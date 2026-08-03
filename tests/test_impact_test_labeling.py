@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.graph.tests import is_test_symbol, filter_tests
-from codegraph.mcp_server import tools_graph
+from cairn.graph.tests import is_test_symbol, filter_tests
+from cairn.mcp_server import tools_graph
 
 
 def _row(conn, table, **cols):

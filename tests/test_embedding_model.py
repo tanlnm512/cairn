@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.graph.embeddings import current_model, purge_stale_models
-from codegraph.graph.schema import get_db
+from cairn.graph.embeddings import current_model, purge_stale_models
+from cairn.graph.schema import get_db
 
 
 def _semantic_extra_installed() -> bool:
@@ -15,7 +15,7 @@ def _semantic_extra_installed() -> bool:
     local backend is actually usable -- without sentence_transformers the
     backend falls back to 'hash' and the model stamp becomes 'hash-256-v1',
     so the env-var-fallback assertions below can't hold. Skip in the default
-    (extra-free) install; run with `pip install 'cg-intel[semantic]'` to exercise.
+    (extra-free) install; run with `pip install 'cairn-intel[semantic]'` to exercise.
     """
     try:
         import sentence_transformers  # noqa: F401
@@ -27,25 +27,25 @@ def _semantic_extra_installed() -> bool:
 
 # Skip the whole module when the [semantic] extra isn't installed: both
 # test_knowledge_model_falls_back_to_code_model (needs the local backend to
-# honor CODEGRAPH_EMBED_LOCAL_MODEL) and the model-name assertions depend on it.
+# honor CAIRN_EMBED_LOCAL_MODEL) and the model-name assertions depend on it.
 # (The other two tests in this file -- purge_stale_models, fp16_flag -- don't
 # need it, so the skip is applied per-test below rather than via pytestmark.)
 _NEEDS_SEMANTIC = pytest.mark.skipif(
     not _semantic_extra_installed(),
-    reason="requires the [semantic] extra (sentence-transformers); install with pip install 'cg-intel[semantic]'",
+    reason="requires the [semantic] extra (sentence-transformers); install with pip install 'cairn-intel[semantic]'",
 )
 
 
 @_NEEDS_SEMANTIC
 def test_knowledge_model_falls_back_to_code_model(monkeypatch):
     # monkeypatch.delenv accepts raising=False so a missing key is fine.
-    monkeypatch.setenv("CODEGRAPH_EMBED_LOCAL_MODEL", "BAAI/bge-m3")
-    monkeypatch.delenv("CODEGRAPH_EMBED_KNOWLEDGE_MODEL", raising=False)
+    monkeypatch.setenv("CAIRN_EMBED_LOCAL_MODEL", "BAAI/bge-m3")
+    monkeypatch.delenv("CAIRN_EMBED_KNOWLEDGE_MODEL", raising=False)
 
     assert current_model("code") == "BAAI/bge-m3"
     assert current_model("knowledge") == "BAAI/bge-m3"
 
-    monkeypatch.setenv("CODEGRAPH_EMBED_KNOWLEDGE_MODEL", "some-other-model")
+    monkeypatch.setenv("CAIRN_EMBED_KNOWLEDGE_MODEL", "some-other-model")
     assert current_model("knowledge") == "some-other-model"
     assert current_model("code") == "BAAI/bge-m3"
 
@@ -73,5 +73,5 @@ def test_purge_stale_models_removes_only_other_models():
 
 
 def test_fp16_flag_env(monkeypatch):
-    monkeypatch.setenv("CODEGRAPH_EMBED_FP16", "1")
-    assert os.environ.get("CODEGRAPH_EMBED_FP16") == "1"
+    monkeypatch.setenv("CAIRN_EMBED_FP16", "1")
+    assert os.environ.get("CAIRN_EMBED_FP16") == "1"

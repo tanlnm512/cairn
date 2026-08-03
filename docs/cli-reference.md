@@ -1,11 +1,11 @@
 # `cg` CLI Reference
 
-The `cg` command is the human-facing interface to codegraph (package
-`cg-intel`). It builds the local code graph, manages knowledge/memory,
+The `cg` command is the human-facing interface to cairn (package
+`cairn-intel`). It builds the local code graph, manages knowledge/memory,
 generates module guides, and runs the MCP server that AI agents consume.
 
 > Run `cg --help` for the live, authoritative command list. This page
-> documents every command as it is registered in `src/codegraph/cli/`.
+> documents every command as it is registered in `src/cairn/cli/`.
 
 ---
 
@@ -13,7 +13,7 @@ generates module guides, and runs the MCP server that AI agents consume.
 
 | Option | Description |
 |--------|-------------|
-| `--version` | Print the installed version (`cg-intel <version>`). |
+| `--version` | Print the installed version (`cairn-intel <version>`). |
 | `--help` | Show help for the group or any subcommand. |
 
 The version is reported from the installed package metadata. `cg version`
@@ -22,7 +22,7 @@ and `cg upgrade --check` are the dedicated version commands.
 ### Common per-command conventions
 
 - `--db` overrides the SQLite graph DB path (default: the central store for
-  the current workspace under `~/.codegraph/<key>/.kg`).
+  the current workspace under `~/.cairn/<key>/.kg`).
 - `--knowledge` overrides the `.knowledge/` bundle path (default:
   `<store>/.knowledge`).
 - `--json` (`as_json`) emits machine-readable JSON instead of the themed
@@ -190,12 +190,12 @@ errors/warnings for each concept).
 | `cg hooks install` | Install post-commit hooks across discovered repos. |
 | `cg hooks uninstall` | Remove post-commit hooks. |
 
-Both take `--workspace`; `install` also takes `--codegraph-dir`.
+Both take `--workspace`; `install` also takes `--cairn-dir`.
 
 ### `cg task` — LLM task queue
 
-`cg task` is the agent-decoupled task queue. Codegraph never calls an LLM
-directly; any agent with the codegraph skill processes pending tasks.
+`cg task` is the agent-decoupled task queue. Cairn never calls an LLM
+directly; any agent with the cairn skill processes pending tasks.
 
 | Subcommand | Description |
 |------------|-------------|
@@ -216,7 +216,7 @@ These are registered directly on `cg` (bare `@main.command()`).
 
 | Command | Description |
 |---------|-------------|
-| `cg init` | Register this workspace with codegraph's central store and build the graph. |
+| `cg init` | Register this workspace with cairn's central store and build the graph. |
 | `cg config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet). |
 | `cg build` | Build (or rebuild) the code graph; also builds dataflow + transitive closure. |
 | `cg stats` | Show graph statistics (repos, symbols, edges, by-repo/by-kind/skipped tables). |
@@ -225,7 +225,7 @@ These are registered directly on `cg` (bare `@main.command()`).
 | `cg sync` | Manually re-index changed files (escape hatch when the watcher is disabled). |
 
 `init` options: `--workspace`, `--from-legacy DIR` (migrate a legacy
-`codegraph/.kg`), `--no-build`, `--import-docs` (ingest `docs/**/*.md`).
+`cairn/.kg`), `--no-build`, `--import-docs` (ingest `docs/**/*.md`).
 
 `build` options: `--repo`, `--workspace`, `--db`, `-v/--verbose`, `--staging`
 (build to temp DB and atomic-swap for zero downtime).
@@ -267,13 +267,13 @@ The navigation tools; the recommended first move from code is `cg def` or
 `--build-index`, `--install-deps`, `--download-model`.
 
 `--install-deps` installs the semantic dependencies (torch +
-sentence-transformers) into the shared `~/.codegraph/lib/` directory, which
+sentence-transformers) into the shared `~/.cairn/lib/` directory, which
 survives reinstalls, then exits without building the index. This is the
 recommended one-time way to get the default `BAAI/bge-m3` model — run
 `cg embed --install-deps`, then `cg embed` to build the index.
 
 `semantic` options: `QUERY` (argument), `--db`, `--limit 20`, `--threshold 0.3`,
-`--json`, `--include-callers`. Set `CODEGRAPH_RERANK=1` for a cross-encoder
+`--json`, `--include-callers`. Set `CAIRN_RERANK=1` for a cross-encoder
 rerank stage.
 
 ### Natural-language and context
@@ -315,11 +315,11 @@ rerank stage.
 
 | Command | Description |
 |---------|-------------|
-| `cg install-agents` | Wire codegraph into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode). |
-| `cg uninstall-agents` | Remove codegraph entries from AI client configs (idempotent). |
+| `cg install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode). |
+| `cg uninstall-agents` | Remove cairn entries from AI client configs (idempotent). |
 | `cg uninstall` | Full teardown: agent wiring, hooks, graph store, and the `cg` binary. |
-| `cg version` | Print the installed codegraph version. |
-| `cg upgrade` | Upgrade codegraph in place (detects install method). |
+| `cg version` | Print the installed cairn version. |
+| `cg upgrade` | Upgrade cairn in place (detects install method). |
 
 `install-agents` options: `--client` (repeatable:
 `claude|claude-desktop|cursor|droid|zcode|agy|opencode|all`), `--workspace`,
@@ -329,7 +329,7 @@ rerank stage.
 With no flags it runs interactively: lists detected clients, their install
 state, and prompts for which to install plus the config scope.
 
-`uninstall` options: `--full` (entire `~/.codegraph`), `--agents-only`,
+`uninstall` options: `--full` (entire `~/.cairn`), `--agents-only`,
 `--hooks-only`, `--graph-only`, `--package-only`, `--client`, `--workspace`,
 `--dry-run`, `-y/--yes`.
 

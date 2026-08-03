@@ -1,6 +1,6 @@
-# Contributing to codegraph
+# Contributing to cairn
 
-Thanks for your interest in contributing to **codegraph** — a local codebase
+Thanks for your interest in contributing to **cairn** — a local codebase
 intelligence system (structural graph + compass + wiki + agent memory) exposed
 via the `cg` CLI and an MCP server. This is currently a small, single-maintainer
 project, so contributions of any size — bug reports, fixes, docs, tests, new
@@ -8,11 +8,11 @@ parsers — are genuinely welcome and have a real impact.
 
 ## Development setup
 
-codegraph targets **Python 3.10+** and is MIT-licensed.
+cairn targets **Python 3.10+** and is MIT-licensed.
 
 ```bash
-git clone https://github.com/tan-le/codegraph.git
-cd codegraph
+git clone https://github.com/tan-le/cairn.git
+cd cairn
 
 # Preferred (a uv.lock is committed at the repo root):
 uv sync --extra dev
@@ -55,21 +55,21 @@ install. See `docs/cli-reference.md` for the full `cg bench` surface.
 
 ## Project layout
 
-Source lives under `src/codegraph/`, with one subpackage per concern:
+Source lives under `src/cairn/`, with one subpackage per concern:
 `graph/` (structural call graph + retrieval), `compass/` (module navigation
 guides), `wiki/` (architectural docs), `memory/` (agent memory + tribal
 knowledge), `knowledge/` (knowledge-base query tools), `parsers/` (tree-sitter
 language parsers), `retrieval/` (FTS + semantic search), `mcp_server/` (the MCP
 transport), `cli/` (the `cg` entry point), `llm/` (decoupled task queue —
-codegraph never calls an LLM directly), `okf/` (the `.knowledge/` file format),
+cairn never calls an LLM directly), `okf/` (the `.knowledge/` file format),
 `viz/` (graph visualization), and `agent_integration/` (shipped templates for
 `cg install-agents`). Tests mirror the package under `tests/`.
 
 ## Codebase intelligence convention (read before editing)
 
-codegraph is **agent-first**: it is its own best tool for understanding itself.
+cairn is **agent-first**: it is its own best tool for understanding itself.
 Whether you're a human or an AI agent, **before editing a file**, use the
-codegraph tools to load context — this catches blast radius that grep misses:
+cairn tools to load context — this catches blast radius that grep misses:
 
 1. `explore("<query>")` first — verbatim source + call paths in one call.
 2. `ask_compass(file_path="<path>")` — load compass + memory for the file.
@@ -103,7 +103,7 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 
 File bugs via **GitHub Issues**. Please include:
 
-- codegraph version (`cg version`)
+- cairn version (`cg version`)
 - Python version and OS
 - Steps to reproduce, expected vs. actual behavior, and any relevant logs
 

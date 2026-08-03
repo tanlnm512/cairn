@@ -1,4 +1,4 @@
-"""Doc-drift prevention tests for the codegraph agent surface.
+"""Doc-drift prevention tests for the cairn agent surface.
 
 These tests guard against doc/code drift on the agent surface: they turn the
 entire class of "skill docs / slash commands disagree with the code" bugs into
@@ -37,7 +37,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC = REPO_ROOT / "src" / "codegraph"
+SRC = REPO_ROOT / "src" / "cairn"
 CMD_DIR = SRC / "agent_integration" / "commands"
 SKILL_MD = SRC / "agent_integration" / "skill" / "SKILL.md"
 TOOLS_MD = SRC / "agent_integration" / "skill" / "references" / "tools.md"
@@ -199,7 +199,7 @@ def _live_defaults_from_source(tool_name: str) -> dict[str, object] | None:
 def _render_agents_instructions_from_source() -> str:
     """Reconstruct ``_agents_instructions()`` output by reading its source.
 
-    Dep-free fallback when importing ``codegraph.agent_install`` fails (it pulls
+    Dep-free fallback when importing ``cairn.agent_install`` fails (it pulls
     the ``mcp`` package transitively). We locate the ``_agents_instructions``
     function and the module-level ``_INSTRUCTIONS_BODY`` string by scanning the
     ``agent_install`` package (after the Phase 1.3 split they live in
@@ -410,7 +410,7 @@ def test_tool_count_string_matches_server():
     # rendering the instruction text from source so the test still runs.
     instructions = ""
     try:
-        from codegraph.agent_install import _agents_instructions
+        from cairn.agent_install import _agents_instructions
         instructions = _agents_instructions()
     except Exception as exc:  # optional deps (mcp/...) missing
         instructions = _render_agents_instructions_from_source()
@@ -518,30 +518,30 @@ def test_skill_tool_index_lists_all_registered_tools():
 # we verify *every* documented default we can resolve, so new drift in any
 # documented default is caught automatically.
 _LIVE_TOOL_MODULES = {
-    "explore": "codegraph.mcp_server.tools_graph",
-    "semantic_search": "codegraph.mcp_server.tools_graph",
-    "find_definition": "codegraph.mcp_server.tools_graph",
-    "get_callers": "codegraph.mcp_server.tools_graph",
-    "get_callees": "codegraph.mcp_server.tools_graph",
-    "impact_analysis": "codegraph.mcp_server.tools_graph",
-    "search_symbols": "codegraph.mcp_server.tools_graph",
-    "cross_repo_deps": "codegraph.mcp_server.tools_graph",
-    "visualize_graph": "codegraph.mcp_server.tools_graph",
-    "search_knowledge": "codegraph.mcp_server.tools_compass",
-    "get_compass": "codegraph.mcp_server.tools_compass",
-    "ask_compass": "codegraph.mcp_server.tools_compass",
-    "memory_digest": "codegraph.mcp_server.tools_memory",
-    "recall_memory": "codegraph.mcp_server.tools_memory",
-    "record_memory": "codegraph.mcp_server.tools_memory",
-    "memory_promote": "codegraph.mcp_server.tools_memory",
-    "memory_demote": "codegraph.mcp_server.tools_memory",
-    "memory_delete": "codegraph.mcp_server.tools_memory",
-    "memory_decay": "codegraph.mcp_server.tools_memory",
-    "knowledge_add": "codegraph.mcp_server.tools_knowledge",
-    "knowledge_search": "codegraph.mcp_server.tools_knowledge",
-    "knowledge_delete": "codegraph.mcp_server.tools_knowledge",
-    "knowledge_status": "codegraph.mcp_server.tools_knowledge",
-    "trace_workflow": "codegraph.mcp_server.tools_knowledge",
+    "explore": "cairn.mcp_server.tools_graph",
+    "semantic_search": "cairn.mcp_server.tools_graph",
+    "find_definition": "cairn.mcp_server.tools_graph",
+    "get_callers": "cairn.mcp_server.tools_graph",
+    "get_callees": "cairn.mcp_server.tools_graph",
+    "impact_analysis": "cairn.mcp_server.tools_graph",
+    "search_symbols": "cairn.mcp_server.tools_graph",
+    "cross_repo_deps": "cairn.mcp_server.tools_graph",
+    "visualize_graph": "cairn.mcp_server.tools_graph",
+    "search_knowledge": "cairn.mcp_server.tools_compass",
+    "get_compass": "cairn.mcp_server.tools_compass",
+    "ask_compass": "cairn.mcp_server.tools_compass",
+    "memory_digest": "cairn.mcp_server.tools_memory",
+    "recall_memory": "cairn.mcp_server.tools_memory",
+    "record_memory": "cairn.mcp_server.tools_memory",
+    "memory_promote": "cairn.mcp_server.tools_memory",
+    "memory_demote": "cairn.mcp_server.tools_memory",
+    "memory_delete": "cairn.mcp_server.tools_memory",
+    "memory_decay": "cairn.mcp_server.tools_memory",
+    "knowledge_add": "cairn.mcp_server.tools_knowledge",
+    "knowledge_search": "cairn.mcp_server.tools_knowledge",
+    "knowledge_delete": "cairn.mcp_server.tools_knowledge",
+    "knowledge_status": "cairn.mcp_server.tools_knowledge",
+    "trace_workflow": "cairn.mcp_server.tools_knowledge",
 }
 
 
@@ -729,17 +729,17 @@ def test_empty_result_strings_offer_a_next_step():
     cases = [
         # (tool module path, function name, substring that MUST appear in an
         #  empty-result return string in that function)
-        ("src/codegraph/mcp_server/tools_graph.py", "find_definition",
+        ("src/cairn/mcp_server/tools_graph.py", "find_definition",
          "search_symbols"),
         # Phase 3.3 moved search_symbols' empty-result prose into a dedicated
         # _render_search_symbols helper (the tool now returns structured data
         # or delegates rendering to the helper). The hint invariant still
         # holds; it just lives in the renderer now.
-        ("src/codegraph/mcp_server/tools_graph.py", "_render_search_symbols",
+        ("src/cairn/mcp_server/tools_graph.py", "_render_search_symbols",
          "semantic_search"),
-        ("src/codegraph/mcp_server/tools_memory.py", "recall_memory",
+        ("src/cairn/mcp_server/tools_memory.py", "recall_memory",
          "memory_digest"),
-        ("src/codegraph/mcp_server/tools_knowledge.py", "knowledge_search",
+        ("src/cairn/mcp_server/tools_knowledge.py", "knowledge_search",
          "broader"),
     ]
     problems = []
@@ -798,7 +798,7 @@ def test_ask_compass_surfaces_all_layers_empty():
     no router/db needed). Regression guard for the surfacing fix.
     """
     REPO = Path(__file__).resolve().parent.parent
-    src = (REPO / "src/codegraph/mcp_server/tools_compass.py").read_text(encoding="utf-8")
+    src = (REPO / "src/cairn/mcp_server/tools_compass.py").read_text(encoding="utf-8")
     m = re.search(r"^def ask_compass\b.*?(?=^def |\Z)", src, re.DOTALL | re.MULTILINE)
     assert m, "could not locate def ask_compass in tools_compass.py"
     body = m.group(0)

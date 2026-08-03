@@ -2,7 +2,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from codegraph.agent_install import install, uninstall, CLIENTS
+from cairn.agent_install import install, uninstall, CLIENTS
 
 
 def test_clients_list_includes_opencode():
@@ -32,7 +32,7 @@ def test_install_uninstall_opencode():
         assert "mcp" in data, "opencode config must use the `mcp` key, not `mcpServers`"
         assert "mcpServers" not in data, "opencode does not read `mcpServers`"
 
-        server = data["mcp"]["codegraph"]
+        server = data["mcp"]["cairn"]
         # stdio => type "local" + command as a single array including "serve".
         assert server["type"] == "local", f"stdio server must be type 'local', got {server['type']!r}"
         assert server["enabled"] is True
@@ -43,7 +43,7 @@ def test_install_uninstall_opencode():
         un_report = uninstall(str(ws), clients=["opencode"])
         assert any(r.client == "opencode" for r in un_report.results)
         after = json.loads(config_path.read_text(encoding="utf-8"))
-        assert "codegraph" not in after.get("mcp", {}), "uninstall must remove the codegraph server"
+        assert "cairn" not in after.get("mcp", {}), "uninstall must remove the cairn server"
 
 
 def test_install_opencode_preserves_other_servers():
@@ -61,7 +61,7 @@ def test_install_opencode_preserves_other_servers():
         install(str(ws), clients=["opencode"], force=True, transport="stdio")
 
         data = json.loads(config_path.read_text(encoding="utf-8"))
-        assert "codegraph" in data["mcp"], "codegraph server must be added"
+        assert "cairn" in data["mcp"], "cairn server must be added"
         assert "other-server" in data["mcp"], "pre-existing server must be preserved"
         assert data["theme"] == "dark", "unrelated top-level keys must be preserved"
 
@@ -72,7 +72,7 @@ def test_install_opencode_sse_uses_remote_type():
         ws = Path(tmpdir)
         install(str(ws), clients=["opencode"], force=True, transport="sse")
         data = json.loads((ws / "opencode.json").read_text(encoding="utf-8"))
-        server = data["mcp"]["codegraph"]
+        server = data["mcp"]["cairn"]
         assert server["type"] == "remote", f"sse server must be type 'remote', got {server['type']!r}"
         assert "url" in server and server["url"].startswith("http")
 
@@ -85,7 +85,7 @@ def test_uninstall_opencode_removes_legacy_mcp_json():
         ws = Path(tmpdir)
         legacy = ws / ".opencode" / "mcp.json"
         legacy.parent.mkdir(parents=True, exist_ok=True)
-        legacy.write_text(json.dumps({"mcpServers": {"codegraph": {"command": "cg"}}}), encoding="utf-8")
+        legacy.write_text(json.dumps({"mcpServers": {"cairn": {"command": "cg"}}}), encoding="utf-8")
 
         uninstall(str(ws), clients=["opencode"])
 

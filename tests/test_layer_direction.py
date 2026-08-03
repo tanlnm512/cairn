@@ -4,10 +4,10 @@ Companion to ``test_agent_surface.py``'s structural drift tests. This turns
 the Phase 0.2 layering rules into CI failures so the fixes don't regress:
 
 1. ``memory`` (L4) must NOT import from ``compass`` (L2). The shared
-   reference-extraction logic lives in the neutral ``codegraph.refs`` module;
+   reference-extraction logic lives in the neutral ``cairn.refs`` module;
    both layers import from it, not from each other.
 2. ``knowledge`` (L5) and ``memory`` (L4) may use the ``graph`` (L1) public
-   API (``codegraph.graph`` / ``..graph``) but must NOT reach into internal
+   API (``cairn.graph`` / ``..graph``) but must NOT reach into internal
    graph submodules (``graph.tokenize``, ``graph.vector_math``,
    ``graph.embeddings``, ``graph.fusion``, ``graph.reranker``,
    ``graph.ann_index``). Those internals are exposed via ``graph.__all__``
@@ -23,7 +23,7 @@ import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC = REPO_ROOT / "src" / "codegraph"
+SRC = REPO_ROOT / "src" / "cairn"
 
 # Layers that must not reach into compass internals from memory.
 # Layers that consume the graph public API only -- these graph submodules are
@@ -54,7 +54,7 @@ GRAPH_INTERNAL_SUBMODULES = {
 
 
 def _iter_layer_py(layer: str):
-    """Yield .py files under src/codegraph/<layer>/."""
+    """Yield .py files under src/cairn/<layer>/."""
     layer_dir = SRC / layer
     if not layer_dir.is_dir():
         return
@@ -80,8 +80,8 @@ def _resolve_relative(file: Path, level: int, module: str | None) -> str:
     """Resolve a relative import to an absolute dotted path.
 
     ``level`` dots climb out of the file's package. E.g. from
-    ``memory/scoring.py`` (package ``codegraph.memory``), ``from ..compass``
-    (level 2, module "compass.critic") resolves to ``codegraph.compass.critic``.
+    ``memory/scoring.py`` (package ``cairn.memory``), ``from ..compass``
+    (level 2, module "compass.critic") resolves to ``cairn.compass.critic``.
     """
     pkg_parts = file.relative_to(SRC.parent).with_suffix("").parts
     # Drop the final module filename to get the containing package.
@@ -100,7 +100,7 @@ class TestLayerDirection:
     def test_memory_does_not_import_compass(self):
         """L4 (memory) must not import from L2 (compass).
 
-        The shared ref-extraction helpers were extracted to ``codegraph.refs``
+        The shared ref-extraction helpers were extracted to ``cairn.refs``
         so memory and compass both depend on the neutral module, breaking the
         former ``memory.scoring -> compass.critic`` edge.
         """
@@ -110,16 +110,16 @@ class TestLayerDirection:
             for module, level in _imported_modules(tree):
                 if level and level > 0:
                     resolved = _resolve_relative(py, level, module)
-                    if resolved.startswith("codegraph.compass") or (
+                    if resolved.startswith("cairn.compass") or (
                         module and "compass" in resolved
                     ):
                         violations.append(f"{py.name}: from {level*'.'}{module}")
-                elif module and (module.startswith("codegraph.compass") or
+                elif module and (module.startswith("cairn.compass") or
                                  module.startswith("src.compass")):
                     violations.append(f"{py.name}: from {module}")
         assert not violations, (
             "memory (L4) reaches into compass (L2). Shared ref logic should "
-            "live in codegraph.refs (neutral), not be imported across the "
+            "live in cairn.refs (neutral), not be imported across the "
             "layer boundary. Violations:\n  " + "\n  ".join(violations)
         )
 
@@ -128,7 +128,7 @@ class TestLayerDirection:
 
         ``graph.tokenize`` / ``graph.vector_math`` / ``graph.embeddings`` etc.
         are implementation modules. Higher layers consume them via the public
-        ``codegraph.graph`` surface (re-exported in graph/__init__.py __all__).
+        ``cairn.graph`` surface (re-exported in graph/__init__.py __all__).
         """
         violations = []
         for layer in ("memory", "knowledge"):
@@ -137,25 +137,25 @@ class TestLayerDirection:
                 for module, level in _imported_modules(tree):
                     if level and level > 0:
                         resolved = _resolve_relative(py, level, module)
-                        if not resolved.startswith("codegraph.graph"):
+                        if not resolved.startswith("cairn.graph"):
                             continue
                     elif module and (
-                        module.startswith("codegraph.graph") or
+                        module.startswith("cairn.graph") or
                         module.startswith("src.graph")
                     ):
                         resolved = module
                     else:
                         continue
-                    # resolved is a codegraph.graph.X[.Y] import. Check if the
-                    # FIRST segment after "codegraph.graph" is an internal
+                    # resolved is a cairn.graph.X[.Y] import. Check if the
+                    # FIRST segment after "cairn.graph" is an internal
                     # submodule.
-                    tail = resolved[len("codegraph.graph"):]
+                    tail = resolved[len("cairn.graph"):]
                     if tail and tail[0] == ".":
                         first_seg = tail[1:].split(".")[0]
                         if first_seg in GRAPH_INTERNAL_SUBMODULES:
                             violations.append(
                                 f"{layer}/{py.name}: reaches into graph internal "
-                                f"'{resolved}' -- import via codegraph.graph public API"
+                                f"'{resolved}' -- import via cairn.graph public API"
                             )
         assert not violations, (
             "Higher layers (memory/knowledge) must use the graph public API, "

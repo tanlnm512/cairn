@@ -1,4 +1,4 @@
-"""Tests for the benchmark module (src/codegraph/bench/).
+"""Tests for the benchmark module (src/cairn/bench/).
 
 Three layers:
 1. Unit tests for the timing primitives (percentiles, time_call, peak_memory)
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.bench import (
+from cairn.bench import (
     generate_corpus,
     corpus_stats,
     run_perf_suite,
@@ -112,10 +112,10 @@ class TestCorpus:
 
     def test_generated_corpus_is_buildable(self, tmp_path):
         """The generated source must actually parse + build without errors."""
-        from codegraph.graph.builder import build_graph
+        from cairn.graph.builder import build_graph
         repo = generate_corpus(tmp_path, 8, complexity="low")
         db = str(tmp_path / "bench.db")
-        os.environ["CODEGRAPH_DB"] = db
+        os.environ["CAIRN_DB"] = db
         stats = build_graph(workspace=str(repo), db_path=db)
         assert stats["symbols"] > 0
         assert stats["edges"] >= 0  # low complexity may have few edges
@@ -127,8 +127,8 @@ class TestPerfSuite:
     def test_runs_and_returns_well_formed_report(self, tmp_path, monkeypatch):
         repo = generate_corpus(tmp_path, 6, complexity="low")
         db = str(tmp_path / "perf.db")
-        monkeypatch.setenv("CODEGRAPH_DB", db)
-        monkeypatch.setenv("CODEGRAPH_EMBED_BACKEND", "hash")
+        monkeypatch.setenv("CAIRN_DB", db)
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
         report = run_perf_suite(
             str(repo), db, embed_backend="hash",
             warmup=0, repeats=1, query_repeats=2,
@@ -147,7 +147,7 @@ class TestPerfSuite:
 
 class TestScalingSuite:
     def test_runs_over_tiny_sizes(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CODEGRAPH_EMBED_BACKEND", "hash")
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
         report = run_scaling_suite(
             tmp_path, sizes=(5, 15), complexity="low", embed_backend="hash",
         )
@@ -189,7 +189,7 @@ class TestCompareReports:
 def test_cg_bench_help_registered():
     """cg bench --help lists the suite options (command is registered)."""
     from click.testing import CliRunner
-    from codegraph.cli import main
+    from cairn.cli import main
     runner = CliRunner()
     result = runner.invoke(main, ["bench", "--help"])
     assert result.exit_code == 0

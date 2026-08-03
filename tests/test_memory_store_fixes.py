@@ -5,13 +5,13 @@ import sqlite3
 
 import pytest
 
-from codegraph.memory.store import (
+from cairn.memory.store import (
     create_memory,
     delete_memory,
     get_memory,
     store_memory,
 )
-from codegraph.okf.bundle import OKFBundle
+from cairn.okf.bundle import OKFBundle
 
 
 def test_store_twice_same_title_distinct_ids_h4(tmp_path, fresh_db):

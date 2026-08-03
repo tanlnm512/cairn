@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-codegraph is pre-1.0 beta software. Only the **latest `0.5.x` release line**
+cairn is pre-1.0 beta software. Only the **latest `0.5.x` release line**
 receives security fixes. Older versions are not supported — please upgrade.
 
 | Version | Supported |
@@ -15,7 +15,7 @@ receives security fixes. Older versions are not supported — please upgrade.
 Please **do not** open a public GitHub issue for security reports. Instead,
 open a private security advisory via GitHub's Security tab:
 
-**https://github.com/tan-le/codegraph/security/advisories/new**
+**https://github.com/tan-le/cairn/security/advisories/new**
 
 ## Response expectations
 
@@ -26,7 +26,7 @@ open a private security advisory via GitHub's Security tab:
 
 ## In scope
 
-codegraph runs an **MCP server** (`cg serve`) and parses **untrusted source
+cairn runs an **MCP server** (`cg serve`) and parses **untrusted source
 code** via tree-sitter. The following are in scope:
 
 - Parser denial-of-service: malformed/pathological source files causing memory

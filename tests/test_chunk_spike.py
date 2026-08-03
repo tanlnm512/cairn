@@ -1,9 +1,9 @@
 import tempfile
 from pathlib import Path
 
-from codegraph.graph.embeddings import chunk_for_symbol
-from codegraph.graph.schema import get_db
-from codegraph.parsers.python_parser import PythonParser
+from cairn.graph.embeddings import chunk_for_symbol
+from cairn.graph.schema import get_db
+from cairn.parsers.python_parser import PythonParser
 
 
 def test_chunk_variant_shapes():

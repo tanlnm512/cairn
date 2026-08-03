@@ -7,14 +7,14 @@ import sys
 import json
 from pathlib import Path
 
-from codegraph.parsers.kotlin import KotlinParser
-from codegraph.parsers.java import JavaParser
-from codegraph.parsers.swift import SwiftParser
-from codegraph.parsers.python_parser import PythonParser
-from codegraph.parsers.typescript import TypeScriptParser, JavaScriptParser
-from codegraph.parsers.dart import DartParser
-from codegraph.parsers.objc import ObjCParser
-from codegraph.parsers.go import GoParser
+from cairn.parsers.kotlin import KotlinParser
+from cairn.parsers.java import JavaParser
+from cairn.parsers.swift import SwiftParser
+from cairn.parsers.python_parser import PythonParser
+from cairn.parsers.typescript import TypeScriptParser, JavaScriptParser
+from cairn.parsers.dart import DartParser
+from cairn.parsers.objc import ObjCParser
+from cairn.parsers.go import GoParser
 
 LANG_CONFIG = {
     "kotlin": (KotlinParser, "sample.kt"),

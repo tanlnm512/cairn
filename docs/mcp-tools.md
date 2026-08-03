@@ -1,8 +1,8 @@
-# codegraph MCP Tools Reference
+# cairn MCP Tools Reference
 
-The `codegraph` MCP server (started by `cg serve`) exposes the codebase
+The `cairn` MCP server (started by `cg serve`) exposes the codebase
 intelligence graph to AI agents. It is a FastMCP server implemented in
-`src/codegraph/mcp_server/` and registers **26 tools** across 5 layers,
+`src/cairn/mcp_server/` and registers **26 tools** across 5 layers,
 plus an index-status resource.
 
 > **`explore(query)` is the recommended first call** — it aggregates the
@@ -49,11 +49,11 @@ into specific relationships.
   widely-used symbol. `cached=True` returns O(1) precomputed dataflow
   (populated by `cg build`/`cg sync`), falling back to live analysis.
 - **`semantic_search`**: defaults to **RRF fusion** (BM25 + vector,
-  `CODEGRAPH_FUSION=1` default). The returned `score` is a rank-fusion number
+  `CAIRN_FUSION=1` default). The returned `score` is a rank-fusion number
   (~0.01-0.02), **not** cosine similarity, regardless of the `threshold`
   argument. Each result's `provenance` (`semantic`, `bm25`, or
   `fused(bm25+semantic)`) is shown. Rank order is meaningful either way; set
-  `CODEGRAPH_FUSION=0` for true 0..1 cosine scores. Set `CODEGRAPH_RERANK=1`
+  `CAIRN_FUSION=0` for true 0..1 cosine scores. Set `CAIRN_RERANK=1`
   for a cross-encoder rerank stage (labelled `[rerank X.XX]` when it ran; it
   silently falls back if the model is unavailable).
 - **`search_symbols`**: FTS5 + phrase splitting handles underscored tokens,
@@ -185,7 +185,7 @@ In addition to the 26 tools, the server exposes a browsable resource:
 
 | Resource | Purpose |
 |----------|---------|
-| `codegraph://status` | Index freshness + build stats for the current workspace (symbol/edge/file counts, edges-resolved fraction, files pending reindex). Read via `read_resource("codegraph://status")` to decide whether to trust a graph query or first prompt `cg update`. |
+| `cairn://status` | Index freshness + build stats for the current workspace (symbol/edge/file counts, edges-resolved fraction, files pending reindex). Read via `read_resource("cairn://status")` to decide whether to trust a graph query or first prompt `cg update`. |
 
 ---
 
@@ -223,4 +223,4 @@ against disk). Tool calls do **not** re-check freshness per query — edits
 made while a `cg serve` process is up require a server restart (or `cg build`)
 to show up in results. Per-query staleness banners surface when a result set
 touches files with unindexed edits pending in `pending_sync`. Use the
-`codegraph://status` resource for the aggregate freshness picture.
+`cairn://status` resource for the aggregate freshness picture.

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.okf.concept import OKFConcept
+from cairn.okf.concept import OKFConcept
 
 
 def test_to_file_writes_atomically(tmp_path):
@@ -54,7 +54,7 @@ type: test
 title: Original Title
 description: Original Description
 tags: []
-generated: {by: codegraph/0.4.0, at: '2024-01-01T00:00:00Z'}
+generated: {by: cairn/0.4.0, at: '2024-01-01T00:00:00Z'}
 okf_version: '0.2'
 ---
 

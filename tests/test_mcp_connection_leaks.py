@@ -55,13 +55,13 @@ class TestMCPConnectionLeaks:
 
     def test_find_definition_closes_conn_on_exception(self, mock_conn):
         """find_definition must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import find_definition
+        from cairn.mcp_server.tools_graph import find_definition
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.find_definition", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.find_definition", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     find_definition("test_symbol")
                 except RuntimeError:
@@ -70,13 +70,13 @@ class TestMCPConnectionLeaks:
 
     def test_get_callers_closes_conn_on_exception(self, mock_conn):
         """get_callers must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import get_callers
+        from cairn.mcp_server.tools_graph import get_callers
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.get_callers", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.get_callers", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     get_callers("test_symbol")
                 except RuntimeError:
@@ -85,13 +85,13 @@ class TestMCPConnectionLeaks:
 
     def test_get_callees_closes_conn_on_exception(self, mock_conn):
         """get_callees must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import get_callees
+        from cairn.mcp_server.tools_graph import get_callees
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.get_callees", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.get_callees", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     get_callees("test_symbol")
                 except RuntimeError:
@@ -100,13 +100,13 @@ class TestMCPConnectionLeaks:
 
     def test_impact_analysis_closes_conn_on_exception(self, mock_conn):
         """impact_analysis must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import impact_analysis
+        from cairn.mcp_server.tools_graph import impact_analysis
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.impact_analysis", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.impact_analysis", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     impact_analysis("test_symbol")
                 except RuntimeError:
@@ -115,13 +115,13 @@ class TestMCPConnectionLeaks:
 
     def test_explore_closes_conn_on_exception(self, mock_conn):
         """explore must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import explore
+        from cairn.mcp_server.tools_graph import explore
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.explore", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.explore", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     explore("test_symbol")
                 except RuntimeError:
@@ -130,13 +130,13 @@ class TestMCPConnectionLeaks:
 
     def test_search_symbols_closes_conn_on_exception(self, mock_conn):
         """search_symbols must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import search_symbols
+        from cairn.mcp_server.tools_graph import search_symbols
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.search_symbols", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.search_symbols", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     search_symbols("test_symbol")
                 except RuntimeError:
@@ -145,13 +145,13 @@ class TestMCPConnectionLeaks:
 
     def test_cross_repo_deps_closes_conn_on_exception(self, mock_conn):
         """cross_repo_deps must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import cross_repo_deps
+        from cairn.mcp_server.tools_graph import cross_repo_deps
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.graph.queries.cross_repo_deps", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.graph.queries.cross_repo_deps", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     cross_repo_deps("test_repo")
                 except RuntimeError:
@@ -160,13 +160,13 @@ class TestMCPConnectionLeaks:
 
     def test_visualize_graph_closes_conn_on_exception(self, mock_conn):
         """visualize_graph must close conn even when query raises."""
-        from codegraph.mcp_server.tools_graph import visualize_graph
+        from cairn.mcp_server.tools_graph import visualize_graph
 
         def mock_query_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.viz.query.get_symbol_graph", mock_query_raises):
-            with patch("codegraph.mcp_server.tools_graph._conn", return_value=mock_conn):
+        with patch("cairn.viz.query.get_symbol_graph", mock_query_raises):
+            with patch("cairn.mcp_server.tools_graph._conn", return_value=mock_conn):
                 try:
                     visualize_graph(scope="symbol", symbol="test")
                 except RuntimeError:
@@ -175,14 +175,14 @@ class TestMCPConnectionLeaks:
 
     def test_recall_memory_closes_conn_on_exception(self, mock_conn):
         """recall_memory must close conn even when query raises."""
-        from codegraph.mcp_server.tools_memory import recall_memory
+        from cairn.mcp_server.tools_memory import recall_memory
 
         def mock_search_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.mcp_server.tools_memory._bundle", return_value=MagicMock()):
-            with patch("codegraph.mcp_server.tools_memory._conn", return_value=mock_conn):
-                with patch("codegraph.memory.promotion.search_memory", mock_search_raises):
+        with patch("cairn.mcp_server.tools_memory._bundle", return_value=MagicMock()):
+            with patch("cairn.mcp_server.tools_memory._conn", return_value=mock_conn):
+                with patch("cairn.memory.promotion.search_memory", mock_search_raises):
                     try:
                         recall_memory("test_query")
                     except RuntimeError:
@@ -195,14 +195,14 @@ class TestMCPConnectionLeaks:
         record_memory uses _rw_conn() (a writable connection) rather than the
         read-only _conn(), since its purpose is to write -- patch _rw_conn here.
         """
-        from codegraph.mcp_server.tools_memory import record_memory
+        from cairn.mcp_server.tools_memory import record_memory
 
         def mock_capture_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.mcp_server.tools_memory._bundle", return_value=MagicMock()):
-            with patch("codegraph.mcp_server.tools_memory._rw_conn", return_value=mock_conn):
-                with patch("codegraph.memory.promotion.capture_memory", mock_capture_raises):
+        with patch("cairn.mcp_server.tools_memory._bundle", return_value=MagicMock()):
+            with patch("cairn.mcp_server.tools_memory._rw_conn", return_value=mock_conn):
+                with patch("cairn.memory.promotion.capture_memory", mock_capture_raises):
                     try:
                         record_memory("decision", "test_title", "test_body")
                     except RuntimeError:
@@ -211,14 +211,14 @@ class TestMCPConnectionLeaks:
 
     def test_ask_compass_closes_conn_on_exception(self, mock_conn):
         """ask_compass must close conn even when query raises."""
-        from codegraph.mcp_server.tools_compass import ask_compass
+        from cairn.mcp_server.tools_compass import ask_compass
 
         def mock_route_raises(*args, **kwargs):
             raise RuntimeError("Query failed")
 
-        with patch("codegraph.mcp_server.tools_compass._bundle", return_value=MagicMock()):
-            with patch("codegraph.mcp_server.tools_compass._conn", return_value=mock_conn):
-                with patch("codegraph.compass.router.route_query", mock_route_raises):
+        with patch("cairn.mcp_server.tools_compass._bundle", return_value=MagicMock()):
+            with patch("cairn.mcp_server.tools_compass._conn", return_value=mock_conn):
+                with patch("cairn.compass.router.route_query", mock_route_raises):
                     try:
                         ask_compass("test_query")
                     except RuntimeError:

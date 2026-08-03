@@ -1,5 +1,5 @@
-from codegraph.parsers.base import ParsedFile, Symbol, Edge
-from codegraph.parsers.inference.kotlin import kotlin_receiver_types
+from cairn.parsers.base import ParsedFile, Symbol, Edge
+from cairn.parsers.inference.kotlin import kotlin_receiver_types
 
 
 def test_kotlin_inference_pass():

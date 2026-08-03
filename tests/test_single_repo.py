@@ -10,7 +10,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from codegraph.graph.scanner import (
+from cairn.graph.scanner import (
     discover_repos,
     infer_repo_for_path,
     is_single_repo_workspace,

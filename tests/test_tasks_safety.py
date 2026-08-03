@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.compass.critic import critic_concept
-from codegraph.llm.tasks import (
+from cairn.compass.critic import critic_concept
+from cairn.llm.tasks import (
     MAX_REVISE_CYCLES,
     Task,
     claim_task,
@@ -25,8 +25,8 @@ from codegraph.llm.tasks import (
     create_task,
     list_tasks,
 )
-from codegraph.okf.bundle import OKFBundle
-from codegraph.okf.concept import OKFConcept
+from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
 
 
 def _seed_graph(conn: sqlite3.Connection) -> None:

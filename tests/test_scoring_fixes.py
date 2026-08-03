@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import pytest
-from codegraph.memory.scoring import _graph_verification, score_memory
-from codegraph.okf.concept import OKFConcept
+from cairn.memory.scoring import _graph_verification, score_memory
+from cairn.okf.concept import OKFConcept
 
 
 class TestGraphVerificationAlignment:
@@ -215,7 +215,7 @@ class TestGraphVerificationAlignment:
         This is a direct test that ensures scoring._graph_verification uses
         the same extraction patterns as the critic.
         """
-        from codegraph.compass.critic import _extract_file_refs, _extract_symbol_refs
+        from cairn.compass.critic import _extract_file_refs, _extract_symbol_refs
 
         cur = fresh_db.cursor()
         # Add test data
@@ -267,8 +267,8 @@ class TestCriticDedup:
 
     def test_file_exists_imported_from_critic(self):
         """Verify scoring._file_exists IS critic._file_exists (same function object)."""
-        from codegraph.memory.scoring import _file_exists as scoring_file_exists
-        from codegraph.compass.critic import _file_exists as critic_file_exists
+        from cairn.memory.scoring import _file_exists as scoring_file_exists
+        from cairn.compass.critic import _file_exists as critic_file_exists
 
         # Identity check: must be the exact same function object
         assert scoring_file_exists is critic_file_exists, (
@@ -277,8 +277,8 @@ class TestCriticDedup:
 
     def test_symbol_exists_imported_from_critic(self):
         """Verify scoring._symbol_exists IS critic._symbol_exists (same function object)."""
-        from codegraph.memory.scoring import _symbol_exists as scoring_symbol_exists
-        from codegraph.compass.critic import _symbol_exists as critic_symbol_exists
+        from cairn.memory.scoring import _symbol_exists as scoring_symbol_exists
+        from cairn.compass.critic import _symbol_exists as critic_symbol_exists
 
         # Identity check: must be the exact same function object
         assert scoring_symbol_exists is critic_symbol_exists, (
@@ -288,7 +288,7 @@ class TestCriticDedup:
     def test_no_duplicate_definitions(self):
         """Verify scoring.py has no duplicate function definitions for _file_exists and _symbol_exists."""
         import inspect
-        from codegraph import memory
+        from cairn import memory
 
         # Get the source code of scoring.py
         scoring_source = inspect.getsource(memory.scoring)

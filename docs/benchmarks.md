@@ -1,9 +1,9 @@
 # Benchmarks
 
-codegraph ships two harnesses for measuring retrieval quality and
+cairn ships two harnesses for measuring retrieval quality and
 build/query performance against ground truth. This document explains **what**
 each one measures, **how** to run it, and the methodology for the
-resolution-label comparison that distinguishes codegraph from name-only
+resolution-label comparison that distinguishes cairn from name-only
 ("fuzzy") code graphs.
 
 > **Status:** the harnesses are checked in and self-running; the number tables
@@ -135,9 +135,9 @@ cg bench --suite scaling --json
 
 ---
 
-## The resolution-label methodology (codegraph's differentiator)
+## The resolution-label methodology (cairn's differentiator)
 
-codegraph labels every call edge `exact`, `ambiguous`, or `unresolved`. Precise
+cairn labels every call edge `exact`, `ambiguous`, or `unresolved`. Precise
 queries (the default) follow **only** `exact` edges, so blast radius is never
 inflated by name collisions. Fuzzy queries (`--fuzzy` / `fuzzy=True`) add
 name-only matches as an explicitly-labelled candidate list.
@@ -185,16 +185,16 @@ cg ask "how does <X> dispatch"        # explore reports ambiguous hops inline
 
 ### Token / tool-call reduction vs a grep-only baseline
 
-To measure how much codegraph reduces agent context cost versus a naive
+To measure how much cairn reduces agent context cost versus a naive
 "grep-and-read" agent workflow:
 
 1. Pick *N* representative questions ("how does auth work", "who calls X",
    "what breaks if I change Y").
-2. For each, run an agent **without** codegraph (grep + file reads) and **with**
-   codegraph (`explore` + drill-down). Capture token usage and tool-call count.
+2. For each, run an agent **without** cairn (grep + file reads) and **with**
+   cairn (`explore` + drill-down). Capture token usage and tool-call count.
 3. Report the deltas:
 
-| metric          | grep-only baseline | with codegraph | reduction |
+| metric          | grep-only baseline | with cairn | reduction |
 |-----------------|--------------------|----------------|-----------|
 | tokens / query  | _fill_             | _fill_         | _fill_%   |
 | tool calls / query | _fill_          | _fill_         | _fill_%   |

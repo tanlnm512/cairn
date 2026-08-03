@@ -1,15 +1,15 @@
 # Architecture
 
-This document describes codegraph's design: what it is, how a query flows
+This document describes cairn's design: what it is, how a query flows
 through its five layers, how it resolves symbols, where it draws the LLM
 boundary, and where data lives on disk.
 
-## What codegraph is
+## What cairn is
 
-codegraph is a **local, structural, agent-first** code intelligence system.
+cairn is a **local, structural, agent-first** code intelligence system.
 
 - **Local.** Everything runs on your machine. The store is a SQLite database
-  plus a markdown tree under `~/.codegraph/`. No network calls, no telemetry
+  plus a markdown tree under `~/.cairn/`. No network calls, no telemetry
   upstream, no remote API. You can read every byte of the output.
 - **Structural.** It parses source with tree-sitter into a typed graph of
   symbols and call edges, then answers queries against that graph. "Who calls
@@ -19,14 +19,14 @@ codegraph is a **local, structural, agent-first** code intelligence system.
   AI agents. The CLI (`cg`) mirrors the same capability for humans and as a
   fallback. The tool surfaces are designed for an agent to call repeatedly and
   cheaply, not for one-shot human typing.
-- **No LLM in the loop by design.** codegraph never calls an LLM itself. Where
+- **No LLM in the loop by design.** cairn never calls an LLM itself. Where
   synthesis quality would help (compass/wiki generation), it hands work off via
   a task queue, and a deterministic critic verifies every result before it is
   committed. Outputs are verifiable, not probabilistic.
 
 ## Layers and query flow
 
-codegraph is organized into five layers. The router (`explore`) is the front
+cairn is organized into five layers. The router (`explore`) is the front
 door: it fans a query across the graph layer and returns one consolidated
 answer. The other layers answer specific question types.
 
@@ -164,11 +164,11 @@ guess through.
 
 ## The LLM boundary
 
-codegraph **never calls an LLM directly.** This is a deliberate design choice,
+cairn **never calls an LLM directly.** This is a deliberate design choice,
 not a missing feature.
 
 Where an LLM would raise quality — generating compass guides, drafting wiki
-docs, composing memory entries — codegraph instead **queues the work** on a
+docs, composing memory entries — cairn instead **queues the work** on a
 file-based task queue and lets an external agent do the synthesis:
 
 ```bash
@@ -189,7 +189,7 @@ you distrust an output, you can re-derive it from the graph alone. Putting an
 LLM inside the query path would make every answer probabilistic and
 uncheckable — so the LLM stays outside it, on a queue, with a critic gate.
 
-The task backend is selected by `CODEGRAPH_LLM_BACKEND` (default `file-queue`).
+The task backend is selected by `CAIRN_LLM_BACKEND` (default `file-queue`).
 
 ## Storage
 
@@ -219,8 +219,8 @@ Two things live on disk, side by side under one store directory:
    should not be read — they are staging areas the decay and critic processes
    manage.
 
-The store root resolves to `~/.codegraph/<workspace-key>/` by default, where
+The store root resolves to `~/.cairn/<workspace-key>/` by default, where
 `<key>` is a hash of the workspace root. One workspace maps to one store; `cg`
-finds the right store by walking up from cwd (like git), with `CODEGRAPH_WORKSPACE`
+finds the right store by walking up from cwd (like git), with `CAIRN_WORKSPACE`
 as an explicit override. See [configuration.md](configuration.md) for the full
 set of path variables and `cg config --list` to print the resolved locations.

@@ -55,7 +55,7 @@ def test_build_graph_resolves_usecase_bare_call(tmp_path):
     """End-to-end build + caller edge: a Kotlin bare `useCase(p)` call must
     resolve to the UseCase class, not the local property. This single test
     exercises the full parser -> resolver -> schema pipeline."""
-    from codegraph.graph.builder import build_graph
+    from cairn.graph.builder import build_graph
 
     files = {
         "UseCase.kt": (
@@ -94,7 +94,7 @@ def test_search_symbols_camelcase_substring_via_like_union(fresh_db):
     """`*UseCase*` must find camelCase names containing 'UseCase'
     (UpdateProfileUseCase, GetPhotosUseCase), not just literal 'UseCase'.
     Guards the FTS5+LIKE union regression."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/r')")
     fresh_db.execute("INSERT INTO files (id, repo_id, path, language) VALUES ('f', 'r', '/r/U.kt', 'kotlin')")
@@ -117,7 +117,7 @@ def test_search_symbols_camelcase_substring_via_like_union(fresh_db):
 def test_impact_analysis_surfaces_affected_tests(fresh_db, monkeypatch):
     """impact_analysis (MCP wrapper) must isolate test callers into an
     'Affected tests' section. Exercises the MCP tool + test-labeling."""
-    from codegraph.mcp_server import tools_graph
+    from cairn.mcp_server import tools_graph
 
     monkeypatch.setattr(tools_graph, "_conn", lambda: fresh_db)
     fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'be', '/repo')")
@@ -137,7 +137,7 @@ def test_get_callers_falls_back_to_fuzzy_when_precise_empty(fresh_db, monkeypatc
     """get_callers auto-retries fuzzy when precise returns nothing -- the
     agent-facing regression where an externally-defined symbol's caller was
     silently missed."""
-    from codegraph.mcp_server import tools_graph
+    from cairn.mcp_server import tools_graph
 
     monkeypatch.setattr(tools_graph, "_conn", lambda: fresh_db)
     fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/repo')")
@@ -154,7 +154,7 @@ def test_get_callers_falls_back_to_fuzzy_when_precise_empty(fresh_db, monkeypatc
 def test_resolver_full_contiguous_beats_last_segment_fallback():
     """The import-aware resolver must rank a full contiguous match above a
     last-segment fallback -- guards both resolution paths + ordering at once."""
-    from codegraph.graph.resolver import _import_aware_candidates
+    from cairn.graph.resolver import _import_aware_candidates
 
     my_imports = ["com.example.RepoA"]
     cands = [
@@ -170,7 +170,7 @@ def test_resolver_receiver_type_disambiguates_same_named_method(tmp_path):
     """Full build pipeline: two classes define `displayName`; the type-aware
     Tier-0 resolver must dispatch each call to the correct class with zero
     ambiguous edges."""
-    from codegraph.graph.builder import build_graph
+    from cairn.graph.builder import build_graph
 
     files = {
         "Profile.kt": 'class Profile {\n    fun displayName(): String { return "x" }\n}\n',
@@ -198,8 +198,8 @@ def test_resolver_receiver_type_disambiguates_same_named_method(tmp_path):
 def test_memory_graph_verification_counts_mixed_refs(fresh_db):
     """_graph_verification must count files (.ts/.java) AND symbols
     (snake_case, qualified) together -- the L2 alignment fix."""
-    from codegraph.memory.scoring import _graph_verification
-    from codegraph.okf.concept import OKFConcept
+    from cairn.memory.scoring import _graph_verification
+    from cairn.okf.concept import OKFConcept
 
     fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/tmp')")
     fresh_db.execute("INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r', 'src/Component.tsx', 'typescript')")
@@ -217,8 +217,8 @@ def test_memory_graph_verification_counts_mixed_refs(fresh_db):
 
 def test_memory_store_distinct_ids_for_same_title(tmp_path):
     """store_memory must give same-title non-raw memories distinct UUID-suffixed IDs."""
-    from codegraph.memory.store import create_memory, store_memory, get_memory
-    from codegraph.okf.bundle import OKFBundle
+    from cairn.memory.store import create_memory, store_memory, get_memory
+    from cairn.okf.bundle import OKFBundle
 
     bundle = OKFBundle(str(tmp_path / "knowledge"))
     id1 = store_memory(create_memory(type_="pattern", title="backoff retry", body="first", confidence=0.4), bundle)
@@ -231,8 +231,8 @@ def test_memory_store_distinct_ids_for_same_title(tmp_path):
 def test_memory_delete_exact_match_no_sibling_clobber(tmp_path, fresh_db):
     """delete_memory must use exact WHERE memory_path = ?, never LIKE --
     deleting one memory must not remove a sibling whose path is a prefix."""
-    from codegraph.memory.store import delete_memory, store_memory, create_memory, get_memory
-    from codegraph.okf.bundle import OKFBundle
+    from cairn.memory.store import delete_memory, store_memory, create_memory, get_memory
+    from cairn.okf.bundle import OKFBundle
 
     bundle = OKFBundle(str(tmp_path / "knowledge"))
     parent = store_memory(create_memory(type_="pattern", title="retry", body="x", confidence=0.4), bundle)
@@ -251,8 +251,8 @@ def test_memory_delete_exact_match_no_sibling_clobber(tmp_path, fresh_db):
 def test_knowledge_update_status_lifecycle():
     """update_status validates transitions: forward (active->superseded) ok,
     backward (archived->active) rejected."""
-    from codegraph.knowledge.store import add_document, update_status, get_document
-    from codegraph.okf.bundle import OKFBundle
+    from cairn.knowledge.store import add_document, update_status, get_document
+    from cairn.okf.bundle import OKFBundle
 
     with tempfile.TemporaryDirectory() as tmp:
         bundle = OKFBundle(tmp)
@@ -267,15 +267,15 @@ def test_knowledge_update_status_lifecycle():
 def test_knowledge_search_excludes_archived_by_default():
     """search_knowledge must exclude archived docs by default but include them
     when asked -- the most user-visible search behavior."""
-    from codegraph.knowledge.store import add_document, update_status
-    from codegraph.knowledge.search import search_knowledge
-    from codegraph.okf.bundle import OKFBundle
+    from cairn.knowledge.store import add_document, update_status
+    from cairn.knowledge.search import search_knowledge
+    from cairn.okf.bundle import OKFBundle
 
     with tempfile.TemporaryDirectory() as tmp:
         bundle = OKFBundle(tmp)
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
-        from codegraph.graph.schema import _apply_schema
+        from cairn.graph.schema import _apply_schema
         _apply_schema(conn)
         cid = add_document(bundle, "Refund Policy Late Orders", "Refunds for late deliveries.", "business-rule")
         update_status(bundle, cid, "archived")
@@ -289,8 +289,8 @@ def test_knowledge_search_excludes_archived_by_default():
 
 def test_knowledge_trace_workflow_resolves_and_missing():
     """trace_workflow resolves by id/title and returns None for a miss."""
-    from codegraph.knowledge.workflow import add_workflow, trace_workflow
-    from codegraph.okf.bundle import OKFBundle
+    from cairn.knowledge.workflow import add_workflow, trace_workflow
+    from cairn.okf.bundle import OKFBundle
 
     steps = [{"name": "Cut branch"}, {"name": "Merge"}]
     with tempfile.TemporaryDirectory() as tmp:
@@ -308,8 +308,8 @@ def test_knowledge_trace_workflow_resolves_and_missing():
 
 def test_compass_critic_flags_hallucinated_file_ref(fresh_db):
     """critic_concept must flag a backtick file ref that doesn't exist in the graph."""
-    from codegraph.compass.critic import critic_concept
-    from codegraph.okf.concept import OKFConcept
+    from cairn.compass.critic import critic_concept
+    from cairn.okf.concept import OKFConcept
 
     concept = OKFConcept(type="Compass", title="t", body="See `src/DoesNotExist.kt` for the entry point.")
     result = critic_concept(concept, fresh_db)
@@ -319,8 +319,8 @@ def test_compass_critic_flags_hallucinated_file_ref(fresh_db):
 
 def test_compass_critic_passes_real_qualified_symbol(fresh_db):
     """critic_concept must NOT flag a real qualified symbol reference."""
-    from codegraph.compass.critic import critic_concept
-    from codegraph.okf.concept import OKFConcept
+    from cairn.compass.critic import critic_concept
+    from cairn.okf.concept import OKFConcept
 
     fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/tmp/r')")
     fresh_db.execute("INSERT INTO files (id, repo_id, path, language) VALUES ('f', 'r', '/tmp/r/src/ApiClient.ts', 'typescript')")
@@ -339,7 +339,7 @@ def test_compass_critic_passes_real_qualified_symbol(fresh_db):
 def test_compass_router_accuracy_on_golden_queries():
     """classify_intent must hit >= 85% of the golden 41-query set across all 5 layers.
     Reuses the canonical GOLDEN list rather than duplicating it."""
-    from codegraph.compass.router import classify_intent
+    from cairn.compass.router import classify_intent
     # Import the canonical golden set maintained alongside the router; do not
     # duplicate it here (single source of truth).
     from tests.test_router_eval import GOLDEN
@@ -355,14 +355,14 @@ def test_compass_router_accuracy_on_golden_queries():
 def test_server_boot_guard_exits_on_empty_store(monkeypatch, tmp_path):
     """server.run must exit(1) on an empty DB (no symbols table) rather than
     boot a broken server."""
-    from codegraph.mcp_server import server
+    from cairn.mcp_server import server
 
     empty_db = tmp_path / "empty.db"
     empty_db.touch()
-    monkeypatch.setenv("CODEGRAPH_DB", str(empty_db))
+    monkeypatch.setenv("CAIRN_DB", str(empty_db))
 
-    with patch("codegraph.mcp_server.server.mcp"), \
-         patch("codegraph.mcp_server.server.verify_tool_count"):
+    with patch("cairn.mcp_server.server.mcp"), \
+         patch("cairn.mcp_server.server.verify_tool_count"):
         with pytest.raises(SystemExit) as exc:
             server.run(transport="stdio")
         assert exc.value.code == 1
@@ -371,11 +371,11 @@ def test_server_boot_guard_exits_on_empty_store(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "module_path, tool, conn_attr, query_path, ok_return, call_args",
     [
-        ("codegraph.mcp_server.tools_graph", "find_definition", "_conn", "codegraph.graph.queries.find_definition", [], ("test_symbol",)),
-        ("codegraph.mcp_server.tools_graph", "get_callers", "_conn", "codegraph.graph.queries.get_callers", [], ("test_symbol",)),
-        ("codegraph.mcp_server.tools_graph", "impact_analysis", "_conn", "codegraph.graph.queries.impact_analysis", {"total": 0, "impacted": [], "cycles": []}, ("test_symbol",)),
-        ("codegraph.mcp_server.tools_graph", "explore", "_conn", "codegraph.graph.queries.explore", {"seeds": [], "files": {}, "call_paths": {}, "blast_radius": {}, "dispatch_hops": []}, ("test_symbol",)),
-        ("codegraph.mcp_server.tools_graph", "search_symbols", "_conn", "codegraph.graph.queries.search_symbols", [], ("test_symbol",)),
+        ("cairn.mcp_server.tools_graph", "find_definition", "_conn", "cairn.graph.queries.find_definition", [], ("test_symbol",)),
+        ("cairn.mcp_server.tools_graph", "get_callers", "_conn", "cairn.graph.queries.get_callers", [], ("test_symbol",)),
+        ("cairn.mcp_server.tools_graph", "impact_analysis", "_conn", "cairn.graph.queries.impact_analysis", {"total": 0, "impacted": [], "cycles": []}, ("test_symbol",)),
+        ("cairn.mcp_server.tools_graph", "explore", "_conn", "cairn.graph.queries.explore", {"seeds": [], "files": {}, "call_paths": {}, "blast_radius": {}, "dispatch_hops": []}, ("test_symbol",)),
+        ("cairn.mcp_server.tools_graph", "search_symbols", "_conn", "cairn.graph.queries.search_symbols", [], ("test_symbol",)),
     ],
     ids=["find_definition", "get_callers", "impact_analysis", "explore", "search_symbols"],
 )
@@ -402,9 +402,9 @@ def test_tool_closes_conn_on_exception(module_path, tool, conn_attr, query_path,
 def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
     """NEW: a read-only get_db connection must refuse writes. This guards the
     core read-only-daemon invariant (can't hold the writer lock -> can't cause
-    'database is locked'). Verifies CODEGRAPH_READ_ONLY -> _read_only_mode ->
+    'database is locked'). Verifies CAIRN_READ_ONLY -> _read_only_mode ->
     get_db(read_only=True) -> SQLite mode=ro."""
-    from codegraph.graph.schema import get_db
+    from cairn.graph.schema import get_db
 
     # Create a DB first (read-only open requires an existing file)
     db_path = str(tmp_path / "ro.db")
@@ -422,8 +422,8 @@ def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
         conn.close()
 
     # And the _read_only_mode env flag is honored by the server core
-    monkeypatch.setenv("CODEGRAPH_READ_ONLY", "1")
-    from codegraph.mcp_server._server_core import _read_only_mode
+    monkeypatch.setenv("CAIRN_READ_ONLY", "1")
+    from cairn.mcp_server._server_core import _read_only_mode
     assert _read_only_mode() is True
 
 
@@ -431,7 +431,7 @@ def test_sweep_strays_kills_orphans_not_daemon(monkeypatch):
     """NEW: find_strays + sweep_strays must return orphan 'cg serve' pids while
     excluding the launchd-managed daemon pid and the current process. Guards
     the stray-sweeper that self-heals DB lock contention."""
-    from codegraph.mcp_server import lifecycle as lc
+    from cairn.mcp_server import lifecycle as lc
 
     fake_orphan = 99999  # nonexistent pid; terminate_pid must tolerate it
     daemon_pid = 88888
@@ -457,7 +457,7 @@ def test_sse_responds_detects_live_vs_dead(monkeypatch):
     """NEW: sse_responds must distinguish a server that answers HTTP from a
     dead/unreachable port -- the hardening that replaced the bare TCP-accept
     false-positive ('responds True but curl times out mid-stream')."""
-    from codegraph.mcp_server import lifecycle as lc
+    from cairn.mcp_server import lifecycle as lc
 
     # Dead port: socket.connect raises -> False
     with patch("socket.create_connection", side_effect=OSError("refused")):

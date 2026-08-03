@@ -41,7 +41,7 @@ def test_commit_success_counts_correctly(fresh_db):
     """When commit succeeds, embedded count reflects committed rows and the
     summary carries embedded/attempted/failed_batches with failed_batches=0.
     Covers the happy path + the summary-dict contract for the success branch."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_symbols(fresh_db, count=3)
     summary = emb.embed_all(fresh_db)
@@ -61,7 +61,7 @@ def test_commit_failure_simulation(fresh_db):
     This test actually triggers the failure path by wrapping the connection
     to fail on commit calls.
     """
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_symbols(fresh_db, count=3)
 

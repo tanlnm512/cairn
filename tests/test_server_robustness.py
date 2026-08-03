@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from codegraph.mcp_server import server
+from cairn.mcp_server import server
 
 
 class TestStoreExistenceCheck:
@@ -25,11 +25,11 @@ class TestStoreExistenceCheck:
         empty_db = tmp_path / "empty.db"
         empty_db.touch()
         
-        monkeypatch.setenv("CODEGRAPH_DB", str(empty_db))
+        monkeypatch.setenv("CAIRN_DB", str(empty_db))
         
         # Mock the actual mcp.run() so we don't try to start the server
-        with patch("codegraph.mcp_server.server.mcp") as mock_mcp, \
-             patch("codegraph.mcp_server.server.verify_tool_count"):
+        with patch("cairn.mcp_server.server.mcp") as mock_mcp, \
+             patch("cairn.mcp_server.server.verify_tool_count"):
             with pytest.raises(SystemExit) as exc_info:
                 server.run(transport="stdio")
             
@@ -46,17 +46,17 @@ class TestStoreExistenceCheck:
         conn = sqlite3.connect(str(test_db))
         
         # Apply the schema to the test database
-        from codegraph.graph.schema import _apply_schema
+        from cairn.graph.schema import _apply_schema
         _apply_schema(conn)
         conn.close()
         
-        monkeypatch.setenv("CODEGRAPH_DB", str(test_db))
+        monkeypatch.setenv("CAIRN_DB", str(test_db))
         
         # Mock the actual mcp.run() so we don't try to start the server
-        with patch("codegraph.mcp_server.server.mcp") as mock_mcp, \
-             patch("codegraph.mcp_server.server.verify_tool_count"):
-            with patch("codegraph.graph.watcher.ensure_fresh_force", return_value=0):
-                with patch("codegraph.memory.promotion.decay", return_value={"expired_raw": 0, "archived_tribal": 0}):
+        with patch("cairn.mcp_server.server.mcp") as mock_mcp, \
+             patch("cairn.mcp_server.server.verify_tool_count"):
+            with patch("cairn.graph.watcher.ensure_fresh_force", return_value=0):
+                with patch("cairn.memory.promotion.decay", return_value={"expired_raw": 0, "archived_tribal": 0}):
                     try:
                         server.run(transport="stdio")
                     except SystemExit as e:
@@ -74,13 +74,13 @@ class TestToolCountAssertion:
 
     def test_tool_count_assertion(self):
         """Registered tool count should match expected constant."""
-        from codegraph.mcp_server._server_core import mcp
+        from cairn.mcp_server._server_core import mcp
 
         # L1: verify_tool_count() raises AssertionError if the registered tool
         # count drifts from _EXPECTED_TOOL_COUNT. The guard is deferred to
         # run() / this test rather than running at import time, so unrelated
         # importers don't trip a regression as an AssertionError.
-        import codegraph.mcp_server.server as server_mod
+        import cairn.mcp_server.server as server_mod
 
         # If the count drifted, this raises AssertionError.
         server_mod.verify_tool_count()
@@ -92,7 +92,7 @@ class TestInstrumentErrorSanitization:
 
     def test_instrument_sanitizes_error(self, caplog):
         """Exception with internal path returns sanitized string, no paths leaked."""
-        from codegraph.mcp_server.metric_buffering import instrument
+        from cairn.mcp_server.metric_buffering import instrument
         import logging
         
         caplog.set_level(logging.DEBUG)
@@ -102,10 +102,10 @@ class TestInstrumentErrorSanitization:
             # Simulate an error that includes an internal path under the REAL
             # home dir (machine-independent). The sanitizer strips Path.home()
             # (replacing it with ~) plus path fragments like /.knowledge/ and
-            # /codegraph/. Hardcoding an auditor-specific path (e.g.
+            # /cairn/. Hardcoding an auditor-specific path (e.g.
             # /Users/tan.le/...) made this test fail on any other machine.
             from pathlib import Path
-            leaky = str(Path.home() / "Projects" / "codegraph" / ".knowledge" / "compass" / "some-module.md")
+            leaky = str(Path.home() / "Projects" / "cairn" / ".knowledge" / "compass" / "some-module.md")
             raise FileNotFoundError(f"No such file or directory: '{leaky}'")
 
         # The function should return a sanitized error string, not raise
@@ -117,7 +117,7 @@ class TestInstrumentErrorSanitization:
         # Should NOT contain the home dir prefix or internal path fragments
         assert str(Path.home()) not in result
         assert "/.knowledge/" not in result
-        assert "/codegraph/" not in result
+        assert "/cairn/" not in result
         
         # Should contain a generic error message
         assert "error" in result.lower() or "failed" in result.lower()
@@ -129,7 +129,7 @@ class TestInstrumentErrorSanitization:
 
     def test_instrument_records_error_metric(self, monkeypatch):
         """Error is recorded as 'error' status in metrics."""
-        from codegraph.mcp_server.metric_buffering import instrument, _METRIC_BUFFER, _METRIC_LOCK
+        from cairn.mcp_server.metric_buffering import instrument, _METRIC_BUFFER, _METRIC_LOCK
         
         @instrument
         def failing_function():

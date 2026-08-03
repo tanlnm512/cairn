@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>codegraph — System Architecture</title>
+<title>cairn — System Architecture</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
   :root {
@@ -67,7 +67,7 @@
 <body>
 
 <nav class="nav"><div class="nav-inner">
-  <strong style="color:var(--heading)">codegraph</strong>
+  <strong style="color:var(--heading)">cairn</strong>
   <a href="#glance">At a glance</a>
   <a href="#layers">Layers</a>
   <a href="#interactions">Interactions</a>
@@ -80,7 +80,7 @@
 
 <div class="wrap">
 
-<h1>codegraph — System Architecture</h1>
+<h1>cairn — System Architecture</h1>
 <p class="lead">A local, structural, agent-first codebase intelligence system: source → typed call graph in SQLite → layered knowledge (compass, wiki, memory) → 26-tool MCP server for AI agents.</p>
 
 <div class="callout">
@@ -103,7 +103,7 @@
 
 <!-- 1 -->
 <h2 id="glance">1. System at a glance</h2>
-<p>codegraph parses your source into a typed call graph, then layers a knowledge system on top. The same store backs a <code>cg</code> CLI for humans and an MCP server for AI agents.</p>
+<p>cairn parses your source into a typed call graph, then layers a knowledge system on top. The same store backs a <code>cg</code> CLI for humans and an MCP server for AI agents.</p>
 
 <div class="diagram">
 <div class="mermaid">
@@ -207,7 +207,7 @@ flowchart LR
 <div class="diagram">
 <div class="mermaid">
 flowchart TB
-    START(["cg build"]) --> SCAN["1. scan<br/>gitignore + codegraph.json + skip set"]
+    START(["cg build"]) --> SCAN["1. scan<br/>gitignore + cairn.json + skip set"]
     SCAN --> PARSE["2. parse<br/>tree-sitter (9 langs)<br/>+ route + service-call detection"]
     PARSE --> INSERT["3. insert<br/>symbols, edges, imports<br/>+ FTS5 sync triggers"]
     INSERT --> RESOLVE["4. resolve<br/>6-tier edge resolution<br/>label exact / ambiguous / unresolved"]
@@ -321,7 +321,7 @@ sequenceDiagram
 
 <!-- 6 -->
 <h2 id="llm">6. The LLM boundary &amp; critic loop</h2>
-<p>codegraph <strong>never calls an LLM itself.</strong> Where synthesis helps (compass/wiki), it uses a decoupled task queue, and a deterministic critic fact-checks every result against the graph before commit.</p>
+<p>cairn <strong>never calls an LLM itself.</strong> Where synthesis helps (compass/wiki), it uses a decoupled task queue, and a deterministic critic fact-checks every result against the graph before commit.</p>
 
 <div class="diagram">
 <div class="mermaid">

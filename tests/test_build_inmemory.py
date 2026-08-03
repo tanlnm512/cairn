@@ -15,8 +15,8 @@ import tempfile
 
 import pytest
 
-from codegraph.graph.builder import build_graph
-from codegraph.graph.schema import get_build_db, backup_to
+from cairn.graph.builder import build_graph
+from cairn.graph.schema import get_build_db, backup_to
 
 
 FIXTURE_FILES = {
@@ -143,7 +143,7 @@ def test_backup_to_persists_schema_and_data(tmp_path):
     # foreign_keys is a per-connection PRAGMA (SQLite does not persist it in
     # the file), so the real contract is "get_db() turns it on for servers",
     # not "backup_to() bakes it into the file". Verify via get_db().
-    from codegraph.graph.schema import get_db
+    from cairn.graph.schema import get_db
 
     served = get_db(db_path)
     try:

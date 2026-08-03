@@ -1,6 +1,6 @@
 """Phase 7b: embedding freshness (content-hash invalidation) and orphan reap.
 
-Uses CODEGRAPH_EMBED_BACKEND=hash so the test needs no torch/model download --
+Uses CAIRN_EMBED_BACKEND=hash so the test needs no torch/model download --
 same dep-free smoke-test posture as the rest of the semantic stack.
 
 Covers two gaps closed alongside HNSW/rerank work:
@@ -36,7 +36,7 @@ def _seed_one_symbol(conn: sqlite3.Connection, docstring: str = "Handles retries
 
 def test_unchanged_symbol_is_not_reembedded(fresh_db):
     """Re-running embed_all with no edits should embed 0 new rows the second time."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_one_symbol(fresh_db)
     conn = fresh_db
@@ -49,7 +49,7 @@ def test_unchanged_symbol_is_not_reembedded(fresh_db):
 
 def test_edited_docstring_triggers_reembed_without_model_change(fresh_db):
     """The gap this closes: editing a docstring under the same model must re-embed."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_one_symbol(fresh_db, docstring="Handles retries.")
     conn = fresh_db
@@ -75,7 +75,7 @@ def test_edited_docstring_triggers_reembed_without_model_change(fresh_db):
 
 def test_orphan_reap_deletes_vectors_for_removed_symbols(fresh_db):
     """The gap this closes: a deleted symbol's embedding must not linger forever."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_one_symbol(fresh_db)
     conn = fresh_db
@@ -92,7 +92,7 @@ def test_orphan_reap_deletes_vectors_for_removed_symbols(fresh_db):
 
 def test_embed_all_reaps_by_default(fresh_db):
     """embed_all's default reap_orphans=True should reap without a separate call."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_one_symbol(fresh_db)
     conn = fresh_db
@@ -108,7 +108,7 @@ def test_embed_all_reaps_by_default(fresh_db):
 
 def test_null_content_hash_from_legacy_row_is_treated_as_stale(fresh_db):
     """Rows written before the content_hash column existed must self-heal."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_one_symbol(fresh_db)
     conn = fresh_db
@@ -130,7 +130,7 @@ def test_chunk_includes_declaration_line_from_disk(fresh_db):
     identifier. Verifies the line is read via line_start and lands in the
     stored `chunk` column.
     """
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = os.path.join(tmpdir, "Api.kt")
@@ -162,7 +162,7 @@ def test_chunk_includes_declaration_line_from_disk(fresh_db):
 
 def test_missing_file_degrades_to_no_signature(fresh_db):
     """A moved/deleted file must not crash embed_all -- just no signature line."""
-    from codegraph.graph import embeddings as emb
+    from cairn.graph import embeddings as emb
 
     _seed_one_symbol(fresh_db)  # file_path '/tmp/test/Api.kt' doesn't exist
     summary = emb.embed_all(fresh_db)

@@ -1,8 +1,8 @@
 .PHONY: dist evals help
 
 # Build the wheel + sdist into dist/. Produces:
-#   dist/cg_intel-<version>-py3-none-any.whl
-#   dist/cg_intel-<version>.tar.gz
+#   dist/cairn_intel-<version>-py3-none-any.whl
+#   dist/cairn_intel-<version>.tar.gz
 dist:
 	rm -rf dist build *.egg-info
 	uv build

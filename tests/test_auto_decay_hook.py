@@ -25,7 +25,7 @@ def test_decay_called_in_update_command(tmp_path, monkeypatch):
     Path(knowledge_path).mkdir(parents=True, exist_ok=True)
     
     # Monkeypatch decay to track if it's called
-    from codegraph.memory import promotion
+    from cairn.memory import promotion
     decay_called = {"called": False}
     
     def mock_decay(bundle, *args, **kwargs):
@@ -35,12 +35,12 @@ def test_decay_called_in_update_command(tmp_path, monkeypatch):
     monkeypatch.setattr(promotion, "decay", mock_decay)
     
     # Set up environment for update command
-    monkeypatch.setenv("CODEGRAPH_DB", db_path)
-    monkeypatch.setenv("CODEGRAPH_KNOWLEDGE", knowledge_path)
+    monkeypatch.setenv("CAIRN_DB", db_path)
+    monkeypatch.setenv("CAIRN_KNOWLEDGE", knowledge_path)
     
     # Import and run the update command (non-interactive)
     from click.testing import CliRunner
-    from codegraph.cli.update import update
+    from cairn.cli.update import update
     
     runner = CliRunner()
     result = runner.invoke(update, ['--workspace', workspace, '--db', db_path])
@@ -63,7 +63,7 @@ def test_decay_called_in_server_boot(tmp_path, monkeypatch):
     Path(knowledge_path).mkdir(parents=True, exist_ok=True)
     
     # Monkeypatch decay to track if it's called
-    from codegraph.memory import promotion
+    from cairn.memory import promotion
     decay_called = {"called": False}
     
     def mock_decay(bundle, *args, **kwargs):
@@ -73,18 +73,18 @@ def test_decay_called_in_server_boot(tmp_path, monkeypatch):
     monkeypatch.setattr(promotion, "decay", mock_decay)
     
     # Set up environment for server boot
-    monkeypatch.setenv("CODEGRAPH_DB", db_path)
+    monkeypatch.setenv("CAIRN_DB", db_path)
     
     # Create a minimal DB schema
     import sqlite3
-    from codegraph.graph.schema import _apply_schema
+    from cairn.graph.schema import _apply_schema
     conn = sqlite3.connect(db_path)
     _apply_schema(conn)
     conn.close()
     
     # Simulate the server boot path that includes decay
     # We directly call the decay logic that's now wired in server.py
-    from codegraph.okf.bundle import OKFBundle
+    from cairn.okf.bundle import OKFBundle
     
     # This is what server.py does at boot (after catch-up)
     bundle = OKFBundle(knowledge_path)

@@ -10,7 +10,7 @@ import sqlite3
 
 import pytest
 
-from codegraph.graph.schema import _apply_schema, MIGRATIONS
+from cairn.graph.schema import _apply_schema, MIGRATIONS
 
 
 def test_migrations_recorded_in_schema_meta(fresh_db):
@@ -30,7 +30,7 @@ def test_migrations_recorded_in_schema_meta(fresh_db):
     migration_entries = {row[0]: row[1] for row in rows}
 
     # All MIGRATIONS should be recorded with their extracted names
-    from codegraph.graph.schema import _extract_migration_name
+    from cairn.graph.schema import _extract_migration_name
     for migration in MIGRATIONS:
         expected_key = _extract_migration_name(migration)
         assert expected_key in migration_entries, \
@@ -89,7 +89,7 @@ def test_partial_migration_detectable(fresh_db):
     recorded_names = [row[0] for row in recorded]
 
     # Each MIGRATION should have a corresponding entry
-    from codegraph.graph.schema import _extract_migration_name
+    from cairn.graph.schema import _extract_migration_name
     for migration in MIGRATIONS:
         expected_key = _extract_migration_name(migration)
         assert expected_key in recorded_names, \

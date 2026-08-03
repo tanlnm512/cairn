@@ -1,10 +1,10 @@
 # Codebase Intelligence System
 
-This workspace uses a local knowledge graph (codegraph) for codebase intelligence.
+This workspace uses a local knowledge graph (cairn) for codebase intelligence.
 All AI coding agents working in this workspace should use these tools.
 
 ## MCP Server
-- Name: `codegraph` (auto-connected at session start)
+- Name: `cairn` (auto-connected at session start)
 - Transport: stdio
 - 26 tools across 5 layers: graph (9), knowledge base + compass (5), memory (7), knowledge (5)
   (`explore` is the recommended first call -- it aggregates the graph layer;
@@ -70,11 +70,11 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 | `impact_analysis` | Within-repo by default, but includes cross-repo consumer reach in its output. Precise mode only follows resolved edges, so common names can under-report. | Pair with `cross_repo_deps(repo)` for the full picture. Use `fuzzy=True` when precise impact looks suspiciously small for a widely-used symbol. |
 | `search_symbols` | FTS5 + phrase splitting handles underscored tokens (`*core_ui_v4*` matches). Substring and camelCase patterns also match via a LIKE-based pass (the FTS5 `*` wildcard is prefix-only and the tokenizer doesn't split camelCase, so non-prefix queries fall back to LIKE). | Wildcards and substring queries both work, on underscored and camelCase names. |
 | `get_callers`/`impact_analysis` on a Kotlin class invoked via `operator fun invoke` | Bare calls of the standard Android UseCase idiom (`someUseCase(params)` against a DI-injected property) resolve to the callee's declared type. | `this.someUseCase(params)` (explicit receiver) is a narrower remaining gap; cross-check with `fuzzy=True` or a grep if that shape looks under-reported. |
-| `semantic_search` | Defaults to RRF fusion (BM25 + vector, `CODEGRAPH_FUSION=1` default): the returned `score` is a rank-fusion number (~0.01-0.02), not cosine similarity, regardless of the `threshold` argument. Real cosine scores (0.3-0.6+ for genuinely on-topic hits with `local`/`BAAI/bge-m3`) only show when fusion is off. | Rank order is meaningful either way. Set `CODEGRAPH_FUSION=0` if you need the score to reflect actual match strength (e.g. deciding how confident a hit is), not just relative order. |
-| `ann_backend_enabled` | On by default: `CODEGRAPH_ANN_BACKEND` unset resolves to `sqlite-vec`. It degrades silently to the brute-force cosine scan if the extension fails to load. | Set `CODEGRAPH_ANN_BACKEND=off` to force the brute-force scan. |
+| `semantic_search` | Defaults to RRF fusion (BM25 + vector, `CAIRN_FUSION=1` default): the returned `score` is a rank-fusion number (~0.01-0.02), not cosine similarity, regardless of the `threshold` argument. Real cosine scores (0.3-0.6+ for genuinely on-topic hits with `local`/`BAAI/bge-m3`) only show when fusion is off. | Rank order is meaningful either way. Set `CAIRN_FUSION=0` if you need the score to reflect actual match strength (e.g. deciding how confident a hit is), not just relative order. |
+| `ann_backend_enabled` | On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. It degrades silently to the brute-force cosine scan if the extension fails to load. | Set `CAIRN_ANN_BACKEND=off` to force the brute-force scan. |
 
 ## LLM Task Queue (agent-decoupled synthesis)
-Codegraph never calls an LLM directly. To generate compass/wiki with LLM quality:
+Cairn never calls an LLM directly. To generate compass/wiki with LLM quality:
 - `cg task list --status pending` -- see queued work
 - `cg task show <id>` -> `cg task claim <id>` -> `cg task complete <id> --result-file <path>`
 - The deterministic critic fact-checks every result; only graph-verified files/symbols allowed.
@@ -90,7 +90,7 @@ Codegraph never calls an LLM directly. To generate compass/wiki with LLM quality
 
 ## Knowledge Files
 
-The `.knowledge/` directory (in codegraph/) contains OKF markdown files:
+The `.knowledge/` directory (in cairn/) contains OKF markdown files:
 - `compass/` -- module navigation guides (25-35 lines each)
 - `wiki/` -- architectural documentation
 - `memory/tribal/` -- past decisions, patterns, mistakes

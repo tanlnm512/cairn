@@ -2,9 +2,9 @@ import tempfile
 from pathlib import Path
 from click.testing import CliRunner
 
-from codegraph.cli import main
-from codegraph.graph import schema
-from codegraph.graph.schema import get_db
+from cairn.cli import main
+from cairn.graph import schema
+from cairn.graph.schema import get_db
 
 
 def test_cli_help():

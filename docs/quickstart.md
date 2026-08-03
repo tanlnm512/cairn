@@ -1,6 +1,6 @@
 # Quickstart
 
-codegraph is a local, structural code intelligence system: it parses your source
+cairn is a local, structural code intelligence system: it parses your source
 with tree-sitter, builds a call-graph in SQLite, and exposes the result to you
 and to AI agents through a CLI (`cg`) and an MCP server. It runs entirely
 on your machine and never calls an LLM by itself.
@@ -16,7 +16,7 @@ This guide gets you from zero to querying a real repo in a few minutes.
 ## Install
 
 ```bash
-pip install cg-intel
+pip install cairn-intel
 ```
 
 That pulls the core: tree-sitter, parsers for 9 languages (Kotlin, Java, Python,
@@ -26,9 +26,9 @@ MCP server. It is zero-network and torch-free by default.
 Optional extras, for when you need them:
 
 ```bash
-pip install cg-intel[semantic]   # sentence-transformers + numpy: embeddings + reranking
-pip install cg-intel[ann]        # native ANN index (sqlite-vec) for large corpora
-pip install cg-intel[watch]      # watchdog: file-watch hooks for live re-indexing
+pip install cairn-intel[semantic]   # sentence-transformers + numpy: embeddings + reranking
+pip install cairn-intel[ann]        # native ANN index (sqlite-vec) for large corpora
+pip install cairn-intel[watch]      # watchdog: file-watch hooks for live re-indexing
 ```
 
 `[semantic]` is heavy (torch, hundreds of MB) — skip it unless you want
@@ -53,7 +53,7 @@ first run. For a fresh workspace, the first `update` parses everything; later
 runs only touch changed files. (For a forced full rebuild, `cg build` exists
 separately.)
 
-The store lives under `~/.codegraph/<workspace-key>/` by default — a `.kg`
+The store lives under `~/.cairn/<workspace-key>/` by default — a `.kg`
 SQLite database plus a `.knowledge/` bundle of markdown. See
 [configuration.md](configuration.md) for how to relocate it.
 
@@ -93,13 +93,13 @@ See [architecture.md](architecture.md) → "Resolution model" for the full story
 
 ## Wire it to an AI agent
 
-codegraph ships an MCP server (`cg serve`). To connect a client like Claude
+cairn ships an MCP server (`cg serve`). To connect a client like Claude
 Desktop, Cursor, or ZCode, add it to the client's MCP config:
 
 ```json
 {
   "mcpServers": {
-    "codegraph": {
+    "cairn": {
       "command": "cg",
       "args": ["serve"]
     }

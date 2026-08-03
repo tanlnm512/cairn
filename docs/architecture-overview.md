@@ -1,6 +1,6 @@
-# Codegraph System Architecture
+# Cairn System Architecture
 
-> **Big-picture guide to how codegraph fits together.** Layers, the interactions
+> **Big-picture guide to how cairn fits together.** Layers, the interactions
 > between them, the build and query flows, and the LLM boundary — with flow and
 > sequence diagrams. For the per-module reference, see
 > [architecture.md](architecture.md); for tool-level detail,
@@ -21,7 +21,7 @@
 
 ## 1. System at a glance
 
-codegraph is a **local, structural, agent-first** codebase intelligence system.
+cairn is a **local, structural, agent-first** codebase intelligence system.
 It parses your source into a typed call graph in SQLite, then layers a
 knowledge system on top (compass, wiki, memory, business knowledge). The same
 store backs a `cg` CLI for humans and a 26-tool MCP server for AI agents.
@@ -147,7 +147,7 @@ emitting a progress event, and ends with precomputed derived indexes.
 
 ```mermaid
 flowchart TB
-    START([cg build]) --> SCAN["1. scan<br/>gitignore + codegraph.json filters<br/>+ default skip set"]
+    START([cg build]) --> SCAN["1. scan<br/>gitignore + cairn.json filters<br/>+ default skip set"]
     SCAN --> PARSE["2. parse<br/>tree-sitter (9 langs)<br/>+ route + service-call detection"]
     PARSE --> INSERT["3. insert<br/>symbols, edges, imports<br/>+ FTS5 sync triggers"]
     INSERT --> RESOLVE["4. resolve<br/>6-tier edge resolution<br/>label exact/ambiguous/unresolved"]
@@ -275,7 +275,7 @@ context directly for that file.
 
 ## 6. The LLM boundary & critic loop
 
-codegraph **never calls an LLM itself.** Where LLM-quality synthesis helps
+cairn **never calls an LLM itself.** Where LLM-quality synthesis helps
 (compass/wiki generation), it uses a decoupled task queue, and a deterministic
 critic fact-checks every result against the graph before commit.
 

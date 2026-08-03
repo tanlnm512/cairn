@@ -13,8 +13,8 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from codegraph.cli import main
-from codegraph.graph.traversal import trace_flow
+from cairn.cli import main
+from cairn.graph.traversal import trace_flow
 
 
 # ─── helpers (same pattern as test_impact_test_labeling.py) ────────────────
@@ -167,7 +167,7 @@ class TestCompassFlowCLI:
         db = str(Path(tmpdir) / "test.db")
         know = str(Path(tmpdir) / ".knowledge")
         Path(know).mkdir(parents=True, exist_ok=True)
-        from codegraph.graph.schema import get_db
+        from cairn.graph.schema import get_db
         conn = get_db(db)
         _seed_chain(conn)
         conn.close()
@@ -201,7 +201,7 @@ class TestCompassFlowCLI:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo')")
             _row(conn, "files", id="f1", repo_id="r1", path="/repo/leaf.py", language="python")
@@ -268,8 +268,8 @@ def _seed_name_collision(conn: sqlite3.Connection) -> None:
 
 class TestDetectFlowGaps:
     def test_finds_rich_flows(self, fresh_db):
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
         import tempfile
         know = tempfile.mkdtemp()
         bundle = OKFBundle(know)
@@ -281,8 +281,8 @@ class TestDetectFlowGaps:
         assert "trivial" not in names   # only 1 edge
 
     def test_min_edges_threshold_filters(self, fresh_db):
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
         import tempfile
         know = tempfile.mkdtemp()
         bundle = OKFBundle(know)
@@ -295,8 +295,8 @@ class TestDetectFlowGaps:
         assert "trivial" not in names  # still below
 
     def test_sorted_by_richest_first(self, fresh_db):
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
         import tempfile
         know = tempfile.mkdtemp()
         bundle = OKFBundle(know)
@@ -308,9 +308,9 @@ class TestDetectFlowGaps:
 
     def test_coverage_marking(self, fresh_db, tmp_path):
         """A flow with an existing compass/flow-* file is marked covered."""
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
-        from codegraph.okf.concept import OKFConcept
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
+        from cairn.okf.concept import OKFConcept
         know = str(tmp_path / ".knowledge")
         bundle = OKFBundle(know)
         # Write a flow compass for richFlow.
@@ -329,8 +329,8 @@ class TestDetectFlowGaps:
 
     def test_name_collision_distinct_entries(self, fresh_db):
         """Two handleCommand methods in different files are distinct candidates."""
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
         import tempfile
         know = tempfile.mkdtemp()
         bundle = OKFBundle(know)
@@ -349,9 +349,9 @@ class TestDetectFlowGaps:
 
     def test_collision_coverage_independent(self, fresh_db, tmp_path):
         """Documenting one handleCommand doesn't mark the other as covered."""
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
-        from codegraph.okf.concept import OKFConcept
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
+        from cairn.okf.concept import OKFConcept
         know = str(tmp_path / ".knowledge")
         bundle = OKFBundle(know)
         # Document only the ChatVM handleCommand.
@@ -369,8 +369,8 @@ class TestDetectFlowGaps:
         assert len(handle_cmds) == 1
 
     def test_empty_graph(self, fresh_db):
-        from codegraph.compass.flow_gaps import detect_flow_gaps
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
         import tempfile
         know = tempfile.mkdtemp()
         bundle = OKFBundle(know)
@@ -386,7 +386,7 @@ class TestFlowGapsCLI:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_flows(conn)
             conn.close()
@@ -402,9 +402,9 @@ class TestFlowGapsCLI:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
-            from codegraph.okf.bundle import OKFBundle
-            from codegraph.okf.concept import OKFConcept
+            from cairn.graph.schema import get_db
+            from cairn.okf.bundle import OKFBundle
+            from cairn.okf.concept import OKFConcept
             conn = get_db(db)
             _seed_flows(conn)
             conn.close()
@@ -431,7 +431,7 @@ class TestFlowGapsCLI:
 class TestTraceFlowByID:
     def test_entry_id_traces_correct_symbol(self, fresh_db):
         """entry_id disambiguates two symbols with the same name."""
-        from codegraph.graph.traversal import find_definition_by_id, trace_flow
+        from cairn.graph.traversal import find_definition_by_id, trace_flow
         _seed_name_collision(fresh_db)
         # Both symbols are named handleCommand; find both IDs.
         rows = fresh_db.execute(
@@ -447,7 +447,7 @@ class TestTraceFlowByID:
         assert "ChatVM.py" in entry_node["file"]
 
     def test_find_definition_by_id_returns_correct_row(self, fresh_db):
-        from codegraph.graph.traversal import find_definition_by_id
+        from cairn.graph.traversal import find_definition_by_id
         _seed_name_collision(fresh_db)
         rows = fresh_db.execute("SELECT id FROM symbols WHERE name = 'handleCommand'").fetchall()
         for r in rows:
@@ -457,7 +457,7 @@ class TestTraceFlowByID:
             assert found[0]["name"] == "handleCommand"
 
     def test_entry_id_nonexistent_returns_empty(self, fresh_db):
-        from codegraph.graph.traversal import find_definition_by_id
+        from cairn.graph.traversal import find_definition_by_id
         assert find_definition_by_id(fresh_db, "nonexistent-id") == []
 
 
@@ -470,7 +470,7 @@ class TestFlowGapsGenerate:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_flows(conn)
             conn.close()
@@ -491,7 +491,7 @@ class TestFlowGapsGenerate:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_flows(conn)
             conn.close()
@@ -510,7 +510,7 @@ class TestFlowGapsGenerate:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_flows(conn)
             conn.close()
@@ -551,14 +551,14 @@ class TestFlowToWorkflow:
         }
 
     def test_converts_chain_to_steps(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts())
         assert len(steps) == 4
         assert steps[0]["name"] == "checkout"
         assert steps[1]["name"] == "createOrder"
 
     def test_step_has_symbol_and_file(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts())
         for step in steps:
             assert "symbol" in step
@@ -567,38 +567,38 @@ class TestFlowToWorkflow:
         assert steps[1]["file"] == "billing/order.py"
 
     def test_entry_step_labeled(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts())
         assert "Entry point" in steps[0]["description"]
 
     def test_branch_annotated(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts())
         create_order = [s for s in steps if s["name"] == "createOrder"][0]
         assert "branches to" in create_order["description"]
         assert "chargeCard" in create_order["description"]
 
     def test_leaf_annotated(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts())
         receipt = [s for s in steps if s["name"] == "sendReceipt"][0]
         assert "terminal" in receipt["description"].lower()
 
     def test_parent_in_description(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts())
         charge = [s for s in steps if s["name"] == "chargeCard"][0]
         assert "called by" in charge["description"]
         assert "createOrder" in charge["description"]
 
     def test_max_steps_caps_output(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow(self._facts(), max_steps=2)
         assert len(steps) == 3  # 2 steps + 1 truncation notice
         assert "truncated" in steps[-1]["name"].lower()
 
     def test_empty_chain_returns_empty(self):
-        from codegraph.knowledge.workflow import flow_to_workflow
+        from cairn.knowledge.workflow import flow_to_workflow
         steps = flow_to_workflow({"chain_raw": [], "entry": "x"})
         assert steps == []
 
@@ -606,10 +606,10 @@ class TestFlowToWorkflow:
 class TestFlowWorkflowEndToEnd:
     def test_generate_flow_workflow_writes_searchable_doc(self, tmp_path):
         """generate_flow_workflow writes a workflow that trace_workflow can read back."""
-        from codegraph.compass.generator import generate_flow_workflow
-        from codegraph.knowledge.workflow import trace_workflow
-        from codegraph.okf.bundle import OKFBundle
-        from codegraph.graph.schema import get_db
+        from cairn.compass.generator import generate_flow_workflow
+        from cairn.knowledge.workflow import trace_workflow
+        from cairn.okf.bundle import OKFBundle
+        from cairn.graph.schema import get_db
 
         db = str(tmp_path / "test.db")
         know = str(tmp_path / ".knowledge")
@@ -635,7 +635,7 @@ class TestFlowWorkflowEndToEnd:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_chain(conn)
             conn.close()
@@ -655,7 +655,7 @@ class TestFlowWorkflowEndToEnd:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_chain(conn)
             conn.close()
@@ -676,8 +676,8 @@ class TestFlowWorkflowEndToEnd:
 class TestFlowSynthesizeTask:
     def test_flow_task_promoted_on_critic_pass(self, fresh_db, tmp_path):
         """A passing flow-synthesize task auto-promotes to compass/flow-<entry>."""
-        from codegraph.llm.tasks import create_task, claim_task, complete_task
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.llm.tasks import create_task, claim_task, complete_task
+        from cairn.okf.bundle import OKFBundle
 
         conn = fresh_db
         _seed_chain(conn)  # checkout -> createOrder -> chargeCard -> ...
@@ -714,8 +714,8 @@ class TestFlowSynthesizeTask:
 
     def test_flow_revise_spawned_on_critic_fail(self, fresh_db, tmp_path):
         """A failing flow-synthesize task spawns a flow-revise task."""
-        from codegraph.llm.tasks import create_task, claim_task, complete_task, list_tasks
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.llm.tasks import create_task, claim_task, complete_task, list_tasks
+        from cairn.okf.bundle import OKFBundle
 
         conn = fresh_db
         _seed_chain(conn)
@@ -750,7 +750,7 @@ class TestFlowSynthesizeTask:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_chain(conn)
             conn.close()
@@ -774,9 +774,9 @@ class TestMCPFlowTools:
         _seed_chain(fresh_db)
         # Import the tool function directly (it's registered on the mcp instance
         # but the function itself is callable).
-        from codegraph.mcp_server.tools_compass import trace_flow
+        from cairn.mcp_server.tools_compass import trace_flow
         # Monkeypatch _conn to return our test conn (the tool uses _conn()).
-        import codegraph.mcp_server.tools_compass as tc
+        import cairn.mcp_server.tools_compass as tc
         orig_conn = tc._conn
         tc._conn = lambda: fresh_db
         try:
@@ -790,8 +790,8 @@ class TestMCPFlowTools:
     def test_generate_flow_mcp_tool(self, fresh_db, tmp_path):
         """The MCP generate_flow tool writes a compass file."""
         _seed_chain(fresh_db)
-        from codegraph.mcp_server import tools_compass as tc
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.mcp_server import tools_compass as tc
+        from cairn.okf.bundle import OKFBundle
         know = str(tmp_path / ".knowledge")
         Path(know).mkdir(parents=True, exist_ok=True)
         bundle = OKFBundle(know)
@@ -813,8 +813,8 @@ class TestMCPFlowTools:
     def test_generate_flow_mcp_with_workflow(self, fresh_db, tmp_path):
         """The MCP generate_flow tool with as_workflow writes both docs."""
         _seed_chain(fresh_db)
-        from codegraph.mcp_server import tools_compass as tc
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.mcp_server import tools_compass as tc
+        from cairn.okf.bundle import OKFBundle
         know = str(tmp_path / ".knowledge")
         Path(know).mkdir(parents=True, exist_ok=True)
         bundle = OKFBundle(know)
@@ -840,8 +840,8 @@ class TestMCPFlowTools:
 class TestWorkflowStaleness:
     def test_fresh_workflow_not_stale(self, fresh_db, tmp_path):
         """A workflow whose steps all resolve is not stale."""
-        from codegraph.knowledge.workflow import check_workflow_staleness, add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import check_workflow_staleness, add_workflow
+        from cairn.okf.bundle import OKFBundle
         _seed_chain(fresh_db)  # checkout -> createOrder -> chargeCard -> ...
         bundle = OKFBundle(str(tmp_path / ".knowledge"))
         add_workflow(bundle, "Test Flow", steps=[
@@ -855,8 +855,8 @@ class TestWorkflowStaleness:
 
     def test_stale_symbol_detected(self, fresh_db, tmp_path):
         """A step referencing a non-existent symbol is flagged."""
-        from codegraph.knowledge.workflow import check_workflow_staleness, add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import check_workflow_staleness, add_workflow
+        from cairn.okf.bundle import OKFBundle
         _seed_chain(fresh_db)
         bundle = OKFBundle(str(tmp_path / ".knowledge"))
         add_workflow(bundle, "Stale Flow", steps=[
@@ -870,8 +870,8 @@ class TestWorkflowStaleness:
 
     def test_stale_file_detected(self, fresh_db, tmp_path):
         """A step referencing a non-existent file is flagged."""
-        from codegraph.knowledge.workflow import check_workflow_staleness, add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import check_workflow_staleness, add_workflow
+        from cairn.okf.bundle import OKFBundle
         _seed_chain(fresh_db)
         bundle = OKFBundle(str(tmp_path / ".knowledge"))
         add_workflow(bundle, "Stale File Flow", steps=[
@@ -883,8 +883,8 @@ class TestWorkflowStaleness:
 
     def test_check_all_workflows(self, fresh_db, tmp_path):
         """Batch check returns only stale workflows, sorted by stale count."""
-        from codegraph.knowledge.workflow import check_all_workflows, add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import check_all_workflows, add_workflow
+        from cairn.okf.bundle import OKFBundle
         _seed_chain(fresh_db)
         bundle = OKFBundle(str(tmp_path / ".knowledge"))
         # Fresh workflow
@@ -905,8 +905,8 @@ class TestWorkflowStaleness:
 class TestWorkflowSync:
     def test_sync_updates_steps(self, fresh_db, tmp_path):
         """sync_workflow re-traces and rebuilds steps from current graph."""
-        from codegraph.knowledge.workflow import sync_workflow, trace_workflow, add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import sync_workflow, trace_workflow, add_workflow
+        from cairn.okf.bundle import OKFBundle
         _seed_chain(fresh_db)
         bundle = OKFBundle(str(tmp_path / ".knowledge"))
         # Create a workflow with a stale step
@@ -931,8 +931,8 @@ class TestWorkflowSync:
 
     def test_sync_handles_missing_entry(self, fresh_db, tmp_path):
         """If the entry symbol was removed, sync reports error without writing."""
-        from codegraph.knowledge.workflow import sync_workflow, add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import sync_workflow, add_workflow
+        from cairn.okf.bundle import OKFBundle
         _seed_chain(fresh_db)
         bundle = OKFBundle(str(tmp_path / ".knowledge"))
         add_workflow(bundle, "Flow: ghost", steps=[
@@ -945,14 +945,14 @@ class TestWorkflowSync:
 
     def test_cli_sync_dry_run(self):
         """cg knowledge workflow sync --dry-run reports staleness without writing."""
-        from codegraph.knowledge.workflow import add_workflow
-        from codegraph.okf.bundle import OKFBundle
+        from cairn.knowledge.workflow import add_workflow
+        from cairn.okf.bundle import OKFBundle
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_chain(conn)
             conn.close()
@@ -978,7 +978,7 @@ class TestWorkflowSync:
             db = str(Path(tmp) / "test.db")
             know = str(Path(tmp) / ".knowledge")
             Path(know).mkdir(parents=True, exist_ok=True)
-            from codegraph.graph.schema import get_db
+            from cairn.graph.schema import get_db
             conn = get_db(db)
             _seed_chain(conn)
             conn.close()

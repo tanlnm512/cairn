@@ -1,4 +1,4 @@
-# Retrieval evaluation queries for codegraph (L1 code symbols and L5 knowledge concepts)
+# Retrieval evaluation queries for cairn (L1 code symbols and L5 knowledge concepts)
 # Used by `cg eval` to calculate Recall@10 and MRR across corpora.
 
 - query: "where do we handle retries and backoff on network requests"

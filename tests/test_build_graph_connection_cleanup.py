@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from codegraph.graph.builder import build_graph
+from cairn.graph.builder import build_graph
 
 
 FIXTURE_FILES = {
@@ -47,7 +47,7 @@ def test_build_graph_closes_connection_on_exception():
         db_path = str(tmp_path / "exception.db")
         
         # First, monkeypatch to raise during parsing
-        with patch('codegraph.graph.builder._parse_file_worker', side_effect=RuntimeError("Simulated parse error")):
+        with patch('cairn.graph.builder._parse_file_worker', side_effect=RuntimeError("Simulated parse error")):
             with pytest.raises(RuntimeError, match="Simulated parse error"):
                 build_graph(workspace=workspace, db_path=db_path, verbose=False)
         
@@ -78,7 +78,7 @@ def test_build_graph_closes_connection_on_keyboard_interrupt():
         db_path = str(tmp_path / "keyboard.db")
         
         # Monkeypatch to raise KeyboardInterrupt during parsing
-        with patch('codegraph.graph.builder._parse_file_worker', side_effect=KeyboardInterrupt()):
+        with patch('cairn.graph.builder._parse_file_worker', side_effect=KeyboardInterrupt()):
             with pytest.raises(KeyboardInterrupt):
                 build_graph(workspace=workspace, db_path=db_path, verbose=False)
         

@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from codegraph.graph.builder import build_graph
-from codegraph.parsers.kotlin import KotlinParser
+from cairn.graph.builder import build_graph
+from cairn.parsers.kotlin import KotlinParser
 
 
 def _make_fixture(tmp_path, name: str, files: dict) -> str:
@@ -103,7 +103,7 @@ def test_operator_invoke_resolves_to_usecase_class(tmp_path):
 def test_callers_and_impact_reach_the_usecase_class(tmp_path):
     """The real user-visible regression guard: pre-fix this returned 0 rows
     for every one of ~150 UseCase classes in the source codebase."""
-    from codegraph.graph.traversal import get_callers, impact_analysis
+    from cairn.graph.traversal import get_callers, impact_analysis
 
     ws = _make_fixture(tmp_path, "ws_callers", _USE_CASE_FILES)
     db_path = str(tmp_path / "graph.db")
@@ -137,7 +137,7 @@ def test_two_viewmodels_both_reach_same_usecase(tmp_path):
     db_path = str(tmp_path / "graph.db")
     build_graph(workspace=ws, db_path=db_path, verbose=False)
 
-    from codegraph.graph.traversal import get_callers
+    from cairn.graph.traversal import get_callers
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row

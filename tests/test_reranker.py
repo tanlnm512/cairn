@@ -40,22 +40,22 @@ def _conn_with_symbols(fresh_db) -> sqlite3.Connection:
 
 class TestRerankEnabled:
     def test_disabled_by_default(self, monkeypatch):
-        monkeypatch.delenv("CODEGRAPH_RERANK", raising=False)
-        from codegraph.graph import reranker as rrk
+        monkeypatch.delenv("CAIRN_RERANK", raising=False)
+        from cairn.graph import reranker as rrk
 
         assert rrk.rerank_enabled() is False
 
     def test_enabled_via_env_var(self, monkeypatch):
-        monkeypatch.setenv("CODEGRAPH_RERANK", "1")
-        from codegraph.graph import reranker as rrk
+        monkeypatch.setenv("CAIRN_RERANK", "1")
+        from cairn.graph import reranker as rrk
 
         assert rrk.rerank_enabled() is True
 
 
 class TestRerankFallback:
     def test_disabled_returns_candidates_unchanged(self, monkeypatch):
-        monkeypatch.delenv("CODEGRAPH_RERANK", raising=False)
-        from codegraph.graph import reranker as rrk
+        monkeypatch.delenv("CAIRN_RERANK", raising=False)
+        from cairn.graph import reranker as rrk
 
         candidates = [{"chunk": "a", "score": 0.9}, {"chunk": "b", "score": 0.5}]
         out, reranked = rrk.rerank("query", candidates, limit=1)
@@ -64,8 +64,8 @@ class TestRerankFallback:
 
     def test_enabled_but_uninstalled_degrades_gracefully(self, monkeypatch):
         """No sentence-transformers in this env -- must fall back, not raise."""
-        monkeypatch.setenv("CODEGRAPH_RERANK", "1")
-        from codegraph.graph import reranker as rrk
+        monkeypatch.setenv("CAIRN_RERANK", "1")
+        from cairn.graph import reranker as rrk
         monkeypatch.setattr(rrk, "reranker_available", lambda: False)
 
         candidates = [{"chunk": "a"}, {"chunk": "b"}, {"chunk": "c"}]
@@ -74,8 +74,8 @@ class TestRerankFallback:
         assert out == candidates[:2]
 
     def test_empty_candidates_short_circuits(self, monkeypatch):
-        monkeypatch.setenv("CODEGRAPH_RERANK", "1")
-        from codegraph.graph import reranker as rrk
+        monkeypatch.setenv("CAIRN_RERANK", "1")
+        from cairn.graph import reranker as rrk
 
         out, reranked = rrk.rerank("query", [], limit=5)
         assert out == []
@@ -94,9 +94,9 @@ class TestRerankSuccessPath:
         returns (candidates, False) first. This lets the resort/truncate
         contract run in the default (extra-free) test environment.
         """
-        from codegraph.graph import reranker as rrk
+        from cairn.graph import reranker as rrk
 
-        monkeypatch.setenv("CODEGRAPH_RERANK", "1")
+        monkeypatch.setenv("CAIRN_RERANK", "1")
         monkeypatch.setattr(rrk, "reranker_available", lambda: True)
 
         class FakeModel:
@@ -121,11 +121,11 @@ class TestRerankSuccessPath:
 
 class TestSemanticSearchIntegration:
     def test_semantic_search_without_rerank_has_reranked_false(self, monkeypatch, fresh_db):
-        monkeypatch.delenv("CODEGRAPH_RERANK", raising=False)
-        from codegraph.graph.queries import semantic_search
+        monkeypatch.delenv("CAIRN_RERANK", raising=False)
+        from cairn.graph.queries import semantic_search
 
         conn = _conn_with_symbols(fresh_db)
-        from codegraph.graph import embeddings as emb
+        from cairn.graph import embeddings as emb
 
         emb.embed_all(conn)
 
@@ -137,14 +137,14 @@ class TestSemanticSearchIntegration:
     def test_semantic_search_with_rerank_enabled_but_uninstalled_still_returns_results(
         self, monkeypatch, fresh_db
     ):
-        """Enabling CODEGRAPH_RERANK without the extra installed must degrade,
+        """Enabling CAIRN_RERANK without the extra installed must degrade,
         not break semantic_search."""
-        monkeypatch.setenv("CODEGRAPH_RERANK", "1")
-        monkeypatch.setattr("codegraph.graph.reranker.reranker_available", lambda: False)
-        from codegraph.graph.queries import semantic_search
+        monkeypatch.setenv("CAIRN_RERANK", "1")
+        monkeypatch.setattr("cairn.graph.reranker.reranker_available", lambda: False)
+        from cairn.graph.queries import semantic_search
 
         conn = _conn_with_symbols(fresh_db)
-        from codegraph.graph import embeddings as emb
+        from cairn.graph import embeddings as emb
 
         emb.embed_all(conn)
 

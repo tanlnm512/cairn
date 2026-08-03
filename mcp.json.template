@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "cg",
+    "cairn": {
+      "command": "cairn",
       "args": ["serve"]
     }
   }

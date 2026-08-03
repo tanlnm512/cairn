@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the codegraph test suite.
+"""Shared pytest fixtures for the cairn test suite.
 
 Consolidates the duplicated setup that previously appeared per-test-file:
 
@@ -7,7 +7,7 @@ Consolidates the duplicated setup that previously appeared per-test-file:
   test gets its own isolated DB; nothing is shared between tests.
 
 * ``hash_backend`` -- forces the dep-free hash embedder
-  (``CODEGRAPH_EMBED_BACKEND=hash``) and resets the cached backend before
+  (``CAIRN_EMBED_BACKEND=hash``) and resets the cached backend before
   and after the test, so semantic-stack tests don't need torch / a model
   download. Apply with ``@pytest.fixture(autouse=True)`` per-test, or just
   request the fixture by name where needed.
@@ -22,7 +22,7 @@ import sqlite3
 
 import pytest
 
-from codegraph.graph.schema import _apply_schema
+from cairn.graph.schema import _apply_schema
 
 
 @pytest.fixture
@@ -57,8 +57,8 @@ def hash_backend(monkeypatch):
     cache reset on entry AND exit is what makes consecutive tests see a
     consistent backend even if an earlier test changed the env var.
     """
-    monkeypatch.setenv("CODEGRAPH_EMBED_BACKEND", "hash")
-    from codegraph.graph import embeddings as emb
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+    from cairn.graph import embeddings as emb
 
     emb.reset_backend_cache()
     yield

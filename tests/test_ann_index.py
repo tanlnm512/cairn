@@ -3,7 +3,7 @@
 sqlite-vec IS installed in this environment (spiked successfully -- v0.1.9,
 cosine distance_metric supported natively), so these tests exercise the real
 extension, not just the disabled/fallback path. Still uses
-CODEGRAPH_EMBED_BACKEND=hash for the vectors themselves so no model download
+CAIRN_EMBED_BACKEND=hash for the vectors themselves so no model download
 is needed.
 
 Covers:
@@ -11,7 +11,7 @@ Covers:
    the pool comes from the ANN path or the brute-force scan.
 2. rebuild_index + ann_query round-trip against a real sqlite-vec table.
 3. Graceful fallback when enabled but no index has been built yet.
-4. Explicit opt-out via CODEGRAPH_ANN_BACKEND=off.
+4. Explicit opt-out via CAIRN_ANN_BACKEND=off.
 """
 from __future__ import annotations
 
@@ -50,36 +50,36 @@ def _conn_with_symbols(fresh_db) -> sqlite3.Connection:
 
 
 def test_try_load_succeeds_in_this_environment():
-    from codegraph.graph import ann_index as ann
+    from cairn.graph import ann_index as ann
 
     conn = sqlite3.connect(":memory:")
     assert ann.try_load(conn) is True
 
 
 def test_ann_backend_enabled_by_default(monkeypatch):
-    monkeypatch.delenv("CODEGRAPH_ANN_BACKEND", raising=False)
-    from codegraph.graph import ann_index as ann
+    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
+    from cairn.graph import ann_index as ann
 
     assert ann.ann_backend_enabled() is True
 
 
 def test_ann_backend_enabled_via_env_var(monkeypatch):
-    monkeypatch.setenv("CODEGRAPH_ANN_BACKEND", "sqlite-vec")
-    from codegraph.graph import ann_index as ann
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
+    from cairn.graph import ann_index as ann
 
     assert ann.ann_backend_enabled() is True
 
 
 def test_ann_backend_disabled_via_explicit_opt_out(monkeypatch):
-    monkeypatch.setenv("CODEGRAPH_ANN_BACKEND", "off")
-    from codegraph.graph import ann_index as ann
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
+    from cairn.graph import ann_index as ann
 
     assert ann.ann_backend_enabled() is False
 
 
 def test_ann_query_returns_none_when_no_index_built(monkeypatch, fresh_db):
-    monkeypatch.setenv("CODEGRAPH_ANN_BACKEND", "sqlite-vec")
-    from codegraph.graph import ann_index as ann, embeddings as emb
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
+    from cairn.graph import ann_index as ann, embeddings as emb
 
     conn = _conn_with_symbols(fresh_db)
     emb.embed_all(conn)
@@ -90,8 +90,8 @@ def test_ann_query_returns_none_when_no_index_built(monkeypatch, fresh_db):
 
 
 def test_rebuild_index_and_query_round_trip(monkeypatch, fresh_db):
-    monkeypatch.setenv("CODEGRAPH_ANN_BACKEND", "sqlite-vec")
-    from codegraph.graph import ann_index as ann, embeddings as emb
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
+    from cairn.graph import ann_index as ann, embeddings as emb
 
     conn = _conn_with_symbols(fresh_db)
     emb.embed_all(conn)
@@ -113,9 +113,9 @@ def test_semantic_search_uses_ann_path_when_index_built(monkeypatch, fresh_db):
     """End-to-end: rebuild the index, enable the backend, confirm
     semantic_search returns results via the ANN path (not just that ANN
     itself works in isolation)."""
-    monkeypatch.setenv("CODEGRAPH_ANN_BACKEND", "sqlite-vec")
-    from codegraph.graph import ann_index as ann, embeddings as emb
-    from codegraph.graph.queries import semantic_search
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
+    from cairn.graph import ann_index as ann, embeddings as emb
+    from cairn.graph.queries import semantic_search
 
     conn = _conn_with_symbols(fresh_db)
     emb.embed_all(conn)
@@ -135,9 +135,9 @@ def test_semantic_search_uses_ann_path_when_index_built(monkeypatch, fresh_db):
 def test_semantic_search_falls_back_when_ann_enabled_but_no_index(monkeypatch, fresh_db):
     """ANN enabled, but rebuild_index was never called for this model --
     semantic_search must still work via the brute-force fallback."""
-    monkeypatch.setenv("CODEGRAPH_ANN_BACKEND", "sqlite-vec")
-    from codegraph.graph import embeddings as emb
-    from codegraph.graph.queries import semantic_search
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
+    from cairn.graph import embeddings as emb
+    from cairn.graph.queries import semantic_search
 
     conn = _conn_with_symbols(fresh_db)
     emb.embed_all(conn)  # note: no ann.rebuild_index() call
@@ -150,9 +150,9 @@ def test_semantic_search_default_env_falls_back_without_index(monkeypatch, fresh
     """Default env (ANN on, but no index built here) must match prior (ANN-off)
     results -- rebuild_index was never called, so ann_query returns None and
     semantic_search falls back to the brute-force scan either way."""
-    monkeypatch.delenv("CODEGRAPH_ANN_BACKEND", raising=False)
-    from codegraph.graph import embeddings as emb
-    from codegraph.graph.queries import semantic_search
+    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
+    from cairn.graph import embeddings as emb
+    from cairn.graph.queries import semantic_search
 
     conn = _conn_with_symbols(fresh_db)
     emb.embed_all(conn)

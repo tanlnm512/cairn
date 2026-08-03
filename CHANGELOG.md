@@ -1,12 +1,12 @@
 # Changelog
 
-All notable changes to **cg-intel** (the `codegraph` local codebase intelligence
+All notable changes to **cairn-intel** (the `cairn` local codebase intelligence
 system) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Prior to `0.4.0`, codegraph was developed without a public changelog. The
+> Prior to `0.4.0`, cairn was developed without a public changelog. The
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.3] - 2026-08-03
 
 > **Focus:** fixes `cg serve` boot hang that prevented Claude Desktop (and
-> other MCP clients) from connecting to codegraph. The boot catch-up was
+> other MCP clients) from connecting to cairn. The boot catch-up was
 > re-discovering every file as "changed" on every startup, blocking the MCP
 > stdio loop past the client's connect timeout.
 
@@ -57,9 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Shared semantic-deps directory (`~/.codegraph/lib`).**
+- **Shared semantic-deps directory (`~/.cairn/lib`).**
   `cg embed --install-deps` now installs torch + sentence-transformers + numpy
-  into `~/.codegraph/lib/` using `pip install --target`, rather than into the
+  into `~/.cairn/lib/` using `pip install --target`, rather than into the
   tool's isolated venv. The shared lib is prepended to `sys.path` at import
   time (`paths.py`), so every `cg embed` / `cg serve` / `cg semantic` finds
   the deps there regardless of which venv `cg` runs in. This means a single
@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Repo-name mismatch between `cg build` and `cg update`.** `build_graph`
   stores `repo_id=''` for single-repo workspaces (`workspace='.'` has no
   relative-path component), but `reindex_paths` looked up files by the
-  inferred repo name (`'codegraph'`). The lookup missed the row, skipped the
+  inferred repo name (`'cairn'`). The lookup missed the row, skipped the
   delete of stale symbols, and the re-insert then FK-violated. The lookup now
   keys on file path (the stable identity) and uses the stored repo_id for
   downstream inserts.
@@ -118,7 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2026-08-03
 
 > **Focus:** broader language coverage (Go), richer edge semantics
-> (service-topology), and making codegraph's defining differentiators
+> (service-topology), and making cairn's defining differentiators
 > (resolution labels, the deterministic critic, memory refs-verification)
 > the headline. Verified end-to-end on a 930-file / 9,504-symbol Android
 > (Kotlin) repo and a fresh-install + MCP connection smoke test.
@@ -134,7 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`calls`/`extends`/`implements`) and exclude service edges unless opted in via
   `include_service_edges=True` — preserving the precise-by-default identity.
 - Configurable cross-repo namespace map: `repo_namespaces` key in
-  `codegraph.json` (and `CODEGRAPH_REPO_NAMESPACES` env override) drive
+  `cairn.json` (and `CAIRN_REPO_NAMESPACES` env override) drive
   `cross_repo_deps`. Falls back to the built-in default map; a malformed value
   never breaks the build. `cg config` now prints the resolved map and its source.
 - `cg eval --queries PATH` flag to point the retrieval harness at a custom
@@ -164,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and all docs (was "24" in several places); fixed `explore` being misclassified
   out of the graph layer. Canonical grouping: graph (9), knowledge base +
   compass (5), memory (7), knowledge (5).
-- `docs/configuration.md` updated to document the `codegraph.json` workspace
+- `docs/configuration.md` updated to document the `cairn.json` workspace
   config file (previously claimed "no config file").
 
 ### Fixed
@@ -176,7 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-08-02
 
 > **This is the first release with a changelog.** Items below describe the state
-> of codegraph at `0.4.0`, reconstructed from project history; future releases
+> of cairn at `0.4.0`, reconstructed from project history; future releases
 > will append entries incrementally.
 
 ### Added
@@ -204,22 +204,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exact` (trusted), `ambiguous` (multiple candidates, resolver declined to
   guess), or `unresolved` (external/stdlib).
 - **Optional semantic search** via sentence-transformers, installable through
-  the **`[semantic]`** extra (`pip install cg-intel[semantic]`). Pulls
+  the **`[semantic]`** extra (`pip install cairn-intel[semantic]`). Pulls
   torch/sentence-transformers and numpy; the default install remains
   zero-network and torch-free. `semantic_search` defaults to RRF fusion
   (BM25 + vector) and also powers the optional rerank stage
-  (`CODEGRAPH_RERANK=1`).
+  (`CAIRN_RERANK=1`).
 - **Native ANN index** via the sqlite-vec loadable SQLite extension, opt-in
-  through the **`[ann]`** extra and `CODEGRAPH_ANN_BACKEND=sqlite-vec`. Separate
+  through the **`[ann]`** extra and `CAIRN_ANN_BACKEND=sqlite-vec`. Separate
   from `[semantic]` since it only matters at real corpus scale; the brute-force
   cosine scan remains the default for small/medium repos.
-- **LLM task queue** for agent-decoupled compass/wiki synthesis. Codegraph never
+- **LLM task queue** for agent-decoupled compass/wiki synthesis. Cairn never
   calls an LLM directly; instead it queues synthesis tasks
   (`cg task list` / `show` / `claim` / `complete`) that an external agent fulfils.
   A deterministic critic fact-checks every result — only graph-verified
   files/symbols are allowed.
 - **CLI** (`cg`) with a full fallback surface mirroring the MCP tools, plus
-  `cg install-agents` and `cg uninstall-agents` for wiring codegraph into local
+  `cg install-agents` and `cg uninstall-agents` for wiring cairn into local
   AI coding clients (MCP configs, skills, commands, and optional git hooks).
 - **OKF knowledge files** stored under `.knowledge/`: `compass/` (module
   navigation guides), `wiki/` (architectural documentation),
@@ -229,7 +229,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **First-class OKF v0.2 frontmatter families** parsed on read: `sources`,
   `verified`, `status`, `stale_after`. These are now named `OKFConcept` fields
   rather than silently landing in `extensions`, and a bare `verified` mapping is
-  normalized to a one-element list per spec §11. (codegraph does not yet
+  normalized to a one-element list per spec §11. (cairn does not yet
   *produce* `Attested Computation` concepts, but the parser tolerates the type
   per spec §4.1.)
 
@@ -239,9 +239,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md`). A concept's last
   content change is now emitted as `generated: { by, at }` rather than the v0.1
   bare `timestamp`; the actor follows the spec §7 `<producer>/<version>` form
-  (e.g. `codegraph/0.4.0`). Legacy v0.1 files with a bare `timestamp:` are
+  (e.g. `cairn/0.4.0`). Legacy v0.1 files with a bare `timestamp:` are
   still read on input via the spec §13.1 fallback, so existing `.knowledge/`
-  trees migrate lazily to v0.2 the next time codegraph rewrites them.
+  trees migrate lazily to v0.2 the next time cairn rewrites them.
 - **`mcp>=0.9` is now a core dependency.** The SSE/streamable-http transport
   plus its `uvicorn`/`starlette` runtime are bundled in `mcp>=0.9`, so they ship
   with the default install — the legacy `[sse]` extra that older `mcp` versions

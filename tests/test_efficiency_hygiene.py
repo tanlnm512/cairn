@@ -2,9 +2,9 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from codegraph.okf.bundle import OKFBundle
-from codegraph.knowledge.store import add_document
-from codegraph.okf.concept import OKFConcept
+from cairn.okf.bundle import OKFBundle
+from cairn.knowledge.store import add_document
+from cairn.okf.concept import OKFConcept
 
 
 def test_okf_bundle_path_traversal_blocked():

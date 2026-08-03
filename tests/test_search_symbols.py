@@ -83,7 +83,7 @@ def _seeded_fts_conn(fresh_db) -> sqlite3.Connection:
 
 def test_underscore_pattern_returns_results(fresh_db):
     """*core_ui_v4* must return at least one symbol — FTS5 phrase splitting."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     rows = search_symbols(conn, "*core_ui_v4*")
@@ -93,7 +93,7 @@ def test_underscore_pattern_returns_results(fresh_db):
 
 def test_plain_pattern_still_works(fresh_db):
     """Non-underscore patterns must still work (regression guard)."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     rows = search_symbols(conn, "*Avatar*")
@@ -104,7 +104,7 @@ def test_plain_pattern_still_works(fresh_db):
 def test_middle_wildcard_matches_camelcase_substring(fresh_db):
     """*UseCase* must find every camelCase name containing "UseCase", not
     just the symbol literally named "UseCase" (the Phase 1d bug)."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     names = {r["name"] for r in search_symbols(conn, "*UseCase*")}
@@ -113,7 +113,7 @@ def test_middle_wildcard_matches_camelcase_substring(fresh_db):
 
 def test_leading_wildcard_matches_camelcase_substring(fresh_db):
     """*UseCase (leading wildcard only) must match the same superset."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     names = {r["name"] for r in search_symbols(conn, "*UseCase")}
@@ -124,7 +124,7 @@ def test_no_wildcard_matches_camelcase_substring(fresh_db):
     """A bare pattern with no wildcard at all is still expected to behave
     like a substring search (the historical/documented LIKE '%...%' feel),
     so "UseCase" alone must also find UpdateProfileUseCase."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     names = {r["name"] for r in search_symbols(conn, "UseCase")}
@@ -133,7 +133,7 @@ def test_no_wildcard_matches_camelcase_substring(fresh_db):
 
 def test_infix_wildcard_matches(fresh_db):
     """Update*UseCase (wildcard in the middle) must still match."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     names = {r["name"] for r in search_symbols(conn, "Update*UseCase")}
@@ -144,8 +144,8 @@ def test_trailing_prefix_pattern_path_unchanged(fresh_db):
     """Register* is a genuine prefix pattern: it must still go through the
     fast FTS path (_pattern_to_fts returns a plain prefix query) and find
     both Register* symbols."""
-    from codegraph.graph.lexical import _pattern_to_fts
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.lexical import _pattern_to_fts
+    from cairn.graph.queries import search_symbols
 
     assert _pattern_to_fts("Register*") == "Register*"
 
@@ -158,7 +158,7 @@ def test_qualified_name_match_preserved(fresh_db):
     """A pattern that only matches via qualified_name (not the bare name)
     must still be found -- guards against a naive LIKE-only fix, which only
     matches s.name and would silently drop this hit."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     names = {r["name"] for r in search_symbols(conn, "*usecase*")}
@@ -170,7 +170,7 @@ def test_qualified_name_match_preserved(fresh_db):
 
 def test_kind_filter_applies_to_fallback_rows(fresh_db):
     """kind filtering must also apply to rows added by the LIKE fallback."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     rows = search_symbols(conn, "*UseCase*", kind="class")
@@ -182,7 +182,7 @@ def test_kind_filter_applies_to_fallback_rows(fresh_db):
 
 def test_limit_is_respected_after_merge(fresh_db):
     """The merged (FTS + LIKE) result set must still respect ``limit``."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     rows = search_symbols(conn, "*UseCase*", limit=2)
@@ -192,7 +192,7 @@ def test_limit_is_respected_after_merge(fresh_db):
 def test_no_duplicate_ids_after_merge(fresh_db):
     """A symbol found by both the FTS pass and the LIKE fallback must only
     appear once in the merged results."""
-    from codegraph.graph.queries import search_symbols
+    from cairn.graph.queries import search_symbols
 
     conn = _seeded_fts_conn(fresh_db)
     rows = search_symbols(conn, "*Avatar*")

@@ -4,7 +4,7 @@ No DB or bundle needed — classify_intent is pure string matching.
 """
 import pytest
 
-from codegraph.compass.router import classify_intent
+from cairn.compass.router import classify_intent
 
 
 # (query, expected_layer)

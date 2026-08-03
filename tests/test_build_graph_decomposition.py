@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.graph.builder import build_graph
+from cairn.graph.builder import build_graph
 
 
 FIXTURE_FILES = {
@@ -141,7 +141,7 @@ def test_build_graph_thin_coordinator_structure():
     verify implementation details, just that the expected helper
     functions exist and are called.
     """
-    from codegraph.graph import builder
+    from cairn.graph import builder
 
     # Verify the helper functions exist
     assert hasattr(builder, "_parse_all"), "Must have _parse_all helper"

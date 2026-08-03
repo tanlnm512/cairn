@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from codegraph.graph.schema import _apply_schema
-from codegraph.graph.dataflow import build_transitive_closure
+from cairn.graph.schema import _apply_schema
+from cairn.graph.dataflow import build_transitive_closure
 
 
 def test_name_collision_no_spurious_edges(fresh_db):

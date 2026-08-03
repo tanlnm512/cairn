@@ -3,7 +3,7 @@
 Before this fix, update_status() accepted any string with no validation,
 and no search path filtered on doc_status at all -- an "archived" document
 surfaced in knowledge_search results exactly like an active one. See
-[[project-codegraph-internals]].
+[[project-cairn-internals]].
 """
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ import tempfile
 
 import pytest
 
-from codegraph.graph.schema import _apply_schema
-from codegraph.knowledge.store import DOC_STATUSES, add_document, get_document, update_status
-from codegraph.knowledge.search import search_knowledge
-from codegraph.okf.bundle import OKFBundle
+from cairn.graph.schema import _apply_schema
+from cairn.knowledge.store import DOC_STATUSES, add_document, get_document, update_status
+from cairn.knowledge.search import search_knowledge
+from cairn.okf.bundle import OKFBundle
 
 
 @pytest.fixture

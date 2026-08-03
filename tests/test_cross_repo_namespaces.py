@@ -1,7 +1,7 @@
 """Tests for configurable cross-repo namespace map (Step 1).
 
 Verifies the resolution priority:
-  CODEGRAPH_REPO_NAMESPACES env > codegraph.json repo_namespaces > built-in default.
+  CAIRN_REPO_NAMESPACES env > cairn.json repo_namespaces > built-in default.
 
 Also covers config.py's ``repo_namespaces`` parsing (shape, malformed-input
 resilience — a bad config never crashes).
@@ -14,8 +14,8 @@ import textwrap
 
 import pytest
 
-from codegraph.graph import cross_repo
-from codegraph.graph.config import CodeGraphConfig, _as_string_dict, load_config
+from cairn.graph import cross_repo
+from cairn.graph.config import CairnConfig, _as_string_dict, load_config
 
 
 # --------------------------------------------------------------------------
@@ -23,7 +23,7 @@ from codegraph.graph.config import CodeGraphConfig, _as_string_dict, load_config
 # --------------------------------------------------------------------------
 
 def test_config_parses_repo_namespaces(tmp_path):
-    cfg_file = tmp_path / "codegraph.json"
+    cfg_file = tmp_path / "cairn.json"
     cfg_file.write_text(json.dumps({
         "exclude": ["build/"],
         "repo_namespaces": {
@@ -37,7 +37,7 @@ def test_config_parses_repo_namespaces(tmp_path):
 
 
 def test_config_repo_namespaces_malformed_is_ignored(tmp_path, capsys):
-    cfg_file = tmp_path / "codegraph.json"
+    cfg_file = tmp_path / "cairn.json"
     cfg_file.write_text(json.dumps({"repo_namespaces": "not-an-object"}))
     cfg = load_config(tmp_path)
     assert cfg.repo_namespaces == {}  # bad value -> empty, no crash
@@ -51,7 +51,7 @@ def test_as_string_dict_drops_non_string_entries():
 
 
 def test_default_config_has_empty_namespaces():
-    cfg = CodeGraphConfig()
+    cfg = CairnConfig()
     assert cfg.repo_namespaces == {}
     assert cfg.is_default
 
@@ -70,53 +70,53 @@ def reset_cache():
 
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch):
-    monkeypatch.delenv("CODEGRAPH_REPO_NAMESPACES", raising=False)
+    monkeypatch.delenv("CAIRN_REPO_NAMESPACES", raising=False)
 
 
 def test_env_override_wins_over_default(reset_cache, monkeypatch):
-    monkeypatch.setenv("CODEGRAPH_REPO_NAMESPACES", json.dumps({"io.app.api": "api"}))
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", json.dumps({"io.app.api": "api"}))
     ns = cross_repo._load_namespaces()
     assert ns == {"io.app.api": "api"}
     assert ns != cross_repo._DEFAULT_NAMESPACES
 
 
 def test_env_malformed_json_falls_back(reset_cache, monkeypatch, capsys):
-    monkeypatch.setenv("CODEGRAPH_REPO_NAMESPACES", "{not json")
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", "{not json")
     ns = cross_repo._load_namespaces()
     assert ns == cross_repo._DEFAULT_NAMESPACES  # fell through to default
     assert "invalid JSON" in capsys.readouterr().err
 
 
 def test_env_non_object_falls_back(reset_cache, monkeypatch, capsys):
-    monkeypatch.setenv("CODEGRAPH_REPO_NAMESPACES", "[1,2,3]")
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", "[1,2,3]")
     ns = cross_repo._load_namespaces()
     assert ns == cross_repo._DEFAULT_NAMESPACES
     assert "JSON object" in capsys.readouterr().err
 
 
 def test_config_file_used_when_no_env(reset_cache, monkeypatch, tmp_path):
-    # A codegraph.json with repo_namespaces at the workspace root.
-    (tmp_path / "codegraph.json").write_text(json.dumps({
+    # A cairn.json with repo_namespaces at the workspace root.
+    (tmp_path / "cairn.json").write_text(json.dumps({
         "repo_namespaces": {"org.platform.billing": "billing-svc"},
     }))
-    monkeypatch.setenv("CODEGRAPH_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path))
 
     ns = cross_repo._load_namespaces()
     assert ns == {"org.platform.billing": "billing-svc"}
 
 
 def test_default_fallback(reset_cache, monkeypatch, tmp_path):
-    # No env, no codegraph.json -> built-in default.
-    monkeypatch.setenv("CODEGRAPH_WORKSPACE", str(tmp_path))
+    # No env, no cairn.json -> built-in default.
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path))
     ns = cross_repo._load_namespaces()
     assert ns == cross_repo._DEFAULT_NAMESPACES
 
 
 def test_result_is_cached(reset_cache, monkeypatch):
-    monkeypatch.setenv("CODEGRAPH_REPO_NAMESPACES", json.dumps({"a.b": "x"}))
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", json.dumps({"a.b": "x"}))
     first = cross_repo._load_namespaces()
     # Change env after first load — cache should ignore it.
-    monkeypatch.setenv("CODEGRAPH_REPO_NAMESPACES", json.dumps({"c.d": "y"}))
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", json.dumps({"c.d": "y"}))
     second = cross_repo._load_namespaces()
     assert first is second  # same object, cached
 
@@ -144,7 +144,7 @@ def _seed_two_repos(conn: sqlite3.Connection) -> None:
 
 def test_cross_repo_deps_uses_env_namespaces(reset_cache, fresh_db, monkeypatch):
     _seed_two_repos(fresh_db)
-    monkeypatch.setenv("CODEGRAPH_REPO_NAMESPACES",
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES",
                        json.dumps({"com.custom.sdk": "repo-b"}))
 
     result = cross_repo.cross_repo_deps(fresh_db, "repo-a")
@@ -155,7 +155,7 @@ def test_cross_repo_deps_uses_env_namespaces(reset_cache, fresh_db, monkeypatch)
 def test_cross_repo_deps_default_map_finds_nothing(reset_cache, fresh_db, monkeypatch):
     """With the built-in default (be-workspace) map, com.custom.sdk maps nowhere."""
     _seed_two_repos(fresh_db)
-    monkeypatch.setenv("CODEGRAPH_WORKSPACE", "/nonexistent-for-test")  # no config
+    monkeypatch.setenv("CAIRN_WORKSPACE", "/nonexistent-for-test")  # no config
 
     result = cross_repo.cross_repo_deps(fresh_db, "repo-a")
     assert result["dependencies"] == []  # default map doesn't know com.custom.sdk

@@ -20,8 +20,8 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 
-from codegraph.graph.builder import build_graph
-from codegraph.graph.resolver import (
+from cairn.graph.builder import build_graph
+from cairn.graph.resolver import (
     resolve_edge,
     build_members_index,
     build_ancestor_index,

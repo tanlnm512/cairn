@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cg-intel"
+name = "cairn-intel"
 version = "0.5.3"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
@@ -52,18 +52,18 @@ test = ["pytest>=7.0"]
 dev = ["pytest>=7.0", "watchdog>=3.0", "build"]
 # Phase 7: semantic search. Pulls torch (~hundreds of MB) via
 # sentence-transformers, hence strictly optional. The default install remains
-# zero-network and torch-free; `pip install cg-intel[semantic]` opts in.
+# zero-network and torch-free; `pip install cairn-intel[semantic]` opts in.
 # numpy accelerates the cosine scan at scale (>10k embeddings); without it the
 # scan falls back to pure Python (correct, but slow on large corpora).
 # Phase 7b: this same dependency also provides CrossEncoder, so the optional
-# rerank stage (CODEGRAPH_RERANK=1, see src/graph/reranker.py) needs no
+# rerank stage (CAIRN_RERANK=1, see src/graph/reranker.py) needs no
 # separate extra -- installing [semantic] is enough for both embeddings and
 # reranking.
 semantic = [
     "sentence-transformers>=3.0",
     "numpy>=1.24",
 ]
-# Phase 7c: native ANN index for semantic_search (CODEGRAPH_ANN_BACKEND=
+# Phase 7c: native ANN index for semantic_search (CAIRN_ANN_BACKEND=
 # sqlite-vec, see src/graph/ann_index.py). Separate from [semantic] since it
 # only matters at real corpus scale -- the brute-force cosine scan is the
 # default and remains fine for small/medium repos. A small, self-contained
@@ -74,10 +74,10 @@ ann = [
 ]
 
 [project.scripts]
-cg = "codegraph.cli:main"
+cairn = "cairn.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/tan-le/codegraph"
+Homepage = "https://github.com/tan-le/cairn"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -85,7 +85,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
 # so `cg install-agents` works from a wheel install, not just a source checkout.
-"codegraph.agent_integration" = ["**/*"]
+"cairn.agent_integration" = ["**/*"]
 
 [tool.pytest.ini_options]
 # `core` marks the fast smoke subset (tests/test_core_smoke.py): one focused

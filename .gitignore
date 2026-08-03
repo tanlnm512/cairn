@@ -24,7 +24,7 @@ htmlcov/
 coverage.xml
 .tox/
 
-# ---- codegraph runtime artifacts (from running `cg build` here) ----
+# ---- cairn runtime artifacts (from running `cg build` here) ----
 .kg
 .knowledge/
 *.db
@@ -42,3 +42,6 @@ coverage.xml
 
 # ---- OS ----
 Thumbs.db
+
+# ---- ZCode session artifacts ----
+.zcode/

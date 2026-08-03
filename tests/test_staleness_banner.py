@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.mcp_server import tools_graph
+from cairn.mcp_server import tools_graph
 
 
 def _row(conn, table, **cols):
@@ -78,7 +78,7 @@ def test_no_banner_when_no_callers(_patched_conn):
 
 def test_staleness_banner_helper_directly(fresh_db):
     """Unit-test the helper: empty paths -> '', stale hit -> banner, fresh -> ''."""
-    from codegraph.mcp_server._server_core import _staleness_banner
+    from cairn.mcp_server._server_core import _staleness_banner
 
     assert _staleness_banner(fresh_db, []) == ""
     assert _staleness_banner(fresh_db, ["nonexistent.kt"]) == ""

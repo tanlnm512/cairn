@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from codegraph.graph.scanner import detect_header_language, EXTENSION_MAP
+from cairn.graph.scanner import detect_header_language, EXTENSION_MAP
 
 
 def test_extension_map_includes_headers():

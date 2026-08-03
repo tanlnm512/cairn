@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/uninstall.sh — Remove codegraph: agent wiring, hooks, graph, package.
+# scripts/uninstall.sh — Remove cairn: agent wiring, hooks, graph, package.
 #
 # Usage:
 #   ./scripts/uninstall.sh                    # interactive (prompt before each step)
@@ -91,10 +91,10 @@ resolve_cg() {
 # Resolve workspace
 resolve_workspace() {
   local ws
-  if [[ -n "${CODEGRAPH_WORKSPACE:-}" ]]; then
-    ws="$CODEGRAPH_WORKSPACE"
-  elif [[ -n "${CODEGRAPH_DB:-}" ]]; then
-    ws="$(dirname "$(dirname "${CODEGRAPH_DB}")")"
+  if [[ -n "${CAIRN_WORKSPACE:-}" ]]; then
+    ws="$CAIRN_WORKSPACE"
+  elif [[ -n "${CAIRN_DB:-}" ]]; then
+    ws="$(dirname "$(dirname "${CAIRN_DB}")")"
   else
     local cg
     cg="$(resolve_cg)" || return 1
@@ -112,7 +112,7 @@ resolve_workspace() {
 #   nothing on disk                     -> ""
 resolve_store() {
   local ws="$1"
-  local home="${CODEGRAPH_HOME:-$HOME/.codegraph}"
+  local home="${CAIRN_HOME:-$HOME/.cairn}"
 
   if [[ -f "$home/workspaces.json" && -n "$ws" ]]; then
     local key
@@ -155,7 +155,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Banner ─────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}Codegraph Uninstaller${NC}"
+echo -e "${BOLD}Cairn Uninstaller${NC}"
 echo ""
 
 if $DRY_RUN; then
@@ -184,7 +184,7 @@ if $DO_AGENTS; then
 
   if [[ -z "$CG_CMD" || -z "$WORKSPACE" ]]; then
     warn "Cannot resolve cg or workspace — skipping agent removal"
-    warn "  Set CODEGRAPH_WORKSPACE or run from your workspace directory"
+    warn "  Set CAIRN_WORKSPACE or run from your workspace directory"
   else
     echo -e "  ${DIM}Workspace: $WORKSPACE${NC}"
     echo -e "  ${DIM}This removes: MCP configs, skills, commands, subagents, hooks${NC}"
@@ -222,7 +222,7 @@ if $DO_HOOKS; then
   if [[ -z "$CG_CMD" || -z "$WORKSPACE" ]]; then
     warn "Cannot resolve cg or workspace — skipping hook removal"
   else
-    echo -e "  ${DIM}Removes codegraph post-commit hooks from all repos${NC}"
+    echo -e "  ${DIM}Removes cairn post-commit hooks from all repos${NC}"
     echo ""
 
     if confirm; then
@@ -243,9 +243,9 @@ fi
 
 # ─── Step 3: Remove graph + knowledge data ────────────────────────────────
 # If the workspace can be pinned to a workspaces.json key, only that store
-# ($HOME/.codegraph/<key>) is removed. If it can't be pinned (e.g. the
+# ($HOME/.cairn/<key>) is removed. If it can't be pinned (e.g. the
 # uninstaller is run from the tool repo rather than a managed workspace),
-# the whole $HOME/.codegraph is removed instead.
+# the whole $HOME/.cairn is removed instead.
 if $DO_GRAPH; then
   info "Graph and knowledge data"
 
@@ -253,10 +253,10 @@ if $DO_GRAPH; then
   STORE="$(resolve_store "${WORKSPACE:-}")" || true
 
   if [[ -z "$STORE" || ! -e "$STORE" ]]; then
-    warn "No codegraph store found — nothing to remove"
-    warn "  Expected: ~/.codegraph/<key>/ or CODEGRAPH_HOME"
+    warn "No cairn store found — nothing to remove"
+    warn "  Expected: ~/.cairn/<key>/ or CAIRN_HOME"
   else
-    local_home="${CODEGRAPH_HOME:-$HOME/.codegraph}"
+    local_home="${CAIRN_HOME:-$HOME/.cairn}"
     if [[ "$STORE" == "$local_home" ]]; then
       whole_home=true
     else
@@ -264,7 +264,7 @@ if $DO_GRAPH; then
     fi
 
     if $whole_home; then
-      echo -e "  ${DIM}Removing:  $STORE (entire codegraph home)${NC}"
+      echo -e "  ${DIM}Removing:  $STORE (entire cairn home)${NC}"
       n_stores=$(/bin/ls -d "$local_home"/*/ 2>/dev/null | wc -l | tr -d ' ')
       [[ -z "$n_stores" || "$n_stores" -eq 0 ]] && n_stores="0"
       echo -e "  ${DIM}Workspaces: $n_stores${NC}"
@@ -332,19 +332,19 @@ if $DO_PACKAGE; then
 
   INSTALLED_VIA=""
   if command -v uv >/dev/null 2>&1; then
-    if uv tool list 2>/dev/null | grep -q "cg-intel"; then
+    if uv tool list 2>/dev/null | grep -q "cairn-intel"; then
       INSTALLED_VIA="uv"
     fi
   fi
   if [[ -z "$INSTALLED_VIA" ]] && command -v pipx >/dev/null 2>&1; then
-    if pipx list 2>/dev/null | grep -q "cg-intel"; then
+    if pipx list 2>/dev/null | grep -q "cairn-intel"; then
       INSTALLED_VIA="pipx"
     fi
   fi
   if [[ -z "$INSTALLED_VIA" && -d "$PROJECT_DIR/.venv" ]]; then
     INSTALLED_VIA="venv"
   fi
-  if [[ -z "$INSTALLED_VIA" ]] && [[ -n "$PYTHON" ]] && "$PYTHON" -m pip show cg-intel >/dev/null 2>&1; then
+  if [[ -z "$INSTALLED_VIA" ]] && [[ -n "$PYTHON" ]] && "$PYTHON" -m pip show cairn-intel >/dev/null 2>&1; then
     INSTALLED_VIA="pip"
   fi
 
@@ -372,16 +372,16 @@ if $DO_PACKAGE; then
       case "$INSTALLED_VIA" in
         uv)
           if $DRY_RUN; then
-            echo -e "  ${DIM}Would run: uv tool uninstall cg-intel${NC}"
+            echo -e "  ${DIM}Would run: uv tool uninstall cairn-intel${NC}"
           else
-            uv tool uninstall cg-intel 2>/dev/null || true
+            uv tool uninstall cairn-intel 2>/dev/null || true
           fi
           ;;
         pipx)
           if $DRY_RUN; then
-            echo -e "  ${DIM}Would run: pipx uninstall cg-intel${NC}"
+            echo -e "  ${DIM}Would run: pipx uninstall cairn-intel${NC}"
           else
-            pipx uninstall cg-intel 2>/dev/null || true
+            pipx uninstall cairn-intel 2>/dev/null || true
           fi
           ;;
         venv)
@@ -393,9 +393,9 @@ if $DO_PACKAGE; then
           ;;
         pip)
           if $DRY_RUN; then
-            echo -e "  ${DIM}Would run: $PYTHON -m pip uninstall -y cg-intel${NC}"
+            echo -e "  ${DIM}Would run: $PYTHON -m pip uninstall -y cairn-intel${NC}"
           else
-            "$PYTHON" -m pip uninstall -y cg-intel 2>/dev/null || true
+            "$PYTHON" -m pip uninstall -y cairn-intel 2>/dev/null || true
           fi
           ;;
       esac

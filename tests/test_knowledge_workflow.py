@@ -1,6 +1,6 @@
 """Regression tests for the procedural workflow layer (2026-07-24).
 
-codegraph's answer to the gap flagged when comparing against LeanKG's
+cairn's answer to the gap flagged when comparing against LeanKG's
 procedural ontology (`kg_trace_workflow`, live-watched ontology YAML).
 Deliberately implemented as a plain knowledge doc (`doc_type="workflow"`)
 rather than a new watched/synced store -- see src/knowledge/workflow.py's
@@ -16,14 +16,14 @@ import tempfile
 
 import pytest
 
-from codegraph.knowledge.store import get_document, update_status
-from codegraph.knowledge.workflow import (
+from cairn.knowledge.store import get_document, update_status
+from cairn.knowledge.workflow import (
     add_workflow,
     list_workflows,
     render_steps_body,
     trace_workflow,
 )
-from codegraph.okf.bundle import OKFBundle
+from cairn.okf.bundle import OKFBundle
 
 
 @pytest.fixture
@@ -81,17 +81,17 @@ class TestAddWorkflow:
     def test_tags_and_affects_are_stored(self, bundle):
         cid = add_workflow(
             bundle, "Deploy Hotfix", steps=SAMPLE_STEPS,
-            tags=["deploy", "hotfix"], affects_modules=["cli"], affects_repos=["codegraph"],
+            tags=["deploy", "hotfix"], affects_modules=["cli"], affects_repos=["cairn"],
         )
         concept = get_document(bundle, cid)
         assert concept.tags == ["deploy", "hotfix"]
         assert concept.extensions["affects_modules"] == ["cli"]
-        assert concept.extensions["affects_repos"] == ["codegraph"]
+        assert concept.extensions["affects_repos"] == ["cairn"]
 
     def test_non_workflow_doc_unaffected_by_steps_param(self, bundle):
         """A plain add_document() call with no steps= must not gain a
         'steps' key in its extensions -- see store.py's guard comment."""
-        from codegraph.knowledge.store import add_document
+        from cairn.knowledge.store import add_document
         cid = add_document(bundle, "Refund Policy", "body", "business-rule")
         concept = get_document(bundle, cid)
         assert "steps" not in concept.extensions
@@ -141,7 +141,7 @@ class TestTraceWorkflow:
 
 class TestListWorkflows:
     def test_lists_only_workflow_doc_type(self, bundle):
-        from codegraph.knowledge.store import add_document
+        from cairn.knowledge.store import add_document
         add_workflow(bundle, "Deploy Hotfix", steps=SAMPLE_STEPS)
         add_document(bundle, "Refund Policy", "body", "business-rule")
 

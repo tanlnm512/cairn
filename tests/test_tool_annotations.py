@@ -1,4 +1,4 @@
-"""Annotation-coverage tests for the codegraph MCP tool surface (Phase 3.1).
+"""Annotation-coverage tests for the cairn MCP tool surface (Phase 3.1).
 
 Every ``@mcp.tool()`` registration now advertises MCP ``ToolAnnotations`` so a
 client (Cursor, Claude Desktop, ...) can render read/write/destructive badges
@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MCP_DIR = REPO_ROOT / "src" / "codegraph" / "mcp_server"
+MCP_DIR = REPO_ROOT / "src" / "cairn" / "mcp_server"
 TOOL_FILES = sorted(MCP_DIR.glob("tools_*.py"))
 
 # The 10 graph-query tools that must be advertised read-only. visualize_graph is

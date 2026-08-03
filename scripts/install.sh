@@ -94,8 +94,8 @@ rm -rf "$PROJECT_DIR"/build "$PROJECT_DIR"/dist "$PROJECT_DIR"/*.egg-info
 ok "Removed build/, dist/, *.egg-info"
 
 if command -v uv >/dev/null 2>&1; then
-  uv cache clean cg-intel >/dev/null 2>&1 || true
-  ok "Cleared uv's cached build for cg-intel"
+  uv cache clean cairn-intel >/dev/null 2>&1 || true
+  ok "Cleared uv's cached build for cairn-intel"
 fi
 
 # ─── Step 2: Install cg binary ─────────────────────────────────────────────

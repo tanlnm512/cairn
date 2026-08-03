@@ -7,8 +7,8 @@ Guards:
 2. ``_extract_callee`` is intentionally NOT deduplicated -- it's genuinely
    language-specific (Python ``attribute``/``call`` vs Swift
    ``navigation_expression``), so each parser keeps its own.
-3. The ``codegraph.parsers.v1`` entry-point group lets an external package
-   register a parser without forking codegraph (the plugin-hooks gate).
+3. The ``cairn.parsers.v1`` entry-point group lets an external package
+   register a parser without forking cairn (the plugin-hooks gate).
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PARSERS = REPO_ROOT / "src" / "codegraph" / "parsers"
+PARSERS = REPO_ROOT / "src" / "cairn" / "parsers"
 
 
 def _parser_files() -> list[Path]:
@@ -59,7 +59,7 @@ class TestNoHelperDuplication:
         assert "typescript.py" in with_extract_callee
 
     def test_base_class_provides_shared_helpers(self):
-        from codegraph.parsers.base import TreeSitterParserBase
+        from cairn.parsers.base import TreeSitterParserBase
 
         for helper in ("_child_of_type", "_find_name", "_qualified_name", "_node_text"):
             assert hasattr(TreeSitterParserBase, helper), (
@@ -68,10 +68,10 @@ class TestNoHelperDuplication:
 
     def test_parsers_inherit_find_name(self):
         """Each tree-sitter parser instance must resolve _find_name via the base."""
-        from codegraph.parsers.base import TreeSitterParserBase
-        from codegraph.parsers.dart import DartParser
-        from codegraph.parsers.objc import ObjCParser
-        from codegraph.parsers.typescript import TypeScriptParser
+        from cairn.parsers.base import TreeSitterParserBase
+        from cairn.parsers.dart import DartParser
+        from cairn.parsers.objc import ObjCParser
+        from cairn.parsers.typescript import TypeScriptParser
 
         for cls in (DartParser, ObjCParser, TypeScriptParser):
             inst = cls()
@@ -87,12 +87,12 @@ class TestPluginEntryPoints:
     """Phase 2.2: external packages register parsers via entry_points."""
 
     def test_entry_point_group_constant(self):
-        from codegraph.parsers._registry import _PLUGIN_ENTRY_POINT_GROUP
+        from cairn.parsers._registry import _PLUGIN_ENTRY_POINT_GROUP
 
-        assert _PLUGIN_ENTRY_POINT_GROUP == "codegraph.parsers.v1"
+        assert _PLUGIN_ENTRY_POINT_GROUP == "cairn.parsers.v1"
 
     def test_plugin_capsule_lookup_returns_none_for_unknown(self):
-        from codegraph.parsers._registry import _load_plugin_capsule
+        from cairn.parsers._registry import _load_plugin_capsule
 
         # No plugin registered -> None, not an error.
         assert _load_plugin_capsule("definitely-not-a-language-xyz") is None
@@ -101,7 +101,7 @@ class TestPluginEntryPoints:
         """A fake entry point registered via patch is picked up by the registry."""
         import importlib.metadata
 
-        from codegraph.parsers._registry import (
+        from cairn.parsers._registry import (
             _PLUGIN_ENTRY_POINT_GROUP,
             _load_plugin_capsule,
         )
@@ -132,7 +132,7 @@ class TestPluginEntryPoints:
         """A plugin whose load() raises must not break the registry."""
         import importlib.metadata
 
-        from codegraph.parsers._registry import (
+        from cairn.parsers._registry import (
             _PLUGIN_ENTRY_POINT_GROUP,
             _load_plugin_capsule,
         )

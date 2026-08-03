@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.parsers.base import TreeSitterParserBase
-from codegraph.parsers.kotlin import KotlinParser
-from codegraph.parsers.typescript import TypeScriptParser
-from codegraph.parsers.java import JavaParser
-from codegraph.parsers.python_parser import PythonParser
-from codegraph.parsers.swift import SwiftParser
-from codegraph.parsers.dart import DartParser
-from codegraph.parsers.objc import ObjCParser
+from cairn.parsers.base import TreeSitterParserBase
+from cairn.parsers.kotlin import KotlinParser
+from cairn.parsers.typescript import TypeScriptParser
+from cairn.parsers.java import JavaParser
+from cairn.parsers.python_parser import PythonParser
+from cairn.parsers.swift import SwiftParser
+from cairn.parsers.dart import DartParser
+from cairn.parsers.objc import ObjCParser
 
 
 class ConcreteTreeSitterParser(TreeSitterParserBase):

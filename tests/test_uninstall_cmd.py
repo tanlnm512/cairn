@@ -1,7 +1,7 @@
 """Smoke tests for `cg uninstall`.
 
 Covers the command surface (help text, option wiring, dry-run never deletes)
-without touching the user's real ~/.codegraph — every case points CODEGRAPH_HOME
+without touching the user's real ~/.cairn — every case points CAIRN_HOME
 at a throwaway tempdir.
 """
 import tempfile
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from codegraph.cli import main
+from cairn.cli import main
 
 
 def test_uninstall_help_lists_steps():
@@ -36,7 +36,7 @@ def test_dry_run_deletes_nothing_when_store_absent():
         result = runner.invoke(
             main,
             ["uninstall", "--graph-only", "--dry-run", "-y"],
-            env={"CODEGRAPH_HOME": tmp},
+            env={"CAIRN_HOME": tmp},
         )
         assert result.exit_code == 0
         assert "nothing to remove" in result.output
@@ -56,7 +56,7 @@ def test_dry_run_targets_store_when_present():
         result = runner.invoke(
             main,
             ["uninstall", "--full", "--graph-only", "--dry-run", "-y"],
-            env={"CODEGRAPH_HOME": str(home)},
+            env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0
         assert str(home) in result.output
@@ -78,7 +78,7 @@ def test_non_dry_run_removes_store():
         result = runner.invoke(
             main,
             ["uninstall", "--full", "--graph-only", "-y"],
-            env={"CODEGRAPH_HOME": str(home)},
+            env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0
         assert "done" in result.output

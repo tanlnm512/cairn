@@ -16,7 +16,7 @@ import sqlite3
 from pathlib import Path
 import pytest
 
-from codegraph.graph.builder import build_graph
+from cairn.graph.builder import build_graph
 
 
 class TestPeriodicCommits:

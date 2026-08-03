@@ -49,10 +49,10 @@ except ImportError as exc:  # pragma: no cover
 
 # Repo root = parent of this scripts/ directory.
 ROOT = Path(__file__).resolve().parent.parent
-EVALS_DIR = ROOT / "src" / "codegraph" / "agent_integration" / "skill" / "evals"
-MCP_TOOLS_GLOB = ROOT / "src" / "codegraph" / "mcp_server" / "tools_*.py"
-CLI_DIR = ROOT / "src" / "codegraph" / "cli"
-SCRIPTS_DIRS = [ROOT / "scripts", ROOT / "src" / "codegraph" / "agent_integration" / "skill" / "scripts"]
+EVALS_DIR = ROOT / "src" / "cairn" / "agent_integration" / "skill" / "evals"
+MCP_TOOLS_GLOB = ROOT / "src" / "cairn" / "mcp_server" / "tools_*.py"
+CLI_DIR = ROOT / "src" / "cairn" / "cli"
+SCRIPTS_DIRS = [ROOT / "scripts", ROOT / "src" / "cairn" / "agent_integration" / "skill" / "scripts"]
 
 # Frontmatter schema. ``expected_calls`` and ``wrong_calls`` are lists of dicts.
 REQUIRED_KEYS = ["id", "rule", "title", "scenario", "expected_calls", "wrong_calls"]
@@ -194,7 +194,7 @@ def resolve_tool(
 
     Recognized forms:
       * bare MCP tool name        -> ``impact_analysis``
-      * fully-qualified MCP name  -> ``mcp__codegraph__rebuild_graph`` (the
+      * fully-qualified MCP name  -> ``mcp__cairn__rebuild_graph`` (the
         tail after the last ``__`` must match a registered tool; we also allow
         it to be *unregistered*, which is legitimate for a ``wrong_calls``
         entry that documents a nonexistent tool an agent might wrongly invoke)
@@ -209,7 +209,7 @@ def resolve_tool(
 
     t = tool.strip()
 
-    # Fully-qualified MCP name, e.g. mcp__codegraph__rebuild_graph. The tail is
+    # Fully-qualified MCP name, e.g. mcp__cairn__rebuild_graph. The tail is
     # the real tool name; if it is NOT registered that is expected for a
     # wrong_calls entry (it documents a tool that does not exist), so we report
     # it as a known *documented-as-nonexistent* MCP surface.

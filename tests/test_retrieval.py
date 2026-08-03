@@ -15,7 +15,7 @@ import math
 import struct
 from pathlib import Path
 
-from codegraph.retrieval import (
+from cairn.retrieval import (
     Candidate,
     CrossEncoderReranker,
     Retriever,
@@ -109,7 +109,7 @@ class TestNoScanDuplication:
 
     @staticmethod
     def _source(layer: str, fname: str) -> str:
-        return (REPO_ROOT / "src" / "codegraph" / layer / fname).read_text(
+        return (REPO_ROOT / "src" / "cairn" / layer / fname).read_text(
             encoding="utf-8"
         )
 

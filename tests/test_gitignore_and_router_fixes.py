@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codegraph.compass.router import route_query
-from codegraph.graph import watcher
-from codegraph.okf.bundle import OKFBundle
+from cairn.compass.router import route_query
+from cairn.graph import watcher
+from cairn.okf.bundle import OKFBundle
 
 
 class TestGitignoreCacheInvalidation:
@@ -28,7 +28,7 @@ class TestGitignoreCacheInvalidation:
         gitignore_path.write_text("node_modules/\nbuild/\n")
 
         # Pre-populate the cache with some gitignore rules
-        from codegraph.graph import scanner as scanner_mod
+        from cairn.graph import scanner as scanner_mod
         import pathspec
         # Simulate what _load_gitignores would create
         spec = pathspec.PathSpec.from_lines("gitignore", ["node_modules/\nbuild/\n"])
@@ -39,7 +39,7 @@ class TestGitignoreCacheInvalidation:
         assert len(scanner_mod._gitignore_cache[str(repo_dir)]) == 1
 
         # Mock reindex_paths to avoid actual scanning
-        with patch("codegraph.graph.incremental.reindex_paths") as mock_reindex:
+        with patch("cairn.graph.incremental.reindex_paths") as mock_reindex:
             mock_reindex.return_value = {"reindexed": 0, "deleted": 0}
 
             # Call ensure_fresh_force with the .gitignore in changed set
@@ -81,7 +81,7 @@ class TestRouterEmptyFlag:
         # Create a bundle with at least one concept
         bundle = OKFBundle(tmp_path)
         # Write a dummy concept so memory search has something
-        from codegraph.okf.concept import OKFConcept
+        from cairn.okf.concept import OKFConcept
 
         concept = OKFConcept(
             concept_id="memory/tribal/test",

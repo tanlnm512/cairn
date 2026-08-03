@@ -15,7 +15,7 @@ cases):
 """
 from __future__ import annotations
 
-from codegraph.graph.resolver import _import_aware_candidates
+from cairn.graph.resolver import _import_aware_candidates
 
 
 def test_package_qualified_resolves_via_contiguous_subsequence():

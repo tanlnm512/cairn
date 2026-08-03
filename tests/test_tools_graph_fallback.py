@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.mcp_server import tools_graph
+from cairn.mcp_server import tools_graph
 
 
 def _row(conn, table, **cols):

@@ -15,7 +15,7 @@ Imagine a polyglot repo where the name `invoke` appears in unrelated places:
 - `Worker.invoke(...)` — a stdlib-style callable (no relation).
 
 Every code graph that resolves by name alone would lump these together.
-codegraph's resolver pins each edge to a definition when it can, and **labels**
+cairn's resolver pins each edge to a definition when it can, and **labels**
 the edge with the outcome.
 
 ## Precise (default) — ground truth
@@ -96,5 +96,5 @@ makes the codebase behave the way it does.
 | "Where is X dispatched polymorphically?" | `explore` / `ask` | Surfaces ambiguous hops grep can't see. |
 | "Show me everything that might call X" | `--fuzzy` | Candidate list, labelled unverified — verify each. |
 
-See also: [benchmarks.md — the resolution-label methodology](../benchmarks.md#the-resolution-label-methodology-codegraphs-differentiator)
+See also: [benchmarks.md — the resolution-label methodology](../benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
 for how to measure the precise-vs-fuzzy false-positive rate on your own codebase.

@@ -23,7 +23,7 @@ class TestPortConstantDRY:
 
         The port should be imported from lifecycle.DEFAULT_PORT instead.
         """
-        serve_py = Path(__file__).parent.parent / "src" / "codegraph" / "cli" / "serve.py"
+        serve_py = Path(__file__).parent.parent / "src" / "cairn" / "cli" / "serve.py"
         content = serve_py.read_text(encoding="utf-8")
         # Check that no bare "9876" appears (not part of longer numbers)
         # We need to be careful to match the literal 9876, not things like "9876" inside
@@ -42,10 +42,10 @@ class TestPortConstantDRY:
         """No file in the agent_install package should contain the literal 9876.
 
         After the Phase 1.3 split, agent_install is a package
-        (src/codegraph/agent_install/). The port must be imported from
+        (src/cairn/agent_install/). The port must be imported from
         lifecycle.DEFAULT_PORT in every module, so scan them all.
         """
-        pkg_dir = Path(__file__).parent.parent / "src" / "codegraph" / "agent_install"
+        pkg_dir = Path(__file__).parent.parent / "src" / "cairn" / "agent_install"
         lines_with_9876 = []
         for src in sorted(pkg_dir.rglob("*.py")):
             for line in src.read_text(encoding="utf-8").splitlines():
@@ -59,7 +59,7 @@ class TestPortConstantDRY:
 
     def test_lifecycle_has_default_port_constant(self):
         """lifecycle.py should define DEFAULT_PORT constant."""
-        lifecycle_py = Path(__file__).parent.parent / "src" / "codegraph" / "mcp_server" / "lifecycle.py"
+        lifecycle_py = Path(__file__).parent.parent / "src" / "cairn" / "mcp_server" / "lifecycle.py"
         content = lifecycle_py.read_text(encoding="utf-8")
         assert "DEFAULT_PORT" in content
         assert "9876" in content  # The constant should have the value
@@ -74,7 +74,7 @@ class TestUnloadReturnsRealStatus:
 
     def test_unload_returns_false_on_launchctl_failure(self, tmp_path, monkeypatch):
         """unload() should return False when launchctl unload fails."""
-        from codegraph.mcp_server import lifecycle
+        from cairn.mcp_server import lifecycle
 
         # unload() returns early (True, "nothing to unload") when the plist
         # doesn't exist -- which would short-circuit before the mocked
@@ -98,7 +98,7 @@ class TestUnloadReturnsRealStatus:
 
     def test_unload_returns_true_on_launchctl_success(self, tmp_path, monkeypatch):
         """unload() should return True when launchctl unload succeeds."""
-        from codegraph.mcp_server import lifecycle
+        from cairn.mcp_server import lifecycle
 
         # See test_unload_returns_false_on_launchctl_failure: ensure the plist
         # exists so the mocked launchctl path runs.
@@ -119,7 +119,7 @@ class TestUnloadReturnsRealStatus:
 
     def test_unload_returns_true_when_plist_not_exists(self, tmp_path, monkeypatch):
         """unload() should return True when plist doesn't exist (nothing to unload)."""
-        from codegraph.mcp_server import lifecycle
+        from cairn.mcp_server import lifecycle
 
         # Mock plist_path() to return a non-existent path
         monkeypatch.setattr(lifecycle, "plist_path", lambda: tmp_path / "nonexistent.plist")

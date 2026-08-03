@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.knowledge.store import add_document, import_directory
-from codegraph.memory.scoring import _authority
-from codegraph.okf.bundle import OKFBundle
-from codegraph.okf.concept import OKFConcept
+from cairn.knowledge.store import add_document, import_directory
+from cairn.memory.scoring import _authority
+from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def bundle():
 def conn():
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    from codegraph.graph.schema import _apply_schema
+    from cairn.graph.schema import _apply_schema
     _apply_schema(c)
     yield c
     c.close()

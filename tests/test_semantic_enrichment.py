@@ -45,8 +45,8 @@ def _conn_with_call_graph(fresh_db) -> sqlite3.Connection:
 
 
 def test_include_callers_false_by_default_has_no_extra_keys(fresh_db):
-    from codegraph.graph import embeddings as emb
-    from codegraph.graph.queries import semantic_search
+    from cairn.graph import embeddings as emb
+    from cairn.graph.queries import semantic_search
 
     conn = _conn_with_call_graph(fresh_db)
     emb.embed_all(conn)
@@ -58,8 +58,8 @@ def test_include_callers_false_by_default_has_no_extra_keys(fresh_db):
 
 
 def test_include_callers_true_attaches_1hop_neighbors(fresh_db):
-    from codegraph.graph import embeddings as emb
-    from codegraph.graph.queries import semantic_search
+    from cairn.graph import embeddings as emb
+    from cairn.graph.queries import semantic_search
 
     conn = _conn_with_call_graph(fresh_db)
     emb.embed_all(conn)
@@ -75,8 +75,8 @@ def test_include_callers_true_attaches_1hop_neighbors(fresh_db):
 
 
 def test_include_callers_degrades_to_empty_lists_for_symbol_with_no_edges(fresh_db):
-    from codegraph.graph import embeddings as emb
-    from codegraph.graph.queries import semantic_search
+    from cairn.graph import embeddings as emb
+    from cairn.graph.queries import semantic_search
 
     conn = _conn_with_call_graph(fresh_db)
     emb.embed_all(conn)

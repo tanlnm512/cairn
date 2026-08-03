@@ -10,13 +10,13 @@ Guards:
 """
 from __future__ import annotations
 
-from codegraph.memory.store_protocol import (
+from cairn.memory.store_protocol import (
     Decision,
     InMemoryMemoryStore,
     MemoryStore,
     OKFMemoryStore,
 )
-from codegraph.okf.concept import OKFConcept
+from cairn.okf.concept import OKFConcept
 
 
 def _make_concept(title: str, tier: str = "drafts", score: float = 0.4) -> OKFConcept:
@@ -92,7 +92,7 @@ class TestInMemoryStore:
 
 class TestAppendPromotionAcceptsDecision:
     def test_append_promotion_persists_decision_value(self):
-        from codegraph.memory.promotion import _append_promotion
+        from cairn.memory.promotion import _append_promotion
 
         c = _make_concept("history")
         # Pass a Decision enum (the preferred form).
@@ -103,7 +103,7 @@ class TestAppendPromotionAcceptsDecision:
 
     def test_append_promotion_accepts_legacy_string(self):
         """Legacy freeform string callers keep working (backward compat)."""
-        from codegraph.memory.promotion import _append_promotion
+        from cairn.memory.promotion import _append_promotion
 
         c = _make_concept("legacy")
         _append_promotion(c, "captured", 0.5)

@@ -2,9 +2,9 @@ import os
 import tempfile
 from pathlib import Path
 
-from codegraph.graph.fusion import rrf_fuse
-from codegraph.graph.schema import get_db
-from codegraph.graph import queries
+from cairn.graph.fusion import rrf_fuse
+from cairn.graph.schema import get_db
+from cairn.graph import queries
 
 
 def test_rrf_known_values():
@@ -71,7 +71,7 @@ def test_semantic_search_preserves_include_callers():
 
 
 def test_fusion_disabled_matches_legacy_path():
-    os.environ["CODEGRAPH_FUSION"] = "0"
+    os.environ["CAIRN_FUSION"] = "0"
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "test.db")
@@ -79,7 +79,7 @@ def test_fusion_disabled_matches_legacy_path():
             res = queries.semantic_search(conn, "test", limit=5)
             assert isinstance(res, list)
     finally:
-        os.environ["CODEGRAPH_FUSION"] = "1"
+        os.environ["CAIRN_FUSION"] = "1"
 
 
 def test_explore_no_longer_gates_on_seed_count():

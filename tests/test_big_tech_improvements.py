@@ -2,13 +2,13 @@ import tempfile
 from pathlib import Path
 import sqlite3
 
-from codegraph.graph.embeddings import chunk_for_symbol
-from codegraph.graph.schema import get_db
-from codegraph.graph.dataflow import build_transitive_closure
-from codegraph.parsers.scip_importer import import_scip_data
-from codegraph.memory.store import consolidate_memories
-from codegraph.okf.bundle import OKFBundle
-from codegraph.okf.concept import OKFConcept
+from cairn.graph.embeddings import chunk_for_symbol
+from cairn.graph.schema import get_db
+from cairn.graph.dataflow import build_transitive_closure
+from cairn.parsers.scip_importer import import_scip_data
+from cairn.memory.store import consolidate_memories
+from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
 
 
 def test_scope_enriched_chunking():

@@ -1,20 +1,20 @@
-# codegraph
+# cairn
 
 > Local codebase intelligence system: structural graph + compass + wiki + agent memory.
 
-[![PyPI version](https://img.shields.io/pypi/v/cg-intel.svg)](https://pypi.org/project/cg-intel/)
-[![License: MIT](https://img.shields.io/pypi/l/cg-intel.svg)](LICENSE)
-[![Python versions](https://img.shields.io/pypi/pyversions/cg-intel.svg)](https://pypi.org/project/cg-intel/)
-[![CI](https://img.shields.io/github/actions/workflow/status/tan-le/codegraph/ci.yml?branch=main&label=CI)](https://github.com/tan-le/codegraph/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
+[![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
+[![Python versions](https://img.shields.io/pypi/pyversions/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
+[![CI](https://img.shields.io/github/actions/workflow/status/tan-le/cairn/ci.yml?branch=main&label=CI)](https://github.com/tan-le/cairn/actions/workflows/ci.yml)
 
-codegraph builds a precise, language-aware structural graph of your codebase and
+cairn builds a precise, language-aware structural graph of your codebase and
 exposes it to both humans (the `cg` CLI) and AI agents (a stdio MCP server with
 26 tools). Symbols, call edges, definitions, blast radius, and tribal memory all
 live in a local SQLite store — no network call, no torch in the default install.
 
-## What is codegraph?
+## What is cairn?
 
-codegraph is a **local** codebase intelligence system. It parses your repos with
+cairn is a **local** codebase intelligence system. It parses your repos with
 tree-sitter into a **structural graph** (definitions, call edges, cross-repo
 dependencies) stored in SQLite, then layers a **compass** (per-module navigation
 guides), a **wiki** (architecture docs), **memory** (decisions / patterns /
@@ -23,9 +23,9 @@ the same store backs the `cg` CLI and a 26-tool MCP server, making it
 **agent-first** — your coding agents query one local source of truth instead of
 re-reading the whole repo every turn.
 
-## Why codegraph? Resolution-labeled edges
+## Why cairn? Resolution-labeled edges
 
-Every code graph can tell you "who calls this." codegraph is the one that tells
+Every code graph can tell you "who calls this." cairn is the one that tells
 you **whether to trust the answer.** The resolver labels each call edge:
 
 - **`exact`** — pinned to one definition. Trusted.
@@ -48,7 +48,7 @@ An empty precise result means "no *resolvable* callers," **not** "unused" —
 retry with `--fuzzy` before concluding a symbol is dead. And `explore` surfaces
 `ambiguous` dispatch hops — polymorphism that grep fundamentally cannot see.
 
-This is measurable: see [docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-codegraphs-differentiator)
+This is measurable: see [docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
 for the precise-vs-fuzzy false-positive methodology, and
 [docs/examples/resolution-walkthrough.md](docs/examples/resolution-walkthrough.md)
 for a worked example. Full design at
@@ -57,33 +57,33 @@ for a worked example. Full design at
 ## Quick start
 
 ```bash
-pip install cg-intel
+pip install cairn-intel
 cg update                       # parse the workspace and build the graph
 cg def SomeSymbol               # find where a symbol is defined
 cg ask "how does auth work"     # natural-language query across all layers
 ```
 
-The graph lives under `~/.codegraph` by default (override with `CODEGRAPH_HOME`).
+The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
 
 ## Install for AI agents
 
-codegraph ships a stdio MCP server (`cg serve`). To wire it into your AI coding
+cairn ships a stdio MCP server (`cg serve`). To wire it into your AI coding
 clients (Claude Code, Cursor, Droid, ZCode, Claude Desktop, agy, opencode):
 
 ```bash
 cg install-agents
 ```
 
-This detects which clients are installed, shows whether codegraph is already
+This detects which clients are installed, shows whether cairn is already
 wired in, and interactively prompts you to choose:
 
 ```
 Client detection:
-  [✓] claude           claude CLI on PATH              codegraph: [ ] not installed
-  [✓] cursor           Cursor.app in /Applications     codegraph: [ ] not installed
-  [✓] zcode            ~/.zcode exists                 codegraph: [✓] installed
+  [✓] claude           claude CLI on PATH              cairn: [ ] not installed
+  [✓] cursor           Cursor.app in /Applications     cairn: [ ] not installed
+  [✓] zcode            ~/.zcode exists                 cairn: [✓] installed
 
-Install codegraph for which clients?
+Install cairn for which clients?
 Clients [claude,cursor]:
 
 Config scope:
@@ -94,7 +94,7 @@ Scope [workspace]:
 
 **Scope:** `workspace` (default) writes configs to the current project dir
 (`./.claude/`, `./.cursor/`); `global` writes to your home dir (`~/.claude/`,
-`~/.cursor/`) so all projects inherit codegraph without per-project setup.
+`~/.cursor/`) so all projects inherit cairn without per-project setup.
 
 Non-interactive flags for scripts/CI:
 
@@ -111,7 +111,7 @@ Or wire manually — the MCP config is:
 ```json
 {
   "mcpServers": {
-    "codegraph": {
+    "cairn": {
       "command": "cg",
       "args": ["serve"]
     }
@@ -133,8 +133,8 @@ The default install is dependency-light and network-free. Opt in with extras:
 
 | Extra | Adds | Key env var |
 |-------|------|-------------|
-| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CODEGRAPH_RERANK=1`; fusion is governed by `CODEGRAPH_FUSION` (default on) |
-| `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CODEGRAPH_ANN_BACKEND=sqlite-vec` |
+| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CAIRN_RERANK=1`; fusion is governed by `CAIRN_FUSION` (default on) |
+| `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[watch]` | `watchdog` — live graph rebuilds on filesystem change | — |
 
 ## Architecture (5 layers)
@@ -181,17 +181,17 @@ pytest -m core            # fast <3s smoke subset (one test per core function)
 Build a wheel + sdist for distribution:
 
 ```bash
-make dist        # → dist/cg_intel-<version>-py3-none-any.whl
+make dist        # → dist/cairn_intel-<version>-py3-none-any.whl
 ```
 
 Hand the `.whl` file to a teammate or upload to PyPI. Install from a wheel:
 
 ```bash
-uv tool install ./cg_intel-<version>-py3-none-any.whl
+uv tool install ./cairn_intel-<version>-py3-none-any.whl
 ```
 
 Semantic search deps (torch + sentence-transformers) are a one-time separate
-download that persists in `~/.codegraph/lib/` (survives reinstalls):
+download that persists in `~/.cairn/lib/` (survives reinstalls):
 
 ```bash
 cg embed --install-deps    # one-time: downloads bge-m3 (~836 MB)
@@ -213,7 +213,7 @@ The full suite (no marker) is the CI path.
 
 **Beta — pre-1.0 (v0.5.3).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
-[GitHub issues](https://github.com/tan-le/codegraph/issues).
+[GitHub issues](https://github.com/tan-le/cairn/issues).
 
 ## License
 

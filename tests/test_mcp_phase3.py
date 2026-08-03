@@ -10,17 +10,17 @@ import inspect
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVER_CORE = REPO_ROOT / "src" / "codegraph" / "mcp_server" / "_server_core.py"
-TOOLS_GRAPH = REPO_ROOT / "src" / "codegraph" / "mcp_server" / "tools_graph.py"
+SERVER_CORE = REPO_ROOT / "src" / "cairn" / "mcp_server" / "_server_core.py"
+TOOLS_GRAPH = REPO_ROOT / "src" / "cairn" / "mcp_server" / "tools_graph.py"
 
 
 class TestStatusResource:
-    """Phase 3.2: codegraph://status is a subscribable resource, not a tool."""
+    """Phase 3.2: cairn://status is a subscribable resource, not a tool."""
 
     def test_resource_is_registered(self):
         src = SERVER_CORE.read_text(encoding="utf-8")
-        assert '@mcp.resource("codegraph://status")' in src, (
-            "codegraph://status resource must be registered in _server_core.py"
+        assert '@mcp.resource("cairn://status")' in src, (
+            "cairn://status resource must be registered in _server_core.py"
         )
         assert "def status_resource" in src
 
@@ -48,7 +48,7 @@ class TestStructuredContent:
     """Phase 3.3: get_callers offers a structured= opt-in return."""
 
     def test_get_callers_has_structured_kwarg(self):
-        from codegraph.mcp_server.tools_graph import get_callers
+        from cairn.mcp_server.tools_graph import get_callers
 
         sig = inspect.signature(get_callers)
         assert "structured" in sig.parameters, (
@@ -60,11 +60,11 @@ class TestStructuredContent:
 
     def test_get_callers_data_returns_dict_shape(self):
         """The extracted structured core returns the documented fields."""
-        from codegraph.mcp_server.tools_graph import get_callers_data
+        from cairn.mcp_server.tools_graph import get_callers_data
 
         # Monkeypatch _conn to return a stub that yields no rows -- exercises
         # the empty path without needing a real graph DB.
-        import codegraph.mcp_server.tools_graph as tg
+        import cairn.mcp_server.tools_graph as tg
 
         class _StubConn:
             def close(self):
@@ -83,18 +83,18 @@ class TestStructuredContent:
             import types
 
             fake_queries = types.SimpleNamespace(get_callers=_StubQuery.get_callers)
-            # The function does `from codegraph.graph import queries` lazily --
+            # The function does `from cairn.graph import queries` lazily --
             # patch the resolved attribute.
-            import codegraph.graph
-            original_graph_queries = getattr(codegraph.graph, "queries", None)
-            codegraph.graph.queries = fake_queries
+            import cairn.graph
+            original_graph_queries = getattr(cairn.graph, "queries", None)
+            cairn.graph.queries = fake_queries
             try:
                 data = get_callers_data("missingSymbol")
             finally:
                 if original_graph_queries is not None:
-                    codegraph.graph.queries = original_graph_queries
+                    cairn.graph.queries = original_graph_queries
                 else:
-                    del codegraph.graph.queries
+                    del cairn.graph.queries
         finally:
             tg._conn = original_conn
 
@@ -107,7 +107,7 @@ class TestStructuredContent:
 
     def test_render_callers_empty_message_preserved(self):
         """The legacy prose path keeps the empty-result next-step hint."""
-        from codegraph.mcp_server.tools_graph import _render_callers
+        from cairn.mcp_server.tools_graph import _render_callers
 
         msg = _render_callers({"symbol": "x", "count": 0, "used_fallback": False,
                                "hit_limit": False, "stale_banner": "", "callers": []})
@@ -121,7 +121,7 @@ class TestStructuredContent:
 
     def test_structured_models_validate_data_helper_output(self):
         """Each Pydantic model accepts the dict its *_data helper produces."""
-        from codegraph.mcp_server.structured import (
+        from cairn.mcp_server.structured import (
             GetCallersResult,
             GetCalleesResult,
             SearchSymbolsResult,
@@ -178,7 +178,7 @@ class TestStructuredContent:
         impact_analysis all expose the structured= opt-in."""
         import inspect
 
-        from codegraph.mcp_server import tools_graph
+        from cairn.mcp_server import tools_graph
 
         tools = [
             tools_graph.get_callers,
@@ -198,7 +198,7 @@ class TestStructuredContent:
 
     def test_each_tool_has_extracted_data_and_render_helpers(self):
         """The structured core + prose renderer were extracted per tool."""
-        from codegraph.mcp_server import tools_graph
+        from cairn.mcp_server import tools_graph
 
         # (data helper, render helper) pairs -- one per refactored tool.
         pairs = [
@@ -214,14 +214,14 @@ class TestStructuredContent:
             assert callable(getattr(tools_graph, render_fn))
 
     def test_render_callees_empty_message_preserved(self):
-        from codegraph.mcp_server.tools_graph import _render_callees
+        from cairn.mcp_server.tools_graph import _render_callees
 
         msg = _render_callees({"symbol": "x", "count": 0, "used_fallback": False,
                                "hit_limit": False, "callees": []})
         assert "No callees found" in msg
 
     def test_render_search_symbols_empty_message_preserved(self):
-        from codegraph.mcp_server.tools_graph import _render_search_symbols
+        from cairn.mcp_server.tools_graph import _render_search_symbols
 
         msg = _render_search_symbols({"pattern": "x", "count": 0, "truncated": False,
                                       "symbols": []})
@@ -229,7 +229,7 @@ class TestStructuredContent:
 
     def test_render_impact_analysis_round_trips(self):
         """The impact renderer reconstructs the prose from structured data."""
-        from codegraph.mcp_server.tools_graph import _render_impact_analysis
+        from cairn.mcp_server.tools_graph import _render_impact_analysis
 
         data = {
             "symbol": "Foo.bar",
@@ -251,13 +251,13 @@ class TestLifespan:
     """Phase 3.4: FastMCP is constructed with the lifespan pattern."""
 
     def test_app_context_dataclass_exists(self):
-        from codegraph.mcp_server._server_core import AppContext
+        from cairn.mcp_server._server_core import AppContext
 
         fields = {f.name for f in __import__("dataclasses").fields(AppContext)}
         assert {"db_path", "knowledge_path", "read_only"}.issubset(fields)
 
     def test_app_lifespan_is_async_context_manager(self):
-        from codegraph.mcp_server._server_core import app_lifespan
+        from cairn.mcp_server._server_core import app_lifespan
 
         # @asynccontextmanager wraps the generator; the result is an
         # async context manager callable.
@@ -266,6 +266,6 @@ class TestLifespan:
     def test_fastmcp_constructed_with_lifespan(self):
         """The server passes app_lifespan to FastMCP()."""
         src = SERVER_CORE.read_text(encoding="utf-8")
-        assert 'FastMCP("codegraph", lifespan=app_lifespan)' in src, (
+        assert 'FastMCP("cairn", lifespan=app_lifespan)' in src, (
             "FastMCP must be constructed with lifespan=app_lifespan (Phase 3.4)"
         )

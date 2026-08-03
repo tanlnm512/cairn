@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from codegraph.compass.critic import (
+from cairn.compass.critic import (
     _extract_file_refs,
     _extract_symbol_refs,
     _file_exists,
     _symbol_exists,
     critic_concept,
 )
-from codegraph.okf.concept import OKFConcept
+from cairn.okf.concept import OKFConcept
 
 
 def _seed_fixture(conn: sqlite3.Connection) -> None:

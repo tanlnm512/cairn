@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from codegraph.graph.schema import get_build_db, backup_to
+from cairn.graph.schema import get_build_db, backup_to
 
 
 def test_backup_to_writes_to_temp_then_atomic_swap(tmp_path):
