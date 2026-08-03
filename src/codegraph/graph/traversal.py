@@ -1,0 +1,427 @@
+"""Graph traversal: symbol lookup and caller/callee/impact queries.
+
+All functions take a sqlite3.Connection (from schema.get_db) and return
+sqlite3.Row objects (dict-like). The "structural traversal" half -- everything
+that walks the edges table rather than running search or analytics.
+"""
+from __future__ import annotations
+
+import sqlite3
+from typing import List, Optional, Tuple
+
+
+# Edge kinds that represent in-codebase structural relationships — the ones
+# blast-radius / flow tracing should follow by default. Service/topology edge
+# kinds (http_call, service_call) are excluded by default because their targets
+# are often external (a URL or another service), and including them would
+# inflate impact estimates — contradicting the precise-by-default identity.
+# Callers can opt in via ``include_service_edges=True``.
+#
+# Both ``"calls"`` (tree-sitter parsers) and ``"call"`` (the SCIP importer,
+# which uses the singular form) are included — the two conventions coexist in
+# the codebase and both represent the same structural relationship.
+STRUCTURAL_EDGE_KINDS: Tuple[str, ...] = ("calls", "call", "extends", "implements")
+
+
+def find_definition(conn: sqlite3.Connection, name: str, limit: int = 50) -> List[sqlite3.Row]:
+    """Find symbols matching `name`. Exact match on name first, then
+    qualified_name, then a prefix/substring match. Ordered by best match.
+    """
+    cur = conn.cursor()
+    # Exact name match.
+    exact = cur.execute(
+        """SELECT s.*, f.path AS file_path, f.repo_id AS repo
+           FROM symbols s JOIN files f ON s.file_id = f.id
+           WHERE s.name = ? ORDER BY s.kind LIMIT ?""",
+        (name, limit),
+    ).fetchall()
+    if exact:
+        return list(exact)
+
+    # Qualified name exact match (e.g. "ApiFactory.create").
+    qual = cur.execute(
+        """SELECT s.*, f.path AS file_path, f.repo_id AS repo
+           FROM symbols s JOIN files f ON s.file_id = f.id
+           WHERE s.qualified_name = ? LIMIT ?""",
+        (name, limit),
+    ).fetchall()
+    if qual:
+        return list(qual)
+
+    # Fuzzy: substring on name.
+    fuzzy = cur.execute(
+        """SELECT s.*, f.path AS file_path, f.repo_id AS repo
+           FROM symbols s JOIN files f ON s.file_id = f.id
+           WHERE s.name LIKE ? ORDER BY s.kind LIMIT ?""",
+        (f"%{name}%", limit),
+    ).fetchall()
+    return list(fuzzy)
+
+
+def get_callers(
+    conn: sqlite3.Connection,
+    name: str,
+    limit: int = 200,
+    fuzzy: bool = False,
+    kind: Optional[str] = None,
+) -> List[sqlite3.Row]:
+    """Return edges whose target is a symbol named `name`.
+
+    Precise mode (default, ``fuzzy=False``): only edges whose ``target_id`` is
+    resolved to a symbol named `name`. These are edges the resolver could pin
+    to exactly one definition, so there are no false positives from homonymous
+    methods.
+
+    Fuzzy mode (``fuzzy=True``): also matches edges whose ``target_name`` equals
+    ``name`` (the pre-resolution behavior). Useful when you deliberately want
+    *every* call site of a common name including unresolved ones (e.g. tracing
+    all ``.let`` usages), at the cost of mixing symbols that merely share a name.
+
+    ``kind`` (optional) filters by edge kind (e.g. ``"http_call"``,
+    ``"service_call"``). Cheap — ``edges.kind`` is indexed. ``None`` returns
+    all kinds (the historical behavior).
+
+    Joins edges -> source symbol -> file so each row reports the caller symbol,
+    its file:line, and repo.
+    """
+    cur = conn.cursor()
+    kind_clause = "AND e.kind = ?" if kind else ""
+    kind_params: Tuple[str, ...] = (kind,) if kind else ()
+    if fuzzy:
+        rows = cur.execute(
+            f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
+                      s.name AS caller_name, s.kind AS caller_kind, s.id AS caller_id,
+                      f.path AS file_path, f.repo_id AS repo, e.resolution AS resolution
+               FROM edges e
+               JOIN symbols s ON e.source_id = s.id
+               JOIN files f ON s.file_id = f.id
+               WHERE (e.target_name = ?
+                  OR e.target_id IN (SELECT id FROM symbols WHERE name = ?))
+                  {kind_clause}
+               LIMIT ?""",
+            (name, name, *kind_params, limit),
+        ).fetchall()
+    else:
+        rows = cur.execute(
+            f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
+                      s.name AS caller_name, s.kind AS caller_kind, s.id AS caller_id,
+                      f.path AS file_path, f.repo_id AS repo, e.resolution AS resolution
+               FROM edges e
+               JOIN symbols s ON e.source_id = s.id
+               JOIN files f ON s.file_id = f.id
+               WHERE e.target_id IN (SELECT id FROM symbols WHERE name = ?)
+                  {kind_clause}
+               LIMIT ?""",
+            (name, *kind_params, limit),
+        ).fetchall()
+    return list(rows)
+
+
+def get_callees(
+    conn: sqlite3.Connection,
+    name: str,
+    limit: int = 200,
+    fuzzy: bool = False,
+    kind: Optional[str] = None,
+) -> List[sqlite3.Row]:
+    """Return edges whose source is a symbol named `name` (what it calls).
+
+    Precise mode (default): only edges with a resolved ``target_id``. Fuzzy
+    mode also returns unresolved outgoing calls (named-only), which is useful
+    for exploring a function's behavior including stdlib/external calls.
+
+    ``kind`` (optional) filters by edge kind (e.g. ``"http_call"``,
+    ``"service_call"``). ``None`` returns all kinds.
+    """
+    cur = conn.cursor()
+    target_clause = "" if fuzzy else "AND e.target_id IS NOT NULL"
+    kind_clause = "AND e.kind = ?" if kind else ""
+    kind_params: Tuple[str, ...] = (kind,) if kind else ()
+    rows = cur.execute(
+        f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
+                   COALESCE(t.name, e.target_name) AS callee_name,
+                   COALESCE(t.kind, 'unknown') AS callee_kind,
+                   e.target_id AS resolved,
+                   e.resolution AS resolution,
+                   f.path AS file_path, f.repo_id AS repo
+            FROM edges e
+            JOIN symbols s ON e.source_id = s.id
+            JOIN files f ON s.file_id = f.id
+            LEFT JOIN symbols t ON e.target_id = t.id
+            WHERE s.name = ? {target_clause} {kind_clause}
+            LIMIT ?""",
+        (name, *kind_params, limit),
+    ).fetchall()
+    return list(rows)
+
+
+def impact_analysis(
+    conn: sqlite3.Connection,
+    name: str,
+    max_depth: int = 10,
+    fuzzy: bool = False,
+    limit: int = 500,
+    include_service_edges: bool = False,
+) -> dict:
+    """Recursive caller traversal with cycle detection.
+
+    Visits each symbol name at most once (BFS by name) to avoid exponential
+    blow-up in heavily interconnected call graphs. Genuine back-edges (a caller
+    already on the current DFS path) are reported as cycles.
+
+    Precise mode (default) only walks resolved edges, so blast-radius is not
+    inflated by name collisions. Use ``fuzzy=True`` to also follow unresolved
+    name-only edges (broader but noisier).
+
+    By default only **structural** edges (``calls``, ``extends``, ``implements``)
+    are followed — service/topology edges (``http_call``, ``service_call``) are
+    excluded because their targets are often external and would inflate impact.
+    Pass ``include_service_edges=True`` to follow them too.
+
+    ``limit`` caps the total accumulated impacted rows (default 500) -- once
+    hit, traversal stops early rather than continuing to walk a common name's
+    call graph to exhaustion. ``truncated`` in the return dict flags this.
+
+    Returns {impacted: [...], cycles: [...], total: int, truncated: bool}.
+    Each impacted entry: {symbol, file, repo, depth}.
+    """
+    allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
+    visited = set()  # globally visited (by name) — prevents re-traversal
+    on_path = set()  # current DFS path — for cycle detection
+    results = []
+    cycles_seen = set()
+    cycles = []
+    truncated = False
+
+    def traverse(sym_name: str, depth: int):
+        nonlocal truncated
+        if truncated:
+            return
+        if depth > max_depth:
+            return
+        if sym_name in on_path:
+            # Genuine back-edge: a caller that's already on our DFS path.
+            if sym_name not in cycles_seen:
+                cycles_seen.add(sym_name)
+                cycles.append({"symbol": sym_name, "depth": depth})
+            return
+        if sym_name in visited:
+            return  # already fully explored via another path
+        visited.add(sym_name)
+        on_path.add(sym_name)
+        callers = get_callers(conn, sym_name, fuzzy=fuzzy)
+        for c in callers:
+            # Filter to structural kinds unless the caller opted in to service
+            # edges. Done post-fetch because get_callers returns edge_kind and
+            # we may want multiple kinds (a tuple) — SQL IN-list would also work
+            # but the row set is already bounded by `limit`.
+            if allowed is not None and c["edge_kind"] not in allowed:
+                continue
+            if len(results) >= limit:
+                truncated = True
+                break
+            results.append(
+                {
+                    "symbol": c["caller_name"],
+                    "file": c["file_path"],
+                    "repo": c["repo"],
+                    "depth": depth,
+                }
+            )
+            traverse(c["caller_name"], depth + 1)
+        on_path.discard(sym_name)
+
+    traverse(name, 0)
+    return {
+        "impacted": results,
+        "cycles": cycles,
+        "total": len(results),
+        "truncated": truncated,
+    }
+
+
+def find_definition_by_id(conn: sqlite3.Connection, sym_id: str) -> List[sqlite3.Row]:
+    """Find a symbol by its database ID. Returns at most one row.
+
+    Used to disambiguate name collisions (e.g. multiple ``handleCommand``
+    methods) when tracing flows by ID rather than by name.
+    """
+    cur = conn.cursor()
+    return list(cur.execute(
+        """SELECT s.*, f.path AS file_path, f.repo_id AS repo
+           FROM symbols s JOIN files f ON s.file_id = f.id
+           WHERE s.id = ? LIMIT 1""",
+        (sym_id,),
+    ).fetchall())
+
+
+def trace_flow(
+    conn: sqlite3.Connection,
+    entry: str,
+    max_depth: int = 8,
+    limit: int = 500,
+    fuzzy: bool = False,
+    entry_id: Optional[str] = None,
+    include_service_edges: bool = False,
+) -> dict:
+    """Downward callee traversal from an entry symbol — the flow it executes.
+
+    The inverse of :func:`impact_analysis` (which walks *callers* upward and
+    returns a flat set): this walks *callees* downward and records the actual
+    ordered call chain, so the output is a readable trace of what happens when
+    ``entry`` runs — ``entry -> A -> B -> C`` — across files and modules.
+
+    BFS by symbol name (each name visited once) with the same cycle detection
+    and ``limit`` cap as ``impact_analysis``, so a handler that fans out to
+    dozens of callees can't explode. Branch points (a symbol with >1 distinct
+    callee) and leaves (terminal callees with no further calls) are surfaced
+    separately — both are the structural signals a "flow compass" cares about.
+
+    By default only **structural** edges (``calls``, ``extends``, ``implements``)
+    are followed — service/topology edges (``http_call``, ``service_call``) are
+    excluded by default to keep the flow trace focused on in-codebase behavior.
+    Pass ``include_service_edges=True`` to follow them too.
+
+    Args:
+        entry: the entry-point symbol name (an HTTP handler, CLI command,
+            Activity.onCreate, ...). Resolved via :func:`get_callees`.
+        max_depth: deepest call hop to follow (default 8).
+        limit: total nodes cap, after which traversal stops (default 500).
+        fuzzy: when True, also follow unresolved name-only outgoing calls
+            (broader but noisier — same semantics as ``get_callees``).
+        entry_id: optional symbol database ID. When set, the seed symbol is
+            resolved by ID (via :func:`find_definition_by_id`) instead of by
+            name — disambiguates collisions like multiple ``handleCommand``
+            methods. Downstream callees are already resolved by ``target_id``
+            in the edges table, so only the seed needs ID-based lookup.
+        include_service_edges: when True, also follow ``http_call``/
+            ``service_call`` edges (default False — they're often external).
+
+    Returns::
+
+        {
+          "entry": str,
+          "chain": [                       # ordered, depth-tagged
+             {"symbol", "kind", "file", "repo", "depth", "parent"},
+             ...
+          ],
+          "branches": [                    # symbols that fan out >1 callee
+             {"symbol", "callees": [names]},
+          ],
+          "leaves": [str],                 # terminal callees (no further calls)
+          "modules": [str],                # distinct file dirs touched
+          "cycles": [{"symbol", "depth"}],
+          "total": int,
+          "truncated": bool,
+        }
+    """
+    allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
+    visited: dict[str, dict] = {}   # name -> chain entry (first-seen wins)
+    on_path: set[str] = set()       # current BFS path — cycle detection
+    branches: list[dict] = []
+    leaves: list[str] = []
+    cycles: list[dict] = []
+    cycles_seen: set[str] = set()
+    truncated = False
+
+    # Seed the chain with the entry symbol itself.
+    if entry_id:
+        entry_row = find_definition_by_id(conn, entry_id)
+    else:
+        entry_row = find_definition(conn, entry, limit=1)
+    entry_file = entry_row[0]["file_path"] if entry_row else ""
+    entry_repo = entry_row[0]["repo"] if entry_row else ""
+    entry_kind = entry_row[0]["kind"] if entry_row else "function"
+    visited[entry] = {
+        "symbol": entry, "kind": entry_kind, "file": entry_file,
+        "repo": entry_repo, "depth": 0, "parent": None,
+    }
+
+    def walk(sym_name: str, depth: int):
+        nonlocal truncated
+        if truncated or depth >= max_depth:
+            return
+        if sym_name in on_path:
+            if sym_name not in cycles_seen:
+                cycles_seen.add(sym_name)
+                cycles.append({"symbol": sym_name, "depth": depth})
+            return
+
+        on_path.add(sym_name)
+        callees = get_callees(conn, sym_name, limit=50, fuzzy=fuzzy)
+
+        if not callees:
+            if sym_name != entry:
+                leaves.append(sym_name)
+            on_path.discard(sym_name)
+            return
+
+        # Dedup callees by name within this hop (one edge per target name).
+        seen_callees: set[str] = set()
+        outgoing: list[str] = []
+        for c in callees:
+            # Skip service/topology edges unless opted in (see STRUCTURAL_EDGE_KINDS).
+            if allowed is not None and c["edge_kind"] not in allowed:
+                continue
+            cname = c["callee_name"]
+            if not cname or cname in seen_callees:
+                continue
+            seen_callees.add(cname)
+            outgoing.append(cname)
+            if len(visited) >= limit:
+                truncated = True
+                break
+            if cname not in visited:
+                # Resolve the callee's DEFINITION location (not the call site).
+                # get_callees returns the caller's file; find_definition gives
+                # us where the symbol is actually declared — which is what a
+                # flow reader wants ("where does this step live").
+                defn = find_definition(conn, cname, limit=1)
+                if defn:
+                    d = defn[0]
+                    cfile = d["file_path"]
+                    crepo = d["repo"]
+                    ckind = d["kind"]
+                else:
+                    cfile = c["file_path"]
+                    crepo = c["repo"]
+                    ckind = c["callee_kind"]
+                visited[cname] = {
+                    "symbol": cname,
+                    "kind": ckind,
+                    "file": cfile,
+                    "repo": crepo,
+                    "depth": depth + 1,
+                    "parent": sym_name,
+                }
+            walk(cname, depth + 1)
+
+        if len(outgoing) > 1:
+            branches.append({"symbol": sym_name, "callees": outgoing})
+
+        on_path.discard(sym_name)
+
+    walk(entry, 0)
+
+    chain = sorted(visited.values(), key=lambda x: (x["depth"], x["symbol"]))
+
+    # Derive distinct modules (file dir, repo-relative-ish) from the chain.
+    dirs: set[str] = set()
+    for node in chain:
+        f = node["file"] or ""
+        if f:
+            parts = f.split("/")
+            # Take last 2 meaningful segments as the module hint.
+            mod = "/".join(parts[-3:-1]) if len(parts) >= 3 else parts[-2] if len(parts) >= 2 else f
+            dirs.add(f"{node['repo']}/{mod}" if node["repo"] else mod)
+
+    return {
+        "entry": entry,
+        "chain": chain,
+        "branches": branches,
+        "leaves": sorted(set(leaves)),
+        "modules": sorted(dirs),
+        "cycles": cycles,
+        "total": len(chain),
+        "truncated": truncated,
+    }

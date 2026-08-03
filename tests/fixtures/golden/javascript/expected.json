@@ -1,0 +1,113 @@
+{
+  "language": "javascript",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "sample.BaseEntity",
+      "line_start": 8,
+      "line_end": 12,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "sample.User",
+      "line_start": 14,
+      "line_end": 28,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "constructor",
+      "kind": "method",
+      "qualified_name": "sample.BaseEntity.constructor",
+      "line_start": 9,
+      "line_end": 11,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "constructor",
+      "kind": "method",
+      "qualified_name": "sample.User.constructor",
+      "line_start": 15,
+      "line_end": 19,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "sample.User.helperCall",
+      "line_start": 25,
+      "line_end": 27,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "sample.User.process",
+      "line_start": 21,
+      "line_end": 23,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "variable",
+      "qualified_name": "sample.Status",
+      "line_start": 3,
+      "line_end": 6,
+      "column_start": 6,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "BaseEntity",
+      "line": 14,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 22,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "events",
+      "line": 1
+    }
+  ]
+}

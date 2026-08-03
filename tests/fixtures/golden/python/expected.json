@@ -1,0 +1,145 @@
+{
+  "language": "python",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "BaseEntity",
+      "line_start": 9,
+      "line_end": 11,
+      "column_start": 0,
+      "column_end": 24,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "class",
+      "qualified_name": "Status",
+      "line_start": 5,
+      "line_end": 7,
+      "column_start": 0,
+      "column_end": 25,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "User",
+      "line_start": 13,
+      "line_end": 23,
+      "column_start": 0,
+      "column_end": 39,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "__init__",
+      "kind": "method",
+      "qualified_name": "BaseEntity.__init__",
+      "line_start": 10,
+      "line_end": 11,
+      "column_start": 4,
+      "column_end": 24,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "__init__",
+      "kind": "method",
+      "qualified_name": "User.__init__",
+      "line_start": 14,
+      "line_end": 17,
+      "column_start": 4,
+      "column_end": 35,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helper_call",
+      "kind": "method",
+      "qualified_name": "User.helper_call",
+      "line_start": 22,
+      "line_end": 23,
+      "column_start": 4,
+      "column_end": 39,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "User.process",
+      "line_start": 19,
+      "line_end": 20,
+      "column_start": 4,
+      "column_end": 42,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "Status",
+      "kind": "implements",
+      "target_name": "Enum",
+      "line": 5,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "BaseEntity",
+      "line": 13,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "__init__",
+      "kind": "calls",
+      "target_name": "__init__",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "__init__",
+      "kind": "calls",
+      "target_name": "super",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "calls",
+      "target_name": "helper_call",
+      "line": 20,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "from enum import Enum",
+      "line": 2
+    },
+    {
+      "imported_path": "from typing import Optional",
+      "line": 3
+    },
+    {
+      "imported_path": "import os",
+      "line": 1
+    }
+  ]
+}

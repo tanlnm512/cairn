@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "cg",
+      "args": ["serve"]
+    }
+  }
+}

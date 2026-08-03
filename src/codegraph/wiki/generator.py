@@ -1,0 +1,108 @@
+"""Wiki generation (Layer 2).
+
+Produces a graph-derived architectural summary per repo -- OKF concepts of
+type Wiki-Architecture, built from graph statistics (symbol-kind
+distribution, most-referenced classes, cross-repo deps). Deterministic, no
+LLM call, no external process: this is the reliable baseline, not a fallback.
+
+Like the compass generators, wiki bodies are critic-checked: the deterministic
+critic verifies backtick-quoted file/symbol references against the L1 graph.
+A wiki body with broken references (e.g. citing a renamed symbol after a
+stale build) carries ``errors`` and is surfaced by the CLI; by default the
+write still proceeds (wiki is graph-sourced and low-hallucination-risk), but
+the critic verdict is returned for transparency.
+"""
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime, timezone
+from typing import List, Tuple
+
+from ..compass.critic import CriticResult, critic_concept
+from ..graph.queries import cross_repo_deps, get_stats
+from ..okf.bundle import OKFBundle
+from ..okf.concept import OKFConcept
+
+
+def generate_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) -> List[OKFConcept]:
+    """Generate wiki concepts for a repo (graph-derived architecture summary)."""
+    concepts, _ = generate_wiki_with_critic(repo, conn, bundle)
+    return concepts
+
+
+def generate_wiki_with_critic(
+    repo: str, conn: sqlite3.Connection, bundle: OKFBundle
+) -> Tuple[List[OKFConcept], List[CriticResult]]:
+    """Generate wiki concepts and run the critic on each.
+
+    Returns ``(concepts, critic_results)`` aligned by index. The critic is
+    informational here (graph-derived bodies rarely fail), but its verdict is
+    returned so callers can surface warnings or block on hard errors.
+    """
+    concepts = _graph_derived_wiki(repo, conn, bundle)
+    results = [critic_concept(c, conn) for c in concepts]
+    return concepts, results
+
+
+def _graph_derived_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) -> List[OKFConcept]:
+    """Produce a graph-derived architecture wiki for a repo."""
+    cur = conn.cursor()
+    stats = get_stats(conn)
+    deps = cross_repo_deps(conn, repo)
+
+    # Dominant patterns: count classes vs interfaces vs enums.
+    by_kind = cur.execute(
+        "SELECT s.kind, COUNT(*) AS c FROM symbols s JOIN files f ON s.file_id=f.id "
+        "WHERE f.repo_id = ? GROUP BY s.kind ORDER BY c DESC",
+        (repo,),
+    ).fetchall()
+
+    # Top classes by incoming edges (likely core abstractions).
+    top_classes = cur.execute(
+        """SELECT s.name, COUNT(e.id) AS incoming
+           FROM symbols s
+           LEFT JOIN edges e ON e.target_id = s.id
+           JOIN files f ON s.file_id = f.id
+           WHERE f.repo_id = ? AND s.kind IN ('class','interface')
+           GROUP BY s.id ORDER BY incoming DESC LIMIT 10""",
+        (repo,),
+    ).fetchall()
+
+    body_parts = [f"# {repo} Architecture\n"]
+    body_parts.append(f"## Overview\n")
+    body_parts.append(
+        f"{repo} contains {stats['by_repo'].get(repo, 0)} symbols across "
+        f"{sum(1 for _ in cur.execute('SELECT 1 FROM files WHERE repo_id=?',(repo,)))} files.\n"
+    )
+    body_parts.append("\n## Symbol Distribution\n")
+    for r in by_kind:
+        body_parts.append(f"- {r['kind']}: {r['c']}")
+    body_parts.append("\n## Core Abstractions (most-referenced classes)\n")
+    for r in top_classes:
+        body_parts.append(f"- `{r['name']}` ({r['incoming']} incoming references)")
+    body_parts.append("\n## Cross-Repo Dependencies\n")
+    if deps["dependencies"]:
+        body_parts.append("Depends on:")
+        for d in deps["dependencies"]:
+            body_parts.append(f"- {d['repo']} ({d['evidence']}, x{d['count']})")
+    else:
+        body_parts.append("(no cross-repo dependencies detected)")
+    body_parts.append("\n## Dependents\n")
+    if deps["dependents"]:
+        for d in deps["dependents"]:
+            body_parts.append(f"- {d['repo']} (x{d['count']})")
+    else:
+        body_parts.append("(none)")
+
+    body = "\n".join(body_parts) + "\n"
+    concept = OKFConcept(
+        type="Wiki-Architecture",
+        title=f"{repo} Architecture",
+        description=f"Graph-derived architectural overview of {repo}",
+        resource=repo,
+        tags=[repo, "architecture"],
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        concept_id=f"wiki/architecture/{repo}",
+        body=body,
+    )
+    return [concept]

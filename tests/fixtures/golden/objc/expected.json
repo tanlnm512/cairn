@@ -1,0 +1,299 @@
+{
+  "language": "objc",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "sample.BaseEntity",
+      "line_start": 12,
+      "line_end": 15,
+      "column_start": 0,
+      "column_end": 4,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "sample.BaseEntity",
+      "line_start": 17,
+      "line_end": 25,
+      "column_start": 0,
+      "column_end": 4,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "sample.User",
+      "line_start": 27,
+      "line_end": 32,
+      "column_start": 0,
+      "column_end": 4,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "sample.User",
+      "line_start": 34,
+      "line_end": 51,
+      "column_start": 0,
+      "column_end": 4,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "sample.User.helperCall",
+      "line_start": 48,
+      "line_end": 50,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "initWithId",
+      "kind": "method",
+      "qualified_name": "sample.User.initWithId",
+      "line_start": 30,
+      "line_end": 30,
+      "column_start": 0,
+      "column_end": 64,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "initWithId",
+      "kind": "method",
+      "qualified_name": "sample.User.initWithId",
+      "line_start": 35,
+      "line_end": 42,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "initWithName",
+      "kind": "method",
+      "qualified_name": "sample.BaseEntity.initWithName",
+      "line_start": 14,
+      "line_end": 14,
+      "column_start": 0,
+      "column_end": 46,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "initWithName",
+      "kind": "method",
+      "qualified_name": "sample.BaseEntity.initWithName",
+      "line_start": 18,
+      "line_end": 24,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "sample.User.process",
+      "line_start": 31,
+      "line_end": 31,
+      "column_start": 0,
+      "column_end": 22,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "sample.User.process",
+      "line_start": 44,
+      "line_end": 46,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "instance_method"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "id",
+      "kind": "property",
+      "qualified_name": "sample.Identifiable.id",
+      "line_start": 4,
+      "line_end": 4,
+      "column_start": 0,
+      "column_end": 41,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "id",
+      "kind": "property",
+      "qualified_name": "sample.User.id",
+      "line_start": 28,
+      "line_end": 28,
+      "column_start": 0,
+      "column_end": 41,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "name",
+      "kind": "property",
+      "qualified_name": "sample.BaseEntity.name",
+      "line_start": 13,
+      "line_end": 13,
+      "column_start": 0,
+      "column_end": 43,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "status",
+      "kind": "property",
+      "qualified_name": "sample.User.status",
+      "line_start": 29,
+      "line_end": 29,
+      "column_start": 0,
+      "column_end": 44,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Identifiable",
+      "kind": "protocol",
+      "qualified_name": "sample.Identifiable",
+      "line_start": 3,
+      "line_end": 5,
+      "column_start": 0,
+      "column_end": 4,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "BaseEntity",
+      "kind": "extends",
+      "target_name": "NSObject",
+      "line": 12,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "Identifiable",
+      "kind": "extends",
+      "target_name": "NSObject",
+      "line": 3,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "BaseEntity",
+      "line": 27,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "Identifiable",
+      "line": 27,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "helperCall",
+      "kind": "calls",
+      "target_name": "stringWithFormat",
+      "line": 49,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "initWithId",
+      "kind": "calls",
+      "target_name": "copy",
+      "line": 38,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "initWithId",
+      "kind": "calls",
+      "target_name": "initWithName",
+      "line": 36,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "initWithName",
+      "kind": "calls",
+      "target_name": "copy",
+      "line": 21,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "initWithName",
+      "kind": "calls",
+      "target_name": "init",
+      "line": 19,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 45,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "Foundation/Foundation.h",
+      "line": 1
+    }
+  ]
+}

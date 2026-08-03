@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cg-intel"
+version = "0.5.3"
+description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "Tan Le"},
+]
+keywords = ["code-intelligence", "tree-sitter", "mcp", "knowledge-graph", "code-graph"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "tree-sitter==0.26.0",
+    "tree-sitter-kotlin==1.1.0",
+    "tree-sitter-java==0.23.5",
+    "tree-sitter-python==0.23.6",
+    "tree-sitter-swift==0.7.3",
+    "tree-sitter-typescript==0.23.2",
+    "tree-sitter-javascript==0.23.0",
+    "tree-sitter-dart==0.1.0",
+    "tree-sitter-objc==3.0.2",
+    "tree-sitter-go==0.25.0",
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "mcp>=0.9.0,<2.0.0",  # SSE/streamable-http + uvicorn/starlette are core deps in mcp>=0.9; the legacy [sse] extra was removed upstream
+    "pathspec>=0.12",
+    "sqlite-vec>=0.1.0",
+    # Progress display: spinners, progress bars, ETA/rate, themed tables.
+    # Pure-Python, no network/torch -- keeps the default install lightweight.
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+watch = ["watchdog>=3.0"]
+test = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "watchdog>=3.0", "build"]
+# Phase 7: semantic search. Pulls torch (~hundreds of MB) via
+# sentence-transformers, hence strictly optional. The default install remains
+# zero-network and torch-free; `pip install cg-intel[semantic]` opts in.
+# numpy accelerates the cosine scan at scale (>10k embeddings); without it the
+# scan falls back to pure Python (correct, but slow on large corpora).
+# Phase 7b: this same dependency also provides CrossEncoder, so the optional
+# rerank stage (CODEGRAPH_RERANK=1, see src/graph/reranker.py) needs no
+# separate extra -- installing [semantic] is enough for both embeddings and
+# reranking.
+semantic = [
+    "sentence-transformers>=3.0",
+    "numpy>=1.24",
+]
+# Phase 7c: native ANN index for semantic_search (CODEGRAPH_ANN_BACKEND=
+# sqlite-vec, see src/graph/ann_index.py). Separate from [semantic] since it
+# only matters at real corpus scale -- the brute-force cosine scan is the
+# default and remains fine for small/medium repos. A small, self-contained
+# loadable SQLite extension (no torch, no native build step on supported
+# platforms), so this stays cheap even for users who don't want [semantic].
+ann = [
+    "sqlite-vec>=0.1.0",
+]
+
+[project.scripts]
+cg = "codegraph.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/tan-le/codegraph"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
+# so `cg install-agents` works from a wheel install, not just a source checkout.
+"codegraph.agent_integration" = ["**/*"]
+
+[tool.pytest.ini_options]
+# `core` marks the fast smoke subset (tests/test_core_smoke.py): one focused
+# test per core function across all 5 layers, runnable via `pytest -m core` for
+# a <3s feedback loop. The full suite (no marker) remains the CI path.
+markers = [
+    "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
+]

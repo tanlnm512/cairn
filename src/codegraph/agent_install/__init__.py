@@ -1,0 +1,318 @@
+"""Agent integration installer: wires codegraph into AI coding clients.
+
+Detects installed clients (Claude Code, Cursor, Droid/Factory, ZCode, agy,
+opencode, Claude Desktop) and writes their per-client configs — MCP server,
+skills, slash commands, subagents/droids, rules, and hooks — with paths
+resolved at install time. Configs are *generated* (not copied), pointing at
+the installed `cg` binary, so there are no hardcoded paths and no dependence
+on cwd at runtime.
+
+The knowledge model (per-workspace graph + .knowledge in ~/.codegraph) is
+unaffected; this package only writes client-facing config files.
+
+Package layout (per the agent_install split):
+- ``_common``   — constants (CLIENTS, _SLASH_COMMANDS), shared helpers,
+                  InstallResult, the shared mcp_config_json generator.
+- ``detect``    — Detection, detect_clients, claude_desktop_config_path.
+- ``merge``     — _deep_merge / _already_installed / _entry_present /
+                  _merge_json_file / _write_file / _write_tree + strip helpers.
+- ``clients/``  — one module per client, each owning its config schema +
+                  install + uninstall (no client imports a sibling client).
+- this module   — the public ``install()`` / ``uninstall()`` dispatch +
+                  cross-tool fallback, re-exporting the public surface so
+                  ``from codegraph.agent_install import install, uninstall,
+                  detect_clients, CLIENTS, Detection`` keeps working.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+# Public re-exports (single source of truth for the public API).
+from ._common import (
+    CLIENTS,
+    InstallResult,
+    _SLASH_COMMANDS,
+    mcp_config_json,
+    resolve_cg_command,
+    resolve_cg_str,
+)
+from .detect import (
+    Detection,
+    check_installed,
+    claude_desktop_config_path,
+    detect_clients,
+)
+from .merge import (
+    _already_installed,
+    _deep_merge,
+    _entry_present,
+    _merge_json_file,
+    _write_file,
+    _write_tree,
+)
+from .clients import claude as _claude
+from .clients import cursor as _cursor
+from .clients import droid as _droid
+from .clients import zcode as _zcode
+from .clients import agy as _agy
+from .clients import opencode as _opencode
+from .clients import claude_desktop as _claude_desktop
+
+# Per-client config generators (re-exported for backward compat — some callers
+# and tests import them by name from the top-level module).
+from .clients.zcode import zcode_mcp_config_json
+from .clients.opencode import opencode_mcp_config_json
+from .clients.claude_desktop import mcp_config_json_desktop
+from .clients.claude import claude_hooks_block
+from .clients.cursor import cursor_hooks_json
+
+# Per-client installers (importable from the top level).
+from .clients.claude import install_claude
+from .clients.claude_desktop import install_claude_desktop
+from .clients.cursor import install_cursor
+from .clients.droid import install_droid
+from .clients.zcode import install_zcode
+from .clients.agy import install_agy
+from .clients.opencode import install_opencode
+
+# Instruction-file builders (re-exported; test_agent_surface imports
+# _agents_instructions and also parses _INSTRUCTIONS_BODY from source).
+from ._common import (
+    _INSTRUCTIONS_BODY,
+    _agents_instructions,
+    _claude_instructions,
+)
+
+
+__all__ = [
+    # Public API
+    "install",
+    "uninstall",
+    "detect_clients",
+    "check_installed",
+    "Detection",
+    "CLIENTS",
+    "InstallReport",
+    "InstallResult",
+    # Path/command resolution
+    "resolve_cg_command",
+    "resolve_cg_str",
+    "claude_desktop_config_path",
+    # MCP config generators
+    "mcp_config_json",
+    "zcode_mcp_config_json",
+    "opencode_mcp_config_json",
+    "mcp_config_json_desktop",
+    # Hooks
+    "claude_hooks_block",
+    "cursor_hooks_json",
+    # Per-client installers
+    "install_claude",
+    "install_claude_desktop",
+    "install_cursor",
+    "install_droid",
+    "install_zcode",
+    "install_agy",
+    "install_opencode",
+]
+
+
+# --- Per-client install reach (what `cg install-agents` wires natively) ---
+# Verified against each client's documented discovery paths (see
+# specs/INTEGRATIONBOOK.md "Client support matrix" for sources). The cross-tool
+# `.agents/` fallback (install_cross_tool, always written) fills gaps for the
+# clients whose docs confirm `.agents/` discovery.
+#
+#   MCP   = MCP server config written to a path the client actually reads
+#   Skill = full skill package (SKILL.md + references/ + scripts/ + evals/)
+#   Cmds  = slash commands    Subs = subagents    Hooks = lifecycle hooks
+#
+#   claude          : MCP YES | Skill YES (.claude/skills/) | Cmds YES | Subs YES | Hooks YES   [FULL]
+#   droid           : MCP YES | Skill YES (.factory/skills/) | Cmds YES | Subs YES | Hooks YES  [FULL]
+#   zcode           : MCP YES | Skill YES (.zcode/skills/) | Cmds YES | Subs YES | Hooks via git [FULL-ish]
+#   cursor          : MCP YES | Skill FALLBACK (.agents/skills/ + .cursor/skills/ discovered;
+#                     native .mdc rules written too) | Subs YES (.cursor/subagents/) | Hooks YES  [rules-rich]
+#   opencode        : MCP YES (opencode.json, `mcp` key) | Skill FALLBACK (.agents/skills/
+#                     discovered) | Cmds/Subs NOT discovered (reads .opencode/commands/ +
+#                     opencode.json agents)  [MCP + skill-via-fallback]
+#   agy             : MCP YES (~/.gemini/config/mcp_config.json) -- Skill/Cmds/Subs/Hooks NOT
+#                     discovered (agy has no skill/command dirs)  [MCP-only]
+#   claude-desktop  : MCP YES (stdio only) -- no Skill/Cmds/Subs/Hooks (app is MCP-only)  [MCP-only]
+#
+# Net: the golden rules + tool-behaviors table reach claude/droid/zcode
+# natively, cursor/opencode via the .agents/ skill fallback, and
+# claude-desktop/agy NOT AT ALL (MCP tools work, but the agent gets no skill).
+
+
+@dataclass
+class InstallReport:
+    detections: list[Detection]
+    results: list[InstallResult]
+    cross_tool: Optional[InstallResult]
+    git_hooks_installed: list[str] = field(default_factory=list)
+    transport: str = "stdio"  # the transport actually used (after auto-detect)
+
+
+def _detect_default_transport(sse_url: str | None = None) -> str:
+    """Pick the transport for install when the caller didn't specify.
+
+    If the SSE daemon is running (probes http://127.0.0.1:{DEFAULT_PORT}/sse), default to
+    "sse" — this is what you almost always want once the daemon is up. Otherwise
+    fall back to "stdio" (safe for fresh installs with no daemon).
+    """
+    import socket
+
+    from ..mcp_server import lifecycle as lc
+
+    url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+    # Parse host:port out of the URL (minimal — no urllib to avoid edge cases).
+    # Expected forms: http://HOST:PORT/sse
+    try:
+        host_part = url.split("://", 1)[1].split("/", 1)[0]
+        host, port_s = host_part.rsplit(":", 1)
+        port = int(port_s)
+    except (IndexError, ValueError):
+        return "stdio"
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return "sse"
+    except OSError:
+        return "stdio"
+
+
+def install_cross_tool(workspace: str, force: bool, dry_run: bool = False) -> InstallResult:
+    """Always write the cross-tool .agents/ copies (shared skill + commands + agent).
+
+    These are discovered by both Claude Code, ZCode, and agy CLI as a fallback,
+    maximizing compatibility.
+    """
+    from ._common import (
+        _TEMPLATE_DIR,
+        _claude_agent_md,
+        _read_template,
+    )
+
+    ws = Path(workspace)
+    res = InstallResult("cross-tool")
+    _write_tree(ws / ".agents" / "skills" / "codegraph", _TEMPLATE_DIR / "skill", force, res, dry_run=dry_run)
+    for name in _SLASH_COMMANDS:
+        _write_file(ws / ".agents" / "commands" / f"{name}.md",
+                    _read_template(f"commands/{name}.md"), force, res, dry_run=dry_run)
+    _write_file(ws / ".agents" / "agents" / "codegraph-explorer.md",
+                _claude_agent_md(), force, res, dry_run=dry_run)
+    _write_file(ws / ".agents" / "agents" / "knowledge-steward.md",
+                _claude_agent_md("cursor/knowledge-steward.json"), force, res, dry_run=dry_run)
+    return res
+
+
+# Dispatch tables. The client key ("claude-desktop") maps to the per-client
+# module; each module owns install_<name> + uninstall(ws, res).
+_INSTALLERS = {
+    "claude": _claude.install_claude,
+    "claude-desktop": _claude_desktop.install_claude_desktop,
+    "cursor": _cursor.install_cursor,
+    "droid": _droid.install_droid,
+    "zcode": _zcode.install_zcode,
+    "agy": _agy.install_agy,
+    "opencode": _opencode.install_opencode,
+}
+
+_UNINSTALLERS = {
+    "claude": _claude.uninstall,
+    "claude-desktop": _claude_desktop.uninstall,
+    "cursor": _cursor.uninstall,
+    "droid": _droid.uninstall,
+    "zcode": _zcode.uninstall,
+    "agy": _agy.uninstall,
+    "opencode": _opencode.uninstall,
+}
+
+
+def install(
+    workspace: str,
+    clients: Optional[list[str]] = None,
+    force: bool = False,
+    dry_run: bool = False,
+    include_git_hooks: bool = False,
+    transport: str | None = None,
+    sse_url: str | None = None,
+    scope: str = "workspace",
+) -> InstallReport:
+    """Install codegraph agent integration.
+
+    ``scope`` controls where dual-scope clients (claude, cursor, zcode) write:
+    ``"workspace"`` (default) writes to ``./.claude/``, ``./.cursor/`` etc.;
+    ``"global"`` writes to ``~/.claude/``, ``~/.cursor/`` etc. Single-scope
+    clients (claude-desktop, agy) ignore the parameter.
+    """
+    if transport is None:
+        transport = _detect_default_transport(sse_url)
+
+    detections = detect_clients(workspace)
+    if clients:
+        bad = [c for c in clients if c not in CLIENTS + ["all"]]
+        if bad:
+            raise ValueError(f"Unknown clients: {bad}. Valid: {CLIENTS + ['all']}")
+        target = set(CLIENTS) if "all" in clients else set(clients)
+    else:
+        target = {d.client for d in detections if d.detected}
+
+    results: list[InstallResult] = []
+    for client in [c for c in CLIENTS if c in target]:
+        results.append(_INSTALLERS[client](
+            workspace, force, dry_run, transport=transport, sse_url=sse_url,
+            scope=scope,
+        ))
+
+    # Cross-tool .agents/ copies: always write when any client is targeted.
+    cross = install_cross_tool(workspace, force, dry_run=dry_run) if target else None
+
+    # Git hooks (optional; under --client all or explicit flag).
+    git_installed: list[str] = []
+    if include_git_hooks and target and not dry_run:
+        try:
+            from ..graph import scanner as scanner_mod
+            from ..hooks.git_hooks import install_hooks
+
+            repos = [r.name for r in scanner_mod.discover_repos(workspace)]
+            git_installed = install_hooks(repos, workspace)
+        except ValueError as e:
+            # Security guard (shell-injection repo-name check) rejected a repo.
+            # Surface it: otherwise a single bad name silently installs zero hooks.
+            print(f"warning: git hooks skipped — {e}")
+        except Exception as e:
+            # Filesystem/other errors are genuinely best-effort, but don't hide them.
+            print(f"warning: git hooks skipped — {e!r}")
+
+    return InstallReport(detections, results, cross, git_installed, transport=transport)
+
+
+def uninstall(workspace: str, clients: Optional[list[str]] = None) -> InstallReport:
+    """Remove codegraph entries from client configs. Idempotent."""
+    from ._common import _read_template  # noqa: F401  (kept for parity)
+    from .merge import _rm_if_codegraph
+
+    detections = detect_clients(workspace)
+    if clients:
+        target = set(CLIENTS) if "all" in clients else set(clients)
+    else:
+        target = {d.client for d in detections if d.detected}
+
+    ws = Path(workspace)
+    results: list[InstallResult] = []
+    for client in [c for c in CLIENTS if c in target]:
+        res = InstallResult(client)
+        _UNINSTALLERS[client](ws, res)
+        results.append(res)
+
+    # Cross-tool .agents/ copies.
+    cross = InstallResult("cross-tool")
+    _rm_if_codegraph(ws / ".agents" / "skills" / "codegraph" / "SKILL.md", cross)
+    for name in _SLASH_COMMANDS:
+        _rm_if_codegraph(ws / ".agents" / "commands" / f"{name}.md", cross)
+    _rm_if_codegraph(ws / ".agents" / "agents" / "codegraph-explorer.md", cross)
+    _rm_if_codegraph(ws / ".agents" / "agents" / "knowledge-steward.md", cross)
+
+    return InstallReport(detections, results, cross if target else None)

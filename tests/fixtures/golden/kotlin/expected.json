@@ -1,0 +1,155 @@
+{
+  "language": "kotlin",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "BaseEntity",
+      "line_start": 13,
+      "line_end": 13,
+      "column_start": 0,
+      "column_end": 44,
+      "docstring": null,
+      "modifiers": [
+        "open"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "User",
+      "line_start": 15,
+      "line_end": 25,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "enum",
+      "qualified_name": "Status",
+      "line_start": 9,
+      "line_end": 11,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Identifiable",
+      "kind": "interface",
+      "qualified_name": "Identifiable",
+      "line_start": 5,
+      "line_end": 7,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "User.helperCall",
+      "line_start": 22,
+      "line_end": 24,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "User.process",
+      "line_start": 18,
+      "line_end": 20,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "id",
+      "kind": "property",
+      "qualified_name": "User.id",
+      "line_start": 15,
+      "line_end": 15,
+      "column_start": 11,
+      "column_end": 34,
+      "docstring": null,
+      "modifiers": [
+        "override"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "name",
+      "kind": "property",
+      "qualified_name": "BaseEntity.name",
+      "line_start": 13,
+      "line_end": 13,
+      "column_start": 22,
+      "column_end": 43,
+      "docstring": null,
+      "modifiers": [
+        "open"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "name",
+      "kind": "property",
+      "qualified_name": "User.name",
+      "line_start": 15,
+      "line_end": 15,
+      "column_start": 36,
+      "column_end": 61,
+      "docstring": null,
+      "modifiers": [
+        "override"
+      ],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "BaseEntity",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "Identifiable",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 19,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "java.util.List",
+      "line": 3
+    }
+  ]
+}

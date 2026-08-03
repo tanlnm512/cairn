@@ -1,0 +1,183 @@
+{
+  "language": "java",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "BaseEntity",
+      "line_start": 13,
+      "line_end": 18,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "User",
+      "line_start": 20,
+      "line_end": 41,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "enum",
+      "qualified_name": "Status",
+      "line_start": 9,
+      "line_end": 11,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Identifiable",
+      "kind": "interface",
+      "qualified_name": "Identifiable",
+      "line_start": 5,
+      "line_end": 7,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "getId",
+      "kind": "method",
+      "qualified_name": "Identifiable.getId",
+      "line_start": 6,
+      "line_end": 6,
+      "column_start": 4,
+      "column_end": 19,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "getId",
+      "kind": "method",
+      "qualified_name": "User.getId",
+      "line_start": 29,
+      "line_end": 32,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "User.helperCall",
+      "line_start": 38,
+      "line_end": 40,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "User.process",
+      "line_start": 34,
+      "line_end": 36,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "id",
+      "kind": "property",
+      "qualified_name": "User.id",
+      "line_start": 21,
+      "line_end": 21,
+      "column_start": 4,
+      "column_end": 22,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "name",
+      "kind": "property",
+      "qualified_name": "BaseEntity.name",
+      "line_start": 14,
+      "line_end": 14,
+      "column_start": 4,
+      "column_end": 26,
+      "docstring": null,
+      "modifiers": [
+        "protected"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "status",
+      "kind": "property",
+      "qualified_name": "User.status",
+      "line_start": 22,
+      "line_end": 22,
+      "column_start": 4,
+      "column_end": 42,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "User",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 35,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "BaseEntity",
+      "line": 20,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "Identifiable",
+      "line": 20,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "java.util.List",
+      "line": 3
+    }
+  ]
+}

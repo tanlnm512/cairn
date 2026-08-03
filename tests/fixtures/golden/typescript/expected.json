@@ -1,0 +1,151 @@
+{
+  "language": "typescript",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "sample.BaseEntity",
+      "line_start": 12,
+      "line_end": 14,
+      "column_start": 7,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "sample.User",
+      "line_start": 16,
+      "line_end": 30,
+      "column_start": 7,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "enum",
+      "qualified_name": "sample.Status",
+      "line_start": 7,
+      "line_end": 10,
+      "column_start": 7,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Identifiable",
+      "kind": "interface",
+      "qualified_name": "sample.Identifiable",
+      "line_start": 3,
+      "line_end": 5,
+      "column_start": 7,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "constructor",
+      "kind": "method",
+      "qualified_name": "sample.BaseEntity.constructor",
+      "line_start": 13,
+      "line_end": 13,
+      "column_start": 4,
+      "column_end": 39,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "constructor",
+      "kind": "method",
+      "qualified_name": "sample.User.constructor",
+      "line_start": 19,
+      "line_end": 21,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "sample.User.helperCall",
+      "line_start": 27,
+      "line_end": 29,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "sample.User.process",
+      "line_start": 23,
+      "line_end": 25,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "status",
+      "kind": "property",
+      "qualified_name": "sample.User.status",
+      "line_start": 17,
+      "line_end": 17,
+      "column_start": 4,
+      "column_end": 41,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "BaseEntity",
+      "line": 16,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "Identifiable",
+      "line": 16,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 24,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "events",
+      "line": 1
+    }
+  ]
+}

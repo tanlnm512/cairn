@@ -1,0 +1,44 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+wheels/
+*.whl
+*.tar.gz
+
+# ---- Virtual envs ----
+.venv/
+venv/
+env/
+.python-version
+
+# ---- Test / coverage ----
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+
+# ---- codegraph runtime artifacts (from running `cg build` here) ----
+.kg
+.knowledge/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ---- OS ----
+Thumbs.db

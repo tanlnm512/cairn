@@ -1,0 +1,123 @@
+{
+  "language": "swift",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "BaseEntity",
+      "line_start": 12,
+      "line_end": 17,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "class"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "User",
+      "line_start": 19,
+      "line_end": 35,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "class"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "enum",
+      "qualified_name": "Status",
+      "line_start": 7,
+      "line_end": 10,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Identifiable",
+      "kind": "interface",
+      "qualified_name": "Identifiable",
+      "line_start": 3,
+      "line_end": 5,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "User.helperCall",
+      "line_start": 32,
+      "line_end": 34,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "process",
+      "kind": "method",
+      "qualified_name": "User.process",
+      "line_start": 28,
+      "line_end": 30,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "User",
+      "kind": "calls",
+      "target_name": "init",
+      "line": 25,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "BaseEntity",
+      "line": 19,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "Identifiable",
+      "line": 19,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 29,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "Foundation",
+      "line": 1
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+# Retrieval evaluation queries for codegraph (L1 code symbols and L5 knowledge concepts)
+# Used by `cg eval` to calculate Recall@10 and MRR across corpora.
+
+- query: "where do we handle retries and backoff on network requests"
+  corpus: L1
+  expect: [ParallelRetry, safeApiCall, retryPolicy]
+
+- query: "resolve tapped click into analytics element id and type"
+  corpus: L1
+  expect: [AutoTrackViewResolver, resolveComposeClickTarget, handleClick]
+
+- query: "symbol definition and AST parsing interface"
+  corpus: L1
+  expect: [BaseParser, Symbol, ParsedFile]
+
+- query: "read source file lines for symbol signature"
+  corpus: L1
+  expect: [_signature_lines_for_rows, chunk_for_symbol]
+
+- query: "reciprocal rank fusion implementation for hybrid search"
+  corpus: L1
+  expect: [rrf_fuse, semantic_search]
+
+- query: "tree sitter parser registry loading capsules"
+  corpus: L1
+  expect: [get_parser, _load_language_capsule]
+
+- query: "sqlite vector ANN index query and candidate lookup"
+  corpus: L1
+  expect: [ann_query, ann_backend_enabled]
+
+- query: "cross encoder reranker model initialization"
+  corpus: L1
+  expect: [rerank_enabled, rerank]
+
+- query: "parse kotlin source code for symbols and call receiver types"
+  corpus: L1
+  expect: [KotlinParser, _infer_call_receiver_type]
+
+- query: "parse java source files for classes methods and fields"
+  corpus: L1
+  expect: [JavaParser, parse]
+
+- query: "parse python source files for symbols and functions"
+  corpus: L1
+  expect: [PythonParser, parse]
+
+- query: "parse swift source code for protocols classes and init"
+  corpus: L1
+  expect: [SwiftParser, parse]
+
+- query: "parse typescript and tsx files into AST nodes"
+  corpus: L1
+  expect: [TypeScriptParser, JavaScriptParser]
+
+- query: "parse dart code for abstract classes and enums"
+  corpus: L1
+  expect: [DartParser, parse]
+
+- query: "parse objective c classes protocols and method implementations"
+  corpus: L1
+  expect: [ObjCParser, parse]
+
+- query: "discover repos and enumerate files with gitignore filter"
+  corpus: L1
+  expect: [scan_repo, EXTENSION_MAP]
+
+- query: "build graph database from parsed files"
+  corpus: L1
+  expect: [build_graph, index_file]
+
+- query: "resolve call edges to target symbol ids"
+  corpus: L1
+  expect: [resolve_edges, resolve_symbol]
+
+- query: "full text search over code symbols using FTS5"
+  corpus: L1
+  expect: [search_symbols, _fts_candidates]
+
+- query: "compute recursive blast radius and call impact"
+  corpus: L1
+  expect: [impact_analysis, _recursive_impact]
+
+- query: "find 1-hop callers of a function"
+  corpus: L1
+  expect: [get_callers, get_callees]
+
+- query: "mcp server tool dispatch and instrumentation"
+  corpus: L1
+  expect: [_instrument, run]
+
+- query: "agent integration installer for cursor and claude"
+  corpus: L1
+  expect: [install_agents, CLIENTS]
+
+- query: "embedding chunk generation for symbols"
+  corpus: L1
+  expect: [chunk_for_symbol, embed_all]
+
+- query: "stale embeddings orphan cleanup"
+  corpus: L1
+  expect: [reap_orphaned_embeddings]
+
+- query: "sentence transformer local model loader"
+  corpus: L1
+  expect: [_get_local_model, current_model]
+
+- query: "natural language router asking compass and graph"
+  corpus: L1
+  expect: [ask_compass, route_query]
+
+- query: "graph visualization generator in mermaid and dot"
+  corpus: L1
+  expect: [visualize_graph, generate_mermaid]
+
+- query: "memory store for learnings and promotion"
+  corpus: L1
+  expect: [record_memory, recall_memory]
+
+- query: "knowledge document add and delete operations"
+  corpus: L1
+  expect: [add_document, OKFBundle]
+
+# L5 Knowledge queries
+- query: "local kb overview decisions and sequence"
+  corpus: L5
+  expect: ["knowledge/spec/local-kb-overview", "local-kb"]
+
+- query: "okf bundle read and write concept storage"
+  corpus: L5
+  expect: ["knowledge/spec/okf-bundle", "okf-bundle"]
+
+- query: "system architecture and 5 layer overview"
+  corpus: L5
+  expect: ["knowledge/spec/architecture", "architecture"]
+
+- query: "agent memory lifecycle raw tribal and core tiers"
+  corpus: L5
+  expect: ["knowledge/spec/memory-lifecycle", "memory-lifecycle"]
+
+- query: "code intelligence handbook and CLI reference"
+  corpus: L5
+  expect: ["knowledge/spec/handbook", "handbook"]
+
+- query: "compass module documentation standard"
+  corpus: L5
+  expect: ["knowledge/spec/compass-standard", "compass"]
+
+- query: "incremental reindexing and watcher sync"
+  corpus: L5
+  expect: ["knowledge/spec/incremental-indexing", "incremental"]
+
+- query: "mcp protocol integration and tools"
+  corpus: L5
+  expect: ["knowledge/spec/mcp-protocol", "mcp"]
+
+- query: "hybrid retrieval and reciprocal rank fusion spec"
+  corpus: L5
+  expect: ["knowledge/spec/hybrid-retrieval", "hybrid-retrieval"]
+
+- query: "tree sitter parser migration plan"
+  corpus: L5
+  expect: ["knowledge/spec/parser-migration", "parser-migration"]

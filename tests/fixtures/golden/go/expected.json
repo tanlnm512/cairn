@@ -1,0 +1,129 @@
+{
+  "language": "go",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "BaseEntity",
+      "line_start": 19,
+      "line_end": 21,
+      "column_start": 5,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "class",
+      "qualified_name": "Status",
+      "line_start": 14,
+      "line_end": 16,
+      "column_start": 5,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "User",
+      "line_start": 24,
+      "line_end": 28,
+      "column_start": 5,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Build",
+      "kind": "function",
+      "qualified_name": "Build",
+      "line_start": 47,
+      "line_end": 49,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Identifiable",
+      "kind": "interface",
+      "qualified_name": "Identifiable",
+      "line_start": 9,
+      "line_end": 11,
+      "column_start": 5,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "GetID",
+      "kind": "method",
+      "qualified_name": "GetID",
+      "line_start": 31,
+      "line_end": 33,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Process",
+      "kind": "method",
+      "qualified_name": "Process",
+      "line_start": 36,
+      "line_end": 38,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "helperCall",
+      "kind": "method",
+      "qualified_name": "helperCall",
+      "line_start": 41,
+      "line_end": 44,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "Process",
+      "kind": "calls",
+      "target_name": "helperCall",
+      "line": 37,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "helperCall",
+      "kind": "calls",
+      "target_name": "Println",
+      "line": 42,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "context",
+      "line": 4
+    },
+    {
+      "imported_path": "fmt",
+      "line": 5
+    }
+  ]
+}
