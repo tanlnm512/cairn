@@ -11,7 +11,7 @@ parsers — are genuinely welcome and have a real impact.
 cairn targets **Python 3.10+** and is MIT-licensed.
 
 ```bash
-git clone https://github.com/tan-le/cairn.git
+git clone https://github.com/tanlnm512/cairn.git
 cd cairn
 
 # Preferred (a uv.lock is committed at the repo root):

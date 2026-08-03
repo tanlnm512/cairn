@@ -15,7 +15,7 @@ receives security fixes. Older versions are not supported — please upgrade.
 Please **do not** open a public GitHub issue for security reports. Instead,
 open a private security advisory via GitHub's Security tab:
 
-**https://github.com/tan-le/cairn/security/advisories/new**
+**https://github.com/tanlnm512/cairn/security/advisories/new**
 
 ## Response expectations
 

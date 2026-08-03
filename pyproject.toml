@@ -77,7 +77,7 @@ ann = [
 cairn = "cairn.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/tan-le/cairn"
+Homepage = "https://github.com/tanlnm512/cairn"
 
 [tool.setuptools.packages.find]
 where = ["src"]

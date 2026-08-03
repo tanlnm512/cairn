@@ -5,7 +5,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
 [![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
 [![Python versions](https://img.shields.io/pypi/pyversions/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
-[![CI](https://img.shields.io/github/actions/workflow/status/tan-le/cairn/ci.yml?branch=main&label=CI)](https://github.com/tan-le/cairn/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
 cairn builds a precise, language-aware structural graph of your codebase and
 exposes it to both humans (the `cg` CLI) and AI agents (a stdio MCP server with
@@ -213,7 +213,7 @@ The full suite (no marker) is the CI path.
 
 **Beta — pre-1.0 (v0.5.3).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
-[GitHub issues](https://github.com/tan-le/cairn/issues).
+[GitHub issues](https://github.com/tanlnm512/cairn/issues).
 
 ## License
 
