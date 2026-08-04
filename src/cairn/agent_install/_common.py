@@ -314,7 +314,7 @@ def _agents_instructions() -> str:
         "## MCP Server\n"
         "- Name: `cairn` (auto-connected at session start)\n"
         "- Transport: stdio\n"
-        "- 26 tools across 5 layers: graph (9), knowledge base + compass (4), memory (7), knowledge (5), router (1)\n"
+        "- 27 tools across 5 layers: graph (9), knowledge base + compass (4), memory (8), knowledge (5), router (1)\n"
         "  (`explore` is the recommended first call -- it aggregates the graph layer)\n"
         "\n"
     ) + _INSTRUCTIONS_BODY

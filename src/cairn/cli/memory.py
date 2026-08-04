@@ -46,6 +46,38 @@ def memory_record(mtype, title, body, resource, confidence, db, knowledge):
     click.echo(f"Recorded {mtype} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})")
 
 
+@memory.command("evolve")
+@click.argument("memory_path")
+@click.option("--title", default=None, help="New title for the revised memory.")
+@click.option("--body", default=None, help="New body for the revised memory.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def memory_evolve(memory_path, title, body, db, knowledge):
+    """Revise a memory: create a new version that supersedes the old one.
+
+    The old memory is marked superseded (hidden from search unless
+    --include-superseded) and its version chain is inherited, preserving
+    the full decision history.
+    """
+    from ..memory.promotion import evolve_memory
+    from ..okf.bundle import OKFBundle
+
+    conn = get_db(db)
+    bundle = OKFBundle(knowledge)
+    result = evolve_memory(
+        conn, bundle, memory_path, new_title=title, new_body=body
+    )
+    conn.close()
+    if result is None:
+        click.echo(f"Memory not found: '{memory_path}'.")
+        return
+    signals = result["signals"]
+    click.echo(
+        f"Evolved '{memory_path}' -> {result['path']} "
+        f"(score={signals['score']}, tier={result['tier']}, superseded {result['superseded']})"
+    )
+
+
 @memory.command("search")
 @click.argument("query")
 @click.option("--tier", default=None)

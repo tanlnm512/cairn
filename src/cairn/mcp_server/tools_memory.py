@@ -56,7 +56,7 @@ def memory_digest(limit: int = 10) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
-def recall_memory(query: str, tier: str = "") -> str:
+def recall_memory(query: str, tier: str = "", include_superseded: bool = False) -> str:
     """Search past decisions, patterns, mistakes, workarounds. Increments refs.
 
     Each result shows a live-recomputed refs-verified fraction (backtick-quoted
@@ -67,6 +67,10 @@ def recall_memory(query: str, tier: str = "") -> str:
 
     Query by symbol name or title keywords (e.g. "ApiFactory", "backoff"), not
     natural-language prose -- matching is token-based with a semantic fallback.
+
+    By default superseded (revised) memories are hidden -- only the latest
+    version of a decision is returned. Set include_superseded=true to audit
+    the full revision history (each superseded memory points to its successor).
 
     Example:
         recall_memory("ApiFactory backoff")
@@ -81,7 +85,10 @@ def recall_memory(query: str, tier: str = "") -> str:
     bundle = _bundle()
     conn = _conn()
     try:
-        results = search_memory(conn, bundle, query, tier=tier or None, session_id="mcp")
+        results = search_memory(
+            conn, bundle, query, tier=tier or None, session_id="mcp",
+            include_superseded=include_superseded,
+        )
     except Exception:
         conn.close()
         raise
@@ -102,11 +109,13 @@ def recall_memory(query: str, tier: str = "") -> str:
         for c in results:
             score = c.extensions.get("memory_score", "?")
             t = c.extensions.get("memory_tier", "?")
+            superseded = c.extensions.get("memory_is_latest", True) is False
             try:
                 refs_verified = round(_graph_verification(c, conn), 3)
             except Exception:
                 refs_verified = "?"
-            out.append(f"  [{t} {score}, refs-verified={refs_verified}] {c.title}")
+            tag = " [SUPERSEDED]" if superseded else ""
+            out.append(f"  [{t} {score}, refs-verified={refs_verified}] {c.title}{tag}")
             if c.description:
                 out.append(f"    {c.description}")
     finally:
@@ -146,7 +155,45 @@ def record_memory(
     finally:
         conn.close()
     signals = result["signals"]
-    return f"Recorded {type} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})"
+    superseded = result.get("superseded")
+    msg = f"Recorded {type} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})"
+    if superseded:
+        msg += f" [superseded {superseded}]"
+    return msg
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
+@instrument
+def memory_evolve(memory_path: str, title: str = "", body: str = "") -> str:
+    """Revise an existing memory by creating a new version that supersedes it.
+
+    The old memory is marked superseded (hidden from recall_memory unless
+    include_superseded=true) and its version chain is inherited, so the full
+    decision history is preserved. Use this when you know a decision/pattern
+    has changed and want to record the revision explicitly rather than letting
+    record_memory's automatic near-dup detection handle it.
+
+    At least one of title or body must be provided (and differ from the old).
+    """
+    from cairn.memory.promotion import evolve_memory
+
+    bundle = _bundle()
+    conn = _rw_conn()
+    try:
+        result = evolve_memory(
+            conn, bundle, memory_path,
+            new_title=title or None,
+            new_body=body or None,
+        )
+    finally:
+        conn.close()
+    if result is None:
+        return f"Error: could not find memory at '{memory_path}'."
+    signals = result["signals"]
+    return (
+        f"Evolved '{memory_path}' -> {result['path']} "
+        f"(score={signals['score']}, tier={result['tier']}, superseded {result['superseded']})"
+    )
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))

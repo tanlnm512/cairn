@@ -2,7 +2,7 @@
 
 The `cairn` MCP server (started by `cairn serve`) exposes the codebase
 intelligence graph to AI agents. It is a FastMCP server implemented in
-`src/cairn/mcp_server/` and registers **26 tools** across 5 layers,
+`src/cairn/mcp_server/` and registers **27 tools** across 5 layers,
 plus an index-status resource.
 
 > **`explore(query)` is the recommended first call** — it aggregates the
@@ -104,14 +104,14 @@ Bundle/OKF-read and cross-layer routing.
 
 > Note on grouping: all docs now use the canonical layer counts — graph (9),
 > knowledge base + compass (5: `get_compass`, `search_knowledge`, `ask_compass`,
-> `trace_flow`, `generate_flow`), memory (7), knowledge (5) — summing to 26,
+> `trace_flow`, `generate_flow`), memory (8), knowledge (5) — summing to 27,
 > which the live `mcp` instance enforces via an assertion in `server.py`.
 > `explore` is registered in the graph layer (1 of its 9) but acts as the
 > aggregator/front-door; `ask_compass` is the cross-layer router.
 
 ---
 
-## Layer 4 — Memory (7 tools)
+## Layer 4 — Memory (8 tools)
 
 Agent memory across the tiers raw → drafts → tribal → canonical. The
 session-orientation entry point is `memory_digest`, not a recall query.
@@ -119,8 +119,9 @@ session-orientation entry point is `memory_digest`, not a recall query.
 | Tool | Purpose |
 |------|---------|
 | `memory_digest(limit?)` | Top tribal memories by score. **Call this once for session orientation** before reaching for `recall_memory`. Each result shows a live `refs-verified` fraction. |
-| `recall_memory(query, tier?)` | Search past decisions, patterns, mistakes, workarounds. Increments refs. Each result shows a live `refs-verified` fraction — a low value flags a memory citing a renamed/removed symbol. |
-| `record_memory(type, title, body, resource?, confidence?)` | Capture a learning. `type`: `decision\|pattern\|mistake\|workaround`. |
+| `recall_memory(query, tier?, include_superseded?)` | Search past decisions, patterns, mistakes, workarounds. Increments refs. Each result shows a live `refs-verified` fraction — a low value flags a memory citing a renamed/removed symbol. Superseded (revised) memories are hidden by default; set `include_superseded=true` to audit revision history. |
+| `record_memory(type, title, body, resource?, confidence?)` | Capture a learning. `type`: `decision\|pattern\|mistake\|workaround`. Automatically supersedes a near-duplicate existing memory (semantic cosine ≥0.85) instead of creating a parallel record. |
+| `memory_evolve(memory_path, title?, body?)` | Revise a memory: create a new version that supersedes the old one, inheriting the version chain. The old memory is marked superseded and hidden from recall. |
 | `memory_promote(memory_path)` | Force-promote a memory to canonical (compass/wiki), bypassing tiers. |
 | `memory_demote(memory_path, tier?)` | Demote a memory to a lower tier (`raw`/`archived`); rejects promotions. |
 | `memory_delete(memory_path)` | Permanently delete a memory and its cross-session refs. **Irreversible.** |
@@ -181,7 +182,7 @@ procedural workflows.
 
 ## Resource: index status
 
-In addition to the 26 tools, the server exposes a browsable resource:
+In addition to the 27 tools, the server exposes a browsable resource:
 
 | Resource | Purpose |
 |----------|---------|
