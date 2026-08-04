@@ -1,0 +1,82 @@
+cairn
+Copyright (c) 2025–2026 Tan Le
+
+Licensed under the MIT License; see LICENSE for full text.
+
+This NOTICE file documents the third-party open-source software used by cairn.
+cairn depends on these packages at runtime (resolved via pip/uv from PyPI) and
+does not redistribute their source. Each package retains its own license; the
+summaries below are for convenience and are not legal substitutes for the
+upstream license texts.
+
+================================================================================
+Dependencies (by license family)
+================================================================================
+
+This product depends on software distributed under the following licenses. Each
+entry lists the package and its declared license.
+
+----------------------------------------
+MIT License
+----------------------------------------
+  annotated-types, anyio, attrs, build, h11, httpx-sse, iniconfig, jsonschema,
+  jsonschema-specifications, markdown-it-py, mcp, mdurl, pluggy, pydantic,
+  pydantic-settings, pydantic_core, PyJWT, pyproject_hooks, pytest,
+  referencing, rich, rpds-py, ruff, PyYAML, tree-sitter, tree-sitter-dart,
+  tree-sitter-go, tree-sitter-java, tree-sitter-javascript, tree-sitter-kotlin,
+  tree-sitter-objc, tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
+  typing-inspection, cffi (MIT-0)
+
+----------------------------------------
+BSD License (BSD-2-Clause / BSD-3-Clause)
+----------------------------------------
+  click (BSD-3-Clause), httpcore (BSD-3-Clause), httpx (BSD-3-Clause),
+  idna (BSD-3-Clause), pycparser (BSD-3-Clause), Pygments (BSD-2-Clause),
+  python-dotenv (BSD-3-Clause), sse-starlette (BSD-3-Clause),
+  starlette (BSD-3-Clause), uvicorn (BSD-3-Clause)
+
+----------------------------------------
+Apache License 2.0
+----------------------------------------
+  python-multipart (Apache-2.0), watchdog (Apache-2.0)
+
+----------------------------------------
+Dual: Apache License 2.0 OR BSD
+----------------------------------------
+  cryptography (Apache-2.0 OR BSD-3-Clause)
+  packaging (Apache-2.0 OR BSD-2-Clause)
+
+----------------------------------------
+Mozilla Public License 2.0 (MPL-2.0)
+----------------------------------------
+  certifi, pathspec
+  Note: MPL-2.0 is file-level weak copyleft. It is satisfied by keeping the
+  MPL-licensed files' source and notice available (they remain in the upstream
+  PyPI packages). cairn does not copy or vendor these files into its source
+  tree, so no additional obligation attaches to distributing cairn itself.
+
+----------------------------------------
+Python Software Foundation License (PSF-2.0)
+----------------------------------------
+  typing_extensions
+
+----------------------------------------
+Dual: MIT License OR Apache License 2.0
+----------------------------------------
+  sqlite-vec
+
+================================================================================
+Optional extras
+================================================================================
+
+The `[semantic]` extra (sentence-transformers, numpy) is not installed by
+default. On Linux it additionally pulls torch and its transitive NVIDIA CUDA
+runtime packages (e.g. nvidia-cublas, nvidia-cudnn, nvidia-cufft, triton),
+which are governed by NVIDIA's CUDA EULA / Apache-2.0 and torch's BSD-style
+license. These are resolved and accepted by the end user; cairn does not
+bundle or redistribute them.
+
+The embedding model `BAAI/bge-m3` (referenced by name, downloaded on demand
+to ~/.cairn/lib/ when a user runs `cg embed --install-deps`) is released
+under the MIT License on Hugging Face. cairn does not redistribute the
+model weights.

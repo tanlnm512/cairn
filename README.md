@@ -209,6 +209,19 @@ cairn embed                   # builds the embedding index
 
 The full suite (no marker) is the CI path.
 
+## Dependency licenses
+
+cairn is MIT-licensed. Its dependencies are all permissive (MIT, BSD,
+Apache-2.0, MPL-2.0, PSF); see [NOTICE](NOTICE) for the full list.
+
+The optional `[semantic]` extra is not installed by default. If you opt into it
+on Linux, `pip` resolves `torch` and its transitive NVIDIA CUDA runtime
+packages, which carry their own licenses (torch: BSD; NVIDIA CUDA components:
+NVIDIA EULA / Apache-2.0). The embedding model `BAAI/bge-m3` (MIT) is
+downloaded on demand to `~/.cairn/lib/` and is not redistributed with cairn.
+None of these are bundled with cairn — they are resolved and accepted by the
+end user at install time.
+
 ## Status
 
 **Beta — pre-1.0 (v0.5.3).** Public surfaces (CLI flags, MCP tool shapes,
@@ -217,4 +230,4 @@ knowledge-file layout) may still shift before 1.0. Feedback welcome via
 
 ## License
 
-[MIT](LICENSE) — © 2025 Tan Le
+[MIT](LICENSE) — © 2025–2026 Tan Le

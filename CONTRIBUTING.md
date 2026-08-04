@@ -99,6 +99,34 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
    full suite.
 4. Keep PRs scoped — one logical change each.
 
+## Contributor licensing (DCO)
+
+cairn is MIT-licensed. To keep the project's licensing clean and to protect
+every downstream user, we ask contributors to certify that they have the right
+to contribute their code under those terms, using the
+[Developer Certificate of Origin (DCO)](https://developercertificate.org/).
+
+This is the same lightweight model the Linux kernel and many other projects use.
+There is **no CLA** to sign and no copyright assignment — you keep your
+copyright. The DCO is satisfied automatically by signing off your commit:
+
+```bash
+git commit -s          # adds "Signed-off-by: Your Name <you@example.com>"
+```
+
+To set it as the default for this repo:
+
+```bash
+git config format.signoff true
+```
+
+By submitting a pull request with a `Signed-off-by:` line, you attest that you
+wrote the code yourself (or have the right to submit it), it is not a
+derivative of GPL/AGPL or proprietary code, and you are licensing it to cairn
+and its users under the MIT License. If a contribution is derived from
+third-party MIT/Apache/BSD-licensed code, retain the upstream copyright and
+license notice in the file or add it to `NOTICE`.
+
 ## Reporting issues
 
 File bugs via **GitHub Issues**. Please include:
