@@ -58,7 +58,6 @@ def test_cairn_prep_grep_count():
     Greps the whole agent_install/ package — the token should appear only in the
     _SLASH_COMMANDS definition in _common.py, not duplicated in any client module.
     """
-    import re
 
     matches = []
     for src in sorted(PKG_DIR.rglob("*.py")):

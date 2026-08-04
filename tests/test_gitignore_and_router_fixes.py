@@ -5,10 +5,8 @@ VAL-CO-007: Router empty flag (L9)
 """
 from __future__ import annotations
 
-import sqlite3
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from cairn.compass.router import route_query
 from cairn.graph import watcher

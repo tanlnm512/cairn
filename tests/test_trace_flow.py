@@ -431,7 +431,7 @@ class TestFlowGapsCLI:
 class TestTraceFlowByID:
     def test_entry_id_traces_correct_symbol(self, fresh_db):
         """entry_id disambiguates two symbols with the same name."""
-        from cairn.graph.traversal import find_definition_by_id, trace_flow
+        from cairn.graph.traversal import trace_flow
         _seed_name_collision(fresh_db)
         # Both symbols are named handleCommand; find both IDs.
         rows = fresh_db.execute(

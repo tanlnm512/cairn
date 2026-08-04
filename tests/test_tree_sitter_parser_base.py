@@ -1,7 +1,6 @@
 """Test TreeSitterParserBase mixin shared helpers."""
 from __future__ import annotations
 
-import pytest
 
 from cairn.parsers.base import TreeSitterParserBase
 from cairn.parsers.kotlin import KotlinParser

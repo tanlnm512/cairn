@@ -19,7 +19,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from cairn.graph.builder import build_graph
 

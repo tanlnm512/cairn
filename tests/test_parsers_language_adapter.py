@@ -12,8 +12,6 @@ Guards:
 """
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,7 +49,7 @@ class TestNoHelperDuplication:
         """
         with_extract_callee = []
         for p in _parser_files():
-            if f"def _extract_callee" in p.read_text(encoding="utf-8"):
+            if "def _extract_callee" in p.read_text(encoding="utf-8"):
                 with_extract_callee.append(p.name)
         # python_parser, swift, typescript each define their own.
         assert "python_parser.py" in with_extract_callee

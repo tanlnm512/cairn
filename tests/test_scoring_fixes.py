@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from cairn.memory.scoring import _graph_verification, score_memory
+from cairn.memory.scoring import _graph_verification
 from cairn.okf.concept import OKFConcept
 
 

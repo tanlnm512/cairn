@@ -6,17 +6,15 @@ These tests fix audit findings L7 and L10:
 """
 from __future__ import annotations
 
-import logging
 import sqlite3
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from cairn.knowledge.store import add_document, import_directory
+from cairn.knowledge.store import import_directory
 from cairn.memory.scoring import _authority
 from cairn.okf.bundle import OKFBundle
-from cairn.okf.concept import OKFConcept
 
 
 @pytest.fixture

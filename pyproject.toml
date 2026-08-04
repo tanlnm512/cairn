@@ -100,7 +100,11 @@ markers = [
 # unused imports, redefinitions) with a low false-positive rate. Style rules
 # (E, UP, BLE, S, etc.) are intentionally excluded -- the codebase predates
 # ruff and adopting them would be a dedicated cleanup PR, not a CI gate.
-src = ["src", "scripts"]
+src = ["src", "scripts", "tests"]
+# Golden fixtures are test *input* data (deliberately-shaped source the parser
+# exercises), not test code -- linting them would rewrite the fixtures and
+# invalidate the very golden tests that consume them.
+extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["F"]

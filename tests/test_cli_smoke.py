@@ -3,7 +3,6 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from cairn.cli import main
-from cairn.graph import schema
 from cairn.graph.schema import get_db
 
 

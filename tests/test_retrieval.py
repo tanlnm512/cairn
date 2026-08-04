@@ -18,7 +18,6 @@ from pathlib import Path
 from cairn.retrieval import (
     Candidate,
     CrossEncoderReranker,
-    Retriever,
     Reranker,
     Fusion,
     RRFUnorderedFusion,

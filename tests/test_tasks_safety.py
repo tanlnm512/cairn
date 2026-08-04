@@ -8,15 +8,11 @@ Tests follow TDD: they fail before the fix, then pass after.
 """
 from __future__ import annotations
 
-import os
 import sqlite3
-import tempfile
 import threading
 from pathlib import Path
 
-import pytest
 
-from cairn.compass.critic import critic_concept
 from cairn.llm.tasks import (
     MAX_REVISE_CYCLES,
     Task,
@@ -26,7 +22,6 @@ from cairn.llm.tasks import (
     list_tasks,
 )
 from cairn.okf.bundle import OKFBundle
-from cairn.okf.concept import OKFConcept
 
 
 def _seed_graph(conn: sqlite3.Connection) -> None:
@@ -280,7 +275,7 @@ class TestClaimTaskAtomicity:
                 else:
                     with claim_lock:
                         claim_counts["loser"] += 1
-            except Exception as e:
+            except Exception:
                 # Should not raise - atomic operation
                 pass
 

@@ -8,8 +8,7 @@ Tests for:
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import MagicMock, patch
-import tempfile
+from unittest.mock import patch
 from pathlib import Path
 import pytest
 
@@ -28,7 +27,7 @@ class TestStoreExistenceCheck:
         monkeypatch.setenv("CAIRN_DB", str(empty_db))
         
         # Mock the actual mcp.run() so we don't try to start the server
-        with patch("cairn.mcp_server.server.mcp") as mock_mcp, \
+        with patch("cairn.mcp_server.server.mcp"), \
              patch("cairn.mcp_server.server.verify_tool_count"):
             with pytest.raises(SystemExit) as exc_info:
                 server.run(transport="stdio")
@@ -42,7 +41,6 @@ class TestStoreExistenceCheck:
         test_db = tmp_path / "test.db"
         
         # Copy the schema from fresh_db to a file
-        import shutil
         conn = sqlite3.connect(str(test_db))
         
         # Apply the schema to the test database
@@ -74,7 +72,6 @@ class TestToolCountAssertion:
 
     def test_tool_count_assertion(self):
         """Registered tool count should match expected constant."""
-        from cairn.mcp_server._server_core import mcp
 
         # L1: verify_tool_count() raises AssertionError if the registered tool
         # count drifts from _EXPECTED_TOOL_COUNT. The guard is deferred to
@@ -140,7 +137,7 @@ class TestInstrumentErrorSanitization:
             _METRIC_BUFFER.clear()
         
         # Call the failing function
-        result = failing_function()
+        failing_function()
         
         # Check that an error metric was logged
         # We need to inspect what's in the buffer
