@@ -1,7 +1,7 @@
-"""cg CLI: cairn commands.
+"""cairn CLI: cairn commands.
 
 All cairn functionality is exposed via the `cairn` command.
-Run `cg --help` for the full command list, or `cairn version` to check
+Run `cairn --help` for the full command list, or `cairn version` to check
 the installed version.
 
 Public entry point: ``main`` (the Click group). The 49 commands live in

@@ -1,7 +1,7 @@
 """Tests for auto-decay hook (VAL-MK-003, M10).
 
 Verifies that the decay() function is called from a periodic maintenance path
-(server boot catch-up or `cg update`), not only via manual CLI/MCP.
+(server boot catch-up or `cairn update`), not only via manual CLI/MCP.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 
 def test_decay_called_in_update_command(tmp_path, monkeypatch):
-    """VAL-MK-003: decay() is called during `cg update` command.
+    """VAL-MK-003: decay() is called during `cairn update` command.
 
     This test monkeypatches the decay() function to spy on whether it's called,
     then drives the update command entry point.
@@ -46,7 +46,7 @@ def test_decay_called_in_update_command(tmp_path, monkeypatch):
     result = runner.invoke(update, ['--workspace', workspace, '--db', db_path])
     
     # Assert that decay was called
-    assert decay_called["called"], "decay() should be called during cg update"
+    assert decay_called["called"], "decay() should be called during cairn update"
 
 
 def test_decay_called_in_server_boot(tmp_path, monkeypatch):

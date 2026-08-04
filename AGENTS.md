@@ -53,7 +53,7 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
   symbol name or title tokens ("ApiFactory", "backoff"), not natural language.
 
 ### After completing a task, ALWAYS:
-1. Run `cg update` to refresh the graph with your changes
+1. Run `cairn update` to refresh the graph with your changes
 2. Call `record_memory` for any learnings:
    - type="decision" for architectural choices made
    - type="pattern" for reusable code patterns discovered
@@ -75,18 +75,18 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 
 ## LLM Task Queue (agent-decoupled synthesis)
 Cairn never calls an LLM directly. To generate compass/wiki with LLM quality:
-- `cg task list --status pending` -- see queued work
-- `cg task show <id>` -> `cg task claim <id>` -> `cg task complete <id> --result-file <path>`
+- `cairn task list --status pending` -- see queued work
+- `cairn task show <id>` -> `cairn task claim <id>` -> `cairn task complete <id> --result-file <path>`
 - The deterministic critic fact-checks every result; only graph-verified files/symbols allowed.
 
 ## CLI Fallback (if MCP tools are unavailable):
-- `cg def <symbol>` -- find definition
-- `cg callers <symbol>` -- who calls this
-- `cg impact <symbol>` -- what breaks if changed (within-repo)
-- `cg deps <repo>` -- cross-repo dependency map
-- `cg context <file>` -- load context for a file
-- `cg ask "<question>"` -- natural language query across all layers
-- `cg memory record <type> "<title>"` -- capture a learning
+- `cairn def <symbol>` -- find definition
+- `cairn callers <symbol>` -- who calls this
+- `cairn impact <symbol>` -- what breaks if changed (within-repo)
+- `cairn deps <repo>` -- cross-repo dependency map
+- `cairn context <file>` -- load context for a file
+- `cairn ask "<question>"` -- natural language query across all layers
+- `cairn memory record <type> "<title>"` -- capture a learning
 
 ## Knowledge Files
 

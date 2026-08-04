@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS parse_errors (
 CREATE INDEX IF NOT EXISTS idx_parse_errors_repo ON parse_errors(repo_id);
 
 -- files the scanner chose not to index, with the reason. Makes skips auditable
--- (cg stats reports counts by reason) rather than silent. A skip is NOT an
+-- (cairn stats reports counts by reason) rather than silent. A skip is NOT an
 -- error -- generated/vendored/gitignored/large files are deliberately excluded
 -- so the graph reflects hand-written source only.
 CREATE TABLE IF NOT EXISTS skipped_files (
@@ -454,7 +454,7 @@ def get_db(
     key = str(path.resolve())  # resolve() works on non-existent paths too (strict=False default)
     if read_only:
         # URI form: a read-only connection. must exist -- a read-only open of
-        # a missing file is an error a writer must fix via `cairn init && cg build`.
+        # a missing file is an error a writer must fix via `cairn init && cairn build`.
         uri = f"file:{path.resolve()}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
     else:

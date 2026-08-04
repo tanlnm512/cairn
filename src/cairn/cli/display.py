@@ -1,4 +1,4 @@
-"""Shared terminal display helpers for the cg CLI.
+"""Shared terminal display helpers for the cairn CLI.
 
 Centralizes all rich-based output so every command renders consistently:
 a single Console (auto-detects TTY), a themed color palette, and a
@@ -91,7 +91,7 @@ def dim(msg: str) -> None:
 def kv(label: str, value, indent: int = 0) -> None:
     """Print a ``label: value`` line with the label styled.
 
-    Used by cg status / cg stats to render the per-layer rollups in a
+    Used by cairn status / cairn stats to render the per-layer rollups in a
     consistent aligned style.
     """
     pad = " " * indent
@@ -113,7 +113,7 @@ def print_table(title: Optional[str], columns: list[str], rows: list[list]) -> N
 
 
 # --- Progress bar context manager -----------------------------------------
-# Used by cg build (parse/insert/resolve phases) and cg embed (batch loop).
+# Used by cairn build (parse/insert/resolve phases) and cairn embed (batch loop).
 
 @contextmanager
 def progress_bar(

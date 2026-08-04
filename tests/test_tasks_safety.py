@@ -68,7 +68,7 @@ class TestCompleteTaskCriticIntegration:
         """Critic passes: result marked with critic_status=passed and auto-promoted.
 
         A passing compass-synthesize task is auto-promoted into compass/<module>
-        (see complete_task + the `cg task complete` CLI branch that prints
+        (see complete_task + the `cairn task complete` CLI branch that prints
         "completed and promoted"). Other task kinds are left for the caller to
         promote. This test was previously written asserting `promoted is False`,
         which contradicted the production behavior; the assertion now matches

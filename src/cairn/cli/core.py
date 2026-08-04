@@ -96,7 +96,7 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
 
 
 # --------------------------------------------------------------------------
-# cg config — show resolved paths and registry.
+# cairn config — show resolved paths and registry.
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--list", "list_all", is_flag=True, help="List all registered workspaces.")
@@ -173,11 +173,11 @@ def config(list_all, mcp_config):
 
     click.echo("")
     click.echo("MCP config for an agent (path-free):")
-    click.echo('  cg config --mcp-config')
+    click.echo('  cairn config --mcp-config')
 
 
 # --------------------------------------------------------------------------
-# cg build
+# cairn build
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--repo", "repo", default=None, help="Only build this repo.")
@@ -320,7 +320,7 @@ def build(repo, workspace, db, verbose, staging):
 
 
 # --------------------------------------------------------------------------
-# cg stats
+# cairn stats
 # --------------------------------------------------------------------------
 @main.command(name="stats")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")

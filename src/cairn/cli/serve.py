@@ -19,15 +19,15 @@ def serve(ctx):
 
     \b
     Run in the foreground (classic stdio / one-shot SSE):
-      cg serve                 # stdio (MCP clients spawn this)
-      cg serve --port {{DEFAULT_PORT}}     # SSE, foreground, dies when terminal closes
+      cairn serve                 # stdio (MCP clients spawn this)
+      cairn serve --port {{DEFAULT_PORT}}     # SSE, foreground, dies when terminal closes
 
     \b
     Manage a persistent SSE daemon shared by all clients (macOS launchd):
-      cg serve start           # install + start LaunchAgent (runs forever)
-      cg serve stop            # unload LaunchAgent + kill stray servers
-      cg serve status          # health check
-      cg serve restart         # stop + start
+      cairn serve start           # install + start LaunchAgent (runs forever)
+      cairn serve stop            # unload LaunchAgent + kill stray servers
+      cairn serve status          # health check
+      cairn serve restart         # stop + start
     """
     if ctx.invoked_subcommand is None:
         # `cairn serve` with no subcommand: foreground stdio mode.
@@ -98,7 +98,7 @@ def serve_start(port, host):
     from ..mcp_server import lifecycle as lc
 
     if not lc.is_macos():
-        click.echo("cg serve start is macOS-only (launchd). For other platforms,")
+        click.echo("cairn serve start is macOS-only (launchd). For other platforms,")
         click.echo(f"run `cairn serve --port {lc.DEFAULT_PORT}` manually under a process supervisor.")
         sys.exit(1)
 
@@ -116,10 +116,10 @@ def serve_start(port, host):
     # Clean any orphan stdio servers first so they don't hold the WAL.
     strays = lc.find_strays(str(store.db))
     if strays:
-        click.echo(f"killing {len(strays)} orphan cg serve process(es): {strays}")
+        click.echo(f"killing {len(strays)} orphan cairn serve process(es): {strays}")
         lc.sweep_strays(str(store.db))
 
-    # (Re)write the plist with current port/host + cg path + workspace env,
+    # (Re)write the plist with current port/host + cairn path + workspace env,
     # then load. Workspace env is critical: under launchd cwd is "/", so
     # without CAIRN_WORKSPACE the daemon can't find the store via the
     # ancestor walk that works when run interactively.
@@ -157,7 +157,7 @@ def serve_stop():
     from ..mcp_server import lifecycle as lc
 
     if not lc.is_macos():
-        click.echo("cg serve stop is macOS-only.")
+        click.echo("cairn serve stop is macOS-only.")
         sys.exit(1)
 
     from ..paths import resolve_store
@@ -175,7 +175,7 @@ def serve_stop():
     # Sweep orphan stdio servers holding the DB.
     strays = lc.find_strays(str(store.db))
     if strays:
-        click.echo(f"killing {len(strays)} stray cg serve process(es): {strays}")
+        click.echo(f"killing {len(strays)} stray cairn serve process(es): {strays}")
         lc.sweep_strays(str(store.db))
 
     # Wait briefly for the port to release.
@@ -219,7 +219,7 @@ def serve_status(port, host):
     click.echo(f"  LaunchAgent loaded : {loaded}")
     click.echo(f"  daemon pid         : {pid}")
     click.echo(f"  SSE responds       : {responds}  ({lc.sse_url(port, host)})")
-    click.echo(f"  stray cg serve pids: {strays if strays else 'none'}")
+    click.echo(f"  stray cairn serve pids: {strays if strays else 'none'}")
     click.echo(f"  DB lock holders    : {db_holders if db_holders else 'none'}")
     click.echo(f"  plist              : {lc.plist_path()}")
     click.echo(f"  log                : {lc.log_path()}")

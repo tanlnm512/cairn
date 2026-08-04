@@ -47,7 +47,7 @@ def shared_lib_path() -> Path:
 
 
 # Inject the shared lib dir into sys.path EARLY (at import time of this module,
-# which every cg entry point loads). This must happen before any code tries to
+# which every cairn entry point loads). This must happen before any code tries to
 # `import sentence_transformers` / `import torch`. If the dir doesn't exist yet
 # (deps not installed), this is a no-op.
 _lib = shared_lib_path()

@@ -47,7 +47,7 @@ codebase.
 4. Either re-run with a scoped/qualified name, cap `depth<=2`, or (if using
    the CLI) run `scripts/impact_guard.py initAppTracking` and report its
    output instead -- it performs steps 1-3 automatically and falls back to
-   `cg dataflow dataflow-lookup` for a trustworthy number.
+   `cairn dataflow dataflow-lookup` for a trustworthy number.
 5. State the real, narrow blast radius explicitly: the call site in
    `MyApplication.kt`, and whatever concrete class implements the tracking
    interface -- found via `get_callers` on the specific interface/method, not

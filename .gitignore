@@ -24,7 +24,7 @@ htmlcov/
 coverage.xml
 .tox/
 
-# ---- cairn runtime artifacts (from running `cg build` here) ----
+# ---- cairn runtime artifacts (from running `cairn build` here) ----
 .kg
 .knowledge/
 *.db

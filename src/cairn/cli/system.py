@@ -57,7 +57,7 @@ def metrics(db, tool_name, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg status
+# cairn status
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -101,7 +101,7 @@ def status(db, knowledge):
 
 
 # --------------------------------------------------------------------------
-# cg eval
+# cairn eval
 # --------------------------------------------------------------------------
 @main.command(name="eval")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -143,7 +143,7 @@ def eval_cmd(db, knowledge, corpus, queries_path, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg sync (manual re-index escape hatch)
+# cairn sync (manual re-index escape hatch)
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)

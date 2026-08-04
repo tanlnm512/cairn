@@ -2,7 +2,7 @@
 
 cairn is a local, structural code intelligence system: it parses your source
 with tree-sitter, builds a call-graph in SQLite, and exposes the result to you
-and to AI agents through a CLI (`cg`) and an MCP server. It runs entirely
+and to AI agents through a CLI (`cairn`) and an MCP server. It runs entirely
 on your machine and never calls an LLM by itself.
 
 This guide gets you from zero to querying a real repo in a few minutes.
@@ -37,7 +37,7 @@ pip install cairn-intel[watch]      # watchdog: file-watch hooks for live re-ind
 Verify it landed:
 
 ```bash
-cg --help
+cairn --help
 ```
 
 ## Build the graph
@@ -45,12 +45,12 @@ cg --help
 From your repository root (or any subdirectory of it):
 
 ```bash
-cg update
+cairn update
 ```
 
-`cg update` reindexes from the git diff, so it is incremental and fast after the
+`cairn update` reindexes from the git diff, so it is incremental and fast after the
 first run. For a fresh workspace, the first `update` parses everything; later
-runs only touch changed files. (For a forced full rebuild, `cg build` exists
+runs only touch changed files. (For a forced full rebuild, `cairn build` exists
 separately.)
 
 The store lives under `~/.cairn/<workspace-key>/` by default — a `.kg`
@@ -60,23 +60,23 @@ SQLite database plus a `.knowledge/` bundle of markdown. See
 ## Query the graph
 
 ```bash
-cg def SomeSymbol              # where is SomeSymbol defined?
-cg callers SomeSymbol          # who calls it (precise edges only)?
-cg callers SomeSymbol --fuzzy  # include name-only matches (candidate list)
-cg callees SomeSymbol          # what does it call?
-cg impact SomeSymbol           # recursive blast radius if it changes
-cg deps my-repo                # cross-repo dependency map
-cg search "*Service*"          # symbol search (supports * wildcards)
+cairn def SomeSymbol              # where is SomeSymbol defined?
+cairn callers SomeSymbol          # who calls it (precise edges only)?
+cairn callers SomeSymbol --fuzzy  # include name-only matches (candidate list)
+cairn callees SomeSymbol          # what does it call?
+cairn impact SomeSymbol           # recursive blast radius if it changes
+cairn deps my-repo                # cross-repo dependency map
+cairn search "*Service*"          # symbol search (supports * wildcards)
 ```
 
 A natural-language question across all layers (graph + compass + wiki + memory):
 
 ```bash
-cg ask "how does ApiFactory create clients"
+cairn ask "how does ApiFactory create clients"
 ```
 
 > **Note:** the `explore` command listed in some older docs is an MCP-only tool.
-> From the CLI, `cg ask` is the equivalent entry point that routes across layers.
+> From the CLI, `cairn ask` is the equivalent entry point that routes across layers.
 
 ### Precise vs fuzzy — read this once
 
@@ -93,14 +93,14 @@ See [architecture.md](architecture.md) → "Resolution model" for the full story
 
 ## Wire it to an AI agent
 
-cairn ships an MCP server (`cg serve`). To connect a client like Claude
+cairn ships an MCP server (`cairn serve`). To connect a client like Claude
 Desktop, Cursor, or ZCode, add it to the client's MCP config:
 
 ```json
 {
   "mcpServers": {
     "cairn": {
-      "command": "cg",
+      "command": "cairn",
       "args": ["serve"]
     }
   }
@@ -116,18 +116,18 @@ For one-shot setup across all detected clients (writes MCP configs, skills,
 slash commands, rules, and hooks):
 
 ```bash
-cg install-agents                    # interactive: pick clients + scope
-cg install-agents --yes              # auto-install all detected, default scope
-cg install-agents --scope global     # write to ~/.claude/, ~/.cursor/, etc.
+cairn install-agents                    # interactive: pick clients + scope
+cairn install-agents --yes              # auto-install all detected, default scope
+cairn install-agents --scope global     # write to ~/.claude/, ~/.cursor/, etc.
 ```
 
 It auto-detects installed clients and transport (SSE daemon vs stdio). Use
 `--client cursor --client claude` to target specific ones, or `--dry-run` to
-preview. To remove everything later: `cg uninstall-agents`.
+preview. To remove everything later: `cairn uninstall-agents`.
 
 ## Next steps
 
-- [cli-reference.md](cli-reference.md) — every `cg` command and flag.
+- [cli-reference.md](cli-reference.md) — every `cairn` command and flag.
 - [mcp-tools.md](mcp-tools.md) — the 26 MCP tools, grouped by layer.
 - [configuration.md](configuration.md) — env vars for paths, semantic search,
   workers, and the LLM task queue.

@@ -28,7 +28,7 @@ def get_compass(module: str) -> str:
                 return f"# {c.title}\n\n{c.body}"
         except Exception:
             continue
-    return f"No compass file found for '{module}'. Generate with: cg compass generate {module}"
+    return f"No compass file found for '{module}'. Generate with: cairn compass generate {module}"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -246,7 +246,7 @@ def generate_flow(entry: str, as_workflow: bool = False, max_steps: int = 20) ->
                 results.append(f"  warn: {w}")
             if result.errors:
                 results.append("The body cited backtick references not found in the graph — "
-                               "rebuild (cg build) or fix the references before promoting.")
+                               "rebuild (cairn build) or fix the references before promoting.")
             return "\n".join(results)
 
         bundle.write_concept(concept)

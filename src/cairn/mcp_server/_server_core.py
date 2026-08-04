@@ -74,7 +74,7 @@ mcp = FastMCP("cairn", lifespan=app_lifespan)
 def _store():
     """Resolve the central store for this workspace.
 
-    Honors CAIRN_DB / CAIRN_KNOWLEDGE if set (cg serve sets both);
+    Honors CAIRN_DB / CAIRN_KNOWLEDGE if set (cairn serve sets both);
     otherwise resolves from the workspace context (cwd at launch).
     """
     return resolve_store()

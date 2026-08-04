@@ -27,7 +27,7 @@ def validate(knowledge):
 
 
 # --------------------------------------------------------------------------
-# cg validate-paths (stale reference detection against the graph)
+# cairn validate-paths (stale reference detection against the graph)
 # --------------------------------------------------------------------------
 @main.command(name="validate-paths")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")

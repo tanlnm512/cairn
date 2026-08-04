@@ -131,7 +131,7 @@ def _start_metric_flusher():
             time.sleep(_METRIC_FLUSH_INTERVAL)
             _flush_metrics()
 
-    t = threading.Thread(target=_loop, name="cg-metric-flusher", daemon=True)
+    t = threading.Thread(target=_loop, name="cairn-metric-flusher", daemon=True)
     t.start()
     atexit.register(_flush_metrics)
 

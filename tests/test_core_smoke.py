@@ -428,7 +428,7 @@ def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
 
 
 def test_sweep_strays_kills_orphans_not_daemon(monkeypatch):
-    """NEW: find_strays + sweep_strays must return orphan 'cg serve' pids while
+    """NEW: find_strays + sweep_strays must return orphan 'cairn serve' pids while
     excluding the launchd-managed daemon pid and the current process. Guards
     the stray-sweeper that self-heals DB lock contention."""
     from cairn.mcp_server import lifecycle as lc

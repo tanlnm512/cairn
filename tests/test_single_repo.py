@@ -1,6 +1,6 @@
 """Tests for single-repo workspace support.
 
-When ``cg init`` is run inside a single git repo (the most common case),
+When ``cairn init`` is run inside a single git repo (the most common case),
 the workspace root itself is the repo — there are no child directories
 with ``.git``.  These tests verify that discover_repos, resolve_repo_path,
 infer_repo_for_path, and related functions handle this case correctly.

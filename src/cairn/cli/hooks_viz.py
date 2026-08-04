@@ -40,7 +40,7 @@ def hooks_uninstall(workspace):
 
 
 # --------------------------------------------------------------------------
-# cg viz (visualization, M7)
+# cairn viz (visualization, M7)
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--format", "fmt", type=click.Choice(["mermaid", "dot", "json"]), default="mermaid")

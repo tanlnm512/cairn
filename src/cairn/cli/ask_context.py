@@ -41,7 +41,7 @@ def ask(question, db, knowledge, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg context
+# cairn context
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("file_path")

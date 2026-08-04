@@ -1,14 +1,14 @@
-"""cg bench: performance + scalability benchmarks.
+"""cairn bench: performance + scalability benchmarks.
 
 Two suites, mirroring how ``cairn eval`` and ``cairn metrics`` already work:
 
-  cg bench                              # perf suite on a generated corpus
-  cg bench --suite perf                 # explicit (default)
-  cg bench --suite scaling --sizes 100,500,1000,5000
-  cg bench --workspace PATH             # perf against an existing repo
-  cg bench --json                       # JSON for CI
-  cg bench --save baseline.json         # save a baseline
-  cg bench --compare baseline.json      # flag regressions > --threshold (15%)
+  cairn bench                              # perf suite on a generated corpus
+  cairn bench --suite perf                 # explicit (default)
+  cairn bench --suite scaling --sizes 100,500,1000,5000
+  cairn bench --workspace PATH             # perf against an existing repo
+  cairn bench --json                       # JSON for CI
+  cairn bench --save baseline.json         # save a baseline
+  cairn bench --compare baseline.json      # flag regressions > --threshold (15%)
 """
 from __future__ import annotations
 

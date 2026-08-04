@@ -50,7 +50,7 @@ def log_path() -> Path:
 
 
 def cg_bin() -> str:
-    """Absolute path to the cg executable to launch. Prefers the same one
+    """Absolute path to the cairn executable to launch. Prefers the same one
     that's running this process; falls back to PATH lookup."""
     for cand in (
         os.environ.get("CAIRN_BIN"),
@@ -196,9 +196,9 @@ def find_strays(db_path: str | Path) -> list[int]:
     # foreground/SSE server invocation contains.
     db_str = str(db_path) if db_path else ""
     if db_str:
-        pattern = rf"cg serve.*{re.escape(db_str)}"
+        pattern = rf"cairn serve.*{re.escape(db_str)}"
     else:
-        pattern = r"cg serve run"
+        pattern = r"cairn serve run"
     r = subprocess.run(
         ["pgrep", "-f", pattern],
         capture_output=True, text=True,
@@ -261,7 +261,7 @@ def sweep_strays(db_path: str | Path, log: bool = False) -> int:
         if log:
             import datetime
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] cairn: stray sweeper killed orphan cg serve pid {pid}",
+            print(f"[{ts}] cairn: stray sweeper killed orphan cairn serve pid {pid}",
                   file=sys.stderr, flush=True)
     return len(strays)
 

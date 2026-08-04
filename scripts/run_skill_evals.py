@@ -9,7 +9,7 @@ declares at its top:
   1. every spec has the required frontmatter keys;
   2. every ``expected_calls`` / ``wrong_calls`` entry has its required fields;
   3. every referenced ``tool`` is a real registered MCP tool
-     (``@mcp.tool()`` in ``src/mcp_server/tools_*.py``), a real ``cg`` CLI
+     (``@mcp.tool()`` in ``src/mcp_server/tools_*.py``), a real ``cairn`` CLI
      command (scraped from ``src/cli/*.py``), or a shipped script under
      ``scripts/`` / ``src/agent_integration/skill/scripts/``.
 
@@ -127,11 +127,11 @@ def _peek_def(lines: list[str], i: int) -> str | None:
 
 
 def discover_cli_commands() -> dict[str, set[str]]:
-    """Map of ``cg``-invokable command names: ``{"<group>": {...}, "main": {...}}``.
+    """Map of ``cairn``-invokable command names: ``{"<group>": {...}, "main": {...}}``.
 
     Group names map to their subcommand names; top-level commands live under
-    the ``"main"`` key. So ``cg dataflow build`` is found as
-    ``commands["dataflow"] == {"build", "lookup"}`` and ``cg update`` as
+    the ``"main"`` key. So ``cairn dataflow build`` is found as
+    ``commands["dataflow"] == {"build", "lookup"}`` and ``cairn update`` as
     ``"update" in commands["main"]``.
     """
     commands: dict[str, set[str]] = {"main": set()}
@@ -198,7 +198,7 @@ def resolve_tool(
         tail after the last ``__`` must match a registered tool; we also allow
         it to be *unregistered*, which is legitimate for a ``wrong_calls``
         entry that documents a nonexistent tool an agent might wrongly invoke)
-      * ``cg <cmd>`` / ``cg <group> <cmd>`` CLI commands
+      * ``cairn <cmd>`` / ``cairn <group> <cmd>`` CLI commands
       * shipped script filenames  -> ``scripts/impact_guard.py``
 
     The ``reason`` string classifies which surface matched (or why not) so the
@@ -224,19 +224,25 @@ def resolve_tool(
     if t in mcp_tools:
         return True, f"MCP tool ({t})"
 
-    # CLI: accept "cg <group> <cmd>", "cg <cmd>", "<group> <cmd>" (no cg prefix).
-    cleaned = t[3:].strip() if t.startswith("cg ") else t
+    # CLI: accept "cairn <group> <cmd>", "cairn <cmd>", "<group> <cmd>" (no prefix).
+    # Also accept the legacy "cg " prefix for eval specs written before the rename.
+    if t.startswith("cairn "):
+        cleaned = t[len("cairn "):].strip()
+    elif t.startswith("cg "):
+        cleaned = t[3:].strip()
+    else:
+        cleaned = t
     parts = cleaned.split()
     if len(parts) == 2:
         grp, cmd = parts
         if grp in cli_commands and cmd in cli_commands[grp]:
-            return True, f"CLI command (cg {grp} {cmd})"
+            return True, f"CLI command (cairn {grp} {cmd})"
         # dataflow-lookup style (hyphenated) sometimes written with space
         hyphen = f"{grp}-{cmd}"
         if grp in cli_commands and hyphen in cli_commands[grp]:
-            return True, f"CLI command (cg {grp} {hyphen})"
+            return True, f"CLI command (cairn {grp} {hyphen})"
     if len(parts) == 1 and parts[0] in cli_commands["main"]:
-        return True, f"CLI command (cg {parts[0]})"
+        return True, f"CLI command (cairn {parts[0]})"
 
     # Shipped script (allow with or without a leading scripts/ dir).
     script_name = Path(t).name

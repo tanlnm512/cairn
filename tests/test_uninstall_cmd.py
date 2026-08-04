@@ -1,4 +1,4 @@
-"""Smoke tests for `cg uninstall`.
+"""Smoke tests for `cairn uninstall`.
 
 Covers the command surface (help text, option wiring, dry-run never deletes)
 without touching the user's real ~/.cairn — every case points CAIRN_HOME

@@ -194,7 +194,7 @@ def run(transport: str = "stdio", port: int | None = None):
             from datetime import datetime
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] cairn: error: database is missing the 'symbols' table. "
-                  f"Run 'cg init && cg build' first.", file=sys.stderr, flush=True)
+                  f"Run 'cairn init && cairn build' first.", file=sys.stderr, flush=True)
             check_conn.close()
             sys.exit(1)
         check_conn.close()
@@ -203,7 +203,7 @@ def run(transport: str = "stdio", port: int | None = None):
         from datetime import datetime
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{ts}] cairn: error: failed to check database: {e}. "
-              f"Run 'cg init && cg build' first.", file=sys.stderr, flush=True)
+              f"Run 'cairn init && cairn build' first.", file=sys.stderr, flush=True)
         sys.exit(1)
 
     # Read-only mode: the shared SSE daemon opens the DB with mode=ro so it
@@ -339,7 +339,7 @@ def _install_stray_sweeper(db_path: str, interval_s: float = 60.0):
                 pass
             time.sleep(interval_s)
 
-    t = threading.Thread(target=_loop, name="cg-stray-sweeper", daemon=True)
+    t = threading.Thread(target=_loop, name="cairn-stray-sweeper", daemon=True)
     t.start()
 
 

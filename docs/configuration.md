@@ -29,15 +29,15 @@ database and a `.knowledge/` markdown bundle. Resolution order is
 | `CAIRN_HOME` | path, default `~/.cairn` | Root holding all per-workspace stores and the `workspaces.json` registry. Override for tests, CI, or a shared volume. |
 | `CAIRN_DB` | path, default `<home>/<key>/.kg` | Hard override for the SQLite graph DB path. Used by the MCP server and tests to pin a store explicitly. |
 | `CAIRN_KNOWLEDGE` | path, default `<home>/<key>/.knowledge` | Hard override for the OKF markdown bundle (compass, wiki, memory). |
-| `CAIRN_BIN` | path, default unset | Path to the `cg` executable; used by the SSE daemon lifecycle so spawned processes find the right binary. |
-| `CAIRN_WORKSPACE` | absolute path, default unset | The workspace root. Highest-priority input to store resolution (overrides the ancestor walk). Set it when running `cg` from outside the repo tree. |
+| `CAIRN_BIN` | path, default unset | Path to the `cairn` executable; used by the SSE daemon lifecycle so spawned processes find the right binary. |
+| `CAIRN_WORKSPACE` | absolute path, default unset | The workspace root. Highest-priority input to store resolution (overrides the ancestor walk). Set it when running `cairn` from outside the repo tree. |
 | `CAIRN_SESSION` | string, default `"unknown"` | Session label attached to metric/usage telemetry buffers; useful to attribute server traffic to a session. |
 
 ## Server and runtime
 
 | Variable | Type / Default | Effect |
 |----------|----------------|--------|
-| `CAIRN_READ_ONLY` | `0`/`1`, default unset (writable) | When `1`/`true`/`yes`, the MCP server opens the DB read-only. Set automatically by the SSE daemon (the safe shared-instance mode) and by `cg serve` when read-only is requested. |
+| `CAIRN_READ_ONLY` | `0`/`1`, default unset (writable) | When `1`/`true`/`yes`, the MCP server opens the DB read-only. Set automatically by the SSE daemon (the safe shared-instance mode) and by `cairn serve` when read-only is requested. |
 | `CAIRN_WORKERS` | int, default = CPU count | Number of parallel parse/build workers. Honored by the builder; uncapped so you can raise it on big machines. |
 | `CAIRN_MAX_RESULT_CHARS` | int, default `60000` | Cap on the character count of MCP tool results. Truncates oversized responses to keep agent context windows bounded. |
 
@@ -85,7 +85,7 @@ way; only the interpretation of the number changes.
 
 cairn never calls an LLM directly. Instead it queues synthesis work
 (compass/wiki generation) on a file-based task queue, which an external agent
-claims and completes. See `cg task list / show / claim / complete`.
+claims and completes. See `cairn task list / show / claim / complete`.
 
 | Variable | Type / Default | Effect |
 |----------|----------------|--------|
@@ -95,7 +95,7 @@ claims and completes. See `cg task list / show / claim / complete`.
 
 | Variable | Type / Default | Effect |
 |----------|----------------|--------|
-| `CAIRN_CHUNK_VARIANT` | `A`/`B`, default `B` | How source is chunked before embedding. Variant `B` is the current default; override to `A` for the legacy chunker if you need to reproduce older embeddings. Changing this invalidates existing embeddings on the next `cg embed`. |
+| `CAIRN_CHUNK_VARIANT` | `A`/`B`, default `B` | How source is chunked before embedding. Variant `B` is the current default; override to `A` for the legacy chunker if you need to reproduce older embeddings. Changing this invalidates existing embeddings on the next `cairn embed`. |
 
 ## Workspace config file (`cairn.json`)
 
@@ -106,7 +106,7 @@ ignored (forward-compatible). Recognized keys:
 |-----|------|--------|
 | `exclude` | list of gitignore globs | Patterns to skip during indexing, matched against repo-root-relative paths. Combined with the built-in skip set and `.gitignore`. |
 | `include` | list of gitignore globs | Patterns to force-include, overriding `exclude` and the default skip set. Use to pull a checked-in vendored dir back into the graph. |
-| `repo_namespaces` | object `prefix -> repo id` | Maps import-path prefixes to owning repo ids, used by `cg deps` / `cross_repo_deps` to detect cross-repo links. When empty, falls back to the built-in default map and `CAIRN_REPO_NAMESPACES`. |
+| `repo_namespaces` | object `prefix -> repo id` | Maps import-path prefixes to owning repo ids, used by `cairn deps` / `cross_repo_deps` to detect cross-repo links. When empty, falls back to the built-in default map and `CAIRN_REPO_NAMESPACES`. |
 
 Example:
 
@@ -135,7 +135,7 @@ is resolved once per process, in priority order:
    workspace. Used silently when nothing else is set, so existing setups keep
    working.
 
-`cg config` prints the resolved map and which source it came from. A malformed
+`cairn config` prints the resolved map and which source it came from. A malformed
 env var or config value is ignored with a stderr warning — never raised.
 
 ---
@@ -143,8 +143,8 @@ env var or config value is ignored with a stderr warning — never raised.
 If you are unsure what is in effect for your workspace, run:
 
 ```bash
-cg config            # shows resolved paths + the active repo_namespaces map
-cg config --list     # shows the registry of all registered workspaces
+cairn config            # shows resolved paths + the active repo_namespaces map
+cairn config --list     # shows the registry of all registered workspaces
 ```
 
 It prints the resolved home, db, knowledge paths, and registry entries, so you

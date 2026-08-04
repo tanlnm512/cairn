@@ -84,7 +84,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
-# so `cg install-agents` works from a wheel install, not just a source checkout.
+# so `cairn install-agents` works from a wheel install, not just a source checkout.
 "cairn.agent_integration" = ["**/*"]
 
 [tool.pytest.ini_options]

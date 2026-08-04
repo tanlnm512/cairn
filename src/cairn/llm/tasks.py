@@ -287,7 +287,7 @@ def complete_task(
             # Branch on critic result
             if critic_result.passed:
                 # Pass: promote compass results into compass/<module> so
-                # cg compass list/gaps/validate pick them up. (Other kinds,
+                # cairn compass list/gaps/validate pick them up. (Other kinds,
                 # e.g. wiki, have no current task producer -- left unpromoted
                 # per this function's documented "caller promotes" contract.)
                 #

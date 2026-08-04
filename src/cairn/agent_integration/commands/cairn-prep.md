@@ -3,7 +3,7 @@
 Before editing file: $ARGUMENTS
 
 Prefer MCP tools (the `cairn` server) for reads — they're faster and stay
-within a session. Fall back to the `cg` CLI only if MCP is unavailable
+within a session. Fall back to the `cairn` CLI only if MCP is unavailable
 (Golden Rule 10: reads via MCP, mutations via CLI).
 
 1. `ask_compass(query="what should I know before editing $ARGUMENTS", file_path="$ARGUMENTS")` — load compass + memory + wiki for this file in one router call
@@ -12,7 +12,7 @@ within a session. Fall back to the `cg` CLI only if MCP is unavailable
 4. `cross_repo_deps("<repo>")` — cross-repo consumers (impact_analysis does NOT cross repos)
 5. `impact_analysis("<main-symbol>")` — within-repo blast radius (precise by default). If the name is common/lifecycle-shaped like `get`/`create`/`onCreate`, run `scripts/impact_guard.py <main-symbol>` instead — see Golden Rule 6
 
-CLI fallback (if MCP unavailable): `cg context $ARGUMENTS`, `cg def`, `cg callers`, `cg deps`, `cg impact`.
+CLI fallback (if MCP unavailable): `cairn context $ARGUMENTS`, `cairn def`, `cairn callers`, `cairn deps`, `cairn impact`.
 
 Summarize for the user:
 - What module this file belongs to

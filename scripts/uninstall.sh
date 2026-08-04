@@ -7,7 +7,7 @@
 #   ./scripts/uninstall.sh --agents-only      # remove agent wiring only
 #   ./scripts/uninstall.sh --hooks-only       # remove git hooks only
 #   ./scripts/uninstall.sh --graph-only       # remove graph + knowledge data only
-#   ./scripts/uninstall.sh --package-only     # remove cg binary only
+#   ./scripts/uninstall.sh --package-only     # remove cairn binary only
 #   ./scripts/uninstall.sh --client cursor     # remove from specific client(s) only
 #   ./scripts/uninstall.sh --dry-run          # show what would be removed
 #
@@ -67,25 +67,25 @@ confirm() {
   [[ "$answer" =~ ^[Yy]$ ]]
 }
 
-# Resolve cg binary
-resolve_cg() {
-  local cg
-  cg="$(command -v cg 2>/dev/null || true)"
-  if [[ -z "$cg" ]] && command -v uv >/dev/null 2>&1; then
+# Resolve cairn binary
+resolve_cairn() {
+  local cairn
+  cairn="$(command -v cairn 2>/dev/null || true)"
+  if [[ -z "$cairn" ]] && command -v uv >/dev/null 2>&1; then
     local uv_bin_dir
     uv_bin_dir="$(uv tool dir --bin 2>/dev/null || true)"
-    if [[ -n "$uv_bin_dir" && -x "$uv_bin_dir/cg" ]]; then
-      cg="$uv_bin_dir/cg"
+    if [[ -n "$uv_bin_dir" && -x "$uv_bin_dir/cairn" ]]; then
+      cairn="$uv_bin_dir/cairn"
     fi
   fi
-  if [[ -z "$cg" ]]; then
-    cg="$PROJECT_DIR/.venv/bin/cg"
+  if [[ -z "$cairn" ]]; then
+    cairn="$PROJECT_DIR/.venv/bin/cairn"
   fi
-  if [[ ! -x "$cg" ]]; then
+  if [[ ! -x "$cairn" ]]; then
     echo ""
     return 1
   fi
-  echo "$cg"
+  echo "$cairn"
 }
 
 # Resolve workspace
@@ -96,9 +96,9 @@ resolve_workspace() {
   elif [[ -n "${CAIRN_DB:-}" ]]; then
     ws="$(dirname "$(dirname "${CAIRN_DB}")")"
   else
-    local cg
-    cg="$(resolve_cg)" || return 1
-    ws="$("$cg" config --workspace 2>/dev/null || true)"
+    local cairn
+    cairn="$(resolve_cairn)" || return 1
+    ws="$("$cairn" config --workspace 2>/dev/null || true)"
     if [[ -z "$ws" || ! -d "$ws" ]]; then
       ws="$(dirname "$PROJECT_DIR")"
     fi
@@ -179,11 +179,11 @@ fi
 if $DO_AGENTS; then
   info "Agent integrations"
 
-  CG_CMD="$(resolve_cg)" || true
+  CAIRN_CMD="$(resolve_cairn)" || true
   WORKSPACE="$(resolve_workspace)" || true
 
-  if [[ -z "$CG_CMD" || -z "$WORKSPACE" ]]; then
-    warn "Cannot resolve cg or workspace — skipping agent removal"
+  if [[ -z "$CAIRN_CMD" || -z "$WORKSPACE" ]]; then
+    warn "Cannot resolve cairn or workspace — skipping agent removal"
     warn "  Set CAIRN_WORKSPACE or run from your workspace directory"
   else
     echo -e "  ${DIM}Workspace: $WORKSPACE${NC}"
@@ -198,10 +198,10 @@ if $DO_AGENTS; then
       fi
 
       if $DRY_RUN; then
-        echo -e "  ${DIM}Would run: $CG_CMD uninstall-agents ${AGENT_ARGS[*]:-}${NC}"
+        echo -e "  ${DIM}Would run: $CAIRN_CMD uninstall-agents ${AGENT_ARGS[*]:-}${NC}"
       else
         cd "$WORKSPACE"
-        "$CG_CMD" uninstall-agents ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"} 2>&1 | while IFS= read -r line; do
+        "$CAIRN_CMD" uninstall-agents ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"} 2>&1 | while IFS= read -r line; do
           echo "  $line"
         done
       fi
@@ -216,21 +216,21 @@ fi
 if $DO_HOOKS; then
   info "Git hooks"
 
-  CG_CMD="$(resolve_cg)" || true
+  CAIRN_CMD="$(resolve_cairn)" || true
   WORKSPACE="$(resolve_workspace)" || true
 
-  if [[ -z "$CG_CMD" || -z "$WORKSPACE" ]]; then
-    warn "Cannot resolve cg or workspace — skipping hook removal"
+  if [[ -z "$CAIRN_CMD" || -z "$WORKSPACE" ]]; then
+    warn "Cannot resolve cairn or workspace — skipping hook removal"
   else
     echo -e "  ${DIM}Removes cairn post-commit hooks from all repos${NC}"
     echo ""
 
     if confirm; then
       if $DRY_RUN; then
-        echo -e "  ${DIM}Would run: $CG_CMD hooks uninstall${NC}"
+        echo -e "  ${DIM}Would run: $CAIRN_CMD hooks uninstall${NC}"
       else
         cd "$WORKSPACE"
-        "$CG_CMD" hooks uninstall 2>&1 | while IFS= read -r line; do
+        "$CAIRN_CMD" hooks uninstall 2>&1 | while IFS= read -r line; do
           echo "  $line"
         done || true
       fi
@@ -321,13 +321,13 @@ except Exception:
   fi
 fi
 
-# ─── Step 4: Uninstall cg binary ───────────────────────────────────────────
+# ─── Step 4: Uninstall cairn binary ────────────────────────────────────────
 if $DO_PACKAGE; then
-  info "cg binary"
+  info "cairn binary"
 
-  CG_PATH="$(command -v cg 2>/dev/null || true)"
+  CG_PATH="$(command -v cairn 2>/dev/null || true)"
   if [[ -z "$CG_PATH" ]]; then
-    CG_PATH="$PROJECT_DIR/.venv/bin/cg"
+    CG_PATH="$PROJECT_DIR/.venv/bin/cairn"
   fi
 
   INSTALLED_VIA=""
@@ -351,14 +351,14 @@ if $DO_PACKAGE; then
   # Stale build/, dist/, *.egg-info left in-tree by `pip install -e .` /
   # `uv tool install` (see install.sh's own pre-clean step for why these
   # can go stale) — clean these up regardless of INSTALLED_VIA so a
-  # "removed" cg doesn't leave packaging debris behind.
+  # "removed" cairn doesn't leave packaging debris behind.
   STALE_ARTIFACTS=()
   for p in "$PROJECT_DIR"/build "$PROJECT_DIR"/dist "$PROJECT_DIR"/*.egg-info; do
     [[ -e "$p" ]] && STALE_ARTIFACTS+=("$p")
   done
 
   if [[ -z "$INSTALLED_VIA" && ${#STALE_ARTIFACTS[@]} -eq 0 ]]; then
-    warn "cg not found via uv, pipx, pip, or venv — nothing to remove"
+    warn "cairn not found via uv, pipx, pip, or venv — nothing to remove"
   else
     if [[ -n "$INSTALLED_VIA" ]]; then
       echo -e "  ${DIM}Installed via: $INSTALLED_VIA${NC}"
@@ -408,7 +408,7 @@ if $DO_PACKAGE; then
         fi
       fi
 
-      ok "cg binary removed${INSTALLED_VIA:+ ($INSTALLED_VIA)}"
+      ok "cairn binary removed${INSTALLED_VIA:+ ($INSTALLED_VIA)}"
     else
       warn "Skipped"
     fi

@@ -79,7 +79,7 @@ def task_claim(task_id, assigned_to, knowledge):
         click.echo(f"Could not claim '{task_id}' (not pending or not found).", err=True)
         sys.exit(1)
     click.echo(f"Claimed {task_id}. Write your result, then:")
-    click.echo(f"  cg task complete {task_id} --result-file <path>")
+    click.echo(f"  cairn task complete {task_id} --result-file <path>")
 
 
 @task.command("complete")

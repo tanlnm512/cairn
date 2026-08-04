@@ -67,7 +67,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
         # back to matching ALL file rows (regardless of repo_id) when the
         # named lookup is empty — otherwise every file looks "new" on every
         # boot, and ensure_fresh_force re-indexes the entire workspace each
-        # time (20s+ on a large repo, which blocks cg serve's stdio startup
+        # time (20s+ on a large repo, which blocks cairn serve's stdio startup
         # past the MCP client's connect timeout).
         if not file_rows:
             try:
