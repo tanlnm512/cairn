@@ -47,8 +47,16 @@ def create_memory(
     session_origin: Optional[str] = None,
     tags: Optional[List[str]] = None,
     score: Optional[float] = None,
+    supersedes: Optional[List[str]] = None,
 ) -> OKFConcept:
-    """Build a memory OKF concept with lifecycle frontmatter."""
+    """Build a memory OKF concept with lifecycle frontmatter.
+
+    ``supersedes`` is the concept_id(s) of the prior version(s) this memory
+    replaces. When set, the new memory is marked ``memory_is_latest: true``
+    and the superseded chain is inherited + extended. Callers are responsible
+    for flipping ``memory_is_latest`` to false on the old memory (see
+    ``evolve_memory`` in promotion.py).
+    """
     tier = tier_for_score(score if score is not None else confidence)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     okf_type = f"{TIER_TYPE_PREFIX[tier]}-{type_}"
@@ -67,6 +75,13 @@ def create_memory(
         "promotion_history": [
             {"date": ts, "action": "captured", "score": round(confidence, 3), "tier": tier}
         ],
+        # Supersession: a memory is "latest" by default. When it supersedes
+        # an older memory, memory_supersedes chains the version history (like
+        # agentmemory's mem::evolve). The old memory gets memory_superseded_by
+        # set and memory_is_latest flipped to false by the caller.
+        "memory_is_latest": True,
+        "memory_supersedes": list(supersedes) if supersedes else [],
+        "memory_superseded_by": None,
     }
     return OKFConcept(
         type=okf_type,

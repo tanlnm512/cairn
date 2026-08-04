@@ -93,12 +93,83 @@ def session_end():
     sys.stdout.write(out or "(no memories captured)")
 
 
+def post_tool_failure():
+    """Called after a tool use fails. Auto-captures the failure as a raw
+    ``mistake`` memory so the agent (and future sessions) can recall what went
+    wrong without the agent having to explicitly call record_memory.
+
+    This is the highest-signal auto-capture: failures the agent didn't bother
+    to record. The captured memory lands in the ``raw`` tier at low confidence
+    and relies on the existing promotion/critic pipeline to promote the worthy
+    ones -- graph_verification will naturally score down memories citing
+    nonexistent symbols.
+
+    Privacy: the tool input and error text are passed through the privacy
+    filter (``strip_private_data``) before storage, so secrets in error output
+    are scrubbed.
+
+    Non-blocking: spawns the cairn CLI as a detached subprocess
+    (``start_new_session=True``) and returns immediately. The agent's next
+    prompt is never delayed.
+    """
+    data = _read_stdin()
+    # Skip interrupts -- those aren't real failures worth capturing.
+    if data.get("is_interrupt") or data.get("isInterrupt"):
+        return
+    tool_name = data.get("tool_name") or data.get("toolName") or "unknown"
+    tool_input = data.get("tool_input") or data.get("toolArgs") or {}
+    error = data.get("error") or ""
+
+    if not error:
+        return
+
+    # Privacy-filter before storage. Tool error output can contain API keys,
+    # bearer tokens, etc. from the failing command's stderr.
+    try:
+        from cairn.memory.privacy import strip_private_data
+    except ImportError:
+        # If the filter isn't importable (unlikely), bail -- never store
+        # unfiltered error output.
+        return
+
+    safe_input = strip_private_data(json.dumps(tool_input)[:4000])
+    safe_error = strip_private_data(str(error)[:4000])
+    title = f"Tool failure: {tool_name}"
+
+    # Build the memory body with the Why/How structure record_memory expects.
+    body = (
+        f"{tool_name} failed during use.\n\n"
+        f"Input: {safe_input}\n\n"
+        f"Error: {safe_error}\n\n"
+        f"Why: Auto-captured by post_tool_failure hook.\n"
+        f"How to apply: Check if this error pattern is recurring before "
+        f"using this tool the same way again."
+    )
+
+    # Detached subprocess -- fire and forget, never blocks the agent.
+    try:
+        subprocess.Popen(
+            _cg_command() + [
+                "memory", "record", "mistake", title,
+                "--body", body,
+                "--confidence", "0.3",  # low: raw capture, unreviewed
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,  # detach so it survives the hook exit
+        )
+    except (subprocess.SubprocessError, OSError):
+        pass  # never let capture break the agent
+
+
 if __name__ == "__main__":
     hook_type = sys.argv[1] if len(sys.argv) > 1 else "post_edit"
     if hook_type == "post_edit":
         post_edit()
     elif hook_type == "session_end":
         session_end()
+    elif hook_type == "post_tool_failure":
+        post_tool_failure()
     else:
         sys.stderr.write(f"unknown hook: {hook_type}\n")
         sys.exit(1)

@@ -107,7 +107,7 @@ Desktop, Cursor, or ZCode, add it to the client's MCP config:
 }
 ```
 
-The server exposes 26 tools across 5 layers (graph, compass + knowledge base +
+The server exposes 27 tools across 5 layers (graph, compass + knowledge base +
 router, memory, knowledge). The aggregator tool `explore` is the recommended
 first call for almost any question — it fans a query across the graph layer and
 returns one consolidated answer in a single round trip.
@@ -128,7 +128,7 @@ preview. To remove everything later: `cairn uninstall-agents`.
 ## Next steps
 
 - [cli-reference.md](cli-reference.md) — every `cairn` command and flag.
-- [mcp-tools.md](mcp-tools.md) — the 26 MCP tools, grouped by layer.
+- [mcp-tools.md](mcp-tools.md) — the 27 MCP tools, grouped by layer.
 - [configuration.md](configuration.md) — env vars for paths, semantic search,
   workers, and the LLM task queue.
 - [architecture.md](architecture.md) — the 5-layer design, resolution model,

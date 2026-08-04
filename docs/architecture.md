@@ -15,7 +15,7 @@ cairn is a **local, structural, agent-first** code intelligence system.
   symbols and call edges, then answers queries against that graph. "Who calls
   this?" is a graph traversal, not a guess. Parsers exist for nine languages:
   Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go.
-- **Agent-first.** The primary interface is an MCP server exposing 26 tools to
+- **Agent-first.** The primary interface is an MCP server exposing 27 tools to
   AI agents. The CLI (`cairn`) mirrors the same capability for humans and as a
   fallback. The tool surfaces are designed for an agent to call repeatedly and
   cheaply, not for one-shot human typing.

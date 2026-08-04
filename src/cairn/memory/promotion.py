@@ -23,13 +23,36 @@ def capture_memory(
     confidence: float = 0.7,
     session_origin: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    supersedes_threshold: float = 0.85,
 ) -> Dict:
     """Create, score, and store a new memory in one step.
 
     Shared by the CLI (`cairn memory record`/`capture`) and the MCP
     `record_memory` tool so the create -> score -> tier -> store sequence
     lives in exactly one place.
+
+    Supersession: before storing, the new memory is compared against all
+    existing ``memory_is_latest`` memories of the same type via semantic
+    cosine similarity. If a match exceeds ``supersedes_threshold``, the new
+    memory supersedes the old one (chains the version history and flips the
+    old to ``memory_is_latest: false``) instead of creating a parallel
+    record. This is higher quality than agentmemory's jaccard-only check
+    because it uses cairn's embedding backend, catching paraphrased revisions
+    that share no surface tokens. Returns ``superseded`` in the result dict.
     """
+    superseded_id = _find_supersession_candidate(
+        conn, bundle, type_, title, body, supersedes_threshold
+    )
+
+    supersedes_chain: list[str] = []
+    if superseded_id:
+        # Inherit the old version chain so memory_supersedes is the full history.
+        old = store_mod.get_memory(bundle, superseded_id)
+        if old is not None:
+            norm_id = _norm_cid(bundle, superseded_id)
+            old_chain = [_norm_cid(bundle, cid) for cid in (old.extensions.get("memory_supersedes") or [])]
+            supersedes_chain = [norm_id] + old_chain
+
     concept = store_mod.create_memory(
         type_=type_,
         title=title,
@@ -38,12 +61,25 @@ def capture_memory(
         confidence=confidence,
         session_origin=session_origin,
         tags=tags,
+        supersedes=supersedes_chain or None,
     )
     signals = score_memory(concept, conn, bundle)
     apply_score(concept, signals)
     tier = store_mod.tier_for_score(signals["score"])
     path = store_mod.store_memory(concept, bundle, tier=tier)
-    return {"path": path, "tier": tier, "signals": signals, "concept": concept}
+
+    # Flip the old memory to is_latest=false AFTER the new one is safely on disk.
+    if superseded_id:
+        _mark_superseded(bundle, superseded_id, path)
+        _append_promotion(concept, "supersede", signals["score"])
+
+    return {
+        "path": path,
+        "tier": tier,
+        "signals": signals,
+        "concept": concept,
+        "superseded": superseded_id,
+    }
 
 
 def record_reference(
@@ -134,6 +170,7 @@ def search_memory(
     query: str,
     tier: Optional[str] = None,
     session_id: Optional[str] = None,
+    include_superseded: bool = False,
 ) -> List[OKFConcept]:
     """Search tribal + canonical memories. Records a reference for each result.
 
@@ -142,6 +179,11 @@ def search_memory(
     matches the lexical layer cannot reach (e.g. querying "messaging" finds a
     memory titled "EventBus vs Flow"). The fallback is additive and silent:
     if the semantic extra isn't installed, behavior is unchanged.
+
+    Superseded memories (``memory_is_latest: false``) are filtered out by
+    default so recall surfaces only the current version. Pass
+    ``include_superseded=True`` to traverse the version chain (useful for
+    auditing decision history).
     """
     results = bundle.search(query, limit=20)
     # Filter to memory concepts only.
@@ -153,6 +195,14 @@ def search_memory(
     if tier:
         results = [c for c in results if c.extensions.get("memory_tier", "").startswith(tier)]
 
+    # Drop superseded versions unless explicitly requested. A memory is
+    # superseded when memory_is_latest is explicitly false; older memories
+    # written before this feature default to True (treated as latest).
+    if not include_superseded:
+        results = [
+            c for c in results if c.extensions.get("memory_is_latest", True) is not False
+        ]
+
     # Lexical broaden: if initial results are thin (empty or very few), run a
     # multi-token keyword scan over all memory concepts. This recovers matches
     # where query tokens are spread across fields (e.g. "backoff retry policy"
@@ -163,6 +213,10 @@ def search_memory(
             for cid in bundle.list_concepts(prefix="memory/")
             if (c := bundle.read_concept(cid)) is not None
         ]
+        if not include_superseded:
+            all_mem = [
+                c for c in all_mem if c.extensions.get("memory_is_latest", True) is not False
+            ]
         lexical = _lexical_memory_match(all_mem, query)
         seen = {c.concept_id for c in results}
         for c in lexical:
@@ -173,7 +227,9 @@ def search_memory(
     # Semantic fallback when lexical search comes up empty. Embeds the query
     # and cosine-ranks every memory concept by its title+description+body.
     if not results:
-        results = _semantic_memory_fallback(conn, bundle, query, tier=tier)
+        results = _semantic_memory_fallback(
+            conn, bundle, query, tier=tier, include_superseded=include_superseded
+        )
 
     # Record references for tribal/canonical (not raw/drafts) in ONE batched
     # transaction instead of one write per result. Batching avoids N
@@ -195,6 +251,7 @@ def _semantic_memory_fallback(
     query: str,
     tier: Optional[str] = None,
     limit: int = 20,
+    include_superseded: bool = False,
 ) -> List[OKFConcept]:
     """Semantic recall over memory concepts when lexical search misses.
 
@@ -218,6 +275,11 @@ def _semantic_memory_fallback(
                 or c.extensions.get("memory_tier")
             )
         ]
+        if not include_superseded:
+            concepts = [
+                c for c in concepts
+                if c.extensions.get("memory_is_latest", True) is not False
+            ]
         if tier:
             concepts = [
                 c for c in concepts
@@ -381,6 +443,148 @@ def memory_stats(bundle: OKFBundle) -> Dict:
         avg = sum(scores) / len(scores) if scores else 0
         stats[tier] = {"count": len(mems), "avg_score": round(avg, 3)}
     return stats
+
+
+# --- supersession helpers ------------------------------------------------
+
+
+def _norm_cid(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize an (possibly absolute) concept_id to bundle-relative.
+
+    OKFConcept.from_file sets concept_id to an absolute path; the supersession
+    chain should store relative ids so it survives a workspace move.
+    """
+    try:
+        return str(Path(concept_id).resolve().relative_to(Path(bundle.root).resolve()))
+    except (ValueError, TypeError):
+        return concept_id
+
+
+def _find_supersession_candidate(
+    conn: sqlite3.Connection,
+    bundle: OKFBundle,
+    type_: str,
+    title: str,
+    body: str,
+    threshold: float = 0.85,
+) -> Optional[str]:
+    """Find the best existing memory that the new one supersedes.
+
+    Strategy (adapted from agentmemory's two-tier check, but using cairn's
+    semantic backend instead of jaccard):
+    1. Cheap blocking: only compare against memories of the same ``type``
+       that are ``memory_is_latest``.
+    2. Quick lexical title-exact match → immediate supersession (same title
+       is a strong signal of revision, like agentmemory's jaccard >0.7).
+    3. Otherwise embed the new text + each candidate and take the top cosine;
+       supersede if >= threshold (paraphrase detection).
+    Returns the concept_id of the candidate, or None.
+    """
+    candidates: list[OKFConcept] = []
+    for cid in bundle.list_concepts(prefix="memory/"):
+        c = bundle.read_concept(cid)
+        if c is None:
+            continue
+        if c.extensions.get("memory_type") != type_:
+            continue
+        if c.extensions.get("memory_is_latest", True) is False:
+            continue
+        candidates.append(c)
+    if not candidates:
+        return None
+
+    # Tier 1: exact title match (case-insensitive) — strongest lexical signal.
+    title_lower = (title or "").strip().lower()
+    for c in candidates:
+        if (c.title or "").strip().lower() == title_lower and title_lower:
+            return c.concept_id
+
+    # Tier 2: semantic cosine. Reuses the same backend as search_memory's
+    # semantic fallback so dimensions line up. Silently returns None if the
+    # embedding backend isn't available (no torch) — supersession is an
+    # enhancement, not a correctness requirement.
+    try:
+        from cairn.graph import embeddings as emb
+        from cairn.retrieval import cosine_scan
+
+        if not emb.embeddings_available():
+            return None
+        new_text = " ".join(filter(None, [title, body]))
+        q_blob, dim = emb.embed_query(new_text)
+        cand_texts = [
+            " ".join(filter(None, [c.title, c.description, c.body]))
+            for c in candidates
+        ]
+        blobs, _ = emb._embed(cand_texts)
+        rows = [
+            (blob if isinstance(blob, bytes) else bytes(blob), len(blob) // 4, c)
+            for c, blob in zip(candidates, blobs)
+        ]
+        scored = cosine_scan(q_blob, dim, rows, threshold=threshold)
+        if scored:
+            return scored[0][1].concept_id
+    except Exception:
+        pass
+    return None
+
+
+def _mark_superseded(bundle: OKFBundle, old_id: str, new_id: str) -> None:
+    """Flip memory_is_latest=false on the old memory and link it to the new."""
+    old = store_mod.get_memory(bundle, old_id)
+    if old is None:
+        return
+    old.extensions["memory_is_latest"] = False
+    old.extensions["memory_superseded_by"] = new_id
+    old_id_norm = old.concept_id
+    try:
+        old_id_norm = str(Path(old_id_norm).relative_to(bundle.root))
+    except ValueError:
+        pass
+    # Re-write in place (same path) so the version chain is durable on disk.
+    bundle.write_concept(old)
+
+
+def evolve_memory(
+    conn: sqlite3.Connection,
+    bundle: OKFBundle,
+    memory_path: str,
+    new_title: Optional[str] = None,
+    new_body: Optional[str] = None,
+) -> Optional[Dict]:
+    """Explicit revision: create a new version that supersedes ``memory_path``.
+
+    Unlike the insert-time supersession (which fires automatically when
+    record_memory detects a near-duplicate), this is the agent-initiated path
+    -- the agent knows it is updating a specific decision. Mirrors
+    agentmemory's ``mem::evolve``: chains ``memory_supersedes``, flips the old
+    to ``memory_is_latest: false``, and stores the new version.
+
+    At least one of new_title / new_body must differ from the old memory.
+    """
+    old = store_mod.get_memory(bundle, memory_path)
+    if old is None:
+        return None
+    mtype = old.extensions.get("memory_type", "decision")
+    norm_old = _norm_cid(bundle, old.concept_id)
+    old_chain = [_norm_cid(bundle, cid) for cid in (old.extensions.get("memory_supersedes") or [])]
+    chain = [norm_old] + old_chain
+    confidence = old.extensions.get("memory_signals", {}).get("agent_confidence", 0.7)
+    concept = store_mod.create_memory(
+        type_=mtype,
+        title=new_title or old.title or "memory",
+        body=new_body or old.body or "",
+        resource=old.resource,
+        confidence=confidence,
+        tags=old.tags,
+        supersedes=chain,
+    )
+    signals = score_memory(concept, conn, bundle)
+    apply_score(concept, signals)
+    tier = store_mod.tier_for_score(signals["score"])
+    new_path = store_mod.store_memory(concept, bundle, tier=tier)
+    _mark_superseded(bundle, old.concept_id, new_path)
+    _append_promotion(concept, "evolve", signals["score"])
+    return {"path": new_path, "tier": tier, "signals": signals, "superseded": old.concept_id}
 
 
 # --- helpers -------------------------------------------------------------

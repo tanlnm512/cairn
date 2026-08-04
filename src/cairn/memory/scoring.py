@@ -1,11 +1,19 @@
-"""Memory scoring engine: 6-signal weighted score.
+"""Memory scoring engine: 7-signal weighted score.
 
 score = 0.25*graph_verification + 0.20*cross_session_refs
-      + 0.15*agent_confidence + 0.20*critic_score + 0.10*freshness
-      + 0.10*authority
+      + 0.15*agent_confidence + 0.20*critic_score + 0.05*freshness
+      + 0.05*reinforcement + 0.10*authority
+
+Freshness uses exponential decay (exp(-λ·age)) rather than the earlier linear
+ramp; a new reinforcement signal rewards memories that are accessed
+frequently (adapted from agentmemory's temporalDecay + reinforcementBoost
+model, but folded into cairn's existing single-score system rather than
+running as a parallel retention scorer).
 """
 from __future__ import annotations
 
+import math
+import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -18,7 +26,8 @@ WEIGHTS = {
     "cross_session_refs": 0.20,
     "agent_confidence": 0.15,
     "critic_score": 0.20,
-    "freshness": 0.10,
+    "freshness": 0.05,
+    "reinforcement": 0.05,
     "authority": 0.10,
 }
 
@@ -43,6 +52,7 @@ def score_memory(
     refs_signal = min(refs / 5.0, 1.0)
     critic = critic_score if critic_score is not None else signals.get("critic_score", 0.5)
     freshness = _freshness(concept)
+    reinforcement = _reinforcement(concept, conn)
     authority = _authority(concept)
 
     signals = {
@@ -52,6 +62,7 @@ def score_memory(
         "agent_confidence": round(confidence, 3),
         "critic_score": round(critic, 3),
         "freshness": round(freshness, 3),
+        "reinforcement": round(reinforcement, 3),
         "authority": round(authority, 3),
     }
     signals["score"] = round(compute_score(signals), 3)
@@ -71,6 +82,7 @@ def compute_score(signals: Dict) -> float:
         + WEIGHTS["agent_confidence"] * signals["agent_confidence"]
         + WEIGHTS["critic_score"] * signals["critic_score"]
         + WEIGHTS["freshness"] * signals["freshness"]
+        + WEIGHTS["reinforcement"] * signals.get("reinforcement", 0.0)
         + WEIGHTS["authority"] * signals.get("authority", 0.5)
     )
 
@@ -83,6 +95,7 @@ def apply_score(concept: OKFConcept, signals: Dict):
         "agent_confidence": signals["agent_confidence"],
         "critic_score": signals["critic_score"],
         "freshness": signals["freshness"],
+        "reinforcement": signals["reinforcement"],
         "authority": signals["authority"],
     }
     concept.extensions["memory_score"] = signals["score"]
@@ -164,7 +177,14 @@ DEFAULT_FRESHNESS_WINDOW_DAYS = 90
 
 
 def _freshness(concept: OKFConcept) -> float:
-    """1.0 if recent, decays linearly to 0 over a type-dependent window.
+    """Exponential decay: exp(-λ·age) where λ = ln(2)/half_life.
+
+    The half-life is the type-dependent freshness window, so a memory reaches
+    0.5 at the window boundary (e.g. 90 days for a decision) rather than
+    hitting 0 as the old linear ramp did. This is adapted from agentmemory's
+    temporalDecay = exp(-lambda * daysSinceCreation), but keeps cairn's
+    type-dependent windows so a `workaround` decays 3x slower than a
+    `decision`.
 
     Human-authored documents (doc_source == "manual") never age out.
     """
@@ -174,15 +194,62 @@ def _freshness(concept: OKFConcept) -> float:
     if concept.extensions.get("doc_source") == "manual":
         return 1.0
     try:
-        # Parse ISO 8601 (strip Z).
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         return 0.5
     now = datetime.now(timezone.utc)
     days = (now - dt).total_seconds() / 86400.0
     mtype = concept.extensions.get("memory_type", "decision")
-    window = FRESHNESS_WINDOW_DAYS.get(mtype, DEFAULT_FRESHNESS_WINDOW_DAYS)
-    return max(0.0, 1.0 - days / window)
+    half_life = FRESHNESS_WINDOW_DAYS.get(mtype, DEFAULT_FRESHNESS_WINDOW_DAYS)
+    if half_life <= 0:
+        return 1.0
+    lam = math.log(2) / half_life
+    return math.exp(-lam * days)
+
+
+def _reinforcement(concept: OKFConcept, conn: sqlite3.Connection) -> float:
+    """Reward signal from how recently and often this memory was recalled.
+
+    Adapted from agentmemory's reinforcementBoost = sigma * Σ(1/daysSince(ts)),
+    but driven by cairn's memory_refs table (which records a row on every
+    recall hit). The boost saturates at 1.0, so a frequently-recalled memory
+    stays warm even as its freshness decays -- pure exponential decay would
+    forget everything eventually; this rewards reuse.
+
+    Returns 0.0 for a never-recalled memory (or when memory_refs is empty).
+    """
+    if not concept.concept_id:
+        return 0.0
+    cur = conn.cursor()
+    # memory_refs.memory_path may be stored as absolute (from_file sets
+    # absolute concept_id) or relative. Query both forms to be robust.
+    cid = concept.concept_id
+    cids = [cid]
+    if os.path.isabs(cid) and "memory/" in cid:
+        # Strip everything before the last "memory/" to get the relative form.
+        rel = "memory/" + cid.split("memory/")[-1]
+        if rel != cid:
+            cids.append(rel)
+    placeholders = ",".join("?" * len(cids))
+    rows = cur.execute(
+        f"SELECT referenced_at FROM memory_refs WHERE memory_path IN ({placeholders})",
+        cids,
+    ).fetchall()
+    if not rows:
+        return 0.0
+    now = datetime.now(timezone.utc)
+    sigma = 0.3  # scaling constant (same default as agentmemory)
+    boost = 0.0
+    for row in rows:
+        ts = row["referenced_at"] if isinstance(row, sqlite3.Row) else row[0]
+        try:
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            days_since = (now - dt).total_seconds() / 86400.0
+            if days_since > 0:
+                boost += 1.0 / days_since
+        except (ValueError, TypeError):
+            continue
+    return min(1.0, boost * sigma)
 
 
 def _authority(concept: OKFConcept) -> float:

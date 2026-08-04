@@ -24,13 +24,13 @@
 cairn is a **local, structural, agent-first** codebase intelligence system.
 It parses your source into a typed call graph in SQLite, then layers a
 knowledge system on top (compass, wiki, memory, business knowledge). The same
-store backs a `cairn` CLI for humans and a 26-tool MCP server for AI agents.
+store backs a `cairn` CLI for humans and a 27-tool MCP server for AI agents.
 
 ```mermaid
 flowchart TB
     subgraph Clients["Clients"]
         H["Human<br/>cairn CLI"]
-        A["AI Agent<br/>MCP server (26 tools)"]
+        A["AI Agent<br/>MCP server (27 tools)"]
     end
 
     subgraph Router["Routing"]
@@ -450,7 +450,7 @@ Every concept is a markdown file with YAML frontmatter (OKF v0.2). The
 ## See also
 
 - [architecture.md](architecture.md) — per-layer deep dive, resolution model, LLM boundary.
-- [mcp-tools.md](mcp-tools.md) — all 26 MCP tools with argument schemas.
+- [mcp-tools.md](mcp-tools.md) — all 27 MCP tools with argument schemas.
 - [examples/resolution-walkthrough.md](examples/resolution-walkthrough.md) — precise vs fuzzy worked example.
 - [benchmarks.md](benchmarks.md) — how to measure retrieval quality and performance.
 - [architecture.html](../architecture.html) — interactive HTML version of these diagrams.

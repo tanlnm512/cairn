@@ -340,7 +340,7 @@ state, and prompts for which to install plus the config scope.
 ## Where to look next
 
 - For the **MCP server** tool surface that AI agents consume, see
-  [mcp-tools.md](./mcp-tools.md) (26 tools across 5 layers; `explore` is the
+  [mcp-tools.md](./mcp-tools.md) (27 tools across 5 layers; `explore` is the
   recommended first call).
 - For the explore-first workflow, precise-vs-fuzzy rules, and per-tool quirks,
   see `AGENTS.md` in the workspace root.
