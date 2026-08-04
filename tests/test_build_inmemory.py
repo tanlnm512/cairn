@@ -9,11 +9,8 @@ executemany batching / O(n^2) fix / dropped periodic commits didn't change
 """
 from __future__ import annotations
 
-import os
 import sqlite3
-import tempfile
 
-import pytest
 
 from cairn.graph.builder import build_graph
 from cairn.graph.schema import get_build_db, backup_to

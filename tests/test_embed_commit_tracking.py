@@ -15,7 +15,6 @@ Uses the hash_backend fixture to avoid the torch dependency.
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import patch
 
 import pytest
 

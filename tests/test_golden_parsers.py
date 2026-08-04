@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 import pytest
 
 from tests.fixtures.golden.regenerate import LANG_CONFIG, GOLDEN_DIR, normalise

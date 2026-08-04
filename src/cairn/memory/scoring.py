@@ -6,7 +6,6 @@ score = 0.25*graph_verification + 0.20*cross_session_refs
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -122,7 +121,6 @@ def _graph_verification(concept: OKFConcept, conn: sqlite3.Connection) -> float:
     if not all_refs:
         return 1.0  # nothing to verify; neutral-positive
 
-    cur = conn.cursor()
     verified = 0
 
     # Check file references using the critic's logic

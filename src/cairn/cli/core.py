@@ -4,11 +4,9 @@ from __future__ import annotations
 import click
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, builder, get_db, main, queries, scanner_mod
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
@@ -30,7 +28,7 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
     """
     import shutil
 
-    from ..paths import register_workspace, resolve_workspace, store_key
+    from ..paths import register_workspace, resolve_workspace
 
     ws = Path(ws_arg).resolve() if ws_arg else resolve_workspace()
     store = register_workspace(ws)
@@ -53,8 +51,6 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
         # Merge: copy legacy knowledge tree into the store. Skip .DS_Store and
         # files that already exist at the destination. Only count as a migration
         # if at least one real file was copied.
-        real_dst = [f for f in store.knowledge.rglob("*")
-                    if f.is_file() and f.name != ".DS_Store"]
         copied = 0
         for item in legacy_kn.rglob("*"):
             if item.is_dir() or item.name == ".DS_Store":
@@ -96,14 +92,13 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
 
 
 # --------------------------------------------------------------------------
-# cg config — show resolved paths and registry.
+# cairn config — show resolved paths and registry.
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--list", "list_all", is_flag=True, help="List all registered workspaces.")
 @click.option("--mcp-config", is_flag=True, help="Print a path-free .mcp.json snippet for agents.")
 def config(list_all, mcp_config):
     """Show resolved store paths for this workspace (or all registered ones)."""
-    import json
 
     from ..paths import REGISTRY_FILE, resolve_store, resolve_workspace
 
@@ -121,7 +116,7 @@ def config(list_all, mcp_config):
 
         reg = _load_registry()
         if not reg:
-            click.echo(f"No workspaces registered. Run `cairn init` in a workspace root.")
+            click.echo("No workspaces registered. Run `cairn init` in a workspace root.")
             click.echo(f"Registry would live at: {REGISTRY_FILE}")
             return
         click.echo(f"Registry: {REGISTRY_FILE}")
@@ -141,7 +136,7 @@ def config(list_all, mcp_config):
     # after install, whether they're getting real embeddings (bge-m3) or the
     # dep-free hash fallback. This is the earliest visibility point — it
     # surfaces the state before the user ever runs `cairn embed`.
-    from ..graph.embeddings import _effective_backend, _backend_name, current_model, embeddings_available
+    from ..graph.embeddings import _effective_backend, _backend_name, current_model
 
     eff = _effective_backend()
     configured = _backend_name()
@@ -149,7 +144,7 @@ def config(list_all, mcp_config):
     if eff == "hash" and configured == "local":
         # Silent fallback: user expects bge-m3 but will get hash.
         click.echo(f"embed:      {model}  ⚠ fallback (sentence-transformers not installed)")
-        click.echo(f"            for real embeddings: uv tool install 'cairn-intel[semantic]' --force")
+        click.echo("            for real embeddings: uv tool install 'cairn-intel[semantic]' --force")
     elif eff == "hash":
         click.echo(f"embed:      {model}  (CAIRN_EMBED_BACKEND=hash)")
     else:
@@ -173,11 +168,11 @@ def config(list_all, mcp_config):
 
     click.echo("")
     click.echo("MCP config for an agent (path-free):")
-    click.echo('  cg config --mcp-config')
+    click.echo('  cairn config --mcp-config')
 
 
 # --------------------------------------------------------------------------
-# cg build
+# cairn build
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--repo", "repo", default=None, help="Only build this repo.")
@@ -320,7 +315,7 @@ def build(repo, workspace, db, verbose, staging):
 
 
 # --------------------------------------------------------------------------
-# cg stats
+# cairn stats
 # --------------------------------------------------------------------------
 @main.command(name="stats")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")

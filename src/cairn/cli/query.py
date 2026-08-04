@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import click
 import json
-import os
-import subprocess
 import sys
-from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main, queries
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command(name="def")
@@ -36,7 +33,7 @@ def find_def(symbol, db, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg callers
+# cairn callers
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("symbol")
@@ -72,7 +69,7 @@ def callers(symbol, db, as_json, fuzzy):
 
 
 # --------------------------------------------------------------------------
-# cg search
+# cairn search
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("pattern")
@@ -97,17 +94,8 @@ def search(pattern, kind, db, as_json):
                    f"{r['file_path']}:{r['line_start']}  ({r['repo']})")
 
 
-def _mods(modifiers_json: str) -> list:
-    if not modifiers_json:
-        return []
-    try:
-        return json.loads(modifiers_json)
-    except (json.JSONDecodeError, TypeError):
-        return []
-
-
 # --------------------------------------------------------------------------
-# cg callees
+# cairn callees
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("symbol")
@@ -139,7 +127,7 @@ def callees(symbol, db, as_json, fuzzy):
 
 
 # --------------------------------------------------------------------------
-# cg impact
+# cairn impact
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("symbol")
@@ -183,7 +171,7 @@ def impact(symbol, depth, db, as_json, fuzzy):
 
 
 # --------------------------------------------------------------------------
-# cg deps
+# cairn deps
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("repo")

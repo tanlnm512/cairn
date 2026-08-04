@@ -116,6 +116,17 @@ __all__ = [
     "install_zcode",
     "install_agy",
     "install_opencode",
+    # Private helpers re-exported for internal callers / tests
+    "_SLASH_COMMANDS",
+    "_already_installed",
+    "_deep_merge",
+    "_entry_present",
+    "_merge_json_file",
+    "_write_file",
+    "_write_tree",
+    "_INSTRUCTIONS_BODY",
+    "_agents_instructions",
+    "_claude_instructions",
 ]
 
 

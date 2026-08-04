@@ -5,13 +5,12 @@ and dispatches to the appropriate cairn command.
 
 Path-free: resolves the `cairn` binary via PATH (shutil.which), falling back to
 `python -m cairn.cli.main` using the running interpreter. Works regardless of install
-method (pipx, wheel, editable) and regardless of cwd — cg resolves the central
+method (pipx, wheel, editable) and regardless of cwd — cairn resolves the central
 store from the workspace context itself.
 """
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -25,17 +24,17 @@ def _read_stdin() -> dict:
 
 
 def _cg_command() -> list[str]:
-    """Resolve a cg invocation. Prefers a `cairn` binary on PATH; falls back to
+    """Resolve a cairn invocation. Prefers a `cairn` binary on PATH; falls back to
     `python -m cairn.cli.main` so the hook works from an editable install / source
     checkout that isn't on PATH."""
-    cg = shutil.which("cairn")
-    if cg:
-        return [cg]
+    cairn_bin = shutil.which("cairn")
+    if cairn_bin:
+        return [cairn_bin]
     return [sys.executable, "-m", "cairn.cli.main"]
 
 
 def _run_cg(args: list, timeout: int = 30) -> str:
-    """Run a cg command. Returns stdout."""
+    """Run a cairn command. Returns stdout."""
     try:
         result = subprocess.run(
             _cg_command() + args,

@@ -54,7 +54,7 @@ def reindex_paths(
             continue
         repo_path = str(scanner_mod.resolve_repo_path(workspace, repo))
         try:
-            rel_path = str(Path(abs_path).relative_to(repo_path))
+            Path(abs_path).relative_to(repo_path)
         except ValueError:
             continue
 

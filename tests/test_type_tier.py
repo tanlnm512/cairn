@@ -18,7 +18,6 @@ Covers:
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 
 from cairn.graph.builder import build_graph
 from cairn.graph.resolver import (

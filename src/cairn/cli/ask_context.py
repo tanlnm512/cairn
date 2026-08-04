@@ -3,12 +3,8 @@ from __future__ import annotations
 
 import click
 import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
@@ -41,7 +37,7 @@ def ask(question, db, knowledge, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg context
+# cairn context
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("file_path")

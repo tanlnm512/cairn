@@ -27,7 +27,7 @@ DEFAULT_THRESHOLD = 100
 
 
 def _cg_command() -> list[str]:
-    """Resolve the cg invocation.
+    """Resolve the cairn invocation.
 
     Mirrors agent_install.resolve_cg_command(): prefer the `cairn` binary on
     PATH; fall back to `python -m cairn.cli.main` when it isn't (e.g. an editable
@@ -46,7 +46,7 @@ def run_cg(args: list[str]) -> subprocess.CompletedProcess:
         print("error: `cairn` not found on PATH", file=sys.stderr)
         sys.exit(1)
     except subprocess.TimeoutExpired:
-        print(f"error: `cg {' '.join(args)}` timed out", file=sys.stderr)
+        print(f"error: `cairn {' '.join(args)}` timed out", file=sys.stderr)
         sys.exit(1)
 
 

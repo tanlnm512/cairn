@@ -9,9 +9,7 @@ symbols.name. Widen transitive_edges schema to carry target_id.
 """
 from __future__ import annotations
 
-import sqlite3
 
-from cairn.graph.schema import _apply_schema
 from cairn.graph.dataflow import build_transitive_closure
 
 

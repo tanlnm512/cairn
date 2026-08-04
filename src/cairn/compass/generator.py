@@ -23,7 +23,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ..graph.queries import cross_repo_deps, get_callers, trace_flow
+from ..graph.queries import trace_flow
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 
@@ -70,8 +70,6 @@ def generate_compass(
         repo: optional repo name; if None, inferred from the path.
         llm_synthesize: optional callable(symbols, key_files, cross_deps) -> str body.
     """
-    cur = conn.cursor()
-
     # 1. Find all symbols in the module path (path substring match).
     repo_filter = repo or _infer_repo(conn, module_path)
     symbols = _symbols_in_module(conn, module_path, repo_filter)

@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import click
-import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
@@ -88,8 +86,6 @@ def memory_capture(session_transcript, session_id, db, knowledge):
     Used by session-end hooks. Routes through the memory-extract LLM task
     (decoupled); if no agent is available, queues the task for later and exits.
     """
-    import json
-    import os
 
     from ..llm.tasks import create_task
     from ..memory.promotion import capture_memory
@@ -159,7 +155,6 @@ def memory_list(tier, tag, db, knowledge):
         click.echo("No memories found.")
         return
     # Open the graph conn only if the DB exists; otherwise skip verification.
-    from pathlib import Path
 
     conn = None
     if Path(db).exists():
@@ -214,7 +209,6 @@ def memory_digest(limit, db, knowledge):
     if not mems:
         click.echo("No tribal memories yet.")
         return
-    from pathlib import Path
 
     conn = None
     if Path(db).exists():

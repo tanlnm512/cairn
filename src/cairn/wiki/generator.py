@@ -69,7 +69,7 @@ def _graph_derived_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) 
     ).fetchall()
 
     body_parts = [f"# {repo} Architecture\n"]
-    body_parts.append(f"## Overview\n")
+    body_parts.append("## Overview\n")
     body_parts.append(
         f"{repo} contains {stats['by_repo'].get(repo, 0)} symbols across "
         f"{sum(1 for _ in cur.execute('SELECT 1 FROM files WHERE repo_id=?',(repo,)))} files.\n"

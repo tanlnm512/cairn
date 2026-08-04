@@ -4,11 +4,9 @@ from __future__ import annotations
 import click
 import json
 import os
-import subprocess
 import sys
-from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main, queries
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
@@ -75,10 +73,10 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
         display.dim(
             "For real embeddings (bge-m3 by default), run ONE TIME:"
         )
-        display.dim("  cg embed --install-deps")
+        display.dim("  cairn embed --install-deps")
         display.dim(
             "This downloads torch + sentence-transformers into ~/.cairn/lib "
-            "(survives reinstalls). Then re-run: cg embed"
+            "(survives reinstalls). Then re-run: cairn embed"
         )
         display.dim(
             "Or set CAIRN_EMBED_BACKEND=hash explicitly to silence this warning."

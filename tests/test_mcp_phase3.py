@@ -79,7 +79,6 @@ class TestStructuredContent:
         try:
             tg._conn = lambda: _StubConn()
             # Patch the lazy import inside get_callers_data.
-            import sys
             import types
 
             fake_queries = types.SimpleNamespace(get_callers=_StubQuery.get_callers)

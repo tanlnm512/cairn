@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from .claude_hooks import post_edit, session_end
 
-# Cursor hooks are functionally identical to Claude Code hooks: both call cg
-# update on edit and cg memory capture on session end. Re-export for clarity.
+# Cursor hooks are functionally identical to Claude Code hooks: both call cairn
+# update on edit and cairn memory capture on session end. Re-export for clarity.
 afterFileEdit = post_edit
 afterSessionEnd = session_end
 

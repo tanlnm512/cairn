@@ -49,15 +49,15 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
   (HTTP handler, CLI command, ViewModel handleCommand, repository method)
 - Call `generate_flow(entry, as_workflow=True)` to write a flow compass + workflow
   from the trace (critic-gated compass, editable workflow)
-- CLI: `cg compass flow <entry> --as-workflow` (or `--use-llm` to queue for LLM synthesis)
-- CLI: `cg compass flow-gaps` to find undocumented flows; `--generate` to batch-generate
+- CLI: `cairn compass flow <entry> --as-workflow` (or `--use-llm` to queue for LLM synthesis)
+- CLI: `cairn compass flow-gaps` to find undocumented flows; `--generate` to batch-generate
 
 ### When you need past decisions:
 - Call `recall_memory(query)` -- symbol/title-keyed, NOT full-text. Query by
   symbol name or title tokens ("ApiFactory", "backoff"), not natural language.
 
 ### After completing a task, ALWAYS:
-1. Run `cg update` to refresh the graph with your changes
+1. Run `cairn update` to refresh the graph with your changes
 2. Call `record_memory` for any learnings:
    - type="decision" for architectural choices made
    - type="pattern" for reusable code patterns discovered
@@ -86,7 +86,7 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 
 3. **search_symbols is the default entry point.** FTS5 + BM25 ranking. For concept-based searches ("where do we handle retries"), `semantic_search` is the complement. `explore` orchestrates both automatically.
 
-4. **Index auto-refreshes at boot.** No per-query freshness check. Edits during a session need a server restart. Run `cg stats` from CLI to check index health — no MCP tool exists for this.
+4. **Index auto-refreshes at boot.** No per-query freshness check. Edits during a session need a server restart. Run `cairn stats` from CLI to check index health — no MCP tool exists for this.
 
 5. **typeHierarchy is limited by tree-sitter.** Works for Kotlin/Java. Expect empty results for TypeScript, Python, Swift. Don't retry — use `explore` or `semantic_search` instead.
 
@@ -98,27 +98,27 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 
 9. **impact_analysis + cross_repo_deps always together.** Neither alone gives the full multi-repo "what breaks" picture. Always call both.
 
-10. **Mutations via CLI, reads via MCP.** `cg update`, `cg build`, `cg dataflow build`, `cg task claim/complete`, `cg memory purge` are CLI-only. MCP is read-only for L1 and narrow CRUD for L4/L5. Exception: `generate_flow` is an MCP write that creates a `compass/flow-*` doc (critic-gated) — the one generation tool available without the CLI.
+10. **Mutations via CLI, reads via MCP.** `cairn update`, `cairn build`, `cairn dataflow build`, `cairn task claim/complete`, `cairn memory purge` are CLI-only. MCP is read-only for L1 and narrow CRUD for L4/L5. Exception: `generate_flow` is an MCP write that creates a `compass/flow-*` doc (critic-gated) — the one generation tool available without the CLI.
 
 ## LLM Task Queue (agent-decoupled synthesis)
 Cairn never calls an LLM directly. To generate compass/wiki/flow docs with LLM quality:
-- `cg task list --status pending` -- see queued work
-- `cg task show <id>` -> `cg task claim <id>` -> `cg task complete <id> --result-file <path>`
+- `cairn task list --status pending` -- see queued work
+- `cairn task show <id>` -> `cairn task claim <id>` -> `cairn task complete <id> --result-file <path>`
 - Task kinds: `compass-synthesize`, `compass-revise`, `flow-synthesize`, `flow-revise`, `wiki`, `memory-extract`, `memory-critic`
 - The deterministic critic fact-checks every result; only graph-verified files/symbols allowed.
 - Flow tasks (`flow-synthesize`) trace the call chain and auto-promote to `compass/flow-<entry>` on critic pass.
 
 ## CLI Fallback (if MCP tools are unavailable):
-- `cg def <symbol>` -- find definition
-- `cg callers <symbol>` -- who calls this
-- `cg impact <symbol>` -- what breaks if changed (within-repo)
-- `cg deps <repo>` -- cross-repo dependency map
-- `cg context <file>` -- load context for a file
-- `cg ask "<question>"` -- natural language query across all layers
-- `cg memory record <type> "<title>"` -- capture a learning
-- `cg compass flow <entry> [--as-workflow]` -- trace a business flow
-- `cg compass flow-gaps` -- find undocumented business flows
-- `cg compass flow-gaps --generate --limit 5` -- batch-generate flow compasses
+- `cairn def <symbol>` -- find definition
+- `cairn callers <symbol>` -- who calls this
+- `cairn impact <symbol>` -- what breaks if changed (within-repo)
+- `cairn deps <repo>` -- cross-repo dependency map
+- `cairn context <file>` -- load context for a file
+- `cairn ask "<question>"` -- natural language query across all layers
+- `cairn memory record <type> "<title>"` -- capture a learning
+- `cairn compass flow <entry> [--as-workflow]` -- trace a business flow
+- `cairn compass flow-gaps` -- find undocumented business flows
+- `cairn compass flow-gaps --generate --limit 5` -- batch-generate flow compasses
 
 ## Knowledge Files
 

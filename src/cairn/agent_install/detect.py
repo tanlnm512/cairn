@@ -14,7 +14,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._common import CLIENTS, resolve_cg_command, resolve_cg_str  # re-export
 
 
 def claude_desktop_config_path() -> Path:

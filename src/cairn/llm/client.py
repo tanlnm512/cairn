@@ -18,8 +18,7 @@ import json
 import os
 import subprocess
 import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Protocol
 
 from ..okf.bundle import OKFBundle
 from . import tasks as task_mod

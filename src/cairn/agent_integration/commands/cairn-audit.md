@@ -3,13 +3,13 @@
 Run a comprehensive health check across all layers. Validation and maintenance
 steps are bulk operations — CLI is the correct surface for these (Golden Rule 10).
 
-1. `cg status` -- overall system status (cross-layer health; no MCP aggregate)
-2. `cg validate` -- OKF conformance
-3. `cg compass validate` -- check for stale file references
-4. `cg compass gaps` -- find modules without compass coverage
-5. `cg compass flow-gaps` -- find undocumented business flows
-6. `cg memory stats` -- memory distribution by tier
-7. `cg memory decay` -- clean up stale memories
+1. `cairn status` -- overall system status (cross-layer health; no MCP aggregate)
+2. `cairn validate` -- OKF conformance
+3. `cairn compass validate` -- check for stale file references
+4. `cairn compass gaps` -- find modules without compass coverage
+5. `cairn compass flow-gaps` -- find undocumented business flows
+6. `cairn memory stats` -- memory distribution by tier
+7. `cairn memory decay` -- clean up stale memories
 
 For targeted MCP-side checks during the audit:
 - `recall_memory("<area>", tier="tribal")` to spot-check tribal-memory quality

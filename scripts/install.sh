@@ -1,11 +1,11 @@
 #!/bin/bash
-# scripts/install.sh — Install the cg CLI binary + wire AI coding clients.
+# scripts/install.sh — Install the cairn CLI binary + wire AI coding clients.
 #
-# This script installs the `cg` command and (optionally) wires it into your
+# This script installs the `cairn` command and (optionally) wires it into your
 # AI coding clients (Claude Code, Cursor, Droid, ZCode, etc.) in one shot.
 #
 # Usage:
-#   ./scripts/install.sh                  # install cg, then interactively pick agents
+#   ./scripts/install.sh                  # install cairn, then interactively pick agents
 #   ./scripts/install.sh --semantic       # also install semantic search extras
 #   ./scripts/install.sh --venv           # use venv instead of uv/pipx
 #   ./scripts/install.sh --no-agents      # skip the agent-wiring step
@@ -98,8 +98,8 @@ if command -v uv >/dev/null 2>&1; then
   ok "Cleared uv's cached build for cairn-intel"
 fi
 
-# ─── Step 2: Install cg binary ─────────────────────────────────────────────
-info "Installing cg binary..."
+# ─── Step 2: Install cairn binary ─────────────────────────────────────────
+info "Installing cairn binary..."
 
 if $USE_VENV; then
   VENV_DIR="$PROJECT_DIR/.venv"
@@ -111,43 +111,43 @@ if $USE_VENV; then
   fi
   source "$VENV_DIR/bin/activate"
   pip install -e "${PROJECT_DIR}[dev]" >/dev/null 2>&1
-  ok "Installed cg (editable, venv mode)"
-  CG_CMD="$VENV_DIR/bin/cg"
+  ok "Installed cairn (editable, venv mode)"
+  CAIRN_CMD="$VENV_DIR/bin/cairn"
 else
   # Prefer uv, fall back to pipx, then venv
   if command -v uv >/dev/null 2>&1; then
     uv tool install --force "$PROJECT_DIR" >/dev/null 2>&1
-    ok "Installed cg via uv"
+    ok "Installed cairn via uv"
   elif command -v pipx >/dev/null 2>&1; then
     pipx install --force "$PROJECT_DIR" >/dev/null 2>&1
-    ok "Installed cg via pipx"
+    ok "Installed cairn via pipx"
   else
     warn "Neither uv nor pipx found. Falling back to venv..."
     VENV_DIR="$PROJECT_DIR/.venv"
     "$PYTHON" -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
     pip install -e "${PROJECT_DIR}[dev]" >/dev/null 2>&1
-    ok "Installed cg (venv fallback)"
-    CG_CMD="$VENV_DIR/bin/cg"
+    ok "Installed cairn (venv fallback)"
+    CAIRN_CMD="$VENV_DIR/bin/cairn"
   fi
 fi
 
-# Resolve cg command path
-if [[ -z "${CG_CMD:-}" ]]; then
-  CG_CMD="$(command -v cg 2>/dev/null || true)"
+# Resolve cairn command path
+if [[ -z "${CAIRN_CMD:-}" ]]; then
+  CAIRN_CMD="$(command -v cairn 2>/dev/null || true)"
 fi
-if [[ -z "$CG_CMD" || ! -x "$CG_CMD" ]] && command -v uv >/dev/null 2>&1; then
+if [[ -z "$CAIRN_CMD" || ! -x "$CAIRN_CMD" ]] && command -v uv >/dev/null 2>&1; then
   UV_BIN_DIR="$(uv tool dir --bin 2>/dev/null || true)"
-  if [[ -n "$UV_BIN_DIR" && -x "$UV_BIN_DIR/cg" ]]; then
-    CG_CMD="$UV_BIN_DIR/cg"
+  if [[ -n "$UV_BIN_DIR" && -x "$UV_BIN_DIR/cairn" ]]; then
+    CAIRN_CMD="$UV_BIN_DIR/cairn"
   fi
 fi
-if [[ -z "$CG_CMD" || ! -x "$CG_CMD" ]]; then
-  fail "cg binary not found. Try: $0 --venv"
+if [[ -z "$CAIRN_CMD" || ! -x "$CAIRN_CMD" ]]; then
+  fail "cairn binary not found. Try: $0 --venv"
 fi
 
-CG_VERSION=$("$CG_CMD" --version 2>/dev/null || echo "unknown")
-ok "cg --version: $CG_VERSION"
+CAIRN_VERSION=$("$CAIRN_CMD" --version 2>/dev/null || echo "unknown")
+ok "cairn --version: $CAIRN_VERSION"
 
 # ─── Step 3: Optional — semantic search extras ─────────────────────────────
 if $EXTRA_SEMANTIC; then
@@ -174,43 +174,43 @@ if $WIRE_AGENTS; then
   if [[ -n "$AGENTS_TARGET" ]]; then
     # --agents was passed: use it directly, no prompt.
     info "Wiring agents: $AGENTS_TARGET (scope: $AGENTS_SCOPE)"
-    "$CG_CMD" install-agents --client "$AGENTS_TARGET" --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
+    "$CAIRN_CMD" install-agents --client "$AGENTS_TARGET" --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
   elif [[ ! -t 0 ]]; then
     # Non-interactive (piped/scripted): auto-install detected-not-installed.
     info "Wiring agents (non-interactive: detected, not yet installed)"
-    "$CG_CMD" install-agents --yes --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
+    "$CAIRN_CMD" install-agents --yes --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
   else
     # Interactive: show detection, let the user choose.
     # First, run install-agents which shows the detection table + prompts.
-    "$CG_CMD" install-agents --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
+    "$CAIRN_CMD" install-agents --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
   fi
 
   echo ""
   if [[ $? -eq 0 ]]; then
     ok "Agent wiring complete"
   else
-    warn "Agent wiring had issues (you can re-run: cg install-agents)"
+    warn "Agent wiring had issues (you can re-run: cairn install-agents)"
   fi
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}cg installed${NC}"
+echo -e "${BOLD}cairn installed${NC}"
 echo ""
-echo "  Binary: $CG_CMD"
+echo "  Binary: $CAIRN_CMD"
 echo ""
 echo "  Next steps:"
-echo "    1. cg init                         # register workspace + build graph"
-echo "    2. cg embed --install-deps         # one-time: semantic deps (bge-m3)"
-echo "    3. cg embed                        # build the embedding index"
+echo "    1. cairn init                      # register workspace + build graph"
+echo "    2. cairn embed --install-deps      # one-time: semantic deps (bge-m3)"
+echo "    3. cairn embed                     # build the embedding index"
 echo ""
 echo "  Or reconfigure agents anytime:"
-echo "    cg install-agents                  # interactive client picker"
-echo "    cg install-agents --scope global   # write to ~/.claude/ etc."
+echo "    cairn install-agents               # interactive client picker"
+echo "    cairn install-agents --scope global   # write to ~/.claude/ etc."
 echo ""
 echo "  Verify:"
-echo "    cg --version"
-echo "    cg stats                           # (after cg init)"
+echo "    cairn --version"
+echo "    cairn stats                        # (after cairn init)"
 echo ""
 echo "  Uninstall:"
 echo "    ./scripts/uninstall.sh"

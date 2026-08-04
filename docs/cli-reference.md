@@ -1,10 +1,10 @@
-# `cg` CLI Reference
+# `cairn` CLI Reference
 
-The `cg` command is the human-facing interface to cairn (package
+The `cairn` command is the human-facing interface to cairn (package
 `cairn-intel`). It builds the local code graph, manages knowledge/memory,
 generates module guides, and runs the MCP server that AI agents consume.
 
-> Run `cg --help` for the live, authoritative command list. This page
+> Run `cairn --help` for the live, authoritative command list. This page
 > documents every command as it is registered in `src/cairn/cli/`.
 
 ---
@@ -16,8 +16,8 @@ generates module guides, and runs the MCP server that AI agents consume.
 | `--version` | Print the installed version (`cairn-intel <version>`). |
 | `--help` | Show help for the group or any subcommand. |
 
-The version is reported from the installed package metadata. `cg version`
-and `cg upgrade --check` are the dedicated version commands.
+The version is reported from the installed package metadata. `cairn version`
+and `cairn upgrade --check` are the dedicated version commands.
 
 ### Common per-command conventions
 
@@ -36,9 +36,9 @@ and `cg upgrade --check` are the dedicated version commands.
 
 ## Command groups
 
-### `cg serve` — MCP server and SSE daemon
+### `cairn serve` — MCP server and SSE daemon
 
-`cg serve` is a group with `invoke_without_command=True`: running `cg serve`
+`cairn serve` is a group with `invoke_without_command=True`: running `cairn serve`
 with no subcommand runs the MCP server in the foreground over **stdio**
 (the mode MCP clients spawn). Pass `--port` (or use a subcommand) for SSE.
 
@@ -47,71 +47,71 @@ read-only, contention-safe model that replaces one-stdio-server-per-client.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg serve` | Foreground stdio server (the MCP-client spawn mode). |
-| `cg serve run` | Foreground server: stdio by default, SSE with `--port`. |
-| `cg serve start` | Install + start the persistent SSE daemon (macOS launchd). Idempotent, auto-restarts, starts at login. |
-| `cg serve stop` | Unload the LaunchAgent and kill stray `cg serve` processes. |
-| `cg serve status` | Health check: launchd state, pid, SSE response, strays, DB lock holders. |
-| `cg serve restart` | Stop then start. |
+| `cairn serve` | Foreground stdio server (the MCP-client spawn mode). |
+| `cairn serve run` | Foreground server: stdio by default, SSE with `--port`. |
+| `cairn serve start` | Install + start the persistent SSE daemon (macOS launchd). Idempotent, auto-restarts, starts at login. |
+| `cairn serve stop` | Unload the LaunchAgent and kill stray `cairn serve` processes. |
+| `cairn serve status` | Health check: launchd state, pid, SSE response, strays, DB lock holders. |
+| `cairn serve restart` | Stop then start. |
 
-**`cg serve run`** options:
+**`cairn serve run`** options:
 - `--db PATH` — SQLite DB path (default: central store).
 - `--port N` — run over SSE on this port.
 - `--read-only / --read-write` — open the graph DB read-only (default for the
-  shared SSE daemon) so it never contends with `cg build`/`cg embed`. The
+  shared SSE daemon) so it never contends with `cairn build`/`cairn embed`. The
   serving-time write paths silently no-op; write tools still open a writable
   connection as needed.
 
-**`cg serve start` / `restart`** options: `--port 9876` (default), `--host 127.0.0.1`.
+**`cairn serve start` / `restart`** options: `--port 9876` (default), `--host 127.0.0.1`.
 
 > SSE `start`/`stop`/`status`/`restart` are macOS-only (launchd). On other
-> platforms run `cg serve --port 9876` under a process supervisor.
+> platforms run `cairn serve --port 9876` under a process supervisor.
 
-### `cg memory` — agent memory (13 subcommands)
+### `cairn memory` — agent memory (13 subcommands)
 
-`cg memory` records and curates agent learnings (decisions, patterns,
+`cairn memory` records and curates agent learnings (decisions, patterns,
 mistakes, workarounds) across the tiers raw → drafts → tribal → canonical.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg memory record TYPE TITLE` | Record a learning. `TYPE`: `decision\|pattern\|mistake\|workaround`. |
-| `cg memory search QUERY` | Search past memories (`--tier` filter). Shows a live `refs-verified` fraction per result. |
-| `cg memory capture` | Extract learnings from a session transcript (session-end hook). Routes via the memory-extract LLM task; queues if no agent is available. |
-| `cg memory list` | List memories (`--tier`, `--tag` filters). Shows `refs-verified` when `--db` resolves. |
-| `cg memory stats` | Memory statistics by tier. |
-| `cg memory digest` | Top tribal memories by score — session-orientation digest (`--limit`, `--db` for `refs-verified`). |
-| `cg memory promote PATH` | Force-promote a memory to canonical (compass/wiki). |
-| `cg memory decay` | Expire raw memories >7d, archive tribal >90d stale. |
-| `cg memory batch-critic` | Run critic pass on queued draft memories. |
-| `cg memory forget PATH` | Permanently delete a memory and its cross-session refs. |
-| `cg memory demote PATH` | Demote a memory to a lower tier (`--tier raw\|archived`); rejects promotions. |
-| `cg memory purge` | Delete old archived memories (`--max-days 90`, `--dry-run`). CLI-only — not exposed as MCP. |
-| `cg memory consolidate` | Consolidate redundant raw memories into unified tribal knowledge. |
+| `cairn memory record TYPE TITLE` | Record a learning. `TYPE`: `decision\|pattern\|mistake\|workaround`. |
+| `cairn memory search QUERY` | Search past memories (`--tier` filter). Shows a live `refs-verified` fraction per result. |
+| `cairn memory capture` | Extract learnings from a session transcript (session-end hook). Routes via the memory-extract LLM task; queues if no agent is available. |
+| `cairn memory list` | List memories (`--tier`, `--tag` filters). Shows `refs-verified` when `--db` resolves. |
+| `cairn memory stats` | Memory statistics by tier. |
+| `cairn memory digest` | Top tribal memories by score — session-orientation digest (`--limit`, `--db` for `refs-verified`). |
+| `cairn memory promote PATH` | Force-promote a memory to canonical (compass/wiki). |
+| `cairn memory decay` | Expire raw memories >7d, archive tribal >90d stale. |
+| `cairn memory batch-critic` | Run critic pass on queued draft memories. |
+| `cairn memory forget PATH` | Permanently delete a memory and its cross-session refs. |
+| `cairn memory demote PATH` | Demote a memory to a lower tier (`--tier raw\|archived`); rejects promotions. |
+| `cairn memory purge` | Delete old archived memories (`--max-days 90`, `--dry-run`). CLI-only — not exposed as MCP. |
+| `cairn memory consolidate` | Consolidate redundant raw memories into unified tribal knowledge. |
 
 `record` options: `--body`, `--resource`, `--confidence 0.7`, `--db`, `--knowledge`.
 
-### `cg knowledge` — business knowledge ingestion and search
+### `cairn knowledge` — business knowledge ingestion and search
 
-`cg knowledge` ingests and searches business documents (specs, business-rules,
+`cairn knowledge` ingests and searches business documents (specs, business-rules,
 decisions) and is the parent of the `workflow` subgroup.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg knowledge add` | Ingest a business knowledge document (`--title` required). |
-| `cg knowledge import DIR` | Batch-ingest all `.md` files from a directory. |
-| `cg knowledge search QUERY` | Search knowledge docs (lexical + semantic + graph bridge). |
-| `cg knowledge list` | List documents (`--type`, `--status`, `--tag` filters). |
-| `cg knowledge embed` | Build the knowledge embedding index. |
-| `cg knowledge impact QUERY` | Search knowledge + full graph impact bridge. |
-| `cg knowledge remove DOC_ID` | Delete a document and its embedding rows. |
-| `cg knowledge status DOC_ID NEW_STATUS` | Update `doc_status` (`active/superseded/archived`). |
-| `cg knowledge export` | Export the `.knowledge` bundle to a directory or `.tar.gz` (`--out`). |
+| `cairn knowledge add` | Ingest a business knowledge document (`--title` required). |
+| `cairn knowledge import DIR` | Batch-ingest all `.md` files from a directory. |
+| `cairn knowledge search QUERY` | Search knowledge docs (lexical + semantic + graph bridge). |
+| `cairn knowledge list` | List documents (`--type`, `--status`, `--tag` filters). |
+| `cairn knowledge embed` | Build the knowledge embedding index. |
+| `cairn knowledge impact QUERY` | Search knowledge + full graph impact bridge. |
+| `cairn knowledge remove DOC_ID` | Delete a document and its embedding rows. |
+| `cairn knowledge status DOC_ID NEW_STATUS` | Update `doc_status` (`active/superseded/archived`). |
+| `cairn knowledge export` | Export the `.knowledge` bundle to a directory or `.tar.gz` (`--out`). |
 
 `add` options: `--file` or `--body` (one required), `--title` (required),
 `--type spec` (`business-rule|spec|decision`), `--tags`, `--affects`,
 `--affects-modules`, `--epic`, `--resource`.
 
-#### `cg knowledge workflow` — ordered procedural workflows
+#### `cairn knowledge workflow` — ordered procedural workflows
 
 A workflow is a knowledge doc with `doc_type="workflow"`; the subgroup adds
 step-aware operations on top. `list`, `status`, `remove`, and `search` work
@@ -119,9 +119,9 @@ on workflows unchanged via the parent commands.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg knowledge workflow add` | Add a workflow with an ordered list of steps. |
-| `cg knowledge workflow trace REF` | Trace a workflow's ordered steps by title, slug, or concept_id. |
-| `cg knowledge workflow sync [REF]` | Detect and refresh stale workflows after code changes (`--all`, `--dry-run`). |
+| `cairn knowledge workflow add` | Add a workflow with an ordered list of steps. |
+| `cairn knowledge workflow trace REF` | Trace a workflow's ordered steps by title, slug, or concept_id. |
+| `cairn knowledge workflow sync [REF]` | Detect and refresh stale workflows after code changes (`--all`, `--dry-run`). |
 
 `add` options: `--title` (required), `--step` (repeatable,
 `name::description[::symbol[::file]]`) or `--steps-file PATH` (YAML/JSON list),
@@ -129,20 +129,20 @@ on workflows unchanged via the parent commands.
 
 `sync` options: `--all`, `--dry-run`, `--max-steps 20`, `--db`, `--knowledge`.
 
-### `cg compass` — module navigation guides
+### `cairn compass` — module navigation guides
 
-`cg compass` generates, lists, validates, and gaps-checks OKF compass files
+`cairn compass` generates, lists, validates, and gaps-checks OKF compass files
 (25-35 line module navigation guides). The deterministic generator is
 graph-sourced; `--use-llm` routes to agent-decoupled synthesis.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg compass generate MODULE` | Generate a compass for a module. |
-| `cg compass list` | List compass files. |
-| `cg compass validate` | Critic-check all compass files against the graph. |
-| `cg compass gaps` | List modules without compass coverage. |
-| `cg compass flow ENTRY` | Generate a compass for a business **flow** traced from an entry-point symbol. |
-| `cg compass flow-gaps` | Find rich call chains that lack a flow compass (`--generate` for batch mode). |
+| `cairn compass generate MODULE` | Generate a compass for a module. |
+| `cairn compass list` | List compass files. |
+| `cairn compass validate` | Critic-check all compass files against the graph. |
+| `cairn compass gaps` | List modules without compass coverage. |
+| `cairn compass flow ENTRY` | Generate a compass for a business **flow** traced from an entry-point symbol. |
+| `cairn compass flow-gaps` | Find rich call chains that lack a flow compass (`--generate` for batch mode). |
 
 `generate` options: `MODULE` (argument), `--repo`, `--use-llm`, `--db`, `--knowledge`,
 `--dry-run` (run the critic, print the verdict, write nothing), `--show-rejections`
@@ -160,49 +160,49 @@ write nothing), `--as-workflow`, `--max-steps 20`, `--use-llm`, `--db`, `--knowl
 > errors/warnings are surfaced so you can see *why* a body was rejected. An agent
 > may hallucinate, but a hallucinated symbol can never land in a compass/wiki doc.
 
-### `cg wiki` — architectural wiki
+### `cairn wiki` — architectural wiki
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg wiki generate` | Generate architectural wiki concepts (`--repo`, or all repos if omitted). |
-| `cg wiki search QUERY` | Search the wiki. |
+| `cairn wiki generate` | Generate architectural wiki concepts (`--repo`, or all repos if omitted). |
+| `cairn wiki search QUERY` | Search the wiki. |
 
 `generate` options: `--repo`, `--db`, `--knowledge`, `--dry-run` (run the critic,
 print each verdict, write nothing), `--show-rejections` (print critic
 errors/warnings for each concept).
 
-### `cg dataflow` — precomputed dataflow index
+### `cairn dataflow` — precomputed dataflow index
 
-`cg dataflow` manages the precomputed dataflow index over public symbols
-(populated during `cg build`/`cg sync`).
+`cairn dataflow` manages the precomputed dataflow index over public symbols
+(populated during `cairn build`/`cairn sync`).
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg dataflow build` | Build the dataflow index from scratch. |
-| `cg dataflow dataflow-lookup SYMBOL` | Look up precomputed dataflow for a symbol. |
+| `cairn dataflow build` | Build the dataflow index from scratch. |
+| `cairn dataflow dataflow-lookup SYMBOL` | Look up precomputed dataflow for a symbol. |
 
 `dataflow-lookup` options: `SYMBOL` (argument), `--db`, `--json`.
 
-### `cg hooks` — git hook management
+### `cairn hooks` — git hook management
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg hooks install` | Install post-commit hooks across discovered repos. |
-| `cg hooks uninstall` | Remove post-commit hooks. |
+| `cairn hooks install` | Install post-commit hooks across discovered repos. |
+| `cairn hooks uninstall` | Remove post-commit hooks. |
 
 Both take `--workspace`; `install` also takes `--cairn-dir`.
 
-### `cg task` — LLM task queue
+### `cairn task` — LLM task queue
 
-`cg task` is the agent-decoupled task queue. Cairn never calls an LLM
+`cairn task` is the agent-decoupled task queue. Cairn never calls an LLM
 directly; any agent with the cairn skill processes pending tasks.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cg task list` | List tasks (`--status`, `--kind` filters). |
-| `cg task show TASK_ID` | Show a task's full body (facts + output spec). |
-| `cg task claim TASK_ID` | Claim a pending task (sets status in-progress). |
-| `cg task complete TASK_ID` | Mark a task done; runs the deterministic critic automatically. |
+| `cairn task list` | List tasks (`--status`, `--kind` filters). |
+| `cairn task show TASK_ID` | Show a task's full body (facts + output spec). |
+| `cairn task claim TASK_ID` | Claim a pending task (sets status in-progress). |
+| `cairn task complete TASK_ID` | Mark a task done; runs the deterministic critic automatically. |
 
 `complete` options: `--result` or `--result-file PATH` (one required).
 
@@ -210,19 +210,19 @@ directly; any agent with the cairn skill processes pending tasks.
 
 ## Top-level commands
 
-These are registered directly on `cg` (bare `@main.command()`).
+These are registered directly on `cairn` (bare `@main.command()`).
 
 ### Setup, build, and lifecycle
 
 | Command | Description |
 |---------|-------------|
-| `cg init` | Register this workspace with cairn's central store and build the graph. |
-| `cg config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet). |
-| `cg build` | Build (or rebuild) the code graph; also builds dataflow + transitive closure. |
-| `cg stats` | Show graph statistics (repos, symbols, edges, by-repo/by-kind/skipped tables). |
-| `cg checkpoint` | Checkpoint the graph DB's WAL back into the main file (TRUNCATE). |
-| `cg update` | Incremental graph update from git diff (or `--file` for a single changed file). |
-| `cg sync` | Manually re-index changed files (escape hatch when the watcher is disabled). |
+| `cairn init` | Register this workspace with cairn's central store and build the graph. |
+| `cairn config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet). |
+| `cairn build` | Build (or rebuild) the code graph; also builds dataflow + transitive closure. |
+| `cairn stats` | Show graph statistics (repos, symbols, edges, by-repo/by-kind/skipped tables). |
+| `cairn checkpoint` | Checkpoint the graph DB's WAL back into the main file (TRUNCATE). |
+| `cairn update` | Incremental graph update from git diff (or `--file` for a single changed file). |
+| `cairn sync` | Manually re-index changed files (escape hatch when the watcher is disabled). |
 
 `init` options: `--workspace`, `--from-legacy DIR` (migrate a legacy
 `cairn/.kg`), `--no-build`, `--import-docs` (ingest `docs/**/*.md`).
@@ -235,20 +235,20 @@ These are registered directly on `cg` (bare `@main.command()`).
 
 ### Graph queries (L1)
 
-The navigation tools; the recommended first move from code is `cg def` or
-`cg impact`. For agent-facing aggregation see the MCP `explore` tool in
+The navigation tools; the recommended first move from code is `cairn def` or
+`cairn impact`. For agent-facing aggregation see the MCP `explore` tool in
 [mcp-tools.md](./mcp-tools.md).
 
 | Command | Description |
 |---------|-------------|
-| `cg def SYMBOL` | Find where a SYMBOL is defined. |
-| `cg callers SYMBOL` | Find all callers of SYMBOL (precise; `--fuzzy` for name-only). |
-| `cg callees SYMBOL` | Find what a SYMBOL calls (precise; `--fuzzy` includes unresolved). |
-| `cg impact SYMBOL` | Recursive impact analysis (precise; `--fuzzy`, `--depth`). |
-| `cg search PATTERN` | Search symbols by PATTERN (`*` wildcards, `--kind` filter). |
-| `cg deps REPO` | Cross-repo dependencies for REPO. |
-| `cg tree REPO` | Directory/package structure of REPO with symbol counts. |
-| `cg viz` | Generate visual diagrams from the graph (Mermaid/DOT/JSON). |
+| `cairn def SYMBOL` | Find where a SYMBOL is defined. |
+| `cairn callers SYMBOL` | Find all callers of SYMBOL (precise; `--fuzzy` for name-only). |
+| `cairn callees SYMBOL` | Find what a SYMBOL calls (precise; `--fuzzy` includes unresolved). |
+| `cairn impact SYMBOL` | Recursive impact analysis (precise; `--fuzzy`, `--depth`). |
+| `cairn search PATTERN` | Search symbols by PATTERN (`*` wildcards, `--kind` filter). |
+| `cairn deps REPO` | Cross-repo dependencies for REPO. |
+| `cairn tree REPO` | Directory/package structure of REPO with symbol counts. |
+| `cairn viz` | Generate visual diagrams from the graph (Mermaid/DOT/JSON). |
 
 `def`/`callers`/`callees`/`impact`/`deps`/`tree`/`viz` share `--db` and `--json`.
 `impact` adds `--depth 10`; `callers`/`callees`/`impact` add `--fuzzy`.
@@ -260,8 +260,8 @@ The navigation tools; the recommended first move from code is `cg def` or
 
 | Command | Description |
 |---------|-------------|
-| `cg embed` | Build the semantic embedding index over the symbol corpus. |
-| `cg semantic QUERY` | Semantic (concept) search: find code by meaning. |
+| `cairn embed` | Build the semantic embedding index over the symbol corpus. |
+| `cairn semantic QUERY` | Semantic (concept) search: find code by meaning. |
 
 `embed` options: `--db`, `--batch-size 64`, `--limit`, `--no-reap`,
 `--build-index`, `--install-deps`, `--download-model`.
@@ -270,7 +270,7 @@ The navigation tools; the recommended first move from code is `cg def` or
 sentence-transformers) into the shared `~/.cairn/lib/` directory, which
 survives reinstalls, then exits without building the index. This is the
 recommended one-time way to get the default `BAAI/bge-m3` model — run
-`cg embed --install-deps`, then `cg embed` to build the index.
+`cairn embed --install-deps`, then `cairn embed` to build the index.
 
 `semantic` options: `QUERY` (argument), `--db`, `--limit 20`, `--threshold 0.3`,
 `--json`, `--include-callers`. Set `CAIRN_RERANK=1` for a cross-encoder
@@ -280,8 +280,8 @@ rerank stage.
 
 | Command | Description |
 |---------|-------------|
-| `cg ask QUESTION` | Natural-language question across all layers (compass router). |
-| `cg context FILE_PATH` | Load relevant context (compass + memory + wiki) for a file. |
+| `cairn ask QUESTION` | Natural-language question across all layers (compass router). |
+| `cairn context FILE_PATH` | Load relevant context (compass + memory + wiki) for a file. |
 
 `ask` options: `--db`, `--knowledge`, `--json`. `context` options: `--knowledge`.
 
@@ -289,9 +289,9 @@ rerank stage.
 
 | Command | Description |
 |---------|-------------|
-| `cg validate` | Check OKF conformance of the `.knowledge/` bundle. |
-| `cg validate-paths` | Check all concepts for stale file/symbol references against the graph (`--mark`). |
-| `cg import-scip SCIP_FILE` | Import compiler-grade symbol bindings from a SCIP index file. |
+| `cairn validate` | Check OKF conformance of the `.knowledge/` bundle. |
+| `cairn validate-paths` | Check all concepts for stale file/symbol references against the graph (`--mark`). |
+| `cairn import-scip SCIP_FILE` | Import compiler-grade symbol bindings from a SCIP index file. |
 
 `import-scip` options: `SCIP_FILE` (argument), `--db`, `--repo default`.
 
@@ -299,10 +299,10 @@ rerank stage.
 
 | Command | Description |
 |---------|-------------|
-| `cg metrics` | Report MCP tool invocation metrics (calls, avg latency, error rate). |
-| `cg status` | System status and health across all layers. |
-| `cg eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`). |
-| `cg bench` | Run performance or scalability benchmarks. |
+| `cairn metrics` | Report MCP tool invocation metrics (calls, avg latency, error rate). |
+| `cairn status` | System status and health across all layers. |
+| `cairn eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`). |
+| `cairn bench` | Run performance or scalability benchmarks. |
 
 `metrics` options: `--db`, `--tool NAME`, `--json`.
 `status` options: `--db`, `--knowledge`.
@@ -315,11 +315,11 @@ rerank stage.
 
 | Command | Description |
 |---------|-------------|
-| `cg install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode). |
-| `cg uninstall-agents` | Remove cairn entries from AI client configs (idempotent). |
-| `cg uninstall` | Full teardown: agent wiring, hooks, graph store, and the `cg` binary. |
-| `cg version` | Print the installed cairn version. |
-| `cg upgrade` | Upgrade cairn in place (detects install method). |
+| `cairn install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode). |
+| `cairn uninstall-agents` | Remove cairn entries from AI client configs (idempotent). |
+| `cairn uninstall` | Full teardown: agent wiring, hooks, graph store, and the `cairn` binary. |
+| `cairn version` | Print the installed cairn version. |
+| `cairn upgrade` | Upgrade cairn in place (detects install method). |
 
 `install-agents` options: `--client` (repeatable:
 `claude|claude-desktop|cursor|droid|zcode|agy|opencode|all`), `--workspace`,

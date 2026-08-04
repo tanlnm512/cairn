@@ -16,7 +16,7 @@ cairn is a **local, structural, agent-first** code intelligence system.
   this?" is a graph traversal, not a guess. Parsers exist for nine languages:
   Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go.
 - **Agent-first.** The primary interface is an MCP server exposing 26 tools to
-  AI agents. The CLI (`cg`) mirrors the same capability for humans and as a
+  AI agents. The CLI (`cairn`) mirrors the same capability for humans and as a
   fallback. The tool surfaces are designed for an agent to call repeatedly and
   cheaply, not for one-shot human typing.
 - **No LLM in the loop by design.** cairn never calls an LLM itself. Where
@@ -32,7 +32,7 @@ answer. The other layers answer specific question types.
 
 ```mermaid
 flowchart TD
-    A["Agent / Human<br/>MCP tools • cg CLI"] --> R["Router layer<br/>explore"]
+    A["Agent / Human<br/>MCP tools • cairn CLI"] --> R["Router layer<br/>explore"]
     R --> L1["Graph layer<br/>9 tools: symbols, callers, callees,<br/>impact, search, deps, semantic_search, explore, viz"]
     R --> L2["Compass + Knowledge-base layer<br/>5 tools: get_compass, search_knowledge,<br/>ask_compass, trace_flow, generate_flow"]
     R --> L4["Memory layer<br/>7 tools: recall_memory, record_memory..."]
@@ -108,7 +108,7 @@ this the hard way" into durable, retrievable context.
 
 The OKF (Open Knowledge Format) markdown KB that compass, wiki, and memory all
 live in. `search_knowledge` queries across it with optional type filtering;
-`cg knowledge add/embed/impact/status/export` manage the corpus and its
+`cairn knowledge add/embed/impact/status/export` manage the corpus and its
 embeddings. This layer is both a store and the embedding surface that powers
 semantic search over docs.
 
@@ -172,10 +172,10 @@ docs, composing memory entries — cairn instead **queues the work** on a
 file-based task queue and lets an external agent do the synthesis:
 
 ```bash
-cg task list --status pending   # see queued work
-cg task show <id>               # inspect a task
-cg task claim <id>              # take ownership
-cg task complete <id> --result-file <path>   # submit a result
+cairn task list --status pending   # see queued work
+cairn task show <id>               # inspect a task
+cairn task claim <id>              # take ownership
+cairn task complete <id> --result-file <path>   # submit a result
 ```
 
 Every submitted result runs through a **deterministic critic** that fact-checks
@@ -220,7 +220,7 @@ Two things live on disk, side by side under one store directory:
    manage.
 
 The store root resolves to `~/.cairn/<workspace-key>/` by default, where
-`<key>` is a hash of the workspace root. One workspace maps to one store; `cg`
+`<key>` is a hash of the workspace root. One workspace maps to one store; `cairn`
 finds the right store by walking up from cwd (like git), with `CAIRN_WORKSPACE`
 as an explicit override. See [configuration.md](configuration.md) for the full
-set of path variables and `cg config --list` to print the resolved locations.
+set of path variables and `cairn config --list` to print the resolved locations.

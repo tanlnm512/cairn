@@ -14,14 +14,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install "ruff>=0.6"
+
+      # Conservative gate: pyflakes (F) only. Catches real defects (undefined
+      # names, unused imports, redefinitions) without style noise.
+      - name: Ruff check
+        run: ruff check
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
         # pyproject declares >=3.10; cover the supported CPython range.
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # 3.14 is declared in classifiers but very new -- wheel gaps for
+        # tree-sitter/sqlite-vec would fail loudly here, not silently pass.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -37,11 +59,43 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Validate skill eval specs
+        run: python scripts/run_skill_evals.py
+
       - name: Run core smoke subset
         run: pytest -m core -q
 
       - name: Run full test suite
-        run: pytest -q
+        run: pytest -q --junitxml=test-results.xml
+
+      - name: Publish test summary
+        if: always()
+        run: |
+          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          import os
+          path = "test-results.xml"
+          if not os.path.exists(path):
+              print("_(no test results — suite did not run)_")
+          else:
+              # junit XML: <testsuites><testsuite tests=... failures=... .../>
+              # stats live on the <testsuite> child, not the <testsuites> root.
+              root = ET.parse(path).getroot()
+              suite = root if root.tag == "testsuite" else root.find("testsuite")
+              if suite is None:
+                  print("_(malformed test results)_")
+              else:
+                  n, fail, err, skip = (
+                      suite.get(k, "0") for k in ("tests", "failures", "errors", "skipped")
+                  )
+                  ok = int(fail) == 0 and int(err) == 0
+                  print(f"## Test results (Python ${{ matrix.python-version }})")
+                  print()
+                  print(f"{'✅' if ok else '❌'} **{n}** tests | "
+                        f"✗ {fail} failures | "
+                        f"⚠ {err} errors | "
+                        f"⊘ {skip} skipped")
+          EOF
 
   build:
     name: Build wheel + sdist

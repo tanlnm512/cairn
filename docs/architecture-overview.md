@@ -24,12 +24,12 @@
 cairn is a **local, structural, agent-first** codebase intelligence system.
 It parses your source into a typed call graph in SQLite, then layers a
 knowledge system on top (compass, wiki, memory, business knowledge). The same
-store backs a `cg` CLI for humans and a 26-tool MCP server for AI agents.
+store backs a `cairn` CLI for humans and a 26-tool MCP server for AI agents.
 
 ```mermaid
 flowchart TB
     subgraph Clients["Clients"]
-        H["Human<br/>cg CLI"]
+        H["Human<br/>cairn CLI"]
         A["AI Agent<br/>MCP server (26 tools)"]
     end
 
@@ -142,12 +142,12 @@ and read down; writes enter via build (L1) or record/add (L4/L5).
 
 ## 4. Build flow: source → graph
 
-A `cg build` is the heaviest operation. It's decomposed into phases, each
+A `cairn build` is the heaviest operation. It's decomposed into phases, each
 emitting a progress event, and ends with precomputed derived indexes.
 
 ```mermaid
 flowchart TB
-    START([cg build]) --> SCAN["1. scan<br/>gitignore + cairn.json filters<br/>+ default skip set"]
+    START([cairn build]) --> SCAN["1. scan<br/>gitignore + cairn.json filters<br/>+ default skip set"]
     SCAN --> PARSE["2. parse<br/>tree-sitter (9 langs)<br/>+ route + service-call detection"]
     PARSE --> INSERT["3. insert<br/>symbols, edges, imports<br/>+ FTS5 sync triggers"]
     INSERT --> RESOLVE["4. resolve<br/>6-tier edge resolution<br/>label exact/ambiguous/unresolved"]
@@ -162,7 +162,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant CLI as cg build
+    participant CLI as cairn build
     participant B as builder
     participant DB as :memory: DB
     participant R as resolver
@@ -198,8 +198,8 @@ sequenceDiagram
 - The **resolver** runs 6 tiers in order (type-aware → same-file → import-aware
   → same-repo → global) and stops at the first tier with a unique match;
   multiple matches in a tier → `ambiguous` (no fallthrough).
-- `cg update` (incremental, from git diff) does **not** rebuild the derived
-  indexes — only `cg build` does. `explore` and `impact_analysis` still work,
+- `cairn update` (incremental, from git diff) does **not** rebuild the derived
+  indexes — only `cairn build` does. `explore` and `impact_analysis` still work,
   just via the live BFS path instead of the O(1) precomputed path.
 
 ---
@@ -284,9 +284,9 @@ flowchart TB
     GEN["Need synthesis?<br/>e.g. generate compass"]
     GEN --> Q{LLM available<br/>in-process?}
     Q -- "yes (droid/opencode/claude)" --> LOOP["sync revise loop<br/>max 4 cycles"]
-    Q -- "no" --> TASK["async task queue<br/>cg task create"]
-    TASK --> CLAIM["agent: cg task claim"]
-    CLAIM --> COMP["agent: cg task complete<br/>--result-file body.md"]
+    Q -- "no" --> TASK["async task queue<br/>cairn task create"]
+    TASK --> CLAIM["agent: cairn task claim"]
+    CLAIM --> COMP["agent: cairn task complete<br/>--result-file body.md"]
     COMP --> CRITIC
     LOOP --> CRITIC["deterministic critic<br/>verifies refs vs graph"]
     CRITIC --> D{passed?}
@@ -422,7 +422,7 @@ erDiagram
   docstring), synced by triggers, powers BM25-ranked lexical search.
 - **Derived tables**: `dataflow` (O(1) blast radius for public symbols),
   `transitive_edges` (closure matrix, default depth 3) — both built by
-  `cg build`, skipped by `cg update`.
+  `cairn build`, skipped by `cairn update`.
 
 ### OKF markdown bundle (`.knowledge/`)
 

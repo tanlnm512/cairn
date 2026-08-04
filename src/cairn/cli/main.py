@@ -1,4 +1,4 @@
-"""cg CLI main group and shared imports.
+"""cairn CLI main group and shared imports.
 
 The `cairn` command group lives here. Individual command modules under cli/
 decorate their commands onto this `main` via @main.command() /

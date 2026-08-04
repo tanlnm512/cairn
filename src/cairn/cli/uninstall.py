@@ -1,11 +1,11 @@
 """Uninstall CLI: ``cairn uninstall`` — full teardown, native (no shell script).
 
 Removes, in order:
-  1. agent wiring     — MCP configs / skills / commands (cg uninstall-agents)
-  2. git hooks        — post-commit hooks (cg hooks uninstall)
+  1. agent wiring     — MCP configs / skills / commands (cairn uninstall-agents)
+  2. git hooks        — post-commit hooks (cairn hooks uninstall)
   3. graph + store    — the current workspace's store dir, or all of
                         ``~/.cairn`` with --full
-  4. cg binary        — via uv / pipx / pip, plus stale in-tree build artifacts
+  4. cairn binary        — via uv / pipx / pip, plus stale in-tree build artifacts
 
 Mirrors scripts/uninstall.sh but runs natively so it works from a wheel/pipx/uv
 install (the shell script is not packaged). Store resolution reuses paths.py,
@@ -207,13 +207,13 @@ def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
 
 
 def _remove_binary(installed_via: str, dry_run: bool) -> None:
-    click.echo("➜ cg binary")
+    click.echo("➜ cairn binary")
     if installed_via == "unknown":
         stale = _stale_artifacts()
         if not stale:
-            click.echo("  (cg not found via uv/pipx/pip/venv — nothing to remove)")
+            click.echo("  (cairn not found via uv/pipx/pip/venv — nothing to remove)")
             return
-        click.echo(f"  installed via: unknown (stale build artifacts only)")
+        click.echo("  installed via: unknown (stale build artifacts only)")
     else:
         click.echo(f"  installed via: {installed_via}")
 
@@ -288,7 +288,7 @@ def _humanish(n: int) -> str:
 @click.option("--agents-only", is_flag=True, help="Remove agent wiring only.")
 @click.option("--hooks-only", is_flag=True, help="Remove git hooks only.")
 @click.option("--graph-only", is_flag=True, help="Remove graph + knowledge data only.")
-@click.option("--package-only", is_flag=True, help="Remove the cg binary only.")
+@click.option("--package-only", is_flag=True, help="Remove the cairn binary only.")
 @click.option("--client", "clients", multiple=True,
               type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "all"]),
               help="Limit agent removal to these clients (repeatable).")
@@ -296,7 +296,7 @@ def _humanish(n: int) -> str:
 @click.option("--dry-run", is_flag=True, help="Show what would be removed; change nothing.")
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmations (implied by --full).")
 def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, ws_arg, dry_run, yes):
-    """Uninstall cairn: agent wiring, hooks, graph store, and the cg binary.
+    """Uninstall cairn: agent wiring, hooks, graph store, and the cairn binary.
 
     By default removes everything for the CURRENT workspace. Use --full to wipe
     the entire ~/.cairn (all workspaces' stores). CLAUDE.md / AGENTS.md and
@@ -307,10 +307,10 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
 
     \b
     Examples:
-      cg uninstall                    # interactive, current workspace
-      cg uninstall --full             # everything, all workspaces, no prompts
-      cg uninstall --graph-only -y    # just the store
-      cg uninstall --dry-run          # preview only
+      cairn uninstall                    # interactive, current workspace
+      cairn uninstall --full             # everything, all workspaces, no prompts
+      cairn uninstall --graph-only -y    # just the store
+      cairn uninstall --dry-run          # preview only
     """
     # Resolve workspace the same way install-agents / uninstall-agents do:
     # explicit flag > env > cwd. NOT the ancestor walk (which can wrongly
@@ -359,7 +359,7 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
         _remove_store(ws, full, dry_run)
         click.echo("")
 
-    if do_package and (dry_run or confirm("cg binary")):
+    if do_package and (dry_run or confirm("cairn binary")):
         _remove_binary(installed_via, dry_run)
         click.echo("")
 

@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing to **cairn** — a local codebase
 intelligence system (structural graph + compass + wiki + agent memory) exposed
-via the `cg` CLI and an MCP server. This is currently a small, single-maintainer
+via the `cairn` CLI and an MCP server. This is currently a small, single-maintainer
 project, so contributions of any size — bug reports, fixes, docs, tests, new
 parsers — are genuinely welcome and have a real impact.
 
@@ -45,13 +45,13 @@ If your change touches build/embed/query hot paths, check for regressions with
 the benchmark:
 
 ```bash
-cg bench --save before.json        # baseline before your change
+cairn bench --save before.json        # baseline before your change
 # ...make your change, rebuild...
-cg bench --compare before.json     # flags ops >15% slower; exits 2 on regression
+cairn bench --compare before.json     # flags ops >15% slower; exits 2 on regression
 ```
 
 The default `hash` embed backend is dependency-free, so this runs on a plain
-install. See `docs/cli-reference.md` for the full `cg bench` surface.
+install. See `docs/cli-reference.md` for the full `cairn bench` surface.
 
 ## Project layout
 
@@ -60,10 +60,10 @@ Source lives under `src/cairn/`, with one subpackage per concern:
 guides), `wiki/` (architectural docs), `memory/` (agent memory + tribal
 knowledge), `knowledge/` (knowledge-base query tools), `parsers/` (tree-sitter
 language parsers), `retrieval/` (FTS + semantic search), `mcp_server/` (the MCP
-transport), `cli/` (the `cg` entry point), `llm/` (decoupled task queue —
+transport), `cli/` (the `cairn` entry point), `llm/` (decoupled task queue —
 cairn never calls an LLM directly), `okf/` (the `.knowledge/` file format),
 `viz/` (graph visualization), and `agent_integration/` (shipped templates for
-`cg install-agents`). Tests mirror the package under `tests/`.
+`cairn install-agents`). Tests mirror the package under `tests/`.
 
 ## Codebase intelligence convention (read before editing)
 
@@ -76,10 +76,10 @@ cairn tools to load context — this catches blast radius that grep misses:
 3. `get_callers("<symbol>")` — see who depends on what you're changing.
 4. `impact_analysis("<symbol>")` — for anything potentially breaking.
 
-If MCP tools aren't available, the `cg` CLI mirrors them: `cg context <file>`,
-`cg callers <symbol>`, `cg impact <symbol>`, `cg def <symbol>`, `cg ask "<q>"`.
+If MCP tools aren't available, the `cairn` CLI mirrors them: `cairn context <file>`,
+`cairn callers <symbol>`, `cairn impact <symbol>`, `cairn def <symbol>`, `cairn ask "<q>"`.
 See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
-`fuzzy=True`), and the post-task `cg update` + `record_memory` loop.
+`fuzzy=True`), and the post-task `cairn update` + `record_memory` loop.
 
 ## Coding style
 
@@ -103,7 +103,7 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 
 File bugs via **GitHub Issues**. Please include:
 
-- cairn version (`cg version`)
+- cairn version (`cairn version`)
 - Python version and OS
 - Steps to reproduce, expected vs. actual behavior, and any relevant logs
 

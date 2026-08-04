@@ -15,13 +15,13 @@ resolution-label comparison that distinguishes cairn from name-only
 
 | Command | Measures | Output |
 |---------|----------|--------|
-| `cg eval` | Retrieval quality — Recall@10 and MRR vs ground-truth queries | per-corpus table or JSON |
-| `cg bench --suite perf` | Build phase timings, embed cost, query latency | per-op table (median / p95 / ops/sec) |
-| `cg bench --suite scaling` | How build/embed cost scales with corpus size | per-size table (build / embed / DB MB / **resolve_rate**) |
+| `cairn eval` | Retrieval quality — Recall@10 and MRR vs ground-truth queries | per-corpus table or JSON |
+| `cairn bench --suite perf` | Build phase timings, embed cost, query latency | per-op table (median / p95 / ops/sec) |
+| `cairn bench --suite scaling` | How build/embed cost scales with corpus size | per-size table (build / embed / DB MB / **resolve_rate**) |
 
 ---
 
-## Retrieval quality — `cg eval`
+## Retrieval quality — `cairn eval`
 
 Evaluates the L1 (code) and L5 (knowledge) retrieval pipelines against a
 ground-truth query set.
@@ -39,16 +39,16 @@ substring of any retrieved name in the top-*k*.
 **Run:**
 
 ```bash
-cg eval                       # against the current DB + knowledge store
-cg eval --corpus L1           # code only
-cg eval --corpus L5           # knowledge only
-cg eval --json                # machine-readable
-cg eval --queries path/to/queries.yaml   # custom ground-truth set
+cairn eval                       # against the current DB + knowledge store
+cairn eval --corpus L1           # code only
+cairn eval --corpus L5           # knowledge only
+cairn eval --json                # machine-readable
+cairn eval --queries path/to/queries.yaml   # custom ground-truth set
 ```
 
 **What it exercises:** `eval_l1_query` tries `semantic_search` first, falls
 back to `search_symbols` (FTS5 + BM25) if embeddings are empty or it throws.
-`eval_l5_query` uses the OKF bundle search. The fallback path means `cg eval`
+`eval_l5_query` uses the OKF bundle search. The fallback path means `cairn eval`
 works on a default (no-torch) install — it just exercises the lexical pipeline.
 
 **Results template:**
@@ -60,7 +60,7 @@ works on a default (no-torch) install — it just exercises the lexical pipeline
 
 ---
 
-## Performance — `cg bench --suite perf`
+## Performance — `cairn bench --suite perf`
 
 Measures per-operation latency against a generated synthetic Python corpus
 (unless `--workspace` points at a real repo).
@@ -78,12 +78,12 @@ Measures per-operation latency against a generated synthetic Python corpus
 **Run:**
 
 ```bash
-cg bench --suite perf                       # synthetic corpus, medium complexity
-cg bench --suite perf --n-files 1000        # bigger corpus
-cg bench --suite perf --workspace /path/to/repo   # real repo
-cg bench --suite perf --json --save base.json     # capture a baseline
-cg bench --suite perf --compare base.json         # diff + exit 2 on regression
-cg bench --suite perf --compare base.json --threshold 0.10   # tighten to 10%
+cairn bench --suite perf                       # synthetic corpus, medium complexity
+cairn bench --suite perf --n-files 1000        # bigger corpus
+cairn bench --suite perf --workspace /path/to/repo   # real repo
+cairn bench --suite perf --json --save base.json     # capture a baseline
+cairn bench --suite perf --compare base.json         # diff + exit 2 on regression
+cairn bench --suite perf --compare base.json --threshold 0.10   # tighten to 10%
 ```
 
 > **CI signal:** `--compare` exits with code **2** if any operation regressed
@@ -106,7 +106,7 @@ cg bench --suite perf --compare base.json --threshold 0.10   # tighten to 10%
 
 ---
 
-## Scaling — `cg bench --suite scaling`
+## Scaling — `cairn bench --suite scaling`
 
 Measures how build/embed cost grows with corpus size.
 
@@ -119,9 +119,9 @@ generates a fresh synthetic corpus, builds + embeds under a single
 **Run:**
 
 ```bash
-cg bench --suite scaling
-cg bench --suite scaling --sizes 100,1000,10000
-cg bench --suite scaling --json
+cairn bench --suite scaling
+cairn bench --suite scaling --sizes 100,1000,10000
+cairn bench --suite scaling --json
 ```
 
 **Results template:**
@@ -152,10 +152,10 @@ codebase:
 
 ```bash
 # Precise (default): only resolved edges. Ground truth for blast radius.
-cg impact invoke                      # exact-edge callers only
+cairn impact invoke                      # exact-edge callers only
 
 # Fuzzy: name-only candidates — every site that merely shares the name.
-cg impact invoke --fuzzy              # candidate list, labelled unverified
+cairn impact invoke --fuzzy              # candidate list, labelled unverified
 ```
 
 The **false-positive rate** of fuzzy is:
@@ -180,7 +180,7 @@ the resolver couldn't pin to one definition. These are edges that grep cannot
 see at all (they require symbol resolution, not text matching). Count them:
 
 ```bash
-cg ask "how does <X> dispatch"        # explore reports ambiguous hops inline
+cairn ask "how does <X> dispatch"        # explore reports ambiguous hops inline
 ```
 
 ### Token / tool-call reduction vs a grep-only baseline
@@ -205,7 +205,7 @@ To measure how much cairn reduces agent context cost versus a naive
 ## Interpreting results
 
 - **Build times** dominate at scale; query times are sub-millisecond once the
-  graph is built. Optimize the build path (`--workers`, incremental `cg update`)
+  graph is built. Optimize the build path (`--workers`, incremental `cairn update`)
   rather than query latency.
 - **resolve_rate** (from the scaling suite) is the fraction of edges the
   resolver pinned to a definition (`exact + ambiguous / total`). It surfaces
@@ -219,4 +219,4 @@ To measure how much cairn reduces agent context cost versus a naive
 
 - [architecture.md § Resolution model](architecture.md#resolution-model) — the
   precise-vs-fuzzy design.
-- [cli-reference.md](cli-reference.md) — full `cg eval` / `cg bench` flags.
+- [cli-reference.md](cli-reference.md) — full `cairn eval` / `cairn bench` flags.

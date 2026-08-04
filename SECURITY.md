@@ -26,12 +26,12 @@ open a private security advisory via GitHub's Security tab:
 
 ## In scope
 
-cairn runs an **MCP server** (`cg serve`) and parses **untrusted source
+cairn runs an **MCP server** (`cairn serve`) and parses **untrusted source
 code** via tree-sitter. The following are in scope:
 
 - Parser denial-of-service: malformed/pathological source files causing memory
   exhaustion, infinite loops, or crashes during indexing.
-- `cg serve` / MCP transport issues: unauthenticated endpoints, request
+- `cairn serve` / MCP transport issues: unauthenticated endpoints, request
   amplification, or crashes triggered by malicious tool input.
 - Path traversal or arbitrary file read/write outside the indexed workspace.
 - Injection via `.knowledge/` markdown or graph data being rendered/executed

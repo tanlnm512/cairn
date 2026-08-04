@@ -4,17 +4,14 @@ Three layers:
 1. Unit tests for the timing primitives (percentiles, time_call, peak_memory)
    — deterministic, fast, no graph/build dependency.
 2. Tests for the corpus generator (determinism, scanner-recognition, buildable).
-3. Smoke tests for the two suites + the cg bench CLI — run end-to-end on a tiny
+3. Smoke tests for the two suites + the cairn bench CLI — run end-to-end on a tiny
    corpus, assert report shape (not specific timings, which are machine-dependent).
 """
 from __future__ import annotations
 
 import json
 import os
-import tempfile
-from pathlib import Path
 
-import pytest
 
 from cairn.bench import (
     generate_corpus,
@@ -187,7 +184,7 @@ class TestCompareReports:
 # --- CLI registration ----------------------------------------------------
 
 def test_cg_bench_help_registered():
-    """cg bench --help lists the suite options (command is registered)."""
+    """cairn bench --help lists the suite options (command is registered)."""
     from click.testing import CliRunner
     from cairn.cli import main
     runner = CliRunner()

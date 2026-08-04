@@ -15,7 +15,10 @@ slug, or concept_id (`trace_workflow`).
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    import sqlite3
 
 from .store import add_document, get_document, list_documents, slugify
 from ..okf.bundle import OKFBundle
@@ -195,7 +198,6 @@ def flow_to_workflow(
             desc_parts = []
 
         kind = node.get("kind", "")
-        depth = node.get("depth", 0)
         parent = node.get("parent")
 
         if kind:
@@ -332,7 +334,6 @@ def sync_workflow(
     """
     from ..compass.generator import _gather_flow_facts
     from ..okf.concept import OKFConcept
-    from .store import add_document
 
     concept = _resolve(bundle, ref)
     if concept is None:

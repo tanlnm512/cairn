@@ -13,7 +13,7 @@ import os
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _bundle, _conn, _repo_of, _staleness_banner, mcp
+from ._server_core import _conn, _repo_of, _staleness_banner, mcp
 from .metric_buffering import instrument
 from .structured import (
     GetCallersResult,

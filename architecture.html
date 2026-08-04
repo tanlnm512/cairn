@@ -103,13 +103,13 @@
 
 <!-- 1 -->
 <h2 id="glance">1. System at a glance</h2>
-<p>cairn parses your source into a typed call graph, then layers a knowledge system on top. The same store backs a <code>cg</code> CLI for humans and an MCP server for AI agents.</p>
+<p>cairn parses your source into a typed call graph, then layers a knowledge system on top. The same store backs a <code>cairn</code> CLI for humans and an MCP server for AI agents.</p>
 
 <div class="diagram">
 <div class="mermaid">
 flowchart TB
     subgraph Clients["Clients"]
-        H["👤 Human<br/>cg CLI"]
+        H["👤 Human<br/>cairn CLI"]
         A["🤖 AI Agent<br/>MCP server — 26 tools"]
     end
     subgraph Router["Front doors"]
@@ -202,12 +202,12 @@ flowchart LR
 
 <!-- 4 -->
 <h2 id="build">4. Build flow: source → graph</h2>
-<p>A <code>cg build</code> is the heaviest operation. It runs in phases, each emitting a progress event, and ends with precomputed derived indexes.</p>
+<p>A <code>cairn build</code> is the heaviest operation. It runs in phases, each emitting a progress event, and ends with precomputed derived indexes.</p>
 
 <div class="diagram">
 <div class="mermaid">
 flowchart TB
-    START(["cg build"]) --> SCAN["1. scan<br/>gitignore + cairn.json + skip set"]
+    START(["cairn build"]) --> SCAN["1. scan<br/>gitignore + cairn.json + skip set"]
     SCAN --> PARSE["2. parse<br/>tree-sitter (9 langs)<br/>+ route + service-call detection"]
     PARSE --> INSERT["3. insert<br/>symbols, edges, imports<br/>+ FTS5 sync triggers"]
     INSERT --> RESOLVE["4. resolve<br/>6-tier edge resolution<br/>label exact / ambiguous / unresolved"]
@@ -224,7 +224,7 @@ flowchart TB
 <div class="diagram">
 <div class="mermaid">
 sequenceDiagram
-    participant CLI as cg build
+    participant CLI as cairn build
     participant B as builder
     participant DB as :memory: DB
     participant R as resolver
@@ -256,7 +256,7 @@ sequenceDiagram
 </div>
 
 <div class="callout callout-warn">
-  <strong>Resolver tiers (in order):</strong> type-aware (receiver dispatch) → same-file → import-aware → same-repo → global. The resolver stops at the first tier with a unique match; multiple matches → <code>ambiguous</code> (no fallthrough). <code>cg update</code> (incremental) does <strong>not</strong> rebuild the derived indexes — only <code>cg build</code> does.
+  <strong>Resolver tiers (in order):</strong> type-aware (receiver dispatch) → same-file → import-aware → same-repo → global. The resolver stops at the first tier with a unique match; multiple matches → <code>ambiguous</code> (no fallthrough). <code>cairn update</code> (incremental) does <strong>not</strong> rebuild the derived indexes — only <code>cairn build</code> does.
 </div>
 
 <!-- 5 -->
@@ -329,9 +329,9 @@ flowchart TB
     GEN["Need synthesis?<br/>e.g. generate compass"]
     GEN --> Q{"LLM available<br/>in-process?"}
     Q -- "yes — droid/opencode/claude" --> LOOP["sync revise loop<br/>max 4 cycles"]
-    Q -- "no" --> TASK["async task queue<br/>cg task create"]
-    TASK --> CLAIM["agent runs<br/>cg task claim"]
-    CLAIM --> COMP["agent runs<br/>cg task complete --result-file"]
+    Q -- "no" --> TASK["async task queue<br/>cairn task create"]
+    TASK --> CLAIM["agent runs<br/>cairn task claim"]
+    CLAIM --> COMP["agent runs<br/>cairn task complete --result-file"]
     COMP --> CRITIC
     LOOP --> CRITIC["🔍 deterministic critic<br/>verifies refs vs graph"]
     CRITIC --> D{"passed?"}
@@ -452,7 +452,7 @@ erDiagram
   <thead><tr><th>Artifact</th><th>What it powers</th></tr></thead>
   <tbody>
     <tr><td><code>symbols_fts</code> (FTS5 external-content)</td><td>BM25-ranked lexical search, synced by triggers</td></tr>
-    <tr><td><code>dataflow</code></td><td>O(1) blast radius for public symbols (built by <code>cg build</code>)</td></tr>
+    <tr><td><code>dataflow</code></td><td>O(1) blast radius for public symbols (built by <code>cairn build</code>)</td></tr>
     <tr><td><code>transitive_edges</code></td><td>Closure matrix (default depth 3)</td></tr>
     <tr><td><code>embeddings</code> / <code>knowledge_embeddings</code></td><td>float32-LE vectors for semantic search</td></tr>
     <tr><td>WAL + <code>mode=ro</code></td><td>Concurrent read-only access (SSE daemon safe mode)</td></tr>

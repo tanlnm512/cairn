@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import click
-import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
@@ -79,7 +76,7 @@ def task_claim(task_id, assigned_to, knowledge):
         click.echo(f"Could not claim '{task_id}' (not pending or not found).", err=True)
         sys.exit(1)
     click.echo(f"Claimed {task_id}. Write your result, then:")
-    click.echo(f"  cg task complete {task_id} --result-file <path>")
+    click.echo(f"  cairn task complete {task_id} --result-file <path>")
 
 
 @task.command("complete")

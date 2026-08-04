@@ -53,14 +53,14 @@ class InstallResult:
 # --------------------------------------------------------------------------
 
 def resolve_cg_command() -> list[str]:
-    """Resolve a cg invocation for generated configs.
+    """Resolve a cairn invocation for generated configs.
 
     Prefers the absolute path of a `cairn` binary on PATH (so the config works
     regardless of the client's cwd). Falls back to `python -m cairn.cli.main`.
     """
-    cg = shutil.which("cairn")
-    if cg:
-        return [cg]
+    cairn_bin = shutil.which("cairn")
+    if cairn_bin:
+        return [cairn_bin]
     return [sys.executable, "-m", "cairn.cli.main"]
 
 
@@ -78,7 +78,7 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
     ``mcp.servers``, opencode flat ``mcp.<name>``) live in their own client
     modules.
 
-    When `cairn` is on PATH (normal install), command is the absolute cg path and
+    When `cairn` is on PATH (normal install), command is the absolute cairn path and
     args is ["serve"]. When only the module fallback is available (dev/venv),
     command is the python interpreter and args is ["-m", "cairn.cli.main", "serve"].
 
@@ -98,7 +98,7 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
         return {"mcpServers": {"cairn": {"type": "sse", "url": url}}}
     cmd = resolve_cg_command()
     if len(cmd) == 1:
-        # cg binary: args = ["serve"]
+        # cairn binary: args = ["serve"]
         return {"mcpServers": {"cairn": {"command": cmd[0], "args": ["serve"]}}}
     # module fallback (e.g. [python, "-m", "cairn.cli.main"]): append "serve" to args
     command, *prefix = cmd

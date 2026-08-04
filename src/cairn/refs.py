@@ -41,7 +41,7 @@ def extract_file_refs(body: str) -> List[str]:
     for m in BACKTICK_RE.findall(body):
         if "/" in m or m.endswith(FILE_EXTENSIONS):
             # Skip build/CLI commands like ./gradlew or `cairn embed`.
-            if m.startswith("./") or m.startswith("cg "):
+            if m.startswith("./") or m.startswith("cairn "):
                 continue
             refs.append(m)
     return refs

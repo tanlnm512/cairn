@@ -346,7 +346,6 @@ def _import_aware_candidates(
         longest = 0
         for tail in import_tails:
             # The imported name is the tail's last segment.
-            imported_name = tail[-1]
             # DIRECT: imported_name is a suffix of qname (symbol imported as-is).
             suffix_len = _common_suffix_len(qsegs, tail)
             # CONTAINING: imported_name is a PREFIX segment of qname (member of

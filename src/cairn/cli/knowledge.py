@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import click
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
@@ -271,6 +269,8 @@ def knowledge_export(out_path):
     import shutil
     import tarfile
 
+    from ..paths import resolve_store
+
     store_paths = resolve_store()
     kn_dir = store_paths.knowledge
     if not kn_dir.exists():
@@ -291,7 +291,7 @@ def knowledge_export(out_path):
 
 
 # --------------------------------------------------------------------------
-# cg knowledge workflow (procedural ontology -- see src/knowledge/workflow.py)
+# cairn knowledge workflow (procedural ontology -- see src/knowledge/workflow.py)
 # --------------------------------------------------------------------------
 # `cairn knowledge list --type workflow`, `cairn knowledge status`, `cairn knowledge
 # remove`, and `cairn knowledge search` already work for workflows unchanged --
@@ -425,9 +425,9 @@ def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
 
     \b
     Examples:
-      cg knowledge workflow sync "Flow: login"     # sync one
-      cg knowledge workflow sync --all              # sync all
-      cg knowledge workflow sync --all --dry-run    # report only
+      cairn knowledge workflow sync "Flow: login"     # sync one
+      cairn knowledge workflow sync --all              # sync all
+      cairn knowledge workflow sync --all --dry-run    # report only
     """
     from cairn.knowledge.workflow import (
         check_all_workflows, check_workflow_staleness, sync_workflow,

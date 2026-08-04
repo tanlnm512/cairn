@@ -2,7 +2,7 @@
 
 The ``pending_sync`` table is populated by the file watcher when a source file
 changes but before reindex runs. Before WI-4, no MCP tool read it (only
-``cg stats`` did), so a long-running ``cg serve`` answered from a stale graph
+``cairn stats`` did), so a long-running ``cairn serve`` answered from a stale graph
 with zero signal. These tests pin the new behavior: when a result's files have
 pending edits, a banner is prepended; otherwise output is unchanged.
 """

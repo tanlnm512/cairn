@@ -16,7 +16,7 @@ run an agent or grade behavior -- it validates the frontmatter itself:
 - it checks that each `expected_calls`/`wrong_calls` entry has its required
   fields (`tool`+`reason`, `tool`+`why`);
 - it resolves every referenced `tool` against the real registered surfaces --
-  MCP tools (`@mcp.tool()` in `src/cairn/mcp_server/tools_*.py`), `cg` CLI commands
+  MCP tools (`@mcp.tool()` in `src/cairn/mcp_server/tools_*.py`), `cairn` CLI commands
   (scraped from `src/cairn/cli/*.py`), and shipped scripts under `scripts/` -- and
   fails if a spec references a tool/command that was renamed or removed;
 - it exits non-zero if any spec fails, so it is safe to put on a CI gate.

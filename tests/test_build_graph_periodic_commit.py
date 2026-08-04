@@ -13,8 +13,6 @@ duplicates of that canonical count-persistence test.)
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
-import pytest
 
 from cairn.graph.builder import build_graph
 

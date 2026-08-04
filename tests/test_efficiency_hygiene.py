@@ -1,5 +1,4 @@
 import tempfile
-from pathlib import Path
 import pytest
 
 from cairn.okf.bundle import OKFBundle

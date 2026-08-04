@@ -1,7 +1,6 @@
 """Memory promotion, critic, decay, and search."""
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -341,7 +340,6 @@ def batch_critic(
 
 def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90) -> Dict:
     """Expire raw memories older than raw_max_days; archive tribal past staleness."""
-    now = datetime.now(timezone.utc)
     expired = 0
     archived = 0
     for concept in store_mod.list_memories(bundle, tier="raw"):
@@ -351,7 +349,6 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90) 
             store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
             expired += 1
     for concept in store_mod.list_memories(bundle, tier="tribal"):
-        staleness = concept.extensions.get("memory_signals", {}).get("staleness_days", 0)
         ts = concept.timestamp
         age = _age_days(ts) if ts else 0
         if age > tribal_max_stale:

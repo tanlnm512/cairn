@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import click
-import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, main, scanner_mod
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
@@ -22,7 +19,6 @@ def update(repo, file_path, workspace, db):
     from ..graph.schema import get_db
     from ..memory.promotion import decay
     from ..okf.bundle import OKFBundle
-    from pathlib import Path
 
     # If a specific file is given, run true single-file incremental re-indexing
     if file_path:

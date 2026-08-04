@@ -2,13 +2,9 @@
 from __future__ import annotations
 
 import click
-import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main, scanner_mod
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
@@ -40,7 +36,7 @@ def hooks_uninstall(workspace):
 
 
 # --------------------------------------------------------------------------
-# cg viz (visualization, M7)
+# cairn viz (visualization, M7)
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--format", "fmt", type=click.Choice(["mermaid", "dot", "json"]), default="mermaid")

@@ -61,10 +61,10 @@ when FTS5 finds < 3 results).
 The MCP server runs a one-time catch-up at startup (`ensure_fresh_force()`)
 that absorbs edits made while the server was down. After that, tool calls do
 NOT re-check file freshness per-query (removed for concurrency safety —
-edits made while `cg serve` is running require a server restart to appear).
+edits made while `cairn serve` is running require a server restart to appear).
 
-There is **no MCP tool for index status**. Run `cg stats` from the CLI if you
-need to verify. If you suspect stale data: `cg update` → restart server.
+There is **no MCP tool for index status**. Run `cairn stats` from the CLI if you
+need to verify. If you suspect stale data: `cairn update` → restart server.
 
 ## Rule 5 — typeHierarchy is limited by tree-sitter parsing; don't retry
 
@@ -99,7 +99,7 @@ results — large enough to trigger a client-side "large MCP response" warning.
 - **Use `scripts/impact_guard.py <symbol>`** instead of calling the raw tool
   when you're unsure whether a name is "common enough" to explode. It runs
   the same query, inspects the `cycles` field the resolver already returns,
-  and prints a clear collision warning (with a `cg dataflow lookup` fallback)
+  and prints a clear collision warning (with a `cairn dataflow lookup` fallback)
   instead of a misleading total. See `evals/rule06-impact-common-name.md` for
   the exact failure this guards against.
 
@@ -144,11 +144,11 @@ cross_repo_deps(repo)       →  which repos import from yours
 ## Rule 10 — Mutations via CLI, reads via MCP
 
 Graph mutations and dangerous bulk operations are **CLI-only by design**:
-- `cg update` / `cg build` — refresh graph
-- `cg stats` — index status
-- `cg dataflow build` — rebuild precomputed dataflow
-- `cg task claim/complete` — LLM task processing
-- `cg memory purge --dry-run` — bulk delete
+- `cairn update` / `cairn build` — refresh graph
+- `cairn stats` — index status
+- `cairn dataflow build` — rebuild precomputed dataflow
+- `cairn task claim/complete` — LLM task processing
+- `cairn memory purge --dry-run` — bulk delete
 
 MCP tools are read-only for L1 (graph) and narrowly scoped for L4/L5 writes
 (individual memory/knowledge CRUD). Never try to bulk-delete or rebuild the

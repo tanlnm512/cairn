@@ -1,6 +1,6 @@
 # cairn MCP Tools Reference
 
-The `cairn` MCP server (started by `cg serve`) exposes the codebase
+The `cairn` MCP server (started by `cairn serve`) exposes the codebase
 intelligence graph to AI agents. It is a FastMCP server implemented in
 `src/cairn/mcp_server/` and registers **26 tools** across 5 layers,
 plus an index-status resource.
@@ -47,7 +47,7 @@ into specific relationships.
   full picture. Precise mode only follows resolved edges, so common names can
   under-report — use `fuzzy=True` when impact looks suspiciously small for a
   widely-used symbol. `cached=True` returns O(1) precomputed dataflow
-  (populated by `cg build`/`cg sync`), falling back to live analysis.
+  (populated by `cairn build`/`cairn sync`), falling back to live analysis.
 - **`semantic_search`**: defaults to **RRF fusion** (BM25 + vector,
   `CAIRN_FUSION=1` default). The returned `score` is a rank-fusion number
   (~0.01-0.02), **not** cosine similarity, regardless of the `threshold`
@@ -146,9 +146,9 @@ session-orientation entry point is `memory_digest`, not a recall query.
   knowledge doc via a crafted `memory_path`. `knowledge_delete` applies the
   same guard to the `knowledge/` namespace.
 
-> CLI-only memory ops (not exposed as MCP): `cg memory capture` (session
-> transcript extraction), `cg memory consolidate`, `cg memory purge`, and
-> `cg memory batch-critic`. See [cli-reference.md](./cli-reference.md).
+> CLI-only memory ops (not exposed as MCP): `cairn memory capture` (session
+> transcript extraction), `cairn memory consolidate`, `cairn memory purge`, and
+> `cairn memory batch-critic`. See [cli-reference.md](./cli-reference.md).
 
 ---
 
@@ -171,9 +171,9 @@ procedural workflows.
   Layer 2/3 bundle-level `search_knowledge`). It bridges to the code graph:
   documents tagged with `affects_repos` get `cross_repo_deps` results
   appended. Lexical search works without the semantic extra; semantic adds
-  recall. If the corpus isn't embedded, run `cg knowledge embed`.
+  recall. If the corpus isn't embedded, run `cairn knowledge embed`.
 - **`trace_workflow`**: a workflow is a knowledge doc with `doc_type="workflow"`
-  (see `cg knowledge workflow` in the CLI). Each step may carry a
+  (see `cairn knowledge workflow` in the CLI). Each step may carry a
   `symbol`/`file` — follow those into `find_definition`/`get_callers` to jump
   from the procedure into the actual code.
 
@@ -185,7 +185,7 @@ In addition to the 26 tools, the server exposes a browsable resource:
 
 | Resource | Purpose |
 |----------|---------|
-| `cairn://status` | Index freshness + build stats for the current workspace (symbol/edge/file counts, edges-resolved fraction, files pending reindex). Read via `read_resource("cairn://status")` to decide whether to trust a graph query or first prompt `cg update`. |
+| `cairn://status` | Index freshness + build stats for the current workspace (symbol/edge/file counts, edges-resolved fraction, files pending reindex). Read via `read_resource("cairn://status")` to decide whether to trust a graph query or first prompt `cairn update`. |
 
 ---
 
@@ -212,7 +212,7 @@ area):
 
 ### After completing a task
 
-1. Run `cg update` to refresh the graph with your changes.
+1. Run `cairn update` to refresh the graph with your changes.
 2. `record_memory` for any learnings (`decision`/`pattern`/`mistake`/`workaround`),
    with `confidence` (0.0-1.0).
 
@@ -220,7 +220,7 @@ area):
 
 The server reconciles freshness **once at boot** (diffing the files table
 against disk). Tool calls do **not** re-check freshness per query — edits
-made while a `cg serve` process is up require a server restart (or `cg build`)
+made while a `cairn serve` process is up require a server restart (or `cairn build`)
 to show up in results. Per-query staleness banners surface when a result set
 touches files with unindexed edits pending in `pending_sync`. Use the
 `cairn://status` resource for the aggregate freshness picture.

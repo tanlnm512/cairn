@@ -5,7 +5,7 @@ and receiver types for member resolution.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict
 from cairn.parsers.base import ParsedFile
 
 

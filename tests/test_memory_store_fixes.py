@@ -1,9 +1,7 @@
 """Tests for memory store fixes (H4, H5)."""
 from __future__ import annotations
 
-import sqlite3
 
-import pytest
 
 from cairn.memory.store import (
     create_memory,

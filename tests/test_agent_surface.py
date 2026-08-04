@@ -5,7 +5,7 @@ entire class of "skill docs / slash commands disagree with the code" bugs into
 CI failures. Each test below targets a specific kind of drift:
 
   1. ``test_cli_commands_in_skill_docs_exist`` -- slash-command docs only
-     reference ``cg`` subcommands that actually exist in the Click registry.
+     reference ``cairn`` subcommands that actually exist in the Click registry.
   2. ``test_tool_count_string_matches_server`` -- the "N tools across M layers"
      string emitted by the installer (and written into AGENTS.md) matches the
      authoritative ``_EXPECTED_TOOL_COUNT`` in the server.
@@ -34,7 +34,6 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "src" / "cairn"
@@ -47,13 +46,13 @@ AGENTS_MD = REPO_ROOT / "AGENTS.md"
 
 
 # ---------------------------------------------------------------------------
-# Helpers: CLI command registry scraped from source (no `cg` invocation needed)
+# Helpers: CLI command registry scraped from source (no `cairn` invocation needed)
 # ---------------------------------------------------------------------------
 
 def _scrape_click_registry() -> tuple[set[str], dict[str, set[str]]]:
-    """Return ``(top_level, groups)`` for the ``cg`` Click CLI.
+    """Return ``(top_level, groups)`` for the ``cairn`` Click CLI.
 
-    ``top_level`` is the set of names usable as ``cg <name>``. ``groups`` maps a
+    ``top_level`` is the set of names usable as ``cairn <name>``. ``groups`` maps a
     group name (e.g. ``memory``) to the set of its subcommand names (e.g.
     ``{"record", "stats", ...}``).
 
@@ -333,12 +332,12 @@ def _parse_tools_md_signatures() -> dict[str, dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 def test_cli_commands_in_skill_docs_exist():
-    """Every ``cg <name>`` / ``cg <group> <sub>`` reference in the slash-command
+    """Every ``cairn <name>`` / ``cairn <group> <sub>`` reference in the slash-command
     docs and the CLI-fallback reference resolves to a real Click command.
 
     Catches drift where a doc names a command that was renamed or removed (the
-    classic ``cg status`` vs ``cg stats`` confusion). We build the command
-    registry by AST-scraping ``src/cli/*.py`` rather than invoking ``cg``, so
+    classic ``cairn status`` vs ``cairn stats`` confusion). We build the command
+    registry by AST-scraping ``src/cli/*.py`` rather than invoking ``cairn``, so
     this works in CI without the package installed.
     """
     top, groups = _scrape_click_registry()
@@ -346,16 +345,16 @@ def test_cli_commands_in_skill_docs_exist():
     # Sanity: the registry scraper must have found the structural anchors we
     # rely on. If these are missing, the scraper itself is broken (and a false
     # PASS would be worse than a loud failure).
-    assert "stats" in top, "scraper failed to find top-level `cg stats`"
+    assert "stats" in top, "scraper failed to find top-level `cairn stats`"
     assert "status" in top, (
-        "scraper failed to find top-level `cg status` (defined in system.py)"
+        "scraper failed to find top-level `cairn status` (defined in system.py)"
     )
     assert "status" in groups.get("serve", set()), (
-        "scraper failed to find `cg serve status` subcommand"
+        "scraper failed to find `cairn serve status` subcommand"
     )
 
-    # Collect every backtick-quoted `cg <name>` and `cg <group> <sub>` reference.
-    ref_re = re.compile(r"`cg ([a-zA-Z][\w-]*)(?:\s+([a-zA-Z][\w-]*))?")
+    # Collect every backtick-quoted `cairn <name>` and `cairn <group> <sub>` reference.
+    ref_re = re.compile(r"`cairn ([a-zA-Z][\w-]*)(?:\s+([a-zA-Z][\w-]*))?")
     refs: dict[tuple[str, ...], set[str]] = {}
     doc_files = sorted(CMD_DIR.glob("*.md")) + [CLI_FALLBACK_MD]
     for f in doc_files:
@@ -364,25 +363,25 @@ def test_cli_commands_in_skill_docs_exist():
             key = (first, second) if second else (first,)
             refs.setdefault(key, set()).add(f.name)
 
-    assert refs, "no `cg ...` references found in docs (regex too strict?)"
+    assert refs, "no `cairn ...` references found in docs (regex too strict?)"
 
     failures: list[str] = []
     for (first, *rest), where in sorted(refs.items()):
         if rest:
             second = rest[0]
             if first not in groups:
-                failures.append(f"`cg {first} {second}` -> `{first}` is not a group "
+                failures.append(f"`cairn {first} {second}` -> `{first}` is not a group "
                                 f"(in {sorted(where)})")
             elif second not in groups[first]:
-                failures.append(f"`cg {first} {second}` -> no `{second}` subcommand "
+                failures.append(f"`cairn {first} {second}` -> no `{second}` subcommand "
                                 f"under `{first}` (in {sorted(where)})")
         else:
             if first not in top:
-                failures.append(f"`cg {first}` -> no such top-level command "
+                failures.append(f"`cairn {first}` -> no such top-level command "
                                 f"(in {sorted(where)})")
 
     assert not failures, (
-        "doc references non-existent cg commands:\n  " + "\n  ".join(failures)
+        "doc references non-existent cairn commands:\n  " + "\n  ".join(failures)
     )
 
 

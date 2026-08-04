@@ -2,7 +2,6 @@
 
 No DB or bundle needed — classify_intent is pure string matching.
 """
-import pytest
 
 from cairn.compass.router import classify_intent
 

@@ -49,7 +49,7 @@ dependencies = [
 [project.optional-dependencies]
 watch = ["watchdog>=3.0"]
 test = ["pytest>=7.0"]
-dev = ["pytest>=7.0", "watchdog>=3.0", "build"]
+dev = ["pytest>=7.0", "watchdog>=3.0", "build", "ruff>=0.6"]
 # Phase 7: semantic search. Pulls torch (~hundreds of MB) via
 # sentence-transformers, hence strictly optional. The default install remains
 # zero-network and torch-free; `pip install cairn-intel[semantic]` opts in.
@@ -84,7 +84,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
-# so `cg install-agents` works from a wheel install, not just a source checkout.
+# so `cairn install-agents` works from a wheel install, not just a source checkout.
 "cairn.agent_integration" = ["**/*"]
 
 [tool.pytest.ini_options]
@@ -94,3 +94,17 @@ where = ["src"]
 markers = [
     "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
 ]
+
+[tool.ruff]
+# Conservative gate: pyflakes (F) only. Catches real defects (undefined names,
+# unused imports, redefinitions) with a low false-positive rate. Style rules
+# (E, UP, BLE, S, etc.) are intentionally excluded -- the codebase predates
+# ruff and adopting them would be a dedicated cleanup PR, not a CI gate.
+src = ["src", "scripts", "tests"]
+# Golden fixtures are test *input* data (deliberately-shaped source the parser
+# exercises), not test code -- linting them would rewrite the fixtures and
+# invalidate the very golden tests that consume them.
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["F"]

@@ -14,7 +14,7 @@ slower) using ``vector_math.l2norm``/``dot``.
 from __future__ import annotations
 
 import struct
-from typing import Callable, List, Sequence, Tuple, TypeVar
+from typing import List, Sequence, Tuple, TypeVar
 
 from ..graph.vector_math import l2norm as _l2norm, dot as _dot
 

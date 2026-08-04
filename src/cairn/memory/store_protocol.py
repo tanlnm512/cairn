@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 from enum import Enum
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Dict, List, Optional, Protocol, runtime_checkable
 
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept

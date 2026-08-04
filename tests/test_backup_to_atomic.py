@@ -5,8 +5,6 @@ import errno
 import fcntl
 import os
 import sqlite3
-import threading
-import time
 
 import pytest
 

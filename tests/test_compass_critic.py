@@ -60,7 +60,7 @@ class TestFileRefExtraction:
         assert "Foo.mm" in refs
 
     def test_still_skips_cli_and_build_commands(self):
-        body = "Run `cg embed` or `./gradlew build` first."
+        body = "Run `cairn embed` or `./gradlew build` first."
         refs = _extract_file_refs(body)
         assert refs == []
 

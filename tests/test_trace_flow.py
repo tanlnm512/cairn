@@ -3,7 +3,7 @@
 trace_flow is the inverse of impact_analysis: it walks callees downward from an
 entry point and records the ordered call chain, rather than walking callers
 upward into a flat set. These tests cover the chain shape, cycle handling,
-branch/leaf detection, and the end-to-end `cg compass flow` CLI path.
+branch/leaf detection, and the end-to-end `cairn compass flow` CLI path.
 """
 from __future__ import annotations
 
@@ -431,7 +431,7 @@ class TestFlowGapsCLI:
 class TestTraceFlowByID:
     def test_entry_id_traces_correct_symbol(self, fresh_db):
         """entry_id disambiguates two symbols with the same name."""
-        from cairn.graph.traversal import find_definition_by_id, trace_flow
+        from cairn.graph.traversal import trace_flow
         _seed_name_collision(fresh_db)
         # Both symbols are named handleCommand; find both IDs.
         rows = fresh_db.execute(
@@ -744,7 +744,7 @@ class TestFlowSynthesizeTask:
         assert "flow-revise" in revise_kinds
 
     def test_cli_flow_use_llm_queues_task(self):
-        """cg compass flow <entry> --use-llm creates a flow-synthesize task."""
+        """cairn compass flow <entry> --use-llm creates a flow-synthesize task."""
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             db = str(Path(tmp) / "test.db")
@@ -760,7 +760,7 @@ class TestFlowSynthesizeTask:
             ])
             assert result.exit_code == 0
             assert "Queued flow task" in result.output
-            assert "cg task show" in result.output
+            assert "cairn task show" in result.output
             # Task file should exist
             task_files = list(Path(know).rglob("_tasks/*.md"))
             assert len(task_files) >= 1
@@ -944,7 +944,7 @@ class TestWorkflowSync:
         assert "no longer traces" in result["error"]
 
     def test_cli_sync_dry_run(self):
-        """cg knowledge workflow sync --dry-run reports staleness without writing."""
+        """cairn knowledge workflow sync --dry-run reports staleness without writing."""
         from cairn.knowledge.workflow import add_workflow
         from cairn.okf.bundle import OKFBundle
         runner = CliRunner()
@@ -972,7 +972,7 @@ class TestWorkflowSync:
             assert "gone" in result.output
 
     def test_cli_sync_all(self):
-        """cg knowledge workflow sync --all syncs every workflow."""
+        """cairn knowledge workflow sync --all syncs every workflow."""
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             db = str(Path(tmp) / "test.db")

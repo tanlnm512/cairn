@@ -8,7 +8,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
 cairn builds a precise, language-aware structural graph of your codebase and
-exposes it to both humans (the `cg` CLI) and AI agents (a stdio MCP server with
+exposes it to both humans (the `cairn` CLI) and AI agents (a stdio MCP server with
 26 tools). Symbols, call edges, definitions, blast radius, and tribal memory all
 live in a local SQLite store — no network call, no torch in the default install.
 
@@ -19,7 +19,7 @@ tree-sitter into a **structural graph** (definitions, call edges, cross-repo
 dependencies) stored in SQLite, then layers a **compass** (per-module navigation
 guides), a **wiki** (architecture docs), **memory** (decisions / patterns /
 mistakes / workarounds), and a **knowledge** store on top. It is **MCP-native**:
-the same store backs the `cg` CLI and a 26-tool MCP server, making it
+the same store backs the `cairn` CLI and a 26-tool MCP server, making it
 **agent-first** — your coding agents query one local source of truth instead of
 re-reading the whole repo every turn.
 
@@ -40,8 +40,8 @@ share the name; precise mode returns only the real callers, while **fuzzy mode**
 candidate list to verify.
 
 ```bash
-cg impact invoke              # precise (default): real callers only — ground truth
-cg impact invoke --fuzzy      # candidate list (name matches), each labelled unverified
+cairn impact invoke              # precise (default): real callers only — ground truth
+cairn impact invoke --fuzzy      # candidate list (name matches), each labelled unverified
 ```
 
 An empty precise result means "no *resolvable* callers," **not** "unused" —
@@ -58,20 +58,20 @@ for a worked example. Full design at
 
 ```bash
 pip install cairn-intel
-cg update                       # parse the workspace and build the graph
-cg def SomeSymbol               # find where a symbol is defined
-cg ask "how does auth work"     # natural-language query across all layers
+cairn update                       # parse the workspace and build the graph
+cairn def SomeSymbol               # find where a symbol is defined
+cairn ask "how does auth work"     # natural-language query across all layers
 ```
 
 The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
 
 ## Install for AI agents
 
-cairn ships a stdio MCP server (`cg serve`). To wire it into your AI coding
+cairn ships a stdio MCP server (`cairn serve`). To wire it into your AI coding
 clients (Claude Code, Cursor, Droid, ZCode, Claude Desktop, agy, opencode):
 
 ```bash
-cg install-agents
+cairn install-agents
 ```
 
 This detects which clients are installed, shows whether cairn is already
@@ -99,11 +99,11 @@ Scope [workspace]:
 Non-interactive flags for scripts/CI:
 
 ```bash
-cg install-agents --yes                          # auto-install detected-not-installed
-cg install-agents --client claude,cursor         # force specific clients
-cg install-agents --scope global                 # write to ~/.claude/ etc.
-cg install-agents --force                        # overwrite existing files
-cg install-agents --dry-run                      # preview without writing
+cairn install-agents --yes                          # auto-install detected-not-installed
+cairn install-agents --client claude,cursor         # force specific clients
+cairn install-agents --scope global                 # write to ~/.claude/ etc.
+cairn install-agents --force                        # overwrite existing files
+cairn install-agents --dry-run                      # preview without writing
 ```
 
 Or wire manually — the MCP config is:
@@ -112,7 +112,7 @@ Or wire manually — the MCP config is:
 {
   "mcpServers": {
     "cairn": {
-      "command": "cg",
+      "command": "cairn",
       "args": ["serve"]
     }
   }
@@ -150,24 +150,24 @@ The MCP server exposes 26 tools across five layers:
 
 ## CLI
 
-The `cg` command groups the main functionality. Run `cg --help`
-(or `cg <group> --help`) for the authoritative, full list.
+The `cairn` command groups the main functionality. Run `cairn --help`
+(or `cairn <group> --help`) for the authoritative, full list.
 
 | Command | What it does |
 |---------|--------------|
-| `cg serve` | Run the stdio MCP server |
-| `cg update` | Parse the workspace and rebuild the graph |
-| `cg def <symbol>` | Find a symbol's definition |
-| `cg impact <symbol>` | Within-repo blast radius (precise by default; `--fuzzy` to audit) |
-| `cg ask "<question>"` | Natural-language query routed across all layers |
-| `cg context <file>` | Load compass + memory + wiki context for a file |
-| `cg memory …` | Record / list / search tribal memory |
-| `cg task …` | Optional LLM task queue (`list` / `show` / `claim` / `complete`) |
-| `cg knowledge …` | Inspect and export the knowledge store |
-| `cg compass …` | Generate / list / validate module compass guides |
-| `cg wiki …` | Generate / search the architecture wiki |
-| `cg install-agents` | Drop integration files into supported AI agents |
-| `cg bench` | Performance / scalability benchmarks (`--save`/`--compare` for regression checks) |
+| `cairn serve` | Run the stdio MCP server |
+| `cairn update` | Parse the workspace and rebuild the graph |
+| `cairn def <symbol>` | Find a symbol's definition |
+| `cairn impact <symbol>` | Within-repo blast radius (precise by default; `--fuzzy` to audit) |
+| `cairn ask "<question>"` | Natural-language query routed across all layers |
+| `cairn context <file>` | Load compass + memory + wiki context for a file |
+| `cairn memory …` | Record / list / search tribal memory |
+| `cairn task …` | Optional LLM task queue (`list` / `show` / `claim` / `complete`) |
+| `cairn knowledge …` | Inspect and export the knowledge store |
+| `cairn compass …` | Generate / list / validate module compass guides |
+| `cairn wiki …` | Generate / search the architecture wiki |
+| `cairn install-agents` | Drop integration files into supported AI agents |
+| `cairn bench` | Performance / scalability benchmarks (`--save`/`--compare` for regression checks) |
 
 ## Development
 
@@ -194,17 +194,17 @@ Semantic search deps (torch + sentence-transformers) are a one-time separate
 download that persists in `~/.cairn/lib/` (survives reinstalls):
 
 ```bash
-cg embed --install-deps    # one-time: downloads bge-m3 (~836 MB)
-cg embed                   # builds the embedding index
+cairn embed --install-deps    # one-time: downloads bge-m3 (~836 MB)
+cairn embed                   # builds the embedding index
 ```
 
 **Bootstrap script** (install + wire agents in one shot):
 
 ```bash
-./scripts/install.sh                       # install cg + interactively pick agents
+./scripts/install.sh                       # install cairn + interactively pick agents
 ./scripts/install.sh --agents all          # wire all detected clients
 ./scripts/install.sh --scope global        # write agent configs to ~/.claude/ etc.
-./scripts/install.sh --no-agents           # install cg only, skip agent wiring
+./scripts/install.sh --no-agents           # install cairn only, skip agent wiring
 ```
 
 The full suite (no marker) is the CI path.

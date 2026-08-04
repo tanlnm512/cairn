@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import click
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, get_db, main, queries, scanner_mod
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
@@ -57,7 +54,7 @@ def metrics(db, tool_name, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg status
+# cairn status
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -101,7 +98,7 @@ def status(db, knowledge):
 
 
 # --------------------------------------------------------------------------
-# cg eval
+# cairn eval
 # --------------------------------------------------------------------------
 @main.command(name="eval")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -143,7 +140,7 @@ def eval_cmd(db, knowledge, corpus, queries_path, as_json):
 
 
 # --------------------------------------------------------------------------
-# cg sync (manual re-index escape hatch)
+# cairn sync (manual re-index escape hatch)
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
@@ -154,8 +151,6 @@ def sync(workspace, db):
     Detects files changed since last index via size/mtime comparison and
     re-indexes them. Equivalent to what the watcher does automatically.
     """
-    import os
-    from datetime import datetime, timezone
     from ..graph import scanner as scanner_mod
     from ..graph.incremental import reindex_paths
 

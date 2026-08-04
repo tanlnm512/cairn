@@ -21,7 +21,7 @@ the edge with the outcome.
 ## Precise (default) — ground truth
 
 ```bash
-cg impact invoke
+cairn impact invoke
 ```
 
 Follows **only** `exact` edges. Returns the callers the resolver could pin to
@@ -39,7 +39,7 @@ No false positives from the unrelated `AuthUseCase.invoke` or `Worker.invoke`.
 ## Fuzzy — the candidate list
 
 ```bash
-cg impact invoke --fuzzy
+cairn impact invoke --fuzzy
 ```
 
 Adds name-only matches — every site that calls *something* named `invoke`,
@@ -59,7 +59,7 @@ graph would inflate blast radius ~70×. Precise mode protects you from that.
 ## When precise returns empty
 
 ```bash
-cg impact somePrivateHelper
+cairn impact somePrivateHelper
 # (empty)
 ```
 
@@ -68,7 +68,7 @@ only via patterns the resolver can't pin (reflection, dynamic dispatch,
 cross-repo calls the namespace map doesn't cover). Before deleting it:
 
 ```bash
-cg impact somePrivateHelper --fuzzy   # audit the candidate list
+cairn impact somePrivateHelper --fuzzy   # audit the candidate list
 ```
 
 ## Ambiguous dispatch — what `explore` adds
@@ -79,7 +79,7 @@ polymorphic call sites — the kind of thing grep cannot find at all, because
 finding them requires symbol resolution, not text matching.
 
 ```bash
-cg ask "how does dispatch work in the notifier"
+cairn ask "how does dispatch work in the notifier"
 ```
 
 The `explore` result includes an **Ambiguous dispatch hops** section listing

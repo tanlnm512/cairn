@@ -12,12 +12,12 @@ Keep references precise and backtick-quoted; keep prose clearly hedged.
 
 1. **See what's queued:**
    ```bash
-   cg task list --status pending
+   cairn task list --status pending
    ```
 
 2. **Inspect a task** (shows the graph-grounded facts + output spec):
    ```bash
-   cg task show <task_id>
+   cairn task show <task_id>
    ```
    The `## Facts` section is **ground truth from the L1 graph**. You may ONLY
    reference the files and symbols listed there. Inventing file paths or symbol
@@ -25,7 +25,7 @@ Keep references precise and backtick-quoted; keep prose clearly hedged.
 
 3. **Claim it** (sets status in-progress, prevents double-processing):
    ```bash
-   cg task claim <task_id> --as <your-name>
+   cairn task claim <task_id> --as <your-name>
    ```
 
 4. **Synthesize the result** following the task's `## Output spec`. For a
@@ -35,7 +35,7 @@ Keep references precise and backtick-quoted; keep prose clearly hedged.
 
 5. **Submit it** — cairn stores the result and the critic runs:
    ```bash
-   cg task complete <task_id> --result-file <path>
+   cairn task complete <task_id> --result-file <path>
    ```
 
 6. If the critic found factual errors, cairn queues a `*-revise` task
@@ -60,5 +60,5 @@ Keep references precise and backtick-quoted; keep prose clearly hedged.
 - You add value in *interpretation*: why a file matters, what's non-obvious,
   what to watch out for. That judgment is what the graph can't produce.
 - If you genuinely need a file/symbol not in the facts, query it first:
-  `cg def <name>` or `cg search <pattern>`, and only cite it if it resolves.
+  `cairn def <name>` or `cairn search <pattern>`, and only cite it if it resolves.
 - Plain-prose claims (no backticks) are NOT checked by the critic. If you assert something factual in prose, you are responsible for it being true.

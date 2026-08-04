@@ -20,8 +20,8 @@ lives alongside it and is loaded on demand:
 - `references/golden-rules.md` -- full rationale/examples for each rule below
 - `references/tool-behaviors.md` -- empirically-verified gotchas per tool
 - `references/task-queue.md` -- LLM synthesis task queue (compass/wiki generation)
-- `references/cli-fallback.md` -- `cg` CLI commands for when MCP is unavailable
-- `scripts/impact_guard.py` -- run instead of raw `impact_analysis`/`cg impact`
+- `references/cli-fallback.md` -- `cairn` CLI commands for when MCP is unavailable
+- `scripts/impact_guard.py` -- run instead of raw `impact_analysis`/`cairn impact`
   when a name might be common/lifecycle-shaped (see Rule 6)
 - `evals/` -- scenario specs for the rules most likely to be silently violated
 
@@ -81,7 +81,7 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 4. Return combined answer: business rules + code blast radius
 
 ### After completing a task, ALWAYS:
-1. `cg update` to refresh the graph
+1. `cairn update` to refresh the graph
 2. `record_memory` for learnings (decision | pattern | mistake | workaround)
 
 ## When to Use Which Tool
@@ -112,13 +112,13 @@ Full rationale + examples for each: `references/golden-rules.md`.
 1. **Resolve to unique name first.** Run `search_symbols("X", kind="class")` before calling `get_callers`/`get_callees`/`impact_analysis`. Ambiguous names return `[]` silently.
 2. **One question = one tool.** No parallel fan-out. Sequential chains are fine (each step depends on previous). Use `explore` as the one-call aggregator.
 3. **search_symbols is the default entry point.** FTS5 + BM25. For concept-based queries, use `semantic_search`. `explore` orchestrates both.
-4. **Index auto-refreshes at boot.** No per-query freshness check. Run `cg stats` from CLI to verify.
+4. **Index auto-refreshes at boot.** No per-query freshness check. Run `cairn stats` from CLI to verify.
 5. **typeHierarchy limited by tree-sitter.** Works for Kotlin/Java. Empty/incomplete for TypeScript, Python, Swift. Don't retry.
 6. **impact_analysis needs specific names; guard against response blowups.** Common names (`get`, `create`, lifecycle methods like `onCreate`) explode into hundreds/thousands of name-collision hits, which also risks a large-MCP-response warning. Use qualified names, prefer `cached=True` for public symbols, and cap `depth<=2` when the symbol is reached via a common/lifecycle name. If the result still returns 100+ impacted symbols for a narrow feature, treat it as a name-collision artifact — don't quote the raw count in your report, note it as noise and fall back to `get_callers` for the specific hop you need. Or just run `scripts/impact_guard.py <symbol>`, which does this check for you.
 7. **explore before ask_compass** for structural questions. `explore` is pure L1 (always works); `ask_compass` depends on compass/wiki coverage.
 8. **Precise first, fuzzy retry.** Empty precise ≠ 'no callers'. Precise = ground truth for refactoring. Fuzzy = hypothesis for auditing.
 9. **impact_analysis + cross_repo_deps always together.** Neither alone gives the full multi-repo picture.
-10. **Mutations via CLI, reads via MCP.** `cg update`, `cg build`, `cg task claim/complete`, `cg memory purge` are CLI-only.
+10. **Mutations via CLI, reads via MCP.** `cairn update`, `cairn build`, `cairn task claim/complete`, `cairn memory purge` are CLI-only.
 
 ## Memory Capture Workflow
 
@@ -134,7 +134,7 @@ symbol name, e.g., "ApiFactory uses per-flavor base URLs").
 
 ## CLI Fallback
 
-If MCP tools are unavailable, use the `cg` CLI -- full command list in
+If MCP tools are unavailable, use the `cairn` CLI -- full command list in
 `references/cli-fallback.md`.
 
 ## LLM Task Queue
