@@ -13,11 +13,9 @@ import sqlite3
 from typing import Dict, List
 
 from ..graph.queries import (
-    cross_repo_deps,
     find_definition,
     get_callers,
     get_callees,
-    impact_analysis,
     search_symbols,
 )
 from ..graph.tokenize import BASE_STOP_WORDS, simple_tokenize

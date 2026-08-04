@@ -2,13 +2,9 @@
 from __future__ import annotations
 
 import click
-import json
-import os
-import subprocess
 import sys
-from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, get_db, main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
@@ -107,7 +103,7 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
 
     if dry_run:
         conn.close()
-        click.echo(f"--- critic verdict (dry-run; nothing written) ---")
+        click.echo("--- critic verdict (dry-run; nothing written) ---")
         click.echo(f"  passed: {result.passed}  quality: {result.quality_score:.2f}  "
                    f"errors: {len(result.errors)}  warnings: {len(result.warnings)}")
         for e in result.errors:
@@ -314,7 +310,7 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
         click.echo("--- flow trace ---")
         for line in facts["chain"]:
             click.echo(f"  {line}")
-        click.echo(f"\n--- critic verdict (dry-run; nothing written) ---")
+        click.echo("\n--- critic verdict (dry-run; nothing written) ---")
         click.echo(f"  passed: {result.passed}  quality: {result.quality_score:.2f}  "
                    f"errors: {len(result.errors)}  warnings: {len(result.warnings)}")
         for e in result.errors:

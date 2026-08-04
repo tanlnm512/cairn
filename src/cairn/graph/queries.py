@@ -26,7 +26,7 @@ from .cross_repo import REPO_NAMESPACES, cross_repo_deps
 from .explore import explore
 from .lexical import search_symbols
 from .stats import get_stats, get_tree, group_by_top_level
-from .traversal import find_definition, find_definition_by_id, get_callers, get_callees, impact_analysis, trace_flow
+from .traversal import find_definition, get_callers, get_callees, impact_analysis, trace_flow
 from .vector_math import l2norm as _l2norm, dot as _dot
 
 # semantic_search is imported lazily below to avoid pulling the heavy
@@ -54,7 +54,7 @@ __all__ = [
     "get_tree",
     "group_by_top_level",
     "explore",
-    "semantic_search",
+    "semantic_search",  # noqa: F822 -- lazy-loaded via __getattr__ below
     "_l2norm",
     "_dot",
 ]

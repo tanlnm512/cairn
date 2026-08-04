@@ -106,7 +106,6 @@ def _scan_workspace_with_skips(
     in the skipped_files table. Falls back to scan_workspace if a repo has no
     source files.
     """
-    from pathlib import Path
 
     all_files = []
     all_skips = []
@@ -392,7 +391,7 @@ def _build_graph_impl(
 
     # Insert repo records (or update indexed_at).
     for repo_name, sample in repos_seen.items():
-        from ..utils.git import get_remote_url, get_current_commit
+        from ..utils.git import get_remote_url
 
         cur.execute(
             """INSERT INTO repos (id, name, path, language, git_remote, indexed_at)
@@ -731,7 +730,7 @@ def _clear_repo(conn, repo_name: str):
     )
     # 4. Now safe to delete symbols.
     cur.execute(
-        f"DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+        "DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
         (repo_name,),
     )
     # 5. Delete files.

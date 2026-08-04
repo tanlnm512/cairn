@@ -6,7 +6,6 @@ Memories are OKF concepts with memory lifecycle extensions in frontmatter:
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional

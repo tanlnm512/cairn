@@ -6,7 +6,7 @@ metadata} dict consumed by the mermaid/dot/json generators.
 from __future__ import annotations
 
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Dict
 
 
 def get_symbol_graph(conn: sqlite3.Connection, name: str, depth: int = 1) -> Dict:
@@ -70,7 +70,7 @@ def get_impact_graph(conn: sqlite3.Connection, name: str, max_depth: int = 3) ->
 
 def get_deps_graph(conn: sqlite3.Connection) -> Dict:
     """Cross-repo dependency map."""
-    from ..graph.queries import REPO_NAMESPACES, cross_repo_deps
+    from ..graph.queries import cross_repo_deps
 
     cur = conn.cursor()
     repos = [r["id"] for r in cur.execute("SELECT id FROM repos").fetchall()]

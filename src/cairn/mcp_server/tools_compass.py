@@ -18,9 +18,6 @@ def get_compass(module: str) -> str:
     """Get the compass navigation guide for a module. Returns the OKF compass body."""
     bundle = _bundle()
     # Try to find a compass concept matching the module.
-    candidates = [
-        f"compass/{module.strip('/').replace('/', '-')}",
-    ]
     for cid in bundle.list_concepts(prefix="compass/"):
         try:
             c = bundle.read_concept(cid)

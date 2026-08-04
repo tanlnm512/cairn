@@ -192,7 +192,6 @@ def instrument(fn):
             error_msg = str(exc)
             # Remove user-specific paths like /Users/tan.le/, /home/user/, etc.
             # Also remove project root paths that might leak
-            import os
             home_dir = str(Path.home())
             if home_dir in error_msg:
                 error_msg = error_msg.replace(home_dir, "~")

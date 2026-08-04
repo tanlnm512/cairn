@@ -15,7 +15,7 @@ class -- no edits to the call sites.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import List, Optional, Protocol, Tuple, runtime_checkable
 
 
 @dataclass

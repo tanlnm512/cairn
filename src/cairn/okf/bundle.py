@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-import yaml
 
 from .concept import OKFConcept
 

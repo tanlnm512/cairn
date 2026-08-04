@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Sequence
 
 from .corpus import generate_corpus
 from .report import ScalingPoint, ScalingReport

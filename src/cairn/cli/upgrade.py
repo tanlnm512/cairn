@@ -2,31 +2,11 @@
 from __future__ import annotations
 
 import click
-import json
-import os
 import subprocess
 import sys
-from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
-
-
-def _shorten(path: str) -> str:
-    """Shorten an absolute path for display by stripping the workspace root.
-
-    Uses the resolved workspace from the central store; falls back to the
-    basename if the workspace can't be determined (e.g. no store yet).
-    """
-    try:
-        from ..paths import resolve_workspace
-        ws = str(resolve_workspace())
-        if path.startswith(ws):
-            rel = path[len(ws):].lstrip("/")
-            return rel if rel else path
-    except Exception:
-        pass
-    return path
 
 
 @main.command()

@@ -30,7 +30,6 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 # PyYAML is a core dependency (see pyproject.toml ``pyyaml>=6.0``), but guard
 # anyway so a minimal environment gets a clear, actionable message rather than
@@ -64,7 +63,7 @@ WRONG_CALL_FIELDS = ["tool", "why"]
 # Discovery: scrape the universe of real tool / command names from source.
 # ---------------------------------------------------------------------------
 
-_MCP_DECOR_RE = re.compile(r"^@mcp\.tool\(\)\s*$")
+_MCP_DECOR_RE = re.compile(r"^@mcp\.tool\(.*\)\s*$")
 _DEF_RE = re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
@@ -138,7 +137,6 @@ def discover_cli_commands() -> dict[str, set[str]]:
     for path in sorted(CLI_DIR.glob("*.py")):
         lines = path.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines):
-            s = line.strip()
             if _GROUP_DEF_RE.match(line):
                 gname = _peek_def(lines, i)
                 if gname:

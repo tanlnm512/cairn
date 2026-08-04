@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 import stat
-from pathlib import Path
 from typing import List
 
 from ..graph.scanner import resolve_repo_path

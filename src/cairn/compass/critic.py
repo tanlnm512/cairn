@@ -13,7 +13,6 @@ The LLM quality-judge is optional; without it we only run the deterministic chec
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -21,8 +20,6 @@ from typing import List, Optional
 from ..okf.concept import OKFConcept
 from ..refs import (
     BACKTICK_RE,
-    FILE_EXTENSIONS,
-    SYMBOL_RE,
     extract_file_refs as _extract_file_refs,
     extract_symbol_refs as _extract_symbol_refs,
     file_exists as _file_exists,
@@ -47,7 +44,6 @@ def critic_concept(
     """Run critic checks on a concept against the graph."""
     errors = []
     warnings = []
-    cur = conn.cursor()
 
     body = concept.body or ""
 

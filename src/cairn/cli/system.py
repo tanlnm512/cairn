@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import click
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, get_db, main, queries, scanner_mod
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
@@ -154,8 +151,6 @@ def sync(workspace, db):
     Detects files changed since last index via size/mtime comparison and
     re-indexes them. Equivalent to what the watcher does automatically.
     """
-    import os
-    from datetime import datetime, timezone
     from ..graph import scanner as scanner_mod
     from ..graph.incremental import reindex_paths
 

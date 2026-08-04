@@ -10,7 +10,6 @@ expansion via shared tags/affects_modules.
 """
 from __future__ import annotations
 
-import struct
 from typing import Dict, List, Any
 
 from cairn.graph import BASE_STOP_WORDS, simple_tokenize

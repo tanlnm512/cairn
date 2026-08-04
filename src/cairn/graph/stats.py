@@ -59,17 +59,8 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 
 def get_tree(conn: sqlite3.Connection, repo: str, prefix: str = "") -> List[sqlite3.Row]:
     """Return directory/package structure with symbol counts for a repo."""
-    cur = conn.cursor()
-    like = f"{repo}/{prefix}%" if prefix else "%"
-    rows = cur.execute(
-        """SELECT f.rel_path_no_repo AS rel, COUNT(s.id) AS symbols
-           FROM (SELECT id, substr(path, ?) AS rel_path_no_repo FROM files WHERE repo_id = ?) f
-           LEFT JOIN symbols s ON s.file_id = f.id
-           GROUP BY f.id""",
-        # path stored absolute; we trim the repo root prefix below instead.
-        (0, repo),
-    )
-    # The above is approximate; do a simpler grouping by top-level package dir.
+    # A precise per-path grouping proved approximate (path-stored-absolute makes
+    # the substr trim fiddly); delegate to the simpler top-level grouping.
     return group_by_top_level(conn, repo)
 
 

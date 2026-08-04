@@ -189,7 +189,6 @@ def status_resource() -> str:
     and the DB path. A client reads this via ``read_resource("cairn://status")``
     to decide whether to trust a graph query or first prompt ``cairn update``.
     """
-    import json
 
     try:
         conn = _conn()

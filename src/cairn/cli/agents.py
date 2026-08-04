@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import click
-import json
 import os
-import subprocess
 import sys
-from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, builder, get_db, main, queries, scanner_mod
+from .main import main
 from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command(name="install-agents")
@@ -92,8 +89,8 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
         else:
             # Interactive prompt: ask for clients.
             default_str = ",".join(not_yet_installed)
-            click.echo(f"Install cairn for which clients?")
-            click.echo(f"  Options: client names (comma-separated), 'all', or Enter for detected-not-installed.")
+            click.echo("Install cairn for which clients?")
+            click.echo("  Options: client names (comma-separated), 'all', or Enter for detected-not-installed.")
             try:
                 answer = click.prompt("Clients", default=default_str, show_default=True).strip()
             except click.exceptions.Abort:

@@ -213,7 +213,7 @@ def _remove_binary(installed_via: str, dry_run: bool) -> None:
         if not stale:
             click.echo("  (cairn not found via uv/pipx/pip/venv — nothing to remove)")
             return
-        click.echo(f"  installed via: unknown (stale build artifacts only)")
+        click.echo("  installed via: unknown (stale build artifacts only)")
     else:
         click.echo(f"  installed via: {installed_via}")
 
