@@ -91,6 +91,8 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
             import questionary
             from prompt_toolkit.styles import Style as PtStyle
 
+            from .display import PROMPT_TOOLKIT_COLORS as C
+
             choices = [
                 {"name": c, "checked": c in not_yet_installed, "value": c}
                 for c in detected
@@ -101,14 +103,14 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
             # (warning) so the highlighted row stands out, and instructions
             # fade to dim so they recede behind the choices.
             cb_style = PtStyle([
-                ("qmark", "fg:ansicyan bold"),
-                ("question", "fg:ansicyan bold"),
-                ("pointer", "fg:ansiyellow bold"),
-                ("selected", "fg:ansigreen bold"),          # ● checked item
-                ("unselected", "fg:ansibrightblack"),       # ○ unchecked item
-                ("highlighted", "fg:ansiyellow bold"),      # » current row
-                ("answer", "fg:ansigreen bold"),
-                ("instruction", "fg:ansibrightblack italic"),
+                ("qmark", f"fg:{C['info']} bold"),
+                ("question", f"fg:{C['info']} bold"),
+                ("pointer", f"fg:{C['warning']} bold"),
+                ("selected", f"fg:{C['success']} bold"),    # ● checked item
+                ("unselected", f"fg:{C['dim']}"),           # ○ unchecked item
+                ("highlighted", f"fg:{C['warning']} bold"), # » current row
+                ("answer", f"fg:{C['success']} bold"),
+                ("instruction", f"fg:{C['dim']} italic"),
             ])
             # Suppress questionary's own "Aborted." so we print a single,
             # consistent message for both Ctrl+C (returns None) and Ctrl+D

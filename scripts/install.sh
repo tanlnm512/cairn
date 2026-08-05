@@ -141,40 +141,24 @@ ok "cairn --version: $CAIRN_VERSION"
 
 # ─── Step 3: Optional — semantic search extras ─────────────────────────────
 #
-# Cairn resolves semantic deps (sentence-transformers, numpy, sqlite-vec) from
-# a shared lib dir (~/.cairn/lib by default), NOT from its own venv. This is
-# deliberate: the deps are heavy (~hundreds of MB via torch) and would be wiped
-# on every `uv tool install --force`. The shared dir survives reinstalls.
-#
-# We install to the same target that `cairn embed --install-deps` uses, so both
-# paths are interchangeable. Honor CAIRN_HOME / CAIRN_LIB overrides to match.
+# `cairn embed --install-deps` (ensure_semantic_deps in
+# src/cairn/graph/embeddings.py) is the canonical installer: it resolves the
+# shared lib dir (~/.cairn/lib by default, honoring CAIRN_HOME/CAIRN_LIB) and
+# installs sentence-transformers/numpy/sqlite-vec there, NOT into cairn's own
+# venv -- deliberate, since the deps are heavy (~hundreds of MB via torch)
+# and would be wiped on every `uv tool install --force`. Delegate to it here
+# instead of re-deriving the same lib-dir resolution and pip/uv fallback
+# logic in bash.
 if $EXTRA_SEMANTIC; then
-  info "Installing semantic search extras (sentence-transformers + numpy + sqlite-vec)..."
-
-  # Resolve the shared lib dir the same way cairn does (paths.py).
-  if [[ -n "${CAIRN_LIB:-}" ]]; then
-    LIB_DIR="$CAIRN_LIB"
-  elif [[ -n "${CAIRN_HOME:-}" ]]; then
-    LIB_DIR="$CAIRN_HOME/lib"
-  else
-    LIB_DIR="$HOME/.cairn/lib"
-  fi
-  mkdir -p "$LIB_DIR"
-
-  SEMANTIC_PKGS="sentence-transformers>=3.0 numpy>=1.24 sqlite-vec>=0.1.0"
-
   if $USE_VENV && [[ -f "$PROJECT_DIR/.venv/bin/pip" ]]; then
-    # venv mode: the venv IS the runtime, so install there directly.
-    "$PROJECT_DIR/.venv/bin/pip" install $SEMANTIC_PKGS >/dev/null 2>&1
-  elif command -v uv >/dev/null 2>&1; then
-    # uv tool mode: install to the shared lib dir (survives reinstalls).
-    uv pip install --target "$LIB_DIR" --python "$PYTHON" $SEMANTIC_PKGS 2>/dev/null || \
-      "$PYTHON" -m pip install --target "$LIB_DIR" $SEMANTIC_PKGS >/dev/null 2>&1
+    # venv mode: the venv IS the runtime, so install there directly instead
+    # of the shared lib dir `cairn embed --install-deps` targets.
+    info "Installing semantic search extras (sentence-transformers + numpy + sqlite-vec)..."
+    "$PROJECT_DIR/.venv/bin/pip" install "sentence-transformers>=3.0" "numpy>=1.24" "sqlite-vec>=0.1.0" >/dev/null 2>&1
+    ok "Semantic search extras installed into .venv"
   else
-    # No uv: install to the shared lib dir via pip --target.
-    "$PYTHON" -m pip install --target "$LIB_DIR" $SEMANTIC_PKGS >/dev/null 2>&1
+    "$CAIRN_CMD" embed --install-deps
   fi
-  ok "Semantic search extras installed to $LIB_DIR"
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────
