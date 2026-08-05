@@ -106,18 +106,22 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
 
 
 def _python_for_hooks() -> str:
-    """Absolute python path for `python -m src.hooks.claude_hooks` invocations."""
+    """Absolute python path for `python -m cairn.hooks.claude_hooks` invocations."""
     return sys.executable
 
 
 def _claude_hook_command(entrypoint: str) -> str:
-    """Build a hook command string: `<python> -m src.hooks.claude_hooks <entry>`."""
-    return f"{_python_for_hooks()} -m src.hooks.claude_hooks {entrypoint}"
+    """Build a hook command string: `<python> -m cairn.hooks.claude_hooks <entry>`."""
+    return f"{_python_for_hooks()} -m cairn.hooks.claude_hooks {entrypoint}"
 
 
 def _hook_markers() -> list[str]:
     """Substrings that identify a cairn hook command, path-independently."""
     return [
+        "cairn.hooks.claude_hooks post_edit",
+        "cairn.hooks.claude_hooks session_end",
+        # Legacy markers from before the module path fix (kept so
+        # uninstall-agents can still strip hooks written by older installs).
         "src.hooks.claude_hooks post_edit",
         "src.hooks.claude_hooks session_end",
     ]

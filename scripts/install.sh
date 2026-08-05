@@ -1,17 +1,13 @@
 #!/bin/bash
-# scripts/install.sh — Install the cairn CLI binary + wire AI coding clients.
+# scripts/install.sh — Install the cairn CLI binary.
 #
-# This script installs the `cairn` command and (optionally) wires it into your
-# AI coding clients (Claude Code, Cursor, Droid, ZCode, etc.) in one shot.
+# This script installs the `cairn` command. To wire it into AI coding
+# clients afterward, run `cairn install-agents` separately.
 #
 # Usage:
-#   ./scripts/install.sh                  # install cairn, then interactively pick agents
+#   ./scripts/install.sh                  # install cairn
 #   ./scripts/install.sh --semantic       # also install semantic search extras
 #   ./scripts/install.sh --venv           # use venv instead of uv/pipx
-#   ./scripts/install.sh --no-agents      # skip the agent-wiring step
-#   ./scripts/install.sh --agents all     # wire all detected clients (no prompt)
-#   ./scripts/install.sh --agents claude,cursor  # wire specific clients
-#   ./scripts/install.sh --scope global   # write agent configs to ~/.claude/ etc.
 #
 # Prerequisites:
 #   - Python >= 3.10 (auto-detected; not the macOS default 3.9)
@@ -34,20 +30,14 @@ fail()  { echo -e "${RED}✗${NC} $*"; exit 1; }
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 EXTRA_SEMANTIC=false
 USE_VENV=false
-WIRE_AGENTS=true
-AGENTS_TARGET=""
-AGENTS_SCOPE="workspace"
 
 # ─── Parse args ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --semantic)    EXTRA_SEMANTIC=true ;;
     --venv)         USE_VENV=true ;;
-    --no-agents)    WIRE_AGENTS=false ;;
-    --agents)       AGENTS_TARGET="$2"; shift ;;
-    --scope)        AGENTS_SCOPE="$2"; shift ;;
     -h|--help)
-      sed -n '2,15p' "$0" | sed 's/^# //' | sed 's/^#//'
+      sed -n '2,10p' "$0" | sed 's/^# //' | sed 's/^#//'
       exit 0 ;;
     *) fail "Unknown option: $1 (use --help)" ;;
   esac
@@ -150,46 +140,24 @@ CAIRN_VERSION=$("$CAIRN_CMD" --version 2>/dev/null || echo "unknown")
 ok "cairn --version: $CAIRN_VERSION"
 
 # ─── Step 3: Optional — semantic search extras ─────────────────────────────
+#
+# `cairn embed --install-deps` (ensure_semantic_deps in
+# src/cairn/graph/embeddings.py) is the canonical installer: it resolves the
+# shared lib dir (~/.cairn/lib by default, honoring CAIRN_HOME/CAIRN_LIB) and
+# installs sentence-transformers/numpy/sqlite-vec there, NOT into cairn's own
+# venv -- deliberate, since the deps are heavy (~hundreds of MB via torch)
+# and would be wiped on every `uv tool install --force`. Delegate to it here
+# instead of re-deriving the same lib-dir resolution and pip/uv fallback
+# logic in bash.
 if $EXTRA_SEMANTIC; then
-  info "Installing semantic search extras (sentence-transformers + numpy)..."
   if $USE_VENV && [[ -f "$PROJECT_DIR/.venv/bin/pip" ]]; then
-    "$PROJECT_DIR/.venv/bin/pip" install "sentence-transformers>=3.0" "numpy>=1.24" >/dev/null 2>&1
-  elif command -v uv >/dev/null 2>&1; then
-    uv pip install --system "sentence-transformers>=3.0" "numpy>=1.24" 2>/dev/null || \
-      "$PYTHON" -m pip install "sentence-transformers>=3.0" "numpy>=1.24" >/dev/null 2>&1
+    # venv mode: the venv IS the runtime, so install there directly instead
+    # of the shared lib dir `cairn embed --install-deps` targets.
+    info "Installing semantic search extras (sentence-transformers + numpy + sqlite-vec)..."
+    "$PROJECT_DIR/.venv/bin/pip" install "sentence-transformers>=3.0" "numpy>=1.24" "sqlite-vec>=0.1.0" >/dev/null 2>&1
+    ok "Semantic search extras installed into .venv"
   else
-    "$PYTHON" -m pip install "sentence-transformers>=3.0" "numpy>=1.24" >/dev/null 2>&1
-  fi
-  ok "Semantic search extras installed"
-fi
-
-# ─── Step 4: Wire AI coding clients ─────────────────────────────────────────
-if $WIRE_AGENTS; then
-  echo ""
-  echo -e "${BOLD}Step 4: Wire AI coding clients${NC}"
-  echo ""
-
-  WS_DIR="$(pwd)"
-
-  if [[ -n "$AGENTS_TARGET" ]]; then
-    # --agents was passed: use it directly, no prompt.
-    info "Wiring agents: $AGENTS_TARGET (scope: $AGENTS_SCOPE)"
-    "$CAIRN_CMD" install-agents --client "$AGENTS_TARGET" --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
-  elif [[ ! -t 0 ]]; then
-    # Non-interactive (piped/scripted): auto-install detected-not-installed.
-    info "Wiring agents (non-interactive: detected, not yet installed)"
-    "$CAIRN_CMD" install-agents --yes --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
-  else
-    # Interactive: show detection, let the user choose.
-    # First, run install-agents which shows the detection table + prompts.
-    "$CAIRN_CMD" install-agents --scope "$AGENTS_SCOPE" --workspace "$WS_DIR"
-  fi
-
-  echo ""
-  if [[ $? -eq 0 ]]; then
-    ok "Agent wiring complete"
-  else
-    warn "Agent wiring had issues (you can re-run: cairn install-agents)"
+    "$CAIRN_CMD" embed --install-deps
   fi
 fi
 
@@ -201,12 +169,9 @@ echo "  Binary: $CAIRN_CMD"
 echo ""
 echo "  Next steps:"
 echo "    1. cairn init                      # register workspace + build graph"
-echo "    2. cairn embed --install-deps      # one-time: semantic deps (bge-m3)"
-echo "    3. cairn embed                     # build the embedding index"
-echo ""
-echo "  Or reconfigure agents anytime:"
-echo "    cairn install-agents               # interactive client picker"
-echo "    cairn install-agents --scope global   # write to ~/.claude/ etc."
+echo "    2. cairn install-agents            # wire AI coding clients (interactive)"
+echo "    3. cairn embed --install-deps      # one-time: semantic deps (bge-m3)"
+echo "    4. cairn embed                     # build the embedding index"
 echo ""
 echo "  Verify:"
 echo "    cairn --version"

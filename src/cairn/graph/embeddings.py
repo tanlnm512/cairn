@@ -339,6 +339,44 @@ def _clear_import_cache(package_names: list[str]) -> None:
             sys.modules.pop(k, None)
 
 
+def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
+    """Run a pip/uv install subprocess with a single-line progress indicator.
+
+    pip/uv don't expose per-package progress callbacks, so we show an
+    indeterminate status via ``cli.display.progress_bar`` (TTY-aware: an
+    animated spinner on a terminal, a throttled single ``\\r``-updated line
+    under CI/pipes). pip's own verbose output is suppressed (captured) so
+    the log stays clean. On failure, the captured output is printed so the
+    user can see the error.
+    """
+    import subprocess
+    import time
+
+    from ..cli.display import progress_bar
+
+    print(f"Installing semantic deps into {lib_dir} (one-time, ~hundreds of MB via torch)...")
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    # We can't know pip's internal progress, so just tick elapsed time.
+    # progress_bar's own throttling caps the actual redraw rate.
+    with progress_bar("Installing semantic deps", total=None, unit="") as bar:
+        while proc.poll() is None:
+            bar.advance(0)
+            time.sleep(0.2)
+
+    output = proc.stdout.read() if proc.stdout else ""
+    if proc.returncode != 0:
+        # Print captured output so the user sees the actual pip error.
+        if output:
+            print(output)
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output)
+
+
 def ensure_semantic_deps(auto_install: bool = True) -> bool:
     """Ensure sentence-transformers is installed.
 
@@ -358,13 +396,11 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
 
     import importlib.util
     import shutil
-    import subprocess
     import sys
 
     from ..paths import shared_lib_path
 
     lib_dir = shared_lib_path()
-    print(f"sentence-transformers not found. Installing semantic deps into {lib_dir} (one-time)...")
     packages = ["sentence-transformers", "numpy", "sqlite-vec"]
     try:
         if importlib.util.find_spec("pip") is not None:
@@ -372,8 +408,9 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
             # prepended to sys.path at import time (paths.py). This keeps the
             # deps OUTSIDE the tool's own venv so they survive reinstalls.
             lib_dir.mkdir(parents=True, exist_ok=True)
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--target", str(lib_dir), *packages]
+            _run_install_with_progress(
+                [sys.executable, "-m", "pip", "install", "--target", str(lib_dir), *packages],
+                lib_dir,
             )
         else:
             # No pip in this interpreter (uv tool env). Use uv pip install
@@ -385,10 +422,9 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
                     "install pip or run: uv pip install --target "
                     f"{lib_dir} sentence-transformers numpy sqlite-vec"
                 )
-            print(f"No pip in this interpreter; installing via uv into {lib_dir}...")
-            lib_dir.mkdir(parents=True, exist_ok=True)
-            subprocess.check_call(
-                [uv, "pip", "install", "--target", str(lib_dir), *packages]
+            _run_install_with_progress(
+                [uv, "pip", "install", "--target", str(lib_dir), *packages],
+                lib_dir,
             )
         # Verify the import resolves now (from the shared lib dir, which
         # paths.py already added to sys.path at startup).

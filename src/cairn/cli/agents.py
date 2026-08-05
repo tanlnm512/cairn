@@ -37,7 +37,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
     Scope: --scope workspace (default) writes to ./.claude/, ./.cursor/ etc.
     --scope global writes to ~/.claude/, ~/.cursor/ etc. (all projects inherit).
     """
-    from ..agent_install import install, detect_clients, check_installed, CLIENTS
+    from ..agent_install import install, detect_clients, check_installed
 
     if sse and stdio:
         click.echo("Error: --sse and --stdio are mutually exclusive.")
@@ -87,28 +87,56 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
             target_clients = not_yet_installed
             click.echo(f"Installing for: {', '.join(target_clients)} (detected, not yet installed)")
         else:
-            # Interactive prompt: ask for clients.
-            default_str = ",".join(not_yet_installed)
-            click.echo("Install cairn for which clients?")
-            click.echo("  Options: client names (comma-separated), 'all', or Enter for detected-not-installed.")
+            # Interactive prompt: ask for clients (checkbox multi-select).
+            import questionary
+            from prompt_toolkit.styles import Style as PtStyle
+
+            from .display import PROMPT_TOOLKIT_COLORS as C
+
+            choices = [
+                {"name": c, "checked": c in not_yet_installed, "value": c}
+                for c in detected
+            ]
+            # Custom style aligned with the cairn CLI theme (see display.py):
+            # the question mark + question text use cyan (info), the selected
+            # indicator turns bold green (success), the pointer is bold yellow
+            # (warning) so the highlighted row stands out, and instructions
+            # fade to dim so they recede behind the choices.
+            cb_style = PtStyle([
+                ("qmark", f"fg:{C['info']} bold"),
+                ("question", f"fg:{C['info']} bold"),
+                ("pointer", f"fg:{C['warning']} bold"),
+                ("selected", f"fg:{C['success']} bold"),    # ● checked item
+                ("unselected", f"fg:{C['dim']}"),           # ○ unchecked item
+                ("highlighted", f"fg:{C['warning']} bold"), # » current row
+                ("answer", f"fg:{C['success']} bold"),
+                ("instruction", f"fg:{C['dim']} italic"),
+            ])
+            # Suppress questionary's own "Aborted." so we print a single,
+            # consistent message for both Ctrl+C (returns None) and Ctrl+D
+            # (raises EOFError, which questionary does not catch).
             try:
-                answer = click.prompt("Clients", default=default_str, show_default=True).strip()
-            except click.exceptions.Abort:
-                click.echo("\nAborted.")
+                answer = questionary.checkbox(
+                    "Select clients to install cairn for:",
+                    choices=choices,
+                    style=cb_style,
+                    instruction="(↑↓ navigate · space toggle · a all · i invert · enter confirm)",
+                ).ask(kbi_msg="")
+            except (KeyboardInterrupt, EOFError):
+                answer = None
+
+            if answer is None:  # Ctrl+C or Ctrl+D
+                click.echo("Aborted.")
                 return
 
-            if answer.lower() == "all":
-                target_clients = detected
-            elif answer:
-                # Validate names.
-                names = [n.strip() for n in answer.split(",") if n.strip()]
-                bad = [n for n in names if n not in CLIENTS]
-                if bad:
-                    click.echo(f"Unknown client(s): {bad}. Valid: {', '.join(CLIENTS)}")
-                    return
-                target_clients = names
-            else:
-                target_clients = not_yet_installed
+            # Respect the selection as-is. An explicitly empty selection
+            # (user unchecked everything) installs nothing, rather than
+            # silently falling back to the detected defaults (which is what
+            # install() would do if we passed an empty/None clients list).
+            if not answer:
+                click.echo("Nothing selected. Use --client <name> to target a specific client.")
+                return
+            target_clients = answer
 
             # Interactive prompt: ask for scope (only if --scope wasn't passed).
             if scope is None:
