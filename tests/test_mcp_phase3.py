@@ -265,6 +265,17 @@ class TestLifespan:
     def test_fastmcp_constructed_with_lifespan(self):
         """The server passes app_lifespan to FastMCP()."""
         src = SERVER_CORE.read_text(encoding="utf-8")
-        assert 'FastMCP("cairn", lifespan=app_lifespan)' in src, (
+        assert 'FastMCP("cairn", lifespan=app_lifespan' in src, (
             "FastMCP must be constructed with lifespan=app_lifespan (Phase 3.4)"
         )
+
+    def test_fastmcp_pins_log_level(self):
+        """FastMCP's default log_level="INFO" calls logging.basicConfig() at
+        import time, clobbering the root logger for every `cairn` CLI
+        invocation (not just `cairn serve`), since this module is imported
+        eagerly to register the serve command. Pin it so constructing this
+        singleton doesn't leak third-party INFO logs into unrelated commands.
+        """
+        from cairn.mcp_server._server_core import mcp
+
+        assert mcp.settings.log_level == "WARNING"

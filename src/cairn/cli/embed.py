@@ -114,6 +114,15 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
                 bar.update(task, total=total)
             bar.update(task, completed=done)
 
+        from cairn.graph import ann_index as ann
+
+        build_ann = ann.ann_backend_enabled()
+
+        # One progress bar for the whole `cairn embed` run -- embedding and
+        # (if enabled) the ANN rebuild used to open their own separate bars
+        # back to back, which read as two unrelated progress indicators.
+        # Reuse the same bar, just retargeting its description/total for the
+        # second phase, so the terminal shows one continuous indicator.
         with display.progress_bar(description="Embedding", total=None, unit="symbols") as bar:
             bar_state["bar"] = bar
             bar_state["task"] = bar._cg_task_id
@@ -121,6 +130,16 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
                 conn, batch_size=batch_size, limit=limit, progress=progress, reap_orphans=not no_reap
             )
             bar_state["bar"] = None
+
+            if build_ann:
+                task_id = bar._cg_task_id
+                # bar.update(total=None) would leave the embedding phase's
+                # total in place (both backends treat total=None as "don't
+                # change it") -- reset the task directly so the ANN phase
+                # renders as a fresh indeterminate bar instead of "0/<n synced>".
+                bar.tasks[task_id].total = None
+                bar.update(task_id, description="ANN index", completed=0)
+                idx_summary = ann.rebuild_index(conn, emb.current_model())
         elapsed = time.time() - t0
 
         after = emb.embed_count(conn)
@@ -135,11 +154,7 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
             ],
         )
 
-        from cairn.graph import ann_index as ann
-
-        if ann.ann_backend_enabled():
-            with display.progress_bar(description="ANN index", total=None, unit=""):
-                idx_summary = ann.rebuild_index(conn, emb.current_model())
+        if build_ann:
             if idx_summary.get("skipped"):
                 display.warning(f"ANN index not built: {idx_summary['skipped']}")
             else:
