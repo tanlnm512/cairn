@@ -37,7 +37,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
     Scope: --scope workspace (default) writes to ./.claude/, ./.cursor/ etc.
     --scope global writes to ~/.claude/, ~/.cursor/ etc. (all projects inherit).
     """
-    from ..agent_install import install, detect_clients, check_installed, CLIENTS
+    from ..agent_install import install, detect_clients, check_installed
 
     if sse and stdio:
         click.echo("Error: --sse and --stdio are mutually exclusive.")
@@ -89,21 +89,52 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
         else:
             # Interactive prompt: ask for clients (checkbox multi-select).
             import questionary
+            from prompt_toolkit.styles import Style as PtStyle
 
             choices = [
                 {"name": c, "checked": c in not_yet_installed, "value": c}
                 for c in detected
             ]
-            answer = questionary.checkbox(
-                "Select clients to install cairn for:",
-                choices=choices,
-            ).ask()
+            # Custom style aligned with the cairn CLI theme (see display.py):
+            # the question mark + question text use cyan (info), the selected
+            # indicator turns bold green (success), the pointer is bold yellow
+            # (warning) so the highlighted row stands out, and instructions
+            # fade to dim so they recede behind the choices.
+            cb_style = PtStyle([
+                ("qmark", "fg:ansicyan bold"),
+                ("question", "fg:ansicyan bold"),
+                ("pointer", "fg:ansiyellow bold"),
+                ("selected", "fg:ansigreen bold"),          # ● checked item
+                ("unselected", "fg:ansibrightblack"),       # ○ unchecked item
+                ("highlighted", "fg:ansiyellow bold"),      # » current row
+                ("answer", "fg:ansigreen bold"),
+                ("instruction", "fg:ansibrightblack italic"),
+            ])
+            # Suppress questionary's own "Aborted." so we print a single,
+            # consistent message for both Ctrl+C (returns None) and Ctrl+D
+            # (raises EOFError, which questionary does not catch).
+            try:
+                answer = questionary.checkbox(
+                    "Select clients to install cairn for:",
+                    choices=choices,
+                    style=cb_style,
+                    instruction="(↑↓ navigate · space toggle · a all · i invert · enter confirm)",
+                ).ask(kbi_msg="")
+            except (KeyboardInterrupt, EOFError):
+                answer = None
 
-            if answer is None:  # Ctrl+C
-                click.echo("\nAborted.")
+            if answer is None:  # Ctrl+C or Ctrl+D
+                click.echo("Aborted.")
                 return
 
-            target_clients = answer if answer else not_yet_installed
+            # Respect the selection as-is. An explicitly empty selection
+            # (user unchecked everything) installs nothing, rather than
+            # silently falling back to the detected defaults (which is what
+            # install() would do if we passed an empty/None clients list).
+            if not answer:
+                click.echo("Nothing selected. Use --client <name> to target a specific client.")
+                return
+            target_clients = answer
 
             # Interactive prompt: ask for scope (only if --scope wasn't passed).
             if scope is None:
