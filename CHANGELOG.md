@@ -24,6 +24,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - _Nothing yet._
 
+## [0.6.0] - 2026-08-05
+
+> **Focus:** `install-agents` gets an interactive checkbox picker, and
+> `scripts/install.sh` no longer silently mis-installs semantic-search deps
+> or wires up AI-client hooks that fail on every invocation.
+
+### Added
+- **Interactive checkbox picker for `cairn install-agents`.** Replaces the
+  old comma-separated free-text prompt with an arrow-key navigable,
+  spacebar-toggle checklist (via `questionary`) of detected AI clients,
+  pre-checked for the ones not yet wired up. Styled with cairn's own CLI
+  color theme (cyan question, green selected, yellow pointer, dim
+  instructions). Both Ctrl+C and Ctrl+D abort cleanly with a single
+  consistent message; `--yes`/`--client`/non-TTY paths are unchanged.
+
+### Changed
+- **`scripts/install.sh` no longer wires AI coding clients.** Installing
+  cairn and wiring agents are now separate steps -- run `cairn
+  install-agents` afterward (interactively, or with `--client`/`--scope`).
+  The install.sh flags `--no-agents`, `--agents`, and `--scope` are removed
+  as a result.
+- **Progress bars share one implementation across TTY and non-TTY output.**
+  `display.progress_bar()`'s rich-backed path previously patched ad-hoc
+  attributes onto a `Progress` instance at runtime; the non-TTY path
+  implemented an unrelated class from scratch. Both now expose the same
+  small, explicit interface, and `cairn embed --install-deps`'s
+  install-progress indicator goes through this shared mechanism too instead
+  of its own hand-rolled status line.
+
+### Fixed
+- **`scripts/install.sh --semantic` installed semantic-search deps into the
+  wrong location** (the tool's own venv, or system Python) instead of the
+  shared lib dir (`~/.cairn/lib`) cairn's runtime actually resolves deps
+  from -- the deps it installed were invisible to `cairn embed`. It now
+  delegates to `cairn embed --install-deps`, the same code path cairn uses
+  internally, honoring `CAIRN_LIB`/`CAIRN_HOME` overrides.
+- **Non-TTY output (CI logs, `cairn build | tee`) could get corrupted with
+  raw carriage-return bytes** during the semantic-deps install step -- it
+  wrote `\r`-updated status lines unconditionally instead of checking
+  whether stdout was a terminal.
+- **`install-agents` wrote AI-client hook commands pointing at a
+  nonexistent Python module** (`src.hooks.claude_hooks` instead of
+  `cairn.hooks.claude_hooks`), so every PostToolUse/Stop hook it wired up
+  silently failed with `ModuleNotFoundError`. `uninstall-agents` still
+  recognizes and removes hooks written by the old, broken path.
+
 ## [0.5.3] - 2026-08-03
 
 > **Focus:** fixes `cairn serve` boot hang that prevented Claude Desktop (and
