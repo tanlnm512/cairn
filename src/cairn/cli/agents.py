@@ -87,28 +87,23 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
             target_clients = not_yet_installed
             click.echo(f"Installing for: {', '.join(target_clients)} (detected, not yet installed)")
         else:
-            # Interactive prompt: ask for clients.
-            default_str = ",".join(not_yet_installed)
-            click.echo("Install cairn for which clients?")
-            click.echo("  Options: client names (comma-separated), 'all', or Enter for detected-not-installed.")
-            try:
-                answer = click.prompt("Clients", default=default_str, show_default=True).strip()
-            except click.exceptions.Abort:
+            # Interactive prompt: ask for clients (checkbox multi-select).
+            import questionary
+
+            choices = [
+                {"name": c, "checked": c in not_yet_installed, "value": c}
+                for c in detected
+            ]
+            answer = questionary.checkbox(
+                "Select clients to install cairn for:",
+                choices=choices,
+            ).ask()
+
+            if answer is None:  # Ctrl+C
                 click.echo("\nAborted.")
                 return
 
-            if answer.lower() == "all":
-                target_clients = detected
-            elif answer:
-                # Validate names.
-                names = [n.strip() for n in answer.split(",") if n.strip()]
-                bad = [n for n in names if n not in CLIENTS]
-                if bad:
-                    click.echo(f"Unknown client(s): {bad}. Valid: {', '.join(CLIENTS)}")
-                    return
-                target_clients = names
-            else:
-                target_clients = not_yet_installed
+            target_clients = answer if answer else not_yet_installed
 
             # Interactive prompt: ask for scope (only if --scope wasn't passed).
             if scope is None:

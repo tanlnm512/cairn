@@ -44,6 +44,7 @@ dependencies = [
     # Progress display: spinners, progress bars, ETA/rate, themed tables.
     # Pure-Python, no network/torch -- keeps the default install lightweight.
     "rich>=13.0",
+    "questionary>=2.0",
 ]
 
 [project.optional-dependencies]
