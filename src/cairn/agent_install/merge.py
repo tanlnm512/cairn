@@ -333,7 +333,7 @@ def _strip_mcp_opencode(path: Path, res) -> None:
 def _strip_hooks(path: Path, res: InstallResult) -> None:
     """Remove cairn hook entries from .claude/settings.json.
 
-    Matches on `src.hooks.claude_hooks <entrypoint>` so it strips entries
+    Matches on `cairn.hooks.claude_hooks <entrypoint>` so it strips entries
     regardless of how the python path was written (absolute, venv-relative,
     cd-prefixed).
     """
