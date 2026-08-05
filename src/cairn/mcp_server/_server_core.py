@@ -68,7 +68,18 @@ async def app_lifespan(server: FastMCP):
 
 # The single FastMCP instance every tools_*.py module decorates. Imported as
 # `from ._server_core import mcp` so @mcp.tool() decorators attach here.
-mcp = FastMCP("cairn", lifespan=app_lifespan)
+#
+# This module is imported by every `cairn` CLI invocation (not just `cairn
+# serve`), since `cli/__init__.py` imports `serve` unconditionally to register
+# its click command. FastMCP.__init__ defaults to log_level="INFO", which
+# calls logging.basicConfig(level="INFO", handlers=[RichHandler(...)]) --
+# unconditionally reconfiguring the *root* logger for the whole process. That
+# clobbered every other command's output: third-party INFO logs (httpx
+# request lines, sentence-transformers' "No device provided" notice, etc.)
+# started rendering through that RichHandler, interleaving with `cairn
+# embed`'s own progress bar. Pin it to WARNING so constructing this singleton
+# doesn't affect unrelated commands.
+mcp = FastMCP("cairn", lifespan=app_lifespan, log_level="WARNING")
 
 
 def _store():
