@@ -257,8 +257,11 @@ def _semantic_memory_fallback(
 
     Embeds the query with the configured backend and cosine-ranks every memory
     concept (by its title + description + body text). Returns the top matches.
-    Silently returns [] if the semantic backend isn't available, so callers
-    degrade to the empty-result path without crashing.
+    Returns [] only if embedding/embedding-available() is False (e.g. the openai
+    backend without an API key). Note: the dep-free hash fallback reports
+    availability as True, so this path still runs under it -- results carry
+    token-overlap signal, not real semantic signal, and the stamped provenance
+    reflects that (``semantic (hash backend)``) so callers can flag it.
     """
     try:
         from cairn.graph import embeddings as emb
@@ -306,8 +309,12 @@ def _semantic_memory_fallback(
         scored = cosine_scan(q_blob, dim, rows, threshold=0.1)
         out = [c for s, c in scored[:limit]]
         # Stamp provenance so callers know these are semantic, not lexical.
+        # Under the dep-free hash fallback the embedding carries only
+        # token-overlap signal (no real semantic meaning), so flag it so the
+        # recall_memory formatter / agent can tell the results are degraded.
+        prov = "semantic (hash backend)" if emb.is_hash_fallback() else "semantic"
         for c in out:
-            c.extensions["provenance"] = "semantic"
+            c.extensions["provenance"] = prov
         return out
     except Exception:
         return []  # never let the fallback break recall_memory

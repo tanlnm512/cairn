@@ -10,10 +10,13 @@ expansion via shared tags/affects_modules.
 """
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Any
 
 from cairn.graph import BASE_STOP_WORDS, simple_tokenize
 from cairn.okf.bundle import OKFBundle
+
+logger = logging.getLogger(__name__)
 
 # Common English words filtered from query tokens before matching. Shared
 # baseline defined in src/graph/tokenize.py.
@@ -238,6 +241,12 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
         if emb.embed_knowledge_count(conn) == 0:
             return []
 
+        # Under the dep-free hash fallback the cosine signal is token-overlap
+        # only; flag it once and annotate provenance so the caller can tell the
+        # semantic results are degraded.
+        emb.warn_hash_fallback_once(logger, context="search_knowledge")
+        prov = "semantic_knowledge (hash backend)" if emb.is_hash_fallback() else "semantic_knowledge"
+
         model = emb.current_model(corpus="knowledge")
         q_blob, q_dim = emb.embed_query(query)
 
@@ -271,7 +280,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
                 "title": concept.title,
                 "doc_type": doc_type,
                 "score": round(score, 4),
-                "provenance": "semantic_knowledge",
+                "provenance": prov,
                 "affects_modules": concept.extensions.get("affects_modules", []),
                 "affects_repos": concept.extensions.get("affects_repos", []),
                 "chunk": chunk,

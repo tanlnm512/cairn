@@ -273,6 +273,49 @@ def _effective_backend() -> str:
     return _EFFECTIVE_BACKEND_CACHE["effective"]
 
 
+def is_hash_fallback() -> bool:
+    """True when embeddings silently use the dep-free hash backend.
+
+    Configured backend is ``local`` (the default) but sentence-transformers
+    isn't installed, so ``_embed`` returns ``hash-256-v1`` vectors. Those carry
+    token-overlap signal only -- no genuine semantic signal -- so query paths
+    (memory recall, semantic_search, explore, knowledge search) check this to
+    flag degraded results to the agent/user.
+
+    Returns False when the user *explicitly* set ``CAIRN_EMBED_BACKEND=hash``
+    (that's an informed choice, not a silent fallback) or when a real backend
+    (local/openai) is active.
+    """
+    return _effective_backend() == "hash" and _backend_name() == "local"
+
+
+# Process-global guard so the one-time warning fires at most once per process
+# across all callers (memory, graph, knowledge). Provenance enrichment on each
+# result still carries the signal on every call; this warning just surfaces it
+# once for a caller who isn't reading the provenance field.
+_HASH_FALLBACK_WARNED: bool = False
+
+
+def warn_hash_fallback_once(logger, context: str = "") -> None:
+    """Emit one hash-fallback warning per process.
+
+    No-op when a real backend is active or the hash backend was explicitly
+    chosen. ``context`` is a short string identifying the calling path
+    (e.g. ``"semantic_search"``) for the log line.
+    """
+    global _HASH_FALLBACK_WARNED
+    if not _HASH_FALLBACK_WARNED and is_hash_fallback():
+        suffix = f" [{context}]" if context else ""
+        logger.warning(
+            "Embeddings are using the dep-free hash backend (%s). Results carry "
+            "token-overlap signal, not real semantic meaning. Install once with "
+            "`cairn embed --install-deps`.%s",
+            current_model(),
+            suffix,
+        )
+        _HASH_FALLBACK_WARNED = True
+
+
 def model_is_cached(model_name: Optional[str] = None) -> bool:
     """Check whether the model weights are present in the local HuggingFace cache.
 

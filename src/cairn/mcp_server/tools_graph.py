@@ -9,6 +9,7 @@ metric-instrumenting decorator from metric_buffering.
 """
 from __future__ import annotations
 
+import logging
 import os
 
 from mcp.types import ToolAnnotations
@@ -22,6 +23,8 @@ from .structured import (
     SearchSymbolsResult,
     SemanticSearchResult,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _clamp(value, lo, hi):
@@ -577,6 +580,13 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
 
     if not emb.embeddings_available():
         return emb.install_hint()
+
+    # Surface the dep-free hash fallback once per process: under it the cosine
+    # signal is token-overlap only, not real semantic meaning. Provenance on
+    # each result (semantic (hash backend) / fused(bm25+semantic, hash)) carries
+    # the signal on every call; this warning catches a caller reading just the
+    # score/label.
+    emb.warn_hash_fallback_once(logger, context="semantic_search")
 
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()

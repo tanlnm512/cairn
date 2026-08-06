@@ -185,6 +185,11 @@ def explore(
             from cairn.graph import embeddings as emb
 
             if emb.embeddings_available() and emb.embed_count(conn) > 0:
+                # explore's quality story is "FTS5 seeds + optional semantic
+                # expansion." Under the dep-free hash fallback the semantic
+                # expansion carries only token-overlap signal -- flag it once so
+                # the caller knows the seed set may be weaker than it looks.
+                emb.warn_hash_fallback_once(logger, context="explore")
                 sem_rows = semantic_search(conn, query, limit=max_nodes)
                 seen = set(seed_ids)
                 for r in sem_rows:

@@ -149,6 +149,15 @@ def semantic_search(
     from cairn.graph import reranker as rrk
     from cairn.graph import ann_index as ann
 
+    # Under the dep-free hash fallback the embedding carries only token-overlap
+    # signal, so a "semantic" provenance is degraded. Annotate provenance strings
+    # so the MCP renderer (which shows [<provenance> <score>]) surfaces it. Only
+    # the semantic contribution is degraded -- fused results still carry a real
+    # BM25 signal -- so we tag both rather than rewrite the whole label.
+    _hash = emb.is_hash_fallback()
+    _sem_prov = "semantic (hash backend)" if _hash else "semantic"
+    _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
+
     rerank_on = rrk.rerank_enabled()
     # When reranking, retrieve a wider shortlist than the caller asked for --
     # the cross-encoder's job is to re-sort a candidate pool, not the whole
@@ -210,7 +219,7 @@ def semantic_search(
                     "repo": r["repo"],
                     "score": round(score, 4),
                     "chunk": r["chunk"],
-                    "provenance": "semantic",
+                    "provenance": _sem_prov,
                     "reranked": False,
                 }
             )
@@ -247,10 +256,10 @@ def semantic_search(
 
                 if in_bm25 and in_vec:
                     base = dict(vec_map[doc_id])
-                    base["provenance"] = "fused(bm25+semantic)"
+                    base["provenance"] = _fused_prov
                 elif in_vec:
                     base = dict(vec_map[doc_id])
-                    base["provenance"] = "semantic"
+                    base["provenance"] = _sem_prov
                 else:
                     b_item = bm25_map[doc_id]
                     base = {

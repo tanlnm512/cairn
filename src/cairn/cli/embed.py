@@ -59,11 +59,10 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
     # Warn when silently falling back to the hash backend. The fallback is
     # intentional for `semantic_search` (graceful degradation), but `cairn embed`
     # is an explicit action where the user expects real model embeddings.
-    # If CAIRN_EMBED_BACKEND is unset (default 'local') but sentence-
-    # transformers isn't installed, _effective_backend() silently returns
-    # 'hash' — surface that so the user knows the index won't carry real
-    # semantic meaning, and tell them how to fix it.
-    if emb._effective_backend() == "hash" and not os.environ.get("CAIRN_EMBED_BACKEND"):
+    # is_hash_fallback() is True only when the backend is the *default* local
+    # but sentence-transformers isn't installed (a silent fallback), not when
+    # the user explicitly set CAIRN_EMBED_BACKEND=hash.
+    if emb.is_hash_fallback():
         display.warning(
             "Using the hash embedder (dep-free) because sentence-transformers "
             "isn't installed. The index will work for token-overlap search but "

@@ -136,12 +136,11 @@ def config(list_all, mcp_config):
     # after install, whether they're getting real embeddings (bge-m3) or the
     # dep-free hash fallback. This is the earliest visibility point — it
     # surfaces the state before the user ever runs `cairn embed`.
-    from ..graph.embeddings import _effective_backend, _backend_name, current_model
+    from ..graph.embeddings import _effective_backend, is_hash_fallback, current_model
 
     eff = _effective_backend()
-    configured = _backend_name()
     model = current_model()
-    if eff == "hash" and configured == "local":
+    if is_hash_fallback():
         # Silent fallback: user expects bge-m3 but will get hash.
         click.echo(f"embed:      {model}  ⚠ fallback (sentence-transformers not installed)")
         click.echo("            for real embeddings: uv tool install 'cairn-intel[semantic]' --force")
