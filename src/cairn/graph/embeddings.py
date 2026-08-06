@@ -194,23 +194,34 @@ def _signature_lines_for_rows(rows: Sequence[sqlite3.Row]) -> dict:
 
     Reads only ``line_start`` (one line per symbol), not the full body —
     cheap enough to do for the whole corpus on every ``embed_all`` run.
-    Mirrors ``queries._read_source_spans``'s file-grouping/graceful-degrade
+    Mirrors ``explore._read_source_spans``'s file-grouping/graceful-degrade
     pattern: a missing/moved file or a symbol with no file_path/line_start
     just gets no signature (chunk_for_symbol falls back to kind+qname+doc),
     never raises. Returns ``{symbol_id: signature_line}``.
+
+    The stored ``file_path`` is repo-relative (portable); it is resolved to an
+    absolute path via ``resolve_file_path`` before opening.
     """
+    from ..paths import resolve_workspace
+    from .scanner import resolve_file_path
+
+    workspace = str(resolve_workspace())
+    # Group by (repo, file_path) so each file is opened once and resolved
+    # against its own repo root.
     by_file: dict = {}
     for r in rows:
         path = r["file_path"] if "file_path" in r.keys() else None
+        repo = r["repo"] if "repo" in r.keys() else None
         ls = r["line_start"] if "line_start" in r.keys() else None
         if not path or not ls or ls < 1:
             continue
-        by_file.setdefault(path, []).append((r["id"], ls))
+        by_file.setdefault((repo, path), []).append((r["id"], ls))
 
     out: dict = {}
-    for path, entries in by_file.items():
+    for (repo, path), entries in by_file.items():
+        abs_path = resolve_file_path(workspace, repo, path)
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
                 all_lines = fh.readlines()
         except OSError:
             continue  # file deleted/moved since index — skip silently
@@ -741,7 +752,7 @@ def embed_all(
         """SELECT s.id, s.name, s.qualified_name, s.kind, s.docstring,
                   s.line_start, s.parameters, s.return_type,
                   s.parent_scope, s.imports_summary, s.body,
-                  f.path AS file_path,
+                  f.path AS file_path, f.repo_id AS repo,
                   e.content_hash AS existing_hash
            FROM symbols s
            JOIN files f ON s.file_id = f.id

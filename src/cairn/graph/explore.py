@@ -13,7 +13,9 @@ import logging
 import os
 import sqlite3
 
+from ..paths import resolve_workspace
 from .lexical import search_symbols
+from .scanner import resolve_file_path
 from .traversal import get_callers, get_callees, impact_analysis
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,10 @@ def _read_source_spans(
     span). Returns ``{file_path: [{"symbol", "kind", "line_start", "line_end",
     "repo", "lines": [str, ...]}]}``.
 
+    The stored ``file_path`` is repo-relative (portable); it is resolved to an
+    absolute path via ``resolve_file_path`` before opening. The dict key stays
+    the stored relative path so callers (and the agent) see portable paths.
+
     Missing files / read errors degrade gracefully: the symbol's entry is
     omitted, never crashes the caller.
     """
@@ -46,16 +52,21 @@ def _read_source_spans(
         tuple(symbol_ids),
     ).fetchall()
 
-    # Group symbol metadata by file so each file is opened at most once.
-    by_file: dict[str, list] = {}
+    workspace = str(resolve_workspace())
+
+    # Group symbol metadata by (repo, file_path) so each file is opened at most
+    # once and can be resolved against its own repo root. The output key is the
+    # stored file_path (repo-relative) so callers see portable paths.
+    by_file: dict[tuple[str, str], list] = {}
     for r in rows:
-        by_file.setdefault(r["file_path"], []).append(dict(r))
+        by_file.setdefault((r["repo"], r["file_path"]), []).append(dict(r))
 
     out: dict[str, list] = {}
     used = 0
-    for file_path, syms in by_file.items():
+    for (repo, file_path), syms in by_file.items():
+        abs_path = resolve_file_path(workspace, repo, file_path)
         try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
                 all_lines = fh.readlines()
         except OSError:
             continue  # file deleted/moved since index — skip silently

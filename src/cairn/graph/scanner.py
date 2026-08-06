@@ -49,7 +49,10 @@ EXTENSION_MAP = {
     ".go": "go",
     ".m": "objc",
     ".mm": "objc",
-    ".h": "header",  # Disambiguated at scan time via detect_header_language
+    # `.h` is ambiguous across C/C++/Objective-C, so it routes to the sentinel
+    # "header" and is resolved to the sniffed language (objc/cpp/c) by
+    # resolve_file_language() at FileInfo construction time.
+    ".h": "header",
     ".hpp": "cpp",
     ".c": "c",
     ".cpp": "cpp",
@@ -70,6 +73,21 @@ def detect_header_language(path_str: str) -> str:
         return "c"
     except Exception:
         return "c"
+
+
+def resolve_file_language(suffix: str, abs_path: str) -> str:
+    """Map a file suffix to its indexing language.
+
+    Same as ``EXTENSION_MAP[suffix]`` for every extension except ``.h``: a
+    header sniffs as objc/cpp/c via :func:`detect_header_language` so it lands
+    on a real parser instead of the ``"header"`` sentinel (which has no parser
+    and would otherwise be recorded as a parse error). Callers that already
+    hold the looked-up language can pass it here unchanged for non-headers.
+    """
+    lang = EXTENSION_MAP.get(suffix)
+    if lang == "header":
+        return detect_header_language(abs_path)
+    return lang
 
 # Layer A: directories to never descend into. Applied even without a .gitignore.
 # Covers build output, VCS, deps, caches, and IDE state across stacks so the
@@ -188,6 +206,25 @@ def resolve_repo_path(workspace: str, repo_name: str) -> Path:
     if is_single_repo_workspace(workspace):
         return ws
     return ws / repo_name
+
+
+def resolve_file_path(workspace: str, repo_id: str, stored_path: str) -> str:
+    """Resolve a DB-stored file path to an absolute path for disk I/O.
+
+    The code graph stores file paths **repo-relative** so the ``.kg`` SQLite
+    file is portable across machines (the build-time contract — see
+    ``builder.py``). At read time this reconstructs the absolute path via
+    ``resolve_repo_path(workspace, repo_id) / stored_path``.
+
+    Legacy absolute paths (DBs built before this change) are returned
+    unchanged, so an un-rebuilt DB keeps working until the next ``cairn
+    build`` converts its rows to relative form. This is the single chokepoint
+    for relative->absolute resolution: every disk-touching consumer reads a
+    stored path through here rather than ``open(row["path"])`` directly.
+    """
+    if Path(stored_path).is_absolute():
+        return stored_path  # legacy absolute path (pre-portability build)
+    return str(resolve_repo_path(workspace, repo_id) / stored_path)
 
 
 def infer_repo_for_path(abs_path: str, workspace: str) -> Optional[str]:
@@ -452,7 +489,7 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
                     repo_path=str(repo_path),
                     path=str(path),
                     rel_path=rel,
-                    language=EXTENSION_MAP[path.suffix],
+                    language=resolve_file_language(path.suffix, str(path)),
                     hash=file_sha256(path),
                 )
             )

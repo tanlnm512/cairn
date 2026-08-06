@@ -111,8 +111,18 @@ def generate_compass(
 def _infer_repo(conn, module_path: str) -> Optional[str]:
     cur = conn.cursor()
     for r in cur.execute("SELECT id, path FROM repos"):
-        if r["path"] in module_path or module_path.startswith(r["id"]):
-            return r["id"]
+        # Match on repo id (stable basename) as a path segment of module_path.
+        # repos.path is now workspace-relative (e.g. "." or a repo name), so the
+        # old `r["path"] in module_path` substring check is unreliable; the id
+        # is the durable identity.
+        rid = r["id"]
+        if module_path.startswith(rid + "/") or ("/" + rid + "/") in module_path \
+                or module_path == rid:
+            return rid
+    # Fallback: single-repo workspace — there's only one repo.
+    repos = cur.execute("SELECT id FROM repos").fetchall()
+    if len(repos) == 1:
+        return repos[0]["id"]
     return None
 
 
@@ -154,12 +164,14 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
     """Outgoing edges from this module's symbols to symbols in other modules."""
     cur = conn.cursor()
     mods = set()
-    # Resolve the repo root to make target paths repo-relative.
-    repo_path = ""
+    # files.path is repo-relative (portable), so target paths need no repo-root
+    # stripping. We still fetch repos.path for a legacy-DB fallback: an un-
+    # rebuilt DB stored absolute paths, so strip the then-absolute repo root.
+    legacy_repo_root = ""
     if repo:
         row = cur.execute("SELECT path FROM repos WHERE id = ?", (repo,)).fetchone()
         if row:
-            repo_path = row["path"]
+            legacy_repo_root = row["path"]
     rows = cur.execute(
         """SELECT DISTINCT f2.path AS target_path, f2.repo_id AS target_repo
            FROM edges e
@@ -171,11 +183,11 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
         (f"%{_escape_like(module_path)}%", f"%{_escape_like(module_path)}%"),
     ).fetchall()
     for r in rows:
-        # Strip the repo root so the module path is repo-relative, then take the
-        # first meaningful source directory (skip src/main/java/...).
         rel = r["target_path"]
-        if repo_path and rel.startswith(repo_path):
-            rel = rel[len(repo_path) + 1:]
+        # Legacy absolute path: strip the (then-absolute) repo root. Repo-
+        # relative paths (current build contract) need no stripping.
+        if legacy_repo_root and rel.startswith(legacy_repo_root + "/"):
+            rel = rel[len(legacy_repo_root) + 1:]
         # Skip build-output-like path noise; keep the top package dir.
         parts = [p for p in rel.split("/") if p and p not in ("src", "main", "java", "kotlin")]
         mod = f"{r['target_repo']}/" + "/".join(parts[:2]) if parts else r["target_repo"]

@@ -136,7 +136,7 @@ def _record_skips(cur, skips: list) -> int:
                 """INSERT INTO skipped_files
                      (id, repo_id, path, reason, size_bytes, recorded_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (_new_id(), s.repo, s.path, s.reason, s.size_bytes, _now()),
+                (_new_id(), s.repo, s.rel_path, s.reason, s.size_bytes, _now()),
             )
             recorded += 1
         except Exception:
@@ -233,9 +233,10 @@ def _insert_results(
     total_to_insert = len(parsed_results)
     for idx, (path, rel_path, language, repo, fi_hash, pf, err, st) in enumerate(parsed_results, start=1):
         if pf is None:
-            # Parse error: log to database and console
+            # Parse error: log to database and console. Store the repo-relative
+            # path so parse_errors stays portable (same contract as files.path).
             log(f"  skip/error {rel_path}: {err}")
-            insert_parse_error(cur, repo, path, err or "Unknown parse error", st)
+            insert_parse_error(cur, repo, rel_path, err or "Unknown parse error", st)
             emit("insert_progress", done=idx, total=total_to_insert, symbols=symbol_count, edges=edge_count)
             continue
 
@@ -271,6 +272,7 @@ def _insert_results(
             sc, ec, ic = insert_parsed_file(
                 cur,
                 repo,
+                rel_path,
                 path,
                 language,
                 fi_hash,
@@ -283,7 +285,7 @@ def _insert_results(
             import_count += ic
         except Exception as e:
             log(f"  error inserting {rel_path}: {e}")
-            insert_parse_error(cur, repo, path, f"Insertion error: {e}")
+            insert_parse_error(cur, repo, rel_path, f"Insertion error: {e}")
             emit("insert_progress", done=idx, total=total_to_insert, symbols=symbol_count, edges=edge_count)
             continue
 
@@ -395,9 +397,21 @@ def _build_graph_impl(
         files_by_repo.setdefault(f.repo, []).append(f)
 
     # Insert repo records (or update indexed_at).
+    # repos.path is stored WORKSPACE-relative (e.g. "." for single-repo, or the
+    # repo dir name for multi-repo) so the .kg file is portable across machines.
+    # The absolute root is reconstructed at read time via resolve_repo_path()
+    # (see scanner.resolve_file_path).
+    ws_root = Path(workspace).resolve()
     for repo_name, sample in repos_seen.items():
         from ..utils.git import get_remote_url
 
+        try:
+            rel_repo_path = str(Path(sample.repo_path).resolve().relative_to(ws_root))
+        except ValueError:
+            # repo_path not under workspace (shouldn't happen for discovered
+            # repos, but be defensive): store "." so resolution still yields the
+            # workspace root as a fallback.
+            rel_repo_path = "."
         cur.execute(
             """INSERT INTO repos (id, name, path, language, git_remote, indexed_at)
                VALUES (?, ?, ?, ?, ?, ?)
@@ -408,7 +422,7 @@ def _build_graph_impl(
             (
                 repo_name,
                 repo_name,
-                sample.repo_path,
+                rel_repo_path,
                 scanner_mod.infer_repo_language(files_by_repo.get(repo_name, [])),
                 get_remote_url(sample.repo_path),
                 _now(),
@@ -548,7 +562,8 @@ def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, 
 def insert_parsed_file(
     cur,
     repo: str,
-    path: str,
+    rel_path: str,
+    abs_path: str,
     language: str,
     file_hash: str,
     pf: ParsedFile,
@@ -557,12 +572,17 @@ def insert_parsed_file(
 ) -> tuple[int, int, int]:
     """Insert a single parsed file's symbols, imports, and raw edges.
 
+    ``rel_path`` is the repo-relative path stored in ``files.path`` (portable
+    across machines); ``abs_path`` is the absolute path used only to stat the
+    file for size/mtime. See scanner.resolve_file_path for the read-side
+    reconstruction of rel_path -> absolute.
+
     Returns (symbol_count, edge_count, import_count).
     """
     file_id = _new_id()
     # Populate size and mtime for catch-up reconciliation.
     try:
-        st = Path(path).stat()
+        st = Path(abs_path).stat()
         file_size = st.st_size
         file_mtime = st.st_mtime
     except OSError:
@@ -570,7 +590,7 @@ def insert_parsed_file(
     cur.execute(
         """INSERT INTO files (id, repo_id, path, language, hash, line_count, indexed_at, size, mtime)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (file_id, repo, path, language, file_hash, pf.line_count, _now(), file_size, file_mtime),
+        (file_id, repo, rel_path, language, file_hash, pf.line_count, _now(), file_size, file_mtime),
     )
 
     # Accumulate rows and flush with executemany (one round-trip per table

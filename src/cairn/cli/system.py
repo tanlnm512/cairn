@@ -172,22 +172,26 @@ def sync(workspace, db):
             existing = set()
             for row in file_rows:
                 existing.add(row["path"])
-                p = Path(row["path"])
-                if not p.exists():
-                    changed.append(str(p))
-                    continue
+                # files.path is repo-relative (portable); resolve to absolute
+                # for stat via the single chokepoint. Legacy absolute paths
+                # pass through unchanged.
+                p = Path(scanner_mod.resolve_file_path(workspace, repo_name, row["path"]))
                 try:
                     st = p.stat()
-                    if st.st_size != (row["size"] or 0):
-                        changed.append(str(p))
-                    elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
-                        changed.append(str(p))
                 except OSError:
+                    changed.append(str(p))
                     continue
+                if st.st_size != (row["size"] or 0):
+                    changed.append(str(p))
+                elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
+                    changed.append(str(p))
 
-            # Detect new source files.
+            # Detect new source files. Storage is repo-relative; the scanner
+            # yields absolute, so compare on the relative form (with a legacy
+            # absolute-form fallback for un-rebuilt DBs).
             for src in scanner_mod.iter_source_files(repo_path):
-                if str(src) not in existing:
+                rel = str(src.relative_to(repo_path)) if str(src).startswith(str(repo_path)) else str(src)
+                if rel not in existing and str(src) not in existing:
                     changed.append(str(src))
 
         if not changed:

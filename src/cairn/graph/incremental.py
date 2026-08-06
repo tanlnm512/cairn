@@ -59,35 +59,27 @@ def reindex_paths(
             continue
 
         cur = conn.cursor()
-        # Find existing file row by PATH (not repo_id). build_graph stores
-        # repo_id='' for the single-repo workspace case (workspace='.' has no
-        # relative-path component to derive a repo name from), while
-        # infer_repo_for_path here returns the directory name ('cairn').
-        # Keying the lookup on repo_id would miss the row, skip the delete of
-        # old symbols, and then the re-insert would FK-violate on the stale
-        # symbols still present. The file's path is its stable identity; match
-        # on that. Try the inferred repo first (fast path when it agrees),
-        # then fall back to a path-only lookup.
+        # Find the existing file row by PATH (not repo_id alone). The file's
+        # stored path is its stable identity across a reindex.
         #
-        # Path normalization: build stores RELATIVE paths (e.g. 'service.py'
-        # relative to the repo root), while reindex_paths receives ABSOLUTE
-        # paths from the change detector. Match on both forms: the exact
-        # abs_path, the basename, and abs_path relative to the repo root.
+        # Path form: build_graph and _reindex_file store files.path as
+        # REPO-RELATIVE (the portable-path contract), while reindex_paths
+        # receives ABSOLUTE paths from the change detector. Normalize the
+        # incoming abs_path to repo-relative first, then match that form
+        # (the common case post-rebuild). Fall back to matching the legacy
+        # absolute form so an un-rebuilt DB (pre-portability) still resolves
+        # until the next `cairn build` converts its rows.
         from pathlib import Path as _P
         rel_to_repo = str(_P(abs_path).relative_to(repo_path)) if abs_path.startswith(repo_path) else _P(abs_path).name
 
+        # Primary: repo-relative (current build contract).
         row = cur.execute(
-            "SELECT id, repo_id, path FROM files WHERE repo_id = ? AND path = ?",
-            (repo, abs_path),
+            "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
         ).fetchone()
         if row is None:
+            # Legacy: pre-portability DBs stored absolute paths.
             row = cur.execute(
                 "SELECT id, repo_id, path FROM files WHERE path = ?", (abs_path,)
-            ).fetchone()
-        if row is None:
-            # Stored as repo-relative; abs_path didn't match.
-            row = cur.execute(
-                "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
             ).fetchone()
         # Use the STORED repo_id for downstream inserts so FK constraints on
         # files.repo_id -> repos.id hold (the inferred 'repo' may not exist in
@@ -146,7 +138,10 @@ def reindex_paths(
                 deleted += 1
             # Also remove from pending_sync if tracking.
             try:
-                conn.execute("DELETE FROM pending_sync WHERE path = ?", (abs_path,))
+                conn.execute(
+                    "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                    (abs_path, stored_path),
+                )
                 conn.commit()
             except sqlite3.OperationalError:
                 logger.debug("pending_sync table missing", exc_info=True)
@@ -154,12 +149,12 @@ def reindex_paths(
             continue
 
         # Re-parse and insert.
-        from .scanner import file_sha256, EXTENSION_MAP
+        from .scanner import file_sha256, EXTENSION_MAP, resolve_file_language
 
         suffix = Path(abs_path).suffix
         if suffix not in EXTENSION_MAP:
             continue
-        language = EXTENSION_MAP[suffix]
+        language = resolve_file_language(suffix, abs_path)
 
         file_hash = file_sha256(Path(abs_path))
         from .builder import get_parser, insert_parsed_file, insert_parse_error
@@ -171,22 +166,26 @@ def reindex_paths(
         try:
             pf = parser.parse(abs_path)
             name_to_symbol_ids = {}
+            # Store files.path as repo-relative (portable); abs_path is only
+            # used to stat the file for size/mtime inside insert_parsed_file.
             insert_parsed_file(
-                cur, stored_repo, abs_path, language, file_hash, pf,
+                cur, stored_repo, rel_to_repo, abs_path, language, file_hash, pf,
                 name_to_symbol_ids, repo_edges_by_file,
             )
             conn.commit()
             reindexed += 1
-            # Clear pending_sync for successfully reindexed files.
+            # Clear pending_sync for successfully reindexed files. Match both
+            # the rel form (current build contract) and abs form (legacy) so a
+            # pre-rebuild DB clears its rows too.
             try:
-                conn.execute("DELETE FROM pending_sync WHERE path = ?", (abs_path,))
+                conn.execute("DELETE FROM pending_sync WHERE path IN (?, ?)", (rel_to_repo, abs_path))
                 conn.commit()
             except sqlite3.OperationalError:
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
         except Exception as e:
             import traceback
-            insert_parse_error(cur, stored_repo, abs_path, str(e), traceback.format_exc())
+            insert_parse_error(cur, stored_repo, rel_to_repo, str(e), traceback.format_exc())
             conn.commit()
             errors.append(f"{abs_path}: {e}")
 
