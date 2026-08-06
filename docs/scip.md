@@ -113,8 +113,25 @@ uv tool install 'cairn-intel[scip]' --force
 pip install cairn-intel[scip]
 ```
 
-Tree-sitter-only builds never import the stub; a missing or mismatched
-`protobuf` runtime degrades with an install hint rather than crashing the build.
+**Version coupling.** The vendored stub embeds a
+`ValidateProtobufRuntimeVersion(...)` check pinned to the `protobuf` version it
+was generated against (see the header comment in `_scip_pb2.py`). The `[scip]`
+extra's `protobuf` floor is kept in sync with that check — if you regenerate
+the stub, re-pin the floor in `pyproject.toml` together (see below). A missing
+runtime, or one too old for the stub, degrades to "SCIP extra not installed"
+with the install hint rather than crashing the build — tree-sitter-only builds
+never import the stub.
+
+## How paths are resolved (multi-repo)
+
+SCIP indexers are typically invoked from inside a repo and emit
+`Document.relative_path` relative to their own `Metadata.project_root` (the
+repo dir), not the workspace root. The importer reads
+`index.metadata.project_root` and resolves each document's path through the
+scanner so SCIP rows land under the correct `(repo_id, repo-relative path)` —
+the same file identity the scanner and incremental path use. Indexes that omit
+`Metadata.project_root` fall back to treating paths as workspace-relative,
+which is correct only when paths happen to be workspace-relative.
 
 ## Regenerating the vendored stub
 

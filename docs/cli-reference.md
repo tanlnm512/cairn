@@ -218,7 +218,7 @@ These are registered directly on `cairn` (bare `@main.command()`).
 | Command | Description |
 |---------|-------------|
 | `cairn init` | Register this workspace with cairn's central store and build the graph. |
-| `cairn config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet). |
+| `cairn config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet). Also echoes the resolved [SCIP](./scip.md) config and whether each index file exists. |
 | `cairn build` | Build (or rebuild) the code graph; also builds dataflow + transitive closure. |
 | `cairn stats` | Show graph statistics (repos, symbols, edges, by-repo/by-kind/skipped tables). |
 | `cairn checkpoint` | Checkpoint the graph DB's WAL back into the main file (TRUNCATE). |
@@ -229,7 +229,10 @@ These are registered directly on `cairn` (bare `@main.command()`).
 `cairn/.kg`), `--no-build`, `--import-docs` (ingest `docs/**/*.md`).
 
 `build` options: `--repo`, `--workspace`, `--db`, `-v/--verbose`, `--staging`
-(build to temp DB and atomic-swap for zero downtime).
+(build to temp DB and atomic-swap for zero downtime). When `cairn.json`
+declares [SCIP](./scip.md) indexes, languages whose index file exists are
+imported from SCIP (exact resolution) and skipped by tree-sitter; the summary
+panel reports per-language SCIP symbol counts.
 
 `update` options: `--repo`, `--file PATH` (single-file, for PostToolUse hooks),
 `--workspace`, `--db`. Runs memory decay after reindex.
@@ -294,7 +297,10 @@ rerank stage.
 | `cairn validate-paths` | Check all concepts for stale file/symbol references against the graph (`--mark`). |
 | `cairn import-scip SCIP_FILE` | Import compiler-grade symbol bindings from a SCIP index file. |
 
-`import-scip` options: `SCIP_FILE` (argument), `--db`, `--repo default`.
+`import-scip` options: `SCIP_FILE` (argument), `--db`, `--repo default`,
+`--format proto|json` (`proto` is the default and what real indexers emit;
+`json` is the legacy shape). See [scip.md](./scip.md) for generating indexes
+and wiring them into `cairn.json` for build-time hybrid indexing.
 
 ### System, metrics, and eval
 
