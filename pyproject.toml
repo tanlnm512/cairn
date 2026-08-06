@@ -83,7 +83,7 @@ ann = [
 # uses to avoid requiring protoc/grpcio-tools at install time. Regenerating the
 # stub is a dev-only step (`scripts/regen_scip_pb2.sh`), never a runtime need.
 scip = [
-    "protobuf>=5.26",
+    "protobuf>=7.35.1",
 ]
 
 [project.scripts]

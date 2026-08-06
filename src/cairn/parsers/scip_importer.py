@@ -26,6 +26,7 @@ not clobber).
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
@@ -46,7 +47,11 @@ try:
     from google.protobuf.message import DecodeError as _ProtoDecodeError
     from . import _scip_pb2 as _scip  # noqa: F401 -- re-exported below
     _PROTOBUF_AVAILABLE = True
-except ImportError:
+except Exception:
+    # A missing runtime OR a protobuf runtime older than the stub's gencode
+    # version (ValidateProtobufRuntimeVersion raises VersionError, a subclass
+    # of Exception -- not ImportError) both degrade the same way: report "SCIP
+    # extra not installed" with the install hint rather than crashing the build.
     _scip = None  # type: ignore[assignment]
     _ProtoDecodeError = Exception  # type: ignore[assignment,misc]
     _PROTOBUF_AVAILABLE = False
@@ -152,25 +157,37 @@ def _short_name(symbol_descriptor: str) -> str:
     return last or "scip_symbol"
 
 
-def _resolve_doc_path(rel_path: str, ws_root: Optional[Path], fallback_repo: str):
+def _resolve_doc_path(
+    rel_path: str,
+    ws_root: Optional[Path],
+    fallback_repo: str,
+    project_root: Optional[Path] = None,
+):
     """Map a SCIP Document.relative_path to (repo_id, repo_relative_path).
 
-    SCIP documents carry paths relative to the project root (workspace root),
-    e.g. ``"demo/Foo.kt"``. Cairn stores ``files.path`` REPO-relative
-    (``"Foo.kt"``) keyed by the inferred repo id, so the incremental path
-    (``reindex_paths``) and the scanner agree on a file's identity. When
-    ``ws_root`` is given, resolve each path through the scanner; otherwise fall
-    back to the legacy single-repo shape (repo_id=fallback, path=rel_path).
+    Real indexers emit ``relative_path`` relative to their OWN
+    ``Metadata.project_root`` (the repo dir), NOT the workspace root. When
+    ``project_root`` is given (resolved against ``ws_root`` once per index), it
+    is used as the base; otherwise we fall back to ``ws_root``. Cairn stores
+    ``files.path`` REPO-relative (``"Foo.kt"``) keyed by the inferred repo id,
+    so the incremental path (``reindex_paths``) and the scanner agree on a
+    file's identity. When ``ws_root`` is given, resolve each path through the
+    scanner; otherwise fall back to the legacy single-repo shape
+    (repo_id=fallback, path=rel_path).
     """
     if ws_root is None:
         return fallback_repo, rel_path
     from cairn.graph import scanner
-    abs_path = str(ws_root / rel_path)
+    base = project_root if project_root is not None else ws_root
+    abs_path = str(base / rel_path)
     repo = scanner.infer_repo_for_path(abs_path, str(ws_root)) or fallback_repo
     try:
         repo_root = scanner.resolve_repo_path(str(ws_root), repo)
         rel_to_repo = str(Path(abs_path).relative_to(repo_root))
-    except Exception:
+    except ValueError:
+        # Path.relative_to raises ValueError when abs_path isn't under
+        # repo_root; fall back to the raw relative_path. Other errors (OSError,
+        # permission denied, ...) must propagate, not be swallowed.
         rel_to_repo = rel_path
     return repo, rel_to_repo
 
@@ -190,6 +207,18 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     cur = conn.cursor()
     files_added = symbols_added = edges_added = 0
 
+    # Real indexers emit Document.relative_path relative to their OWN
+    # Metadata.project_root (the repo dir), not the workspace root. Read it once
+    # per index and resolve against ws_root so per-document path resolution
+    # matches how the indexer wrote the paths. Some indexes omit metadata;
+    # access it defensively.
+    project_root = None
+    if ws_root is not None:
+        meta = getattr(index, "metadata", None)
+        raw_root = getattr(meta, "project_root", None) if meta is not None else None
+        if raw_root:
+            project_root = (ws_root / raw_root).resolve() if not Path(raw_root).is_absolute() else Path(raw_root)
+
     # Pre-index SymbolInformation.documentation by descriptor for docstring
     # attachment on definition symbols.
     docs: Dict[str, str] = {}
@@ -204,16 +233,28 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
             docs[info.symbol] = "\n\n".join(d) if isinstance(d, (list, tuple)) else str(d)
 
     # Pass 1: collect definitions {descriptor -> (sym_id, file_id, line, col)}.
-    # Resolve each document's path to (repo_id, repo-relative) once.
+    # Resolve each document's path to (repo_id, repo-relative) once. A real
+    # Definition (role 1) always wins over a ForwardDefinition (role 4) for the
+    # same descriptor; a forward decl only fills in the map when no real def is
+    # seen, so references still resolve without spurious symbol rows.
     doc_paths: Dict[int, Tuple[str, str]] = {}
     defs: Dict[str, Tuple[str, str, int, int]] = {}
+    real_defs: set = set()
     for i, doc in enumerate(index.documents):
         rel = doc.relative_path
-        doc_repo, rel_to_repo = _resolve_doc_path(rel, ws_root, repo_id)
+        doc_repo, rel_to_repo = _resolve_doc_path(rel, ws_root, repo_id, project_root=project_root)
         doc_paths[i] = (doc_repo, rel_to_repo)
         file_id = f"{doc_repo}:{rel_to_repo}"
         for occ in doc.occurrences:
-            if not (occ.symbol_roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION)):
+            roles = occ.symbol_roles
+            if not (roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION)):
+                continue
+            is_real = bool(roles & _SCIP_ROLE_DEFINITION)
+            if is_real:
+                real_defs.add(occ.symbol)
+            # Don't overwrite a real def with a forward decl (last-writer-wins
+            # would otherwise let `class Foo;` clobber the real definition).
+            if not is_real and occ.symbol in real_defs:
                 continue
             sl, sc, _, _, _ = _extract_range(occ)
             sym_id = f"{file_id}:{_short_name(occ.symbol)}:{sl}:{sc}"
@@ -248,22 +289,26 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
                 continue
             sl, sc, el, ec, _ = _extract_range(occ)
             is_def = bool(occ.symbol_roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION))
+            is_real_def = bool(occ.symbol_roles & _SCIP_ROLE_DEFINITION)
             name = _short_name(sym_descriptor)
 
             if is_def:
                 sym_id = defs.get(sym_descriptor, (f"{file_id}:{name}:{sl}:{sc}", file_id, sl, sc))[0]
-                kind = _kind_from_syntax(occ.syntax_kind)
-                docstring = docs.get(sym_descriptor)
-                cur.execute(
-                    """INSERT OR IGNORE INTO symbols
-                       (id, file_id, name, qualified_name, kind,
-                        line_start, line_end, column_start, column_end,
-                        docstring, source)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scip')""",
-                    (sym_id, file_id, name, sym_descriptor, kind, sl, el, sc, ec, docstring),
-                )
-                if cur.rowcount > 0:
-                    symbols_added += 1
+                # Only real definitions get a symbols row; a pure forward decl
+                # (role 4 alone) is resolvable via defs but emits no symbol.
+                if is_real_def:
+                    kind = _kind_from_syntax(occ.syntax_kind)
+                    docstring = docs.get(sym_descriptor)
+                    cur.execute(
+                        """INSERT OR IGNORE INTO symbols
+                           (id, file_id, name, qualified_name, kind,
+                            line_start, line_end, column_start, column_end,
+                            docstring, source)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scip')""",
+                        (sym_id, file_id, name, sym_descriptor, kind, sl, el, sc, ec, docstring),
+                    )
+                    if cur.rowcount > 0:
+                        symbols_added += 1
                 file_defs_by_line.append((sl, sym_id))
                 continue
 
@@ -296,7 +341,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
             else:
                 edge_kind = "call"
 
-            edge_id = f"{file_id}:{name}:{sl}:{sc}:{abs(hash(sym_descriptor)) % 100000}"
+            edge_id = f"{file_id}:{name}:{sl}:{sc}:{hashlib.sha1(sym_descriptor.encode('utf-8')).hexdigest()[:8]}"
             cur.execute(
                 """INSERT OR REPLACE INTO edges
                    (id, source_id, target_id, target_name, kind, line, column, resolution)
@@ -349,8 +394,11 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
     files_added = symbols_added = edges_added = 0
 
     documents = scip_dict.get("documents", [])
-    # Pass 1: collect definitions.
+    # Pass 1: collect definitions. A real Definition (role 1) wins over a
+    # ForwardDefinition (role 4); a forward decl only fills the map as a
+    # fallback so references still resolve without emitting a symbol row.
     defs: Dict[str, Tuple[str, str, int, int]] = {}
+    real_defs: set = set()
     for doc in documents:
         rel = doc.get("relative_path") or doc.get("path")
         if not rel:
@@ -360,10 +408,15 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
             roles = occ.get("symbol_roles", 0) or 0
             if not (roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION)):
                 continue
+            is_real = bool(roles & _SCIP_ROLE_DEFINITION)
+            sym_desc = occ.get("symbol", "")
+            if is_real:
+                real_defs.add(sym_desc)
+            elif sym_desc in real_defs:
+                continue
             rng = occ.get("range") or [0, 0, 0, 0]
             sl = (rng[0] if rng else 0) + 1
             sc = rng[1] if len(rng) > 1 else 0
-            sym_desc = occ.get("symbol", "")
             defs[sym_desc] = (f"{file_id}:{_short_name(sym_desc)}:{sl}:{sc}", file_id, sl, sc)
 
     # Pass 2: emit.
@@ -383,6 +436,7 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
             "VALUES (?, ?, ?, 'scip_imported', 0, ?)",
             (file_id, rel, repo_id, lang),
         )
+        files_added += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
         file_defs_by_line: list[Tuple[int, str]] = []
         for occ in doc.get("occurrences", []):
@@ -396,20 +450,24 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
             ec = rng[3] if len(rng) >= 4 else (rng[2] if len(rng) > 2 else sc)
             roles = occ.get("symbol_roles", 0) or 0
             is_def = bool(roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION))
+            is_real_def = bool(roles & _SCIP_ROLE_DEFINITION)
             name = _short_name(sym_desc)
 
             if is_def:
                 sym_id = defs.get(sym_desc, (f"{file_id}:{name}:{sl}:{sc}", file_id, sl, sc))[0]
-                kind = _kind_from_syntax(occ.get("syntax_kind", 0) or 0)
-                cur.execute(
-                    """INSERT OR IGNORE INTO symbols
-                       (id, file_id, name, qualified_name, kind,
-                        line_start, line_end, column_start, column_end, source)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scip')""",
-                    (sym_id, file_id, name, sym_desc, kind, sl, el, sc, ec),
-                )
-                if cur.rowcount > 0:
-                    symbols_added += 1
+                # Only real definitions get a symbols row; a pure forward decl
+                # (role 4 alone) is resolvable via defs but emits no symbol.
+                if is_real_def:
+                    kind = _kind_from_syntax(occ.get("syntax_kind", 0) or 0)
+                    cur.execute(
+                        """INSERT OR IGNORE INTO symbols
+                           (id, file_id, name, qualified_name, kind,
+                            line_start, line_end, column_start, column_end, source)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scip')""",
+                        (sym_id, file_id, name, sym_desc, kind, sl, el, sc, ec),
+                    )
+                    if cur.rowcount > 0:
+                        symbols_added += 1
                 file_defs_by_line.append((sl, sym_id))
                 continue
 
@@ -427,7 +485,7 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 edge_kind = "reference"
             else:
                 edge_kind = "call"
-            edge_id = f"{file_id}:{name}:{sl}:{sc}:{abs(hash(sym_desc)) % 100000}"
+            edge_id = f"{file_id}:{name}:{sl}:{sc}:{hashlib.sha1(sym_desc.encode('utf-8')).hexdigest()[:8]}"
             cur.execute(
                 """INSERT OR REPLACE INTO edges
                    (id, source_id, target_id, target_name, kind, line, column, resolution)
@@ -438,7 +496,6 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 edges_added += 1
 
     conn.commit()
-    files_added = len(documents)
     return {"files_added": files_added, "symbols_added": symbols_added, "edges_added": edges_added}
 
 
