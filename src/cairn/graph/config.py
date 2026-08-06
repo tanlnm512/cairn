@@ -39,22 +39,31 @@ class CairnConfig:
     ``repo_namespaces`` maps import-path prefixes to owning repo ids (e.g.
     ``{"com.example.sdk": "sdk"}``) and feeds ``cross_repo_deps``. When empty,
     cross-repo analysis falls back to the built-in default map.
+
+    ``scip`` maps language -> index file path (relative to workspace root) for
+    pre-built SCIP indexes. At build time cairn resolves each path and keeps
+    only languages whose file actually exists; the rest fall back to tree-sitter.
     """
 
     exclude: List[str] = field(default_factory=list)
     include: List[str] = field(default_factory=list)
     repo_namespaces: Dict[str, str] = field(default_factory=dict)
+    scip: Dict[str, str] = field(default_factory=dict)
     source: Optional[Path] = None  # the file these came from, for diagnostics
 
     @property
     def is_default(self) -> bool:
-        return not self.exclude and not self.include and not self.repo_namespaces
+        return (
+            not self.exclude and not self.include
+            and not self.repo_namespaces and not self.scip
+        )
 
 
 # Config keys we recognize. Unknown keys are ignored (forward-compatible).
 _EXCLUDE_KEY = "exclude"
 _INCLUDE_KEY = "include"
 _REPO_NAMESPACES_KEY = "repo_namespaces"
+_SCIP_KEY = "scip"
 
 
 def load_config(root: Union[str, Path]) -> CairnConfig:
@@ -89,10 +98,12 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
     exclude = _as_string_list(raw.get(_EXCLUDE_KEY), path, _EXCLUDE_KEY)
     include = _as_string_list(raw.get(_INCLUDE_KEY), path, _INCLUDE_KEY)
     repo_namespaces = _as_string_dict(raw.get(_REPO_NAMESPACES_KEY), path, _REPO_NAMESPACES_KEY)
+    scip = _as_string_dict(raw.get(_SCIP_KEY), path, _SCIP_KEY)
     return CairnConfig(
         exclude=exclude,
         include=include,
         repo_namespaces=repo_namespaces,
+        scip=scip,
         source=path,
     )
 

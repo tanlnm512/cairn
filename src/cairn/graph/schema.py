@@ -272,6 +272,12 @@ SYMBOL_IMPORTS_SUMMARY_MIGRATION = "ALTER TABLE symbols ADD COLUMN imports_summa
 SYMBOL_BODY_MIGRATION = "ALTER TABLE symbols ADD COLUMN body TEXT"
 TRANSITIVE_EDGES_TARGET_ID_MIGRATION = "ALTER TABLE transitive_edges ADD COLUMN target_id TEXT"
 
+# Provenance column on symbols: 'tree_sitter' or 'scip'. NULL on legacy rows
+# (pre-SCIP builds) is treated as 'tree_sitter'. Additive ALTER is invisible to
+# the FTS5 triggers (schema.py CREATE TRIGGER only references rowid, name,
+# qualified_name, docstring), so it composes with existing migrations cleanly.
+SYMBOL_SOURCE_MIGRATION = "ALTER TABLE symbols ADD COLUMN source TEXT"
+
 # All additive migrations applied at connect time. Each is attempted in a
 # try/except so re-running on an already-migrated DB is a no-op.
 MIGRATIONS = [
@@ -286,6 +292,7 @@ MIGRATIONS = [
     SYMBOL_IMPORTS_SUMMARY_MIGRATION,
     SYMBOL_BODY_MIGRATION,
     TRANSITIVE_EDGES_TARGET_ID_MIGRATION,
+    SYMBOL_SOURCE_MIGRATION,
 ]
 
 # Default DB location: resolved from the central store for the current workspace.

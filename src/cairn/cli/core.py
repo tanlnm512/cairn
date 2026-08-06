@@ -165,6 +165,18 @@ def config(list_all, mcp_config):
     else:
         click.echo("  (empty — cross_repo_deps will find no cross-repo links)")
 
+    # Show resolved SCIP config + whether each index file exists, so a user
+    # can tell at a glance which languages will use SCIP vs tree-sitter.
+    if cfg.scip:
+        click.echo(f"scip ({str(cfg.source) if cfg.source else 'built-in'}):")
+        ws_root = Path(store.workspace)
+        for lang, rel in sorted(cfg.scip.items()):
+            exists = (ws_root / rel).exists()
+            mark = "exists" if exists else "MISSING (falls back to tree-sitter)"
+            click.echo(f"  {lang}: {rel}  ({mark})")
+    else:
+        click.echo("scip: (none — tree-sitter for all languages)")
+
     click.echo("")
     click.echo("MCP config for an agent (path-free):")
     click.echo('  cairn config --mcp-config')
@@ -307,6 +319,14 @@ def build(repo, workspace, db, verbose, staging):
         f"{ambig:,} ambiguous",
         f"{unres:,} unresolved",
     ]
+    scip = summary.get("scip") or {}
+    if scip:
+        langs = ", ".join(
+            f"{lang} ({s.get('symbols_added', 0):,} sym)" for lang, s in sorted(scip.items())
+        )
+        subtitle_parts.append(f"SCIP: {langs}")
+    elif "scip" in summary:
+        subtitle_parts.append("SCIP: configured but no indexes imported")
     if staging:
         subtitle_parts.append(f"atomic swap → {db}")
     if df_error:
