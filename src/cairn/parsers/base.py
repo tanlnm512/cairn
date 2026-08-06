@@ -24,19 +24,13 @@ class Symbol:
     docstring: Optional[str] = None
     modifiers: List[str] = field(default_factory=list)
     # Structured extras for symbol kinds that need more than
-    # name/kind/modifiers -- currently routes (kind='route'), which carry
+    # name/kind/modifiers -- e.g. routes (kind='route') carry
     # {"http_method", "path", "framework", "handler", "provenance"}. None for
-    # every other symbol kind; stored as JSON in the additive
-    # symbols.metadata column (see src/graph/schema.py).
+    # other kinds; stored as JSON in the symbols.metadata column.
     metadata: Optional[Dict[str, Any]] = None
-    # Embedding context (additive TEXT columns on `symbols`). All default to
-    # None: parsers that don't populate them simply leave the corresponding
-    # chunk section empty. `parameters`/`return_type` feed the
-    # "Parameters:"/"Return Type:" sections of variant B/C; `parent_scope`,
-    # `imports_summary`, and `body` feed the variant-C "Enclosing Scope:" /
-    # "Imports:" / "Body:" sections. The builder derives parent_scope and
-    # imports_summary at build time when the parser leaves them None, so
-    # parsers only need to set the ones they actually know.
+    # Embedding context (TEXT columns on `symbols`). All default to None;
+    # parsers only set the ones they know. `parent_scope` and
+    # `imports_summary` are derived by the builder when left None.
     parameters: Optional[str] = None
     return_type: Optional[str] = None
     parent_scope: Optional[str] = None
@@ -96,12 +90,8 @@ class BaseParser(abc.ABC):
 class TreeSitterParserBase:
     """Mixin with shared helpers for tree-sitter-based parsers.
 
-    Provides:
-    - _node_text: extract text from a tree-sitter node
-    - _qualified_name: build qualified names using the scope stack
-    - _child_of_type / _find_name: common AST-shape helpers. ``_extract_callee``
-      stays per-parser because its shape is genuinely language-specific.
-    - Scope stack management (_scope, _callable_scope)
+    Provides _node_text, _qualified_name, _child_of_type/_find_name (AST-shape
+    helpers), and scope stack management (_scope, _callable_scope).
     """
 
     def __init__(self):

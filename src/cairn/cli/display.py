@@ -1,19 +1,9 @@
 """Shared terminal display helpers for the cairn CLI.
 
-Centralizes all rich-based output so every command renders consistently:
-a single Console (auto-detects TTY), a themed color palette, and a
-``progress_bar()`` context manager for build/embed loops.
-
-Design notes:
-  - **TTY-aware.** When stdout isn't a terminal (piped to a file, CI logs),
-    rich is configured with ``force_terminal=False`` so it strips colors and
-    progress bars degrade to plain ``N/M`` text. This keeps ``cairn build |
-    tee build.log`` and CI captures readable.
-  - **No globals beyond the console.** Each command that needs a progress
-    bar opens one via ``with progress_bar() as bar:`` -- nested progress
-    would clash if shared.
-  - **Theme.** One place (THEME) defines the color for each semantic role
-    (success/warning/error/info/dim), so restyling is one edit.
+Provides a single rich Console (auto-detects TTY), a themed color palette,
+and a ``progress_bar()`` context manager for build/embed loops. TTY-aware:
+when stdout isn't a terminal, colors are stripped and progress bars degrade
+to plain ``N/M`` text.
 """
 from __future__ import annotations
 
@@ -36,9 +26,8 @@ from rich.progress import (
 from rich.table import Table
 from rich.theme import Theme
 
-# One console for the whole CLI process. force_terminal defaults to auto-detect;
-# we pass through whatever stdout is, so piping to a file loses colors
-# automatically (rich checks isatty under the hood when force_terminal is None).
+# One console for the whole CLI process. Pass through whatever stdout is so
+# piping to a file loses colors automatically.
 THEME = Theme({
     "success": "bold green",
     "warning": "bold yellow",
@@ -51,11 +40,9 @@ THEME = Theme({
 
 console = Console(theme=THEME)
 
-# Semantic roles as prompt_toolkit ansi color names, for questionary/
-# prompt_toolkit-based prompts (e.g. install-agents' checkbox). Kept next to
-# THEME -- rather than derived from it -- because rich Style objects and
-# prompt_toolkit style strings use incompatible color models; update both if
-# the palette changes.
+# prompt_toolkit style strings for questionary/prompt_toolkit-based prompts
+# (e.g. install-agents' checkbox). rich Style objects and prompt_toolkit style
+# strings use incompatible color models; update both if the palette changes.
 PROMPT_TOOLKIT_COLORS = {
     "info": "ansicyan",
     "success": "ansigreen",
@@ -65,19 +52,12 @@ PROMPT_TOOLKIT_COLORS = {
 
 
 def is_tty() -> bool:
-    """True iff stdout is an interactive terminal.
-
-    Used to decide whether to show spinners/animated bars at all. In CI or
-    piped contexts we fall back to plain text to avoid escape-sequence soup
-    in log files.
-    """
+    """True iff stdout is an interactive terminal."""
     return sys.stdout.isatty()
 
 
 # --- One-shot status helpers ----------------------------------------------
-# Each takes an optional ``file`` (for click.echo compatibility) but routes
-# through the rich console so colors/theme apply. Use these instead of
-# click.echo for any status-style output.
+# Routes through the rich console so colors/theme apply.
 
 def success(msg: str) -> None:
     console.print(f"[success]✓[/success] {msg}")
@@ -102,11 +82,7 @@ def dim(msg: str) -> None:
 # --- Labeled key/value pairs (for stats/status) ---------------------------
 
 def kv(label: str, value, indent: int = 0) -> None:
-    """Print a ``label: value`` line with the label styled.
-
-    Used by cairn status / cairn stats to render the per-layer rollups in a
-    consistent aligned style.
-    """
+    """Print a styled ``label: value`` line."""
     pad = " " * indent
     console.print(f"{pad}[label]{label:14}[/label] [number]{value}[/number]")
 
@@ -127,10 +103,8 @@ def print_table(title: Optional[str], columns: list[str], rows: list[list]) -> N
 
 # --- Non-TTY single-line progress -----------------------------------------
 # Rich's Progress, when stdout isn't a TTY, prints a NEW line on every refresh
-# instead of updating in place. That produces garbled multi-line output in CI
-# logs and pipes. This lightweight class mimics the slice of the Progress API
-# that cairn callers use (update/advance/set_total/set_description/tasks) but
-# renders a single line with \r so the line updates in place.
+# instead of updating in place. This class mimics the slice of the Progress API
+# that cairn callers use but renders a single line with \r.
 
 class _SimpleTask:
     __slots__ = ("description", "total", "completed", "unit")
@@ -146,14 +120,9 @@ class _PlainTextProgress:
     """A minimal Progress-compatible renderer for non-TTY (piped/CI) output.
 
     Renders one line that updates in place via carriage return. Redraws at
-    most once per 0.5s (time-throttled) to keep piped/CI output compact,
-    regardless of how frequently the caller updates. Description changes
-    (phase transitions) are drawn immediately but lightly throttled to 0.2s.
-    On context-exit, emits a final ``\n``.
-
-    Exposes the same attributes/methods cairn callers rely on:
-    ``_cg_task_id``, ``update()``, ``advance()``, ``set_total()``,
-    ``set_description()``, and ``tasks`` (list-indexed by task id).
+    most once per 0.5s (time-throttled); description changes draw immediately
+    but throttled to 0.2s. Exposes ``_cg_task_id``, ``update()``, ``advance()``,
+    ``set_total()``, ``set_description()``, and ``tasks``.
     """
 
     def __init__(self, description: str, total: Optional[int], unit: str):
@@ -161,8 +130,7 @@ class _PlainTextProgress:
         self._cg_task_id = 0
         self._last_desc = None
         self._t0 = time.time()
-        # Start _last_draw at _t0 so the first non-forced draw is throttled
-        # (prevents a burst of draws during rapid initial updates).
+        # Start _last_draw at _t0 so the first non-forced draw is throttled.
         self._last_draw = self._t0
 
     def update(self, task_id: int, *, completed: Optional[int] = None,
@@ -170,9 +138,6 @@ class _PlainTextProgress:
                advance: Optional[int] = None) -> None:
         task = self.tasks[task_id]
         # Only treat description as a "force" draw if it actually changed.
-        # Callers like cairn build call set_description("Parsing") on every
-        # per-file callback; without this guard, force=True bypasses the time
-        # throttle and we draw once per file.
         desc_changed = False
         if description is not None and description != task.description:
             task.description = description
@@ -198,11 +163,8 @@ class _PlainTextProgress:
         task = self.tasks[self._cg_task_id]
 
         # Time-based throttle is the PRIMARY gate: never draw more than once
-        # per 0.5s. This is what keeps piped/CI output compact — even if the
-        # caller updates every file, we only emit ~2 lines/second. Description
-        # changes bypass the throttle (so phase transitions like "Parsing" →
-        # "Indexing" are visible immediately), but only if >0.2s has passed
-        # to avoid back-to-back draws during rapid phase switches.
+        # per 0.5s. Description changes bypass it (so phase transitions are
+        # visible immediately) but only if >0.2s has passed.
         now = time.time()
         elapsed_since_draw = now - self._last_draw
         desc_changed = task.description != self._last_desc
@@ -250,10 +212,7 @@ class _PlainTextProgress:
 
 class _RichProgressHandle:
     """Adapts a rich ``Progress`` + its one task to ``_PlainTextProgress``'s
-    API (``update``/``advance``/``set_total``/``set_description``/``tasks``/
-    ``_cg_task_id``), so ``progress_bar()`` callers see the same contract on
-    both backends instead of relying on attributes monkey-patched onto the
-    ``Progress`` instance at runtime.
+    API so ``progress_bar()`` callers see the same contract on both backends.
     """
 
     def __init__(self, progress: Progress, task_id: int):
@@ -278,7 +237,6 @@ class _RichProgressHandle:
 
 
 # --- Progress bar context manager -----------------------------------------
-# Used by cairn build (parse/insert/resolve phases) and cairn embed (batch loop).
 
 @contextmanager
 def progress_bar(
@@ -289,17 +247,9 @@ def progress_bar(
 ) -> Iterator:
     """Yield a progress bar configured for the cairn CLI.
 
-    ``description``: the label shown to the left of the bar (e.g. "Parsing").
-    ``total``: if known up-front, the bar shows determinate progress + ETA.
-               If None, the caller must ``.update(task_id, total=N)`` later.
-    ``unit``: shown after the count ("1,234 files", "64 symbols").
-    ``transient``: when True (default, TTY only), the live bar is erased on
-                   success and replaced by a one-line summary. Ignored in
-                   non-TTY mode (the line stays, then a newline is emitted).
-
-    **TTY mode:** uses rich's animated ``Progress`` (spinner, bar, ETA).
-    **Non-TTY mode:** uses ``_PlainTextProgress`` which renders a single line
-    updated in place via ``\\r`` — one line of progress, not one per refresh.
+    ``total`` None means the caller must ``.update(task_id, total=N)`` later.
+    TTY mode uses rich's animated Progress; non-TTY mode uses
+    ``_PlainTextProgress`` (one line updated via ``\\r``).
     """
     if not is_tty():
         bar = _PlainTextProgress(description, total, unit)
@@ -328,11 +278,7 @@ def progress_bar(
 # --- Banner / panel for final summaries -----------------------------------
 
 def summary_panel(title: str, kv_pairs: list[tuple[str, str]], subtitle: Optional[str] = None) -> None:
-    """Print a final summary as a styled panel.
-
-    ``title``: heading (e.g. "Built graph in 12.3s").
-    ``kv_pairs``: list of (label, value) shown as ``label value`` lines inside.
-    """
+    """Print a final summary as a styled panel with ``kv_pairs`` lines inside."""
     from rich.panel import Panel
     from rich.text import Text
 

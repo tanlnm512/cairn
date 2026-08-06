@@ -33,11 +33,9 @@ CAIRN_HOME = Path(
 REGISTRY_FILE = CAIRN_HOME / "workspaces.json"
 
 # Shared library directory for the heavy semantic deps (torch,
-# sentence-transformers, numpy). Installed once via `cairn embed --install-deps`
-# using `pip install --target`, so they survive `uv tool install --force`
-# reinstalls (which reset the tool's own venv). At import time (below) this
-# directory is prepended to sys.path if it exists, so `import torch` /
-# `import sentence_transformers` resolve from here, not the venv.
+# sentence-transformers, numpy). Installed via `cairn embed --install-deps`
+# with `pip install --target` so they survive `uv tool install --force`
+# reinstalls. Prepended to sys.path at import time below.
 SHARED_LIB = CAIRN_HOME / "lib"
 
 

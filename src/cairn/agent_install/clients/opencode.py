@@ -7,9 +7,6 @@ opencode schema (https://opencode.ai/docs/mcp-servers):
   keyed by name: ``{"mcp": {"<name>": {"type": "local", "command": [...]}}}``.
 - ``type`` is ``"local"`` (stdio) or ``"remote"`` (sse/http); for local, the full
   invocation is a single ``command`` array.
-
-Co-locating the generator, installer, and uninstaller here is what prevents
-the class of bug where install writes one shape and uninstall expects another.
 """
 from __future__ import annotations
 

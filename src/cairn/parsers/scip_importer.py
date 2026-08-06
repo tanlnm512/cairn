@@ -11,18 +11,15 @@ from pathlib import Path
 from typing import Any, Dict
 
 # --- SCIP symbol_roles bitmask ----------------------------------------------
-# Only the bits we care about for classification. See the SCIP protocol:
-# https://github.com/sourcegraph/scip/blob/main/scip.proto
+# See the SCIP protocol: https://github.com/sourcegraph/scip/blob/main/scip.proto
 #   1   (1 << 0) Definition
 #   2   (1 << 1) Import
 #   4   (1 << 2) ForwardDefinition
 #   64  (1 << 6) ReadAccess
 #   128 (1 << 7) WriteAccess
-# Non-definition occurrences also cover plain references and relation roles.
 # A "call" is not a dedicated SCIP bit; we reserve kind='call' for occurrences
-# that are neither import/read/write nor a definition, i.e. relation-style
-# references such as implementations/usages. Pure references, reads and writes
-# are emitted as kind='reference' so they are not mistaken for call edges.
+# that are neither import/read/write nor a definition. Pure references, reads
+# and writes are emitted as kind='reference' so they are not mistaken for calls.
 _SCIP_ROLE_DEFINITION = 1
 _SCIP_ROLE_IMPORT = 2
 _SCIP_ROLE_READ_ACCESS = 64
@@ -98,10 +95,9 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 symbols_added += 1
                 last_def_id = sym_id
             else:
-                # Classify the non-definition occurrence from its SCIP role
-                # bits rather than assuming every reference is a call. Imports,
-                # read accesses and write accesses are reference-ish; only the
-                # remaining relation-style occurrences are treated as calls.
+                # Classify non-definition occurrences from SCIP role bits:
+                # imports and read/write accesses are reference-ish; remaining
+                # relation-style occurrences are treated as calls.
                 if roles & _SCIP_ROLE_IMPORT or roles & _SCIP_ROLE_ACCESS_MASK:
                     edge_kind = "reference"
                 else:

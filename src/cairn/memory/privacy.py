@@ -1,14 +1,12 @@
 """Privacy filter: strip secrets from text before storing in memory.
 
-Adapted from agentmemory's ``src/functions/privacy.ts`` — a regex-only floor
-(not a ceiling). It catches well-known secret shapes (API keys, bearer tokens,
-JWTs) and ``<private>...</private>`` tags. It does NOT do entropy analysis or
-load actual secret values from env; for stronger guarantees, callers should
-add their own env-based redaction on top.
+A regex-only floor (not a ceiling). Catches well-known secret shapes (API
+keys, bearer tokens, JWTs) and ``<private>...</private>`` tags. It does NOT do
+entropy analysis or load actual secret values from env; for stronger
+guarantees, callers should add their own env-based redaction on top.
 
-Used by the auto-capture hook (``post_tool_failure``) to ensure tool error
-output containing secrets is scrubbed before being stored as a raw ``mistake``
-memory.
+Used by the auto-capture hook (``post_tool_failure``) so tool error output
+containing secrets is scrubbed before being stored as a raw ``mistake`` memory.
 """
 from __future__ import annotations
 
@@ -17,9 +15,8 @@ import re
 # ``<private>...</private>`` tags → [REDACTED].
 _PRIVATE_TAG_RE = re.compile(r"<private>[\s\S]*?</private>", re.IGNORECASE)
 
-# Each pattern is cloned per-call (``re.compile(source, flags)``) to avoid the
-# stateful ``lastIndex`` bug that would arise from reusing a compiled ``/g``
-# regex across multiple calls. Listed verbatim from agentmemory's privacy.ts.
+# Each pattern is cloned per-call to avoid the stateful ``lastIndex`` bug that
+# would arise from reusing a compiled ``/g`` regex across multiple calls.
 _SECRET_PATTERN_SOURCES: list[str] = [
     r"(?:api[_-]?key|secret|token|password|credential|auth)[\s]*[=:]\s*[\"']?[A-Za-z0-9_\-/.+]{20,}[\"']?",
     r"Bearer\s+[A-Za-z0-9._\-+/=]{20,}",

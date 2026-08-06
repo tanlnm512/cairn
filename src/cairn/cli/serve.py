@@ -75,9 +75,8 @@ def _serve_foreground(db, port, read_only=None):
     store = resolve_store()
     os.environ["CAIRN_DB"] = db or str(store.db)
     os.environ["CAIRN_KNOWLEDGE"] = str(store.knowledge)
-    # Default: the shared SSE daemon runs read-only (the contention-safe model);
-    # a foreground stdio server (the per-client editor process) keeps read-write
-    # so write tools behave as before for interactive use.
+    # Default: the shared SSE daemon runs read-only (contention-safe); a
+    # foreground stdio server keeps read-write for interactive use.
     if read_only is None:
         read_only = bool(port)
     os.environ["CAIRN_READ_ONLY"] = "1" if read_only else "0"
@@ -127,8 +126,7 @@ def serve_start(port, host):
 
     # (Re)write the plist with current port/host + cairn path + workspace env,
     # then load. Workspace env is critical: under launchd cwd is "/", so
-    # without CAIRN_WORKSPACE the daemon can't find the store via the
-    # ancestor walk that works when run interactively.
+    # without CAIRN_WORKSPACE the daemon can't find the store.
     lc.write_plist(lc.render_plist(
         port=port, host=host,
         workspace=str(store.workspace),

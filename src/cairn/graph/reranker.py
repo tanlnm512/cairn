@@ -1,19 +1,14 @@
 """Cross-encoder reranking for semantic_search.
 
 Second stage of a two-stage retrieval pipeline: the cosine/ANN scan in
-`queries.semantic_search` is a *bi-encoder* -- it embeds query and candidate
-independently, so it's cheap to score against the whole corpus but blind to
-interactions between the two texts. A *cross-encoder* scores `(query,
-candidate)` jointly, which is more accurate but too slow to run against every
-symbol -- so it only ever sees a shortlist the cosine scan already narrowed
-down. This module is that second stage.
+`queries.semantic_search` is a *bi-encoder* (embeds query and candidate
+independently -- cheap but blind to interactions); a *cross-encoder* scores
+`(query, candidate)` jointly, more accurate but too slow to run against every
+symbol, so it only ever sees a shortlist the cosine scan already narrowed down.
 
-Mirrors `embeddings.py`'s backend-selection posture: off by default
-(`CAIRN_RERANK` unset), reuses the `sentence-transformers` dependency
-already pulled in by the `[semantic]` extra (no new heavy install), and
-degrades to a no-op on any failure rather than raising past this module --
-a reranker outage should never take down semantic search, just make it
-slightly less accurate for the run.
+Off by default (`CAIRN_RERANK` unset), reuses the `sentence-transformers`
+dependency from the `[semantic]` extra, and degrades to a no-op on any failure
+rather than raising past this module.
 """
 from __future__ import annotations
 
@@ -45,10 +40,8 @@ def current_rerank_model() -> str:
 def reranker_available() -> bool:
     """True iff sentence-transformers' CrossEncoder can be imported right now.
 
-    Does not attempt to load the model itself (that can still fail later --
-    e.g. no network on first run, corrupt cache -- which `rerank()` catches
-    separately). This only answers "is the capability installed at all",
-    mirroring `embeddings.embeddings_available()`'s narrower import check.
+    Does not attempt to load the model itself (that can still fail later);
+    only answers "is the capability installed at all".
     """
     try:
         from sentence_transformers import CrossEncoder  # noqa: F401
@@ -71,9 +64,7 @@ def _get_reranker():
     if model_name not in _RERANKER_CACHE:
         from sentence_transformers import CrossEncoder
 
-        # Single-model cache: a model-name change means the previous
-        # CrossEncoder's tensors are stale, so evict any other entry rather
-        # than letting it leak.
+        # Single-model cache: a model-name change evicts the stale entry.
         if _RERANKER_CACHE and next(iter(_RERANKER_CACHE)) != model_name:
             _RERANKER_CACHE.clear()
         _RERANKER_CACHE[model_name] = CrossEncoder(model_name)
@@ -83,15 +74,11 @@ def _get_reranker():
 def rerank(query: str, candidates: List[dict], limit: int) -> Tuple[List[dict], bool]:
     """Rerank a candidate shortlist; returns (results, reranked).
 
-    ``candidates`` must each have a ``"chunk"`` key (the text that was embedded
-    -- same text `semantic_search` carries through from the `embeddings`
-    table). Non-fatal on any failure: disabled, uninstalled, or
-    a `predict()` exception (corrupt model cache, OOM, etc.) all fall back to
-    ``candidates[:limit]`` unchanged with ``reranked=False`` -- the caller
-    still gets a usable ANN-ordered result, just not re-scored.
-
-    On success, each returned dict gains a ``"rerank_score"`` float and the
-    list is truncated to ``limit`` by that score, descending.
+    ``candidates`` must each have a ``"chunk"`` key. Non-fatal on any failure
+    (disabled, uninstalled, or a `predict()` exception): falls back to
+    ``candidates[:limit]`` unchanged with ``reranked=False``. On success, each
+    returned dict gains a ``"rerank_score"`` float and the list is truncated
+    to ``limit`` by that score, descending.
     """
     if not candidates:
         return candidates[:limit], False
@@ -111,7 +98,6 @@ def rerank(query: str, candidates: List[dict], limit: int) -> Tuple[List[dict], 
             out.append(reranked_cand)
         return out, True
     except Exception:
-        # Model load failure, predict() crash, whatever -- never let a
-        # reranker problem take down semantic search itself.
+        # Never let a reranker problem take down semantic search.
         logger.debug("rerank failed, returning unranked", exc_info=True)
         return candidates[:limit], False

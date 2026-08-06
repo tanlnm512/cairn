@@ -5,11 +5,10 @@ frontmatter field is `type`. This module provides read/write/validate for
 concepts used across Layers 2-4 (compass, wiki, memory).
 
 v0.2 wire format (spec §13.1): a concept's last content change is recorded as
-`generated: { by, at }` rather than the v0.1 bare `timestamp`. Internally the
-"when" is still carried on the `timestamp` field so the 6 modules that read
-recency (scoring, promotion, store, cli/memory, llm/tasks) are unchanged; the
-translation happens only at this serialization boundary. Legacy v0.1 files
-with a bare `timestamp:` are still read (spec §13.1 "MAY fall back").
+`generated: { by, at }`. Internally the "when" is still carried on the
+`timestamp` field; the translation happens only at this serialization
+boundary. Files with a bare v0.1 `timestamp:` are still read (spec §13.1
+"MAY fall back").
 """
 from __future__ import annotations
 
@@ -27,8 +26,7 @@ OKF_VERSION = "0.2"
 def _default_generated_by() -> str:
     """Actor for `generated.by` (spec §7 `<producer>/<version>` form).
 
-    Imported lazily so importing this module never triggers a circular import
-    back into the top-level package (which imports subpackages that import us).
+    Imported lazily to avoid a circular import back into the top-level package.
     """
     try:
         from cairn import __version__  # local import avoids cycle
@@ -40,11 +38,9 @@ def _default_generated_by() -> str:
 def _coerce_timestamp(value: Any) -> Optional[str]:
     """Normalize a parsed timestamp to the ISO-8601 string readers expect.
 
-    YAML auto-converts an unquoted ISO datetime (e.g. `2024-01-01T00:00:00Z`)
-    into a `datetime` object. The recency readers (`scoring._freshness`,
-    `promotion.decay`, etc.) call `.replace("Z", "+00:00")` on it, which only
-    works on a string. Coerce here so hand-edited or unquoted timestamps on
-    either the v0.2 `generated.at` or legacy `timestamp` path survive intact.
+    YAML auto-converts an unquoted ISO datetime into a `datetime` object, but
+    the recency readers call `.replace("Z", "+00:00")` on it, which only works
+    on a string. Coerce here so unquoted timestamps survive intact.
     """
     if value is None:
         return None
@@ -71,9 +67,8 @@ class OKFConcept:
     description: Optional[str] = None
     resource: Optional[str] = None  # canonical URI to the underlying asset
     tags: List[str] = field(default_factory=list)
-    # Internally carries the "when" from v0.2 `generated.at` (or legacy
-    # `timestamp`). Kept as a field so recency readers need no changes; it is
-    # serialized back out as `generated.at` by `to_markdown`.
+    # Internally carries the "when" from v0.2 `generated.at`; serialized back
+    # out as `generated.at` by `to_markdown`.
     timestamp: Optional[str] = None
 
     # v0.2 first-class optional families (spec §5). Parsed out of frontmatter
@@ -110,17 +105,15 @@ class OKFConcept:
         description = frontmatter.pop("description", None)
         resource = frontmatter.pop("resource", None)
         tags = frontmatter.pop("tags", []) or []
-        # v0.2 `generated: {by, at}` first; fall back to legacy v0.1
-        # `timestamp` (spec §13.1 "MAY fall back") so on-disk v0.1 files still
-        # parse. `timestamp` stays the internal "when" field for all readers.
+        # v0.2 `generated: {by, at}` first; fall back to a bare `timestamp`
+        # (spec §13.1 "MAY fall back") so on-disk v0.1 files still parse.
         generated = frontmatter.pop("generated", None) or {}
         generated_by = generated.get("by") if isinstance(generated, dict) else None
         timestamp = generated.get("at") if isinstance(generated, dict) else None
         if timestamp is None:
             timestamp = frontmatter.pop("timestamp", None)
-        # YAML auto-coerces an unquoted ISO datetime into a `datetime` object,
-        # but the recency readers expect a string. Normalize at parse time so
-        # hand-edited (or otherwise unquoted) timestamps survive intact.
+        # Normalize at parse time so hand-edited (or unquoted) timestamps
+        # survive intact.
         timestamp = _coerce_timestamp(timestamp)
         frontmatter.pop("okf_version", None)
         # v0.2 optional families (spec §5).
@@ -152,15 +145,9 @@ class OKFConcept:
     def to_file(self, path: str):
         """Write the concept to a markdown file atomically.
 
-        Uses temp-file-then-os.replace pattern for atomic writes:
-        1. Create a temp file in the same directory as the target (required for os.replace atomicity)
-        2. Write the markdown content to the temp file
-        3. Atomically replace the target with the temp file using os.replace
-
-        This ensures that:
-        - A crash mid-write won't leave a truncated target file
-        - No temp file residue remains after successful write
-        - The target file is either fully written or unchanged
+        Uses temp-file-then-os.replace so a crash mid-write won't leave a
+        truncated target, no temp residue remains after success, and the
+        target is either fully written or unchanged.
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         # Create temp file in the same directory as target for os.replace atomicity
@@ -187,15 +174,11 @@ class OKFConcept:
             fm["resource"] = self.resource
         if self.tags:
             fm["tags"] = self.tags
-        # Compute the serialization timestamp locally without mutating self.
-        # to_markdown is a read-only serializer; assigning back to self.timestamp
-        # would be a surprising side effect (e.g. corrupting a later equality
-        # check or making repeated writes carry a growing timestamp). Callers
-        # that want the timestamp persisted should set it explicitly.
+        # Compute the serialization timestamp locally without mutating self --
+        # to_markdown is a read-only serializer; callers wanting the timestamp
+        # persisted should set it explicitly.
         ts = self.timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # v0.2 wire format (spec §5.2/§13.1): emit `generated: {by, at}`
-        # rather than the v0.1 bare `timestamp`. `timestamp` remains the
-        # internal field; it is materialized into `generated.at` here.
+        # v0.2 wire format (spec §5.2/§13.1): emit `generated: {by, at}`.
         fm["generated"] = {
             "by": self.generated_by or _default_generated_by(),
             "at": ts,

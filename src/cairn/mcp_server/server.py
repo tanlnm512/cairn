@@ -1,32 +1,11 @@
 """cairn MCP server: exposes graph query tools to AI agents.
 
-Implements 27 tools across 5 layers:
-  L1 (graph): find_definition, get_callers, get_callees, impact_analysis,
-              search_symbols, cross_repo_deps, explore, semantic_search
-  L2/L3 (knowledge base): search_knowledge, get_compass,
-                          trace_flow, generate_flow
-  L4 (memory + router): recall_memory, record_memory, ask_compass,
-                         visualize_graph, memory_promote, memory_demote,
-                         memory_delete, memory_decay, memory_evolve
-  L5 (knowledge): knowledge_add, knowledge_search, knowledge_delete,
-                  knowledge_status, trace_workflow (ordered procedural
-                  steps -- a knowledge doc with doc_type="workflow",
-                  see src/knowledge/workflow.py)
+Implements 27 tools across 5 layers (graph, knowledge base, memory/router,
+knowledge). Transport: stdio (default) or SSE, via the mcp SDK (FastMCP).
 
-Transport: stdio (default) or SSE. Uses the mcp SDK (FastMCP).
-
-Freshness is reconciled once at boot (see run()) by diffing the files table
-against disk and re-indexing anything changed while no server was running.
-Tool calls do NOT re-check freshness per-query (concurrency safety -- see
-src/graph/watcher.py) -- edits made while a `cairn serve` process is up require a
-server restart (or `cairn build`) to show up in query results.
-
-Architecture: this file is the thin entry point. Tool implementations live
-in split modules (tools_graph, tools_memory, tools_knowledge, tools_compass),
-each of which decorates the shared FastMCP instance from _server_core.
-Metric buffering lives in metric_buffering. This file owns boot (the
-sys.path bootstrap shim, the boot catch-up, the parent-pid watchdog) and
-the run() entry point.
+This file owns boot (sys.path bootstrap shim, boot catch-up, parent-pid
+watchdog) and the run() entry point; tool implementations live in the
+tools_*.py modules and decorate the shared FastMCP instance from _server_core.
 """
 from __future__ import annotations
 
@@ -71,24 +50,11 @@ _EXPECTED_TOOL_COUNT = 27
 def _install_exit_watchdog():
     """Ensure the server dies when its parent (the MCP client) dies.
 
-    Without this, stdio MCP servers park on stdin forever if the editor is
-    hard-closed, force-quit, or the laptop sleeps — the SDK's stdin-EOF
-    handler is sometimes missed, leaving `cairn serve` processes accumulating
-    across sessions and holding the SQLite WAL lock.
-
-    Two mechanisms:
-      1. SIGTERM/SIGINT -> SystemExit raised in the main thread.
-      2. Background daemon thread polling the parent pid; when it changes
-         (reparented to init on POSIX) -> SystemExit.
-
-    Deliberately does NOT touch stdin: the MCP SDK's own stdio transport
-    (anyio) is the sole reader of stdin. An earlier version of this watchdog
-    read raw bytes off the stdin fd directly to detect EOF, which raced with
-    anyio's reader for the same fd — bytes belonging to JSON-RPC messages
-    were randomly stolen by the watchdog, so the server would never see a
-    complete request and `cairn serve` appeared to hang/never respond to
-    clients. Polling os.getppid() detects the same "parent is gone"
-    condition without consuming anything from stdin.
+    Two mechanisms: SIGTERM/SIGINT -> SystemExit in the main thread, and a
+    background daemon thread polling the parent pid (reparented to init on
+    POSIX) -> SystemExit. Deliberately does NOT read stdin: the MCP SDK's
+    anyio transport is the sole reader of the stdin fd, and reading it here
+    steals bytes from JSON-RPC messages.
     """
     def _signal_handler(_signum, _frame):
         raise SystemExit(0)
@@ -119,30 +85,15 @@ def _install_exit_watchdog():
     threading.Thread(target=_watch_parent, daemon=True).start()
 
 
-# Verify the registered tool count matches expected.
-#
-# Counts the tools ACTUALLY registered on the FastMCP `mcp` instance rather
-# than a hardcoded literal, so a dropped import (a tools_*.py module failing
-# to load, or a decorator being removed) actually trips this guard. Each
-# tools_*.py module registers its tools via @mcp.tool() decorator side
-# effects at import time (see the imports above); if any of those imports
-# silently fails, fewer tools land on `mcp` and the count drops.
-#
-# FastMCP exposes the live registry via the tool manager; the sync
-# ToolManager.list_tools() (the backing store behind the async
-# FastMCP.list_tools()) returns the registered Tool objects directly, so we
-# don't need an event loop here.
+# Counts tools ACTUALLY registered on the FastMCP `mcp` instance rather than a
+# hardcoded literal, so a dropped tools_*.py import or removed @mcp.tool
+# decorator trips this guard.
 def _count_fastmcp_tools():
     """Count tools actually registered on the FastMCP instance.
 
-    Reaches into the FastMCP internals (``mcp._tool_manager.list_tools()``) to
-    read the live registry synchronously without an event loop. This is a
-    private API that can move across SDK versions, so access is wrapped
-    defensively: any :class:`AttributeError` (renamed/removed private
-    attribute after an upgrade) degrades to a safe count of 0 rather than
-    crashing the boot guard. The caller (:func:`verify_tool_count`) still
-    asserts against ``_EXPECTED_TOOL_COUNT``, so a genuine regression in the
-    accessible case is still caught.
+    Reads the live registry synchronously via FastMCP internals. The private
+    API can move across SDK versions, so :class:`AttributeError` degrades to a
+    safe count of 0 rather than crashing the boot guard.
     """
     try:
         return len(mcp._tool_manager.list_tools())
@@ -154,16 +105,9 @@ def _count_fastmcp_tools():
 def verify_tool_count() -> None:
     """Raise AssertionError if the registered tool count drifts.
 
-    The tools_*.py modules register their @mcp.tool() decorators as an import
-    side effect (see the imports above). If one of those imports silently
-    fails, or a decorator is removed, fewer tools land on `mcp` and the count
-    drops. This guard catches that.
-
-    Deliberately a callable rather than a module-level ``assert`` so that
-    merely importing :mod:`cairn.mcp_server` (which re-exports ``run``)
-    never trips it -- a tool-count regression should surface at server start,
-    not turn into an ``AssertionError`` for unrelated importers. Called from
-    :func:`run` and exercised by the test suite.
+    Deliberately a callable rather than a module-level ``assert`` so merely
+    importing :mod:`cairn.mcp_server` never trips it; a regression should
+    surface at server start, not as an import-time error.
     """
     actual = _count_fastmcp_tools()
     assert actual == _EXPECTED_TOOL_COUNT, (
@@ -176,20 +120,16 @@ def run(transport: str = "stdio", port: int | None = None):
     """Run the MCP server.
 
     Runs a one-time catch-up at boot to absorb edits made while the server was
-    down. This is the ONLY freshness check -- tool calls do not re-check
-    per-query, so edits made while this process is running require a restart
-    to be picked up (see module docstring above).
+    down. Tool calls do not re-check freshness per-query, so edits made while
+    this process is running require a restart to be picked up.
     """
-    # Fail fast if tool registration drifted (a tools_*.py import silently
-    # failed or a @mcp.tool decorator was removed). See verify_tool_count().
+    # Fail fast if tool registration drifted.
     verify_tool_count()
 
-    # Stdio servers should die when their MCP client disconnects (prevents
-    # stale-process buildup across editor sessions). The watchdog polls
-    # os.getppid() and self-exits when the parent changes -- correct for stdio
-    # where the client IS the parent, but WRONG for SSE where the parent is
-    # launchd/zsh and changes are unrelated to client connections. SSE daemons
-    # are managed via `cairn serve stop` (SIGTERM) instead.
+    # Stdio servers should die when their MCP client disconnects. The watchdog
+    # polls os.getppid() and self-exits when the parent changes -- correct for
+    # stdio where the client IS the parent, but wrong for SSE where the parent
+    # is launchd/zsh. SSE daemons are managed via `cairn serve stop` (SIGTERM).
     if transport == "stdio":
         _install_exit_watchdog()
 
@@ -221,25 +161,16 @@ def run(transport: str = "stdio", port: int | None = None):
 
     # Read-only mode: the shared SSE daemon opens the DB with mode=ro so it
     # can never hold the writer lock and therefore never contends with
-    # `cairn build`/`cairn embed`/`cairn memory`. The two boot write paths below
-    # (catch-up reindex, memory decay) are SKIPPED in read-only mode: they
-    # would either error on the read-only connection or, worse, open a
-    # writable connection and reintroduce contention. Their jobs are covered
-    # by the writable CLI side -- `cairn update` for catch-up, `cairn memory decay`
-    # (or the CLI's own boot) for archival. Serving-time analytics writes
-    # (memory_refs ref-counting, tool_metrics) already no-op under read-only.
+    # `cairn build`/`cairn embed`/`cairn memory`. The two boot write paths
+    # below (catch-up reindex, memory decay) are SKIPPED in read-only mode:
+    # they are covered by the writable CLI side (`cairn update`, `cairn memory
+    # decay`). Serving-time analytics writes already no-op under read-only.
     read_only = os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes")
 
     # Boot catch-up: absorb edits made while no server was running.
-    #
-    # conn.close() lives in `finally`, not after ensure_fresh_force(), because
-    # a mid-transaction failure there (e.g. FOREIGN KEY constraint) must not
-    # leave the connection open: an uncommitted write transaction pinned by
-    # the exception's traceback would hold SQLite's writer lock for the rest
-    # of this (long-lived) process's life, permanently locking out `cairn update`
-    # / `cairn build` with "database is locked" no matter how long their
-    # busy_timeout is. rollback() first so the failed transaction doesn't
-    # linger even if close() itself is delayed.
+    # conn.close() lives in `finally` (with a preceding rollback()) so a
+    # mid-transaction failure doesn't leave an uncommitted write transaction
+    # pinning SQLite's writer lock for the life of this process.
     if read_only:
         from datetime import datetime
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -254,15 +185,10 @@ def run(transport: str = "stdio", port: int | None = None):
             conn = get_db(db_path)
             n = ensure_fresh_force(conn, str(workspace))
             if n:
-                # Boot log line -- plain print, not rich. Written to stderr, NOT
-                # stdout: for stdio transport, stdout IS the JSON-RPC channel the
-                # MCP client reads, and any plain-text line written there before
-                # mcp.run() starts corrupts the framing (client fails to parse it
-                # as JSON-RPC and drops the connection -- the process stays alive
-                # but the client never sees any tools). SSE transport also logs
-                # to stderr here for consistency; its own "listening on" line
-                # below is the only stdout write and only happens under SSE.
-                # Format kept parseable: "[YYYY-MM-DD HH:MM:SS] message".
+                # Boot log line goes to stderr, NOT stdout: for stdio transport,
+                # stdout IS the JSON-RPC channel the MCP client reads, and a
+                # plain-text line written there before mcp.run() corrupts the
+                # framing.
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f"[{ts}] cairn: caught up {n} file(s) changed while the server was down", file=sys.stderr, flush=True)
@@ -277,9 +203,7 @@ def run(transport: str = "stdio", port: int | None = None):
                 conn.close()
 
     # Run memory decay at server boot to archive stale raw memories automatically.
-    # This prevents raw memory growth in long-running servers without manual intervention.
-    # Skipped in read-only mode (see note above): decay writes, so it belongs on the
-    # writable CLI side. Wrapped in the same read_only guard as the catch-up.
+    # Skipped in read-only mode: decay writes, so it belongs on the writable CLI side.
     if not read_only:
         try:
             from cairn.memory.promotion import decay
@@ -304,18 +228,14 @@ def run(transport: str = "stdio", port: int | None = None):
 
     if transport == "sse":
         # The shared SSE daemon is the canonical writer-free reader. Stray
-        # per-editor stdio `cairn serve` processes (left over from hard-closed
-        # editors, force-quits, or sleep -- the exit watchdog can miss these)
-        # can still hold the WAL lock and reintroduce "database is locked"
-        # even against a read-only daemon, because the *stray* opened the DB
+        # per-editor stdio `cairn serve` processes can still hold the WAL lock
+        # and reintroduce "database is locked" because the stray opened the DB
         # read-write. A background sweeper evicts them periodically so a daemon
-        # crash+restart self-heals without manual `cairn serve stop`. Runs only
-        # under SSE: a stdio server is itself a potential stray and must not
-        # kill its siblings.
+        # crash+restart self-heals. Runs only under SSE: a stdio server is
+        # itself a potential stray and must not kill its siblings.
         _install_stray_sweeper(db_path, interval_s=60.0)
 
-        # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not
-        # from kwargs. Set them here.
+        # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not kwargs.
         if port:
             mcp.settings.port = port
         from datetime import datetime
@@ -333,10 +253,8 @@ def run(transport: str = "stdio", port: int | None = None):
 def _install_stray_sweeper(db_path: str, interval_s: float = 60.0):
     """Background daemon thread that periodically evicts orphan `cairn serve` PIDs.
 
-    Only called from the SSE daemon path (see run()). The sweep itself is
-    best-effort and logged to stderr: it prints one line per kill so the
-    daemon log records self-healing events. Idempotent start (a single
-    daemon process needs only one sweeper).
+    Called only from the SSE daemon path (see run()). Best-effort: the sweep
+    logs one line per kill to stderr. Idempotent start.
     """
     from ..mcp_server import lifecycle as lc
 

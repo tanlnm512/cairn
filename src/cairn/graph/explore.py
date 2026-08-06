@@ -3,9 +3,6 @@
 A thin orchestrator that combines FTS5 + semantic seed search, 1-hop
 caller/callee neighborhood, verbatim source spans, shallow blast radius, and
 ambiguous-dispatch hops into a single answer.
-
-Imports the other split modules (traversal, lexical, semantic) rather than
-re-implementing them -- this is the integration layer.
 """
 from __future__ import annotations
 
@@ -100,12 +97,12 @@ def _ambiguous_dispatch(
 ) -> list:
     """Surface ``resolution='ambiguous'`` edges grouped by target.
 
-    Ambiguous edges are intentionally left unresolved by the resolver (NULL
-    ``target_id``) when more than one candidate existed — e.g. an interface
-    call with several impls. These are invisible to precise ``get_callers``
-    (which filters on resolved ``target_id``) and to ``impact_analysis``.
-    This helper makes them queryable so ``explore`` can show "this call could
-    dispatch to any of these impls" — information grep fundamentally lacks.
+    Ambiguous edges are left unresolved by the resolver (NULL ``target_id``)
+    when more than one candidate existed — e.g. an interface call with several
+    impls. These are invisible to precise ``get_callers`` (which filters on
+    resolved ``target_id``) and to ``impact_analysis``; this helper makes them
+    queryable so ``explore`` can show "this call could dispatch to any of
+    these impls".
 
     Returns ``[{"dispatches_to": str, "candidates": [caller_name, ...]}]``,
     one entry per distinct ``target_name`` that has at least one ambiguous

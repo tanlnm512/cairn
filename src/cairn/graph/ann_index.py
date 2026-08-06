@@ -1,24 +1,18 @@
 """Native ANN index for semantic_search, via the sqlite-vec extension.
 
 `sqlite-vec` (https://github.com/asg017/sqlite-vec) provides a `vec0` virtual
-table living in the *same* `.db` file as `embeddings`, loaded as a normal
-SQLite extension (`conn.enable_load_extension` + `sqlite_vec.load(conn)`).
-Keeping vectors in the same file as the rows they reference avoids the
-crash-consistency hazard of a sidecar index whose writes can fall out of the
-SQLite transaction.
+table in the *same* `.db` file as `embeddings`, loaded as a SQLite extension.
+Keeping vectors in the same file avoids the crash-consistency hazard of a
+sidecar index whose writes can fall out of the SQLite transaction.
 
-Scope decision: rather than trying to keep the vec0 table incrementally in
-sync with individual `INSERT OR REPLACE`s on `embeddings` (fragile --
-`embeddings`'s hidden rowid can be reused by `INSERT OR REPLACE`'s
-delete+reinsert, and vec0 has no equivalent "replace" semantics), this module
-does a wholesale rebuild from the `embeddings` table. That is cheap enough at
-cairn's scale (one bulk SELECT + bulk INSERT) to run after every `cairn embed`.
+This module does a wholesale rebuild from the `embeddings` table rather than
+keeping the vec0 table incrementally in sync with individual `INSERT OR
+REPLACE`s (vec0 has no "replace" semantics; embeddings' hidden rowid can be
+reused by delete+reinsert).
 
-On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. Set it
-to `off` (or any value other than `sqlite-vec`) to force the brute-force
-cosine scan instead. Any load failure (extension loading disabled in this
-Python build, package not installed, wheel unavailable for the platform, etc.)
-degrades to the brute-force scan exactly like a missing table would.
+On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. Set it to
+`off` to force the brute-force cosine scan. Any load failure degrades to the
+brute-force scan.
 """
 from __future__ import annotations
 

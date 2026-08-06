@@ -20,7 +20,7 @@ class OKFBundle:
         # Lazily-built search index: concept_id -> {title, description, tags,
         # body_lower}. ``None`` means "not built yet"; built on first search()
         # call and invalidated by any mutation (write/delete) so it can never
-        # go stale. Avoids re-parsing every concept from disk on each query.
+        # go stale.
         self._index: Optional[Dict[str, Dict[str, Any]]] = None
 
     def _validate_concept_path(self, concept_id: str) -> Path:
@@ -55,9 +55,9 @@ class OKFBundle:
     def invalidate_search_index(self) -> None:
         """Drop the in-memory search index so it is rebuilt on the next search.
 
-        Callers that mutate the bundle outside ``write_concept`` (e.g. direct
-        ``unlink`` of a concept file from the memory/knowledge stores) should
-        invoke this so the index can never return stale or phantom entries.
+        Callers that mutate the bundle outside ``write_concept`` (e.g. a direct
+        ``unlink`` of a concept file) should invoke this so the index can never
+        return stale or phantom entries.
         """
         self._index = None
 
@@ -79,8 +79,7 @@ class OKFBundle:
 
         Returns ``{concept_id: {title, description, tags, body_lower, tags_str}}``.
         Built lazily on the first ``search`` call and reused across subsequent
-        queries so a multi-keyword or repeated search does not re-walk the tree
-        and re-parse from disk each time. Invalidated by ``write_concept`` and
+        queries. Invalidated by ``write_concept`` and
         ``invalidate_search_index``.
         """
         index: Dict[str, Dict[str, Any]] = {}
@@ -105,9 +104,8 @@ class OKFBundle:
     ) -> List[OKFConcept]:
         """Simple text search across concept title, description, tags, body.
 
-        Uses a lazily-built in-memory index so the bundle tree is walked and
-        parsed from disk at most once (on the first search), not once per
-        query. The index is invalidated whenever a concept is written.
+        Uses a lazily-built in-memory index; the index is invalidated whenever
+        a concept is written.
         """
         if self._index is None:
             self._index = self._build_search_index()
@@ -126,8 +124,7 @@ class OKFBundle:
             score = sum(h.count(query_lower) for h in haystacks)
             if score > 0:
                 # Parse the matching concept from disk only for the hits we
-                # actually return (keeps the index small and avoids holding
-                # full bodies of every concept in memory permanently).
+                # actually return (keeps the index small).
                 try:
                     concept = self.read_concept(cid)
                 except Exception as e:

@@ -1,10 +1,7 @@
 """Client detection: which AI coding clients are present for a workspace.
 
 Also owns `claude_desktop_config_path` (the OS-specific global Desktop config
-path), which detection needs. `resolve_cg_command`/`resolve_cg_str` live in
-``_common`` because client config generators need them too and must not import
-detect (which would pull detection into every client module); they are
-re-exported here for callers that import them from the detection module.
+path), which detection needs.
 """
 from __future__ import annotations
 

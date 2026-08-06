@@ -3,14 +3,12 @@
 Produces a graph-derived architectural summary per repo -- OKF concepts of
 type Wiki-Architecture, built from graph statistics (symbol-kind
 distribution, most-referenced classes, cross-repo deps). Deterministic, no
-LLM call, no external process: this is the reliable baseline, not a fallback.
+LLM call, no external process.
 
-Like the compass generators, wiki bodies are critic-checked: the deterministic
-critic verifies backtick-quoted file/symbol references against the L1 graph.
-A wiki body with broken references (e.g. citing a renamed symbol after a
-stale build) carries ``errors`` and is surfaced by the CLI; by default the
-write still proceeds (wiki is graph-sourced and low-hallucination-risk), but
-the critic verdict is returned for transparency.
+Wiki bodies are critic-checked: the deterministic critic verifies
+backtick-quoted file/symbol references against the graph. A body with broken
+references carries ``errors``; by default the write still proceeds, but the
+critic verdict is returned for transparency.
 """
 from __future__ import annotations
 
@@ -36,8 +34,8 @@ def generate_wiki_with_critic(
     """Generate wiki concepts and run the critic on each.
 
     Returns ``(concepts, critic_results)`` aligned by index. The critic is
-    informational here (graph-derived bodies rarely fail), but its verdict is
-    returned so callers can surface warnings or block on hard errors.
+    informational here; its verdict is returned so callers can surface
+    warnings or block on hard errors.
     """
     concepts = _graph_derived_wiki(repo, conn, bundle)
     results = [critic_concept(c, conn) for c in concepts]

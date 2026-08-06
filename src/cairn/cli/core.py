@@ -186,10 +186,8 @@ def build(repo, workspace, db, verbose, staging):
 
     target_db = db + ".tmp" if staging else db
 
-    # Phase-event handler: drive a single rich progress bar across all
-    # phases (scan -> parse -> insert -> resolve -> persist). The bar's
-    # description + total are updated in place as each phase begins, so the
-    # user sees one continuous bar instead of five separate ones.
+    # Phase-event handler: drive one progress bar across all phases
+    # (scan -> parse -> insert -> resolve -> persist).
     bar_state = {"bar": None, "task": None, "phase": None}
 
     def on_progress(phase, **kw):
@@ -237,9 +235,8 @@ def build(repo, workspace, db, verbose, staging):
             )
         except Exception:
             bar_state["bar"] = None
-            # --staging writes to a temp DB (db + ".tmp"). If build_graph raises
-            # the exception propagates past os.replace, leaving the half-built
-            # temp DB on disk. Remove it so a failed staging build doesn't leak.
+            # --staging writes to a temp DB; remove the half-built temp DB on
+            # failure so a failed staging build doesn't leak.
             if staging and os.path.exists(target_db):
                 try:
                     os.remove(target_db)
@@ -277,9 +274,8 @@ def build(repo, workspace, db, verbose, staging):
     except Exception as e:
         df_error = str(e)
     finally:
-        # Always close: a failed dataflow build must not leak the connection --
-        # an open write transaction pinned by an exception's traceback holds
-        # SQLite's writer lock and can lock out subsequent `cairn build`/`cairn embed`.
+        # Always close: a leaked connection can hold SQLite's writer lock and
+        # lock out subsequent `cairn build`/`cairn embed`.
         if conn is not None:
             conn.close()
 

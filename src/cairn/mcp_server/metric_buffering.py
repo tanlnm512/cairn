@@ -76,9 +76,9 @@ def _flush_metrics():
     import logging
     logger = logging.getLogger(__name__)
 
-    # Snapshot the buffer WITHOUT clearing it yet -- a failed flush then leaves
-    # the rows queued for the next attempt. The maxlen on the deque still caps
-    # unbounded growth during a long outage.
+    # Snapshot the buffer WITHOUT clearing it yet -- a failed flush leaves the
+    # rows queued for the next attempt. The deque's maxlen caps unbounded
+    # growth during a long outage.
     with _METRIC_LOCK:
         if not _METRIC_BUFFER:
             return
@@ -155,15 +155,11 @@ def _log_metric(tool_name: str, duration_ms: float, status: str = "ok",
 def instrument(fn):
     """Decorator: wraps an MCP tool with timing + error capture + metric logging.
 
-    Uses functools.wraps (not manual __name__/__doc__ copying) so that
-    __wrapped__ is set and inspect.signature(wrapper) resolves to the
-    original function's real parameters. FastMCP's @mcp.tool() introspects
-    the signature of whatever it decorates to build the tool's JSON schema;
-    without __wrapped__, it would only see (*args, **kwargs) and generate a
-    broken schema (and broken calls) for every tool.
-
-    Renamed from ``_instrument`` (was private in server.py) since it now
-    lives in its own module and is imported by every tools_*.py.
+    Uses functools.wraps so ``__wrapped__`` is set and
+    inspect.signature(wrapper) resolves to the original function's real
+    parameters. FastMCP's @mcp.tool() introspects the signature of whatever
+    it decorates to build the tool's JSON schema; without ``__wrapped__`` it
+    would only see (*args, **kwargs) and generate a broken schema.
     """
     import logging
     import traceback
@@ -190,11 +186,8 @@ def instrument(fn):
             _log_metric(name, duration_ms, "error", str(exc))
 
             # Re-raise so FastMCP's Tool.run converts the exception into a
-            # proper MCP error response (isError: true). Previously this
-            # returned a "[ERROR: ...]" prose string, which made every failure
-            # look like a successful HTTP-200 result -- clients that check
-            # isError never saw failures, and agents had to regex the error
-            # prefix out of prose.
+            # proper MCP error response (isError: true) rather than a prose
+            # string that looks like a successful result.
             raise
 
     return wrapper

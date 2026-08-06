@@ -1,12 +1,8 @@
 """Semantic + lexical search over knowledge documents.
 
-Mirrors src/memory/promotion.py:search_memory() pattern:
   1. Lexical (multi-token + cross-doc expansion) -- works without semantic extra
   2. Semantic fallback (cosine scan) -- when lexical empty
   3. Graph bridge -- cross_repo_deps for affects_repos matches
-
-Lexical search uses multi-token scoring with field weighting and cross-doc
-expansion via shared tags/affects_modules.
 """
 from __future__ import annotations
 
@@ -32,9 +28,7 @@ _WEIGHT_BODY = 1
 def _visible(concept, include_archived: bool) -> bool:
     """True unless the doc is archived and the caller didn't opt in.
 
-    Enforces the doc_status lifecycle at the read side. "superseded" docs
-    still surface by default (they're outdated-but-relevant, not retired);
-    only "archived" is excluded unless the caller explicitly asks for it.
+    "superseded" docs still surface by default; only "archived" is excluded.
     """
     if include_archived:
         return True
@@ -262,9 +256,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 
         out = []
         # Iterate the full ranked list (not scored[:limit]) and stop once we
-        # have `limit` visible results -- filtering archived docs *after*
-        # slicing to limit would silently return fewer than `limit` results
-        # whenever an archived doc would otherwise have placed in-range.
+        # have `limit` visible results.
         for score, doc_id, chunk in scored:
             if len(out) >= limit:
                 break
@@ -293,10 +285,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 def _cosine_scan(rows, q_blob, q_dim, threshold):
     """Cosine similarity scan. Returns [(score, doc_id, chunk), ...].
 
-    Thin adapter over the shared ``cairn.retrieval.cosine_scan`` so the
-    knowledge, symbols, and memory pipelines all share one implementation of
-    the numpy/pure-Python dual path. DB rows are reshaped into the
-    ``(vec_blob, dim, payload)`` triples cosine_scan expects.
+    Thin adapter over the shared ``cairn.retrieval.cosine_scan``.
     """
     from cairn.retrieval import cosine_scan
 

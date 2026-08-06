@@ -1,16 +1,13 @@
 """Synthetic corpus generator for the benchmark suites.
 
 Produces a deterministic, parameterized Python source tree that exercises the
-full build pipeline (parse → insert → resolve → embed) with a realistic-ish
+full build pipeline (parse -> insert -> resolve -> embed) with a realistic-ish
 call graph: classes with methods, cross-file calls, and imports. Seeded so
-runs across machines/sessions are directly comparable — critical for
-regression detection, where a non-deterministic corpus would make the timing
-signal noisy.
+runs across machines/sessions are directly comparable.
 
-The generated files are intentionally simple-but-interconnected: each module
-imports a couple of siblings and calls methods on them, so the resolver has
-real edges to follow and the query battery (get_callers/impact_analysis) has
-non-trivial blast radii rather than a flat list of isolated symbols.
+Each generated module imports a couple of siblings and calls methods on them,
+so the resolver has real edges to follow and the query battery has non-trivial
+blast radii rather than a flat list of isolated symbols.
 """
 from __future__ import annotations
 
@@ -92,10 +89,9 @@ def generate_corpus(
             lines.append("")
         (repo / f"{mod}.py").write_text("\n".join(lines), encoding="utf-8")
 
-    # An __init__.py makes the package importable for the relative imports
-    # above to be syntactically valid (the parser reads them as import edges
-    # regardless, but well-formed source avoids parse-error noise in verbose
-    # builds).
+    # An __init__.py makes the package importable for the relative imports to
+    # be syntactically valid (the parser reads them as import edges regardless,
+    # but well-formed source avoids parse-error noise in verbose builds).
     (repo / "__init__.py").write_text("", encoding="utf-8")
     return repo
 

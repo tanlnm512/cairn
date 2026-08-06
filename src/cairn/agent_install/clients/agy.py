@@ -23,9 +23,6 @@ def agy_config_path() -> Path:
       Windows: %APPDATA%/gemini/config/mcp_config.json
       Linux:   $XDG_CONFIG_HOME/gemini/config/mcp_config.json
                (falling back to ~/.config/gemini/config/mcp_config.json)
-
-    Mirrors the per-OS handling of ``claude_desktop_config_path`` so the
-    config is found on Windows (``%APPDATA%``) and XDG-aware Linux setups.
     """
     if sys.platform.startswith("win"):
         base = Path(os.environ.get("APPDATA", str(Path.home())))

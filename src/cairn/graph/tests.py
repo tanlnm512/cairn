@@ -60,12 +60,9 @@ def is_test_symbol(file_path: str, symbol_name: str = "", qualified_name: str = 
     result set; the path check is a substring scan over ~20 patterns.
     """
     path_hit = bool(file_path) and any(p in file_path for p in _TEST_PATH_PATTERNS)
-    # Avoid a false positive where a file is named `Test.kt` / `*Tests.java` but
-    # lives under a production source root (`src/main/`, `src/release/`). A bare
-    # `Test` filename alone is a weak signal; the path must corroborate it by
-    # being outside mainline source roots. (Caught in audit 2026-07-30: 7 real
-    # `src/main/.../Test.kt` files in customer-android would otherwise be
-    # mislabeled as tests.)
+    # A bare `Test` filename is a weak signal; under a production source root
+    # (`src/main/`, `src/release/`) only strong directory signals count, not
+    # filename-only patterns like "Test.kt".
     if path_hit and "/src/main/" in file_path:
         # Only the strong directory signals (src/test, src/androidTest, tests/,
         # __tests__, spec/) survive in a production root -- NOT filename-only
@@ -88,8 +85,6 @@ def is_test_symbol(file_path: str, symbol_name: str = "", qualified_name: str = 
     # The name signal (suffix Test/Spec) is weak on its own: A/B-test classes,
     # test-data builders, and utility classes named `Test` live in `src/main/`.
     # Demote it in production roots unless a strong directory signal also fires.
-    # (Audit 2026-07-30: `PadBookingABTest` in src/main was a name-only false
-    # positive after the path guard alone.)
     if name_hit and file_path and "/src/main/" in file_path and not path_hit:
         name_hit = False
     if path_hit and name_hit:

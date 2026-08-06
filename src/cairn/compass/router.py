@@ -22,9 +22,9 @@ from ..graph.tokenize import BASE_STOP_WORDS, simple_tokenize
 from ..okf.bundle import OKFBundle
 
 # Keyword -> (intent, layer). Order matters: first match wins.
-# L5 patterns MUST come before L1 because "impact of changing" also matches
-# L1's \b(impact|...) and "epic" could match L1 patterns. The more specific
-# patterns (multi-word phrases) are placed first.
+# L5 patterns MUST precede L1: "impact of changing" also matches L1's
+# \b(impact|...) and "epic" could match L1 patterns. More specific multi-word
+# phrases are placed first.
 INTENT_PATTERNS = [
     # L5: knowledge (specific phrases first — must precede L1's broad "impact")
     (r"\b(business rule|business policy)\b", "knowledge_lookup", "L5"),
@@ -249,12 +249,10 @@ def _get_compass(token: str, bundle: OKFBundle) -> List[str]:
 
 
 def _search_memory(query: str, bundle: OKFBundle, conn: sqlite3.Connection) -> List[str]:
-    """Routes through the shared search_memory() (lexical + semantic
-    fallback) instead of a bare substring scan, so ask_compass's L4/degraded
-    results match recall_memory's quality rather than a separate, weaker
-    implementation. session_id is intentionally omitted -- routing/degraded
-    fallback shouldn't inflate cross_session_refs for queries that weren't
-    an explicit memory recall.
+    """Routes through the shared search_memory() (lexical + semantic fallback).
+
+    session_id is intentionally omitted so routing/degraded fallback doesn't
+    inflate cross_session_refs for queries that weren't an explicit memory recall.
     """
     from ..memory.promotion import search_memory
 
@@ -282,13 +280,10 @@ def _extract_symbol_token(query: str) -> str:
 def _extract_query_tokens(query: str) -> List[str]:
     """Extract meaningful search tokens from a natural-language query.
 
-    Returns a deduplicated list of tokens suitable for FTS5 search:
-    - CamelCase symbols (>=3 chars, stop-filtered) — kept in original case
-    - Lowercase technical terms (>=3 chars after splitting on non-alphanumeric,
-      stop-filtered) — skipped if they duplicate a CamelCase token
-
-    Example: "where do we handle retries and backoff logic"
-    -> ["retries", "backoff", "logic"]
+    Returns a deduplicated list suitable for FTS5 search: CamelCase symbols
+    (>=3 chars, stop-filtered, kept in original case) and lowercase technical
+    terms (>=3 chars, stop-filtered), skipping lowercase forms that duplicate a
+    CamelCase token.
     """
     tokens = []
     seen = set()

@@ -4,28 +4,19 @@ Extracts structs, interfaces, type aliases, functions, methods (with their
 receiver type as ``parent_scope``), call expressions, and imports into the
 shared ParsedFile model.
 
-Go-specific shape notes (verified against the tree-sitter-go grammar):
+Go-specific shape notes:
 
-- ``type_declaration`` wraps one or more ``type_spec`` nodes (Go allows
-  ``type ( A = int; B struct{} )`` grouped declarations). Each ``type_spec``
+- ``type_declaration`` wraps one or more ``type_spec`` nodes. Each ``type_spec``
   carries a ``type_identifier`` (the name) and one of ``struct_type`` /
   ``interface_type`` / a type alias body.
 
-- ``function_declaration`` has no receiver: ``func identifier(params) block``.
+- ``function_declaration`` has no receiver; ``method_declaration`` does, and the
+  receiver type becomes the method's ``parent_scope``.
 
-- ``method_declaration`` has a receiver: ``func (recv RecvType) Name(params)
-  block``. The receiver is the first ``parameter_list`` child and the method
-  name is a ``field_identifier`` (not ``identifier``). The receiver type becomes
-  the method's ``parent_scope`` so ``func (s *Server) Handle()`` is scoped under
-  ``Server`` -- the one thing the Java parser doesn't need but Go does.
+- ``call_expression`` targets are either a bare ``identifier`` or a
+  ``selector_expression`` (``pkg.Foo()`` / ``recv.Method()``).
 
-- ``call_expression`` targets are either a bare ``identifier`` (``Foo()``) or a
-  ``selector_expression`` (``pkg.Foo()`` / ``recv.Method()``). The called name
-  is the trailing ``field_identifier``/``identifier``; the receiver (if any) is
-  captured for the resolver's type-aware tier.
-
-- Imports: single (``import "fmt"``) or grouped (``import ( ... )``), each an
-  ``import_spec`` whose path is an ``interpreted_string_literal``.
+- Imports: single (``import "fmt"``) or grouped (``import ( ... )``).
 """
 from __future__ import annotations
 
@@ -65,11 +56,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
         return pf
 
     def _walk(self, node: Node, source: bytes, pf: ParsedFile):
-        """Depth-first traversal, recursing into every child by default.
-
-        Visitors for specific node types either consume the subtree (return after
-        handling children themselves) or fall through to the default child walk.
-        """
+        """Depth-first traversal, recursing into every child by default."""
         for child in node.children:
             self._visit(child, source, pf)
 
@@ -115,8 +102,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
             edge = self._parse_call(node, source)
             if edge:
                 pf.edges.append(edge)
-            # A call expression may itself contain nested calls (e.g. arguments);
-            # keep walking so we don't miss them.
+            # A call expression may contain nested calls (e.g. arguments).
             self._walk(node, source, pf)
             return
 
@@ -177,7 +163,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
 
     def _parse_method(self, node: Node, source: bytes) -> Optional[Symbol]:
         """A method_declaration: ``func (recv RecvType) Name(params) block``."""
-        # The method name is a ``field_identifier`` child (NOT an identifier).
+        # The method name is a ``field_identifier`` child.
         name = None
         receiver_type = None
         param_lists = []
@@ -290,10 +276,8 @@ class GoParser(BaseParser, TreeSitterParserBase):
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
         """call_expression -> Edge(kind='calls').
 
-        Target is the callee name: bare ``Foo()`` -> ``Foo``; ``pkg.Foo()`` or
-        ``recv.Method()`` -> ``Foo``/``Method``. When there's a receiver, capture
-        its base type for the resolver's type-aware tier (best-effort: the
-        receiver is often a local variable whose type isn't visible here).
+        Captures the callee name and, when there's a receiver, its base type
+        for the resolver's type-aware tier.
         """
         callee = None
         receiver_text = None
@@ -373,8 +357,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
 
 
 # Tree-sitter node kinds that represent a type reference in Go. Used by the
-# signature/return-type and receiver-type extraction. ``qualified_type`` covers
-# ``pkg.Type``; ``pointer_type`` is handled separately (it wraps a base type).
+# signature/return-type and receiver-type extraction.
 _TYPE_NODE_KINDS = {
     "type_identifier",
     "qualified_type",

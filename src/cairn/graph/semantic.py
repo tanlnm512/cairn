@@ -25,13 +25,10 @@ def _candidates_from_ann_hits(
     conn: sqlite3.Connection, ann_hits: List[Tuple[str, float]], threshold: float
 ) -> List[dict]:
     """Turn ``ann_index.ann_query``'s (symbol_id, score) pairs into the same
-    candidate dict shape the brute-force scan produces, so both paths feed
-    the same threshold-filter / rerank code below.
+    candidate dict shape the brute-force scan produces.
 
-    ``ann_hits`` is already ANN-distance-ordered (most similar first); this
-    only adds metadata (name/kind/qualified_name/file_path/repo/chunk) via a
-    targeted IN query and re-applies ``threshold`` (the vec0 MATCH query has
-    no threshold concept of its own — it just returns the nearest k).
+    Re-applies ``threshold`` (the vec0 MATCH query has no threshold concept of
+    its own — it just returns the nearest k).
     """
     ids = [sid for sid, score in ann_hits if score >= threshold]
     if not ids:
@@ -79,90 +76,54 @@ def semantic_search(
 ) -> List[dict]:
     """Return top-k symbols by cosine similarity to a natural-language query.
 
-    This is the semantic counterpart to ``search_symbols``: where FTS5 matches
-    tokens, this matches *meaning* — synonyms, paraphrases, and cross-language
-    concepts land close in embedding space even with zero shared tokens.
+    The semantic counterpart to ``search_symbols``: matches *meaning*
+    (synonyms, paraphrases, cross-language concepts) rather than tokens.
 
-    Loads the query embedding via ``embeddings.embed_query`` (backend-selected),
-    then cosine-compares it against every stored vector for the current model.
-    The scan is O(n) over the embeddings table; at 50k chunks it's ~50ms with
-    numpy and ~2s in pure Python — acceptable for interactive queries and
-    avoids any native vector extension. Only candidates with cosine
-    ``score >= threshold`` survive this stage.
+    Loads the query embedding via ``embeddings.embed_query`` then
+    cosine-compares it against every stored vector for the current model;
+    only candidates with cosine ``score >= threshold`` survive.
 
-    When ``CAIRN_FUSION`` is unset or not ``"0"`` (**the default**), the
-    surviving vector candidates are blended with a BM25 (``search_symbols``)
-    candidate list via Reciprocal Rank Fusion (``src.graph.fusion.rrf_fuse``).
-    This is intentional — it lets a strong lexical hit rank alongside a
-    moderate semantic one — but it means each result's ``score`` is
-    overwritten with the *RRF rank score* (``1/(k+rank)``: small, e.g.
-    0.01-0.02, and tightly clustered by rank) instead of the cosine value
-    computed above. ``threshold`` only gates which vector candidates enter
-    the fusion; it does not gate the final result set, so a query with zero
-    cosine hits above ``threshold`` can still return results sourced purely
-    from BM25 (``provenance="bm25"``, initial ``score`` of ``0.0`` before the
-    RRF rank score overwrites it). Set ``CAIRN_FUSION=0`` to skip this
-    stage and get comparable cosine scores back in ``score`` instead.
+    By default (``CAIRN_FUSION`` unset or not ``"0"``) the surviving vector
+    candidates are blended with a BM25 list via Reciprocal Rank Fusion. When
+    fusion is on, each result's ``score`` is the RRF rank score (small, e.g.
+    0.01-0.02), not the cosine value; a query with zero cosine hits above
+    ``threshold`` can still return BM25-only results
+    (``provenance="bm25"``). Set ``CAIRN_FUSION=0`` for comparable cosine
+    scores.
 
-    When ``CAIRN_RERANK=1`` (see ``src.graph.reranker``), this becomes a
-    two-stage retrieve-then-rerank pipeline: the cosine scan above pulls a
-    wider candidate pool (``max(limit * 5, 50)``) instead of exactly
-    ``limit``, a cross-encoder re-scores that shortlist on ``(query, chunk)``
-    pairs, and the result is truncated to ``limit`` by the *rerank* score
-    instead of the cosine/fusion score. Reranking is opt-in and degrades to
-    plain ordering on any failure (not installed, model load error, etc.) —
-    check the ``reranked`` field on the result to know which path ran.
+    When ``CAIRN_RERANK=1``, this becomes a two-stage retrieve-then-rerank
+    pipeline: a wider candidate pool (``max(limit * 5, 50)``) is cross-encoder
+    re-scored and truncated to ``limit`` by the rerank score. Degrades to plain
+    ordering on any failure (check the ``reranked`` field).
 
-    Every result carries a ``provenance`` (``"semantic"``, ``"bm25"``, or
-    ``"fused(bm25+semantic)"``) and a ``score`` so callers never mistake a
-    fuzzy similarity hit for a grounded structural edge — the resolver's
-    exact/ambiguous/unresolved contract stays the source of truth for
-    *structural* queries. ``score`` is a comparable 0..1 cosine value only
-    when ``CAIRN_FUSION=0``; by default it's an RRF rank score, not a
-    similarity measure (see above). ``reranked=True`` results also carry a
-    ``rerank_score`` — not directly comparable to plain cosine ``score``
-    values from a non-reranked call.
-
-    When ``CAIRN_ANN_BACKEND=sqlite-vec`` (see ``src.graph.ann_index``)
-    and an index has been built for the current model (``cairn embed
-    --build-index``), the candidate pool comes from a native ANN query
-    instead of the brute-force scan below. Falls back to the brute-force scan
-    transparently if the extension can't load or no index exists yet for
-    this model.
+    When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
+    model, the candidate pool comes from a native ANN query instead of the
+    brute-force scan (transparent fallback).
 
     When ``include_callers=True``, each result is enriched with a small
-    ``"callers"``/``"callees"`` neighbor list (1-hop, precise resolution
-    only, capped at 5 each) so the tool returns a small subgraph instead of a
-    flat list — the join back to the graph that this chunk's own docstring
-    says a semantic hit is "meant to be" (see ``chunk_for_symbol``), done
-    automatically instead of requiring a separate ``get_callers`` call per
-    hit. Off by default: adds up to ``2 * limit`` extra graph queries, real
-    latency for a feature not every caller needs.
+    ``"callers"``/``"callees"`` neighbor list (1-hop, precise resolution only,
+    capped at 5 each). Off by default: adds up to ``2 * limit`` extra graph
+    queries.
 
-    Returns ``[{"id", "name", "kind", "qualified_name", "file_path", "repo",
-    "score", "chunk", "provenance", "reranked"}]`` (plus ``"callers"``/
-    ``"callees"`` when requested) sorted by score (or rerank_score, when
-    reranked) descending. ``score`` is an RRF rank score unless
-    ``CAIRN_FUSION=0`` (see above) or ``reranked=True``.
+    Every result carries ``provenance`` (``"semantic"``, ``"bm25"``, or
+    ``"fused(bm25+semantic)"``) and ``score``. Returns
+    ``[{"id", "name", "kind", "qualified_name", "file_path", "repo", "score",
+    "chunk", "provenance", "reranked"}]`` (plus ``"callers"``/``"callees"`` when
+    requested) sorted by score (or rerank_score) descending.
     """
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
     from cairn.graph import ann_index as ann
 
     # Under the dep-free hash fallback the embedding carries only token-overlap
-    # signal, so a "semantic" provenance is degraded. Annotate provenance strings
-    # so the MCP renderer (which shows [<provenance> <score>]) surfaces it. Only
-    # the semantic contribution is degraded -- fused results still carry a real
-    # BM25 signal -- so we tag both rather than rewrite the whole label.
+    # signal, so annotate provenance strings to surface the degradation.
     _hash = emb.is_hash_fallback()
     _sem_prov = "semantic (hash backend)" if _hash else "semantic"
     _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
 
     rerank_on = rrk.rerank_enabled()
-    # When reranking, retrieve a wider shortlist than the caller asked for --
-    # the cross-encoder's job is to re-sort a candidate pool, not the whole
-    # corpus. Plain cosine ordering (rerank off) keeps today's behavior of
-    # slicing to exactly `limit` from the cosine scan.
+    # When reranking, retrieve a wider shortlist for the cross-encoder to
+    # re-sort; plain cosine ordering slices to exactly `limit`.
     pool_size = max(limit * 5, 50) if rerank_on else limit
 
     model = emb.current_model()
@@ -172,19 +133,12 @@ def semantic_search(
     if ann.ann_backend_enabled():
         ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
         if ann_hits is not None:
-            # ANN path available and an index exists for this model -- skip
-            # the brute-force scan below entirely.
+            # ANN path available and an index exists for this model.
             candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
-        # else: extension unavailable or no index built yet for this model --
-        # candidates stays None, falls through to the brute-force scan below
-        # exactly as if ANN were never enabled.
 
     if candidates is None:
-        # Brute-force cosine scan fallback (used when the ANN index isn't
-        # available). Hard-cap the candidate pool so the fetchall() can't grow
-        # unbounded with corpus size -- the preferred path is the sqlite-vec
-        # ANN index; this is just the safety-net fallback. 50k rows is ~50ms
-        # with numpy / ~2s pure-Python, well past any interactive result set.
+        # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
+        # fetchall() can't grow unbounded with corpus size.
         brute_force_limit = 50000
         rows = conn.execute(
             "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
@@ -199,10 +153,8 @@ def semantic_search(
         if not rows:
             return []
 
-        # Prefer numpy for the scan (fast); fall back to pure Python if the
-        # extra isn't installed. Both produce identical cosine scores. The
-        # scan core itself is shared via cairn.retrieval.cosine_scan so
-        # symbols / knowledge / memory all use one implementation.
+        # Prefer numpy for the scan; fall back to pure Python. Both produce
+        # identical cosine scores. Shared via cairn.retrieval.cosine_scan.
         from cairn.retrieval import cosine_scan
 
         triples = [(r["vec"], r["dim"], r) for r in rows]
@@ -300,11 +252,8 @@ def semantic_search(
 def _attach_callers(conn: sqlite3.Connection, results: List[dict], neighbor_limit: int = 5) -> None:
     """Mutates each result dict in place, adding a small 1-hop neighbor list.
 
-    Precise resolution only (``get_callers``/``get_callees`` default,
-    ``fuzzy=False``) -- a semantic hit enriched with imprecise neighbors would
-    undercut the whole point of keeping fuzzy and structural provenance
-    separate. Missing/errored lookups degrade to an empty list per result,
-    never raise -- this is a nice-to-have enrichment, not core retrieval.
+    Precise resolution only (``fuzzy=False``). Missing/errored lookups degrade
+    to an empty list per result, never raise.
     """
     for item in results:
         name = item.get("name")

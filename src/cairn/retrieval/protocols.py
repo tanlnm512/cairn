@@ -1,17 +1,14 @@
 """Retriever / Reranker / Fusion protocol trio.
 
-The retrieval pipeline is conceptually three composable stages:
+The retrieval pipeline is three composable stages:
 
   retrieve → fuse → rerank
 
-This module defines the three protocols as the swappable seams. The actual
+This module defines the three protocols as the swappable seams. Concrete
 fusion (Reciprocal Rank Fusion) and cross-encoder reranking live in
 ``graph.fusion`` / ``graph.reranker`` and are wired directly by
-``graph.semantic`` -- they are invoked by name there, not through these
-protocol classes, so this module carries no concrete providers. The protocols
-are intentionally narrow so a future provider (Cohere rerank, pgvector
-retriever, a learned-fusion model) plugs in by implementing one class -- no
-edits to the call sites.
+``graph.semantic``. The protocols are narrow so a new provider plugs in by
+implementing one class.
 """
 from __future__ import annotations
 
@@ -23,12 +20,10 @@ from typing import List, Optional, Protocol, Tuple, runtime_checkable
 class Candidate:
     """A single retrieved item flowing through the pipeline.
 
-    The minimal shared shape across symbols / knowledge / memory pipelines.
     ``id`` is the join key used by fusion; ``score`` is the retrieval score
     (cosine, then possibly an RRF rank score after fusion, then a rerank score
-    after reranking). ``payload`` carries whatever domain-specific fields the
-    producing retriever attached (name/kind/file_path for symbols, title/
-    doc_type for knowledge, the OKFConcept for memory).
+    after reranking). ``payload`` carries domain-specific fields from the
+    producing retriever.
     """
 
     id: str

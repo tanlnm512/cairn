@@ -134,10 +134,7 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
         loaded = _load_json_or_none(path)
         if loaded is None:
             # Malformed/unreadable JSON: do NOT clobber the user's config. Back
-            # it up so the data is recoverable, then start fresh. (Previously
-            # this silently overwrote with a cairn-only config, losing whatever
-            # the user had -- e.g. a hand-edited file with a trailing comma,
-            # or one mid-edit by another tool.)
+            # it up so the data is recoverable, then start fresh.
             backup = path.with_suffix(path.suffix + ".bak")
             try:
                 backup.write_bytes(path.read_bytes())
@@ -359,10 +356,8 @@ def _strip_mcp_zcode(path: Path, res) -> None:
 def _strip_mcp_opencode(path: Path, res) -> None:
     """Remove the cairn server from an opencode.json, leaving others intact.
 
-    opencode's MCP shape is a flat ``mcp.<name>`` dict (no nested ``servers``
-    key like ZCode). Cleans up the empty ``mcp`` key when cairn was the
-    only server. Also strips a stray ``.opencode/mcp.json`` if an earlier
-    installer wrote one (opencode itself does not read it).
+    Also strips a stray ``.opencode/mcp.json`` if an earlier installer wrote one
+    (opencode itself does not read it).
     """
     data = _load_json_or_none(path)
     if isinstance(data, dict):
@@ -375,8 +370,7 @@ def _strip_mcp_opencode(path: Path, res) -> None:
                 data.pop("mcp", None)
             _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
             res.written.append(f"stripped cairn from {path}")
-    # Cleanup: an earlier installer wrote .opencode/mcp.json (wrong path,
-    # never read by opencode). Remove it if present so uninstall is complete.
+    # Cleanup: remove a stray .opencode/mcp.json if it carries our server.
     stray = path.parent / ".opencode" / "mcp.json"
     if stray.exists():
         # Only treat it as ours if it carries our server.

@@ -1,18 +1,11 @@
 """Boot-time freshness: catches up the graph with disk edits at `cairn serve` start.
 
 **A long-running `cairn serve` process does NOT see source edits made after it
-started.** This module runs once at boot to absorb edits made while the
-server was down; it does not provide per-query freshness. Restart the server
-(or run `cairn build`/`cairn update` from the CLI, which re-indexes directly
-rather than going through this module) to pick up mid-session changes.
-
-Architecture:
-    1. `ensure_fresh_force(conn, workspace)` — called once, at `cairn serve`
-       boot (`server.run()`). stat()-based check of files table vs disk;
-       re-indexes only changed files. No caching -- always runs when called.
-    2. `invalidate_gitignore_cache(path)` — clears scanner's gitignore cache
-       when a .gitignore changes, so subsequent scans pick up new rules.
-       Called by `_do_catch_up` when .gitignore files are in the changed set.
+started.** This module runs once at boot to absorb edits made while the server
+was down; it does not provide per-query freshness. ``ensure_fresh_force`` does
+a stat()-based check of the files table vs disk and re-indexes only changed
+files. ``invalidate_gitignore_cache`` clears the scanner's gitignore cache
+when a .gitignore changes.
 """
 from __future__ import annotations
 
@@ -61,12 +54,9 @@ def _detect_changed(conn, workspace: str) -> list[str]:
         except Exception:
             continue
 
-        # Safety net: if the repo_name-keyed lookup returns nothing (e.g. the
-        # DB was built with a workspace whose root name differs from the
-        # current one, or a mid-transition DB), fall back to all rows so we
-        # don't mis-classify every file as "new" and re-index the whole
-        # workspace on every boot (20s+ on a large repo, which blocks cairn
-        # serve's stdio startup past the MCP client's connect timeout).
+        # Safety net: if the repo_name-keyed lookup returns nothing, fall back
+        # to all rows so we don't mis-classify every file as "new" and re-index
+        # the whole workspace on every boot.
         if not file_rows:
             try:
                 file_rows = conn.execute(
@@ -76,8 +66,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
                 continue
 
         for row in file_rows:
-            # files.path is repo-relative (portable); resolve to absolute for
-            # stat via the single chokepoint. Legacy absolute paths pass through.
+            # files.path is repo-relative; resolve to absolute via the chokepoint.
             p = Path(scanner_mod.resolve_file_path(workspace, repo_name, row["path"]))
             try:
                 st = p.stat()
@@ -94,8 +83,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
                 changed.append(str(p))
 
         # Detect NEW source files not yet in the DB. Storage is repo-relative;
-        # the scanner yields absolute, so compare on the relative form (with a
-        # legacy absolute-form fallback for un-rebuilt DBs).
+        # the scanner yields absolute, so compare on both forms.
         existing = {row["path"] for row in file_rows}
         for src in scanner_mod.iter_source_files(repo_path):
             rel = str(src.relative_to(repo_path)) if str(src).startswith(str(repo_path)) else str(src)
@@ -106,10 +94,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
 
 
 def ensure_fresh_force(conn, workspace: str) -> int:
-    """Detect and re-index disk changes. The only freshness entry point that
-    actually runs today -- called once, at `cairn serve` boot. See module
-    docstring: there is no per-query equivalent currently wired in.
-    """
+    """Detect and re-index disk changes. Called once at `cairn serve` boot."""
     return _do_catch_up(conn, workspace)
 
 

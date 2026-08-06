@@ -79,10 +79,9 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
 
     # --- MCP registration -------------------------------------------------
     # Claude Code only reads a *workspace* `.mcp.json`; a global `~/.mcp.json`
-    # is NOT picked up. So for workspace scope we write the file, but for
-    # global scope we register via `claude mcp add --scope user` (the CLI's
-    # supported global path). The subprocess is best-effort: if the `claude`
-    # CLI is absent we record a warning so the user knows MCP wasn't wired.
+    # is NOT picked up. For workspace scope we write the file; for global scope
+    # we register via `claude mcp add --scope user`. The subprocess is
+    # best-effort: if the `claude` CLI is absent we record a warning.
     if scope == "workspace":
         _merge_json_file(base / ".mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
     else:
@@ -148,5 +147,5 @@ def uninstall(ws: Path, res: InstallResult) -> None:
         _rm_if_exists(ws / ".claude" / "commands" / f"{n}.md", res)
     _rm_if_exists(ws / ".claude" / "agents" / "cairn-explorer.md", res)
     _rm_if_exists(ws / ".claude" / "agents" / "knowledge-steward.md", res)
-    _rm_if_exists(ws / ".claude" / "agents" / "cairn-agent.md", res)  # renamed; clean up the old filename
+    _rm_if_exists(ws / ".claude" / "agents" / "cairn-agent.md", res)  # legacy filename cleanup
     _strip_hooks(ws / ".claude" / "settings.json", res)

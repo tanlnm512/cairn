@@ -70,10 +70,8 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
 
                 fact_errors = outcome.get("fact_errors") or []
                 if fact_errors:
-                    # Mirror the deterministic path: a concept that exhausted its
-                    # revise cycles with remaining fact errors must NOT ship to
-                    # disk. Previously the LLM path wrote unconditionally and only
-                    # printed the errors, leaking an unverified concept.
+                    # A concept that exhausted its revise cycles with remaining
+                    # fact errors must NOT ship to disk.
                     click.echo(
                         f"compass {concept.concept_id}: NOT written — "
                         f"{len(fact_errors)} unresolved fact error(s) after "
@@ -236,24 +234,10 @@ def compass_gaps(db, knowledge):
 def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm):
     """Generate a compass for a business FLOW, traced from an entry-point symbol.
 
-    Unlike `compass generate <module>` (which answers "what lives in this
-    directory?"), this traces the downward call chain from an entry point --
-    an HTTP handler, CLI command, Activity.onCreate, or any public symbol --
-    across module boundaries, and synthesizes a narrative of what happens
-    when it runs.
-
-    The traced chain, branch points, and terminal calls all come from the L1
-    graph (no LLM required for the deterministic path). The critic gates the
-    write just as it does for module compasses.
-
-    Use --as-workflow to also generate a Knowledge-workflow doc (procedural
-    knowledge) from the same trace. The workflow's steps are the traced call
-    chain, each anchored to its symbol/file — editable via `cairn knowledge
-    workflow trace` after generation.
-
-    Use --use-llm to queue the flow for agent-decoupled synthesis instead of
-    the deterministic template. An agent with the cairn skill can then
-    process it via `cairn task claim/complete`.
+    Traces the downward call chain from an entry point (HTTP handler, CLI
+    command, Activity.onCreate, etc.) across module boundaries and synthesizes
+    a narrative. Use ``--as-workflow`` to also generate a Knowledge-workflow
+    doc, or ``--use-llm`` to queue for agent-decoupled synthesis.
     """
     from ..compass.generator import _gather_flow_facts, generate_flow_compass, generate_flow_workflow
     from ..compass.critic import critic_concept
@@ -318,8 +302,7 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
         concept = generate_flow_compass(entry, conn, bundle)
 
         # Critic gate (same contract as the module compass). Run it BEFORE the
-        # dry-run return so --dry-run reflects the real verdict, not a pre-critic
-        # body. (Previously dry-run returned here without ever calling the critic.)
+        # dry-run return so --dry-run reflects the real verdict.
         result = critic_concept(concept, conn)
     finally:
         conn.close()
@@ -371,14 +354,9 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
 def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
     """Find business flows (rich call chains) that lack a flow compass.
 
-    The flow equivalent of `compass gaps` (which finds uncovered modules).
     Lists functions/methods with >= --min-edges resolved outgoing calls that
-    don't yet have a `compass/flow-*` file, sorted by richness (most callees
-    first). Already-documented flows are marked [DONE].
-
-    Use --generate to batch-generate flow compasses for all undocumented flows.
-    Name collisions (e.g. multiple `handleCommand` methods) are resolved by
-    symbol ID, so each gets its own compass file.
+    don't yet have a `compass/flow-*` file, sorted by richness. Use
+    ``--generate`` to batch-generate flow compasses for all undocumented flows.
     """
     from ..compass.flow_gaps import detect_flow_gaps
     from ..okf.bundle import OKFBundle

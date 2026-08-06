@@ -41,8 +41,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             line_count=source.count(b"\n") + 1,
         )
         # Parsers are cached singletons reused across files, so reset all
-        # per-file accumulators here -- otherwise edges from file N bleed into
-        # file N+1's ParsedFile.
+        # per-file accumulators here.
         self._pending_edges = []
         self._scope = []
         self._scope_kinds = []
@@ -160,10 +159,9 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_field(self, node: Node, source: bytes) -> List[Symbol]:
-        # field_declaration: modifiers type variable_declarator (= value);
+        # field_declaration: modifiers type variable_declarator (= value).
         # A single declaration may define several names (e.g. ``int a, b, c;``),
-        # so emit one Symbol PER variable_declarator. Modifiers and the field
-        # span are shared across all declarators.
+        # so emit one Symbol per variable_declarator.
         mods = self._collect_modifiers(node, source)
         syms: List[Symbol] = []
         for child in node.children:
@@ -252,14 +250,9 @@ class JavaParser(BaseParser, TreeSitterParserBase):
                 yield from child.children
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
-        # method_invocation: (object '.')? name '(' args ')'
-        #   bar()           -> [identifier=bar, argument_list]
-        #   obj.method()    -> [identifier=obj, '.', identifier=method, ...]
-        #   Other.static()  -> same shape as obj.method()
-        # The called name is the LAST identifier before the argument_list --
-        # the first identifier (when present) is the receiver/object, not the
-        # method. Returning the first identifier mis-records every qualified
-        # call edge onto the receiver.
+        # method_invocation: (object '.')? name '(' args ')'. The called name is
+        # the LAST identifier before the argument_list -- the first identifier
+        # (when present) is the receiver, not the method.
         owner = self._current_edge_owner()
         callee = None
         receiver_text = None

@@ -5,14 +5,11 @@ Removes, in order:
   2. git hooks        — post-commit hooks (cairn hooks uninstall)
   3. graph + store    — the current workspace's store dir, or all of
                         ``~/.cairn`` with --full
-  4. cairn binary        — via uv / pipx / pip, plus stale in-tree build artifacts
+  4. cairn binary     — via uv / pipx / pip, plus stale in-tree build artifacts
 
-Mirrors scripts/uninstall.sh but runs natively so it works from a wheel/pipx/uv
-install (the shell script is not packaged). Store resolution reuses paths.py,
-which is the single correct source of truth — the shell script's bugs came from
-reimplementing this in bash.
-
-CLAUDE.md / AGENTS.md are never removed (created create-if-absent only).
+Runs natively so it works from a wheel/pipx/uv install. Store resolution
+reuses paths.py (the single source of truth). CLAUDE.md / AGENTS.md are never
+removed (created create-if-absent only).
 """
 from __future__ import annotations
 
@@ -30,18 +27,15 @@ from ..paths import store_key
 
 
 def _home() -> Path:
-    """CAIRN_HOME read lazily, so tests/processes that set the env var
-    after import are honored. (paths.py binds it once at import time.)"""
+    """CAIRN_HOME read lazily so the env var set after import is honored
+    (paths.py binds it once at import time)."""
     return Path(os.environ.get("CAIRN_HOME", str(Path.home() / ".cairn")))
 
 
 # ─── detection helpers ─────────────────────────────────────────────────────
 
 def _detect_install_method() -> str:
-    """How cairn-intel was installed: 'uv', 'pipx', 'pip', 'venv', or 'unknown'.
-
-    Same logic as upgrade.py but extended with the venv (source checkout) case.
-    """
+    """How cairn-intel was installed: 'uv', 'pipx', 'pip', 'venv', or 'unknown'."""
     exe = sys.executable
     try:
         r = subprocess.run(
@@ -140,9 +134,8 @@ def _resolve_store_target(ws: str, full: bool) -> tuple[Path, bool] | None:
     - --full                                    -> (home, True)
     - workspace has a pinned store              -> (that store, False)
     - workspace not pinned, but home has stores -> (home, True)
-      (mirrors scripts/uninstall.sh: don't say "nothing to remove" when
-      ~/.cairn clearly holds stores — the user is running from the tool
-      repo or an unregistered dir.)
+      (don't say "nothing to remove" when ~/.cairn clearly holds stores --
+      the user is running from the tool repo or an unregistered dir.)
     """
     home = _home()
     if full or not (home / store_key(Path(ws))).exists():
@@ -291,9 +284,6 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
     the entire ~/.cairn (all workspaces' stores). CLAUDE.md / AGENTS.md and
     your source repos are never touched.
 
-    Equivalent to scripts/uninstall.sh, but native — works from any install
-    (uv / pipx / pip / venv), not just a source checkout.
-
     \b
     Examples:
       cairn uninstall                    # interactive, current workspace
@@ -301,9 +291,8 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
       cairn uninstall --graph-only -y    # just the store
       cairn uninstall --dry-run          # preview only
     """
-    # Resolve workspace the same way install-agents / uninstall-agents do:
-    # explicit flag > env > cwd. NOT the ancestor walk (which can wrongly
-    # resolve to a parent like ~/Projects).
+    # Resolve workspace: explicit flag > env > cwd. NOT the ancestor walk
+    # (which can wrongly resolve to a parent like ~/Projects).
     if ws_arg:
         ws = ws_arg
     elif os.environ.get("CAIRN_WORKSPACE"):
@@ -311,11 +300,9 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
     else:
         ws = str(Path.cwd())
 
-    # Decide which steps run. A bare `cairn uninstall` runs all four; any --*-only
-    # flag restricts to just that step. --full implies all four and is mutually
-    # exclusive with --*-only (combining them previously silently ran all four
-    # because the `or full` term dominated every do_* line, defeating the
-    # --*-only intent on a destructive command).
+    # Decide which steps run. A bare `cairn uninstall` runs all four; any
+    # --*-only flag restricts to just that step. --full implies all four and is
+    # mutually exclusive with --*-only on a destructive command.
     if full and (agents_only or hooks_only or graph_only or package_only):
         raise click.UsageError("--full cannot be combined with --agents-only/--hooks-only/--graph-only/--package-only.")
     any_only = agents_only or hooks_only or graph_only or package_only

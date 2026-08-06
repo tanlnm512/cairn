@@ -51,8 +51,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             line_count=source.count(b"\n") + 1,
         )
         # Parsers are cached singletons reused across files, so reset all
-        # per-file accumulators here -- otherwise edges/scope from file N bleed
-        # into file N+1's ParsedFile.
+        # per-file accumulators here.
         self._pending_edges = []
         self._scope = []
         self._scope_kinds = []

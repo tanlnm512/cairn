@@ -34,13 +34,11 @@ to recognize NestJS `@Controller`/`@Get`/`@Post`/etc.
 
 qualified_name: TS/JS has no canonical FQN the way Kotlin/Java packages do, so
 each symbol is prefixed with the file's stem (basename minus extension) --
-e.g. ``router.Router.handle``. This is not just cosmetic: `resolve_relative_import`
-below returns the resolved import's path with its extension stripped too, so
-its last path segment is *identical* to the target file's stem. That is what
-lets the existing import-aware resolver (src/graph/resolver.py) connect
-``import { Router } from './router'`` to the `Router` class defined in
-`router.ts` via its generic dot-splitting tail-match, with zero resolver
-changes.
+e.g. ``router.Router.handle``. `resolve_relative_import` returns the resolved
+import's path with its extension stripped too, so its last path segment is
+*identical* to the target file's stem; that is what lets the import-aware
+resolver (src/graph/resolver.py) connect ``import { Router } from './router'``
+to the `Router` class defined in `router.ts` via its dot-splitting tail-match.
 """
 from __future__ import annotations
 
@@ -145,18 +143,16 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             # `@Controller('users')` etc. The full decorator text attaches to
             # its target declaration. In tree-sitter-typescript a decorator is
             # a CHILD of the node it decorates (class_declaration /
-            # method_definition / function_declaration), NOT a preceding
-            # sibling -- so the declaration's own _parse_* picks it up via
-            # _own_decorators, and we must NOT also stash it on the pending
-            # queue (doing so would glom it onto the next method/sibling).
+            # method_definition / function_declaration), so the declaration's
+            # own _parse_* collects it via _own_decorators and we must NOT
+            # also stash it on the pending queue (that would glom it onto the
+            # next method/sibling).
             #
-            # Only decorators whose parent is NOT a declaration node (e.g. a
-            # standalone export-list decorator, or the legacy "preceding
-            # sibling" shape some emitters produce) fall through to the pending
+            # Decorators whose parent is NOT a declaration node (e.g. a
+            # standalone export-list decorator) fall through to the pending
             # queue. Parameter-position decorators
-            # (`getUser(@Param('id') id: ...)`) are dropped entirely: we don't
-            # track parameters as symbols, so there's nothing correct to
-            # attach them to.
+            # (`getUser(@Param('id') id: ...)`) are dropped: parameters aren't
+            # tracked as symbols.
             parent_type = node.parent.type if node.parent is not None else None
             if parent_type in ("required_parameter", "optional_parameter"):
                 return
@@ -276,9 +272,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
 
     def _own_decorators(self, node: Node, source: bytes) -> List[str]:
         """Decorators that are direct children of ``node`` (e.g. a class's own
-        ``@Controller(...)``). In tree-sitter-typescript these are children of
-        the decorated node, so collect them here rather than via the pending
-        queue (which would mis-attach them to the first inner member)."""
+        ``@Controller(...)``)."""
         return [
             self._node_text(c, source).strip()
             for c in node.children

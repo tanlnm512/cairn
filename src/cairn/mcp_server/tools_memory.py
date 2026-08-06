@@ -37,7 +37,7 @@ def memory_digest(limit: int = 10) -> str:
     if not mems:
         return "No tribal memories yet."
     out = [f"Top {len(mems)} tribal memories:"]
-    # One read-only conn for all verification lookups (was per-result in recall).
+    # One read-only conn for all verification lookups.
     conn = _conn()
     try:
         for c in mems:
@@ -109,8 +109,7 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
     if any(c.extensions.get("provenance", "").startswith("semantic") for c in results):
         from cairn.graph import embeddings as _emb
         _emb.warn_hash_fallback_once(logger, context="recall_memory")
-    # Reuse the already-open conn for verification (refactored from the old
-    # per-result _conn() churn).
+    # Reuse the already-open conn for verification.
     try:
         for c in results:
             score = c.extensions.get("memory_score", "?")

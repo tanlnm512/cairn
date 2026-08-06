@@ -1,19 +1,15 @@
 """Repo scanner: discover repos and enumerate source files by language.
 
-4-layer filtering. A file is indexed only if it passes ALL of:
-  A. not under a DEFAULT_SKIP_DIRS directory (build output, vcs, deps, ...)
+A file is indexed only if it passes ALL four filter layers:
+  A. not under a DEFAULT_SKIP_DIRS directory
   B. not matched by a .gitignore (root + nested, gitwildmatch semantics)
   C. not matched by cairn.json `exclude` (repo-root-relative globs)
   D. not larger than MAX_FILE_SIZE (default 1 MB)
 
-`include` (cairn.json) overrides A/B/C: a path matched by `include` is
-indexed even if a default skip dir or gitignore would have excluded it. This is
-the explicit opt-in for a checked-in vendored dependency.
-
-Skips are recorded in the `skipped_files` table (reason-tagged) so they are
-auditable via `cairn stats` rather than silent. `scan_repo` is a pure read of the
-filesystem and does not touch the DB; the builder records skips when it indexes
-(see :func:`record_skip`).
+`include` (cairn.json) overrides A/B/C: a matched path is indexed even if a
+skip dir or gitignore would have excluded it. Skips are recorded in the
+`skipped_files` table (reason-tagged). `scan_repo` is a pure read of the
+filesystem and does not touch the DB.
 """
 from __future__ import annotations
 
@@ -35,8 +31,8 @@ EXTENSION_MAP = {
     ".swift": "swift",
     ".py": "python",
     # TypeScript/JavaScript. .tsx picks the TSX grammar internally
-    # (src/parsers/typescript.py) but is still tagged "typescript" here so it
-    # routes to the same parser/builder dispatch as .ts.
+    # (src/parsers/typescript.py) but is tagged "typescript" here so it routes
+    # to the same parser/builder dispatch as .ts.
     ".ts": "typescript",
     ".tsx": "typescript",
     ".mts": "typescript",
@@ -90,9 +86,9 @@ def resolve_file_language(suffix: str, abs_path: str) -> str:
     return lang
 
 # Layer A: directories to never descend into. Applied even without a .gitignore.
-# Covers build output, VCS, deps, caches, and IDE state across stacks so the
-# graph is hand-written source, not third-party noise. Keep names lowercase --
-# matched case-insensitively against the final path component below.
+# Covers build output, VCS, deps, caches, and IDE state so the graph is
+# hand-written source, not third-party noise. Keep names lowercase -- matched
+# case-insensitively against the final path component below.
 DEFAULT_SKIP_DIRS = {
     # build output
     "build", "out", "dist", "target", "bin", "obj",
@@ -113,8 +109,7 @@ DEFAULT_SKIP_DIRS = {
 }
 
 # Layer D: skip files above this size. Generated blobs (minified JS, large
-# generated R.java/R.swift) dominate queries they touch and add no value.
-# 1 MB matches the upstream default.
+# generated R.java/R.swift) dominate queries and add no value.
 MAX_FILE_SIZE = 1_000_000
 
 # Skip-reason constants (stored in skipped_files.reason).
@@ -124,9 +119,8 @@ REASON_CONFIG_EXCLUDE = "config_exclude"
 REASON_SIZE_CAP = "size_cap"
 
 # Workspace root resolved from the current context (see src/paths.py):
-#   CAIRN_WORKSPACE env > registered ancestor > cwd.
-# Resolved at import time; a fresh `cairn` invocation resolves against the cwd it
-# was launched from. Pass an explicit workspace to override.
+#   CAIRN_WORKSPACE env > registered ancestor > cwd. Resolved at import time;
+#   pass an explicit workspace to override.
 from cairn.paths import resolve_workspace as _resolve_workspace
 
 DEFAULT_WORKSPACE = str(_resolve_workspace())
@@ -212,18 +206,14 @@ def resolve_file_path(workspace: str, repo_id: str, stored_path: str) -> str:
     """Resolve a DB-stored file path to an absolute path for disk I/O.
 
     The code graph stores file paths **repo-relative** so the ``.kg`` SQLite
-    file is portable across machines (the build-time contract — see
-    ``builder.py``). At read time this reconstructs the absolute path via
-    ``resolve_repo_path(workspace, repo_id) / stored_path``.
-
-    Legacy absolute paths (DBs built before this change) are returned
-    unchanged, so an un-rebuilt DB keeps working until the next ``cairn
-    build`` converts its rows to relative form. This is the single chokepoint
-    for relative->absolute resolution: every disk-touching consumer reads a
-    stored path through here rather than ``open(row["path"])`` directly.
+    file is portable across machines. At read time this reconstructs the
+    absolute path via ``resolve_repo_path(workspace, repo_id) / stored_path``.
+    Absolute paths are returned unchanged. This is the single chokepoint for
+    relative->absolute resolution: every disk-touching consumer reads a stored
+    path through here rather than ``open(row["path"])`` directly.
     """
     if Path(stored_path).is_absolute():
-        return stored_path  # legacy absolute path (pre-portability build)
+        return stored_path  # absolute path stored as-is
     return str(resolve_repo_path(workspace, repo_id) / stored_path)
 
 
@@ -259,9 +249,8 @@ def file_sha256(path: Path) -> str:
 
 # Cache: repo_root -> list of (dir_of_gitignore, compiled PathSpec).
 # A file's gitignore match is the union of all .gitignore files from its own
-# directory up to the repo root. We compile each .gitignore once and walk.
-# NOTE(phase-2): the file watcher must invalidate this cache (clear the repo
-# entry) when a .gitignore changes, so edits to ignore rules take effect.
+# directory up to the repo root.
+# NOTE: the file watcher must invalidate this cache when a .gitignore changes.
 _gitignore_cache: dict[str, list[tuple[str, pathspec.PathSpec]]] = {}
 
 

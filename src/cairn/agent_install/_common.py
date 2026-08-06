@@ -1,8 +1,6 @@
 """Shared constants, helpers, and result types for the agent_install package.
 
-Kept separate from detect/merge/clients so no module imports a sibling client
-(the layout guardrail: no client module may import another client). Anything
-needed by two or more client modules lives here.
+Kept separate from detect/merge/clients so no module imports a sibling client.
 """
 from __future__ import annotations
 
@@ -13,13 +11,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # All supported clients. Order matters only for display.
-# "claude" is Claude Code (CLI, workspace-scoped). "claude-desktop" is the
+# "claude" is Claude Code (CLI, workspace-scoped); "claude-desktop" is the
 # Claude Desktop GUI app (global config, MCP-only).
 CLIENTS = ["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode"]
 
-# Slash commands provided by cairn. Defined once and referenced everywhere
-# (every client module imports this constant; the list literal itself must not
-# be duplicated, so it stays here as the single source of truth).
+# Slash commands provided by cairn (single source of truth for all client modules).
 _SLASH_COMMANDS = [
     "cairn",
     "cairn-prep",
@@ -55,8 +51,8 @@ class InstallResult:
 def resolve_cg_command() -> list[str]:
     """Resolve a cairn invocation for generated configs.
 
-    Prefers the absolute path of a `cairn` binary on PATH (so the config works
-    regardless of the client's cwd). Falls back to `python -m cairn.cli.main`.
+    Prefers the absolute path of a `cairn` binary on PATH; falls back to
+    `python -m cairn.cli.main`.
     """
     cairn_bin = shutil.which("cairn")
     if cairn_bin:
@@ -74,13 +70,8 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
     """MCP server config pointing at `cairn serve` (shared mcpServers shape).
 
     Used by claude, cursor, droid, agy, and (via mcp_config_json_desktop) the
-    Claude Desktop app. Client-specific MCP shapes (ZCode nested
-    ``mcp.servers``, opencode flat ``mcp.<name>``) live in their own client
+    Claude Desktop app. Client-specific MCP shapes live in their own client
     modules.
-
-    When `cairn` is on PATH (normal install), command is the absolute cairn path and
-    args is ["serve"]. When only the module fallback is available (dev/venv),
-    command is the python interpreter and args is ["-m", "cairn.cli.main", "serve"].
 
     Args:
         transport: "stdio" (default, one process per client) or "sse" (one
@@ -120,8 +111,8 @@ def _hook_markers() -> list[str]:
     return [
         "cairn.hooks.claude_hooks post_edit",
         "cairn.hooks.claude_hooks session_end",
-        # Legacy markers from before the module path fix (kept so
-        # uninstall-agents can still strip hooks written by older installs).
+        # Legacy markers (kept so uninstall-agents can still strip hooks written
+        # by older installs).
         "src.hooks.claude_hooks post_edit",
         "src.hooks.claude_hooks session_end",
     ]
@@ -139,10 +130,7 @@ def _read_template(rel: str) -> str:
 
 
 def _claude_command_md(name: str) -> str:
-    """Read a slash command body and prepend Claude Code frontmatter.
-
-    Droid commands have no frontmatter; Claude Code requires a description.
-    """
+    """Read a slash command body and prepend Claude Code frontmatter."""
     body = _read_template(f"commands/{name}.md")
     # Derive a one-line description from the first heading.
     first_line = next((ln for ln in body.splitlines() if ln.strip()), name)
@@ -153,22 +141,10 @@ def _claude_command_md(name: str) -> str:
 def _claude_agent_md(template_name: str = "cursor/cairn-explorer.json") -> str:
     """Translate a Cursor subagent JSON into a Claude Code agent .md file.
 
-    Maps Cursor subagent fields to the richer Claude Code frontmatter:
-      - model: pass through (supports "inherit" or model IDs)
-      - readonly -> tools: Read, Grep, Glob, LS + MCP tools (no write access)
-      - extra_tools -> additional built-ins for non-readonly agents that need
-        more than the MCP tool set (e.g. ["Write"] for an agent whose prompt
-        says it saves reports/artifacts). Defaults to [] (MCP-only), NOT "all
-        tools" -- Claude Code's `tools:` frontmatter is an explicit allowlist;
-        there is no partial-inherit. If a non-readonly agent's prompt implies
-        it needs a built-in tool, that tool belongs in extra_tools, or the
-        prompt is over-promising what the agent can actually do.
-      - is_background -> background frontmatter field
-    Also adds mcpServers and effort for better Claude Code integration, plus
-    `skills: ["cairn"]` -- this preloads the full cairn SKILL.md
-    content (golden rules, tool reference, tool-behaviors table) into the
-    subagent at startup, so the Cursor `prompt` text should NOT re-embed that
-    material -- keep it to what's specific to this subagent's role.
+    Maps Cursor subagent fields to the richer Claude Code frontmatter
+    (model, tools from readonly/extra_tools, is_background -> background).
+    `skills: ["cairn"]` preloads the full cairn SKILL.md into the subagent, so
+    the Cursor `prompt` text should stay specific to the subagent's role.
     """
     sub = json.loads(_read_template(template_name))
 

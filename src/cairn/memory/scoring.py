@@ -4,11 +4,8 @@ score = 0.25*graph_verification + 0.20*cross_session_refs
       + 0.15*agent_confidence + 0.20*critic_score + 0.05*freshness
       + 0.05*reinforcement + 0.10*authority
 
-Freshness uses exponential decay (exp(-λ·age)) rather than the earlier linear
-ramp; a new reinforcement signal rewards memories that are accessed
-frequently (adapted from agentmemory's temporalDecay + reinforcementBoost
-model, but folded into cairn's existing single-score system rather than
-running as a parallel retention scorer).
+Freshness uses exponential decay (exp(-λ·age)); reinforcement rewards memories
+that are accessed frequently.
 """
 from __future__ import annotations
 
@@ -32,9 +29,6 @@ WEIGHTS = {
 }
 
 # Neutral default critic score used when no LLM critic value is available.
-# A single constant keeps score_memory() (no critic passed) and batch_critic()
-# (no llm_critic callable) in agreement: both contribute a neutral
-# WEIGHTS["critic_score"] * 0.5 = 0.10, neither inflating nor deflating the score.
 DEFAULT_CRITIC_SCORE = 0.5
 
 
@@ -76,12 +70,7 @@ def score_memory(
 
 
 def compute_score(signals: Dict) -> float:
-    """Apply the weighted formula to an already-computed signals dict.
-
-    Factored out so callers that only need to substitute one signal (e.g.
-    `batch_critic` overriding `critic_score` after an LLM pass) don't have
-    to duplicate the weighted-sum formula themselves.
-    """
+    """Apply the weighted formula to an already-computed signals dict."""
     return (
         WEIGHTS["graph_verification"] * signals["graph_verification"]
         + WEIGHTS["cross_session_refs"] * signals["cross_session_refs_signal"]
@@ -109,10 +98,8 @@ def apply_score(concept: OKFConcept, signals: Dict):
 
 # --- signal computations -------------------------------------------------
 
-# Reuse the same extraction logic as the critic to ensure scoring and fact-checking
-# agree on what counts as a "verified" reference (scoring and the critic must not
-# drift on what a "verified" reference is). Imported from the neutral refs module
-# (not from compass/critic) to avoid an L4 → L2 layer dependency edge.
+# Reuse the critic's extraction/verification logic so scoring and fact-checking
+# agree on what counts as a "verified" reference.
 from ..refs import (
     extract_file_refs as _extract_file_refs,
     extract_symbol_refs as _extract_symbol_refs,
@@ -122,17 +109,9 @@ from ..refs import (
 
 
 def _graph_verification(concept: OKFConcept, conn: sqlite3.Connection) -> float:
-    """Fraction of backtick-quoted file/symbol refs that exist in the graph.
-
-    Uses the same extraction and verification logic as the critic
-    (_extract_file_refs, _extract_symbol_refs, _file_exists, _symbol_exists)
-    to ensure consistency across the codebase.
-    Supports all file extensions (.kt/.java/.swift/.py/.ts/.tsx/.js/.jsx/.dart/.m/.mm)
-    and symbol patterns (CapitalizedWord, lowerCamelCase, snake_case, qualified names).
-    """
+    """Fraction of backtick-quoted file/symbol refs that exist in the graph."""
     body = concept.body or ""
 
-    # Use the critic's extractors to get file and symbol references
     file_refs = _extract_file_refs(body)
     symbol_refs = _extract_symbol_refs(body)
 
@@ -142,12 +121,10 @@ def _graph_verification(concept: OKFConcept, conn: sqlite3.Connection) -> float:
 
     verified = 0
 
-    # Check file references using the critic's logic
     for ref in file_refs:
         if _file_exists(conn, ref):
             verified += 1
 
-    # Check symbol references using the critic's logic
     for ref in symbol_refs:
         if _symbol_exists(conn, ref):
             verified += 1
@@ -168,11 +145,8 @@ def _cross_session_refs(concept: OKFConcept, conn: sqlite3.Connection) -> int:
 
 
 # Decay window per memory_type, in days. `decision` memories are context-bound
-# (an architecture choice that can be superseded by later changes) and keep
-# the original 90-day window. `pattern`/`mistake`/`workaround` memories tend
-# to stay valid longer -- a workaround remains correct until the underlying
-# dependency changes, not just because time passed -- so they decay over a
-# 3x longer window instead of aging out purely on the calendar.
+# and decay over 90 days; `pattern`/`mistake`/`workaround` memories tend to
+# stay valid longer so they decay over a 3x longer window.
 FRESHNESS_WINDOW_DAYS = {
     "decision": 90,
     "pattern": 270,
@@ -186,13 +160,8 @@ def _freshness(concept: OKFConcept) -> float:
     """Exponential decay: exp(-λ·age) where λ = ln(2)/half_life.
 
     The half-life is the type-dependent freshness window, so a memory reaches
-    0.5 at the window boundary (e.g. 90 days for a decision) rather than
-    hitting 0 as the old linear ramp did. This is adapted from agentmemory's
-    temporalDecay = exp(-lambda * daysSinceCreation), but keeps cairn's
-    type-dependent windows so a `workaround` decays 3x slower than a
-    `decision`.
-
-    Human-authored documents (doc_source == "manual") never age out.
+    0.5 at the window boundary. Human-authored documents (doc_source == "manual")
+    never age out.
     """
     ts = concept.timestamp or concept.extensions.get("timestamp")
     if not ts:
@@ -216,13 +185,9 @@ def _freshness(concept: OKFConcept) -> float:
 def _reinforcement(concept: OKFConcept, conn: sqlite3.Connection) -> float:
     """Reward signal from how recently and often this memory was recalled.
 
-    Adapted from agentmemory's reinforcementBoost = sigma * Σ(1/daysSince(ts)),
-    but driven by cairn's memory_refs table (which records a row on every
-    recall hit). The boost saturates at 1.0, so a frequently-recalled memory
-    stays warm even as its freshness decays -- pure exponential decay would
-    forget everything eventually; this rewards reuse.
-
-    Returns 0.0 for a never-recalled memory (or when memory_refs is empty).
+    Driven by the memory_refs table (a row per recall hit). The boost
+    saturates at 1.0, so a frequently-recalled memory stays warm even as its
+    freshness decays. Returns 0.0 for a never-recalled memory.
     """
     if not concept.concept_id:
         return 0.0
@@ -244,7 +209,7 @@ def _reinforcement(concept: OKFConcept, conn: sqlite3.Connection) -> float:
     if not rows:
         return 0.0
     now = datetime.now(timezone.utc)
-    sigma = 0.3  # scaling constant (same default as agentmemory)
+    sigma = 0.3  # scaling constant
     boost = 0.0
     for row in rows:
         ts = row["referenced_at"] if isinstance(row, sqlite3.Row) else row[0]

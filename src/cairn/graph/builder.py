@@ -6,13 +6,11 @@ Orchestrates the indexing pipeline. For each repo:
   3. Insert symbols + imports + edges (edges initially unresolved)
   4. Resolve edge targets via the import-aware resolver (src/graph/resolver.py)
 
-Resolution is deferred to a second pass per repo, after that repo's symbols
-and imports are committed, so the resolver sees a complete symbol/import index.
 An edge is resolved only when exactly one candidate exists in a tier
 (same-file -> import-aware -> same-repo -> global); otherwise it is marked
-``ambiguous`` and left unresolved by design -- precise-by-default queries then
-trust only ``resolution='exact'`` rows, while ``--fuzzy`` re-enables matching
-by the preserved ``target_name``.
+``ambiguous`` and left unresolved. Precise-by-default queries trust only
+``resolution='exact'`` rows; ``--fuzzy`` re-enables matching by the preserved
+``target_name``.
 """
 from __future__ import annotations
 
@@ -102,9 +100,8 @@ def _scan_workspace_with_skips(
 ) -> tuple[list, list]:
     """Scan the workspace, returning (files_to_index, skips).
 
-    Uses scanner.iter_files_and_skips per repo so the builder can record skips
-    in the skipped_files table. Falls back to scan_workspace if a repo has no
-    source files.
+    Records skips in the skipped_files table; falls back to scan_workspace if
+    a repo has no source files.
     """
 
     all_files = []
@@ -146,12 +143,7 @@ def _record_skips(cur, skips: list) -> int:
 
 
 def _parse_all(files, verbose: bool, progress=None) -> tuple[list, int]:
-    """Parse all files and return parsed results.
-
-    Returns:
-        (parsed_results, parse_errors) where parsed_results is a list of tuples
-        and parse_errors is the count of files that failed to parse.
-    """
+    """Parse all files. Returns (parsed_results, parse_errors_count)."""
     log = _log if verbose else lambda *a: None
     emit = progress or (lambda *a, **k: None)
 
@@ -211,8 +203,7 @@ def _insert_results(
 ) -> tuple[int, int, int, int, Dict[str, Dict[str, List[tuple]]]]:
     """Insert parsed results into the database.
 
-    Returns:
-        (file_count, symbol_count, edge_count, import_count, repo_edges_by_file)
+    Returns (file_count, symbol_count, edge_count, import_count, repo_edges_by_file).
     """
     cur = conn.cursor()
     log = _log if verbose else lambda *a: None
@@ -240,11 +231,8 @@ def _insert_results(
             emit("insert_progress", done=idx, total=total_to_insert, symbols=symbol_count, edges=edge_count)
             continue
 
-        # Framework-aware route detection: merged into the parsed file's own
-        # symbols/edges *before* insertion -- routes are ordinary kind='route'
-        # symbols and kind='references' edges to the rest of the pipeline
-        # (normal insert, normal same-file source lookup, normal resolver
-        # pass). No special-casing needed beyond this merge.
+        # Framework-aware route detection: routes are ordinary kind='route'
+        # symbols and kind='references' edges merged in before insertion.
         try:
             route_extraction = routes_mod.detect_routes(pf, language)
             if route_extraction:
@@ -255,11 +243,9 @@ def _insert_results(
             # never let it fail the whole file's indexing.
             log(f"  route detection failed for {rel_path}: {e}")
 
-        # Service-topology edge detection: merged into the parsed file's edges
-        # before insertion -- http_call/service_call are ordinary kinds to the
-        # rest of the pipeline (free-text `edges.kind`, indexed). By default
-        # impact_analysis/trace_flow exclude these from blast radius; they are
-        # queryable via get_callees/get_callers(kind=...).
+        # Service-topology edge detection: http_call/service_call are ordinary
+        # kinds merged in before insertion. By default impact_analysis/trace_flow
+        # exclude these from blast radius; queryable via get_callees/get_callers(kind=...).
         try:
             sc_extraction = service_calls_mod.detect_service_calls(pf, language)
             if sc_extraction:
@@ -315,8 +301,7 @@ def _resolve_all(
 ) -> dict:
     """Resolve all edge targets per repo.
 
-    Returns:
-        resolution_stats dict with keys: exact, ambiguous, unresolved
+    Returns resolution_stats dict with keys: exact, ambiguous, unresolved.
     """
     log = _log if verbose else lambda *a: None
     emit = progress or (lambda *a, **k: None)
@@ -346,32 +331,9 @@ def _build_graph_impl(
     verbose: bool = False,
     progress=None,
 ) -> dict:
-    """Build (or rebuild) the graph. Returns summary stats.
+    """Build (or rebuild) the graph into ``conn`` (opened by the caller).
 
-    A full-workspace rebuild (repo_filter is None) builds in an in-memory
-    SQLite database with bulk-load pragmas, then persists to disk once at the
-    end via backup_to(). A single-repo rebuild (repo_filter set) keeps the
-    on-disk path so it doesn't clobber the other repos already in the DB.
-
-    ``verbose``: when True, per-file detail (parse errors, route-detection
-    failures, per-batch insert counts) is logged. Default False -- most
-    callers want the high-level progress, not per-file noise.
-
-    ``progress``: optional callable receiving phase events the caller can
-    render as a progress bar or themed log. Event shapes (first arg is the
-    phase name, the rest are kwargs/values specific to that phase):
-
-        progress("scan", files=N, skips=M)
-        progress("parse_progress", done=k, total=N)
-        progress("parse_done", parsed=P, errors=E)
-        progress("insert_progress", done=k, total=N, symbols=S, edges=E)
-        progress("resolve_start", repo=R)
-        progress("resolve_done", repo=R, stats={...})
-        progress("persist")
-
-    A no-op default (None) preserves the silent contract for library callers.
-
-    ``conn``: database connection to use. Must be opened by the caller.
+    See ``build_graph`` for the full contract (repo_filter, verbose, progress).
     """
     resolved_db = db_path or str(_resolve_store().db)
     in_memory = repo_filter is None
@@ -385,10 +347,8 @@ def _build_graph_impl(
         return {"repos": 0, "files": 0, "symbols": 0, "edges": 0, "imports": 0}
     emit("scan", files=len(files), skips=len(skips))
 
-    # Group files by repo for repo-record insertion. Bucket files by repo once
-    # (O(files)) so the per-repo language inference below is O(files) total
-    # rather than O(repos x files) -- the list comprehension re-scan of all
-    # files was 2.5M comparisons on a 50-repo/50k-file workspace.
+    # Bucket files by repo once so the per-repo language inference below is
+    # O(files) total rather than O(repos x files).
     repos_seen: Dict[str, scanner_mod.FileInfo] = {}
     files_by_repo: Dict[str, List[scanner_mod.FileInfo]] = {}
     for f in files:
@@ -537,12 +497,10 @@ def build_graph(
 
 
 def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, str, Optional[ParsedFile], Optional[str], Optional[str]]:
-    """Worker function to parse a single file in a separate process.
+    """Worker: parse a single file in a separate process.
 
-    Args:
-        args: (file_path, file_rel_path, file_language, file_repo)
-    Returns:
-        (file_path, file_rel_path, file_language, file_repo, parsed_file, error_msg, stack_trace)
+    ``args`` is (file_path, file_rel_path, file_language, file_repo); returns
+    those plus (parsed_file, error_msg, stack_trace).
     """
     import traceback
     path, rel_path, language, repo = args
@@ -572,11 +530,8 @@ def insert_parsed_file(
 ) -> tuple[int, int, int]:
     """Insert a single parsed file's symbols, imports, and raw edges.
 
-    ``rel_path`` is the repo-relative path stored in ``files.path`` (portable
-    across machines); ``abs_path`` is the absolute path used only to stat the
-    file for size/mtime. See scanner.resolve_file_path for the read-side
-    reconstruction of rel_path -> absolute.
-
+    ``rel_path`` is the repo-relative path stored in ``files.path`` (portable);
+    ``abs_path`` is the absolute path used only to stat for size/mtime.
     Returns (symbol_count, edge_count, import_count).
     """
     file_id = _new_id()
@@ -600,13 +555,8 @@ def insert_parsed_file(
     edge_rows: List[tuple] = []
 
     # --- symbols: recording ids for same-file source resolution -----------
-    # Variant-C embedding context: derive parent_scope and a file-level
-    # imports_summary at build time when the parser didn't supply them, so
-    # variant-C chunks get meaningful "Enclosing Scope:"/"Imports:" sections
-    # without every parser having to populate them. `body` stays None unless
-    # the parser set it (per-symbol source extraction is out of scope here;
-    # parent_scope + imports_summary already materially improve variant C, and
-    # the body section degrades gracefully to omitted).
+    # Derive parent_scope and a file-level imports_summary at build time when
+    # the parser didn't supply them; `body` stays None unless the parser set it.
     file_imports_summary = ", ".join(
         imp.imported_path for imp in pf.imports[:20]
     ) or None  # file-level summary, identical for every symbol in this file

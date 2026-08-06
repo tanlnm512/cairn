@@ -3,18 +3,6 @@
 Extracts class/interface/enum/object declarations, function/method declarations,
 property declarations, call expressions, imports, and inheritance into the
 shared ParsedFile model.
-
-Node-type reference (tree-sitter-kotlin):
-  class_declaration          -> Symbol(class)
-  object_declaration         -> Symbol(class)   # companion/object
-  interface_declaration      -> Symbol(interface)
-  enum_declaration           -> Symbol(enum)
-  function_declaration       -> Symbol(function) or Symbol(method) if inside a type
-  property_declaration       -> Symbol(property)
-  call_expression            -> Edge(calls)
-  import_header              -> Import
-  inheritance_specifier /    -> Edge(implements|extends)
-    delegation_specifier
 """
 from __future__ import annotations
 
@@ -52,20 +40,13 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         super().__init__()
         self._parser = _get_ts_parser("kotlin")
         self._scope_kinds: List[str] = []
-        # Per-parse accumulator for inheritance edges, flushed at the end so
-        # _parse_inheritance doesn't need a ParsedFile reference at every call.
+        # Per-parse accumulator for inheritance edges.
         self._pending_edges: List[Edge] = []
-        # In-file receiver-type tracker. _var_types is a stack of
-        # {var_name: type_name} scopes -- one per enclosing function, seeded
-        # with `this` -> enclosing type and typed parameters, so a receiver
-        # like `local.displayName()` can be typed from the nearest enclosing
-        # scope outward (innermost first).
+        # In-file receiver-type tracker: a stack of {var_name: type_name}
+        # scopes, one per enclosing function.
         self._var_types: List[dict] = [{}]
-        # _field_types is {type_name: {field_name: type_name}}, populated by a
-        # pre-scan of the whole tree (see _prescan_field_types) BEFORE the main
-        # walk. Doing this in a separate pass means class-level property types
-        # are known regardless of whether they're declared before or after the
-        # methods that reference them.
+        # {type_name: {field_name: type_name}}, populated by _prescan_field_types
+        # before the main walk.
         self._field_types: dict = {}
 
     def parse(self, path: str) -> ParsedFile:
@@ -83,23 +64,16 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         )
 
         # Parsers are cached singletons reused across files, so reset all
-        # per-file accumulators here -- otherwise edges/scope from file N bleed
-        # into file N+1's ParsedFile.
+        # per-file accumulators here.
         self._pending_edges = []
         self._scope = []
         self._scope_kinds = []
         self._callable_scope = []
-        # In-file receiver-type tracker. _var_types is a stack of
-        # {var_name: type_name} scopes -- one per enclosing function, seeded
-        # with `this` -> enclosing type and typed parameters, so a receiver
-        # like `local.displayName()` can be typed from the nearest enclosing
-        # scope outward (innermost first).
+        # In-file receiver-type tracker: a stack of {var_name: type_name}
+        # scopes, one per enclosing function.
         self._var_types: List[dict] = [{}]
-        # _field_types is {type_name: {field_name: type_name}}, populated by a
-        # pre-scan of the whole tree (see _prescan_field_types) BEFORE the
-        # main walk. Doing this in a separate pass means class-level property
-        # types are known regardless of whether they're declared before or
-        # after the methods that reference them.
+        # {type_name: {field_name: type_name}}, populated by _prescan_field_types
+        # before the main walk.
         self._field_types: dict = {}
         self._prescan_field_types(tree.root_node, source)
 
@@ -110,13 +84,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     # --- field-type pre-scan ----------------------------------------------
 
     def _prescan_field_types(self, node: Node, source: bytes) -> None:
-        """Populate self._field_types with {type: {field: type}} before the walk.
-
-        Only looks at each type declaration's own primary-constructor
-        parameters and direct class_body property declarations (not nested
-        function bodies -- those are locals, tracked separately by the main
-        walk's _var_types stack). Recurses into nested type declarations.
-        """
+        """Populate self._field_types with {type: {field: type}} before the walk."""
         for child in node.children:
             if child.type in TYPE_DECL_NODES:
                 type_name = self._parse_type_identifier(child, source)
@@ -151,11 +119,8 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _visit(self, node: Node, source: bytes, pf: ParsedFile):
         t = node.type
 
-        # Node type is `import` in tree-sitter-kotlin 1.x; newer grammars emit
-        # `import_header`. The docstring's node-type reference already lists
-        # `import_header`, so accept both so imports aren't silently dropped
-        # when the grammar changes. `_parse_import` just reads children/text, so
-        # it works for either node name.
+        # Accept both `import` (tree-sitter-kotlin 1.x) and `import_header`
+        # (newer grammars) so imports aren't silently dropped across versions.
         if t in ("import", "import_header"):
             imp = self._parse_import(node, source)
             if imp:
@@ -195,11 +160,8 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             sym = self._parse_property(node, source)
             if sym:
                 pf.symbols.append(sym)
-            # Only track *local* var types (inside a function body) here --
-            # class-level property types are already covered by the
-            # _field_types pre-scan. Writing class-level props into the flat
-            # _var_types base scope would leak one class's field type into
-            # another class's same-named field.
+            # Only track local var types inside a function body; class-level
+            # property types are covered by the _field_types pre-scan.
             if self._callable_scope:
                 name, vtype = self._var_name_and_type(node, source)
                 if name and vtype:
@@ -231,8 +193,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         """Classify a type declaration node into a symbol kind.
 
         tree-sitter-kotlin folds `interface` and `enum class` into
-        class_declaration/object_declaration with a leading keyword child, so
-        we inspect the keyword(s) rather than relying on the node type alone.
+        class_declaration/object_declaration with a leading keyword child.
         """
         if node.type == "class_declaration":
             # Look at the first keyword child: interface | class | (enum class)
@@ -268,11 +229,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return mods
 
     def _parse_type_identifier(self, node: Node, source: bytes) -> Optional[str]:
-        """Find the declared name of a type/function node.
-
-        Handles both old (type_identifier/simple_identifier) and new (identifier)
-        tree-sitter-kotlin grammar node names.
-        """
+        """Find the declared name of a type/function node."""
         for child in node.children:
             if child.type in ("type_identifier", "simple_identifier", "identifier"):
                 return self._node_text(child, source).strip()
@@ -285,9 +242,8 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         if not name:
             return None
 
-        # Note: tree-sitter-kotlin represents `interface Foo {}` as a
-        # class_declaration whose first keyword child is `interface` (there is
-        # no interface_declaration node). Same for object/enum in some versions.
+        # tree-sitter-kotlin represents `interface Foo {}` as a class_declaration
+        # whose first keyword child is `interface`. Same for object/enum.
         kind = self._classify_type_decl(node, source)
 
         mods = self._collect_modifiers(node, source)
@@ -364,7 +320,6 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         """Constructor parameter: [modifiers] (val|var) name : Type.
 
         Treated as a property when it has val/var (a real backing field).
-        Node name may be simple_identifier (old grammar) or identifier (new).
         """
         has_val_or_var = False
         name = None
@@ -410,15 +365,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _parse_inheritance(self, node: Node, source: bytes, child_name: str):
         """Emit implements/extends edges for a type declaration.
 
-        Kotlin uses ':' for both extends and implements, but the grammar DOES
-        distinguish them by node type:
-          - A superclass (extends) is a `constructor_invocation`
-            `Base(...)` -- the only target carrying constructor parens. A class
-            can have at most one superclass, and when present it is listed first.
-          - Interfaces (implements) are plain `user_type` targets.
-        We map `constructor_invocation` -> `extends`, `user_type` -> `implements`.
-        Grammar versions differ: delegation_specifier (singular) or
-        delegation_specifiers (plural wrapper); we recurse into both.
+        Kotlin uses ':' for both extends and implements, distinguished by node
+        type: a superclass (extends) is a `constructor_invocation` `Base(...)`;
+        interfaces (implements) are plain `user_type` targets.
         """
         # Find the specifiers container; it may be a direct child or nested.
         spec_nodes = []
@@ -446,12 +395,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     ):
         """Recursively gather (name, is_extends) inheritance targets.
 
-        - `constructor_invocation` `Base(...)`: the superclass (extends). The
-          target name is the inner `user_type`'s identifier -- NOT the argument
-          list, so we must not route through `_extract_call_target_name` (which
-          returns the trailing identifier of a `call_expression`, i.e. the last
-          argument like `name` in `BaseEntity(name)`).
-        - plain `user_type`: an interface (implements).
+        For a `constructor_invocation` `Base(...)`, the target name is the inner
+        `user_type`'s identifier (not the argument list). Plain `user_type`
+        targets are interfaces (implements).
         """
         if node is None:
             return
@@ -478,13 +424,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         receiver_type = self._infer_call_receiver_type(node, source)
 
         # Kotlin operator-invoke sugar: `someUseCase(params)` desugars to
-        # `someUseCase.invoke(params)` on a DI-injected property/param/local
-        # (the standard Android UseCase/functional-object pattern). The edge
-        # target is rewritten from the variable name to its declared TYPE
-        # (e.g. "UpdateProfileUseCase") via _resolve_bare_name_type, so that
-        # get_callers/impact_analysis reach the shared class (which matches by
-        # symbol name). Rewriting to "invoke" instead would be useless since
-        # every UseCase shares that name.
+        # `someUseCase.invoke(params)` on a DI-injected property/param/local.
+        # Rewrite the edge target from the variable name to its declared TYPE
+        # so callers reach the shared class.
         if receiver_type is None:
             bare = self._bare_callee_identifier(node, source)
             if bare is not None and bare == target and bare[:1].islower():
@@ -492,12 +434,10 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
                 if inferred and inferred != bare and inferred[:1].isupper():
                     target = inferred
 
-        # The same operator-invoke sugar applies to the EXPLICIT-receiver
-        # shape `this.prop(c)` / `obj.prop(c)` where `prop` is a
-        # DI-injected property of a UseCase type. ``_infer_call_receiver_type``
-        # returns that property's declared TYPE (e.g. UseCaseA) for this
-        # shape; rewrite the target from the property name to the type name so
-        # the edge resolves to the shared UseCase class, like the bare case.
+        # The same operator-invoke sugar applies to the explicit-receiver
+        # shape `this.prop(c)` / `obj.prop(c)` where `prop` is a DI-injected
+        # property of a UseCase type. Rewrite the target from the property name
+        # to the type name so the edge resolves to the shared UseCase class.
         enclosing = self._scope[-1] if self._scope else None
         declared_type_of_target = (
             self._field_types.get(enclosing, {}).get(target) if enclosing else None
@@ -508,10 +448,8 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             and receiver_type[:1].isupper()
             and target != receiver_type
             and receiver_type != enclosing
-            # The receiver_type must actually BE the declared type of this
-            # target (i.e. it's a property-invoke, not a method call like
-            # `useCaseA.something()` where target='something' has no declared
-            # field type). This guard is what keeps genuine method calls intact.
+            # Guard: only fire when the receiver_type IS the declared type of
+            # this target (property-invoke), not a method call.
             and declared_type_of_target == receiver_type
         ):
             target = receiver_type
@@ -601,12 +539,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _infer_node_type(self, node: Optional[Node], source: bytes) -> Optional[str]:
         """Best-effort type of an arbitrary receiver expression node.
 
-        Handles the shapes this grammar actually produces: `this_expression`,
-        a bare `identifier` (local/param/field/static-type reference), a
-        constructor `call_expression`, and a `navigation_expression` (a field
-        access chain, e.g. the `this.profile` prefix of `this.profile.x`).
-        Returns None (abstain) for anything else -- the resolver's type tier
-        then falls through to same-repo/global.
+        Handles `this_expression`, a bare `identifier`, a constructor
+        `call_expression`, and a `navigation_expression` (field access chain).
+        Returns None for anything else.
         """
         if node is None:
             return None
@@ -643,9 +578,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
 
     def _resolve_bare_name_type(self, name: str) -> Optional[str]:
         """Type of a bare identifier: local/param (innermost scope first),
-        else an implicit `this.<name>` field on the enclosing type, else --
-        if capitalized -- treat it as a reference to that type itself
-        (static/companion call receiver, e.g. `Profile.create()`).
+        else an implicit `this.<name>` field on the enclosing type, else -- if
+        capitalized -- a reference to that type itself (static/companion call
+        receiver, e.g. `Profile.create()`).
         """
         for scope in reversed(self._var_types):
             if name in scope:
@@ -661,19 +596,11 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _infer_call_receiver_type(self, node: Node, source: bytes) -> Optional[str]:
         """Receiver type for a call_expression, if the call is `X.method()`.
 
-        Finds the call's navigation_expression (the `X.method` chain) and
-        infers the type of everything before the final `.method` segment.
-        Bare calls (`method()`, no receiver) return None.
-
-        Also handles the explicit-`this` property-invoke shape
-        `this.prop(c)` / `obj.prop(c)`, where the invoked thing is the
-        property itself (commonly a Kotlin ``operator fun invoke`` UseCase)
-        rather than a method named by the final segment. We detect the
-        property-invoke shape: a nav whose FINAL segment is a lowercase
-        identifier that names a callable field (not a method). In that case
-        the receiver type is the declared type of the whole nav expr
-        (e.g. `this.useCaseA` -> UseCaseA), letting the rewrite fire.
-        Otherwise the standard `recv.method()` path is used.
+        Bare calls (`method()`, no receiver) return None. Also handles the
+        property-invoke shape `this.prop(c)` / `obj.prop(c)` where the invoked
+        thing is the property itself (commonly a Kotlin ``operator fun invoke``
+        UseCase); in that case the receiver type is the declared type of the
+        whole nav expr, letting the rewrite fire.
         """
         nav = None
         for child in node.children:
@@ -689,18 +616,13 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
                 break
         member_name = self._node_text(member_node, source).strip() if member_node else ""
 
-        # Property-invoke shape. The final segment is the property being
-        # invoked, not a method on the receiver. Heuristic: the final segment
-        # starts lowercase (a value/property name, not a type or method on a
-        # type) AND the whole nav expr resolves to a declared field type. The
-        # classic Android pattern is `this.updateProfileUseCase(p)` /
-        # `obj.someUseCase(p)`.
+        # Property-invoke shape: the final segment is the property being
+        # invoked (lowercase value name) AND the whole nav resolves to a
+        # declared field type.
         if member_name and not member_name[:1].isupper():
             whole_type = self._infer_node_type(nav, source)
             if whole_type:
                 return whole_type
-            # Fall through to the standard path if the whole-nav type is
-            # unknown -- keeps behavior unchanged for untyped receivers.
 
         # Standard `recv.method()` call: receiver is everything before the
         # final segment.
@@ -708,13 +630,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return self._infer_node_type(receiver_expr, source)
 
     def _bare_callee_identifier(self, node: Node, source: bytes) -> Optional[str]:
-        """The callee identifier text, iff ``node`` is a truly bare call
-        `name(...)` -- its first child is itself a plain identifier, not a
-        `navigation_expression` or a nested `call_expression` (e.g. the outer
-        node of a trailing-lambda call like `uc(p) { it }`, whose first child
-        is the inner call_expression). Returns None otherwise, so the
-        operator-invoke rewrite in `_parse_call` only ever fires for this one
-        unambiguous shape.
+        """The callee identifier text iff ``node`` is a truly bare call
+        `name(...)` -- its first child is a plain identifier. Returns None
+        otherwise, so the operator-invoke rewrite only fires for this shape.
         """
         if not node.children:
             return None
@@ -726,7 +644,6 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _extract_call_target_name(self, node: Node, source: bytes) -> Optional[str]:
         """Extract the called name from a call_expression.
 
-        Kotlin calls are usually navigation_expression ending in call_suffix.
         The called name is the last simple_identifier before the value_arguments.
         """
         last_id = None

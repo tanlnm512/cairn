@@ -38,10 +38,7 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
     from cairn.graph import embeddings as emb
 
     if install_deps:
-        # --install-deps: install semantic dependencies and exit. Don't fall
-        # through to embedding — the user asked only to install deps (which
-        # may involve downloading torch + sentence-transformers, ~hundreds of
-        # MB). Run `cairn embed` separately to build the index.
+        # --install-deps: install semantic dependencies and exit.
         if not emb.ensure_semantic_deps(auto_install=True):
             display.error("Semantic dependencies unavailable")
             display.dim(emb.install_hint())
@@ -56,12 +53,10 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
         display.dim("Run `cairn embed --install-deps` to auto-install.")
         sys.exit(1)
 
-    # Warn when silently falling back to the hash backend. The fallback is
-    # intentional for `semantic_search` (graceful degradation), but `cairn embed`
-    # is an explicit action where the user expects real model embeddings.
-    # is_hash_fallback() is True only when the backend is the *default* local
-    # but sentence-transformers isn't installed (a silent fallback), not when
-    # the user explicitly set CAIRN_EMBED_BACKEND=hash.
+    # Warn when silently falling back to the hash backend. is_hash_fallback()
+    # is True only when the backend is the *default* local but
+    # sentence-transformers isn't installed (a silent fallback), not when the
+    # user explicitly set CAIRN_EMBED_BACKEND=hash.
     if emb.is_hash_fallback():
         display.warning(
             "Using the hash embedder (dep-free) because sentence-transformers "
@@ -117,10 +112,8 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
         build_ann = ann.ann_backend_enabled()
 
         # One progress bar for the whole `cairn embed` run -- embedding and
-        # (if enabled) the ANN rebuild used to open their own separate bars
-        # back to back, which read as two unrelated progress indicators.
-        # Reuse the same bar, just retargeting its description/total for the
-        # second phase, so the terminal shows one continuous indicator.
+        # (if enabled) the ANN rebuild -- retargeting its description/total for
+        # the second phase.
         with display.progress_bar(description="Embedding", total=None, unit="symbols") as bar:
             bar_state["bar"] = bar
             bar_state["task"] = bar._cg_task_id
@@ -131,10 +124,8 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
 
             if build_ann:
                 task_id = bar._cg_task_id
-                # bar.update(total=None) would leave the embedding phase's
-                # total in place (both backends treat total=None as "don't
-                # change it") -- reset the task directly so the ANN phase
-                # renders as a fresh indeterminate bar instead of "0/<n synced>".
+                # Reset the task directly so the ANN phase renders as a fresh
+                # indeterminate bar.
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())

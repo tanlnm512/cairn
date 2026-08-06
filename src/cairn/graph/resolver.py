@@ -1,27 +1,11 @@
 """Import-aware edge resolver.
 
-The key insight: the data needed to resolve edges precisely is *already in
-the graph* -- import paths (full dotted, e.g.
-``xyz.be.customer.networking.ApiFactory``) and symbol qualified_names. We just
-have to connect them.
+Resolves an edge to exactly one candidate across priority tiers, leaving
+otherwise-unresolved edges as ``resolution='ambiguous'`` (precise by default).
 
-Resolution strategy (in priority order). An edge is resolved only when there is
-exactly one plausible candidate; otherwise it is left unresolved on purpose
-(``resolution='ambiguous'``). This trades raw resolution count for trust --
-a precise-by-default query model.
-
-  1. SAME-FILE   — exactly one symbol with ``name`` in the source file.
-  2. IMPORT-AWARE — the source file imports a path whose tail matches ``name``;
-                   resolve to the symbol whose qualified_name tail matches that
-                   import path. Disambiguates symbol-imported vs local.
-  3. SAME-REPO   — exactly one symbol with ``name`` anywhere else in the repo.
-  4. GLOBAL      — exactly one symbol with ``name`` in the whole workspace.
-  5. AMBIGUOUS   — more than one candidate survived a tier -> unresolved.
-
-Resolution is decided per tier: if a tier yields exactly one candidate, that's
-the answer. If it yields many, we mark ``ambiguous`` and stop (we do NOT fall
-through to a broader tier -- that would only add more noise). If a tier yields
-zero candidates, we try the next broader tier.
+Tiers: SAME-FILE -> IMPORT-AWARE -> SAME-REPO -> GLOBAL -> AMBIGUOUS.
+Resolution is decided per tier: one candidate -> answer; many -> mark
+ambiguous and stop; zero -> try the next broader tier.
 """
 from __future__ import annotations
 
@@ -33,8 +17,6 @@ def build_symbol_index(conn: sqlite3.Connection) -> Dict[str, List[Tuple[str, st
     """Build a global bare-name -> symbol index.
 
     Returns ``{name: [(symbol_id, repo, file_id, qualified_name), ...]}``.
-    This is the resolution substrate; both tiers (same-repo / global) filter it.
-    The qualified_name (present for 100% of symbols) powers import-aware matches.
     """
     index: Dict[str, List[Tuple[str, str, str, str]]] = {}
     rows = conn.execute(
@@ -52,17 +34,10 @@ def build_symbol_index(conn: sqlite3.Connection) -> Dict[str, List[Tuple[str, st
 def build_import_index(
     conn: sqlite3.Connection, repo_id: Optional[str] = None
 ) -> Dict[str, List[str]]:
-    """Build a per-file import-path index.
+    """Build a per-file import-path index ``{file_id: [imported_path, ...]}``.
 
-    Returns ``{file_id: [imported_path, ...]}``. ``imported_path`` is the full
-    dotted form captured by the parser (e.g. ``retrofit2.Retrofit`` or
-    ``xyz.be.customer.networking.ApiFactory``).
-
-    When ``repo_id`` is given, only that repo's imports are loaded (joined via
-    ``files``). The resolver only ever looks up a source file's OWN imports
-    (``imports_by_file.get(source_file_id)``), and source files belong to the
-    repo being resolved, so scoping is exact -- no cross-repo import is ever
-    consulted. This keeps incremental re-runs from scanning the whole corpus.
+    When ``repo_id`` is given, only that repo's imports are loaded. The
+    resolver only ever looks up a source file's OWN imports, so scoping is exact.
     """
     imports: Dict[str, List[str]] = {}
     if repo_id is not None:
@@ -81,10 +56,7 @@ def build_import_index(
     return imports
 
 
-# Symbol kinds that are members of a type (never types themselves). Anything
-# NOT in this set is treated as a type/namespace for enclosing-scope purposes,
-# so the members index auto-adapts to whatever type kind a parser emits
-# (class/interface/enum/protocol/struct/object/...).
+# Symbol kinds that are members of a type (never types themselves).
 _MEMBER_KINDS = ("method", "function", "property", "variable", "field", "constant")
 
 
@@ -95,23 +67,11 @@ def build_members_index(
     """Build a {(enclosing_type_simple_name, member_name): [symbol_id, ...]} index.
 
     A member's qualified_name looks like ``pkg.Outer.Inner.member``; the
-    enclosing type is the second-to-last segment. This is the substrate for the
-    type-aware resolution tier: given a known receiver type and a member name,
-    look up which symbol(s) define it.
-
-    Note ``function`` is kept as a member kind on purpose -- some parsers
-    (e.g. TypeScript) classify methods as ``function``. To avoid indexing a
-    top-level function under its *package* (``pkg.foo`` -> spurious key
-    ``('pkg', 'foo')``), an entry is only added when the enclosing segment is an
-    actual **type** symbol in the graph -- i.e. a symbol whose kind is not a
-    member kind. This keys off real type names rather than a hardcoded type-kind
-    allowlist, so it works across languages.
-
-    When ``repo_id`` is given, both the type-name set and the member rows are
-    scoped to that repo via ``files``. Scoping is safe here: a receiver type
-    resolved during repo X's pass whose members live in another repo is a rare
-    cross-repo-inheritance case, and a miss degrades gracefully (no typed match
-    -> fall through to the name-based tiers) rather than corrupting a result.
+    enclosing type is the second-to-last segment. An entry is only added when
+    the enclosing segment is an actual type symbol in the graph (keys off real
+    type names rather than a hardcoded type-kind allowlist, so it works across
+    languages). When ``repo_id`` is given, both the type-name set and the member
+    rows are scoped to that repo.
     """
     repo_join = ""
     repo_where = ""
@@ -155,13 +115,8 @@ def build_ancestor_index(
     """Build a {child_type_name: [parent_type_name, ...]} index from inheritance edges.
 
     Reads ``target_name`` directly (the bare parent name), so it does NOT
-    depend on the inheritance edges being resolved first -- safe to call at
-    the top of ``resolve_repo_edges`` before any UPDATE is flushed.
-
-    When ``repo_id`` is given, the index is scoped to that repo's inheritance
-    edges (the child symbol's repo). Scoping is exact for resolving repo X's
-    calls: an inheritance edge lives with its child symbol, so every
-    ``extends``/``implements`` edge relevant to repo X is captured.
+    depend on the inheritance edges being resolved first. When ``repo_id`` is
+    given, the index is scoped to that repo's inheritance edges.
     """
     anc: Dict[str, List[str]] = {}
     if repo_id is not None:
@@ -196,8 +151,7 @@ def _members_of(
 ) -> List[str]:
     """Symbol ids for ``member`` on ``recv_type``, walking ancestors breadth-first.
 
-    Cycle-safe via ``_seen``. Returns the first non-empty hit found on
-    ``recv_type`` itself, else recurses into its declared parents.
+    Cycle-safe via ``_seen``.
     """
     _seen = _seen if _seen is not None else set()
     if recv_type in _seen:
@@ -228,11 +182,6 @@ def resolve_edge(
     Returns ``(target_id, resolution_label)`` where ``resolution_label`` is one
     of ``'exact'``, ``'ambiguous'``, ``'unresolved'``. When ``ambiguous`` or
     ``unresolved``, ``target_id`` is ``None``.
-
-    ``receiver_type``/``members_by_type``/``ancestors`` are all optional and
-    defaulted so existing callers (e.g. ``incremental.py``) keep compiling
-    unchanged. When ``receiver_type`` is None the resolution path is
-    byte-for-byte identical to the type-aware-tier-disabled behavior.
     """
     members_by_type = members_by_type or {}
     ancestors = ancestors or {}
@@ -243,14 +192,9 @@ def resolve_edge(
 
     # --- Tier 0: type-aware (receiver dispatch) ---------------------------
     # A known receiver type is the STRONGEST resolution signal, so it runs
-    # first -- ahead of same-file, whose name-collision ambiguity would
-    # otherwise short-circuit (e.g. two `render` methods in one file defeat a
-    # typed `p.render()` call before this tier is reached). If the edge carries
-    # a known receiver type (e.g. `user.profile` -> receiver_type='Profile'),
-    # resolve `target_name` against that type's members and its
-    # extends/implements ancestors. Abstains (falls through to the name-based
-    # tiers) when there's no receiver type or no typed match, so behavior for
-    # untyped edges is byte-for-byte unchanged.
+    # first, ahead of same-file. Resolve `target_name` against that type's
+    # members and its extends/implements ancestors; abstains when there's no
+    # receiver type or no typed match.
     if receiver_type:
         typed = _members_of(receiver_type, target_name, members_by_type, ancestors)
         # Keep only candidates that are ALSO in the bare-name set (consistency
@@ -270,10 +214,8 @@ def resolve_edge(
         return None, "ambiguous"
 
     # --- Tier 2: import-aware --------------------------------------------
-    # The source file's imports may pin which definition is in scope. An import
-    # like ``xyz.be.c.networking.ApiFactory`` (tail ``ApiFactory``) resolves to
-    # a symbol whose qualified_name ends with the matching suffix. We only trust
-    # this when it narrows to exactly one candidate.
+    # The source file's imports may pin which definition is in scope. We only
+    # trust this when it narrows to exactly one candidate.
     my_imports = imports_by_file.get(source_file_id)
     if my_imports:
         import_match = _import_aware_candidates(target_name, my_imports, cands)
@@ -305,26 +247,13 @@ def _import_aware_candidates(
 
     Two reachability patterns are recognized:
 
-    1. DIRECT -- the file imports the symbol itself. The import path *ends* in
-       the target name. Example: ``import retrofit2.Retrofit``; a reference to
-       ``Retrofit`` resolves to the symbol whose qualified_name ends in
-       ``Retrofit``.
+    1. DIRECT -- the file imports the symbol itself (import path ends in the
+       target name).
+    2. CONTAINING -- the file imports the enclosing type and the target is a
+       member of it (import path is a prefix of the candidate's qualified_name).
 
-    2. CONTAINING -- the file imports the *enclosing type* and the target is a
-       member of it. Example: ``import pkg.RepoA``; a call ``RepoA.create()``
-       extracts target_name ``create`` (a method). The candidate
-       ``RepoA.create`` is reachable because its qualified_name *starts with*
-       the imported type ``RepoA``. This is the most common call pattern and the
-       one tree-sitter extracts (it keeps the tail identifier of a navigation
-       chain).
-
-    For each candidate we score the longest import whose tail is either a
-    suffix of (DIRECT) or a prefix of (CONTAINING) the candidate's
-    qualified_name segments. Candidates with the highest score win; ties mean
-    the import does not actually disambiguate, so all winners are returned and
-    the caller treats them as ambiguous.
-
-    ``cands`` tuples are ``(symbol_id, repo, file_id, qualified_name)``.
+    Candidates with the highest score win; ties are returned and treated as
+    ambiguous.
     """
     # Last segment of each import is the name it brings into scope. We keep the
     # full segment chain so a longer match scores higher (more specific import).
@@ -345,35 +274,21 @@ def _import_aware_candidates(
             qsegs = [target_name]
         longest = 0
         for tail in import_tails:
-            # The imported name is the tail's last segment.
             # DIRECT: imported_name is a suffix of qname (symbol imported as-is).
             suffix_len = _common_suffix_len(qsegs, tail)
             # CONTAINING: imported_name is a PREFIX segment of qname (member of
-            # an imported type). e.g. tail [pkg, RepoA], qsegs [RepoA, create]:
-            # the imported type name "RepoA" matches qsegs[0].
-            # For package-qualified imports (e.g. tail [com, example, RepoA],
-            # qsegs [RepoA, create]), we find where the import tail aligns as a
-            # contiguous subsequence in qsegs and score by how much of the import
-            # path corroborates.
-            # FALLBACK: For type-scoped qnames where the import tail has package
-            # segments not present in qsegs, match just the last segment of the
-            # import tail (the type name) against qsegs[0] at lower confidence.
+            # an imported type).
             prefix_len = 0
             if qsegs:
-                # Find the position where the import tail aligns in qsegs
-                # The import tail should be a contiguous subsequence starting
-                # somewhere in qsegs
+                # Find where the import tail aligns as a contiguous subsequence
+                # in qsegs; score by how much of the import path corroborates.
                 for i in range(len(qsegs) - len(tail) + 1):
                     if qsegs[i:i + len(tail)] == tail:
-                        # Score by how much of the import path corroborates:
-                        # 1 segment minimum (the type name itself) plus any
-                        # corroborating prefix segments that precede it in qsegs
                         prefix_len = len(tail) + i
                         break
-                # Fallback: if full contiguous match fails, try matching just
-                # the last segment of the import tail against qsegs[0].
-                # This handles type-scoped qnames (e.g., 'RepoA.create') with
-                # package-qualified imports (e.g., 'com.example.RepoA').
+                # Fallback: match just the last segment of the import tail
+                # against qsegs[0] for type-scoped qnames with package-qualified
+                # imports.
                 if prefix_len == 0 and tail[-1] == qsegs[0]:
                     prefix_len = 1
             m = max(suffix_len, prefix_len)
@@ -407,31 +322,17 @@ def resolve_repo_edges(
     """Resolve and persist edges for one repo.
 
     ``edges_by_file`` maps ``source_file_id`` to a list of
-    ``(edge_id, source_symbol_id, target_name, line, column)`` tuples. These are
-    edges whose source symbol is already resolved (caller-side); only the target
-    side is decided here.
-
-    Writes ``(target_id, target_name, resolution)`` back to each edge row. When
-    resolved, ``target_name`` is cleared (consistent with the existing resolved-
-    edge convention) and ``resolution='exact'``. Otherwise ``target_id`` is NULL,
-    ``target_name`` is preserved for fuzzy fallback, and ``resolution`` marks
-    ambiguity.
-
-    The symbol + import + type indices are built once per call (per repo
-    build) and reused across all of the repo's files. Returns a counts dict
+    ``(edge_id, source_symbol_id, target_name, line, column)`` tuples. Writes
+    ``(target_id, target_name, resolution)`` back to each edge row; on exact
+    resolution ``target_name`` is cleared, otherwise preserved for fuzzy
+    fallback. Returns a counts dict
     ``{'exact': n, 'ambiguous': n, 'unresolved': n}``.
 
-    Edge tuples may be 5-tuples (pre-Phase-10: no receiver_type) or 6-tuples
-    (``..., receiver_type``); both are tolerated during rollout.
+    Edge tuples may be 5-tuples (no receiver_type) or 6-tuples; both tolerated.
 
-    The import / member / ancestor indexes are scoped to ``repo`` (H6): each is
-    only ever consulted for the repo being resolved (a source file's own
-    imports, a receiver type's own members, a child type's own inheritance
-    edges), so scoping is exact and keeps incremental re-runs from scanning the
-    whole corpus. ``build_symbol_index`` is deliberately left UNSCOPED: the
-    same-repo tier (3) and the global singleton tier (4) both rely on the full
-    workspace symbol set, and narrowing it would turn cross-repo ``exact``
-    resolutions into ``unresolved``. See the tier comments in ``resolve_edge``.
+    The import/member/ancestor indexes are scoped to ``repo``; the symbol index
+    is deliberately left unscoped so the same-repo (3) and global (4) tiers see
+    the full workspace symbol set.
     """
     symbols_by_name = build_symbol_index(conn)
     imports_by_file = build_import_index(conn, repo_id=repo)

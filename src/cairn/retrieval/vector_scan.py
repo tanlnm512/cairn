@@ -1,15 +1,12 @@
 """Unified cosine-scan core: the single shared vector-similarity implementation.
 
-This module exposes one ``cosine_scan`` that all three retrieval paths
-(``graph/semantic.py`` symbols, ``knowledge/search.py`` docs,
-``memory/promotion.py`` concepts) call. It is backend agnostic: callers pass
-already-fetched ``(vec_blob, dim, payload)`` rows plus a query vector; it
-returns ``[(score, payload), ...]`` ranked descending. The three pipelines
-differ in *which table they scan and what payload they join*, not in the
-cosine math -- so the math lives once here.
+``cosine_scan`` is called by all three retrieval paths (``graph/semantic.py``
+symbols, ``knowledge/search.py`` docs, ``memory/promotion.py`` concepts).
+Callers pass already-fetched ``(vec_blob, dim, payload)`` rows plus a query
+vector; it returns ``[(score, payload), ...]`` ranked descending.
 
-NumPy is preferred when available (fast); falls back to pure Python (correct,
-slower) using ``vector_math.l2norm``/``dot``.
+NumPy is preferred when available (fast); falls back to pure Python using
+``vector_math.l2norm``/``dot``.
 """
 from __future__ import annotations
 
@@ -60,9 +57,7 @@ def cosine_scan(
         scored.sort(key=lambda x: -x[0])
         return scored
     except ImportError:
-        # Pure-Python fallback -- struct unpack is ~10x faster than array for
-        # this shape. Uses the shared vector_math helpers so all three layers
-        # agree on the math.
+        # Pure-Python fallback using the shared vector_math helpers.
         q = struct.unpack(f"<{len(q_blob) // 4}f", q_blob)
         qn = _l2norm(q)
         if qn == 0.0:

@@ -1,8 +1,7 @@
 """Graph traversal: symbol lookup and caller/callee/impact queries.
 
 All functions take a sqlite3.Connection (from schema.get_db) and return
-sqlite3.Row objects (dict-like). The "structural traversal" half -- everything
-that walks the edges table rather than running search or analytics.
+sqlite3.Row objects (dict-like).
 """
 from __future__ import annotations
 
@@ -10,16 +9,10 @@ import sqlite3
 from typing import List, Optional, Tuple
 
 
-# Edge kinds that represent in-codebase structural relationships — the ones
-# blast-radius / flow tracing should follow by default. Service/topology edge
-# kinds (http_call, service_call) are excluded by default because their targets
-# are often external (a URL or another service), and including them would
-# inflate impact estimates — contradicting the precise-by-default identity.
-# Callers can opt in via ``include_service_edges=True``.
-#
-# Both ``"calls"`` (tree-sitter parsers) and ``"call"`` (the SCIP importer,
-# which uses the singular form) are included — the two conventions coexist in
-# the codebase and both represent the same structural relationship.
+# Edge kinds that represent in-codebase structural relationships. Service/
+# topology edge kinds (http_call, service_call) are excluded by default; pass
+# ``include_service_edges=True`` to follow them. Both ``"calls"`` (tree-sitter
+# parsers) and ``"call"`` (the SCIP importer) are included.
 STRUCTURAL_EDGE_KINDS: Tuple[str, ...] = ("calls", "call", "extends", "implements")
 
 
@@ -82,21 +75,13 @@ def get_callers(
     """Return edges whose target is a symbol named `name`.
 
     Precise mode (default, ``fuzzy=False``): only edges whose ``target_id`` is
-    resolved to a symbol named `name`. These are edges the resolver could pin
-    to exactly one definition, so there are no false positives from homonymous
-    methods.
+    resolved to a symbol named `name` (no false positives from homonymous
+    methods). Fuzzy mode (``fuzzy=True``): also matches edges whose
+    ``target_name`` equals ``name`` (useful for tracing every call site of a
+    common name, e.g. all ``.let`` usages).
 
-    Fuzzy mode (``fuzzy=True``): also matches edges whose ``target_name`` equals
-    ``name`` (the pre-resolution behavior). Useful when you deliberately want
-    *every* call site of a common name including unresolved ones (e.g. tracing
-    all ``.let`` usages), at the cost of mixing symbols that merely share a name.
-
-    ``kind`` (optional) filters by edge kind (e.g. ``"http_call"``,
-    ``"service_call"``). Cheap — ``edges.kind`` is indexed. ``None`` returns
-    all kinds (the historical behavior).
-
-    Joins edges -> source symbol -> file so each row reports the caller symbol,
-    its file:line, and repo.
+    ``kind`` (optional) filters by edge kind; ``None`` returns all kinds. Each
+    row reports the caller symbol, its file:line, and repo.
     """
     cur = conn.cursor()
     kind_clause = "AND e.kind = ?" if kind else ""
@@ -141,11 +126,10 @@ def get_callees(
     """Return edges whose source is a symbol named `name` (what it calls).
 
     Precise mode (default): only edges with a resolved ``target_id``. Fuzzy
-    mode also returns unresolved outgoing calls (named-only), which is useful
-    for exploring a function's behavior including stdlib/external calls.
+    mode also returns unresolved outgoing calls (useful for exploring a
+    function's behavior including stdlib/external calls).
 
-    ``kind`` (optional) filters by edge kind (e.g. ``"http_call"``,
-    ``"service_call"``). ``None`` returns all kinds.
+    ``kind`` (optional) filters by edge kind; ``None`` returns all kinds.
     """
     cur = conn.cursor()
     target_clause = "" if fuzzy else "AND e.target_id IS NOT NULL"
@@ -179,25 +163,13 @@ def impact_analysis(
 ) -> dict:
     """Recursive caller traversal with cycle detection.
 
-    Visits each symbol at most once (keyed by symbol **id**, not name) to avoid
-    exponential blow-up in heavily interconnected call graphs. Keying by id —
-    not by name — means two unrelated methods that merely share a name (e.g.
-    two classes' ``render``) are tracked as distinct nodes, so a cross-class
-    flow is not truncated as a false "cycle". Genuine back-edges (a caller
-    already on the current DFS path) are reported as cycles.
+    Visits each symbol at most once (keyed by symbol **id**, not name). Precise
+    mode (default) only walks resolved edges; ``fuzzy=True`` also follows
+    unresolved name-only edges. By default only **structural** edges
+    (``calls``, ``extends``, ``implements``) are followed; pass
+    ``include_service_edges=True`` to also follow ``http_call``/``service_call``.
 
-    Precise mode (default) only walks resolved edges, so blast-radius is not
-    inflated by name collisions. Use ``fuzzy=True`` to also follow unresolved
-    name-only edges (broader but noisier).
-
-    By default only **structural** edges (``calls``, ``extends``, ``implements``)
-    are followed — service/topology edges (``http_call``, ``service_call``) are
-    excluded because their targets are often external and would inflate impact.
-    Pass ``include_service_edges=True`` to follow them too.
-
-    ``limit`` caps the total accumulated impacted rows (default 500) -- once
-    hit, traversal stops early rather than continuing to walk a common name's
-    call graph to exhaustion. ``truncated`` in the return dict flags this.
+    ``limit`` caps total impacted rows; ``truncated`` in the return flags this.
 
     Returns {impacted: [...], cycles: [...], total: int, truncated: bool}.
     Each impacted entry: {symbol, file, repo, depth}.
@@ -229,9 +201,7 @@ def impact_analysis(
         callers = get_callers(conn, sym_name, fuzzy=fuzzy)
         for c in callers:
             # Filter to structural kinds unless the caller opted in to service
-            # edges. Done post-fetch because get_callers returns edge_kind and
-            # we may want multiple kinds (a tuple) — SQL IN-list would also work
-            # but the row set is already bounded by `limit`.
+            # edges.
             if allowed is not None and c["edge_kind"] not in allowed:
                 continue
             if len(results) >= limit:
@@ -245,15 +215,11 @@ def impact_analysis(
                     "depth": depth,
                 }
             )
-            # Key by the caller's symbol id so homonymous methods in different
-            # classes do not collapse to the same node.
             traverse(c["caller_id"], c["caller_name"], depth + 1)
         on_path.discard(sym_id)
 
-    # Seed: the entry name may resolve to several symbols (e.g. overloaded
-    # methods). Mark every matching id as visited/on-path so the traversal does
-    # not re-enter the seed, then expand the seed's callers once. Callers carry
-    # their own ids and are keyed by those going forward.
+    # Seed: the entry name may resolve to several symbols. Mark every matching
+    # id as visited/on-path so the traversal does not re-enter the seed.
     for seed in find_definition(conn, name, limit=limit):
         visited.add(seed["id"])
         on_path.add(seed["id"])
@@ -282,11 +248,7 @@ def impact_analysis(
 
 
 def find_definition_by_id(conn: sqlite3.Connection, sym_id: str) -> List[sqlite3.Row]:
-    """Find a symbol by its database ID. Returns at most one row.
-
-    Used to disambiguate name collisions (e.g. multiple ``handleCommand``
-    methods) when tracing flows by ID rather than by name.
-    """
+    """Find a symbol by its database ID. Returns at most one row."""
     cur = conn.cursor()
     return list(cur.execute(
         """SELECT s.*, f.path AS file_path, f.repo_id AS repo
@@ -307,57 +269,27 @@ def trace_flow(
 ) -> dict:
     """Downward callee traversal from an entry symbol — the flow it executes.
 
-    The inverse of :func:`impact_analysis` (which walks *callers* upward and
-    returns a flat set): this walks *callees* downward and records the actual
-    ordered call chain, so the output is a readable trace of what happens when
-    ``entry`` runs — ``entry -> A -> B -> C`` — across files and modules.
-
-    BFS by symbol **id** (each id visited once) with the same cycle detection
-    and ``limit`` cap as ``impact_analysis``, so a handler that fans out to
-    dozens of callees can't explode. Keying by id — not name — means two
-    unrelated methods that merely share a name (e.g. two classes' ``render``)
-    are tracked as distinct nodes, so a cross-class flow is not truncated as a
-    false "cycle". Branch points (a symbol with >1 distinct callee) and leaves
-    (terminal callees with no further calls) are surfaced separately — both are
-    the structural signals a "flow compass" cares about.
-
-    By default only **structural** edges (``calls``, ``extends``, ``implements``)
-    are followed — service/topology edges (``http_call``, ``service_call``) are
-    excluded by default to keep the flow trace focused on in-codebase behavior.
-    Pass ``include_service_edges=True`` to follow them too.
+    The inverse of :func:`impact_analysis` (callers upward, flat set): this
+    walks callees downward and records the ordered call chain
+    (``entry -> A -> B -> C``) across files and modules. BFS by symbol **id**
+    (each id visited once) with the same cycle detection and ``limit`` cap as
+    ``impact_analysis``. Branch points (a symbol with >1 distinct callee) and
+    leaves (terminal callees) are surfaced separately. By default only
+    **structural** edges are followed; pass ``include_service_edges=True`` to
+    follow ``http_call``/``service_call`` too.
 
     Args:
-        entry: the entry-point symbol name (an HTTP handler, CLI command,
-            Activity.onCreate, ...). Resolved via :func:`get_callees`.
+        entry: the entry-point symbol name. Resolved via :func:`get_callees`.
         max_depth: deepest call hop to follow (default 8).
-        limit: total nodes cap, after which traversal stops (default 500).
-        fuzzy: when True, also follow unresolved name-only outgoing calls
-            (broader but noisier — same semantics as ``get_callees``).
-        entry_id: optional symbol database ID. When set, the seed symbol is
-            resolved by ID (via :func:`find_definition_by_id`) instead of by
-            name — disambiguates collisions like multiple ``handleCommand``
-            methods. Downstream callees are already resolved by ``target_id``
-            in the edges table, so only the seed needs ID-based lookup.
+        limit: total nodes cap (default 500).
+        fuzzy: when True, also follow unresolved name-only outgoing calls.
+        entry_id: optional symbol DB ID. When set, the seed symbol is resolved
+            by ID (via :func:`find_definition_by_id`) instead of by name.
         include_service_edges: when True, also follow ``http_call``/
-            ``service_call`` edges (default False — they're often external).
+            ``service_call`` edges (default False).
 
-    Returns::
-
-        {
-          "entry": str,
-          "chain": [                       # ordered, depth-tagged
-             {"symbol", "kind", "file", "repo", "depth", "parent"},
-             ...
-          ],
-          "branches": [                    # symbols that fan out >1 callee
-             {"symbol", "callees": [names]},
-          ],
-          "leaves": [str],                 # terminal callees (no further calls)
-          "modules": [str],                # distinct file dirs touched
-          "cycles": [{"symbol", "depth"}],
-          "total": int,
-          "truncated": bool,
-        }
+    Returns a dict with keys: entry, chain (ordered depth-tagged nodes),
+    branches, leaves, modules, cycles, total, truncated.
     """
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
     visited: dict[str, dict] = {}   # id -> chain entry (first-seen wins)
@@ -406,15 +338,13 @@ def trace_flow(
         seen_callees: set[str] = set()
         outgoing: list[str] = []
         for c in callees:
-            # Skip service/topology edges unless opted in (see STRUCTURAL_EDGE_KINDS).
             if allowed is not None and c["edge_kind"] not in allowed:
                 continue
             cname = c["callee_name"]
             if not cname:
                 continue
             # Prefer the resolved target id as the node identity; fall back to
-            # a name-scoped key for unresolved (name-only) callees so it stays
-            # distinct from real symbol ids.
+            # a name-scoped key for unresolved (name-only) callees.
             cid = c["resolved"] or f"name:{cname}"
             if cid in seen_callees:
                 continue
@@ -424,10 +354,8 @@ def trace_flow(
                 truncated = True
                 break
             if cid not in visited:
-                # Resolve the callee's DEFINITION location (not the call site).
-                # get_callees returns the caller's file; find_definition gives
-                # us where the symbol is actually declared — which is what a
-                # flow reader wants ("where does this step live").
+                # Resolve the callee's DEFINITION location (not the call site):
+                # where the symbol is actually declared.
                 defn = find_definition(conn, cname, limit=1)
                 if defn:
                     d = defn[0]

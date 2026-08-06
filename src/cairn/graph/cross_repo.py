@@ -6,10 +6,6 @@ per process by :func:`_load_namespaces` in priority order: the
 of the workspace's ``cairn.json``, then the built-in :data:`_DEFAULT_NAMESPACES`
 fallback. ``cross_repo_deps`` uses the resolved map plus the ``imports`` table
 to compute which repos a given repo depends on, and which depend on it.
-
-Both the loader and ``cross_repo_deps`` are imported by name from
-``queries.py`` (the backward-compat shim) and from ``src.graph`` (the public
-API) by ``viz/query.py`` and ``wiki/generator.py``.
 """
 from __future__ import annotations
 
@@ -20,8 +16,7 @@ from typing import Dict
 
 
 # Built-in fallback: per the spec's be-workspace conventions. Used when neither
-# the env var nor cairn.json supplies a namespace map. Kept so existing
-# be-workspace behavior is preserved silently.
+# the env var nor cairn.json supplies a namespace map.
 _DEFAULT_NAMESPACES: Dict[str, str] = {
     "xyz.be.utils": "be-sdk",
     "xyz.be.customer.networking": "be-sdk",
@@ -150,11 +145,9 @@ def cross_repo_deps(conn: sqlite3.Connection, repo: str) -> dict:
 
     # Dependents: imports in OTHER repos referencing `repo`'s namespaces.
     # The prefix filter is pushed into SQL (``imported_path LIKE ns || '%'``)
-    # rather than loading every import row into memory and filtering in
-    # Python — the earlier Python-side loop scaled with the total number of
-    # import rows across all repos. Namespace prefixes may contain LIKE
-    # meta-characters (``_``), so they are escaped and the LIKE uses
-    # ``ESCAPE '\\'``.
+    # rather than loading every import row into memory and filtering in Python.
+    # Namespace prefixes may contain LIKE meta-characters (``_``), so they are
+    # escaped and the LIKE uses ``ESCAPE '\\'``.
     my_namespaces = [ns for ns, owner in namespaces.items() if owner == repo]
     dependents: dict[str, dict] = {}
     if my_namespaces:

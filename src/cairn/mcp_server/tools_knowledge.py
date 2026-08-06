@@ -103,10 +103,9 @@ def knowledge_delete(doc_id: str) -> str:
     # tool at a compass/wiki/memory doc via a crafted doc_id.
     concept = get_document(bundle, doc_id)
     if concept is not None:
-        # read_concept -> _validate_concept_path -> OKFConcept.from_file sets a
-        # *resolved* absolute concept_id; normalize to bundle-relative before the
-        # namespace prefix check (resolve both sides so symlinked /var vs
-        # /private/var roots don't trip relative_to).
+        # OKFConcept.from_file sets a resolved absolute concept_id; normalize to
+        # bundle-relative before the namespace check (resolve both sides so
+        # symlinked roots don't trip relative_to).
         resolved = concept.concept_id
         try:
             resolved = str(Path(resolved).resolve().relative_to(Path(bundle.root).resolve()))
