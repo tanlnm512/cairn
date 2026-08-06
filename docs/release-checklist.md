@@ -5,9 +5,10 @@ Each item maps to a real failure mode hit in this project's history —
 don't skip on "I'm sure it's fine."
 
 ## Tests
-- [ ] `uv run pytest tests/ -q` — full suite (NOT just `-m core`). CI only
-      runs the `core` smoke subset; the full suite has 500+ tests CI never sees.
-      Note the pass/skip/fail count; compare to the last green run.
+- [ ] `uv run pytest tests/ -q` — full suite (~500 tests). CI runs this too
+      (after a `core` smoke pass), but confirm locally before pushing so you
+      aren't waiting on a CI round-trip for a local failure. Note the
+      pass/skip/fail count; compare to the last green run.
 - [ ] No new `xfail` or `skip` slipped in to make a failure "pass."
 
 ## Build verification (for changes touching indexing/embedding)
@@ -48,8 +49,9 @@ If a change is supposed to be refactor/doc-only/comments-only:
 
 ## Agent / bulk-edit safety
 If changes were made by sub-agents or bulk find-replace:
-- [ ] AST comparison passed (see appendix) — comments-only changes verified
-      programmatically, not by reading diffs.
+- [ ] `make verify-no-code-change` passed (or `make verify-no-code-change REF=HEAD~1`
+      for a just-made commit) — comments-only changes verified programmatically
+      via AST comparison (`scripts/verify_no_code_change.py`), not by reading diffs.
 - [ ] `ruff check` clean.
 - [ ] No string literals (help text, print output, error messages) were
       silently rewritten — these are executable, not comments.
