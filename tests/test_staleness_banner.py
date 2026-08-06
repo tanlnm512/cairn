@@ -46,6 +46,9 @@ def _patched_conn(fresh_db, monkeypatch):
 
 
 def test_banner_present_when_caller_file_is_stale(_patched_conn):
+    """Regression (WI-4): a result whose files have pending_sync edits must be
+    prefixed with a staleness banner so a long-running serve doesn't silently
+    answer from a stale graph. See BUGS.md."""
     _seed_caller(_patched_conn, stale=True)
 
     result = tools_graph.get_callers("doThing")

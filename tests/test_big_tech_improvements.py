@@ -52,6 +52,8 @@ def test_transitive_closure_builder():
 
 
 def test_scip_importer():
+    """Regression: the SCIP importer must produce a real exact-resolution edge,
+    not a fake/placeholder resolution. See BUGS.md#2026-08-06/scip-importer-fake-resolution."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "test.db")
         conn = get_db(db_path)

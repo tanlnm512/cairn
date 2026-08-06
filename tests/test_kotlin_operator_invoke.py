@@ -89,6 +89,8 @@ _USE_CASE_FILES = {
 
 
 def test_operator_invoke_resolves_to_usecase_class(tmp_path):
+    """Regression: a bare `useCase(p)` call must resolve to the UseCase class,
+    not the local property. See BUGS.md."""
     ws = _make_fixture(tmp_path, "ws_invoke", _USE_CASE_FILES)
     db_path = str(tmp_path / "graph.db")
     build_graph(workspace=ws, db_path=db_path, verbose=False)
@@ -123,6 +125,8 @@ def test_callers_and_impact_reach_the_usecase_class(tmp_path):
 
 
 def test_two_viewmodels_both_reach_same_usecase(tmp_path):
+    """Regression: every caller injecting the same UseCase must reach the class,
+    not silently resolve to its own local property. See BUGS.md."""
     files = dict(_USE_CASE_FILES)
     files["MoodViewModel.kt"] = (
         "class MoodViewModel(\n"
