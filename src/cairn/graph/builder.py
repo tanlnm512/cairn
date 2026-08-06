@@ -383,11 +383,16 @@ def _build_graph_impl(
         return {"repos": 0, "files": 0, "symbols": 0, "edges": 0, "imports": 0}
     emit("scan", files=len(files), skips=len(skips))
 
-    # Group files by repo for repo-record insertion.
+    # Group files by repo for repo-record insertion. Bucket files by repo once
+    # (O(files)) so the per-repo language inference below is O(files) total
+    # rather than O(repos x files) -- the list comprehension re-scan of all
+    # files was 2.5M comparisons on a 50-repo/50k-file workspace.
     repos_seen: Dict[str, scanner_mod.FileInfo] = {}
+    files_by_repo: Dict[str, List[scanner_mod.FileInfo]] = {}
     for f in files:
         if f.repo not in repos_seen:
             repos_seen[f.repo] = f
+        files_by_repo.setdefault(f.repo, []).append(f)
 
     # Insert repo records (or update indexed_at).
     for repo_name, sample in repos_seen.items():
@@ -404,9 +409,7 @@ def _build_graph_impl(
                 repo_name,
                 repo_name,
                 sample.repo_path,
-                scanner_mod.infer_repo_language(
-                    [f for f in files if f.repo == repo_name]
-                ),
+                scanner_mod.infer_repo_language(files_by_repo.get(repo_name, [])),
                 get_remote_url(sample.repo_path),
                 _now(),
             ),

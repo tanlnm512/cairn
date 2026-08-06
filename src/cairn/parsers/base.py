@@ -7,7 +7,6 @@ shape that the graph builder writes into SQLite.
 from __future__ import annotations
 
 import abc
-import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -85,10 +84,6 @@ class BaseParser(abc.ABC):
     def parse(self, path: str) -> ParsedFile:
         """Parse a source file into symbols, edges, and imports."""
         raise NotImplementedError
-
-    @staticmethod
-    def file_hash(path: str) -> str:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     @staticmethod
     def count_lines(path: str) -> int:

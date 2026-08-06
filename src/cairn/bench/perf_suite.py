@@ -115,6 +115,13 @@ def run_perf_suite(
             os.environ["CAIRN_EMBED_BACKEND"] = _saved_embed_backend  # type: ignore[assignment]
         else:
             os.environ.pop("CAIRN_EMBED_BACKEND", None)
+        # The embed backend resolution is cached for the life of the process
+        # (see embeddings.reset_backend_cache). We flipped the env above and
+        # reset the cache before the embed phase so the bench's `hash` backend
+        # is now the cached effective backend; reset again here so non-bench
+        # in-process callers see the restored backend rather than the bench's.
+        from cairn.graph import embeddings as _emb
+        _emb.reset_backend_cache()
 
     # --- Build phase ------------------------------------------------------
     # Build timing is single-shot (the phase-event split is the signal, and a

@@ -6,23 +6,18 @@ the .knowledge/knowledge/ subtree. Scoped via concept_id prefix "knowledge/".
 from __future__ import annotations
 
 import logging
-import re
 from typing import List, Optional
 from pathlib import Path
 
 from cairn.okf.concept import OKFConcept
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.provenance import Tier
+from cairn.okf.utils import slugify
 
 logger = logging.getLogger(__name__)
 
 # Maximum file size for import (10MB) to prevent excessive memory usage
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
-
-
-def slugify(text: str) -> str:
-    """URL-safe slug. Mirrors src/memory/store.py:82 pattern."""
-    return re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")[:60]
 
 
 def add_document(

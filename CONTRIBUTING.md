@@ -31,7 +31,7 @@ There are two feedback loops:
 
 ```bash
 pytest -m core -q      # fast smoke subset (<3s) — the inner dev loop
-pytest -q              # full suite (all 58 test files) — the CI path
+pytest -q              # full suite (~60 test files) — the CI path
 ```
 
 The `core` marker (declared in `pyproject.toml`) marks **one focused test per

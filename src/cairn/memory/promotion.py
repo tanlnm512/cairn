@@ -10,7 +10,7 @@ from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
 from . import store as store_mod
-from .scoring import apply_score, score_memory
+from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
 
 
 def capture_memory(
@@ -368,14 +368,14 @@ def batch_critic(
     dropped = 0
     tribal = 0
     for concept in drafts:
-        # Compute critic score: LLM if available, else a neutral default (0.5).
-        # compute_score has no None handling (it does WEIGHTS["critic_score"]
-        # * signals["critic_score"]), so a float is required, and 0.5 matches
-        # the neutral default score_memory uses when critic_score is absent.
-        # This contributes a neutral 0.20*0.5 = 0.10, neither inflating nor
-        # deflating.
+        # Compute critic score: LLM if available, else a neutral default.
+        # DEFAULT_CRITIC_SCORE is shared with score_memory() so both code paths
+        # agree on the neutral value. compute_score has no None handling (it
+        # does WEIGHTS["critic_score"] * signals["critic_score"]), so a float
+        # is required. This contributes a neutral 0.20*0.5 = 0.10, neither
+        # inflating nor deflating.
         signals = score_memory(concept, conn, bundle)
-        critic = llm_critic(concept) if llm_critic else 0.5
+        critic = llm_critic(concept) if llm_critic else DEFAULT_CRITIC_SCORE
         signals["critic_score"] = critic
         signals["score"] = _rescore_with_critic(signals, critic)
         apply_score(concept, signals)

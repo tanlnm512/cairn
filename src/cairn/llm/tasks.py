@@ -358,9 +358,12 @@ def complete_task(
             else:
                 # Fail with errors
                 if task.attempt < MAX_REVISE_CYCLES:
-                    # Spawn a revise task
-                    revise_kind = task.task_kind.replace("-synthesize", "-revise")
-                    if "-revise" not in revise_kind and task.task_kind != revise_kind:
+                    # Spawn a revise task. A synthesize task becomes the matching
+                    # revise kind (compass-synthesize -> compass-revise); any
+                    # other kind just appends "-revise".
+                    if task.task_kind.endswith("-synthesize"):
+                        revise_kind = task.task_kind[: -len("-synthesize")] + "-revise"
+                    else:
                         revise_kind = f"{task.task_kind}-revise"
                     
                     create_task(

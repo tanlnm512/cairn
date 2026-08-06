@@ -33,14 +33,20 @@ def _cg_command() -> list[str]:
     return [sys.executable, "-m", "cairn.cli.main"]
 
 
-def _run_cg(args: list, timeout: int = 30) -> str:
-    """Run a cairn command. Returns stdout."""
+def _run_cg(args: list, timeout: int = 30, stdin: str | None = None) -> str:
+    """Run a cairn command. Returns stdout.
+
+    ``stdin`` (if given) is piped to the child's stdin — use this for large
+    payloads (e.g. a session transcript) that would otherwise blow past
+    ARG_MAX (~256KB on macOS) when passed as an argv element.
+    """
     try:
         result = subprocess.run(
             _cg_command() + args,
             capture_output=True,
             text=True,
             timeout=timeout,
+            input=stdin,
         )
         return result.stdout
     except (subprocess.SubprocessError, OSError) as e:
@@ -84,11 +90,15 @@ def session_end():
         # Even without a transcript, queue a capture so an agent can process it.
         sys.stdout.write("(no transcript; nothing to capture)")
         return
+    # Pass the transcript via stdin rather than as an argv element: a long
+    # session can be hundreds of KB / MB of JSON, which exceeds ARG_MAX
+    # (~256KB on macOS) and would yield E2BIG on the subprocess exec. The
+    # `memory capture` command reads it when --session-transcript-stdin is set.
     transcript = json.dumps(messages)
-    # Delegate memory extraction to the capture command.
     out = _run_cg(
-        ["memory", "capture", "--session-transcript", transcript, "--session-id", "claude"],
+        ["memory", "capture", "--session-transcript-stdin", "--session-id", "claude"],
         timeout=60,
+        stdin=transcript,
     )
     sys.stdout.write(out or "(no memories captured)")
 

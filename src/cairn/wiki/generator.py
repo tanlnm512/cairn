@@ -72,7 +72,7 @@ def _graph_derived_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) 
     body_parts.append("## Overview\n")
     body_parts.append(
         f"{repo} contains {stats['by_repo'].get(repo, 0)} symbols across "
-        f"{sum(1 for _ in cur.execute('SELECT 1 FROM files WHERE repo_id=?',(repo,)))} files.\n"
+        f"{cur.execute('SELECT COUNT(*) FROM files WHERE repo_id=?', (repo,)).fetchone()[0]} files.\n"
     )
     body_parts.append("\n## Symbol Distribution\n")
     for r in by_kind:

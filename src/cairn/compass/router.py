@@ -42,7 +42,7 @@ INTENT_PATTERNS = [
     (r"\b(navigate|where do i start|guide|onboard)\b", "module_navigation", "L3"),
     (r"\b(gotcha|trap|non-obvious|watch out|pitfall)\b", "non_obvious_gotchas", "L3"),
     # L4: memory
-    (r"\b(why did|decision|chose|rationale|chose)\b", "past_decisions", "L4"),
+    (r"\b(why did|decision|chose|rationale)\b", "past_decisions", "L4"),
     (r"\b(mistake|error|wrong|forgot|bug we hit)\b", "common_mistakes", "L4"),
 ]
 

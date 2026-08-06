@@ -4,9 +4,18 @@ Claude Code reads workspace-scoped files: ``.mcp.json`` (MCP), ``.claude/``
 (skills, commands, agents), ``.claude/settings.json`` (hooks), and
 ``CLAUDE.md`` (instructions). This module owns all of those for Claude Code
 so the shape that install writes matches the shape uninstall strips.
+
+Scope note: ``scope="global"`` installs the ``.claude/`` tree to ``~/.claude/``
+(which Claude Code does read for global skills/commands/agents), but the MCP
+server cannot be registered globally by writing ``~/.mcp.json`` — Claude Code
+only reads a workspace ``.mcp.json``. The global MCP equivalent is
+``claude mcp add --scope user``, so global installs register MCP via that
+subprocess when the ``claude`` CLI is present.
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 from .._common import (
@@ -18,6 +27,7 @@ from .._common import (
     _claude_hook_command,
     _claude_instructions,
     mcp_config_json,
+    resolve_cg_command,
 )
 from ..merge import (
     _merge_json_file,
@@ -57,8 +67,9 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
 
     ``scope="workspace"`` writes to ``<workspace>/.claude/`` and
     ``<workspace>/.mcp.json`` (default). ``scope="global"`` writes to
-    ``~/.claude/`` and ``~/.mcp.json`` so all projects inherit cairn
-    without per-workspace installation.
+    ``~/.claude/`` so all projects inherit cairn's skills/commands/agents
+    without per-workspace installation. Global MCP registration uses
+    ``claude mcp add --scope user`` (see module docstring).
     """
     ws = Path(workspace)
     res = InstallResult("claude")
@@ -66,8 +77,38 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
     # Base dir: workspace root (default) or home (global scope).
     base = ws if scope == "workspace" else Path.home()
 
-    # MCP config at base root (shared with zcode).
-    _merge_json_file(base / ".mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+    # --- MCP registration -------------------------------------------------
+    # Claude Code only reads a *workspace* `.mcp.json`; a global `~/.mcp.json`
+    # is NOT picked up. So for workspace scope we write the file, but for
+    # global scope we register via `claude mcp add --scope user` (the CLI's
+    # supported global path). The subprocess is best-effort: if the `claude`
+    # CLI is absent we record a warning so the user knows MCP wasn't wired.
+    if scope == "workspace":
+        _merge_json_file(base / ".mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+    else:
+        if dry_run:
+            res.notes.append("[dry-run] Would register MCP globally via `claude mcp add --scope user`.")
+        elif shutil.which("claude"):
+            cmd = resolve_cg_command()
+            try:
+                subprocess.run(
+                    ["claude", "mcp", "add", "cairn", "--scope", "user", *cmd, "serve"],
+                    capture_output=True, timeout=15, check=False,
+                )
+                res.notes.append("Registered MCP globally via `claude mcp add --scope user`.")
+            except (subprocess.SubprocessError, OSError) as e:
+                res.notes.append(
+                    f"WARNING: `claude mcp add --scope user` failed ({e}); "
+                    "MCP not registered globally. Re-run with the claude CLI on PATH "
+                    "or install per-workspace (scope=workspace)."
+                )
+        else:
+            res.notes.append(
+                "WARNING: global MCP requires the `claude` CLI on PATH "
+                "(`claude mcp add --scope user`); it was not found, so MCP was NOT "
+                "registered. Claude Code does not read a global ~/.mcp.json. "
+                "Re-run with claude on PATH or use scope=workspace."
+            )
 
     # Skill (whole package: SKILL.md + references/ + scripts/ + evals/).
     _write_tree(base / ".claude" / "skills" / "cairn", _TEMPLATE_DIR / "skill", force, res, dry_run=dry_run)

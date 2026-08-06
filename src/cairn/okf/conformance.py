@@ -1,9 +1,13 @@
-"""OKF v0.1 conformance checker.
+"""OKF conformance checker (spec v0.2).
 
 Per the OKF spec Section 9, a bundle is conformant if:
   1. Every non-reserved .md file has parseable YAML frontmatter
   2. Every frontmatter block contains a non-empty `type` field
   3. index.md and log.md follow their structure (when present)
+
+v0.2 fields (``generated``, ``status``, ``stale_after``) are optional and not
+validated for structural correctness here; only the presence of ``type`` is
+required.
 
 Consumers MUST NOT reject a bundle for: missing optional fields, unknown type
 values, unknown frontmatter keys, broken cross-links, or missing index.md.

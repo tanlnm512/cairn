@@ -13,6 +13,7 @@ from typing import List, Optional
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..okf.provenance import Tier
+from ..okf.utils import slugify
 
 TIERS = ("raw", "drafts", "tribal", "archived")
 TIER_DIRS = {
@@ -95,13 +96,6 @@ def create_memory(
     )
 
 
-def slugify(text: str) -> str:
-    import re
-
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
-    return slug[:60] or "memory"
-
-
 def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = None, old_id: Optional[str] = None):
     """Write a memory concept to its tier directory.
 
@@ -110,7 +104,7 @@ def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = N
     is unlinked to prevent orphan files on re-tiering.
     """
     t = tier or concept.extensions.get("memory_tier", "drafts")
-    slug = slugify(concept.title)
+    slug = slugify(concept.title) or "memory"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if t == "raw":
         concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}"
@@ -256,6 +250,11 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
 
 
 def _slugify(text: str) -> str:
+    # Kept local (not consolidated with okf.utils.slugify) on purpose: the
+    # consolidation paths (consolidate_memories) want a richer slugifier that
+    # preserves underscores and other \w word characters (e.g. snake_case
+    # titles) and doesn't ASCII-truncate. okf.utils.slugify is ASCII-only and
+    # truncates to 60 chars, which would change consolidated concept_ids.
     import re
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)

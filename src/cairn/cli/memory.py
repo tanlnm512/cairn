@@ -109,14 +109,21 @@ def memory_search(query, tier, db, knowledge):
 
 @memory.command("capture")
 @click.option("--session-transcript", default=None, help="JSON transcript of the session")
+@click.option("--session-transcript-stdin", is_flag=True, default=False,
+              help="Read the JSON transcript from stdin (avoids ARG_MAX for long sessions)")
 @click.option("--session-id", default="hook", help="Origin session id")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_capture(session_transcript, session_id, db, knowledge):
+def memory_capture(session_transcript, session_transcript_stdin, session_id, db, knowledge):
     """Extract learnings from a session transcript and record them.
 
     Used by session-end hooks. Routes through the memory-extract LLM task
     (decoupled); if no agent is available, queues the task for later and exits.
+
+    The transcript may be passed inline via ``--session-transcript <json>``
+    or, for long sessions that would exceed ARG_MAX (~256KB on macOS) as an
+    argv element, piped on stdin with ``--session-transcript-stdin``. When
+    both are given the stdin form wins.
     """
 
     from ..llm.tasks import create_task
@@ -125,7 +132,11 @@ def memory_capture(session_transcript, session_id, db, knowledge):
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    transcript = session_transcript or "[]"
+    if session_transcript_stdin:
+        # Read the full transcript from stdin — no ARG_MAX limit.
+        transcript = sys.stdin.read()
+    else:
+        transcript = session_transcript or "[]"
 
     # Try synchronous extraction via a configured subprocess backend.
     backend = os.environ.get("CAIRN_LLM_BACKEND", "").lower()

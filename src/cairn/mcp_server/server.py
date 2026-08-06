@@ -133,8 +133,22 @@ def _install_exit_watchdog():
 # FastMCP.list_tools()) returns the registered Tool objects directly, so we
 # don't need an event loop here.
 def _count_fastmcp_tools():
-    """Count tools actually registered on the FastMCP instance."""
-    return len(mcp._tool_manager.list_tools())
+    """Count tools actually registered on the FastMCP instance.
+
+    Reaches into the FastMCP internals (``mcp._tool_manager.list_tools()``) to
+    read the live registry synchronously without an event loop. This is a
+    private API that can move across SDK versions, so access is wrapped
+    defensively: any :class:`AttributeError` (renamed/removed private
+    attribute after an upgrade) degrades to a safe count of 0 rather than
+    crashing the boot guard. The caller (:func:`verify_tool_count`) still
+    asserts against ``_EXPECTED_TOOL_COUNT``, so a genuine regression in the
+    accessible case is still caught.
+    """
+    try:
+        return len(mcp._tool_manager.list_tools())
+    except AttributeError:
+        # FastMCP internals changed (SDK upgrade); can't count safely.
+        return 0
 
 
 def verify_tool_count() -> None:
@@ -186,7 +200,6 @@ def run(transport: str = "stdio", port: int | None = None):
     # Use raw sqlite3 connection to avoid schema auto-creation
     try:
         check_conn = sqlite3.connect(db_path)
-        check_conn.row_factory = sqlite3.Row
         tables = check_conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
         ).fetchall()

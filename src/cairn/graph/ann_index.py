@@ -42,14 +42,6 @@ def ann_backend_enabled() -> bool:
         return False
 
 
-def install_hint() -> str:
-    return (
-        "The sqlite-vec ANN backend requires the 'sqlite-vec' package "
-        "(pip install sqlite-vec) and a Python sqlite3 build with extension "
-        "loading enabled. Falling back to the brute-force cosine scan."
-    )
-
-
 def _table_name(model: str) -> str:
     """Sanitize a model name into a valid SQLite identifier.
 

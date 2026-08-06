@@ -25,6 +25,7 @@ from pathlib import Path
 import click
 
 from .main import main
+from ._helpers import _human_bytes
 from ..paths import store_key
 
 
@@ -179,7 +180,7 @@ def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
         label = str(target)
 
     try:
-        size_str = _humanish(_dir_size(target))
+        size_str = _human_bytes(_dir_size(target))
     except Exception:
         size_str = "unknown"
     click.echo(f"  removing: {label}")
@@ -256,14 +257,6 @@ def _remove_binary(installed_via: str, dry_run: bool) -> None:
 
 # ─── small utils ───────────────────────────────────────────────────────────
 
-def _human_bytes(n: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024:
-            return f"{n:.0f} {unit}"
-        n /= 1024
-    return f"{n:.1f} TB"
-
-
 def _dir_size(path: Path) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
@@ -274,10 +267,6 @@ def _dir_size(path: Path) -> int:
             except OSError:
                 pass
     return total
-
-
-def _humanish(n: int) -> str:
-    return _human_bytes(n)
 
 
 # ─── the command ───────────────────────────────────────────────────────────

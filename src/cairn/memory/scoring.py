@@ -31,6 +31,12 @@ WEIGHTS = {
     "authority": 0.10,
 }
 
+# Neutral default critic score used when no LLM critic value is available.
+# A single constant keeps score_memory() (no critic passed) and batch_critic()
+# (no llm_critic callable) in agreement: both contribute a neutral
+# WEIGHTS["critic_score"] * 0.5 = 0.10, neither inflating nor deflating the score.
+DEFAULT_CRITIC_SCORE = 0.5
+
 
 def score_memory(
     concept: OKFConcept,
@@ -50,7 +56,7 @@ def score_memory(
     refs = _cross_session_refs(concept, conn)
     # cross_session_refs signal: normalize refs count (saturates ~5).
     refs_signal = min(refs / 5.0, 1.0)
-    critic = critic_score if critic_score is not None else signals.get("critic_score", 0.5)
+    critic = critic_score if critic_score is not None else signals.get("critic_score", DEFAULT_CRITIC_SCORE)
     freshness = _freshness(concept)
     reinforcement = _reinforcement(concept, conn)
     authority = _authority(concept)
