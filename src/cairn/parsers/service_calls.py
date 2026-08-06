@@ -131,14 +131,24 @@ def detect_service_calls(pf: ParsedFile, language: str) -> Optional[ServiceCallE
 def _owner_for_line(pf: ParsedFile, line: int) -> str:
     """Best-effort: find the symbol whose span contains `line`.
 
-    Falls back to the nearest preceding symbol, then to "" (top-level). This
+    Among the symbols that enclose `line` (``line_start <= line <= line_end``),
+    pick the one with the SMALLEST span -- i.e. the innermost symbol -- so a
+    call after a class's closing brace is no longer mis-attributed to that
+    class. Falls back to "" (top-level) when nothing encloses the line. This
     mirrors the base parser's `_current_edge_owner` but operates post-parse on
     the already-collected symbol list rather than a live scope stack.
     """
     candidate = ""
-    best_start = -1
+    best_span = None
     for s in pf.symbols:
-        if s.line_start <= line and s.line_start > best_start:
-            best_start = s.line_start
+        # Require the line to actually fall inside the symbol's span, including
+        # its end. Without the line_end check a call after a class body would
+        # still match the class (its line_start precedes the call).
+        if not (s.line_start <= line <= s.line_end):
+            continue
+        span = s.line_end - s.line_start
+        # Prefer the innermost (smallest) enclosing span.
+        if best_span is None or span < best_span:
+            best_span = span
             candidate = s.name
     return candidate

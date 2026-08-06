@@ -116,22 +116,24 @@ resolve_store() {
 
   if [[ -f "$home/workspaces.json" && -n "$ws" ]]; then
     local key
-    key="$("$PYTHON" -c "
+    key="$("$PYTHON" -c '
 import json, sys
-w = json.load(open('$home/workspaces.json'))
+home, ws = sys.argv[1], sys.argv[2]
+w = json.load(open(home + "/workspaces.json"))
 for k, v in w.items():
-    if k == '$ws' or '$ws'.startswith(k):
+    if k == ws or ws.startswith(k):
         print(v); sys.exit()
-" 2>/dev/null || true)"
+' "$home" "$ws" 2>/dev/null || true)"
     if [[ -z "$key" ]]; then
       # python3 might be system 3.9 — try uv run python
-      key="$(uv run python -c "
+      key="$(uv run python -c '
 import json, sys
-w = json.load(open('$home/workspaces.json'))
+home, ws = sys.argv[1], sys.argv[2]
+w = json.load(open(home + "/workspaces.json"))
 for k, v in w.items():
-    if k == '$ws' or '$ws'.startswith(k):
+    if k == ws or ws.startswith(k):
         print(v); sys.exit()
-" 2>/dev/null || true)"
+' "$home" "$ws" 2>/dev/null || true)"
     fi
     if [[ -n "$key" ]]; then
       echo "$home/$key"
@@ -303,29 +305,29 @@ if $DO_GRAPH; then
         # also wipes workspaces.json with the directory; single-store removal
         # prunes just that workspace's entry).
         if ! $whole_home && [[ -f "$local_home/workspaces.json" ]]; then
-          "$PYTHON" -c "
-import json
-path = '$local_home/workspaces.json'
+          "$PYTHON" -c '
+import json, sys
+path, workspace = sys.argv[1], sys.argv[2]
 try:
     w = json.load(open(path))
-    cleaned = {k: v for k, v in w.items() if v != '$WORKSPACE'}
+    cleaned = {k: v for k, v in w.items() if v != workspace}
     if len(cleaned) < len(w):
-        json.dump(cleaned, open(path, 'w'), indent=2)
-        print('Cleaned workspaces.json')
+        json.dump(cleaned, open(path, "w"), indent=2)
+        print("Cleaned workspaces.json")
 except Exception:
     pass
-" 2>/dev/null || uv run python -c "
-import json
-path = '$local_home/workspaces.json'
+' "$local_home/workspaces.json" "$WORKSPACE" 2>/dev/null || uv run python -c '
+import json, sys
+path, workspace = sys.argv[1], sys.argv[2]
 try:
     w = json.load(open(path))
-    cleaned = {k: v for k, v in w.items() if v != '$WORKSPACE'}
+    cleaned = {k: v for k, v in w.items() if v != workspace}
     if len(cleaned) < len(w):
-        json.dump(cleaned, open(path, 'w'), indent=2)
-        print('Cleaned workspaces.json')
+        json.dump(cleaned, open(path, "w"), indent=2)
+        print("Cleaned workspaces.json")
 except Exception:
     pass
-" 2>/dev/null || true
+' "$local_home/workspaces.json" "$WORKSPACE" 2>/dev/null || true
         fi
       fi
       if $whole_home; then

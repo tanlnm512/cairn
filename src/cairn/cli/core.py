@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, builder, get_db, main, queries, scanner_mod
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
+from ._helpers import _human_bytes
 
 @main.command()
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: cwd).")
@@ -231,10 +231,22 @@ def build(repo, workspace, db, verbose, staging):
     with display.progress_bar(description="Scanning", total=None, unit="files") as bar:
         bar_state["bar"] = bar
         bar_state["task"] = bar._cg_task_id
-        summary = builder.build_graph(
-            workspace=workspace, repo_filter=repo, db_path=target_db,
-            verbose=verbose, progress=on_progress,
-        )
+        try:
+            summary = builder.build_graph(
+                workspace=workspace, repo_filter=repo, db_path=target_db,
+                verbose=verbose, progress=on_progress,
+            )
+        except Exception:
+            bar_state["bar"] = None
+            # --staging writes to a temp DB (db + ".tmp"). If build_graph raises
+            # the exception propagates past os.replace, leaving the half-built
+            # temp DB on disk. Remove it so a failed staging build doesn't leak.
+            if staging and os.path.exists(target_db):
+                try:
+                    os.remove(target_db)
+                except OSError:
+                    pass
+            raise
         bar_state["bar"] = None
     elapsed = time.time() - t0
 
@@ -369,10 +381,12 @@ def checkpoint(db):
 
     path = db or str(resolve_store().db)
     conn = sqlite3.connect(path)
-    conn.execute("PRAGMA busy_timeout = 10000")
-    before = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
-    result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    conn.close()
+    try:
+        conn.execute("PRAGMA busy_timeout = 10000")
+        before = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
+        result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        conn.close()
     after = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
     display.kv("checkpoint", f"busy={result[0]} log_frames={result[1]} checkpointed={result[2]}")
     display.kv("wal size", f"{_human_bytes(before)} -> {_human_bytes(after)}")

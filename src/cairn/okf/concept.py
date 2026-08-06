@@ -187,14 +187,18 @@ class OKFConcept:
             fm["resource"] = self.resource
         if self.tags:
             fm["tags"] = self.tags
-        if self.timestamp is None:
-            self.timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Compute the serialization timestamp locally without mutating self.
+        # to_markdown is a read-only serializer; assigning back to self.timestamp
+        # would be a surprising side effect (e.g. corrupting a later equality
+        # check or making repeated writes carry a growing timestamp). Callers
+        # that want the timestamp persisted should set it explicitly.
+        ts = self.timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # v0.2 wire format (spec §5.2/§13.1): emit `generated: {by, at}`
         # rather than the v0.1 bare `timestamp`. `timestamp` remains the
         # internal field; it is materialized into `generated.at` here.
         fm["generated"] = {
             "by": self.generated_by or _default_generated_by(),
-            "at": self.timestamp,
+            "at": ts,
         }
         if self.status is not None:
             fm["status"] = self.status

@@ -6,7 +6,6 @@ import json
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
 def dataflow():
@@ -20,8 +19,10 @@ def dataflow_build(db):
     from ..graph.dataflow import build_dataflow_index
 
     conn = get_db(db)
-    count = build_dataflow_index(conn)
-    conn.close()
+    try:
+        count = build_dataflow_index(conn)
+    finally:
+        conn.close()
     click.echo(f"Dataflow index built: {count} public symbols indexed.")
 
 
@@ -34,8 +35,10 @@ def dataflow_lookup(symbol, db, as_json):
     from ..graph.dataflow import get_dataflow
 
     conn = get_db(db)
-    df = get_dataflow(conn, symbol)
-    conn.close()
+    try:
+        df = get_dataflow(conn, symbol)
+    finally:
+        conn.close()
     if df is None:
         click.echo(f"No dataflow entry for '{symbol}'. Run `cairn dataflow build` first.", err=True)
         sys.exit(1)

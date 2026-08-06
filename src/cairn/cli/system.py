@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, get_db, main, queries, scanner_mod
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
+from ._helpers import _shorten
 
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -65,21 +65,22 @@ def status(db, knowledge):
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
-    s = queries.get_stats(conn)
-    bundle = OKFBundle(knowledge)
-    compass_n = len(bundle.list_concepts(prefix="compass/"))
-    wiki_n = len(bundle.list_concepts(prefix="wiki/"))
-    mem = mstats(bundle)
-
-    # Show pending sync files (unindexed edits in debounce window).
     try:
-        pending_rows = conn.execute(
-            "SELECT path, repo_id, changed_at FROM pending_sync ORDER BY changed_at DESC"
-        ).fetchall()
-    except Exception:
-        pending_rows = []
+        s = queries.get_stats(conn)
+        bundle = OKFBundle(knowledge)
+        compass_n = len(bundle.list_concepts(prefix="compass/"))
+        wiki_n = len(bundle.list_concepts(prefix="wiki/"))
+        mem = mstats(bundle)
 
-    conn.close()
+        # Show pending sync files (unindexed edits in debounce window).
+        try:
+            pending_rows = conn.execute(
+                "SELECT path, repo_id, changed_at FROM pending_sync ORDER BY changed_at DESC"
+            ).fetchall()
+        except Exception:
+            pending_rows = []
+    finally:
+        conn.close()
 
     from . import display
     display.kv("graph", f"{s['repos']} repos · {s['symbols']:,} symbols · {s['edges']:,} edges")
@@ -155,64 +156,65 @@ def sync(workspace, db):
     from ..graph.incremental import reindex_paths
 
     conn = get_db(db)
-    changed: list[str] = []
+    try:
+        changed: list[str] = []
 
-    for repo_path in scanner_mod.discover_repos(workspace):
-        repo_name = repo_path.name
-        try:
-            file_rows = conn.execute(
-                "SELECT path, size, mtime FROM files WHERE repo_id = ?",
-                (repo_name,),
-            ).fetchall()
-        except Exception:
-            continue
-
-        existing = set()
-        for row in file_rows:
-            existing.add(row["path"])
-            p = Path(row["path"])
-            if not p.exists():
-                changed.append(str(p))
-                continue
+        for repo_path in scanner_mod.discover_repos(workspace):
+            repo_name = repo_path.name
             try:
-                st = p.stat()
-                if st.st_size != (row["size"] or 0):
-                    changed.append(str(p))
-                elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
-                    changed.append(str(p))
-            except OSError:
+                file_rows = conn.execute(
+                    "SELECT path, size, mtime FROM files WHERE repo_id = ?",
+                    (repo_name,),
+                ).fetchall()
+            except Exception:
                 continue
 
-        # Detect new source files.
-        for src in scanner_mod.iter_source_files(repo_path):
-            if str(src) not in existing:
-                changed.append(str(src))
+            existing = set()
+            for row in file_rows:
+                existing.add(row["path"])
+                p = Path(row["path"])
+                if not p.exists():
+                    changed.append(str(p))
+                    continue
+                try:
+                    st = p.stat()
+                    if st.st_size != (row["size"] or 0):
+                        changed.append(str(p))
+                    elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
+                        changed.append(str(p))
+                except OSError:
+                    continue
 
-    if not changed:
-        conn.close()
+            # Detect new source files.
+            for src in scanner_mod.iter_source_files(repo_path):
+                if str(src) not in existing:
+                    changed.append(str(src))
+
+        if not changed:
+            from . import display
+            display.success("No changes detected. Graph is up to date.")
+            return
+
         from . import display
-        display.success("No changes detected. Graph is up to date.")
-        return
-
-    from . import display
-    with display.progress_bar(description=f"Syncing {len(changed)} files", total=len(changed), unit="files") as bar:
-        # reindex_paths doesn't expose per-file progress; show an indeterminate
-        # bar that completes when it returns. For small N this is instant.
-        result = reindex_paths(conn, workspace, changed)
-        bar.update(bar._cg_task_id, completed=len(changed))
-    # Refresh the dataflow index if any files were reindexed.
-    if result["reindexed"]:
-        try:
-            from ..graph.dataflow import build_dataflow_index
-            df_count = build_dataflow_index(conn)
-            display.dim(f"  dataflow index: {df_count:,} symbols")
-        except Exception:
-            pass
-    conn.close()
-    display.success(f"Synced: {result['reindexed']} reindexed, {result['deleted']} deleted")
-    if result["errors"]:
-        display.warning(f"{len(result['errors'])} errors")
-        for e in result["errors"][:5]:
-            display.dim(f"  {e}")
+        with display.progress_bar(description=f"Syncing {len(changed)} files", total=len(changed), unit="files") as bar:
+            # reindex_paths doesn't expose per-file progress; show an indeterminate
+            # bar that completes when it returns. For small N this is instant.
+            result = reindex_paths(conn, workspace, changed)
+            bar.update(bar._cg_task_id, completed=len(changed))
+        # Refresh the dataflow index if any files were reindexed.
+        if result["reindexed"]:
+            try:
+                from ..graph.dataflow import build_dataflow_index
+                df_count = build_dataflow_index(conn)
+                display.dim(f"  dataflow index: {df_count:,} symbols")
+            except Exception:
+                pass
+        display.success(f"Synced: {result['reindexed']} reindexed, {result['deleted']} deleted")
+        if result["errors"]:
+            display.warning(f"{len(result['errors'])} errors")
+            for e in result["errors"][:5]:
+                display.dim(f"  {e}")
+    finally:
+        conn.close()
 
 

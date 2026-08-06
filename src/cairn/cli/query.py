@@ -6,7 +6,7 @@ import json
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
+from ._helpers import _mods, _shorten
 
 @main.command(name="def")
 @click.argument("symbol")
@@ -156,6 +156,9 @@ def impact(symbol, depth, db, as_json, fuzzy):
             click.echo(f"Cycles detected: {cycle_names}")
         else:
             click.echo(f"Cycles detected ({len(cycle_names)}): {cycle_names[:15]} ...")
+    if result["total"] == 0 and not result["impacted"]:
+        click.echo(f"No impacted symbols for '{symbol}'.", err=True)
+        sys.exit(1)
     click.echo(f"Total impacted: {result['total']}")
     # Group by depth for readability.
     by_depth: dict[int, list] = {}
@@ -199,4 +202,6 @@ def deps(repo, db, as_json):
             click.echo(f"  {d['repo']:18} x{d['count']}")
     else:
         click.echo("  (none)")
+    if not result["dependencies"] and not result["dependents"]:
+        sys.exit(1)
 

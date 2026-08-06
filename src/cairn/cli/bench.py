@@ -95,6 +95,7 @@ def bench(
     )
 
     tmp_root = None
+    tmp_db = None  # cg_bench_db_* dir created only by the perf suite
     try:
         if suite == "scaling":
             size_list = [int(s.strip()) for s in sizes.split(",") if s.strip()]
@@ -118,7 +119,9 @@ def bench(
                 tmp_root = Path(tempfile.mkdtemp(prefix="cg_bench_"))
                 corpus = generate_corpus(tmp_root, n_files, complexity=complexity)
                 ws = str(corpus)
-            db_path = str(Path(tempfile.mkdtemp(prefix="cg_bench_db_")) / "bench.db")
+            db_path_dir = Path(tempfile.mkdtemp(prefix="cg_bench_db_"))
+            tmp_db = db_path_dir
+            db_path = str(db_path_dir / "bench.db")
             os.environ["CAIRN_DB"] = db_path
             report = run_perf_suite(
                 ws,
@@ -170,3 +173,8 @@ def bench(
     finally:
         if tmp_root and tmp_root.exists():
             shutil.rmtree(tmp_root, ignore_errors=True)
+        # The perf suite creates a separate cg_bench_db_* dir for its SQLite
+        # DB path; clean that up too or every `cairn bench` (no --workspace)
+        # would orphan a temp directory.
+        if tmp_db is not None and tmp_db.exists():
+            shutil.rmtree(tmp_db, ignore_errors=True)

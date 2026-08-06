@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, main, scanner_mod
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
 @click.option("--repo", default=None, help="Specific repo to update.")
@@ -35,11 +34,14 @@ def update(repo, file_path, workspace, db):
         try:
             rel_path = str(abs_path.relative_to(repo_path))
         except ValueError:
+            conn.close()
             display.error(f"File {file_path} is not under repository path {repo_path}")
             sys.exit(1)
 
-        _reindex_file(conn, repo, repo_path, rel_path, workspace=str(workspace))
-        conn.close()
+        try:
+            _reindex_file(conn, repo, repo_path, rel_path, workspace=str(workspace))
+        finally:
+            conn.close()
         display.success(f"Reindexed {rel_path} in repo {repo}")
         return
 

@@ -5,7 +5,6 @@ import click
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
 @click.argument("repo")
@@ -13,8 +12,10 @@ from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 def tree(repo, db):
     """Directory/package structure of REPO with symbol counts."""
     conn = get_db(db)
-    buckets = queries.get_tree(conn, repo)
-    conn.close()
+    try:
+        buckets = queries.get_tree(conn, repo)
+    finally:
+        conn.close()
     if not buckets:
         click.echo(f"No data for repo '{repo}'.", err=True)
         sys.exit(1)

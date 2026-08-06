@@ -29,6 +29,7 @@ database and a `.knowledge/` markdown bundle. Resolution order is
 | `CAIRN_HOME` | path, default `~/.cairn` | Root holding all per-workspace stores and the `workspaces.json` registry. Override for tests, CI, or a shared volume. |
 | `CAIRN_DB` | path, default `<home>/<key>/.kg` | Hard override for the SQLite graph DB path. Used by the MCP server and tests to pin a store explicitly. |
 | `CAIRN_KNOWLEDGE` | path, default `<home>/<key>/.knowledge` | Hard override for the OKF markdown bundle (compass, wiki, memory). |
+| `CAIRN_LIB` | path, default `<CAIRN_HOME>/lib` | Shared library directory for the heavy semantic dependencies (torch, sentence-transformers, numpy). Installed once via `cairn embed --install-deps` using `pip install --target`, so they survive `uv tool install --force` reinstalls (which reset the tool's own venv). Prepended to `sys.path` at import time when it exists, so `import torch` / `import sentence_transformers` resolve from here, not the venv. |
 | `CAIRN_BIN` | path, default unset | Path to the `cairn` executable; used by the SSE daemon lifecycle so spawned processes find the right binary. |
 | `CAIRN_WORKSPACE` | absolute path, default unset | The workspace root. Highest-priority input to store resolution (overrides the ancestor walk). Set it when running `cairn` from outside the repo tree. |
 | `CAIRN_SESSION` | string, default `"unknown"` | Session label attached to metric/usage telemetry buffers; useful to attribute server traffic to a session. |
@@ -51,7 +52,7 @@ and the variables are inert. See also the `CAIRN_FUSION` note below.
 |----------|----------------|--------|
 | `CAIRN_FUSION` | `0`/`1`, default `1` | Reciprocal Rank Fusion of BM25 + vector scores. When on (default), the returned `score` is a fusion rank number (~0.01–0.02), not cosine similarity. Set to `0` to expose raw cosine scores. |
 | `CAIRN_ANN_BACKEND` | string, default `sqlite-vec` | When unset or `sqlite-vec` (and the `sqlite-vec` package is importable), uses a native ANN index. Set to `off` (or any other value) to force the brute-force cosine scan. Any load failure degrades to brute force automatically. |
-| `CAIRN_EMBED_BACKEND` | `local`/`openai`, default `local` | Embedding provider. `local` uses sentence-transformers in-process; `openai` calls the OpenAI embeddings API. |
+| `CAIRN_EMBED_BACKEND` | `local`/`openai`/`hash`, default `local` | Embedding provider. `local` uses sentence-transformers in-process (and silently falls back to `hash` when the package is missing); `openai` calls the OpenAI embeddings API; `hash` is a deterministic dep-free hash embedder (low quality, for tests/offline smoke checks). |
 | `CAIRN_EMBED_LOCAL_MODEL` | string, default `BAAI/bge-m3` | HuggingFace model id for the `local` backend. |
 | `CAIRN_EMBED_OPENAI_MODEL` | string, default `text-embedding-3-small` | Model name for the `openai` backend. |
 | `CAIRN_EMBED_KNOWLEDGE_MODEL` | string, default unset | Optional separate model for embedding the `.knowledge/` markdown corpus (lets docs use a different model than code). Falls back to the main model. |

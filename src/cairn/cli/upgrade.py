@@ -6,7 +6,6 @@ import subprocess
 import sys
 
 from .main import main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 
 @main.command()

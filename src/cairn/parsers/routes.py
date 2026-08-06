@@ -339,7 +339,12 @@ def _detect_nextjs(pf: ParsedFile) -> Optional[RouteExtraction]:
     parts = p.parts
     lower_parts = [part.lower() for part in parts]
     try:
-        anchor_idx = max(
+        # Use the FIRST (outermost) "app"/"pages" directory as the router root.
+        # Next.js treats the top-most app/pages dir as the anchor; deeper
+        # same-named dirs (e.g. ``app/ui/app/page.tsx`` in a monorepo) are
+        # route segments, not a second router root. ``min`` picks the first
+        # occurrence where ``max`` would erroneously re-anchor on a later one.
+        anchor_idx = min(
             i for i, part in enumerate(lower_parts) if part in ("pages", "app")
         )
     except ValueError:

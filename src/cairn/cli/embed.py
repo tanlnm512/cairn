@@ -7,7 +7,6 @@ import os
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -224,7 +223,7 @@ def semantic(query, db, limit, threshold, as_json, include_callers):
     from . import display
     if not rows:
         display.warning(f"No semantic matches for '{query}' (threshold {threshold})")
-        return
+        sys.exit(1)
     console_out = [f"{len(rows)} semantic match(es) for '{query}':"]
     for r in rows:
         short = (r["file_path"] or "").rsplit("/", 1)[-1]

@@ -186,39 +186,91 @@ def find_strays(db_path: str | Path) -> list[int]:
         match the resolved path that appears in argv/env-derived cmdline.
         When db_path looks like the default/central store (i.e. it may not
         appear literally in argv), we fall back to matching ``cairn serve run``.
+
+    Caveat on db_path scoping: under launchd the daemon receives CAIRN_DB via
+    the plist EnvironmentVariables rather than a ``--db`` argv flag, so the
+    resolved path almost never appears in the process command line. We
+    therefore fall back to a broad ``cairn serve run`` match and rely on the
+    daemon/child exclusion below rather than the db_str substring, which would
+    rarely match in practice.
     """
     pids: list[int] = []
     daemon_pid = running_pid()
+    # Build the set of pids to PRESERVE: the launchd-managed daemon pid plus
+    # any processes it spawned. The plist invokes ``cairn serve run`` under
+    # launchd (pid 1), but the SSE server may itself fork workers, and on some
+    # setups launchctl reports a supervisor pid distinct from the actual
+    # ``cairn serve run`` child. Excluding the daemon's direct children
+    # (ppid == daemon_pid) prevents us from killing the live SSE server.
+    protected = {daemon_pid, os.getpid()}
+    if daemon_pid is not None:
+        protected |= _children_of(daemon_pid)
     # Build the pgrep pattern. `pgrep -f` matches against the full command
     # line on macOS. We scope to the literal db_path when it looks non-default
     # (so unrelated `cairn serve` processes serving OTHER dbs are spared); we
     # otherwise fall back to the `run` subcommand, which only a real
     # foreground/SSE server invocation contains.
+    #
+    # Note: under launchd the db_path is typically passed via the CAIRN_DB env
+    # var (plist EnvironmentVariables), NOT on the argv, so a ``cairn
+    # serve.*<db_str>`` pattern rarely matches. We still try the scoped match
+    # first for the ``--db`` argv case, then broaden to ``cairn serve run`` if
+    # that yields nothing -- matching the live server reliably matters more
+    # than the marginal over-match, since daemon children are excluded above.
     db_str = str(db_path) if db_path else ""
-    if db_str:
-        pattern = rf"cairn serve.*{re.escape(db_str)}"
-    else:
-        pattern = r"cairn serve run"
-    r = subprocess.run(
-        ["pgrep", "-f", pattern],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        return pids
-    for pid_s in r.stdout.split():
-        try:
-            pid = int(pid_s)
-        except ValueError:
+    candidates: list[int] = []
+    patterns = [rf"cairn serve.*{re.escape(db_str)}", r"cairn serve run"] if db_str else [r"cairn serve run"]
+    seen: set[int] = set()
+    for pattern in patterns:
+        r = subprocess.run(
+            ["pgrep", "-f", pattern],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
             continue
-        if pid == os.getpid():
+        for pid_s in r.stdout.split():
+            try:
+                pid = int(pid_s)
+            except ValueError:
+                continue
+            if pid not in seen:
+                seen.add(pid)
+                candidates.append(pid)
+        # If the scoped pattern matched anything, don't bother with the broad
+        # fallback -- it would only add false positives.
+        if candidates:
+            break
+    for pid in candidates:
+        if pid in protected:
             continue
-        if pid == daemon_pid:
-            continue
-        # Exclude the launchd-managed daemon's children (the actual server
-        # process spawned by the plist). The daemon pid from launchctl is the
-        # one we want to keep; its descendants serve the SSE port.
         pids.append(pid)
     return pids
+
+
+def _children_of(ppid: int) -> set[int]:
+    """Return direct child pids of ``ppid`` via a single ``pgrep -P`` call.
+
+    pgrep -P <ppid> lists processes whose parent pid equals ``ppid``. We use
+    this to find the launchd daemon's spawned server child(ren) so
+    find_strays can exclude them along with the daemon pid itself. Best-effort:
+    on failure or a non-macOS host it returns an empty set (callers still keep
+    the daemon pid excluded, just not its descendants).
+    """
+    try:
+        r = subprocess.run(
+            ["pgrep", "-P", str(ppid)],
+            capture_output=True, text=True,
+        )
+    except (OSError, ValueError):
+        return set()
+    children: set[int] = set()
+    if r.returncode == 0:
+        for pid_s in r.stdout.split():
+            try:
+                children.add(int(pid_s))
+            except ValueError:
+                continue
+    return children
 
 
 def terminate_pid(pid: int, timeout: float = 5.0) -> None:

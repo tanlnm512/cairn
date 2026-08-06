@@ -82,8 +82,15 @@ def _search_like(
 
     Preserves graceful degradation so search does not crash on a SQLite build
     without FTS5.
+
+    ``*`` in the pattern is treated as a wildcard (mapped to ``%``), but any
+    literal ``%`` or ``_`` that came *from the user* is escaped so it matches
+    itself rather than acting as a LIKE wildcard (``_`` would otherwise match
+    any single char, ``%`` any run of chars). Order: escape meta-chars in the
+    raw pattern first, then turn ``*`` into the ``%`` wildcard.
     """
-    sql_pattern = pattern.replace("*", "%")
+    escaped = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    sql_pattern = escaped.replace("*", "%")
     if "%" not in sql_pattern and "_" not in sql_pattern:
         sql_pattern = f"%{sql_pattern}%"
     cur = conn.cursor()
@@ -91,7 +98,7 @@ def _search_like(
         rows = cur.execute(
             """SELECT s.*, f.path AS file_path, f.repo_id AS repo
                FROM symbols s JOIN files f ON s.file_id = f.id
-               WHERE s.name LIKE ? AND s.kind = ?
+               WHERE s.name LIKE ? ESCAPE '\\' AND s.kind = ?
                ORDER BY s.name LIMIT ?""",
             (sql_pattern, kind, limit),
         ).fetchall()
@@ -99,7 +106,7 @@ def _search_like(
         rows = cur.execute(
             """SELECT s.*, f.path AS file_path, f.repo_id AS repo
                FROM symbols s JOIN files f ON s.file_id = f.id
-               WHERE s.name LIKE ?
+               WHERE s.name LIKE ? ESCAPE '\\'
                ORDER BY s.name LIMIT ?""",
             (sql_pattern, limit),
         ).fetchall()

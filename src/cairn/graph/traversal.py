@@ -23,6 +23,17 @@ from typing import List, Optional, Tuple
 STRUCTURAL_EDGE_KINDS: Tuple[str, ...] = ("calls", "call", "extends", "implements")
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE meta-characters so ``value`` matches literally.
+
+    ``\\``, ``%`` and ``_`` are escaped by prefixing a backslash; the
+    accompanying LIKE clause must use ``ESCAPE '\\'``. This keeps a symbol
+    name like ``foo_bar`` or ``rate_50%`` from matching unintended rows
+    (``_`` is a single-char wildcard, ``%`` is a multi-char wildcard).
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def find_definition(conn: sqlite3.Connection, name: str, limit: int = 50) -> List[sqlite3.Row]:
     """Find symbols matching `name`. Exact match on name first, then
     qualified_name, then a prefix/substring match. Ordered by best match.
@@ -48,12 +59,15 @@ def find_definition(conn: sqlite3.Connection, name: str, limit: int = 50) -> Lis
     if qual:
         return list(qual)
 
-    # Fuzzy: substring on name.
+    # Fuzzy: substring on name. The user-supplied name is escaped first so
+    # any literal ``%``/``_`` in it match themselves rather than acting as
+    # LIKE wildcards (``ESCAPE '\\'`` enables the backslash escape char).
+    escaped = _escape_like(name)
     fuzzy = cur.execute(
         """SELECT s.*, f.path AS file_path, f.repo_id AS repo
            FROM symbols s JOIN files f ON s.file_id = f.id
-           WHERE s.name LIKE ? ORDER BY s.kind LIMIT ?""",
-        (f"%{name}%", limit),
+           WHERE s.name LIKE ? ESCAPE '\\' ORDER BY s.kind LIMIT ?""",
+        (f"%{escaped}%", limit),
     ).fetchall()
     return list(fuzzy)
 
@@ -165,8 +179,11 @@ def impact_analysis(
 ) -> dict:
     """Recursive caller traversal with cycle detection.
 
-    Visits each symbol name at most once (BFS by name) to avoid exponential
-    blow-up in heavily interconnected call graphs. Genuine back-edges (a caller
+    Visits each symbol at most once (keyed by symbol **id**, not name) to avoid
+    exponential blow-up in heavily interconnected call graphs. Keying by id —
+    not by name — means two unrelated methods that merely share a name (e.g.
+    two classes' ``render``) are tracked as distinct nodes, so a cross-class
+    flow is not truncated as a false "cycle". Genuine back-edges (a caller
     already on the current DFS path) are reported as cycles.
 
     Precise mode (default) only walks resolved edges, so blast-radius is not
@@ -186,29 +203,29 @@ def impact_analysis(
     Each impacted entry: {symbol, file, repo, depth}.
     """
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
-    visited = set()  # globally visited (by name) — prevents re-traversal
-    on_path = set()  # current DFS path — for cycle detection
+    visited: set[str] = set()   # globally visited symbol ids — prevents re-traversal
+    on_path: set[str] = set()   # current DFS path symbol ids — cycle detection
     results = []
-    cycles_seen = set()
+    cycles_seen: set[str] = set()
     cycles = []
     truncated = False
 
-    def traverse(sym_name: str, depth: int):
+    def traverse(sym_id: str, sym_name: str, depth: int):
         nonlocal truncated
         if truncated:
             return
         if depth > max_depth:
             return
-        if sym_name in on_path:
+        if sym_id in on_path:
             # Genuine back-edge: a caller that's already on our DFS path.
-            if sym_name not in cycles_seen:
-                cycles_seen.add(sym_name)
+            if sym_id not in cycles_seen:
+                cycles_seen.add(sym_id)
                 cycles.append({"symbol": sym_name, "depth": depth})
             return
-        if sym_name in visited:
+        if sym_id in visited:
             return  # already fully explored via another path
-        visited.add(sym_name)
-        on_path.add(sym_name)
+        visited.add(sym_id)
+        on_path.add(sym_id)
         callers = get_callers(conn, sym_name, fuzzy=fuzzy)
         for c in callers:
             # Filter to structural kinds unless the caller opted in to service
@@ -228,10 +245,34 @@ def impact_analysis(
                     "depth": depth,
                 }
             )
-            traverse(c["caller_name"], depth + 1)
-        on_path.discard(sym_name)
+            # Key by the caller's symbol id so homonymous methods in different
+            # classes do not collapse to the same node.
+            traverse(c["caller_id"], c["caller_name"], depth + 1)
+        on_path.discard(sym_id)
 
-    traverse(name, 0)
+    # Seed: the entry name may resolve to several symbols (e.g. overloaded
+    # methods). Mark every matching id as visited/on-path so the traversal does
+    # not re-enter the seed, then expand the seed's callers once. Callers carry
+    # their own ids and are keyed by those going forward.
+    for seed in find_definition(conn, name, limit=limit):
+        visited.add(seed["id"])
+        on_path.add(seed["id"])
+    for c in get_callers(conn, name, fuzzy=fuzzy):
+        if allowed is not None and c["edge_kind"] not in allowed:
+            continue
+        if len(results) >= limit:
+            truncated = True
+            break
+        results.append(
+            {
+                "symbol": c["caller_name"],
+                "file": c["file_path"],
+                "repo": c["repo"],
+                "depth": 0,
+            }
+        )
+        traverse(c["caller_id"], c["caller_name"], 1)
+
     return {
         "impacted": results,
         "cycles": cycles,
@@ -271,11 +312,14 @@ def trace_flow(
     ordered call chain, so the output is a readable trace of what happens when
     ``entry`` runs — ``entry -> A -> B -> C`` — across files and modules.
 
-    BFS by symbol name (each name visited once) with the same cycle detection
+    BFS by symbol **id** (each id visited once) with the same cycle detection
     and ``limit`` cap as ``impact_analysis``, so a handler that fans out to
-    dozens of callees can't explode. Branch points (a symbol with >1 distinct
-    callee) and leaves (terminal callees with no further calls) are surfaced
-    separately — both are the structural signals a "flow compass" cares about.
+    dozens of callees can't explode. Keying by id — not name — means two
+    unrelated methods that merely share a name (e.g. two classes' ``render``)
+    are tracked as distinct nodes, so a cross-class flow is not truncated as a
+    false "cycle". Branch points (a symbol with >1 distinct callee) and leaves
+    (terminal callees with no further calls) are surfaced separately — both are
+    the structural signals a "flow compass" cares about.
 
     By default only **structural** edges (``calls``, ``extends``, ``implements``)
     are followed — service/topology edges (``http_call``, ``service_call``) are
@@ -316,8 +360,8 @@ def trace_flow(
         }
     """
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
-    visited: dict[str, dict] = {}   # name -> chain entry (first-seen wins)
-    on_path: set[str] = set()       # current BFS path — cycle detection
+    visited: dict[str, dict] = {}   # id -> chain entry (first-seen wins)
+    on_path: set[str] = set()       # current DFS path symbol ids — cycle detection
     branches: list[dict] = []
     leaves: list[str] = []
     cycles: list[dict] = []
@@ -332,31 +376,33 @@ def trace_flow(
     entry_file = entry_row[0]["file_path"] if entry_row else ""
     entry_repo = entry_row[0]["repo"] if entry_row else ""
     entry_kind = entry_row[0]["kind"] if entry_row else "function"
-    visited[entry] = {
+    entry_row_id = entry_row[0]["id"] if entry_row else entry
+    visited[entry_row_id] = {
         "symbol": entry, "kind": entry_kind, "file": entry_file,
         "repo": entry_repo, "depth": 0, "parent": None,
     }
 
-    def walk(sym_name: str, depth: int):
+    def walk(sym_id: str, sym_name: str, depth: int):
         nonlocal truncated
         if truncated or depth >= max_depth:
             return
-        if sym_name in on_path:
-            if sym_name not in cycles_seen:
-                cycles_seen.add(sym_name)
+        if sym_id in on_path:
+            if sym_id not in cycles_seen:
+                cycles_seen.add(sym_id)
                 cycles.append({"symbol": sym_name, "depth": depth})
             return
 
-        on_path.add(sym_name)
+        on_path.add(sym_id)
         callees = get_callees(conn, sym_name, limit=50, fuzzy=fuzzy)
 
         if not callees:
-            if sym_name != entry:
+            if sym_id != entry_row_id:
                 leaves.append(sym_name)
-            on_path.discard(sym_name)
+            on_path.discard(sym_id)
             return
 
-        # Dedup callees by name within this hop (one edge per target name).
+        # Dedup callees by identity (id when resolved, else name) within this
+        # hop so one node is walked once even if reached via multiple edges.
         seen_callees: set[str] = set()
         outgoing: list[str] = []
         for c in callees:
@@ -364,14 +410,20 @@ def trace_flow(
             if allowed is not None and c["edge_kind"] not in allowed:
                 continue
             cname = c["callee_name"]
-            if not cname or cname in seen_callees:
+            if not cname:
                 continue
-            seen_callees.add(cname)
+            # Prefer the resolved target id as the node identity; fall back to
+            # a name-scoped key for unresolved (name-only) callees so it stays
+            # distinct from real symbol ids.
+            cid = c["resolved"] or f"name:{cname}"
+            if cid in seen_callees:
+                continue
+            seen_callees.add(cid)
             outgoing.append(cname)
             if len(visited) >= limit:
                 truncated = True
                 break
-            if cname not in visited:
+            if cid not in visited:
                 # Resolve the callee's DEFINITION location (not the call site).
                 # get_callees returns the caller's file; find_definition gives
                 # us where the symbol is actually declared — which is what a
@@ -386,7 +438,7 @@ def trace_flow(
                     cfile = c["file_path"]
                     crepo = c["repo"]
                     ckind = c["callee_kind"]
-                visited[cname] = {
+                visited[cid] = {
                     "symbol": cname,
                     "kind": ckind,
                     "file": cfile,
@@ -394,14 +446,14 @@ def trace_flow(
                     "depth": depth + 1,
                     "parent": sym_name,
                 }
-            walk(cname, depth + 1)
+            walk(cid, cname, depth + 1)
 
         if len(outgoing) > 1:
             branches.append({"symbol": sym_name, "callees": outgoing})
 
-        on_path.discard(sym_name)
+        on_path.discard(sym_id)
 
-    walk(entry, 0)
+    walk(entry_row_id, entry, 0)
 
     chain = sorted(visited.values(), key=lambda x: (x["depth"], x["symbol"]))
 

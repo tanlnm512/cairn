@@ -133,10 +133,15 @@ def knowledge_delete(doc_id: str) -> str:
     return f"Deleted knowledge document: '{doc_id}'."
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
 @instrument
 def knowledge_status(doc_id: str, new_status: str) -> str:
-    """Update doc_status on a knowledge document (active → superseded → archived)."""
+    """Update doc_status on a knowledge document (active → superseded → archived).
+
+    This is a write (update_status -> bundle.write_concept persists to disk), so
+    unlike the read-only knowledge_search it advertises readOnlyHint=False and
+    idempotentHint=False (re-applying a forward status transition can fail or be
+    a no-op depending on the current lifecycle state)."""
     from cairn.knowledge.store import update_status
 
     bundle = _bundle()

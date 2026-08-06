@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 from .concept import OKFConcept
@@ -17,6 +17,11 @@ class OKFBundle:
 
     def __init__(self, root_path: str):
         self.root = Path(root_path)
+        # Lazily-built search index: concept_id -> {title, description, tags,
+        # body_lower}. ``None`` means "not built yet"; built on first search()
+        # call and invalidated by any mutation (write/delete) so it can never
+        # go stale. Avoids re-parsing every concept from disk on each query.
+        self._index: Optional[Dict[str, Dict[str, Any]]] = None
 
     def _validate_concept_path(self, concept_id: str) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -42,7 +47,19 @@ class OKFBundle:
             raise ValueError("concept_id is required to write")
         path = self._validate_concept_path(concept.concept_id)
         concept.to_file(str(path))
+        # Invalidate the search index: the written concept may be new or have
+        # changed title/description/tags/body, so any cached entry is stale.
+        self._index = None
         self.update_log("write", concept.concept_id)
+
+    def invalidate_search_index(self) -> None:
+        """Drop the in-memory search index so it is rebuilt on the next search.
+
+        Callers that mutate the bundle outside ``write_concept`` (e.g. direct
+        ``unlink`` of a concept file from the memory/knowledge stores) should
+        invoke this so the index can never return stale or phantom entries.
+        """
+        self._index = None
 
     def list_concepts(self, prefix: Optional[str] = None) -> List[str]:
         """List all concept IDs (relative paths without .md), optional prefix filter."""
@@ -57,28 +74,65 @@ class OKFBundle:
                 ids.append(rel)
         return sorted(ids)
 
-    def search(
-        self, query: str, tags: Optional[List[str]] = None, limit: int = 20
-    ) -> List[OKFConcept]:
-        """Simple text search across concept title, description, tags, body."""
-        query_lower = query.lower()
-        results = []
+    def _build_search_index(self) -> Dict[str, Dict[str, Any]]:
+        """Parse every concept once and cache the searchable fields.
+
+        Returns ``{concept_id: {title, description, tags, body_lower, tags_str}}``.
+        Built lazily on the first ``search`` call and reused across subsequent
+        queries so a multi-keyword or repeated search does not re-walk the tree
+        and re-parse from disk each time. Invalidated by ``write_concept`` and
+        ``invalidate_search_index``.
+        """
+        index: Dict[str, Dict[str, Any]] = {}
         for cid in self.list_concepts():
             try:
                 concept = self.read_concept(cid)
             except Exception as e:
                 logger.warning("Failed to read concept %s: %s", cid, e)
                 continue
-            haystacks = [
-                (concept.title or "").lower(),
-                (concept.description or "").lower(),
-                (concept.body or "").lower(),
-                " ".join(concept.tags).lower(),
-            ]
-            if tags and not any(t in concept.tags for t in tags):
+            tags = concept.tags or []
+            index[cid] = {
+                "title": (concept.title or "").lower(),
+                "description": (concept.description or "").lower(),
+                "tags": tags,
+                "tags_str": " ".join(tags).lower(),
+                "body_lower": (concept.body or "").lower(),
+            }
+        return index
+
+    def search(
+        self, query: str, tags: Optional[List[str]] = None, limit: int = 20
+    ) -> List[OKFConcept]:
+        """Simple text search across concept title, description, tags, body.
+
+        Uses a lazily-built in-memory index so the bundle tree is walked and
+        parsed from disk at most once (on the first search), not once per
+        query. The index is invalidated whenever a concept is written.
+        """
+        if self._index is None:
+            self._index = self._build_search_index()
+        query_lower = query.lower()
+        results: List[tuple] = []
+        for cid, entry in self._index.items():
+            concept_tags = entry["tags"]
+            if tags and not any(t in concept_tags for t in tags):
                 continue
+            haystacks = [
+                entry["title"],
+                entry["description"],
+                entry["body_lower"],
+                entry["tags_str"],
+            ]
             score = sum(h.count(query_lower) for h in haystacks)
             if score > 0:
+                # Parse the matching concept from disk only for the hits we
+                # actually return (keeps the index small and avoids holding
+                # full bodies of every concept in memory permanently).
+                try:
+                    concept = self.read_concept(cid)
+                except Exception as e:
+                    logger.warning("Failed to read concept %s: %s", cid, e)
+                    continue
                 results.append((score, concept))
         results.sort(key=lambda x: -x[0])
         return [c for _, c in results[:limit]]
