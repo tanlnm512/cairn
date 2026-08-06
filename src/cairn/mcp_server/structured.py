@@ -73,6 +73,7 @@ class SearchSymbolsResult(BaseModel):
 
     pattern: str
     count: int
+    total_count: int
     truncated: bool
     symbols: List[SymbolEntry]
 

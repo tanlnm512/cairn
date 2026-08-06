@@ -52,6 +52,8 @@ def _edges(db_path, target_name):
 
 
 def test_receiver_type_disambiguates_same_named_method(tmp_path):
+    """Regression: without the type-aware Tier 0, two classes defining the same
+    method name left every cross-file call `ambiguous`. See BUGS.md."""
     files = {
         "Profile.kt": 'class Profile {\n    fun displayName(): String { return "x" }\n}\n',
         "Account.kt": 'class Account {\n    fun displayName(): String { return "y" }\n}\n',

@@ -13,6 +13,7 @@ from typing import List, Optional
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..okf.provenance import Tier
+from ..okf.utils import slugify
 
 TIERS = ("raw", "drafts", "tribal", "archived")
 TIER_DIRS = {
@@ -53,9 +54,9 @@ def create_memory(
 
     ``supersedes`` is the concept_id(s) of the prior version(s) this memory
     replaces. When set, the new memory is marked ``memory_is_latest: true``
-    and the superseded chain is inherited + extended. Callers are responsible
-    for flipping ``memory_is_latest`` to false on the old memory (see
-    ``evolve_memory`` in promotion.py).
+    and the superseded chain is inherited + extended. Callers must flip
+    ``memory_is_latest`` to false on the old memory (see ``evolve_memory`` in
+    promotion.py).
     """
     tier = tier_for_score(score if score is not None else confidence)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -75,10 +76,10 @@ def create_memory(
         "promotion_history": [
             {"date": ts, "action": "captured", "score": round(confidence, 3), "tier": tier}
         ],
-        # Supersession: a memory is "latest" by default. When it supersedes
-        # an older memory, memory_supersedes chains the version history (like
-        # agentmemory's mem::evolve). The old memory gets memory_superseded_by
-        # set and memory_is_latest flipped to false by the caller.
+        # Supersession: a memory is "latest" by default. When it supersedes an
+        # older memory, memory_supersedes chains the version history. The old
+        # memory gets memory_superseded_by set and memory_is_latest flipped to
+        # false by the caller.
         "memory_is_latest": True,
         "memory_supersedes": list(supersedes) if supersedes else [],
         "memory_superseded_by": None,
@@ -95,13 +96,6 @@ def create_memory(
     )
 
 
-def slugify(text: str) -> str:
-    import re
-
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
-    return slug[:60] or "memory"
-
-
 def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = None, old_id: Optional[str] = None):
     """Write a memory concept to its tier directory.
 
@@ -110,7 +104,7 @@ def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = N
     is unlinked to prevent orphan files on re-tiering.
     """
     t = tier or concept.extensions.get("memory_tier", "drafts")
-    slug = slugify(concept.title)
+    slug = slugify(concept.title) or "memory"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if t == "raw":
         concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}"
@@ -172,9 +166,9 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
     if not cid.startswith("memory/"):
         cid = f"memory/{cid}"
     # get_memory -> read_concept -> _validate_concept_path raises ValueError
-    # (uncaught by get_memory, which only handles FileNotFoundError) when the
-    # concept_id escapes the bundle root. Catch it here so a traversal attempt
-    # is a controlled refusal (returns False), not an unhandled exception.
+    # when the concept_id escapes the bundle root. Catch it here so a
+    # traversal attempt is a controlled refusal (returns False), not an
+    # unhandled exception.
     try:
         concept = get_memory(bundle, memory_path)
     except ValueError:
@@ -187,9 +181,8 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
         except ValueError:
             pass
     # Route the file path through the write-path validator so a malformed
-    # concept_id can't escape the bundle root via the delete path -- mirrors
-    # write_concept's guard. Raises ValueError if cid escapes root; treat that
-    # as "nothing to delete".
+    # concept_id can't escape the bundle root via the delete path. Raises
+    # ValueError if cid escapes root; treat that as "nothing to delete".
     try:
         file_path = bundle._validate_concept_path(cid)
     except ValueError:
@@ -197,10 +190,11 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
     if not file_path.exists():
         return False
     file_path.unlink()
-    # Clean up memory_refs in DB.
+    # Clean up memory_refs in DB. Do NOT commit here -- the caller owns the
+    # transaction boundary; committing a connection we don't own can either
+    # commit an in-flight caller transaction or hit "database is locked".
     if conn is not None:
         conn.execute("DELETE FROM memory_refs WHERE memory_path = ?", (cid,))
-        conn.commit()
     return True
 
 
@@ -255,6 +249,10 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
 
 
 def _slugify(text: str) -> str:
+    # Local (not okf.utils.slugify): the consolidation paths want a richer
+    # slugifier that preserves underscores and other \w word characters and
+    # doesn't ASCII-truncate (okf.utils.slugify is ASCII-only and truncates to
+    # 60 chars, which would change consolidated concept_ids).
     import re
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
@@ -298,9 +296,8 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                 merged_body_lines.append(c.body)
 
         new_title = primary.title or title_key.title()
-        # Add a UUID suffix (same format as the archived path below) so distinct
-        # consolidations that share a title don't silently clobber each other via
-        # write_concept's atomic os.replace on the same tribal path.
+        # UUID suffix so distinct consolidations that share a title don't
+        # clobber each other via write_concept's atomic os.replace.
         import uuid
         unique_suffix = uuid.uuid4().hex[:6]
         unified_concept = OKFConcept(
@@ -321,10 +318,9 @@ def consolidate_memories(bundle: OKFBundle) -> int:
             if c.concept_id and c.concept_id != unified_concept.concept_id:
                 try:
                     c.extensions["memory_tier"] = "archived"
-                    # Add a UUID suffix (same format as store_memory's non-raw
-                    # tier) so distinct memories that share a title don't
-                    # silently clobber each other via write_concept's atomic
-                    # os.replace on the same archived path.
+                    # UUID suffix (same format as store_memory's non-raw tier)
+                    # so distinct memories that share a title don't clobber
+                    # each other via write_concept's atomic os.replace.
                     archived_suffix = uuid.uuid4().hex[:6]
                     c.concept_id = f"memory/archived/{_slugify(c.title or 'memory')}-{archived_suffix}"
                     bundle.write_concept(c)

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, builder, get_db, main, queries, scanner_mod
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
+from ._helpers import _human_bytes
 
 @main.command()
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: cwd).")
@@ -136,12 +136,11 @@ def config(list_all, mcp_config):
     # after install, whether they're getting real embeddings (bge-m3) or the
     # dep-free hash fallback. This is the earliest visibility point — it
     # surfaces the state before the user ever runs `cairn embed`.
-    from ..graph.embeddings import _effective_backend, _backend_name, current_model
+    from ..graph.embeddings import _effective_backend, is_hash_fallback, current_model
 
     eff = _effective_backend()
-    configured = _backend_name()
     model = current_model()
-    if eff == "hash" and configured == "local":
+    if is_hash_fallback():
         # Silent fallback: user expects bge-m3 but will get hash.
         click.echo(f"embed:      {model}  ⚠ fallback (sentence-transformers not installed)")
         click.echo("            for real embeddings: uv tool install 'cairn-intel[semantic]' --force")
@@ -187,10 +186,8 @@ def build(repo, workspace, db, verbose, staging):
 
     target_db = db + ".tmp" if staging else db
 
-    # Phase-event handler: drive a single rich progress bar across all
-    # phases (scan -> parse -> insert -> resolve -> persist). The bar's
-    # description + total are updated in place as each phase begins, so the
-    # user sees one continuous bar instead of five separate ones.
+    # Phase-event handler: drive one progress bar across all phases
+    # (scan -> parse -> insert -> resolve -> persist).
     bar_state = {"bar": None, "task": None, "phase": None}
 
     def on_progress(phase, **kw):
@@ -231,10 +228,21 @@ def build(repo, workspace, db, verbose, staging):
     with display.progress_bar(description="Scanning", total=None, unit="files") as bar:
         bar_state["bar"] = bar
         bar_state["task"] = bar._cg_task_id
-        summary = builder.build_graph(
-            workspace=workspace, repo_filter=repo, db_path=target_db,
-            verbose=verbose, progress=on_progress,
-        )
+        try:
+            summary = builder.build_graph(
+                workspace=workspace, repo_filter=repo, db_path=target_db,
+                verbose=verbose, progress=on_progress,
+            )
+        except Exception:
+            bar_state["bar"] = None
+            # --staging writes to a temp DB; remove the half-built temp DB on
+            # failure so a failed staging build doesn't leak.
+            if staging and os.path.exists(target_db):
+                try:
+                    os.remove(target_db)
+                except OSError:
+                    pass
+            raise
         bar_state["bar"] = None
     elapsed = time.time() - t0
 
@@ -266,9 +274,8 @@ def build(repo, workspace, db, verbose, staging):
     except Exception as e:
         df_error = str(e)
     finally:
-        # Always close: a failed dataflow build must not leak the connection --
-        # an open write transaction pinned by an exception's traceback holds
-        # SQLite's writer lock and can lock out subsequent `cairn build`/`cairn embed`.
+        # Always close: a leaked connection can hold SQLite's writer lock and
+        # lock out subsequent `cairn build`/`cairn embed`.
         if conn is not None:
             conn.close()
 
@@ -369,10 +376,12 @@ def checkpoint(db):
 
     path = db or str(resolve_store().db)
     conn = sqlite3.connect(path)
-    conn.execute("PRAGMA busy_timeout = 10000")
-    before = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
-    result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    conn.close()
+    try:
+        conn.execute("PRAGMA busy_timeout = 10000")
+        before = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
+        result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        conn.close()
     after = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
     display.kv("checkpoint", f"busy={result[0]} log_frames={result[1]} checkpointed={result[2]}")
     display.kv("wal size", f"{_human_bytes(before)} -> {_human_bytes(after)}")

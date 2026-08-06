@@ -1,7 +1,4 @@
-"""SQLite schema and database lifecycle for the Layer 1 code graph.
-
-Additional tables (repo_deps, memory_refs, etc.) are added by later migrations.
-"""
+"""SQLite schema and database lifecycle for the Layer 1 code graph."""
 from __future__ import annotations
 
 import errno
@@ -251,36 +248,25 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 #   'exact'      — resolved to exactly one candidate (trusted)
 #   'ambiguous'  — multiple candidates existed; left unresolved on purpose
 #   'unresolved' — no candidate found (e.g. stdlib/external call)
-# Added via ALTER rather than CREATE TABLE so existing DBs migrate in place.
 EDGE_RESOLUTION_MIGRATION = "ALTER TABLE edges ADD COLUMN resolution TEXT"
 
-# Store file size and mtime for fast catch-up reconciliation. Catch-up compares
-# stat() against these columns; only re-hashes on mismatch.
+# File size and mtime columns for fast catch-up reconciliation; only re-hashes
+# on mismatch.
 FILES_SIZE_MIGRATION = "ALTER TABLE files ADD COLUMN size INTEGER"
 FILES_MTIME_MIGRATION = "ALTER TABLE files ADD COLUMN mtime REAL"
 
 # JSON metadata column for symbols that need structured data beyond
-# name/kind/modifiers -- currently routes (kind='route'), which store
-# {"http_method", "path", "framework", "handler"}. Reuses the `symbols` table
-# rather than a new one, so every existing index/query/FTS5 trigger already
-# covers routes with no further change.
+# name/kind/modifiers (e.g. routes store {"http_method","path","framework","handler"}).
 SYMBOL_METADATA_MIGRATION = "ALTER TABLE symbols ADD COLUMN metadata TEXT"
 
 # content-hash column on embeddings, so embed_all can detect a changed
-# docstring/signature even when the model name hasn't changed. Without it the
-# only invalidation trigger is "no row exists for this symbol under the current
-# model" -- an edit that doesn't rename the model would silently leave a stale
-# vector in place forever. NULL on rows written before this migration; embed_all
-# treats NULL as "needs re-embedding" so old rows self-heal on the next
-# `cairn embed` rather than requiring a one-off backfill script.
+# docstring/signature even when the model name hasn't changed. NULL on rows
+# written before this migration; embed_all treats NULL as "needs re-embedding".
 EMBEDDINGS_CONTENT_HASH_MIGRATION = "ALTER TABLE embeddings ADD COLUMN content_hash TEXT"
 SYMBOL_PARAMETERS_MIGRATION = "ALTER TABLE symbols ADD COLUMN parameters TEXT"
 SYMBOL_RETURN_TYPE_MIGRATION = "ALTER TABLE symbols ADD COLUMN return_type TEXT"
-# Variant-C embedding context: the three columns chunk_for_symbol reads
-# behind `if "X" in row.keys()` guards (parent_scope / imports_summary /
-# body). Additive ALTERs, mirroring parameters/return_type. Without these,
-# the variant-C "Enclosing Scope:"/"Imports:"/"Body:" sections are always
-# empty, silently degrading embedding quality.
+# Variant-C embedding context columns chunk_for_symbol reads behind
+# `if "X" in row.keys()` guards (parent_scope / imports_summary / body).
 SYMBOL_PARENT_SCOPE_MIGRATION = "ALTER TABLE symbols ADD COLUMN parent_scope TEXT"
 SYMBOL_IMPORTS_SUMMARY_MIGRATION = "ALTER TABLE symbols ADD COLUMN imports_summary TEXT"
 SYMBOL_BODY_MIGRATION = "ALTER TABLE symbols ADD COLUMN body TEXT"
@@ -302,21 +288,14 @@ MIGRATIONS = [
     TRANSITIVE_EDGES_TARGET_ID_MIGRATION,
 ]
 
-# Default DB location: resolved from the central store for the current workspace
-# (see src/paths.py). Resolved lazily so tests that set CAIRN_HOME before
-# importing still get the right path. CLI decorators read DEFAULT_DB_PATH once
-# at import; resolve_store() reflects the cwd the user invoked `cairn` from.
+# Default DB location: resolved from the central store for the current workspace.
 from cairn.paths import resolve_store  # noqa: E402
 
 DEFAULT_DB_PATH = resolve_store().db
 
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
-    """Create tables/indexes/FTS (idempotent) and run additive migrations.
-
-    Shared by get_db and the in-memory build path (get_build_db) so both use
-    the identical schema -- including the FTS5 shadow tables and triggers.
-    """
+    """Create tables/indexes/FTS (idempotent) and run additive migrations."""
     conn.executescript(SCHEMA_SQL)
     for migration in MIGRATIONS:
         # Check if migration has already been applied
@@ -348,21 +327,20 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
                 # Real error - raise it
                 raise
 
-    # Deferred until after MIGRATIONS: on a pre-existing DB, transitive_edges
-    # may predate the target_id column, so this index can only be created
-    # once TRANSITIVE_EDGES_TARGET_ID_MIGRATION has backfilled it.
+    # Deferred until after MIGRATIONS: the target_id column may not exist on a
+    # pre-existing DB until TRANSITIVE_EDGES_TARGET_ID_MIGRATION backfills it.
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_transitive_target_id ON transitive_edges(target_id)"
     )
 
 
 def _extract_migration_name(migration_sql: str) -> str:
-    """Extract a unique migration name from the ALTER TABLE SQL.
-
-    Example: "ALTER TABLE edges ADD COLUMN resolution TEXT" -> "edges.resolution"
-    """
+    """Extract a unique migration name from ALTER TABLE SQL (e.g. "edges.resolution")."""
     parts = migration_sql.split()
-    if "ADD COLUMN" in parts:
+    # ``parts`` holds whitespace-split tokens, so check for the ADD and COLUMN
+    # keywords separately (``"ADD COLUMN" in parts`` would look for a single
+    # two-word element that never exists).
+    if "ADD" in parts and "COLUMN" in parts:
         table_idx = parts.index("TABLE") + 1
         col_idx = parts.index("COLUMN") + 1
         table = parts[table_idx]
@@ -375,15 +353,10 @@ def _extract_migration_name(migration_sql: str) -> str:
 
 
 def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
-    """Rebuild the FTS index from symbols when the shadow store is empty.
+    """Rebuild the FTS index from symbols when the token store is empty.
 
-    A DB whose FTS rows exist but never got tokenized needs a 'rebuild' to
-    populate the search index. 'rebuild' repopulates from the external content
-    table (symbols). We guard on the token-store table being empty rather than
-    the FTS row count: the FTS shadow rows can exist with zero tokens if the
-    table was created/populated before triggers were wired, and COUNT(*) on
-    symbols_fts would wrongly report "already indexed". The check is cheap
-    (~2ms) because the shadow table is small.
+    Guards on symbols_fts_data being empty (the FTS shadow rows can exist with
+    zero tokens if populated before triggers were wired), not the FTS row count.
     """
     try:
         token_rows = conn.execute(
@@ -397,14 +370,9 @@ def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
 
 
 # Paths whose schema has already been applied+backfilled in this process.
-# A long-lived `cairn serve` process calls get_db() once per tool call; without
-# this cache it re-runs the full CREATE-TABLE/migration script and an FTS
-# backfill check on every call, each briefly taking SQLite's write lock. On
-# a busy server that churn is frequent enough that external writers (e.g.
-# `cairn update`/`cairn build` running in a separate process) can starve for the
-# whole 5s busy_timeout and fail with "database is locked". Schema/backfill
-# only need to happen once per process per db path -- guarded by a lock since
-# the metric flusher thread (server.py) can call get_db() concurrently.
+# Schema/backfill only need to happen once per process per db path -- guarded
+# by a lock since the metric flusher thread (server.py) can call get_db()
+# concurrently.
 _INITIALIZED_PATHS: set[str] = set()
 _INIT_LOCK = threading.Lock()
 
@@ -414,41 +382,15 @@ def get_db(
     busy_timeout_ms: int = 5000,
     read_only: bool = False,
 ) -> sqlite3.Connection:
-    """Open a SQLite connection to the graph DB. Creates the file if missing.
+    """Open a SQLite connection to the graph DB, creating it if missing.
 
-    Runs schema migrations (idempotent CREATE IF NOT EXISTS) so that DBs created
-    in earlier phases gain new tables (memory_refs, repo_deps) automatically.
-    Returns a connection with Row factory enabled and foreign keys ON.
+    Runs idempotent schema migrations and returns a connection with Row factory
+    and foreign keys ON. When db_path is None, resolves the store for the
+    current workspace context (CAIRN_DB env > central store keyed by workspace).
 
-    When db_path is None, resolves the store for the current workspace context
-    (CAIRN_DB env > central store keyed by workspace).
-
-    Schema application and FTS backfill are skipped after the first call for
-    a given path in this process (see _INITIALIZED_PATHS above) -- callers
-    that need to force a re-check (e.g. right after an external process may
-    have created the file) should use init_db() instead.
-
-    busy_timeout_ms defaults to 5s, tuned for interactive MCP tool calls that
-    should fail fast rather than hang. CLI write commands (`cairn update`, single
-    -file reindex) pass a longer value: multiple MCP clients (SSE daemon,
-    per-editor stdio `cairn serve` processes) can legitimately hold the writer
-    lock for longer than 5s under concurrent load, and a background CLI
-    command can afford to wait.
-
-    read_only=True opens the connection read-only via the SQLite URI
-    (`file:<path>?mode=ro`). Such a connection CANNOT acquire SQLite's writer
-    lock, so it is structurally incapable of contending with writers -- this
-    is the basis for a read-only MCP daemon that coexists with `cairn build` /
-    `cairn embed` / `cairn memory` holding the single write lock. Under read_only:
-      - journal_mode=WAL is NOT set: it requires a write transaction, so a
-        read-only connection would raise "attempt to write a readonly
-        database". WAL is a property of the *file*, set by the first writer
-        (the CLI), so readers still get WAL's concurrent-reader benefits.
-      - schema apply / FTS backfill are skipped: they write. Migrations are
-        the responsibility of the writable CLI process (`cairn build`/`cairn init`),
-        not a read-only reader. A read-only open does NOT mark the path as
-        initialized in _INITIALIZED_PATHS, so a later writable get_db() in the
-        same process still runs its migrations.
+    read_only=True opens via the SQLite URI (`file:<path>?mode=ro`); such a
+    connection cannot contend with writers and skips schema apply / FTS backfill
+    (migrations are the writable CLI process's responsibility).
     """
     path = Path(db_path) if db_path else resolve_store().db
     key = str(path.resolve())  # resolve() works on non-existent paths too (strict=False default)
@@ -465,26 +407,16 @@ def get_db(
         conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA mmap_size = 268435456")
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
-    # TOCTOU invariant: the schema work (_apply_schema + _maybe_backfill_fts +
-    # commit) and the marking of the path as initialized must be atomic under
-    # _INIT_LOCK, so a second thread calling get_db() for the same path cannot
-    # observe the key as initialized (skip its own migrations) on a connection
-    # whose migrations have not been applied yet. _apply_schema and
-    # _maybe_backfill_fts only execute SQL and never acquire _INIT_LOCK, so
-    # nesting them here cannot self-deadlock (no re-entrancy).
+    # The schema work + commit and marking the path initialized must be atomic
+    # under _INIT_LOCK so a second thread calling get_db() for the same path
+    # cannot observe the key as initialized on a connection whose migrations
+    # have not yet been applied.
     with _INIT_LOCK:
         already_initialized = key in _INITIALIZED_PATHS
         # Only a writable connection can apply the schema (it writes). A
-        # read-only connection must NOT mark the path initialized: if it did,
-        # a concurrent/racing writable get_db() in the same process would see
-        # the path as already-initialized and skip its own _apply_schema,
-        # silently losing migrations. Read-only readers always re-check; the
-        # check is cheap (a set membership test under the lock).
+        # read-only connection must NOT mark the path initialized.
         if not already_initialized and not read_only:
             _INITIALIZED_PATHS.add(key)
-            # Ensure schema is current (idempotent; cheap on already-initialized
-            # DBs). Held under the lock so a racing second get_db() for the same
-            # path can't return a connection whose migrations haven't committed.
             _apply_schema(conn)
             _maybe_backfill_fts(conn)
             conn.commit()
@@ -500,13 +432,7 @@ def init_db(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 
 def get_build_db() -> sqlite3.Connection:
-    """In-memory connection tuned for bulk load. Persist with backup_to().
-
-    A from-scratch full rebuild pays no disk/transaction overhead until the
-    very end. NEVER apply these pragmas to the serving connection (get_db):
-    they trade durability/concurrency for throughput, which is only safe for a
-    from-scratch build you can always redo.
-    """
+    """In-memory connection tuned for bulk load. Persist with backup_to()."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = OFF")   # re-enabled on the persisted DB
@@ -519,13 +445,7 @@ def get_build_db() -> sqlite3.Connection:
 
 
 def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
-    """Persist an in-memory build DB to disk with atomic swap and build locking.
-
-    Writes to db_path + '.tmp' first, then os.replace() for atomic swap.
-    Takes an advisory file lock on db_path + '.build.lock' to prevent
-    concurrent rebuilds. Leaves the persisted DB with foreign_keys ON and
-    journal_mode WAL, ready to serve.
-    """
+    """Persist an in-memory build DB to disk with atomic swap and build locking."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
     # Take advisory lock to prevent concurrent rebuilds

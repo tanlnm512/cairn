@@ -10,11 +10,9 @@ retrieval paths (symbols / knowledge / memory).
 """
 from .protocols import (
     Candidate,
-    CrossEncoderReranker,
     Retriever,
     Reranker,
     Fusion,
-    RRFUnorderedFusion,
 )
 from .vector_scan import cosine_scan
 
@@ -23,7 +21,5 @@ __all__ = [
     "Retriever",
     "Reranker",
     "Fusion",
-    "CrossEncoderReranker",
-    "RRFUnorderedFusion",
     "cosine_scan",
 ]

@@ -1,7 +1,7 @@
 """Aggregate stats and directory/package tree rollups.
 
 Read-only analytics over the graph (counts, by-kind, by-repo, per-directory
-symbol buckets) -- distinct from the traversal and search halves.
+symbol buckets).
 
 Note: ``group_by_top_level`` is also imported by ``viz/query.py``, so it
 stays public (no underscore).
@@ -38,8 +38,7 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     stats["edges_resolved"] = cur.execute(
         "SELECT COUNT(*) AS c FROM edges WHERE target_id IS NOT NULL"
     ).fetchone()["c"]
-    # skipped-file counts by reason (best-effort -- the table may not exist on
-    # DBs created before this migration, though get_db creates it).
+    # skipped-file counts by reason (best-effort -- the table may not exist).
     try:
         stats["skipped_total"] = cur.execute(
             "SELECT COUNT(*) AS c FROM skipped_files"
@@ -59,20 +58,18 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 
 def get_tree(conn: sqlite3.Connection, repo: str, prefix: str = "") -> List[sqlite3.Row]:
     """Return directory/package structure with symbol counts for a repo."""
-    # A precise per-path grouping proved approximate (path-stored-absolute makes
-    # the substr trim fiddly); delegate to the simpler top-level grouping.
     return group_by_top_level(conn, repo)
 
 
 def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[sqlite3.Row]:
     """Group a repo's symbols by their top-level source directory."""
     cur = conn.cursor()
+    # files.path is repo-relative; fetch repos.path to strip it if a DB row
+    # still holds an absolute path.
     repo_row = cur.execute(
         "SELECT path FROM repos WHERE id = ?", (repo,)
     ).fetchone()
-    if not repo_row:
-        return []
-    repo_root = repo_row["path"]
+    legacy_repo_root = repo_row["path"] if repo_row else ""
     rows = cur.execute(
         """SELECT f.path AS path, COUNT(s.id) AS symbols
            FROM files f LEFT JOIN symbols s ON s.file_id = f.id
@@ -80,11 +77,14 @@ def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[sqlite3.Row]
            GROUP BY f.id""",
         (repo,),
     ).fetchall()
-    # Bucket by the first 2-3 path segments after repo root.
+    # Bucket by the first 2-3 path segments.
     buckets: dict[str, int] = {}
     for r in rows:
-        rel = r["path"].replace(repo_root + "/", "", 1)
-        parts = rel.split("/")
+        p = r["path"]
+        # Strip the repo root if the path is absolute.
+        if legacy_repo_root and p.startswith(legacy_repo_root + "/"):
+            p = p[len(legacy_repo_root) + 1:]
+        parts = p.split("/")
         # Use first meaningful module dir (skip src/main/java/...)
         key = "/".join(parts[:3]) if len(parts) >= 3 else parts[0]
         buckets[key] = buckets.get(key, 0) + r["symbols"]

@@ -1,14 +1,8 @@
 """Procedural workflow knowledge -- ordered, queryable step sequences.
 
 A workflow is just another OKF concept (`doc_type="workflow"`) under the
-existing knowledge/ layer (L5), so it inherits everything built for it for
-free -- `doc_status` lifecycle enforcement, archived-doc filtering in
-`search_knowledge`, and the existing `cairn knowledge list/status/remove/search`
-CLI commands, unchanged. There is no separate ingestion or "sync" step:
-`OKFBundle.write_concept`/`read_concept` ARE the source of truth, so a write
-is immediately visible to every reader.
-
-This module adds only what's genuinely workflow-specific: turning an ordered
+knowledge/ layer, inheriting the existing lifecycle, filtering, and CLI
+commands. This module adds only what's workflow-specific: turning an ordered
 step list into both a readable body and a structured `steps` extension
 (`add_workflow`), and resolving + returning those steps in order by title,
 slug, or concept_id (`trace_workflow`).
@@ -30,11 +24,8 @@ DOC_TYPE = "workflow"
 def render_steps_body(title: str, steps: List[dict]) -> str:
     """Render an ordered step list as a readable markdown body.
 
-    Keeps the doc human-readable when opened directly, but this is a
-    *rendering* -- the `steps` extension (structured, not prose) is what
-    `trace_workflow` actually reads. If the two ever disagree (e.g. someone
-    hand-edits the body without touching the frontmatter), the extension
-    wins; nothing here re-derives steps from the body.
+    This is a rendering; the `steps` extension (structured) is what
+    `trace_workflow` actually reads, and wins if the two ever disagree.
     """
     lines = [f"# {title}\n"]
     for i, step in enumerate(steps, start=1):
@@ -65,16 +56,10 @@ def add_workflow(
     """Add a workflow. Returns the concept_id (knowledge/workflow/<slug>).
 
     ``steps`` is an ordered list of dicts, each typically
-    ``{"name", "description", "symbol", "file"}`` (only ``name`` is
-    required by this function; the rest are optional per step). ``symbol``/
-    ``file`` are how a step joins back to the graph -- same principle as
-    compass/wiki (a hit is meant to be joined back to structural tools, not
-    read in isolation): an agent tracing a workflow can follow a step
-    straight into `find_definition`/`get_callers` on the referenced symbol.
+    ``{"name", "description", "symbol", "file"}`` (only ``name`` required).
+    ``symbol``/``file`` join a step back to the graph.
 
-    Raises ValueError if ``steps`` is empty -- a workflow with zero steps
-    isn't a workflow, and silently accepting one would just produce a
-    confusing "workflow with no steps" result out of `trace_workflow` later.
+    Raises ValueError if ``steps`` is empty.
     """
     if not steps:
         raise ValueError("add_workflow requires at least one step")
@@ -117,14 +102,10 @@ def trace_workflow(bundle: OKFBundle, ref: str) -> Optional[dict]:
 
     ``ref`` may be a title, a slug, or a full concept_id. Returns
     ``{"concept_id", "title", "doc_status", "steps"}``, or ``None`` if no
-    workflow matches -- callers (CLI/MCP) own the "not found, try
-    knowledge_search instead" messaging; this just signals absence.
+    workflow matches.
 
-    Deliberately does NOT filter on doc_status itself (unlike
-    `search_knowledge`'s archived-by-default exclusion) -- tracing a
-    *specific, named* workflow the caller already knows about should still
-    work even if it's since been archived/superseded; the caller gets
-    `doc_status` back and can decide whether to warn or refuse.
+    Does NOT filter on doc_status -- tracing a specific named workflow works
+    even if archived; the caller gets ``doc_status`` back and decides.
     """
     concept = _resolve(bundle, ref)
     if concept is None:
@@ -138,23 +119,16 @@ def trace_workflow(bundle: OKFBundle, ref: str) -> Optional[dict]:
 
 
 def list_workflows(bundle: OKFBundle, status: Optional[str] = None) -> List[OKFConcept]:
-    """List all workflow documents. Thin wrapper over list_documents for
-    discoverability -- `cairn knowledge list --type workflow` does the same
-    thing and needs no changes to already work.
-    """
+    """List all workflow documents."""
     return list_documents(bundle, doc_type=DOC_TYPE, status=status)
 
 
 # ---------------------------------------------------------------------------
 # Graph-derived workflows: bridge the declarative call-graph trace into
-# procedural workflow steps. See compass/generator.py:_gather_flow_facts for
-# the source shape; this converter turns it into the steps[] list that
-# add_workflow expects.
+# procedural workflow steps.
 # ---------------------------------------------------------------------------
 
-# Cap on how many chain nodes become workflow steps. A full trace can be 300+
-# nodes deep (e.g. a ViewModel handleCommand); the top-N by depth captures the
-# meaningful business narrative without the leaf-level noise.
+# Cap on how many chain nodes become workflow steps.
 DEFAULT_FLOW_STEP_LIMIT = 20
 
 
@@ -164,19 +138,13 @@ def flow_to_workflow(
 ) -> List[dict]:
     """Convert a flow compass facts dict into workflow steps.
 
-    Takes the ``chain_raw`` from ``_gather_flow_facts`` (each node carrying
-    ``{symbol, kind, file, repo, depth, parent}``) and returns an ordered
+    Takes the ``chain_raw`` from ``_gather_flow_facts`` and returns an ordered
     ``steps[]`` list where each step has ``{name, symbol, file, description}``.
-
-    The description carries the structural context (depth, kind, caller) so
-    the workflow reads as an ordered narrative. Branch points and terminal
-    calls are annotated — these are the modification signals a developer
-    needs when reading the procedure.
+    Branch points and terminal calls are annotated.
 
     Args:
         facts: the dict returned by ``compass.generator._gather_flow_facts``.
-        max_steps: cap on the number of steps (default 20). Nodes beyond this
-            are omitted; the caller can raise the limit for deeper traces.
+        max_steps: cap on the number of steps (default 20).
 
     Returns:
         A list of step dicts, ready for ``add_workflow(steps=...)``.
@@ -226,10 +194,7 @@ def flow_to_workflow(
             "description": description,
         })
 
-    # If the chain was longer than max_steps (whether because the trace itself
-    # was truncated by trace_flow's node limit, or because we're capping the
-    # workflow at max_steps for readability), note the omission so the reader
-    # knows there's more depth available.
+    # If the chain was longer than max_steps, note the omission.
     if len(chain) > max_steps:
         omitted = len(chain) - max_steps
         steps.append({
@@ -241,8 +206,7 @@ def flow_to_workflow(
 
 
 # ---------------------------------------------------------------------------
-# Workflow staleness detection + sync: keep graph-derived workflows current
-# after code changes (renamed symbols, moved files, refactored call chains).
+# Workflow staleness detection + sync.
 # ---------------------------------------------------------------------------
 
 def check_workflow_staleness(
@@ -252,13 +216,9 @@ def check_workflow_staleness(
 ) -> Optional[dict]:
     """Check a workflow's step anchors against the current graph.
 
-    For each step in ``concept.extensions["steps"]``, verifies that the
-    step's ``symbol`` and ``file`` still exist in the L1 graph. Returns a
-    staleness report, or ``None`` if the workflow can't be resolved.
-
-    Uses the same ``symbol_exists`` / ``file_exists`` functions as the
-    critic, so the verification is consistent with how compass files are
-    checked.
+    For each step in ``concept.extensions["steps"]``, verifies that the step's
+    ``symbol`` and ``file`` still exist in the graph. Returns a staleness
+    report, or ``None`` if the workflow can't be resolved.
     """
     from ..refs import file_exists as _file_exists, symbol_exists as _symbol_exists
 
@@ -303,8 +263,6 @@ def check_all_workflows(
     by stale step count (most stale first)."""
     reports = []
     for concept in list_documents(bundle, doc_type=DOC_TYPE):
-        # Resolve by title (concept_id may be absolute-path-shaped in some
-        # test contexts, but title always resolves via _resolve's title match).
         ref = concept.title or concept.concept_id
         report = check_workflow_staleness(conn, bundle, ref)
         if report and report["stale_count"] > 0:
@@ -321,16 +279,10 @@ def sync_workflow(
 ) -> Optional[dict]:
     """Re-trace a workflow's flow and rebuild its steps from the current graph.
 
-    Resolves the workflow, re-traces via :func:`trace_flow` using the
-    workflow's ``resource`` field as the entry point, rebuilds the steps via
-    :func:`flow_to_workflow`, and writes the updated concept. Only ``steps``
-    and ``body`` change — ``resource``, ``tags``, ``affects_repos``, etc. are
-    preserved.
-
-    Returns a sync report, or ``None`` if the workflow can't be resolved.
-    If the entry symbol no longer traces (renamed/removed), returns a report
-    with ``new_step_count <= 1`` and ``error`` set rather than writing an
-    empty workflow.
+    Re-traces via :func:`trace_flow` using the workflow's ``resource`` field as
+    the entry point, rebuilds the steps via :func:`flow_to_workflow`, and writes
+    the updated concept (only ``steps`` and ``body`` change). Returns a sync
+    report, or ``None`` if the workflow can't be resolved.
     """
     from ..compass.generator import _gather_flow_facts
     from ..okf.concept import OKFConcept

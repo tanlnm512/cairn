@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, get_db, main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
 def task():
@@ -83,8 +82,9 @@ def task_claim(task_id, assigned_to, knowledge):
 @click.argument("task_id")
 @click.option("--result", default=None, help="Result text (alternative to --result-file)")
 @click.option("--result-file", default=None, help="Read result from this file")
+@click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def task_complete(task_id, result, result_file, knowledge):
+def task_complete(task_id, result, result_file, db, knowledge):
     """Mark a task done. Runs the deterministic critic automatically."""
     from ..llm.tasks import complete_task, MAX_REVISE_CYCLES
     from ..okf.bundle import OKFBundle
@@ -95,9 +95,9 @@ def task_complete(task_id, result, result_file, knowledge):
     if not result:
         click.echo("No result provided. Use --result or --result-file.", err=True)
         sys.exit(1)
-    
+
     # Open DB connection for critic
-    conn = get_db()
+    conn = get_db(db)
     
     try:
         outcome = complete_task(bundle, task_id, result, conn=conn)

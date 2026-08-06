@@ -28,9 +28,9 @@ Node-type reference:
   interfaces (implements)                -> Edge(implements)
 
 qualified_name follows the same file-stem-prefix convention as
-src/parsers/typescript.py (see that module's docstring for why); imports of
-relative Dart specs (`./foo.dart`) are resolved and extension-stripped for the
-same reason. `package:` imports are left as opaque bare specs (external).
+src/parsers/typescript.py; imports of relative Dart specs (`./foo.dart`) are
+resolved and extension-stripped for the same reason. `package:` imports are
+left as opaque bare specs (external).
 """
 from __future__ import annotations
 
@@ -91,7 +91,12 @@ class DartParser(BaseParser, TreeSitterParserBase):
         self._path = file_path
         self._file_stem = file_path.stem
         self._func_depth = 0
+        # Parsers are cached singletons reused across files, so reset all
+        # per-file accumulators here -- otherwise scope/edges from file N
+        # bleed into file N+1's ParsedFile.
         self._pending_edges: List[Edge] = []
+        self._scope = []
+        self._callable_scope = []
 
         self._process_siblings(tree.root_node.children, source, pf)
         pf.edges.extend(self._pending_edges)

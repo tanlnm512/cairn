@@ -29,10 +29,9 @@ DEFAULT_THRESHOLD = 100
 def _cg_command() -> list[str]:
     """Resolve the cairn invocation.
 
-    Mirrors agent_install.resolve_cg_command(): prefer the `cairn` binary on
-    PATH; fall back to `python -m cairn.cli.main` when it isn't (e.g. an editable
-    install invoked via the module path). This script ships standalone into
-    the skill dir, so it cannot import resolve_cg_command directly.
+    Prefer the `cairn` binary on PATH; fall back to `python -m cairn.cli.main`
+    when it isn't. This script ships standalone into the skill dir, so it
+    cannot import resolve_cg_command directly.
     """
     if shutil.which("cairn"):
         return ["cairn"]

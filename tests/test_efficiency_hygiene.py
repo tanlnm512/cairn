@@ -7,6 +7,8 @@ from cairn.okf.concept import OKFConcept
 
 
 def test_okf_bundle_path_traversal_blocked():
+    """Regression guard: bundle read/write must reject paths that escape the
+    bundle root (``../../victim`` path traversal). See BUGS.md."""
     with tempfile.TemporaryDirectory() as tmpdir:
         bundle = OKFBundle(tmpdir)
 
@@ -21,6 +23,8 @@ def test_okf_bundle_path_traversal_blocked():
 
 
 def test_knowledge_store_slugifies_doc_type():
+    """Regression guard: doc_type must be slugified so a traversal payload
+    (``../../victim``) can't write outside the knowledge tree. See BUGS.md."""
     with tempfile.TemporaryDirectory() as tmpdir:
         bundle = OKFBundle(tmpdir)
         concept_id = add_document(

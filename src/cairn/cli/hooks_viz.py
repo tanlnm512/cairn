@@ -5,7 +5,6 @@ import click
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, get_db, main, scanner_mod
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
 def hooks():
@@ -36,7 +35,7 @@ def hooks_uninstall(workspace):
 
 
 # --------------------------------------------------------------------------
-# cairn viz (visualization, M7)
+# cairn viz (visualization)
 # --------------------------------------------------------------------------
 @main.command()
 @click.option("--format", "fmt", type=click.Choice(["mermaid", "dot", "json"]), default="mermaid")
@@ -54,19 +53,21 @@ def viz(fmt, scope, symbol, module, repo, depth, output, do_embed, db):
     from ..viz import renderers as vr
 
     conn = get_db(db)
-    if scope == "symbol":
-        graph = vq.get_symbol_graph(conn, symbol or "")
-    elif scope == "impact":
-        graph = vq.get_impact_graph(conn, symbol or "", max_depth=depth)
-    elif scope == "module":
-        graph = vq.get_module_graph(conn, module or "")
-    elif scope == "repo":
-        graph = vq.get_repo_graph(conn, repo or "")
-    elif scope == "deps":
-        graph = vq.get_deps_graph(conn)
-    else:
-        graph = {"nodes": [], "edges": [], "metadata": {}}
-    conn.close()
+    try:
+        if scope == "symbol":
+            graph = vq.get_symbol_graph(conn, symbol or "")
+        elif scope == "impact":
+            graph = vq.get_impact_graph(conn, symbol or "", max_depth=depth)
+        elif scope == "module":
+            graph = vq.get_module_graph(conn, module or "")
+        elif scope == "repo":
+            graph = vq.get_repo_graph(conn, repo or "")
+        elif scope == "deps":
+            graph = vq.get_deps_graph(conn)
+        else:
+            graph = {"nodes": [], "edges": [], "metadata": {}}
+    finally:
+        conn.close()
 
     if fmt == "mermaid":
         out = vr.embed(graph) if do_embed else vr.to_mermaid(graph)
@@ -91,8 +92,10 @@ def import_scip(scip_file, db, repo):
     from ..parsers.scip_importer import import_scip_file
 
     conn = get_db(db)
-    stats = import_scip_file(conn, scip_file, repo_id=repo)
-    conn.close()
+    try:
+        stats = import_scip_file(conn, scip_file, repo_id=repo)
+    finally:
+        conn.close()
     click.echo(
         f"Imported SCIP index: {stats['files_added']} files, {stats['symbols_added']} symbols, {stats['edges_added']} exact edges."
     )

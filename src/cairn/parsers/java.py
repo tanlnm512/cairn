@@ -40,6 +40,12 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             hash=hashlib.sha256(source).hexdigest(),
             line_count=source.count(b"\n") + 1,
         )
+        # Parsers are cached singletons reused across files, so reset all
+        # per-file accumulators here.
+        self._pending_edges = []
+        self._scope = []
+        self._scope_kinds = []
+        self._callable_scope = []
         self._walk(tree.root_node, source, pf)
         pf.edges.extend(self._pending_edges)
         return pf
@@ -72,7 +78,9 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             sym = self._parse_method(node, source)
             if sym:
                 pf.symbols.append(sym)
+                self._callable_scope.append(sym.name)
                 self._walk(node, source, pf)
+                self._callable_scope.pop()
             return
 
         if t == "field_declaration":
@@ -151,10 +159,9 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_field(self, node: Node, source: bytes) -> List[Symbol]:
-        # field_declaration: modifiers type variable_declarator (= value);
+        # field_declaration: modifiers type variable_declarator (= value).
         # A single declaration may define several names (e.g. ``int a, b, c;``),
-        # so emit one Symbol PER variable_declarator. Modifiers and the field
-        # span are shared across all declarators.
+        # so emit one Symbol per variable_declarator.
         mods = self._collect_modifiers(node, source)
         syms: List[Symbol] = []
         for child in node.children:
@@ -243,15 +250,26 @@ class JavaParser(BaseParser, TreeSitterParserBase):
                 yield from child.children
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
-        # method_invocation: object? '.'? name '(' args ')'
-        # The called name is an identifier child.
-        owner = self._scope[-1] if self._scope else ""
+        # method_invocation: (object '.')? name '(' args ')'. The called name is
+        # the LAST identifier before the argument_list -- the first identifier
+        # (when present) is the receiver, not the method.
+        owner = self._current_edge_owner()
+        callee = None
+        receiver_text = None
         for child in node.children:
+            if child.type == "argument_list":
+                break
             if child.type == "identifier":
-                return Edge(
-                    source_name=owner,
-                    kind="calls",
-                    target_name=self._node_text(child, source).strip(),
-                    line=node.start_point[0] + 1,
-                )
-        return None
+                if callee is not None:
+                    # A previous identifier was captured; it was the receiver.
+                    receiver_text = callee
+                callee = self._node_text(child, source).strip()
+        if not callee:
+            return None
+        return Edge(
+            source_name=owner,
+            kind="calls",
+            target_name=callee,
+            line=node.start_point[0] + 1,
+            receiver_type=self._infer_receiver_type(receiver_text),
+        )

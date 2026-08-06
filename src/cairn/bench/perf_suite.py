@@ -85,22 +85,16 @@ def run_perf_suite(
 
     Assumes the corpus already exists at ``workspace`` (use
     :func:`generate_corpus` first, or point at a real repo). The graph is built
-    fresh into ``db_path`` each run.
-
-    ``embed_backend`` defaults to ``hash`` (dep-free, deterministic). Set to a
-    real backend only if you've installed the ``[semantic]`` extra — the perf
-    suite is otherwise self-contained.
-
-    ``query_repeats`` is higher than ``repeats`` because queries are cheap and
-    need more samples for a stable p95.
+    fresh into ``db_path`` each run. ``embed_backend`` defaults to ``hash``
+    (dep-free, deterministic); set a real backend only if the ``[semantic]``
+    extra is installed.
     """
     report = PerfReport(db_path=db_path)
     report.corpus = corpus_stats(Path(workspace))
 
     # This suite mutates two process-global env vars to point the build/embed
-    # at the bench DB and the chosen backend. Snapshot them so callers (e.g.
-    # tests reusing one process) aren't left with the bench's values after the
-    # run. Restored in the `finally` around the return.
+    # at the bench DB and the chosen backend. Snapshot and restore them so
+    # callers reusing one process aren't left with the bench's values.
     _saved_db = os.environ.get("CAIRN_DB")
     _saved_embed_backend = os.environ.get("CAIRN_EMBED_BACKEND")
     _had_db = "CAIRN_DB" in os.environ
@@ -115,6 +109,11 @@ def run_perf_suite(
             os.environ["CAIRN_EMBED_BACKEND"] = _saved_embed_backend  # type: ignore[assignment]
         else:
             os.environ.pop("CAIRN_EMBED_BACKEND", None)
+        # The embed backend resolution is cached for the process lifetime (see
+        # embeddings.reset_backend_cache). Reset again here so non-bench
+        # in-process callers see the restored backend rather than the bench's.
+        from cairn.graph import embeddings as _emb
+        _emb.reset_backend_cache()
 
     # --- Build phase ------------------------------------------------------
     # Build timing is single-shot (the phase-event split is the signal, and a

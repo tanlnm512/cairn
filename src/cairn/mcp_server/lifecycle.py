@@ -1,23 +1,14 @@
 """Lifecycle management for the cairn SSE daemon (macOS launchd).
 
-Provides the plumbing for `cairn serve start|stop|status|restart` so a single
-SSE server can run as a persistent per-user LaunchAgent, shared by all MCP
-clients (ZCode, Claude Desktop, Cursor) instead of one stdio process per
-client.
+Plumbing for `cairn serve start|stop|status|restart` so a single SSE server
+runs as a persistent per-user LaunchAgent shared by all MCP clients.
 
 Design:
-- A LaunchAgent plist at ~/Library/LaunchAgents/dev.cairn.sse.plist runs
-  `cairn serve --port <N>` with KeepAlive (restart on crash) and RunAtLoad
-  (start at login). launchd becomes the parent (pid 1), so the server's
-  stdio-only `_install_exit_watchdog` is correctly bypassed under SSE.
-- `start` is idempotent: reloading an already-loaded job is a no-op.
-- `stop` does `launchctl unload` (graceful SIGTERM from launchd) and also
-  sweeps stray `cairn serve` processes that aren't under launchd -- the
-  orphan-accumulation problem that causes "database is locked".
+- A LaunchAgent plist runs `cairn serve --port <N>` with KeepAlive and RunAtLoad.
+- `start` is idempotent; `stop` does `launchctl unload` and sweeps stray
+  `cairn serve` processes (the orphan-accumulation cause of "database is locked").
 
-Only macOS is supported (launchd). On other platforms the functions raise
-RuntimeError with a clear message; callers can fall back to `cairn serve`
-(foreground) or wire up systemd equivalent.
+macOS-only; on other platforms functions raise RuntimeError.
 """
 from __future__ import annotations
 
@@ -78,29 +69,20 @@ def render_plist(
 ) -> dict:
     """Build the LaunchAgent plist as a dict (plistlib-renderable).
 
-    Runs `cairn serve run --port <N> --read-only` (the foreground SSE subcommand).
-    Note the `run` subcommand: the top-level `cairn serve` group doesn't accept
-    --port directly (it's a group dispatcher), so the plist must invoke the
-    `run` subcommand explicitly.
-
-    The daemon is read-only by default: the shared SSE server opens the graph
-    DB with `mode=ro` so it can never acquire SQLite's writer lock and therefore
-    never contends with `cairn build`/`cairn embed`/`cairn memory`. Serving-time write
-    paths (memory ref-counts, tool metrics) silently no-op; write tools still
-    open a writable connection as needed. Pass read_only=False for a read-write
-    daemon (not recommended for a shared multi-client daemon).
+    Runs `cairn serve run --port <N> --read-only`. The daemon is read-only by
+    default: the shared SSE server opens the graph DB with `mode=ro` so it
+    never contends with `cairn build`/`cairn embed`/`cairn memory`. Pass
+    read_only=False for a read-write daemon (not recommended for shared use).
 
     Args:
         workspace: absolute path to the workspace whose store the daemon
-            should serve. Under launchd the cwd is `/`, so without this the
-            daemon can't find the right store via ancestor walk.
+            should serve (launchd's cwd is `/`).
         db_path: explicit DB path (overrides workspace-derived path).
         knowledge_path: explicit knowledge dir.
     """
     bin_ = cg_bin()
     env = {
-        # Inherit the user PATH so `cairn` can find python etc. launchd
-        # otherwise starts with a minimal environment.
+        # Inherit the user PATH so `cairn` can find python etc.
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
     }
     if workspace:
@@ -146,9 +128,8 @@ def is_loaded() -> bool:
 def running_pid() -> int | None:
     """PID of the running daemon, or None if loaded-but-not-running / not loaded.
 
-    Handles the two launchctl output formats across macOS versions:
-      - plist style:        \\t"PID" = 6155;   (key quoted, indented, trailing ;)
-      - tab style:          PID\\tStatus\\tLabel  (first column is the pid)
+    Handles the two launchctl output formats across macOS versions (plist-style
+    `"PID" = N;` and tab-style `PID<Tab>Status<Tab>Label`).
     """
     if not is_macos():
         return None
@@ -162,7 +143,7 @@ def running_pid() -> int | None:
     m = re.search(r'"PID"\s*=\s*(\d+)', r.stdout)
     if m:
         return int(m.group(1))
-    # Tab-separated output: PID  Status  Label (first line).
+    # Tab-separated output: PID<Tab>Status<Tab>Label.
     for line in r.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) >= 3 and parts[0].strip().isdigit():
@@ -173,61 +154,78 @@ def running_pid() -> int | None:
 def find_strays(db_path: str | Path) -> list[int]:
     """Find `cairn serve` PIDs NOT managed by launchd that hold the DB.
 
-    These are orphaned stdio servers left over from editor sessions -- the
-    root cause of WAL lock contention. Returns PIDs to kill.
-
-    The match is scoped two ways for safety:
-      - by command shape: only real ``cairn serve run``/``cairn serve``
-        invocations (a bare ``cairn serve`` substring would otherwise match ANY
-        process whose argv merely contains it -- editors, grep, this very
-        process);
-      - by db_path: only processes serving the SAME DB. A server sets
-        ``CAIRN_DB`` (see cli/serve.py) and may also pass ``--db``; we
-        match the resolved path that appears in argv/env-derived cmdline.
-        When db_path looks like the default/central store (i.e. it may not
-        appear literally in argv), we fall back to matching ``cairn serve run``.
+    These are orphaned stdio servers left over from editor sessions -- the root
+    cause of WAL lock contention. Matched by command shape (real `cairn serve`
+    invocations) and optionally scoped by db_path. Daemon and its children are
+    excluded.
     """
     pids: list[int] = []
     daemon_pid = running_pid()
-    # Build the pgrep pattern. `pgrep -f` matches against the full command
-    # line on macOS. We scope to the literal db_path when it looks non-default
-    # (so unrelated `cairn serve` processes serving OTHER dbs are spared); we
-    # otherwise fall back to the `run` subcommand, which only a real
-    # foreground/SSE server invocation contains.
+    # Build the set of pids to PRESERVE: the launchd-managed daemon pid plus
+    # any processes it spawned, so we don't kill the live SSE server.
+    protected = {daemon_pid, os.getpid()}
+    if daemon_pid is not None:
+        protected |= _children_of(daemon_pid)
+    # pgrep -f matches against the full command line on macOS. Scope to the
+    # literal db_path when it looks non-default; otherwise fall back to the
+    # `run` subcommand, which only a real foreground/SSE server invocation
+    # contains. Under launchd db_path is typically passed via CAIRN_DB env (not
+    # argv), so the scoped pattern rarely matches; we still try it first for
+    # the `--db` argv case.
     db_str = str(db_path) if db_path else ""
-    if db_str:
-        pattern = rf"cairn serve.*{re.escape(db_str)}"
-    else:
-        pattern = r"cairn serve run"
-    r = subprocess.run(
-        ["pgrep", "-f", pattern],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        return pids
-    for pid_s in r.stdout.split():
-        try:
-            pid = int(pid_s)
-        except ValueError:
+    candidates: list[int] = []
+    patterns = [rf"cairn serve.*{re.escape(db_str)}", r"cairn serve run"] if db_str else [r"cairn serve run"]
+    seen: set[int] = set()
+    for pattern in patterns:
+        r = subprocess.run(
+            ["pgrep", "-f", pattern],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
             continue
-        if pid == os.getpid():
+        for pid_s in r.stdout.split():
+            try:
+                pid = int(pid_s)
+            except ValueError:
+                continue
+            if pid not in seen:
+                seen.add(pid)
+                candidates.append(pid)
+        # If the scoped pattern matched anything, don't bother with the broad
+        # fallback -- it would only add false positives.
+        if candidates:
+            break
+    for pid in candidates:
+        if pid in protected:
             continue
-        if pid == daemon_pid:
-            continue
-        # Exclude the launchd-managed daemon's children (the actual server
-        # process spawned by the plist). The daemon pid from launchctl is the
-        # one we want to keep; its descendants serve the SSE port.
         pids.append(pid)
     return pids
 
 
-def terminate_pid(pid: int, timeout: float = 5.0) -> None:
-    """SIGTERM a pid, wait, SIGKILL if still alive. Best-effort, never raises.
+def _children_of(ppid: int) -> set[int]:
+    """Return direct child pids of ``ppid`` via a single ``pgrep -P`` call.
 
-    Defined here so the daemon's own stray-sweeper thread can evict orphans
-    without importing the CLI layer (which would pull Click and the whole
-    command tree into the server process).
+    Best-effort: on failure or a non-macOS host it returns an empty set.
     """
+    try:
+        r = subprocess.run(
+            ["pgrep", "-P", str(ppid)],
+            capture_output=True, text=True,
+        )
+    except (OSError, ValueError):
+        return set()
+    children: set[int] = set()
+    if r.returncode == 0:
+        for pid_s in r.stdout.split():
+            try:
+                children.add(int(pid_s))
+            except ValueError:
+                continue
+    return children
+
+
+def terminate_pid(pid: int, timeout: float = 5.0) -> None:
+    """SIGTERM a pid, wait, SIGKILL if still alive. Best-effort, never raises."""
     import signal
     import time
 
@@ -251,9 +249,7 @@ def terminate_pid(pid: int, timeout: float = 5.0) -> None:
 def sweep_strays(db_path: str | Path, log: bool = False) -> int:
     """Find and kill stray `cairn serve` processes. Returns count killed.
 
-    Idempotent and safe to call from the daemon's background sweeper thread or
-    from `cairn serve start`/`stop`. Best-effort: a pid that died between find and
-    kill is a no-op.
+    Idempotent; best-effort (a pid that died between find and kill is a no-op).
     """
     strays = find_strays(db_path)
     for pid in strays:
@@ -304,18 +300,10 @@ def sse_url(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> str:
 def sse_responds(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout: float = 2.0) -> bool:
     """Liveness check: does the SSE server actually answer HTTP requests?
 
-    A bare TCP accept is a false-positive liveness signal -- the listen
-    backlog accepts even when uvicorn is wedged (e.g. blocking on a SQLite WAL
-    lock during a write) and can't service the request. That left `cairn serve
-    status` reading "SSE responds: True (but curl times out mid-stream)"
-    during a real lockup.
-
-    We probe the root path ``/`` (NOT ``/sse``) with a spec-complete HTTP/1.1
-    GET and read the start of the response status line. Hitting ``/`` avoids
-    the SSE handler's request validation, which would otherwise reject the
-    probe and spam the daemon log with "Request validation failed" on every
-    health check. A 404 from the root is still a valid liveness signal: it
-    proves uvicorn parsed the request and emitted a status line.
+    Probes the root path ``/`` (not ``/sse``) and reads the start of the
+    response status line. A bare TCP accept is a false-positive (the listen
+    backlog accepts even when uvicorn is wedged). Hitting ``/`` avoids the SSE
+    handler's request validation; a 404 still proves uvicorn parsed the request.
 
     Returns True only if the server both accepted AND emitted a response byte
     within `timeout`.
@@ -326,7 +314,7 @@ def sse_responds(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout: fl
         with socket.create_connection((host, port), timeout=timeout) as sock:
             sock.settimeout(timeout)
             # Probe the root path -- any HTTP status line (including 404) proves
-            # uvicorn is servicing requests, not just holding the listen socket.
+            # uvicorn is servicing requests.
             sock.sendall(f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
             first = sock.recv(1, socket.MSG_PEEK)
             return bool(first)

@@ -6,23 +6,18 @@ the .knowledge/knowledge/ subtree. Scoped via concept_id prefix "knowledge/".
 from __future__ import annotations
 
 import logging
-import re
 from typing import List, Optional
 from pathlib import Path
 
 from cairn.okf.concept import OKFConcept
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.provenance import Tier
+from cairn.okf.utils import slugify
 
 logger = logging.getLogger(__name__)
 
 # Maximum file size for import (10MB) to prevent excessive memory usage
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
-
-
-def slugify(text: str) -> str:
-    """URL-safe slug. Mirrors src/memory/store.py:82 pattern."""
-    return re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")[:60]
 
 
 def add_document(
@@ -41,16 +36,11 @@ def add_document(
 ) -> str:
     """Ingest a document. Returns the concept_id.
 
-    concept_id pattern: knowledge/{doc_type}/{slug}
-    (mirrors compass/{module-dashes} convention)
+    concept_id pattern: knowledge/{doc_type}/{slug}.
 
-    ``steps`` is an optional ordered list of step dicts (each typically
-    ``{"name", "description", "symbol", "file"}``, though nothing here
-    enforces that shape) stored under the ``steps`` extension. Intended for
-    ``doc_type="workflow"`` docs -- see ``src/knowledge/workflow.py`` for the
-    dedicated ``add_workflow``/``trace_workflow`` helpers built on top of
-    this, but it's a plain extension field like any other, so any doc_type
-    can carry ordered steps if that's ever useful elsewhere.
+    ``steps`` is an optional ordered list of step dicts stored under the
+    ``steps`` extension (intended for ``doc_type="workflow"``; see
+    ``src/knowledge/workflow.py``).
     """
     slug = slugify(title)
     safe_doc_type = slugify(doc_type) or "general"
@@ -65,8 +55,7 @@ def add_document(
         "affects_modules": affects_modules or [],
         "affects_repos": affects_repos or [],
     }
-    # Only add the steps key when actually given -- keeps non-workflow docs'
-    # frontmatter unchanged from before this param existed.
+    # Only add the steps key when actually given.
     if steps:
         extensions["steps"] = steps
 
@@ -123,15 +112,11 @@ DOC_STATUSES = ("active", "superseded", "archived")
 def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
     """Update doc_status, enforcing the documented forward-only lifecycle.
 
-    Rejects (returns False, doesn't raise -- matches this function's
-    bool-return contract):
+    Rejects (returns False, doesn't raise):
       - unknown status values (only "active"/"superseded"/"archived" valid)
-      - backward transitions (e.g. archived -> active) -- once a doc moves
-        forward in the lifecycle it can't be silently un-retired this way;
-        re-add it as a fresh document if that's genuinely intended.
-    A missing/unknown current status (docs written before this field existed,
-    or before it was validated) is treated as "active" so it can still
-    progress forward normally.
+      - backward transitions (e.g. archived -> active); re-add as a fresh
+        document instead.
+    A missing/unknown current status is treated as "active".
     """
     if new_status not in DOC_STATUSES:
         return False
@@ -158,9 +143,8 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
     if concept is not None:
         doc_id = concept.concept_id
     # Route the file path through the write-path validator so a malformed /
-    # malicious doc_id can't escape the bundle root via the delete path --
-    # mirrors write_concept's guard. Raises ValueError on escape; treat that
-    # as "nothing to delete".
+    # malicious doc_id can't escape the bundle root. Raises ValueError on
+    # escape; treat that as "nothing to delete".
     try:
         file_path = bundle._validate_concept_path(doc_id)
     except ValueError:
@@ -173,9 +157,11 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
         rel_id = str(Path(doc_id).relative_to(bundle.root))
     except ValueError:
         rel_id = doc_id
+    # Clean up embeddings in DB. Do NOT commit here -- the caller owns the
+    # transaction boundary; committing a connection we don't own can either
+    # commit an in-flight caller transaction or hit "database is locked".
     if conn is not None:
         conn.execute("DELETE FROM knowledge_embeddings WHERE doc_id = ?", (rel_id,))
-        conn.commit()
     return True
 
 

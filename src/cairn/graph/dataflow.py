@@ -1,11 +1,8 @@
 """Precomputed dataflow index for public/exported symbols.
 
-Builds a lookup table (`dataflow`) that materialises within-repo impact chains
-and cross-repo consumer repos for each public symbol. Populated during
-`cairn build` / `cairn sync` by build_dataflow_index(); queried via get_dataflow().
-
-This is a derived-tier artifact — fully deterministic from the code graph,
-no LLM involvement, rebuildable at any time.
+Materialises within-repo impact chains and cross-repo consumer repos for each
+public symbol into the `dataflow` table. Built by build_dataflow_index();
+queried via get_dataflow(). Fully deterministic from the code graph.
 """
 from __future__ import annotations
 
@@ -117,16 +114,13 @@ def build_dataflow_index(
 
 def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> int:
     """Precompute multi-hop call graph edges into transitive_edges matrix table.
-    
-    Joins on resolved target_id (resolution='exact') instead of bare symbols.name
-    to avoid name collisions producing spurious edges. Falls back to target_name
-    for unresolved edges to maintain compatibility.
+
+    Joins on resolved target_id (resolution='exact') to avoid name collisions
+    producing spurious edges; falls back to target_name for unresolved edges.
     """
     cur = conn.cursor()
-    # The per-depth extension filters on transitive_edges.distance; without an
-    # index there it is a full table scan per depth iteration. Created
-    # idempotently here so this function self-optimizes regardless of schema.py.
-    # NOTE: also recommended for schema.py -- idx_transitive_distance.
+    # The per-depth extension filters on transitive_edges.distance; create the
+    # index idempotently here so this function self-optimizes.
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_transitive_distance ON transitive_edges(distance)"
     )

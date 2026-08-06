@@ -32,6 +32,11 @@ class PythonParser(BaseParser, TreeSitterParserBase):
             hash=hashlib.sha256(source).hexdigest(),
             line_count=source.count(b"\n") + 1,
         )
+        # Parsers are cached singletons reused across files, so reset all
+        # per-file accumulators here.
+        self._pending_edges = []
+        self._scope = []
+        self._callable_scope = []
         self._walk(tree.root_node, source, pf)
         pf.edges.extend(self._pending_edges)
         return pf
@@ -126,13 +131,10 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 break
         if not name:
             return None
-        # A def is a method only when its IMMEDIATE enclosing scope is a class.
-        # In the tree-sitter Python grammar the function_definition's direct
-        # parent is always the wrapping `block`; the meaningful parent is that
-        # block's parent. So: method iff (block's parent) is a class_definition.
-        # This correctly classifies nested functions (def-inside-def) as plain
-        # functions / closures rather than methods, even when the outer def
-        # lives inside a class.
+        # A def is a method only when its enclosing scope is a class. In the
+        # tree-sitter Python grammar the function_definition's direct parent is
+        # always the wrapping `block`; the meaningful parent is that block's
+        # parent, so method iff (block's parent) is a class_definition.
         kind = "function"
         parent = node.parent
         if parent is not None and parent.type == "block":

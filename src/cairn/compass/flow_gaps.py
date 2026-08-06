@@ -44,18 +44,13 @@ def detect_flow_gaps(
 ) -> Dict[str, List[dict]]:
     """Find functions/methods with rich call chains but no flow compass.
 
-    Args:
-        conn: graph DB connection.
-        bundle: OKF bundle (read for existing flow compass coverage).
-        min_edges: minimum resolved outgoing edges to qualify as a flow
-            worth documenting (default 5).
+    ``conn`` is the graph DB connection, ``bundle`` the OKF bundle (read for
+    existing flow compass coverage), ``min_edges`` the minimum resolved outgoing
+    edges to qualify (default 5).
 
-    Returns:
-        ``{"uncovered": [...], "covered": [...]}`` where each entry is::
-
-            {"name", "kind", "file", "repo", "out_edges", "id", "covered": bool}
-
-        Both lists are sorted by ``out_edges`` descending (richest first).
+    Returns ``{"uncovered": [...], "covered": [...]}`` where each entry is
+    ``{"name", "kind", "file", "repo", "out_edges", "id", "covered": bool}``,
+    both lists sorted by ``out_edges`` descending.
     """
     candidates = _get_flow_candidates(conn, min_edges)
 

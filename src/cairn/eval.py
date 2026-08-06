@@ -165,4 +165,3 @@ def run_evaluation(
             report[c_key] = {"count": 0, "recall_at_10": 0.0, "mrr": 0.0}
 
     return report
-# extra comment

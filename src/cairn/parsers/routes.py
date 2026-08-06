@@ -9,11 +9,9 @@ JavaScript only). It produces:
     class/method name
 
 The builder merges these into the ``ParsedFile``'s own ``symbols``/``edges``
-lists before the normal insert + resolver passes run (see
-``src/graph/builder.py``) -- routes are just more symbols and edges to the
-rest of the pipeline. Because a route symbol is always inserted into the SAME
-file as its handler, the resolver's same-file tier resolves the
-route -> handler ``references`` edge exactly, with zero resolver changes.
+before the normal insert + resolver passes run. A route symbol is inserted
+into the SAME file as its handler, so the resolver's same-file tier resolves
+the route -> handler ``references`` edge exactly.
 
 Implemented detectors (scoped to this workspace's actual stack):
 
@@ -135,8 +133,7 @@ def _detect_nestjs(pf: ParsedFile) -> Optional[RouteExtraction]:
             continue  # not a @Controller class
 
         # Methods that belong to this controller: qualified_name is
-        # "<file_stem>.<ControllerName>.<method>" (see typescript.py's
-        # file-stem-prefixed qualified_name convention).
+        # "<file_stem>.<ControllerName>.<method>" (file-stem-prefixed FQN).
         owned_prefix = f"{controller.qualified_name}."
         for method in pf.symbols:
             if method.kind != "method":
@@ -257,11 +254,9 @@ def _nextjs_segment(part: str) -> str:
 def _is_exported(sym: Symbol, source: str) -> bool:
     """True if ``sym`` is a named or default export, inferred from raw source.
 
-    The base ``Symbol`` model does not currently carry export/default metadata
-    (the TS/JS parser walks through ``export_statement`` nodes without recording
-    the export), so this re-derives it from source text. A symbol counts as
-    exported if its declaration is preceded by ``export`` (named export) OR it
-    is referenced by an ``export default <name>`` statement anywhere in the file.
+    A symbol counts as exported if its declaration is preceded by ``export``
+    (named export) OR it is referenced by an ``export default <name>`` statement
+    anywhere in the file.
     """
     name = re.escape(sym.name)
     # Named export at the declaration site:
@@ -310,8 +305,7 @@ def _select_handler_symbol(pf: ParsedFile, source: str) -> Optional[Symbol]:
 
     A route handler is the file's default export (App Router pages REQUIRE a
     default export; Pages Router conventionally default-exports the page).
-    Preference order, so a helper declared above the default export no longer
-    gets mis-attributed as the handler:
+    Preference order:
 
       1. the symbol named by ``export default`` (if any and present);
       2. otherwise the first exported function/class;
@@ -339,7 +333,12 @@ def _detect_nextjs(pf: ParsedFile) -> Optional[RouteExtraction]:
     parts = p.parts
     lower_parts = [part.lower() for part in parts]
     try:
-        anchor_idx = max(
+        # Use the FIRST (outermost) "app"/"pages" directory as the router root.
+        # Next.js treats the top-most app/pages dir as the anchor; deeper
+        # same-named dirs (e.g. ``app/ui/app/page.tsx`` in a monorepo) are
+        # route segments, not a second router root. ``min`` picks the first
+        # occurrence where ``max`` would erroneously re-anchor on a later one.
+        anchor_idx = min(
             i for i, part in enumerate(lower_parts) if part in ("pages", "app")
         )
     except ValueError:

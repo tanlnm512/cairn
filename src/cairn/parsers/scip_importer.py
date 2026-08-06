@@ -10,6 +10,23 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict
 
+# --- SCIP symbol_roles bitmask ----------------------------------------------
+# See the SCIP protocol: https://github.com/sourcegraph/scip/blob/main/scip.proto
+#   1   (1 << 0) Definition
+#   2   (1 << 1) Import
+#   4   (1 << 2) ForwardDefinition
+#   64  (1 << 6) ReadAccess
+#   128 (1 << 7) WriteAccess
+# A "call" is not a dedicated SCIP bit; we reserve kind='call' for occurrences
+# that are neither import/read/write nor a definition. Pure references, reads
+# and writes are emitted as kind='reference' so they are not mistaken for calls.
+_SCIP_ROLE_DEFINITION = 1
+_SCIP_ROLE_IMPORT = 2
+_SCIP_ROLE_READ_ACCESS = 64
+_SCIP_ROLE_WRITE_ACCESS = 128
+# Access bits bundled together (reference-ish, not a call).
+_SCIP_ROLE_ACCESS_MASK = _SCIP_ROLE_READ_ACCESS | _SCIP_ROLE_WRITE_ACCESS
+
 
 def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_id: str = "default") -> dict:
     """Import a SCIP index dictionary into cairn database.
@@ -62,7 +79,9 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
             start_col = range_val[1] if len(range_val) > 1 else 0
 
             roles = occ.get("symbol_roles", 0)
-            is_def = bool(roles & 1) if isinstance(roles, int) else False
+            if not isinstance(roles, int):
+                roles = 0
+            is_def = bool(roles & _SCIP_ROLE_DEFINITION)
 
             sym_name = symbol_str.rstrip("#").rstrip(".").split(" ")[-1].split("/")[-1]
 
@@ -76,11 +95,18 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 symbols_added += 1
                 last_def_id = sym_id
             else:
+                # Classify non-definition occurrences from SCIP role bits:
+                # imports and read/write accesses are reference-ish; remaining
+                # relation-style occurrences are treated as calls.
+                if roles & _SCIP_ROLE_IMPORT or roles & _SCIP_ROLE_ACCESS_MASK:
+                    edge_kind = "reference"
+                else:
+                    edge_kind = "call"
                 edge_id = f"{file_id}:{sym_name}:{start_line}:{start_col}"
                 cur.execute(
                     "INSERT OR REPLACE INTO edges (id, source_id, target_name, kind, line, column, resolution) "
-                    "VALUES (?, ?, ?, 'call', ?, ?, 'exact')",
-                    (edge_id, last_def_id, sym_name, start_line, start_col),
+                    "VALUES (?, ?, ?, ?, ?, ?, 'exact')",
+                    (edge_id, last_def_id, sym_name, edge_kind, start_line, start_col),
                 )
                 edges_added += 1
 

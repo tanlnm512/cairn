@@ -428,23 +428,37 @@ def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
 
 def test_sweep_strays_kills_orphans_not_daemon(monkeypatch):
     """NEW: find_strays + sweep_strays must return orphan 'cairn serve' pids while
-    excluding the launchd-managed daemon pid and the current process. Guards
-    the stray-sweeper that self-heals DB lock contention."""
+    excluding the launchd-managed daemon pid, the daemon's spawned child, and the
+    current process. Guards the stray-sweeper that self-heals DB lock contention."""
     from cairn.mcp_server import lifecycle as lc
 
     fake_orphan = 99999  # nonexistent pid; terminate_pid must tolerate it
+    daemon_child = 77777  # the server process spawned by the launchd daemon
     daemon_pid = 88888
     own_pid = os.getpid()
 
-    # Mock running_pid (launchd daemon) and pgrep output
+    # Mock running_pid (launchd daemon).
     monkeypatch.setattr(lc, "running_pid", lambda: daemon_pid)
-    completed = MagicMock()
-    completed.returncode = 0
-    completed.stdout = f"{daemon_pid}\n{own_pid}\n{fake_orphan}\n"
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: completed)
+
+    # Discriminate the two pgrep call shapes: `pgrep -P <daemon>` (child
+    # discovery) returns the daemon's spawned server child, while the broad
+    # `pgrep -f cairn serve run` returns the full candidate set.
+    def fake_run(args, *rest, **kw):
+        res = MagicMock()
+        res.returncode = 0
+        if "-P" in args:
+            # daemon's direct children
+            res.stdout = f"{daemon_child}\n"
+        else:
+            # main stray scan: daemon, its child, own pid, and an orphan
+            res.stdout = f"{daemon_pid}\n{daemon_child}\n{own_pid}\n{fake_orphan}\n"
+        return res
+
+    monkeypatch.setattr("subprocess.run", fake_run)
 
     strays = lc.find_strays("/fake/.kg")
     assert daemon_pid not in strays, "daemon pid must be excluded"
+    assert daemon_child not in strays, "daemon's spawned child must be excluded"
     assert own_pid not in strays, "own pid must be excluded"
     assert fake_orphan in strays, "orphan pid must be returned"
 

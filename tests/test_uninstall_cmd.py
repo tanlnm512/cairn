@@ -55,7 +55,7 @@ def test_dry_run_targets_store_when_present():
 
         result = runner.invoke(
             main,
-            ["uninstall", "--full", "--graph-only", "--dry-run", "-y"],
+            ["uninstall", "--graph-only", "--dry-run", "-y"],
             env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0
@@ -77,9 +77,25 @@ def test_non_dry_run_removes_store():
 
         result = runner.invoke(
             main,
-            ["uninstall", "--full", "--graph-only", "-y"],
+            ["uninstall", "--graph-only", "-y"],
             env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0
         assert "done" in result.output
         assert not store.exists()
+
+
+def test_full_and_only_flags_are_mutually_exclusive():
+    """--full combined with any --*-only must be rejected (exit code 2).
+
+    Previously --full silently overrode --*-only on this destructive command,
+    running all four steps regardless of the --*-only intent.
+    """
+    runner = CliRunner()
+    for only_flag in ("--agents-only", "--hooks-only", "--graph-only", "--package-only"):
+        result = runner.invoke(
+            main,
+            ["uninstall", "--full", only_flag, "-y"],
+        )
+        assert result.exit_code == 2, f"--full {only_flag} should be rejected"
+        assert "cannot be combined" in result.output.lower()

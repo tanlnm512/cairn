@@ -41,14 +41,9 @@ def install_claude_desktop(workspace: str, force: bool, dry_run: bool,
                            scope: str = "workspace") -> InstallResult:
     """Wire cairn into Claude Desktop (global claude_desktop_config.json).
 
-    Claude Desktop (the app) supports **stdio MCP servers only** — no SSE/HTTP,
-    no skills, slash commands, hooks, or subagents (those are Claude Code
-    features). The transport/sse_url args are accepted for symmetry but
-    ignored: this always writes a stdio config. See mcp_config_json_desktop().
-
-    Because Claude Desktop's config is a single global file outside the
-    workspace, the workspace is pinned via CAIRN_WORKSPACE on the server
-    entry.
+    Always writes a stdio config (Claude Desktop is MCP-stdio-only); the
+    transport/sse_url args are accepted for symmetry but ignored. See
+    :func:`mcp_config_json_desktop`.
     """
     res = InstallResult("claude-desktop")
     cfg = claude_desktop_config_path()

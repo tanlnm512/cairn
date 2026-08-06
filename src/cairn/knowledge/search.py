@@ -1,19 +1,18 @@
 """Semantic + lexical search over knowledge documents.
 
-Mirrors src/memory/promotion.py:search_memory() pattern:
   1. Lexical (multi-token + cross-doc expansion) -- works without semantic extra
   2. Semantic fallback (cosine scan) -- when lexical empty
   3. Graph bridge -- cross_repo_deps for affects_repos matches
-
-Lexical search uses multi-token scoring with field weighting and cross-doc
-expansion via shared tags/affects_modules.
 """
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Any
 
 from cairn.graph import BASE_STOP_WORDS, simple_tokenize
 from cairn.okf.bundle import OKFBundle
+
+logger = logging.getLogger(__name__)
 
 # Common English words filtered from query tokens before matching. Shared
 # baseline defined in src/graph/tokenize.py.
@@ -29,9 +28,7 @@ _WEIGHT_BODY = 1
 def _visible(concept, include_archived: bool) -> bool:
     """True unless the doc is archived and the caller didn't opt in.
 
-    Enforces the doc_status lifecycle at the read side. "superseded" docs
-    still surface by default (they're outdated-but-relevant, not retired);
-    only "archived" is excluded unless the caller explicitly asks for it.
+    "superseded" docs still surface by default; only "archived" is excluded.
     """
     if include_archived:
         return True
@@ -238,7 +235,13 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
         if emb.embed_knowledge_count(conn) == 0:
             return []
 
-        model = emb.current_model()
+        # Under the dep-free hash fallback the cosine signal is token-overlap
+        # only; flag it once and annotate provenance so the caller can tell the
+        # semantic results are degraded.
+        emb.warn_hash_fallback_once(logger, context="search_knowledge")
+        prov = "semantic_knowledge (hash backend)" if emb.is_hash_fallback() else "semantic_knowledge"
+
+        model = emb.current_model(corpus="knowledge")
         q_blob, q_dim = emb.embed_query(query)
 
         # NO JOIN — just the embeddings table
@@ -253,9 +256,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 
         out = []
         # Iterate the full ranked list (not scored[:limit]) and stop once we
-        # have `limit` visible results -- filtering archived docs *after*
-        # slicing to limit would silently return fewer than `limit` results
-        # whenever an archived doc would otherwise have placed in-range.
+        # have `limit` visible results.
         for score, doc_id, chunk in scored:
             if len(out) >= limit:
                 break
@@ -271,7 +272,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
                 "title": concept.title,
                 "doc_type": doc_type,
                 "score": round(score, 4),
-                "provenance": "semantic_knowledge",
+                "provenance": prov,
                 "affects_modules": concept.extensions.get("affects_modules", []),
                 "affects_repos": concept.extensions.get("affects_repos", []),
                 "chunk": chunk,
@@ -284,10 +285,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 def _cosine_scan(rows, q_blob, q_dim, threshold):
     """Cosine similarity scan. Returns [(score, doc_id, chunk), ...].
 
-    Thin adapter over the shared ``cairn.retrieval.cosine_scan`` so the
-    knowledge, symbols, and memory pipelines all share one implementation of
-    the numpy/pure-Python dual path. DB rows are reshaped into the
-    ``(vec_blob, dim, payload)`` triples cosine_scan expects.
+    Thin adapter over the shared ``cairn.retrieval.cosine_scan``.
     """
     from cairn.retrieval import cosine_scan
 

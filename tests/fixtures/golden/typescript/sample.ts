@@ -28,3 +28,18 @@ export class User extends BaseEntity implements Identifiable {
         return `processed_${input}`;
     }
 }
+
+// Decorators: class-level decorator must attach to the class, method-level
+// to the method. Tests both bare `class` and `export class` shapes (the
+// decorator's tree-sitter parent differs: class_declaration vs export_statement).
+@Controller('/api')
+class UserController {
+    @Get(':id')
+    getOne() {}
+}
+
+@Injectable()
+export class AuthService {
+    @Post('/login')
+    login() {}
+}

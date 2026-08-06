@@ -1,15 +1,12 @@
 """Critic pass: fact-check OKF concepts (compass/wiki) against the L1 graph.
 
-Scope (important): this is a *deterministic reference checker*, NOT a general
-hallucination detector. It verifies only backtick-quoted references:
+A deterministic reference checker, NOT a general hallucination detector. It
+verifies only backtick-quoted references:
   1. File paths mentioned in the concept body actually exist in the graph
   2. Symbol references mentioned exist as symbols
-Plain prose statements with no backticks are NOT checked -- an LLM can still
-assert false claims in un-backticked prose and have them pass here. To narrow
-that gap, prose-heavy bodies with few/no verifiable references raise a warning
-and face a stricter pass threshold (see _prose_heavy_warning). For full
-trust, treat promoted bodies as critic-gated, not critic-proven.
-The LLM quality-judge is optional; without it we only run the deterministic checks.
+Plain prose statements with no backticks are NOT checked; prose-heavy bodies
+with few verifiable references raise a warning and face a stricter pass
+threshold. The LLM quality-judge is optional.
 """
 from __future__ import annotations
 
@@ -59,10 +56,9 @@ def critic_concept(
         if not _symbol_exists(conn, sym):
             warnings.append(f"Unknown symbol reference: {sym}")
 
-    # 3. Prose-heavy / low-ref guard: the extractors above only inspect
-    # backtick-quoted references, so a body can be long on unverifiable prose
-    # and short on anything the critic actually checks. Flag such drafts with
-    # a WARNING (non-blocking on its own) and require a higher quality bar below.
+    # 3. Prose-heavy / low-ref guard: the extractors only inspect backtick
+    # references, so flag long unverifiable prose with a WARNING (non-blocking)
+    # and apply a higher quality bar below.
     warning = _prose_heavy_warning(body, len(file_refs) + len(symbol_refs))
     if warning is not None:
         warnings.append(warning)
@@ -72,10 +68,8 @@ def critic_concept(
     if llm_judge:
         quality = llm_judge(body)
     else:
-        # Deterministic heuristic: reward presence of all 5 sections.
-        # Module compasses and flow compasses use different section titles, so
-        # we recognize either set (a 5-section flow compass is just as complete
-        # as a 5-section module compass).
+        # Deterministic heuristic: reward presence of all 5 sections (module
+        # compass and flow compass use different section titles, both recognized).
         sections = sum(
             1 for h in [
                 # Module compass sections
@@ -95,11 +89,8 @@ def critic_concept(
         )
         quality = min(sections / 5.0, 1.0)
 
-    # No factual errors is mandatory. When the critic has no warnings this
-    # passes at quality >= 0.5; when there ARE warnings -- e.g. a prose-heavy
-    # draft with few verifiable references -- demand quality >= 0.7 so a
-    # low-effort, citation-light body can't slip through on section headers
-    # alone. Errors always fail regardless.
+    # No factual errors is mandatory. With no warnings this passes at quality
+    # >= 0.5; with warnings (e.g. a prose-heavy draft) demand quality >= 0.7.
     threshold = 0.7 if warnings else 0.5
     passed = len(errors) == 0 and quality >= threshold
     return CriticResult(errors=errors, warnings=warnings, quality_score=quality, passed=passed)
@@ -136,14 +127,8 @@ def _prose_heavy_warning(body: str, verified_ref_count: int) -> Optional[str]:
     """Detect a body that is long on prose but short of verifiable references.
 
     Returns a warning string when the draft is "prose-heavy / low-ref", else
-    None. Used to raise the pass threshold (see critic_concept) because such a
-    draft has little for the deterministic critic to actually anchor on -- a
-    false prose claim would otherwise ship unchecked.
-
-    Deliberately conservative: markdown section headings (#, ##) are stripped
-    before measuring, so a well-structured 5-section compass draft that simply
-    lacks backticks is not penalized purely for being structured prose. The
-    intent is to catch un-cited walls of text, not normal documentation.
+    None. Markdown section headings are stripped before measuring so a
+    well-structured draft isn't penalized purely for being structured prose.
     """
     # Drop heading lines so structure alone doesn't trigger the heuristic.
     prose_only = "\n".join(

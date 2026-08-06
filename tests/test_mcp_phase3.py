@@ -137,7 +137,7 @@ class TestStructuredContent:
             "hit_limit": False, "callees": [],
         })
         assert SearchSymbolsResult.model_validate({
-            "pattern": "x", "count": 0, "truncated": False, "symbols": [],
+            "pattern": "x", "count": 0, "total_count": 0, "truncated": False, "symbols": [],
         })
         assert ImpactAnalysisResult.model_validate({
             "symbol": "x", "total": 0, "truncated": False, "fuzzy": False,

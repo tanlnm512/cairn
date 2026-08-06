@@ -142,6 +142,4 @@ def _empty(scope: str, name: str) -> Dict:
 
 def _parent(impact_result: dict, entry: dict) -> str:
     """Best-effort parent for an impact entry (used for edge target)."""
-    # Simplification: link everything to the focal symbol; a fuller impl would
-    # track the actual parent in the traversal.
     return entry.get("symbol", "")

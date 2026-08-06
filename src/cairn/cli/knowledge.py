@@ -232,6 +232,7 @@ def knowledge_remove(doc_id, db):
     conn = get_db(db)
     try:
         ok = delete_document(bundle, doc_id, conn=conn)
+        conn.commit()
     finally:
         conn.close()
     if ok:
@@ -300,9 +301,7 @@ def knowledge_export(out_path):
 # query, not a generic search) are genuinely workflow-specific.
 @knowledge.group("workflow")
 def knowledge_workflow():
-    """Ordered procedural workflows (cairn's answer to a LeanKG-style
-    procedural ontology -- see src/knowledge/workflow.py for the design
-    rationale)."""
+    """Ordered procedural workflows (see src/knowledge/workflow.py)."""
 
 
 @knowledge_workflow.command("add")

@@ -1,27 +1,17 @@
 """Service-topology edge detection (code -> external service / HTTP call).
 
-Runs as a post-parse pass over an already-parsed ``ParsedFile``, alongside
-:mod:`parsers.routes`. It emits *edges* (not symbols) of two kinds:
+Runs as a post-parse pass over an already-parsed ``ParsedFile``. It emits
+*edges* (not symbols) of two kinds:
 
   - ``kind='http_call'``   — a call to a known HTTP client method
     (``fetch(...)``, ``axios.get(...)``, ``http.Get/Post`` in Go,
-    ``OkHttp``/``Retrofit`` in Kotlin/Java). The target is usually a string
-    literal URL or an external method, so the resolver will mark these
-    ``unresolved`` — which is correct and informative, not a gap.
+    ``OkHttp``/``Retrofit`` in Kotlin/Java).
+  - ``kind='service_call'`` — a call from a route handler to another service.
 
-  - ``kind='service_call'`` — a call from a route handler (``kind='route'``
-    symbol produced by :mod:`parsers.routes`) to another service. Composes
-    with route extraction to give a service-topology story.
-
-The builder merges these into the ``ParsedFile``'s ``edges`` list before the
-normal insert + resolver passes run — service-call edges are just more edges
-to the rest of the pipeline. No schema change is needed: ``edges.kind`` is
-free-text, indexed.
-
-By default ``impact_analysis`` and ``trace_flow`` follow only *structural*
-edges (``calls``/``extends``/``implements``) and exclude these, because their
-targets are often external and would inflate blast radius. Callers opt in via
-``include_service_edges=True`` (see :mod:`graph.traversal`).
+These merge into the ``ParsedFile``'s ``edges`` list; no schema change is
+needed (``edges.kind`` is free-text, indexed). ``impact_analysis`` and
+``trace_flow`` exclude these by default; callers opt in via
+``include_service_edges=True``.
 """
 from __future__ import annotations
 
@@ -44,10 +34,9 @@ class ServiceCallExtraction:
 # ---------------------------------------------------------------------------
 # Detection: per-language HTTP client call patterns.
 #
-# These are lightweight regex scans over the raw source, not a second AST parse.
-# Like the React-Router route detector, this means they can miss reformatted or
-# multi-line variants — but they catch the overwhelmingly common shapes and
-# never fail the file's indexing (the builder wraps the call in try/except).
+# Lightweight regex scans over the raw source, not a second AST parse. They can
+# miss reformatted or multi-line variants but catch the common shapes and never
+# fail the file's indexing (the builder wraps the call in try/except).
 # ---------------------------------------------------------------------------
 
 # JavaScript/TypeScript: fetch("url"), axios.get("url"), axios.post, etc.
@@ -129,16 +118,16 @@ def detect_service_calls(pf: ParsedFile, language: str) -> Optional[ServiceCallE
 
 
 def _owner_for_line(pf: ParsedFile, line: int) -> str:
-    """Best-effort: find the symbol whose span contains `line`.
-
-    Falls back to the nearest preceding symbol, then to "" (top-level). This
-    mirrors the base parser's `_current_edge_owner` but operates post-parse on
-    the already-collected symbol list rather than a live scope stack.
-    """
+    """Find the innermost symbol whose span contains `line`; "" if none."""
     candidate = ""
-    best_start = -1
+    best_span = None
     for s in pf.symbols:
-        if s.line_start <= line and s.line_start > best_start:
-            best_start = s.line_start
+        # Require the line to fall inside the symbol's span, including its end.
+        if not (s.line_start <= line <= s.line_end):
+            continue
+        span = s.line_end - s.line_start
+        # Prefer the innermost (smallest) enclosing span.
+        if best_span is None or span < best_span:
+            best_span = span
             candidate = s.name
     return candidate

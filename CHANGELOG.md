@@ -13,7 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- **Portable `.kg` database.** The code graph now stores file paths
+  **repo-relative** (`files.path`, `parse_errors.file_path`,
+  `skipped_files.path`, `pending_sync.path`) and `repos.path` **workspace-
+  relative**, so the `.kg` SQLite file is shareable across machines — copy it
+  into the recipient's `~/.cairn/<key>/` store (or point `CAIRN_DB` at it) and
+  queries resolve against the local workspace. Paths are reconstructed to
+  absolute only at disk-I/O time (source reads, freshness checks) via the new
+  `scanner.resolve_file_path` chokepoint. **Run `cairn build` once after
+  upgrading** to convert an existing absolute-path DB to relative form;
+  un-rebuilt DBs keep working until then (read paths tolerate both forms).
 
 ### Changed
 - _Nothing yet._

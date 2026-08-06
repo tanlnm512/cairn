@@ -9,6 +9,7 @@ metric-instrumenting decorator from metric_buffering.
 """
 from __future__ import annotations
 
+import logging
 import os
 
 from mcp.types import ToolAnnotations
@@ -23,12 +24,11 @@ from .structured import (
     SemanticSearchResult,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _clamp(value, lo, hi):
-    """Clamp an int to [lo, hi]. Defense-in-depth at the MCP tool boundary:
-    LLM clients can pass arbitrarily large depth/limit values, so bound them
-    before any DB work runs. Keeps defaults (already inside the range) intact.
-    """
+    """Clamp an int to [lo, hi], used to bound LLM-supplied depth/limit values at the tool boundary."""
     try:
         v = int(value)
     except (TypeError, ValueError):
@@ -119,18 +119,21 @@ def get_callers_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
         if not rows and not fuzzy:
             rows = queries.get_callers(conn, name, fuzzy=True, limit=limit)
             used_fallback = True
-        # Staleness banner: check while conn is still open; only relevant when
-        # there are results (an empty answer can't be "stale" in any useful
-        # sense, and skipping it avoids the extra query for the common miss case).
+        # Staleness banner: check while conn is open; only relevant when there
+        # are results (an empty answer can't be "stale").
         banner = _staleness_banner(conn, [r["file_path"] for r in rows]) if rows else ""
     finally:
         conn.close()
 
+    # hit_limit only makes sense on the precise (non-fallback) path: when we
+    # fell back to fuzzy it's because the precise callers don't exist, so a
+    # higher limit wouldn't surface more precise results.
+    hit_limit = (not used_fallback) and len(rows) >= limit
     return {
         "symbol": name,
         "count": len(rows),
         "used_fallback": used_fallback,
-        "hit_limit": len(rows) >= limit,
+        "hit_limit": hit_limit,
         "stale_banner": banner,
         "callers": [
             {
@@ -210,11 +213,14 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
     finally:
         conn.close()
 
+    # hit_limit only makes sense on the precise (non-fallback) path: when we
+    # fell back to fuzzy it's because the precise callees don't exist.
+    hit_limit = (not used_fallback) and len(rows) >= limit
     return {
         "symbol": name,
         "count": len(rows),
         "used_fallback": used_fallback,
-        "hit_limit": len(rows) >= limit,
+        "hit_limit": hit_limit,
         "callees": [
             {
                 "name": r["callee_name"],
@@ -374,7 +380,7 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
         out.append(f"Affected tests ({len(affected_tests)} — run these to verify the change):")
         for t in affected_tests[:15]:
             out.append(
-                f"  {t['symbol']}  {t['file']}:{''}  ({t['repo']}, {t['detection_method']})"
+                f"  {t['symbol']}  {t['file']}  ({t['repo']}, {t['detection_method']})"
             )
         if len(affected_tests) > 15:
             out.append(f"  ... and {len(affected_tests) - 15} more")
@@ -449,7 +455,6 @@ def explore(query: str) -> str:
             short = file_path.rsplit("/", 1)[-1]
             out.append(f"{file_path}")
             for e in entries:
-                # Header line for the symbol span.
                 out.append(
                     f"  [{e['kind']} {e['symbol']}  lines {e['line_start']}-{e['line_end']}]"
                 )
@@ -562,15 +567,19 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
     if not emb.embeddings_available():
         return emb.install_hint()
 
+    # Surface the dep-free hash fallback once per process: under it the cosine
+    # signal is token-overlap only, not real semantic meaning. Provenance on
+    # each result (semantic (hash backend) / fused(bm25+semantic, hash)) carries
+    # the signal on every call; this warning catches a caller reading just the
+    # score/label.
+    emb.warn_hash_fallback_once(logger, context="semantic_search")
+
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
-        # Do NOT lazily embed during a search query. embed_all() writes N
-        # transactions (one INSERT+commit per batch across the whole corpus —
-        # 50k+ symbols), which contends with the daemon's WAL lock and fails
-        # with "database is locked". Embedding is a build-time operation
-        # (`cairn embed`), not a query-time one. If the corpus isn't indexed yet,
-        # tell the caller to run `cairn embed` once.
+        # Do NOT lazily embed during a search query -- embed_all() writes contend
+        # with the daemon's WAL lock and fails with "database is locked". Embedding
+        # is a build-time operation (`cairn embed`).
         if emb.embed_count(conn) == 0:
             return (
                 "Semantic index is empty. Run `cairn embed` once to index the "
@@ -697,9 +706,14 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
         conn.close()
 
     SHOWN = 50
+    returned = rows[:SHOWN]
+    # Distinguish the FULL DB match count (total_count, could be thousands)
+    # from how many symbols are actually shipped (count == len(symbols)).
+    # total_count drives the "and N more" message.
     return {
         "pattern": pattern,
-        "count": len(rows),
+        "count": len(returned),
+        "total_count": len(rows),
         "truncated": len(rows) > SHOWN,
         "symbols": [
             {
@@ -709,27 +723,29 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
                 "line": r["line_start"],
                 "repo": r["repo"],
             }
-            for r in rows[:SHOWN]
+            for r in returned
         ],
     }
 
 
 def _render_search_symbols(data: dict) -> str:
     """Render the structured ``search_symbols_data`` result as the prose return."""
-    if data["count"] == 0:
+    # total_count is the full DB match count; count is how many were shipped.
+    total_count = data.get("total_count", data["count"])
+    if total_count == 0:
         return (
             f"No symbols matching '{data['pattern']}'. The token may not be indexed or "
             f"may use different casing/wording. Try a broader pattern (fewer "
             f"characters, a leading wildcard), or semantic_search(\"{data['pattern']}\") "
             f"to match by meaning."
         )
-    out = [f"{data['count']} symbols matching '{data['pattern']}':"]
+    out = [f"{total_count} symbols matching '{data['pattern']}':"]
     for s in data["symbols"]:
         out.append(
             f"  {s['kind']} {s['name']}  {s['file_path']}:{s['line']}  ({s['repo']})"
         )
     if data["truncated"]:
-        out.append(f"  ... and {data['count'] - len(data['symbols'])} more")
+        out.append(f"  ... and {total_count - len(data['symbols'])} more")
     return "\n".join(out)
 
 
@@ -800,7 +816,11 @@ def visualize_graph(
         elif scope == "deps":
             graph = vq.get_deps_graph(conn)
         else:
-            graph = {"nodes": [], "edges": [], "metadata": {}}
+            available_scopes = ["symbol", "impact", "module", "repo", "deps"]
+            return (
+                f"Unknown scope '{scope}'. Available: "
+                f"{', '.join(available_scopes)}"
+            )
     finally:
         conn.close()
 

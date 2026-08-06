@@ -1,4 +1,4 @@
-"""Compass file generator: Meta's 5-question framework, graph-assisted.
+"""Compass file generator: a graph-assisted 5-question framework.
 
 For each module (package/directory), generates a 25-35 line compass file with:
   1. What Does This Module Do?
@@ -27,7 +27,7 @@ from ..graph.queries import trace_flow
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 
-# Cap revise cycles to bound the loop (Meta-style: feedback bounded, not infinite).
+# Cap revise cycles to bound the generator->critic->revise loop.
 from ..llm.tasks import MAX_REVISE_CYCLES
 
 # Escape char for LIKE pattern matching. We escape the user-supplied
@@ -111,8 +111,17 @@ def generate_compass(
 def _infer_repo(conn, module_path: str) -> Optional[str]:
     cur = conn.cursor()
     for r in cur.execute("SELECT id, path FROM repos"):
-        if r["path"] in module_path or module_path.startswith(r["id"]):
-            return r["id"]
+        # Match on repo id (stable basename) as a path segment of module_path.
+        # repos.path is workspace-relative (e.g. "." or a repo name), so the id
+        # is the durable identity.
+        rid = r["id"]
+        if module_path.startswith(rid + "/") or ("/" + rid + "/") in module_path \
+                or module_path == rid:
+            return rid
+    # Fallback: single-repo workspace — there's only one repo.
+    repos = cur.execute("SELECT id FROM repos").fetchall()
+    if len(repos) == 1:
+        return repos[0]["id"]
     return None
 
 
@@ -154,12 +163,14 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
     """Outgoing edges from this module's symbols to symbols in other modules."""
     cur = conn.cursor()
     mods = set()
-    # Resolve the repo root to make target paths repo-relative.
-    repo_path = ""
+    # files.path is repo-relative (portable), so target paths need no repo-root
+    # stripping. We fetch repos.path only to strip it should an absolute path
+    # appear (paths stored before the current contract).
+    legacy_repo_root = ""
     if repo:
         row = cur.execute("SELECT path FROM repos WHERE id = ?", (repo,)).fetchone()
         if row:
-            repo_path = row["path"]
+            legacy_repo_root = row["path"]
     rows = cur.execute(
         """SELECT DISTINCT f2.path AS target_path, f2.repo_id AS target_repo
            FROM edges e
@@ -171,11 +182,10 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
         (f"%{_escape_like(module_path)}%", f"%{_escape_like(module_path)}%"),
     ).fetchall()
     for r in rows:
-        # Strip the repo root so the module path is repo-relative, then take the
-        # first meaningful source directory (skip src/main/java/...).
         rel = r["target_path"]
-        if repo_path and rel.startswith(repo_path):
-            rel = rel[len(repo_path) + 1:]
+        # Strip an absolute repo root if present; repo-relative paths need none.
+        if legacy_repo_root and rel.startswith(legacy_repo_root + "/"):
+            rel = rel[len(legacy_repo_root) + 1:]
         # Skip build-output-like path noise; keep the top package dir.
         parts = [p for p in rel.split("/") if p and p not in ("src", "main", "java", "kotlin")]
         mod = f"{r['target_repo']}/" + "/".join(parts[:2]) if parts else r["target_repo"]
@@ -339,14 +349,9 @@ def generate_compass_with_llm(
 # ===========================================================================
 # Flow compass: trace what happens when an entry point runs.
 #
-# The module compass above answers "what lives in this directory?". A flow
-# compass answers "what happens when X runs?" -- it traces the downward call
-# chain from an entry point (HTTP handler, CLI command, Activity.onCreate, ...)
-# across module boundaries and synthesizes a narrative of the business flow.
-#
-# Reuses trace_flow() (graph/traversal.py) for the chain, the same critic for
-# fact-checking, and the same OKFConcept/atomic-write persistence. The only
-# flow-specific pieces are the fact gatherer and the 5-question template.
+# A flow compass answers "what happens when X runs?" -- it traces the downward
+# call chain from an entry point (HTTP handler, CLI command, Activity.onCreate,
+# ...) across module boundaries and synthesizes a narrative of the business flow.
 # ===========================================================================
 
 
@@ -410,12 +415,7 @@ def _gather_flow_facts(
 
 
 def _flow_template_body(facts: Dict[str, Any]) -> str:
-    """Deterministic 5-section body for a flow compass.
-
-    The sections mirror the module compass but reframe each around the flow:
-    what it does, the call sequence, failure-prone steps, modules it spans,
-    and tribal knowledge.
-    """
+    """Deterministic 5-section body for a flow compass."""
     entry = facts["entry"]
     chain = facts["chain"]
     branches = facts.get("branches", [])
@@ -537,26 +537,10 @@ def generate_flow_workflow(
 ) -> str:
     """Generate a Knowledge-workflow from a flow trace.
 
-    Bridges the declarative call-graph trace (:func:`trace_flow`) into the
-    procedural workflow system (:func:`add_workflow`). The traced chain
-    becomes an ordered ``steps[]`` list — a workflow doc that's *seeded by
-    the graph* but *curated by humans*. The user is expected to edit it
-    (rename steps, add descriptions, remove noise).
-
-    Unlike :func:`generate_flow_compass` (which writes a ``Compass`` concept
-    gated by the critic), this writes a ``Knowledge-workflow`` concept —
-    ``tier=asserted``, no critic gate, immediately searchable and traceable.
-
-    Args:
-        entry: the entry-point symbol name.
-        conn: graph DB connection.
-        bundle: OKF bundle to write into.
-        entry_id: optional symbol database ID for collision-safe resolution.
-        title: optional title override. Defaults to ``Flow: {entry}``.
-        max_steps: cap on the number of workflow steps (default 20).
-
-    Returns:
-        The ``concept_id`` of the written workflow.
+    Turns the traced call chain (:func:`trace_flow`) into an ordered
+    ``steps[]`` list via :func:`flow_to_workflow` and writes a
+    ``Knowledge-workflow`` concept (``tier=asserted``, no critic gate). Returns
+    the ``concept_id``.
     """
     from ..knowledge.workflow import add_workflow, flow_to_workflow
 

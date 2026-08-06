@@ -7,7 +7,6 @@ shape that the graph builder writes into SQLite.
 from __future__ import annotations
 
 import abc
-import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,19 +24,13 @@ class Symbol:
     docstring: Optional[str] = None
     modifiers: List[str] = field(default_factory=list)
     # Structured extras for symbol kinds that need more than
-    # name/kind/modifiers -- currently routes (kind='route'), which carry
+    # name/kind/modifiers -- e.g. routes (kind='route') carry
     # {"http_method", "path", "framework", "handler", "provenance"}. None for
-    # every other symbol kind; stored as JSON in the additive
-    # symbols.metadata column (see src/graph/schema.py).
+    # other kinds; stored as JSON in the symbols.metadata column.
     metadata: Optional[Dict[str, Any]] = None
-    # Embedding context (additive TEXT columns on `symbols`). All default to
-    # None: parsers that don't populate them simply leave the corresponding
-    # chunk section empty. `parameters`/`return_type` feed the
-    # "Parameters:"/"Return Type:" sections of variant B/C; `parent_scope`,
-    # `imports_summary`, and `body` feed the variant-C "Enclosing Scope:" /
-    # "Imports:" / "Body:" sections. The builder derives parent_scope and
-    # imports_summary at build time when the parser leaves them None, so
-    # parsers only need to set the ones they actually know.
+    # Embedding context (TEXT columns on `symbols`). All default to None;
+    # parsers only set the ones they know. `parent_scope` and
+    # `imports_summary` are derived by the builder when left None.
     parameters: Optional[str] = None
     return_type: Optional[str] = None
     parent_scope: Optional[str] = None
@@ -87,10 +80,6 @@ class BaseParser(abc.ABC):
         raise NotImplementedError
 
     @staticmethod
-    def file_hash(path: str) -> str:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-    @staticmethod
     def count_lines(path: str) -> int:
         try:
             return sum(1 for _ in Path(path).open(encoding="utf-8", errors="replace"))
@@ -101,12 +90,8 @@ class BaseParser(abc.ABC):
 class TreeSitterParserBase:
     """Mixin with shared helpers for tree-sitter-based parsers.
 
-    Provides:
-    - _node_text: extract text from a tree-sitter node
-    - _qualified_name: build qualified names using the scope stack
-    - _child_of_type / _find_name: common AST-shape helpers. ``_extract_callee``
-      stays per-parser because its shape is genuinely language-specific.
-    - Scope stack management (_scope, _callable_scope)
+    Provides _node_text, _qualified_name, _child_of_type/_find_name (AST-shape
+    helpers), and scope stack management (_scope, _callable_scope).
     """
 
     def __init__(self):
@@ -158,6 +143,21 @@ class TreeSitterParserBase:
         if self._scope:
             return self._scope[-1]
         return ""
+
+    def _infer_receiver_type(self, receiver_text: Optional[str]) -> Optional[str]:
+        """Best-effort receiver type for the resolver.
+
+        The receiver is often a local variable or a package qualifier; we only
+        return it when it looks like a type (Capitalized), since the resolver's
+        type-aware tier matches on receiver type. Package qualifiers like
+        ``fmt`` are lowercase and won't match a class anyway.
+        """
+        if not receiver_text:
+            return None
+        # Heuristic: a capitalized leading char suggests a type, not a package.
+        if receiver_text[0].isupper():
+            return receiver_text
+        return None
 
     # Max body chars captured per symbol. Large enough to hold a typical
     # method/function implementation; beyond this the embedding chunk would be

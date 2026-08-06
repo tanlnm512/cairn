@@ -1,0 +1,39 @@
+#!/bin/bash
+# scripts/hooks/pre-commit
+#
+# Runs ruff on staged .py files and aborts the commit on any error.
+# Installed via:  scripts/install-dev-hooks.sh
+# Bypass once:    git commit --no-verify
+#
+# Why: ruff (pyflakes F-rules) catches unused imports, undefined names, and
+# redefinitions — real defects with a low false-positive rate. Catching them
+# here is instant and free; catching them in CI costs a round-trip and blocks
+# the PR after you've already moved on. See docs/BUGS.md#comments-only-code-drift
+# for the failure mode this guards (bulk edits leaving dead imports behind).
+
+set -euo pipefail
+
+# Only consider staged .py files (added/copied/modified).
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.py' 'src/**/*.py' 'tests/**/*.py' 'scripts/**/*.py' | grep '\.py$' || true)
+
+if [ -z "$staged" ]; then
+  exit 0  # no Python staged — nothing to check
+fi
+
+# Prefer the project's ruff (uv run), fall back to a bare ruff if uv is absent.
+if command -v uv >/dev/null 2>&1; then
+  RUFF="uv run ruff"
+else
+  RUFF="ruff"
+fi
+
+# Run ruff on just the staged files (fast — skips the rest of the tree).
+if ! $RUFF check --output-format=concise $staged; then
+  echo ""
+  echo "❌ ruff found issues in staged files."
+  echo "   Fix with: $RUFF check --fix $staged"
+  echo "   Or bypass this check once: git commit --no-verify"
+  exit 1
+fi
+
+exit 0

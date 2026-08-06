@@ -1,10 +1,9 @@
 """Shared core for the MCP server: the FastMCP singleton + conn/store helpers.
 
 Holds the single ``FastMCP("cairn")`` instance every tools_*.py module
-decorates, plus the helpers every tool uses: ``_conn`` (graph DB connection),
-``_store`` (workspace store resolution), ``_bundle`` (the OKFBundle for the
-current workspace), and ``_repo_of`` (symbol -> repo lookup, used only by the
-impact_analysis tool).
+decorates, plus helpers: ``_conn`` (graph DB connection), ``_store`` (workspace
+store resolution), ``_bundle`` (the OKFBundle for the current workspace), and
+``_repo_of`` (symbol -> repo lookup).
 """
 from __future__ import annotations
 
@@ -22,22 +21,14 @@ from cairn.paths import resolve_store
 
 
 # --- Lifespan-managed shared state ---------------------------------------
-# The SDK-blessed pattern: a server is constructed with ``lifespan=app_lifespan``
-# which yields an ``AppContext`` (the shared state) accessed inside tools via
-# ``ctx.request_context.lifespan_context``. This is more idiomatic than the
-# module-level ``_conn()``/``_bundle()`` re-resolution and future-proofs for a
-# pooled backend (pgvector-style). The module-level helpers below stay as the
-# current call sites so existing tools keep working unchanged; new tools may
+# Shared state is yielded once by ``app_lifespan`` as an ``AppContext``,
+# accessed inside tools via ``ctx.request_context.lifespan_context``. The
+# module-level helpers below stay so existing tools keep working; new tools may
 # take a ``ctx`` param and read from ``AppContext`` directly.
 
 @dataclass
 class AppContext:
-    """Shared server state, yielded once by ``app_lifespan``.
-
-    Holds the resolved DB path and knowledge-dir so tools don't re-resolve the
-    store on every call. A future pooled-backend migration would add the pool
-    here and tear it down in the lifespan's finally block.
-    """
+    """Shared server state, yielded once by ``app_lifespan``."""
 
     db_path: str
     knowledge_path: str
@@ -48,9 +39,8 @@ class AppContext:
 async def app_lifespan(server: FastMCP):
     """Resolve shared state once at server startup; tear down on shutdown.
 
-    Reads CAIRN_DB / CAIRN_KNOWLEDGE (set by ``cairn serve``) or falls
-    back to the workspace store. Yields an ``AppContext``; the yielded object
-    is what ``ctx.request_context.lifespan_context`` returns inside a tool.
+    Reads CAIRN_DB / CAIRN_KNOWLEDGE (set by ``cairn serve``) or falls back to
+    the workspace store. Yields an ``AppContext``.
     """
     store = resolve_store()
     ctx = AppContext(
@@ -61,32 +51,22 @@ async def app_lifespan(server: FastMCP):
     try:
         yield ctx
     finally:
-        # No persistent resources to close today (conns are per-call). A future
-        # connection pool would be closed here on shutdown.
         pass
 
 
 # The single FastMCP instance every tools_*.py module decorates. Imported as
 # `from ._server_core import mcp` so @mcp.tool() decorators attach here.
-#
-# This module is imported by every `cairn` CLI invocation (not just `cairn
-# serve`), since `cli/__init__.py` imports `serve` unconditionally to register
-# its click command. FastMCP.__init__ defaults to log_level="INFO", which
-# calls logging.basicConfig(level="INFO", handlers=[RichHandler(...)]) --
-# unconditionally reconfiguring the *root* logger for the whole process. That
-# clobbered every other command's output: third-party INFO logs (httpx
-# request lines, sentence-transformers' "No device provided" notice, etc.)
-# started rendering through that RichHandler, interleaving with `cairn
-# embed`'s own progress bar. Pin it to WARNING so constructing this singleton
-# doesn't affect unrelated commands.
+# log_level is pinned to WARNING so constructing this singleton (imported by
+# every CLI invocation) doesn't reconfigure the root logger and clobber other
+# commands' output.
 mcp = FastMCP("cairn", lifespan=app_lifespan, log_level="WARNING")
 
 
 def _store():
     """Resolve the central store for this workspace.
 
-    Honors CAIRN_DB / CAIRN_KNOWLEDGE if set (cairn serve sets both);
-    otherwise resolves from the workspace context (cwd at launch).
+    Honors CAIRN_DB / CAIRN_KNOWLEDGE if set; otherwise resolves from the
+    workspace context.
     """
     return resolve_store()
 
@@ -94,11 +74,8 @@ def _store():
 def _read_only_mode() -> bool:
     """True if this server process is serving read-only (no write lock).
 
-    Set by `cairn serve run --read-only` (and the launchd daemon plist) via the
-    CAIRN_READ_ONLY env var. When true, _conn() opens the DB read-only so
-    it can never contend with writers. The serving-time write paths (memory
-    ref-counting, tool metrics) are analytics and already swallow read-only /
-    OperationalError, so read-only mode silently degrades them to no-ops.
+    Set by `cairn serve run --read-only` via the CAIRN_READ_ONLY env var. When
+    true, _conn() opens the DB read-only so it can never contend with writers.
     """
     return os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes")
 
@@ -106,11 +83,9 @@ def _read_only_mode() -> bool:
 def _conn():
     """Open a SQLite connection to the graph DB for this workspace.
 
-    Read-only when CAIRN_READ_ONLY is set (the safe shared-daemon mode);
-    read-write otherwise. Callers that MUST write real data (record_memory,
-    knowledge_add, etc.) should call _rw_conn() instead so the requirement is
-    explicit at the call site -- a read-only server will degrade those tools
-    gracefully rather than silently succeed-halfway.
+    Read-only when CAIRN_READ_ONLY is set; read-write otherwise. Callers that
+    MUST write real data should call _rw_conn() instead so the requirement is
+    explicit at the call site.
     """
     return get_db(
         os.environ.get("CAIRN_DB") or str(_store().db),
@@ -121,12 +96,9 @@ def _conn():
 def _rw_conn():
     """Open a writable SQLite connection, even in read-only server mode.
 
-    For write tools (record_memory, knowledge_add, knowledge_delete,
-    knowledge_status, memory_promote/delete) whose *purpose* is to write. In a
-    read-only daemon this still opens writable -- it will contend with the CLI
-    writer and can fail with "database is locked" under load, but that's the
-    honest failure mode for a write tool, and the tool surfaces it as an error
-    string instead of pretending success.
+    For write tools whose *purpose* is to write. In a read-only daemon this
+    will contend with the CLI writer and can fail with "database is locked",
+    surfaced as an error string.
     """
     return get_db(os.environ.get("CAIRN_DB") or str(_store().db), read_only=False)
 
@@ -147,14 +119,8 @@ def _staleness_banner(conn, file_paths) -> str:
     """Return a staleness banner if any of ``file_paths`` has an unindexed edit
     pending in the ``pending_sync`` table; empty string otherwise.
 
-    The ``pending_sync`` table is populated by the file watcher's debounce path
-    when a source file changes. Graph tools pass the file paths in their result
-    set, and a one-line banner is prepended when any are stale, so a
-    long-running ``cairn serve`` doesn't silently answer from a stale graph.
-
-    Guarded: when ``pending_sync`` is empty (the common case) or the table is
-    absent, this adds effectively zero latency -- a single ``SELECT ... WHERE
-    path IN (...)`` against an indexed primary key (``pending_sync.path``).
+    Guarded: when ``pending_sync`` is empty or the table is absent, this adds
+    effectively zero latency (a single indexed ``SELECT ... WHERE path IN (...)``).
     """
     paths = [p for p in file_paths if p]
     if not paths:
@@ -185,20 +151,15 @@ def _staleness_banner(conn, file_paths) -> str:
 
 
 # --- Index/build status as a Resource ----------------------------------
-# By the MCP spec's own boundary rule, "is the index fresh / how stale" is data
-# the agent BROWSES, not an action -- it belongs as a subscribable resource a
-# client lists under resources/ and polls cheaply, not as a tool that clutters
-# the tool palette. The inline ``_staleness_banner`` above stays for per-query
-# signals; this resource is the aggregate browsable surface.
+# Index freshness is browsable data, exposed as a subscribable resource a
+# client lists under resources/ and polls cheaply.
 
 @mcp.resource("cairn://status")
 def status_resource() -> str:
     """Index freshness + build stats for the current workspace.
 
-    Returns a compact, human-readable status block: symbol/edge/file counts,
-    edges-resolved fraction, the count of files pending reindex (staleness),
-    and the DB path. A client reads this via ``read_resource("cairn://status")``
-    to decide whether to trust a graph query or first prompt ``cairn update``.
+    Returns a compact status block: symbol/edge/file counts, edges-resolved
+    fraction, files pending reindex (staleness), and the DB path.
     """
 
     try:
@@ -212,8 +173,7 @@ def status_resource() -> str:
     except Exception as e:
         return f"cairn status: unavailable ({e})"
 
-    # Staleness: total files pending reindex (not just those in a given query
-    # result, which is what _staleness_banner reports).
+    # Staleness: total files pending reindex.
     stale_count = 0
     try:
         conn = _conn()

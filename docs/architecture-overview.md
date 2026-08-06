@@ -41,7 +41,7 @@ flowchart TB
     subgraph Layers["5 Layers"]
         L1["L1 Graph<br/>9 tools"]
         L2["L2 Compass + KB<br/>5 tools"]
-        L4["L4 Memory<br/>7 tools"]
+        L4["L4 Memory<br/>8 tools"]
         L5["L5 Knowledge<br/>5 tools"]
     end
 
@@ -52,7 +52,7 @@ flowchart TB
 
     subgraph Build["Build pipeline"]
         P["tree-sitter parsers<br/>9 languages"]
-        R["resolver<br/>6 tiers"]
+        R["resolver<br/>5 tiers"]
         D["dataflow + closure<br/>precompute"]
     end
 
@@ -83,7 +83,7 @@ fact-checked by a deterministic critic against the graph. See the
 |-------|-------|---------|-----------|
 | **L1 Graph** | 9 | The structural core: definitions, callers/callees, blast radius, semantic search, the `explore` aggregator, cross-repo deps, graph viz | `.kg` SQLite |
 | **L2 Compass + KB + Router** | 5 | Module navigation guides (`get_compass`), KB search (`search_knowledge`), the cross-layer router (`ask_compass`), flow tracing/generation (`trace_flow`, `generate_flow`) | `.knowledge/` + `.kg` |
-| **L4 Memory** | 7 | Tribal memory across tiers: record / recall / digest / promote / demote / decay / delete | `.knowledge/` + `.kg` (refs) |
+| **L4 Memory** | 8 | Tribal memory across tiers: record / recall / digest / promote / demote / evolve / decay / delete | `.knowledge/` + `.kg` (refs) |
 | **L5 Knowledge** | 5 | Business docs + procedural workflows: add / search / delete / status / trace_workflow | `.knowledge/` |
 
 > There is no separate "L3". The router (`ask_compass`) lives in the L2 group
@@ -150,7 +150,7 @@ flowchart TB
     START([cairn build]) --> SCAN["1. scan<br/>gitignore + cairn.json filters<br/>+ default skip set"]
     SCAN --> PARSE["2. parse<br/>tree-sitter (9 langs)<br/>+ route + service-call detection"]
     PARSE --> INSERT["3. insert<br/>symbols, edges, imports<br/>+ FTS5 sync triggers"]
-    INSERT --> RESOLVE["4. resolve<br/>6-tier edge resolution<br/>label exact/ambiguous/unresolved"]
+    INSERT --> RESOLVE["4. resolve<br/>5-tier edge resolution<br/>label exact/ambiguous/unresolved"]
     RESOLVE --> PERSIST{in-memory<br/>build?}
     PERSIST -- "yes (full workspace)" --> SWAP["5a. persist<br/>atomic .tmp + os.replace<br/>(SQLite page copy)"]
     PERSIST -- "no (single repo)" --> DERIVED
@@ -183,7 +183,7 @@ sequenceDiagram
     loop every repo
         B->>R: resolve_repo_edges (emit "resolve_start")
         R->>DB: build indexes (symbol/import/members/ancestor)
-        R->>DB: resolve_edge x N (6 tiers)
+        R->>DB: resolve_edge x N (5 tiers)
         R->>DB: UPDATE edges SET target_id, resolution (emit "resolve_done")
     end
     B->>Disk: backup_to() (emit "persist")<br/>atomic .tmp + os.replace
@@ -195,7 +195,7 @@ sequenceDiagram
 
 - The full-workspace build runs in `:memory:` and is swapped to disk atomically
   — readers never see a partial graph. Single-repo rebuilds stay on disk.
-- The **resolver** runs 6 tiers in order (type-aware → same-file → import-aware
+- The **resolver** runs 5 tiers in order (type-aware → same-file → import-aware
   → same-repo → global) and stops at the first tier with a unique match;
   multiple matches in a tier → `ambiguous` (no fallthrough).
 - `cairn update` (incremental, from git diff) does **not** rebuild the derived
@@ -331,7 +331,7 @@ Memory is a four-tier system with promotion, decay, and live verification.
 ```mermaid
 flowchart LR
     CAP["capture_memory<br/>(agent records learning)"]
-    CAP --> SCORE["score_memory<br/>6 signals"]
+    CAP --> SCORE["score_memory<br/>7 signals"]
     SCORE --> TIER{score?}
     TIER -- "< 0.3" --> RAW["raw/<br/>ephemeral"]
     TIER -- "< 0.5" --> DRAFT["drafts/<br/>awaiting critic"]
@@ -347,10 +347,11 @@ flowchart LR
     RECALL -.->|"live: refs-verified<br/>fraction vs graph"| VERIFY["L1 graph check"]
 ```
 
-The **6 scoring signals** (weighted): `0.25*graph_verification +
+The **7 scoring signals** (weighted): `0.25*graph_verification +
 0.20*cross_session_refs + 0.15*agent_confidence + 0.20*critic_score +
-0.10*freshness + 0.10*authority`. A memory decays over type-dependent windows
-(`decision`: 90d; `pattern`/`mistake`/`workaround`: 270d) unless human-authored.
+0.05*freshness + 0.05*reinforcement + 0.10*authority`. A memory decays over
+type-dependent windows (`decision`: 90d; `pattern`/`mistake`/`workaround`:
+270d) unless human-authored.
 
 The standout feature: `recall_memory` and `memory_digest` recompute the
 **refs-verified fraction live** — the fraction of a memory's backtick-quoted
@@ -443,7 +444,7 @@ erDiagram
 
 Every concept is a markdown file with YAML frontmatter (OKF v0.2). The
 `generated.by` field records the last producer; `memory_signals` caches the
-6-signal score; `memory_tier` tracks the lifecycle stage.
+7-signal score; `memory_tier` tracks the lifecycle stage.
 
 ---
 

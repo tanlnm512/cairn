@@ -10,7 +10,7 @@ from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
 from . import store as store_mod
-from .scoring import apply_score, score_memory
+from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
 
 
 def capture_memory(
@@ -28,17 +28,11 @@ def capture_memory(
     """Create, score, and store a new memory in one step.
 
     Shared by the CLI (`cairn memory record`/`capture`) and the MCP
-    `record_memory` tool so the create -> score -> tier -> store sequence
-    lives in exactly one place.
-
-    Supersession: before storing, the new memory is compared against all
+    `record_memory` tool. Before storing, the new memory is compared against
     existing ``memory_is_latest`` memories of the same type via semantic
-    cosine similarity. If a match exceeds ``supersedes_threshold``, the new
+    cosine similarity; if a match exceeds ``supersedes_threshold``, the new
     memory supersedes the old one (chains the version history and flips the
-    old to ``memory_is_latest: false``) instead of creating a parallel
-    record. This is higher quality than agentmemory's jaccard-only check
-    because it uses cairn's embedding backend, catching paraphrased revisions
-    that share no surface tokens. Returns ``superseded`` in the result dict.
+    old to ``memory_is_latest: false``). Returns ``superseded`` in the result.
     """
     superseded_id = _find_supersession_candidate(
         conn, bundle, type_, title, body, supersedes_threshold
@@ -87,9 +81,8 @@ def record_reference(
 ):
     """Record that a session referenced a memory (increments cross_session_refs).
 
-    Best-effort: ref-counts are analytics, not correctness. A "database is
-    locked" error (common when `cairn serve` processes hold the WAL) must never
-    break a read -- we swallow it and move on.
+    Best-effort: ref-counts are analytics, not correctness, so lock errors are
+    swallowed.
     """
     import uuid
 
@@ -116,11 +109,8 @@ def record_references_batch(
 ):
     """Insert N memory_refs in ONE transaction (best-effort).
 
-    Batching into one write transaction avoids acquiring the SQLite write lock
-    N times, a primary cause of "database is locked" under concurrent servers.
-
-    Args:
-        refs: list of (memory_path, context) tuples.
+    ``refs`` is a list of (memory_path, context) tuples. Batching avoids
+    acquiring the SQLite write lock N times under concurrent servers.
     """
     if not refs:
         return
@@ -147,9 +137,8 @@ def _lexical_memory_match(concepts, query):
     """Score memory concepts by multi-token keyword overlap against the query.
 
     Tokenizes the query (stop-filtered) and counts how many tokens appear in each
-    concept's title + description + body. Returns the top-scoped concepts. This
-    recovers matches that the substring-based bundle.search misses when the query
-    tokens are spread across fields (e.g. "backoff retry policy").
+    concept's title + description + body. Recovers matches the substring-based
+    bundle.search misses when query tokens are spread across fields.
     """
     tokens = [t for t in simple_tokenize(query) if t not in BASE_STOP_WORDS]
     if not tokens:
@@ -174,16 +163,10 @@ def search_memory(
 ) -> List[OKFConcept]:
     """Search tribal + canonical memories. Records a reference for each result.
 
-    When the lexical substring search (bundle.search) returns nothing, falls
-    back to a semantic scan over the memory corpus -- this recovers conceptual
-    matches the lexical layer cannot reach (e.g. querying "messaging" finds a
-    memory titled "EventBus vs Flow"). The fallback is additive and silent:
-    if the semantic extra isn't installed, behavior is unchanged.
-
-    Superseded memories (``memory_is_latest: false``) are filtered out by
-    default so recall surfaces only the current version. Pass
-    ``include_superseded=True`` to traverse the version chain (useful for
-    auditing decision history).
+    Falls back to a semantic scan over the memory corpus when the lexical
+    substring search (bundle.search) returns nothing. Superseded memories
+    (``memory_is_latest: false``) are filtered out by default; pass
+    ``include_superseded=True`` to traverse the version chain.
     """
     results = bundle.search(query, limit=20)
     # Filter to memory concepts only.
@@ -197,16 +180,15 @@ def search_memory(
 
     # Drop superseded versions unless explicitly requested. A memory is
     # superseded when memory_is_latest is explicitly false; older memories
-    # written before this feature default to True (treated as latest).
+    # without this key default to True (treated as latest).
     if not include_superseded:
         results = [
             c for c in results if c.extensions.get("memory_is_latest", True) is not False
         ]
 
     # Lexical broaden: if initial results are thin (empty or very few), run a
-    # multi-token keyword scan over all memory concepts. This recovers matches
-    # where query tokens are spread across fields (e.g. "backoff retry policy"
-    # when the memory title starts with a different token).
+    # multi-token keyword scan over all memory concepts to recover matches
+    # where query tokens are spread across fields.
     if len(results) <= 2:
         all_mem = [
             c
@@ -232,9 +214,8 @@ def search_memory(
         )
 
     # Record references for tribal/canonical (not raw/drafts) in ONE batched
-    # transaction instead of one write per result. Batching avoids N
-    # write-lock acquisitions for N tribal hits, a primary cause of
-    # "database is locked" under concurrent `cairn serve` processes.
+    # transaction instead of one write per result, to avoid N write-lock
+    # acquisitions under concurrent `cairn serve` processes.
     if session_id:
         refs = [
             (c.concept_id, query)
@@ -256,9 +237,9 @@ def _semantic_memory_fallback(
     """Semantic recall over memory concepts when lexical search misses.
 
     Embeds the query with the configured backend and cosine-ranks every memory
-    concept (by its title + description + body text). Returns the top matches.
-    Silently returns [] if the semantic backend isn't available, so callers
-    degrade to the empty-result path without crashing.
+    concept (by its title + description + body text). Returns [] if embedding is
+    unavailable. Under the dep-free hash fallback the stamped provenance is
+    ``semantic (hash backend)`` so callers can flag the degraded signal.
     """
     try:
         from cairn.graph import embeddings as emb
@@ -292,7 +273,7 @@ def _semantic_memory_fallback(
             for c in concepts
         ]
         # Embed the query + every memory text with the SAME backend so the
-        # dimensions and embedding space line up. _embed returns float32 BLOBs.
+        # dimensions and embedding space line up.
         q_blob, dim = emb.embed_query(query)
         mem_blobs, _ = emb._embed(texts)
 
@@ -306,8 +287,9 @@ def _semantic_memory_fallback(
         scored = cosine_scan(q_blob, dim, rows, threshold=0.1)
         out = [c for s, c in scored[:limit]]
         # Stamp provenance so callers know these are semantic, not lexical.
+        prov = "semantic (hash backend)" if emb.is_hash_fallback() else "semantic"
         for c in out:
-            c.extensions["provenance"] = "semantic"
+            c.extensions["provenance"] = prov
         return out
     except Exception:
         return []  # never let the fallback break recall_memory
@@ -332,19 +314,16 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
         new_id = f"wiki/features/promoted-{store_mod.slugify(concept.title)}"
     concept.type = new_type
     concept.extensions["memory_status"] = "canonical"
-    # Clear the tier label: this concept has left the memory tier system
-    # entirely, and search_memory()/router.py filter on truthy memory_tier
-    # to decide whether a result is a memory hit -- a stale "tribal"/"raw"
-    # label here would make a promoted, canonical concept keep showing up
-    # in recall_memory output as if it were still an unpromoted memory.
+    # Clear the tier label: search_memory()/router.py filter on truthy
+    # memory_tier to decide whether a result is a memory hit, so a stale
+    # label here would make a promoted, canonical concept keep showing up as
+    # an unpromoted memory.
     concept.extensions.pop("memory_tier", None)
     old_id = concept.concept_id
     concept.concept_id = new_id
     # Append the promotion-history entry BEFORE writing so the new file is
-    # written exactly once with history included (avoids a crash window
-    # between unlinking the old file and the rewrite). _append_promotion only
-    # mutates the in-memory concept's promotion_history extension, so calling
-    # it before the write is safe and correct.
+    # written exactly once with history included (no crash window between
+    # unlinking the old file and the rewrite).
     _append_promotion(concept, "force_promote", concept.extensions.get("memory_score", 0.0))
     # Write the new file (with history) first...
     bundle.write_concept(concept)
@@ -368,20 +347,17 @@ def batch_critic(
     dropped = 0
     tribal = 0
     for concept in drafts:
-        # Compute critic score: LLM if available, else a neutral default (0.5).
-        # compute_score has no None handling (it does WEIGHTS["critic_score"]
-        # * signals["critic_score"]), so a float is required, and 0.5 matches
-        # the neutral default score_memory uses when critic_score is absent.
-        # This contributes a neutral 0.20*0.5 = 0.10, neither inflating nor
-        # deflating.
+        # Compute critic score: LLM if available, else a neutral default.
+        # DEFAULT_CRITIC_SCORE is shared with score_memory() so both code paths
+        # agree on the neutral value; a float is required (compute_score has no
+        # None handling).
         signals = score_memory(concept, conn, bundle)
-        critic = llm_critic(concept) if llm_critic else 0.5
+        critic = llm_critic(concept) if llm_critic else DEFAULT_CRITIC_SCORE
         signals["critic_score"] = critic
         signals["score"] = _rescore_with_critic(signals, critic)
         apply_score(concept, signals)
-        # Named decision (Graphiti pattern): the threshold branches below map
-        # to an explicit Decision enum so promotion_history records *which*
-        # decision was reached, not just a freeform verb.
+        # Map the threshold branches to an explicit Decision enum so
+        # promotion_history records which decision was reached.
         new_tier = store_mod.tier_for_score(signals["score"])
         old_id = concept.concept_id  # capture before re-tier for cleanup
         if signals["score"] < 0.3:
@@ -423,11 +399,9 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90) 
 def tribal_digest(bundle: OKFBundle, limit: int = 10) -> List[OKFConcept]:
     """Top tribal memories by score, for a quick session-orientation digest.
 
-    Reads tribal memories directly via list_memories() rather than through
-    search_memory() (which requires a query) or the router.py/knowledge/
-    search.py search mirrors -- this answers "what's worth knowing before I
-    start", not "find X", so it deliberately doesn't go through any of the
-    three divergent memory-search implementations.
+    Reads tribal memories directly via list_memories() rather than the
+    query-based search paths -- this answers "what's worth knowing before I
+    start", not "find X".
     """
     mems = store_mod.list_memories(bundle, tier="tribal")
     mems.sort(key=lambda c: c.extensions.get("memory_score", 0), reverse=True)
@@ -470,15 +444,10 @@ def _find_supersession_candidate(
 ) -> Optional[str]:
     """Find the best existing memory that the new one supersedes.
 
-    Strategy (adapted from agentmemory's two-tier check, but using cairn's
-    semantic backend instead of jaccard):
-    1. Cheap blocking: only compare against memories of the same ``type``
-       that are ``memory_is_latest``.
-    2. Quick lexical title-exact match → immediate supersession (same title
-       is a strong signal of revision, like agentmemory's jaccard >0.7).
-    3. Otherwise embed the new text + each candidate and take the top cosine;
-       supersede if >= threshold (paraphrase detection).
-    Returns the concept_id of the candidate, or None.
+    Two-tier check: (1) cheap blocking by same ``type`` + ``memory_is_latest``;
+    (2) quick exact title match -> immediate supersession; otherwise (3) embed
+    the new text + each candidate and take the top cosine, superseding if >=
+    threshold. Returns the candidate concept_id, or None.
     """
     candidates: list[OKFConcept] = []
     for cid in bundle.list_concepts(prefix="memory/"):
@@ -501,8 +470,8 @@ def _find_supersession_candidate(
 
     # Tier 2: semantic cosine. Reuses the same backend as search_memory's
     # semantic fallback so dimensions line up. Silently returns None if the
-    # embedding backend isn't available (no torch) — supersession is an
-    # enhancement, not a correctness requirement.
+    # embedding backend isn't available -- supersession is an enhancement,
+    # not a correctness requirement.
     try:
         from cairn.graph import embeddings as emb
         from cairn.retrieval import cosine_scan
@@ -553,13 +522,10 @@ def evolve_memory(
 ) -> Optional[Dict]:
     """Explicit revision: create a new version that supersedes ``memory_path``.
 
-    Unlike the insert-time supersession (which fires automatically when
-    record_memory detects a near-duplicate), this is the agent-initiated path
-    -- the agent knows it is updating a specific decision. Mirrors
-    agentmemory's ``mem::evolve``: chains ``memory_supersedes``, flips the old
-    to ``memory_is_latest: false``, and stores the new version.
-
-    At least one of new_title / new_body must differ from the old memory.
+    The agent-initiated path (vs. insert-time supersession): chains
+    ``memory_supersedes``, flips the old to ``memory_is_latest: false``, and
+    stores the new version. At least one of new_title / new_body must differ
+    from the old memory.
     """
     old = store_mod.get_memory(bundle, memory_path)
     if old is None:
@@ -607,10 +573,9 @@ def _rescore_with_critic(signals: Dict, critic: float) -> float:
 def _append_promotion(concept: OKFConcept, action, score: float):
     """Append a record to ``promotion_history``.
 
-    ``action`` may be a :class:`~cairn.memory.store_protocol.Decision`
-    (the named lifecycle enum) or a freeform string. The stable string value
-    is persisted either way, so existing readers and serialized OKF files
-    keep working.
+    ``action`` may be a :class:`~cairn.memory.store_protocol.Decision` (the
+    named lifecycle enum) or a freeform string; the stable string value is
+    persisted either way.
     """
     # Accept Decision enums transparently; fall back to str for other callers.
     action_str = action.value if hasattr(action, "value") else str(action)

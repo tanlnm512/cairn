@@ -37,7 +37,7 @@ def memory_digest(limit: int = 10) -> str:
     if not mems:
         return "No tribal memories yet."
     out = [f"Top {len(mems)} tribal memories:"]
-    # One read-only conn for all verification lookups (was per-result in recall).
+    # One read-only conn for all verification lookups.
     conn = _conn()
     try:
         for c in mems:
@@ -103,19 +103,29 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
             f"captured -- see the Memory Capture Workflow in the skill."
         )
     out = [f"{len(results)} memories matching '{query}':"]
-    # Reuse the already-open conn for verification (refactored from the old
-    # per-result _conn() churn).
+    # If any hit came via the semantic fallback, surface the backend quality:
+    # the hash fallback carries token-overlap signal, not real semantic meaning.
+    # One-time warning is enough -- provenance on each line carries it too.
+    if any(c.extensions.get("provenance", "").startswith("semantic") for c in results):
+        from cairn.graph import embeddings as _emb
+        _emb.warn_hash_fallback_once(logger, context="recall_memory")
+    # Reuse the already-open conn for verification.
     try:
         for c in results:
             score = c.extensions.get("memory_score", "?")
             t = c.extensions.get("memory_tier", "?")
+            # provenance is "" for lexical hits, "semantic" / "semantic (hash
+            # backend)" for the semantic fallback. Shown compactly so an agent
+            # can see when results are degraded (hash backend = token-overlap).
+            prov = c.extensions.get("provenance", "")
+            prov_tag = f", {prov}" if prov else ""
             superseded = c.extensions.get("memory_is_latest", True) is False
             try:
                 refs_verified = round(_graph_verification(c, conn), 3)
             except Exception:
                 refs_verified = "?"
             tag = " [SUPERSEDED]" if superseded else ""
-            out.append(f"  [{t} {score}, refs-verified={refs_verified}] {c.title}{tag}")
+            out.append(f"  [{t} {score}, refs-verified={refs_verified}{prov_tag}] {c.title}{tag}")
             if c.description:
                 out.append(f"    {c.description}")
     finally:
@@ -270,6 +280,7 @@ def memory_delete(memory_path: str) -> str:
     conn = _rw_conn()
     try:
         ok = dm(bundle, memory_path, conn=conn)
+        conn.commit()
     finally:
         conn.close()
     if not ok:

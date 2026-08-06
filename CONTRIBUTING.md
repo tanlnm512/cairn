@@ -25,13 +25,24 @@ Optional extras (see `pyproject.toml`): `[watch]` (file watching),
 `[semantic]` (sentence-transformers + numpy; pulls torch, large),
 `[ann]` (sqlite-vec native ANN index).
 
+Install the dev pre-commit hook (runs `ruff` on staged `.py` files; aborts
+on any unused-import / undefined-name / redefinition error so it's caught
+locally instead of in CI):
+
+```bash
+./scripts/install-dev-hooks.sh   # one-time; sets core.hooksPath -> scripts/hooks/
+```
+
+Bypass once with `git commit --no-verify`; uninstall with
+`git config --unset core.hooksPath`.
+
 ## Running tests
 
 There are two feedback loops:
 
 ```bash
 pytest -m core -q      # fast smoke subset (<3s) — the inner dev loop
-pytest -q              # full suite (all 58 test files) — the CI path
+pytest -q              # full suite (~60 test files) — the CI path
 ```
 
 The `core` marker (declared in `pyproject.toml`) marks **one focused test per

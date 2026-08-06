@@ -1,8 +1,7 @@
-"""Post-pass receiver-type inference for query-extracted parser data.
+"""Post-pass inference helpers for query-extracted parser data.
 
-Currently Kotlin-only: resolves call-edge receiver types by matching
-receiver identifiers against a type environment built from type symbols.
+This package previously hosted a Kotlin receiver-type post-pass, but that
+logic now lives inline in :mod:`cairn.parsers.kotlin` (see its
+``_infer_call_receiver_type``), so the standalone module was removed. The
+package is kept as an extension point for future inference passes.
 """
-from cairn.parsers.inference.kotlin import kotlin_receiver_types
-
-__all__ = ["kotlin_receiver_types"]

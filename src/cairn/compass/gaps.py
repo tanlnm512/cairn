@@ -25,8 +25,10 @@ def detect_gaps(conn: sqlite3.Connection, bundle: OKFBundle) -> List[str]:
             continue
     gaps = []
     for mod in all_modules:
-        # A module is covered if any compass resource is a prefix of it or vice-versa.
-        if not any(mod.startswith(c) or c.startswith(mod) for c in covered):
+        # A module is covered if any compass resource matches it exactly or is
+        # a path-segment-prefix of it (or vice-versa). Require segment boundary
+        # so a compass for `app/foo` does NOT cover `app/foobar`.
+        if not any(mod == c or mod.startswith(c + "/") or c.startswith(mod + "/") for c in covered):
             gaps.append(mod)
     return gaps
 

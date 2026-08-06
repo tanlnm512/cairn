@@ -9,7 +9,7 @@
 
 cairn builds a precise, language-aware structural graph of your codebase and
 exposes it to both humans (the `cairn` CLI) and AI agents (a stdio MCP server with
-26 tools). Symbols, call edges, definitions, blast radius, and tribal memory all
+27 tools). Symbols, call edges, definitions, blast radius, and tribal memory all
 live in a local SQLite store — no network call, no torch in the default install.
 
 ## What is cairn?
@@ -19,7 +19,7 @@ tree-sitter into a **structural graph** (definitions, call edges, cross-repo
 dependencies) stored in SQLite, then layers a **compass** (per-module navigation
 guides), a **wiki** (architecture docs), **memory** (decisions / patterns /
 mistakes / workarounds), and a **knowledge** store on top. It is **MCP-native**:
-the same store backs the `cairn` CLI and a 26-tool MCP server, making it
+the same store backs the `cairn` CLI and a 27-tool MCP server, making it
 **agent-first** — your coding agents query one local source of truth instead of
 re-reading the whole repo every turn.
 
@@ -139,13 +139,13 @@ The default install is dependency-light and network-free. Opt in with extras:
 
 ## Architecture (5 layers)
 
-The MCP server exposes 26 tools across five layers:
+The MCP server exposes 27 tools across five layers:
 
 | Layer | Purpose |
 |-------|---------|
 | **graph** (9 tools) | Structural graph: `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `explore` (the graph aggregator and recommended first call), and `visualize_graph` |
 | **compass + knowledge base** (5 tools) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
-| **memory** (7 tools) | Tribal memory: record / recall / search decisions, patterns, mistakes, workarounds |
+| **memory** (8 tools) | Tribal memory: recall / record / lifecycle (promote, demote, evolve, decay, delete, digest) |
 | **knowledge** (5 tools) | The OKF knowledge store — add / search / status business docs and workflows |
 
 ## CLI

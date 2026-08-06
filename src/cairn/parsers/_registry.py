@@ -16,13 +16,13 @@ grammar already covers JSX in .jsx files), not the TypeScript grammar.
 External packages can register additional languages via the
 ``cairn.parsers.v1`` entry-point group. An entry point in that group must
 resolve to a zero-arg callable returning a tree-sitter language capsule
-(PyCapsule). The group name encodes the API version so a future breaking
-change ships under ``cairn.parsers.v2`` without breaking v1 plugins
-(pytest's ``pytest11`` lesson).
+(PyCapsule). The ``v1`` suffix encodes the API version so a future breaking
+change can ship under ``cairn.parsers.v2`` without breaking v1 plugins.
 """
 from __future__ import annotations
 
 import functools
+import warnings
 
 from tree_sitter import Language, Parser
 
@@ -91,17 +91,22 @@ def _load_plugin_capsule(language: str):
             try:
                 factory = ep.load()
                 return factory()
-            except Exception:
-                # A broken plugin is skipped, not fatal. The language simply
-                # stays unsupported unless another entry point provides it.
+            except Exception as exc:  # noqa: BLE001 - a broken plugin is skipped
+                # A broken plugin is skipped, not fatal -- the language simply
+                # stays unsupported unless another entry point provides it. But
+                # we surface a warning so a misbehaving plugin doesn't silently
+                # disappear without any diagnostic signal.
+                warnings.warn(
+                    f"cairn parser plugin {ep.name!r} for language "
+                    f"{language!r} failed to load and was skipped: "
+                    f"{type(exc).__name__}: {exc}",
+                    stacklevel=2,
+                )
                 continue
     return None
 
 
-# Entry-point group for external parser plugins. The ``v1`` suffix encodes the
-# API version so a future breaking change can ship under ``v2`` without
-# invalidating v1 plugins. An entry point resolves to a zero-arg callable
-# returning a tree-sitter language capsule.
+# Entry-point group for external parser plugins (see module docstring).
 _PLUGIN_ENTRY_POINT_GROUP = "cairn.parsers.v1"
 
 

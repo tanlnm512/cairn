@@ -2,6 +2,20 @@
   "language": "typescript",
   "symbols": [
     {
+      "name": "AuthService",
+      "kind": "class",
+      "qualified_name": "sample.AuthService",
+      "line_start": 42,
+      "line_end": 45,
+      "column_start": 7,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "@Injectable()"
+      ],
+      "metadata": null
+    },
+    {
       "name": "BaseEntity",
       "kind": "class",
       "qualified_name": "sample.BaseEntity",
@@ -23,6 +37,20 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "UserController",
+      "kind": "class",
+      "qualified_name": "sample.UserController",
+      "line_start": 35,
+      "line_end": 39,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [
+        "@Controller('/api')"
+      ],
       "metadata": null
     },
     {
@@ -74,6 +102,20 @@
       "metadata": null
     },
     {
+      "name": "getOne",
+      "kind": "method",
+      "qualified_name": "sample.UserController.getOne",
+      "line_start": 38,
+      "line_end": 38,
+      "column_start": 4,
+      "column_end": 15,
+      "docstring": null,
+      "modifiers": [
+        "@Get(':id')"
+      ],
+      "metadata": null
+    },
+    {
       "name": "helperCall",
       "kind": "method",
       "qualified_name": "sample.User.helperCall",
@@ -84,6 +126,20 @@
       "docstring": null,
       "modifiers": [
         "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "login",
+      "kind": "method",
+      "qualified_name": "sample.AuthService.login",
+      "line_start": 44,
+      "line_end": 44,
+      "column_start": 4,
+      "column_end": 14,
+      "docstring": null,
+      "modifiers": [
+        "@Post('/login')"
       ],
       "metadata": null
     },

@@ -3,9 +3,6 @@
 A thin orchestrator that combines FTS5 + semantic seed search, 1-hop
 caller/callee neighborhood, verbatim source spans, shallow blast radius, and
 ambiguous-dispatch hops into a single answer.
-
-Imports the other split modules (traversal, lexical, semantic) rather than
-re-implementing them -- this is the integration layer.
 """
 from __future__ import annotations
 
@@ -13,7 +10,9 @@ import logging
 import os
 import sqlite3
 
+from ..paths import resolve_workspace
 from .lexical import search_symbols
+from .scanner import resolve_file_path
 from .traversal import get_callers, get_callees, impact_analysis
 
 logger = logging.getLogger(__name__)
@@ -31,6 +30,10 @@ def _read_source_spans(
     span). Returns ``{file_path: [{"symbol", "kind", "line_start", "line_end",
     "repo", "lines": [str, ...]}]}``.
 
+    The stored ``file_path`` is repo-relative (portable); it is resolved to an
+    absolute path via ``resolve_file_path`` before opening. The dict key stays
+    the stored relative path so callers (and the agent) see portable paths.
+
     Missing files / read errors degrade gracefully: the symbol's entry is
     omitted, never crashes the caller.
     """
@@ -46,16 +49,21 @@ def _read_source_spans(
         tuple(symbol_ids),
     ).fetchall()
 
-    # Group symbol metadata by file so each file is opened at most once.
-    by_file: dict[str, list] = {}
+    workspace = str(resolve_workspace())
+
+    # Group symbol metadata by (repo, file_path) so each file is opened at most
+    # once and can be resolved against its own repo root. The output key is the
+    # stored file_path (repo-relative) so callers see portable paths.
+    by_file: dict[tuple[str, str], list] = {}
     for r in rows:
-        by_file.setdefault(r["file_path"], []).append(dict(r))
+        by_file.setdefault((r["repo"], r["file_path"]), []).append(dict(r))
 
     out: dict[str, list] = {}
     used = 0
-    for file_path, syms in by_file.items():
+    for (repo, file_path), syms in by_file.items():
+        abs_path = resolve_file_path(workspace, repo, file_path)
         try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
                 all_lines = fh.readlines()
         except OSError:
             continue  # file deleted/moved since index — skip silently
@@ -89,12 +97,12 @@ def _ambiguous_dispatch(
 ) -> list:
     """Surface ``resolution='ambiguous'`` edges grouped by target.
 
-    Ambiguous edges are intentionally left unresolved by the resolver (NULL
-    ``target_id``) when more than one candidate existed — e.g. an interface
-    call with several impls. These are invisible to precise ``get_callers``
-    (which filters on resolved ``target_id``) and to ``impact_analysis``.
-    This helper makes them queryable so ``explore`` can show "this call could
-    dispatch to any of these impls" — information grep fundamentally lacks.
+    Ambiguous edges are left unresolved by the resolver (NULL ``target_id``)
+    when more than one candidate existed — e.g. an interface call with several
+    impls. These are invisible to precise ``get_callers`` (which filters on
+    resolved ``target_id``) and to ``impact_analysis``; this helper makes them
+    queryable so ``explore`` can show "this call could dispatch to any of
+    these impls".
 
     Returns ``[{"dispatches_to": str, "candidates": [caller_name, ...]}]``,
     one entry per distinct ``target_name`` that has at least one ambiguous
@@ -185,6 +193,11 @@ def explore(
             from cairn.graph import embeddings as emb
 
             if emb.embeddings_available() and emb.embed_count(conn) > 0:
+                # explore's quality story is "FTS5 seeds + optional semantic
+                # expansion." Under the dep-free hash fallback the semantic
+                # expansion carries only token-overlap signal -- flag it once so
+                # the caller knows the seed set may be weaker than it looks.
+                emb.warn_hash_fallback_once(logger, context="explore")
                 sem_rows = semantic_search(conn, query, limit=max_nodes)
                 seen = set(seed_ids)
                 for r in sem_rows:

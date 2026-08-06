@@ -29,8 +29,6 @@ def simple_tokenize(
     """Split on non-alphanumeric boundaries, lowercase, filter stop words.
 
     Returns a deduplicated, order-preserving list of tokens >= min_len chars.
-    Used as-is by knowledge search, and as the lowercase-token pass inside
-    the router's CamelCase-aware extraction.
     """
     stop: Set[str] = set(stop_words) if stop_words is not None else set(BASE_STOP_WORDS)
     tokens: List[str] = []

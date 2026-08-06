@@ -5,7 +5,6 @@ import click
 import json
 
 from .main import DEFAULT_DB_PATH, get_db, main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
 @click.argument("question")
@@ -18,9 +17,11 @@ def ask(question, db, knowledge, as_json):
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
-    bundle = OKFBundle(knowledge)
-    result = route_query(question, conn, bundle)
-    conn.close()
+    try:
+        bundle = OKFBundle(knowledge)
+        result = route_query(question, conn, bundle)
+    finally:
+        conn.close()
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
         return

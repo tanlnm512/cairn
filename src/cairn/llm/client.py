@@ -162,13 +162,9 @@ class SubprocessBackend:
 def _build_prompt(prompt_id: str, facts: Dict[str, Any]) -> str:
     """Render a minimal prompt. The agent's skill provides the full template.
 
-    We send the prompt_id + facts; the loaded skill maps prompt_id to the real
-    instructions. This keeps prompt wording out of cairn (versionable in SKILL.md).
-
-    The output spec (e.g. the compass 5-section format) is reused verbatim from
-    the file-queue task body (`task_mod._output_spec`) so both backends produce
-    the same shape -- otherwise a synchronous subprocess run free-styles its own
-    headings instead of matching the rest of the corpus.
+    Sends prompt_id + facts; the loaded skill maps prompt_id to the real
+    instructions. The output spec is reused from task_mod._output_spec so both
+    backends produce the same shape.
     """
     facts_str = json.dumps(facts, indent=2, default=str)
     spec = task_mod._output_spec(prompt_id)

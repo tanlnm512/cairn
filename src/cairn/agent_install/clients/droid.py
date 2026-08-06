@@ -74,5 +74,5 @@ def uninstall(ws: Path, res: InstallResult) -> None:
         _rm_if_exists(ws / ".factory" / "commands" / f"{n}.md", res)
     _rm_if_exists(ws / ".factory" / "droids" / "cairn-explorer.md", res)
     _rm_if_exists(ws / ".factory" / "droids" / "knowledge-steward.md", res)
-    _rm_if_exists(ws / ".factory" / "droids" / "cairn-agent.md", res)  # renamed; clean up the old filename
+    _rm_if_exists(ws / ".factory" / "droids" / "cairn-agent.md", res)  # legacy filename cleanup
     _strip_mcp(ws / ".factory" / "mcp.json", res)

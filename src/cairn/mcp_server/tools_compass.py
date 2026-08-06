@@ -129,11 +129,8 @@ def ask_compass(query: str, file_path: str = "") -> str:
     ]
     if result.get("degraded"):
         out.append("(Showing fallback results — targeted layer had no coverage.)")
-    # Empty across ALL queried layers: say so explicitly. Without this line the
-    # response is just a header followed by nothing, and an agent must infer
-    # failure from absence — the exact "don't treat as no-info" trap the skill
-    # warns against. Surfacing it tells the agent to drill down with a specific
-    # layer tool rather than concluding nothing exists.
+    # Empty across ALL queried layers: say so explicitly, so an agent drills
+    # down with a specific layer tool rather than concluding nothing exists.
     if result.get("empty"):
         out.append(
             "(No results from any layer — coverage for this query is thin. "

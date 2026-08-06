@@ -1,28 +1,16 @@
-"""Backward-compat re-exports for the graph query engine.
+"""Re-exports of the graph query engine's public API.
 
-Historical entry point for all read-side graph operations. The actual
-implementations now live in split modules under ``src/graph/``:
-
-  - ``traversal``  -- find_definition, get_callers, get_callees, impact_analysis, trace_flow
-  - ``lexical``    -- search_symbols (+ FTS5 pattern helpers)
-  - ``cross_repo`` -- cross_repo_deps, REPO_NAMESPACES
-  - ``stats``      -- get_stats, get_tree, group_by_top_level
-  - ``explore``    -- explore (+ source-span / ambiguous-dispatch helpers)
-  - ``semantic``   -- semantic_search (+ ANN-hit / caller-attach helpers)
-  - ``vector_math``-- l2norm, dot, cosine
-
-This file re-exports the public names so existing imports keep working:
-
-    from cairn.graph.queries import find_definition, search_symbols, ...
-
-New code should prefer the package-level public API instead:
-
-    from cairn.graph import find_definition, search_symbols, ...
+Read-side graph operations are implemented in split modules under ``src/graph/``:
+``traversal``, ``lexical``, ``cross_repo``, ``stats``, ``explore``,
+``semantic``, and ``vector_math``. This file re-exports the public names so
+``from cairn.graph.queries import ...`` keeps working; new code may also import
+directly from ``cairn.graph``.
 """
 from __future__ import annotations
 
 # Public API surface -- re-exported for backward compatibility.
 from .cross_repo import REPO_NAMESPACES, cross_repo_deps
+
 from .explore import explore
 from .lexical import search_symbols
 from .stats import get_stats, get_tree, group_by_top_level

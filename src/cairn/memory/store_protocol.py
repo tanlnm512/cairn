@@ -1,17 +1,12 @@
 """MemoryStore protocol: the swappable storage seam for the memory layer.
 
-Defines a 5-method storage protocol (LangGraph ``BaseStore`` / LangMem
-pattern) with no lifecycle opinions, plus a concrete ``OKFMemoryStore``
-adapter that wraps the existing ``store.py`` functions against a fixed
-bundle+conn pair.
-
-The lifecycle logic (``promotion``/``scoring``/``critic``) is a *consumer*
-of a ``MemoryStore``: pass a mock store in tests and the lifecycle runs
-without materializing a filesystem bundle.
-
-Also defines the named ``Decision`` enum (Graphiti pattern) so ``batch_critic``
-and ``promotion_history`` use auditable constants instead of bare thresholds
-and freeform action strings.
+Defines a 5-method storage protocol with no lifecycle opinions, plus a concrete
+``OKFMemoryStore`` adapter that wraps ``store.py`` functions against a fixed
+bundle+conn pair. The lifecycle logic (``promotion``/``scoring``/``critic``)
+is a *consumer* of a ``MemoryStore``: pass a mock store in tests and the
+lifecycle runs without materializing a filesystem bundle. Also defines the
+named ``Decision`` enum so ``batch_critic`` and ``promotion_history`` use
+auditable constants instead of bare thresholds and freeform action strings.
 """
 from __future__ import annotations
 
@@ -25,10 +20,6 @@ from ..okf.concept import OKFConcept
 
 class Decision(str, Enum):
     """Named lifecycle decision for a memory under critic/promotion review.
-
-    Mirrors Graphiti's named-decision enum pattern so the lifecycle is
-    auditable: a memory's history records which *decision* was reached, not
-    just an ad-hoc verb.
 
     The ``value`` is the stable string persisted to ``promotion_history`` --
     readers that treat ``action`` as a freeform string keep working
@@ -80,11 +71,9 @@ class MemoryStore(Protocol):
 class OKFMemoryStore:
     """Concrete ``MemoryStore`` backed by ``store.py`` + an ``OKFBundle``.
 
-    Adapts the existing module-level functions (which take ``bundle``/``conn``
-    per call) into the protocol shape: bind the bundle+conn once at
-    construction, then ``add``/``get``/``search``/``update``/``delete`` need
-    no further arguments. This is the production implementation; tests use a
-    mock or in-memory replacement (see ``InMemoryMemoryStore``).
+    Binds the bundle+conn once at construction so the protocol methods need no
+    further arguments. This is the production implementation; tests use a mock
+    or ``InMemoryMemoryStore``.
     """
 
     def __init__(self, bundle: OKFBundle, conn: Optional[sqlite3.Connection] = None):
@@ -120,9 +109,7 @@ class OKFMemoryStore:
 class InMemoryMemoryStore:
     """A filesystem-free ``MemoryStore`` for tests.
 
-    Holds concepts in a dict keyed by concept_id. Lets lifecycle logic
-    (``batch_critic``/``decay``/``score_memory``) be unit-tested without
-    materializing an ``OKFBundle`` on disk. Tier is tracked via
+    Holds concepts in a dict keyed by concept_id. Tier is tracked via
     ``concept.extensions['memory_tier']``.
     """
 

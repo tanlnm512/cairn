@@ -116,22 +116,24 @@ resolve_store() {
 
   if [[ -f "$home/workspaces.json" && -n "$ws" ]]; then
     local key
-    key="$("$PYTHON" -c "
+    key="$("$PYTHON" -c '
 import json, sys
-w = json.load(open('$home/workspaces.json'))
+home, ws = sys.argv[1], sys.argv[2]
+w = json.load(open(home + "/workspaces.json"))
 for k, v in w.items():
-    if k == '$ws' or '$ws'.startswith(k):
+    if k == ws or ws.startswith(k):
         print(v); sys.exit()
-" 2>/dev/null || true)"
+' "$home" "$ws" 2>/dev/null || true)"
     if [[ -z "$key" ]]; then
       # python3 might be system 3.9 — try uv run python
-      key="$(uv run python -c "
+      key="$(uv run python -c '
 import json, sys
-w = json.load(open('$home/workspaces.json'))
+home, ws = sys.argv[1], sys.argv[2]
+w = json.load(open(home + "/workspaces.json"))
 for k, v in w.items():
-    if k == '$ws' or '$ws'.startswith(k):
+    if k == ws or ws.startswith(k):
         print(v); sys.exit()
-" 2>/dev/null || true)"
+' "$home" "$ws" 2>/dev/null || true)"
     fi
     if [[ -n "$key" ]]; then
       echo "$home/$key"
@@ -279,35 +281,53 @@ if $DO_GRAPH; then
       if $DRY_RUN; then
         echo -e "  ${DIM}Would rm -rf $STORE${NC}"
       else
-        rm -rf "$STORE"
+        # SAFETY: normalize the resolved store path and refuse to rm anything
+        # that is not strictly under the cairn home. This guards against a
+        # mis-set CAIRN_HOME, an empty STORE, or resolve_store() falling back
+        # to an unexpected location. Applies even in --full (non-interactive)
+        # mode -- a wrong path here can wipe arbitrary data.
+        _cairn_home_norm="$(cd "$local_home" 2>/dev/null && pwd -P)" || \
+          _cairn_home_norm=""
+        _store_norm="$(cd "$STORE" 2>/dev/null && pwd -P)" || \
+          _store_norm=""
+        if [[ -z "$_store_norm" ]]; then
+          warn "Could not resolve '$STORE' (already gone?) — skipping rm"
+        elif [[ -z "$_cairn_home_norm" ]]; then
+          fail "Refusing to remove '$STORE': cairn home '$local_home' is not accessible"
+        elif [[ "$_store_norm" != "$_cairn_home_norm" && \
+                "$_store_norm" != "$_cairn_home_norm"/* ]]; then
+          fail "Refusing to remove '$STORE': not under cairn home '$_cairn_home_norm'. Set CAIRN_HOME correctly and re-run."
+        else
+          rm -rf "$_store_norm"
+        fi
 
         # Drop stale workspace entries from workspaces.json (whole-home removal
         # also wipes workspaces.json with the directory; single-store removal
         # prunes just that workspace's entry).
         if ! $whole_home && [[ -f "$local_home/workspaces.json" ]]; then
-          "$PYTHON" -c "
-import json
-path = '$local_home/workspaces.json'
+          "$PYTHON" -c '
+import json, sys
+path, workspace = sys.argv[1], sys.argv[2]
 try:
     w = json.load(open(path))
-    cleaned = {k: v for k, v in w.items() if v != '$WORKSPACE'}
+    cleaned = {k: v for k, v in w.items() if v != workspace}
     if len(cleaned) < len(w):
-        json.dump(cleaned, open(path, 'w'), indent=2)
-        print('Cleaned workspaces.json')
+        json.dump(cleaned, open(path, "w"), indent=2)
+        print("Cleaned workspaces.json")
 except Exception:
     pass
-" 2>/dev/null || uv run python -c "
-import json
-path = '$local_home/workspaces.json'
+' "$local_home/workspaces.json" "$WORKSPACE" 2>/dev/null || uv run python -c '
+import json, sys
+path, workspace = sys.argv[1], sys.argv[2]
 try:
     w = json.load(open(path))
-    cleaned = {k: v for k, v in w.items() if v != '$WORKSPACE'}
+    cleaned = {k: v for k, v in w.items() if v != workspace}
     if len(cleaned) < len(w):
-        json.dump(cleaned, open(path, 'w'), indent=2)
-        print('Cleaned workspaces.json')
+        json.dump(cleaned, open(path, "w"), indent=2)
+        print("Cleaned workspaces.json")
 except Exception:
     pass
-" 2>/dev/null || true
+' "$local_home/workspaces.json" "$WORKSPACE" 2>/dev/null || true
         fi
       fi
       if $whole_home; then

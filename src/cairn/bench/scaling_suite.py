@@ -3,8 +3,7 @@
 Answers "will cairn scale to a large monorepo?". Generates a synthetic
 corpus at each size in ``sizes``, builds + embeds it, and records build-time,
 embed-time, DB-size, resolve-rate, and peak memory. The resulting curve shows
-where the cost becomes superlinear — the same shape of finding the ROADMAP's
-"global symbol index rebuild per resolve" wall would surface as.
+where the cost becomes superlinear.
 
 Each size is single-shot (scaling is about the curve shape, not precise p95);
 memory is captured via tracemalloc around the whole build+embed.
@@ -71,9 +70,7 @@ def run_scaling_suite(
         emb.reset_backend_cache()
 
         # Build + embed under a single memory trace so peak_memory reflects
-        # the full per-size cost a user would pay. Each phase is timed inline
-        # with perf_counter so we get both the memory footprint and the
-        # build/embed split from one pass (no double build).
+        # the full per-size cost; each phase is timed inline with perf_counter.
         import time as _t
 
         build_stats: dict = {}

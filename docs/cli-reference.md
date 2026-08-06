@@ -67,7 +67,7 @@ read-only, contention-safe model that replaces one-stdio-server-per-client.
 > SSE `start`/`stop`/`status`/`restart` are macOS-only (launchd). On other
 > platforms run `cairn serve --port 9876` under a process supervisor.
 
-### `cairn memory` — agent memory (13 subcommands)
+### `cairn memory` — agent memory (14 subcommands)
 
 `cairn memory` records and curates agent learnings (decisions, patterns,
 mistakes, workarounds) across the tiers raw → drafts → tribal → canonical.
@@ -75,6 +75,7 @@ mistakes, workarounds) across the tiers raw → drafts → tribal → canonical.
 | Subcommand | Description |
 |------------|-------------|
 | `cairn memory record TYPE TITLE` | Record a learning. `TYPE`: `decision\|pattern\|mistake\|workaround`. |
+| `cairn memory evolve PATH` | Revise a memory; creates a new version that supersedes the old (`--title`, `--body`). |
 | `cairn memory search QUERY` | Search past memories (`--tier` filter). Shows a live `refs-verified` fraction per result. |
 | `cairn memory capture` | Extract learnings from a session transcript (session-end hook). Routes via the memory-extract LLM task; queues if no agent is available. |
 | `cairn memory list` | List memories (`--tier`, `--tag` filters). Shows `refs-verified` when `--db` resolves. |

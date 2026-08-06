@@ -1,9 +1,8 @@
 """Tree-sitter Objective-C parser.
 
-Unlike Dart, tree-sitter-objc is a conventionally *nested* C-family grammar
+tree-sitter-objc is a conventionally *nested* C-family grammar
 (protocol/interface/implementation bodies properly contain their members), so
-this parser uses the same recursive per-child `_visit` dispatch as
-kotlin.py/java.py/typescript.py rather than Dart's flat sibling-list approach.
+this parser uses the recursive per-child `_visit` dispatch.
 
 Node-type reference:
   preproc_include                          -> Import (#import/#include)
@@ -25,20 +24,12 @@ Node-type reference:
 Selector simplification: a multi-keyword Objective-C selector like
 `doThing:withOption:` is recorded under just its FIRST keyword (`doThing`),
 both at the method definition site and at each call site, so the two stay
-consistent and name-resolvable. This loses the full selector signature but is
-enough for "where is this method defined / who calls it" queries.
-
-qualified_name follows the same file-stem-prefix convention used by
-src/parsers/typescript.py and src/parsers/dart.py.
+consistent and name-resolvable.
 
 Known limitation -- header imports aren't indexed: `#import "Foo.h"` /
 `#import <Framework/Foo.h>` point at `.h` files, and `.h` is deliberately NOT
-in scanner.py's EXTENSION_MAP (headers are ambiguous across C/C++/Objective-C,
-and C/C++ isn't implemented yet -- see the scanner.py comment). Since
-`@interface` declarations conventionally live in the header and only
-`@implementation` is in the indexed `.m`/`.mm` file, the import-aware resolver
-tier will rarely have a matching indexed file to pin to for Objective-C; the
-resolver's same-file and same-repo/global tiers still work normally.
+in scanner.py's EXTENSION_MAP. The resolver's same-file and same-repo/global
+tiers still work normally.
 """
 from __future__ import annotations
 
@@ -87,7 +78,11 @@ class ObjCParser(BaseParser, TreeSitterParserBase):
 
         self._path = file_path
         self._file_stem = file_path.stem
+        # Parsers are cached singletons reused across files, so reset all
+        # per-file accumulators here.
         self._pending_edges: List[Edge] = []
+        self._scope = []
+        self._callable_scope = []
 
         self._walk(tree.root_node, source, pf)
         pf.edges.extend(self._pending_edges)
@@ -338,9 +333,8 @@ class ObjCParser(BaseParser, TreeSitterParserBase):
         children = node.children
         if len(children) < 3:
             return None
-        # children[0] = '[', children[1] = receiver (one node, whatever its
-        # own internal shape). The selector run starts at children[2]; we
-        # only need its first keyword (see module docstring).
+        # children[0] = '[', children[1] = receiver. The selector run starts at
+        # children[2]; we only need its first keyword.
         for c in children[2:]:
             if c.type == "identifier":
                 return Edge(

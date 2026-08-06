@@ -6,7 +6,6 @@ import os
 import sys
 
 from .main import main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command(name="install-agents")
 @click.option("--client", "clients", multiple=True,
@@ -97,11 +96,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
                 {"name": c, "checked": c in not_yet_installed, "value": c}
                 for c in detected
             ]
-            # Custom style aligned with the cairn CLI theme (see display.py):
-            # the question mark + question text use cyan (info), the selected
-            # indicator turns bold green (success), the pointer is bold yellow
-            # (warning) so the highlighted row stands out, and instructions
-            # fade to dim so they recede behind the choices.
+            # Custom style aligned with the cairn CLI theme (see display.py).
             cb_style = PtStyle([
                 ("qmark", f"fg:{C['info']} bold"),
                 ("question", f"fg:{C['info']} bold"),
@@ -112,9 +107,9 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
                 ("answer", f"fg:{C['success']} bold"),
                 ("instruction", f"fg:{C['dim']} italic"),
             ])
-            # Suppress questionary's own "Aborted." so we print a single,
-            # consistent message for both Ctrl+C (returns None) and Ctrl+D
-            # (raises EOFError, which questionary does not catch).
+            # Suppress questionary's own "Aborted." so a single consistent
+            # message prints for both Ctrl+C (returns None) and Ctrl+D (raises
+            # EOFError, which questionary does not catch).
             try:
                 answer = questionary.checkbox(
                     "Select clients to install cairn for:",
@@ -130,9 +125,9 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
                 return
 
             # Respect the selection as-is. An explicitly empty selection
-            # (user unchecked everything) installs nothing, rather than
-            # silently falling back to the detected defaults (which is what
-            # install() would do if we passed an empty/None clients list).
+            # installs nothing, rather than silently falling back to the
+            # detected defaults (which install() would do for an empty/None
+            # clients list).
             if not answer:
                 click.echo("Nothing selected. Use --client <name> to target a specific client.")
                 return

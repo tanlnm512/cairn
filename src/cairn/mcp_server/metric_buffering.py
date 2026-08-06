@@ -76,9 +76,9 @@ def _flush_metrics():
     import logging
     logger = logging.getLogger(__name__)
 
-    # Snapshot the buffer WITHOUT clearing it yet -- a failed flush then leaves
-    # the rows queued for the next attempt. The maxlen on the deque still caps
-    # unbounded growth during a long outage.
+    # Snapshot the buffer WITHOUT clearing it yet -- a failed flush leaves the
+    # rows queued for the next attempt. The deque's maxlen caps unbounded
+    # growth during a long outage.
     with _METRIC_LOCK:
         if not _METRIC_BUFFER:
             return
@@ -155,20 +155,15 @@ def _log_metric(tool_name: str, duration_ms: float, status: str = "ok",
 def instrument(fn):
     """Decorator: wraps an MCP tool with timing + error capture + metric logging.
 
-    Uses functools.wraps (not manual __name__/__doc__ copying) so that
-    __wrapped__ is set and inspect.signature(wrapper) resolves to the
-    original function's real parameters. FastMCP's @mcp.tool() introspects
-    the signature of whatever it decorates to build the tool's JSON schema;
-    without __wrapped__, it would only see (*args, **kwargs) and generate a
-    broken schema (and broken calls) for every tool.
-
-    Renamed from ``_instrument`` (was private in server.py) since it now
-    lives in its own module and is imported by every tools_*.py.
+    Uses functools.wraps so ``__wrapped__`` is set and
+    inspect.signature(wrapper) resolves to the original function's real
+    parameters. FastMCP's @mcp.tool() introspects the signature of whatever
+    it decorates to build the tool's JSON schema; without ``__wrapped__`` it
+    would only see (*args, **kwargs) and generate a broken schema.
     """
     import logging
     import traceback
-    from pathlib import Path
-    
+
     logger = logging.getLogger(__name__)
     
     @functools.wraps(fn)
@@ -183,30 +178,16 @@ def instrument(fn):
             return result
         except Exception as exc:
             duration_ms = (time.time() - t0) * 1000
-            
-            # Log full traceback server-side
+
+            # Log full traceback server-side.
             tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             logger.error(f"Error in {name}: {exc}\n{tb_str}")
 
-            # Sanitize error message to remove internal paths
-            error_msg = str(exc)
-            # Remove user-specific paths like /Users/tan.le/, /home/user/, etc.
-            # Also remove project root paths that might leak
-            home_dir = str(Path.home())
-            if home_dir in error_msg:
-                error_msg = error_msg.replace(home_dir, "~")
-            # Remove other common path patterns
-            parts_to_remove = [
-                "/Projects/", "/cairn/", "/src/", "/.knowledge/",
-                "/.cairn/", "\\.knowledge\\/", "\\.cairn\\/",
-            ]
-            for part in parts_to_remove:
-                error_msg = error_msg.replace(part, "/")
-            
-            # Return sanitized error string instead of raising
-            sanitized_result = f"[ERROR: {name} failed - {error_msg}]"
-            
             _log_metric(name, duration_ms, "error", str(exc))
-            return sanitized_result
+
+            # Re-raise so FastMCP's Tool.run converts the exception into a
+            # proper MCP error response (isError: true) rather than a prose
+            # string that looks like a successful result.
+            raise
 
     return wrapper

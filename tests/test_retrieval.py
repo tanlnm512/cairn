@@ -17,10 +17,8 @@ from pathlib import Path
 
 from cairn.retrieval import (
     Candidate,
-    CrossEncoderReranker,
     Reranker,
     Fusion,
-    RRFUnorderedFusion,
     cosine_scan,
 )
 
@@ -33,13 +31,30 @@ def _f32(*vals: float) -> bytes:
 
 
 class TestProtocols:
-    def test_concrete_providers_satisfy_protocols(self):
-        """The default providers implement the protocol trio."""
-        assert isinstance(RRFUnorderedFusion(), Fusion)
-        assert isinstance(CrossEncoderReranker(), Reranker)
-        # Retriever is abstract (no default impl yet) but the Protocol is
-        # runtime-checkable; verify the structural shape is enforced.
-        assert isinstance(RRFUnorderedFusion(), Fusion)  # not a Retriever
+    def test_protocols_are_runtime_checkable(self):
+        """The protocol trio is runtime-checkable and structurally enforced.
+
+        The concrete providers were removed (fusion/rerank live directly in
+        ``graph.semantic``), so verify the protocols themselves still work
+        against minimal conforming and non-conforming objects.
+        """
+
+        class _GoodFusion:
+            def fuse(self, rankings, *, k=60, weights=None):
+                return []
+
+        class _GoodReranker:
+            def rerank(self, query, candidates, limit):
+                return [], False
+
+        class _NoMethods:
+            pass
+
+        assert isinstance(_GoodFusion(), Fusion)
+        assert isinstance(_GoodReranker(), Reranker)
+        # A class lacking the required methods does not satisfy the protocol.
+        assert not isinstance(_NoMethods(), Fusion)
+        assert not isinstance(_NoMethods(), Reranker)
 
     def test_candidate_defaults(self):
         c = Candidate(id="x")

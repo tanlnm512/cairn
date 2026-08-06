@@ -3,11 +3,9 @@ from __future__ import annotations
 
 import click
 import json
-import os
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -39,10 +37,7 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
     from cairn.graph import embeddings as emb
 
     if install_deps:
-        # --install-deps: install semantic dependencies and exit. Don't fall
-        # through to embedding — the user asked only to install deps (which
-        # may involve downloading torch + sentence-transformers, ~hundreds of
-        # MB). Run `cairn embed` separately to build the index.
+        # --install-deps: install semantic dependencies and exit.
         if not emb.ensure_semantic_deps(auto_install=True):
             display.error("Semantic dependencies unavailable")
             display.dim(emb.install_hint())
@@ -57,14 +52,11 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
         display.dim("Run `cairn embed --install-deps` to auto-install.")
         sys.exit(1)
 
-    # Warn when silently falling back to the hash backend. The fallback is
-    # intentional for `semantic_search` (graceful degradation), but `cairn embed`
-    # is an explicit action where the user expects real model embeddings.
-    # If CAIRN_EMBED_BACKEND is unset (default 'local') but sentence-
-    # transformers isn't installed, _effective_backend() silently returns
-    # 'hash' — surface that so the user knows the index won't carry real
-    # semantic meaning, and tell them how to fix it.
-    if emb._effective_backend() == "hash" and not os.environ.get("CAIRN_EMBED_BACKEND"):
+    # Warn when silently falling back to the hash backend. is_hash_fallback()
+    # is True only when the backend is the *default* local but
+    # sentence-transformers isn't installed (a silent fallback), not when the
+    # user explicitly set CAIRN_EMBED_BACKEND=hash.
+    if emb.is_hash_fallback():
         display.warning(
             "Using the hash embedder (dep-free) because sentence-transformers "
             "isn't installed. The index will work for token-overlap search but "
@@ -119,10 +111,8 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
         build_ann = ann.ann_backend_enabled()
 
         # One progress bar for the whole `cairn embed` run -- embedding and
-        # (if enabled) the ANN rebuild used to open their own separate bars
-        # back to back, which read as two unrelated progress indicators.
-        # Reuse the same bar, just retargeting its description/total for the
-        # second phase, so the terminal shows one continuous indicator.
+        # (if enabled) the ANN rebuild -- retargeting its description/total for
+        # the second phase.
         with display.progress_bar(description="Embedding", total=None, unit="symbols") as bar:
             bar_state["bar"] = bar
             bar_state["task"] = bar._cg_task_id
@@ -133,10 +123,8 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
 
             if build_ann:
                 task_id = bar._cg_task_id
-                # bar.update(total=None) would leave the embedding phase's
-                # total in place (both backends treat total=None as "don't
-                # change it") -- reset the task directly so the ANN phase
-                # renders as a fresh indeterminate bar instead of "0/<n synced>".
+                # Reset the task directly so the ANN phase renders as a fresh
+                # indeterminate bar.
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())
@@ -224,7 +212,7 @@ def semantic(query, db, limit, threshold, as_json, include_callers):
     from . import display
     if not rows:
         display.warning(f"No semantic matches for '{query}' (threshold {threshold})")
-        return
+        sys.exit(1)
     console_out = [f"{len(rows)} semantic match(es) for '{query}':"]
     for r in rows:
         short = (r["file_path"] or "").rsplit("/", 1)[-1]

@@ -1,21 +1,14 @@
 """LLM task queue: agent-decoupled synthesis via OKF Task concepts.
 
 Tasks live in .knowledge/_tasks/<id>.md as OKF concepts (type: Task). Any agent
-that can read markdown and run `cairn task` can process them — cairn never
-calls an LLM directly. The deterministic critic gates promotion by
-fact-checking backtick-quoted file/symbol references against the graph and
-applying prose/quality heuristics; it is NOT a comprehensive hallucination
-detector, since un-backticked prose is not verified (see
-src/compass/critic.py). The critic runs automatically on task completion.
+that can read markdown and run `cairn task` can process them. The deterministic
+critic gates promotion by fact-checking backtick-quoted file/symbol references
+against the graph; un-backticked prose is NOT verified (see src/compass/critic.py).
 
 Task lifecycle:
   pending -> in-progress (claimed) -> done (critic run) -> [promoted | revised | dropped]
   A revised task spawns a new '<kind>-revise' task with the fact errors attached,
   up to MAX_REVISE_CYCLES times.
-
-This decouples cairn from any specific LLM/agent. The agent loads the
-cairn skill, reads a pending task, writes a result file, runs
-`cairn task complete`. Prompts live in the skill, keyed by task_kind.
 """
 from __future__ import annotations
 
@@ -114,33 +107,23 @@ def list_tasks(
 def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Optional[Task]:
     """Atomically claim a pending task. Returns None if not claimable.
 
-    Uses os.open(O_CREAT|O_EXCL) on a claim-marker file for atomicity.
-    Two concurrent claims on the same pending task yield exactly one winner.
-    An already-claimed task cannot be re-claimed.
-
-    If an existing `.claim` marker is older than CLAIM_STALE_SECONDS, it is
-    treated as leaked (e.g. a crash between marker creation and status update)
-    and reclaimed. This prevents a leaked marker from permanently blocking a
-    task.
+    Uses os.open(O_CREAT|O_EXCL) on a claim-marker file; two concurrent claims
+    on the same pending task yield exactly one winner. A `.claim` marker older
+    than CLAIM_STALE_SECONDS is treated as leaked and reclaimed.
     """
     # Create claim marker path (sibling to the task file)
     claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
 
     try:
-        # Try to create the claim marker atomically.
-        # This fails with FileExistsError if already exists (i.e., already claimed).
+        # Create the claim marker atomically (O_EXCL fails if already claimed).
         fd = os.open(claim_marker, os.O_CREAT | os.O_EXCL)
         os.close(fd)
     except FileExistsError:
-        # Marker already exists. Before giving up, check whether it's stale:
-        # a crash between os.open above and the status update below can leave a
-        # marker with the task still "pending", permanently blocking it.
+        # Marker exists -- check if it's stale (leaked by a crash between marker
+        # creation and status update) before giving up.
         if not _try_remove_stale_marker(claim_marker):
-            # Not stale (or couldn't remove) -- genuinely claimed by someone.
             return None
-        # Stale marker removed: retry the atomic create exactly once. If another
-        # agent grabbed the slot in the meantime this raises FileExistsError
-        # again and we treat it as "not claimable", preserving single-winner.
+        # Stale marker removed: retry once. A concurrent winner raises again.
         try:
             fd = os.open(claim_marker, os.O_CREAT | os.O_EXCL)
             os.close(fd)
@@ -179,18 +162,16 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
 
 
 def _try_remove_stale_marker(claim_marker: Path) -> bool:
-    """If `claim_marker` is older than CLAIM_STALE_SECONDS, remove it.
+    """Remove `claim_marker` if older than CLAIM_STALE_SECONDS.
 
-    Returns True if the stale marker was removed (caller should retry the
-    atomic create). Returns False if the marker is fresh or could not be
-    removed safely.
+    Returns True if the stale marker was removed (or vanished), False if it is
+    fresh or could not be removed.
     """
     try:
         mtime = os.stat(claim_marker).st_mtime
     except OSError:
-        # Marker disappeared between the FileExistsError and the stat -- it's
-        # gone now, so report True so the caller retries the atomic create
-        # (which will either succeed or lose cleanly to a concurrent winner).
+        # Marker disappeared between FileExistsError and stat -- report True so
+        # the caller retries the atomic create.
         return True
     if (time.time() - mtime) < CLAIM_STALE_SECONDS:
         return False
@@ -210,15 +191,9 @@ def complete_task(
 ) -> Dict[str, Any]:
     """Mark a task done and run the deterministic critic on its result.
 
-    Returns {task_id, promoted, revised, dropped, errors, quality}.
-    On fact-check failure, spawns a revise task (up to MAX_REVISE_CYCLES).
-    On pass, the caller is responsible for promoting (e.g. into compass/).
-
-    Ownership check: when `claimer` is provided, it must match the task's
-    `assigned_to` (the agent that claimed it); a mismatch refuses completion
-    with a clear error and leaves the task in-progress. When `claimer` is None
-    the call is permissive -- callers without an identity still work, at the
-    cost of leaving the ownership guardrail inert.
+    Returns {task_id, promoted, revised, dropped, errors, quality}. On fact-check
+    failure, spawns a revise task (up to MAX_REVISE_CYCLES). When `claimer` is
+    provided it must match the task's `assigned_to`, else completion is refused.
     """
     task = _read(bundle, task_id)
     if task is None or task.status != "in-progress":
@@ -231,10 +206,9 @@ def complete_task(
             "quality": 0.0,
         }
 
-    # Ownership guard. Refuse if a claimer identity was supplied but does
-    # not own this task. Leave the task in-progress so the rightful owner can
-    # still complete it. (Empty-string assigned_to means the task was claimed
-    # anonymously; treat that as "anyone may complete".)
+    # Ownership guard. Refuse if a claimer identity was supplied but does not
+    # own this task. Empty-string assigned_to means the task was claimed
+    # anonymously and anyone may complete it.
     if claimer is not None and task.assigned_to and claimer != task.assigned_to:
         return {
             "task_id": task_id,
@@ -286,18 +260,11 @@ def complete_task(
             
             # Branch on critic result
             if critic_result.passed:
-                # Pass: promote compass results into compass/<module> so
-                # cairn compass list/gaps/validate pick them up. (Other kinds,
-                # e.g. wiki, have no current task producer -- left unpromoted
-                # per this function's documented "caller promotes" contract.)
-                #
-                # The result body is promoted AS-IS. The critic gates this by
-                # verifying backtick-quoted file/symbol refs and (for
-                # prose-heavy / low-ref drafts) demanding a higher quality
-                # score, but un-backticked prose is NOT verified. When the
-                # critic emitted warnings, prepend a visible marker so the
-                # promoted concept carries its provenance/caveat rather than
-                # looking fully checked.
+                # Promote compass/flow results into compass/ so the
+                # list/gaps/validate tools pick them up. The result body is
+                # promoted AS-IS; when the critic emitted warnings, a visible
+                # marker is prepended so the promoted concept carries its caveat.
+                # (Un-backticked prose is NOT critic-verified.)
                 promoted = False
                 if task.task_kind in ("compass-synthesize", "compass-revise"):
                     from ..compass.generator import _derive_title
@@ -324,8 +291,7 @@ def complete_task(
 
                 if task.task_kind in ("flow-synthesize", "flow-revise"):
                     # Promote flow results to compass/flow-{entry} so flow-gaps
-                    # coverage detection recognizes them. concept_id scheme
-                    # matches generate_flow_compass (generator.py).
+                    # coverage detection recognizes them.
                     entry = task.resource
                     promoted_body = result
                     if critic_result.warnings:
@@ -358,9 +324,11 @@ def complete_task(
             else:
                 # Fail with errors
                 if task.attempt < MAX_REVISE_CYCLES:
-                    # Spawn a revise task
-                    revise_kind = task.task_kind.replace("-synthesize", "-revise")
-                    if "-revise" not in revise_kind and task.task_kind != revise_kind:
+                    # Spawn a revise task. A synthesize task becomes the matching
+                    # revise kind; any other kind appends "-revise".
+                    if task.task_kind.endswith("-synthesize"):
+                        revise_kind = task.task_kind[: -len("-synthesize")] + "-revise"
+                    else:
                         revise_kind = f"{task.task_kind}-revise"
                     
                     create_task(
@@ -395,7 +363,6 @@ def complete_task(
                     }
         except Exception:
             # Critic run failed - treat as success but log error
-            # (This preserves existing behavior when critic is unavailable)
             return {
                 "task_id": task_id,
                 "promoted": False,
@@ -444,10 +411,7 @@ def _task_to_concept(task: Task) -> OKFConcept:
     # plus stored structurally in extensions for programmatic access.
     extensions["facts"] = task.facts
     body = _render_body(task)
-    # Task lifecycle status rides on the OKF v0.2 `status` first-class field.
-    # (Task values pending|in-progress|done|failed are distinct from OKF's
-    # draft|stable|deprecated, so there is no semantic ambiguity; `concept.status`
-    # is simply where per-concept lifecycle now lives.)
+    # Task lifecycle status rides on the OKF v0.2 first-class `status` field.
     return OKFConcept(
         type="Task",
         title=f"{task.task_kind}: {task.resource}",
@@ -513,8 +477,8 @@ def _output_spec(task_kind: str) -> str:
 
 def _concept_to_task(concept: OKFConcept) -> Task:
     ext = concept.extensions
-    # Task status lives on the OKF v0.2 first-class `status` field. Fall back to
-    # a legacy `extensions["status"]` for tasks written before the v0.2 upgrade.
+    # Task status lives on the OKF v0.2 first-class `status` field; fall back
+    # to extensions["status"] for tasks written before the v0.2 upgrade.
     task_status = concept.status or ext.get("status", "pending")
     return Task(
         id=concept.concept_id.split("/")[-1],

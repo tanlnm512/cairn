@@ -27,8 +27,7 @@ def reindex_paths(
     """Re-index a set of absolute file paths. Handles repo resolution, deletion,
     and resolver re-run. Returns {'reindexed': n, 'deleted': m, 'errors': [...]}.
 
-    Both the git-diff incremental path and the file watcher call this. It is
-    idempotent and safe to call from the watcher thread (as long as the watcher
+    Idempotent and safe to call from the watcher thread (as long as the watcher
     opens its own connection).
     """
     import uuid
@@ -59,35 +58,21 @@ def reindex_paths(
             continue
 
         cur = conn.cursor()
-        # Find existing file row by PATH (not repo_id). build_graph stores
-        # repo_id='' for the single-repo workspace case (workspace='.' has no
-        # relative-path component to derive a repo name from), while
-        # infer_repo_for_path here returns the directory name ('cairn').
-        # Keying the lookup on repo_id would miss the row, skip the delete of
-        # old symbols, and then the re-insert would FK-violate on the stale
-        # symbols still present. The file's path is its stable identity; match
-        # on that. Try the inferred repo first (fast path when it agrees),
-        # then fall back to a path-only lookup.
-        #
-        # Path normalization: build stores RELATIVE paths (e.g. 'service.py'
-        # relative to the repo root), while reindex_paths receives ABSOLUTE
-        # paths from the change detector. Match on both forms: the exact
-        # abs_path, the basename, and abs_path relative to the repo root.
+        # files.path is stored as REPO-RELATIVE (the portable-path contract);
+        # reindex_paths receives ABSOLUTE paths. Normalize the incoming abs_path
+        # to repo-relative first (the common case). Fall back to matching the
+        # stored absolute form for DBs not yet rebuilt to portable paths.
         from pathlib import Path as _P
         rel_to_repo = str(_P(abs_path).relative_to(repo_path)) if abs_path.startswith(repo_path) else _P(abs_path).name
 
+        # Primary: repo-relative (current build contract).
         row = cur.execute(
-            "SELECT id, repo_id, path FROM files WHERE repo_id = ? AND path = ?",
-            (repo, abs_path),
+            "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
         ).fetchone()
         if row is None:
+            # Fallback: DBs not yet rebuilt store absolute paths.
             row = cur.execute(
                 "SELECT id, repo_id, path FROM files WHERE path = ?", (abs_path,)
-            ).fetchone()
-        if row is None:
-            # Stored as repo-relative; abs_path didn't match.
-            row = cur.execute(
-                "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
             ).fetchone()
         # Use the STORED repo_id for downstream inserts so FK constraints on
         # files.repo_id -> repos.id hold (the inferred 'repo' may not exist in
@@ -102,16 +87,15 @@ def reindex_paths(
                 (file_id,),
             )
             # Cross-file edges/imports pointing INTO this file's symbols (as
-            # target) aren't touched by the DELETEs above -- only this file's
-            # own outgoing edges are. Null out those references before
-            # deleting the symbols below, or the FK (edges.target_id /
-            # imports.resolved_symbol_id -> symbols.id, no cascade) raises
-            # "FOREIGN KEY constraint failed". Nulling (not deleting the edge
-            # row) matches the existing unresolved-target convention --
-            # target_name/imported_path survive for the resolver to re-link
-            # once the symbol reappears.
+            # target) aren't touched by the DELETEs above. Null out those
+            # references before deleting the symbols below, or the FK
+            # (edges.target_id / imports.resolved_symbol_id -> symbols.id,
+            # no cascade) raises "FOREIGN KEY constraint failed". Nulling
+            # matches the unresolved-target convention: target_name/
+            # imported_path survive for the resolver to re-link.
             cur.execute(
-                "UPDATE edges SET target_id = NULL WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+                "UPDATE edges SET target_id = NULL, resolution = 'unresolved' "
+                "WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
                 (file_id,),
             )
             cur.execute(
@@ -121,8 +105,7 @@ def reindex_paths(
             cur.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
             # Clear embeddings for these symbols BEFORE deleting them, or the
             # FK (embeddings.symbol_id -> symbols.id) blocks the symbol delete.
-            # Re-embedding after reindex repopulates them; leaving stale rows
-            # would point at the wrong symbol after the id is reused.
+            # Re-embedding after reindex repopulates them.
             try:
                 cur.execute(
                     "DELETE FROM embeddings WHERE symbol_id IN "
@@ -145,7 +128,10 @@ def reindex_paths(
                 deleted += 1
             # Also remove from pending_sync if tracking.
             try:
-                conn.execute("DELETE FROM pending_sync WHERE path = ?", (abs_path,))
+                conn.execute(
+                    "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                    (abs_path, stored_path),
+                )
                 conn.commit()
             except sqlite3.OperationalError:
                 logger.debug("pending_sync table missing", exc_info=True)
@@ -153,12 +139,12 @@ def reindex_paths(
             continue
 
         # Re-parse and insert.
-        from .scanner import file_sha256, EXTENSION_MAP
+        from .scanner import file_sha256, EXTENSION_MAP, resolve_file_language
 
         suffix = Path(abs_path).suffix
         if suffix not in EXTENSION_MAP:
             continue
-        language = EXTENSION_MAP[suffix]
+        language = resolve_file_language(suffix, abs_path)
 
         file_hash = file_sha256(Path(abs_path))
         from .builder import get_parser, insert_parsed_file, insert_parse_error
@@ -170,22 +156,26 @@ def reindex_paths(
         try:
             pf = parser.parse(abs_path)
             name_to_symbol_ids = {}
+            # Store files.path as repo-relative (portable); abs_path is only
+            # used to stat the file for size/mtime inside insert_parsed_file.
             insert_parsed_file(
-                cur, stored_repo, abs_path, language, file_hash, pf,
+                cur, stored_repo, rel_to_repo, abs_path, language, file_hash, pf,
                 name_to_symbol_ids, repo_edges_by_file,
             )
             conn.commit()
             reindexed += 1
-            # Clear pending_sync for successfully reindexed files.
+            # Clear pending_sync for successfully reindexed files. Match both
+            # the rel form (current build contract) and abs form (DBs not yet
+            # rebuilt to portable paths) so either clears its rows.
             try:
-                conn.execute("DELETE FROM pending_sync WHERE path = ?", (abs_path,))
+                conn.execute("DELETE FROM pending_sync WHERE path IN (?, ?)", (rel_to_repo, abs_path))
                 conn.commit()
             except sqlite3.OperationalError:
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
         except Exception as e:
             import traceback
-            insert_parse_error(cur, stored_repo, abs_path, str(e), traceback.format_exc())
+            insert_parse_error(cur, stored_repo, rel_to_repo, str(e), traceback.format_exc())
             conn.commit()
             errors.append(f"{abs_path}: {e}")
 
@@ -211,12 +201,9 @@ def incremental_update(
     """Re-index only changed files since the last build.
 
     Uses `git diff` to find changed source files, deletes their old symbols/edges,
-    and re-parses + inserts them. Returns a summary.
-
-    Uses a longer busy_timeout than interactive MCP tool calls: this is a
-    background CLI command that can afford to wait out lock contention from
-    concurrently-running `cairn serve` processes (SSE daemon + per-editor stdio
-    clients) rather than fail after 5s.
+    and re-parses + inserts them. Returns a summary. Uses a longer busy_timeout
+    than interactive MCP tool calls so it can wait out lock contention from
+    concurrently-running `cairn serve` processes rather than fail after 5s.
     """
     conn = get_db(db_path, busy_timeout_ms=20000)
     repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
@@ -236,16 +223,14 @@ def incremental_update(
 def _changed_source_files(repo_path: Path, conn=None) -> List[str]:
     """Return repo-relative paths of changed source files since last index.
 
-    Primary signal: ``git diff --name-only HEAD`` (covers uncommitted edits +
-    the last commit). Falls back to size/mtime comparison against the ``files``
-    table when git is unavailable or the repo has no HEAD yet (a fresh
-    checkout with no commits, or a non-git source tree). Without the fallback,
-    such repos silently report "0 changed files" on every ``cairn update`` — the
-    git call exits non-zero and is swallowed as "no changes".
+    Primary signal: ``git diff --name-only HEAD``. Falls back to size/mtime
+    comparison against the ``files`` table when git is unavailable or the repo
+    has no HEAD yet. Without the fallback, such repos silently report "0 changed
+    files" on every ``cairn update``.
 
     ``conn`` (optional) is needed only for the fallback path. If omitted and
-    git is unavailable, returns [] (callers that want the fallback must pass
-    the open connection, since detection is per-repo and the DB is shared).
+    git is unavailable, returns [] -- callers that want the fallback must pass
+    the open connection.
     """
     out = _run_git(["diff", "--name-only", "HEAD"], str(repo_path))
     if out is not None:
@@ -267,10 +252,10 @@ def _changed_source_files(repo_path: Path, conn=None) -> List[str]:
 def _changed_via_stat(repo_path: Path, conn) -> List[str]:
     """Size/mtime-based change detection against the ``files`` table.
 
-    Mirrors the logic in ``cairn sync`` (cli/system.py): a file is "changed" if
-    its on-disk size or mtime differs from the stored row by more than the
-    0.5s mtime tolerance, or if a tracked file no longer exists, or if a new
-    source file appears that isn't in the table. Returns repo-relative paths.
+    A file is "changed" if its on-disk size or mtime differs from the stored
+    row by more than the 0.5s mtime tolerance, or if a tracked file no longer
+    exists, or if a new source file appears that isn't in the table. Returns
+    repo-relative paths.
     """
     repo_name = repo_path.name
     try:
@@ -317,8 +302,8 @@ def _reindex_file(
 ):
     """Delete old symbols/edges/imports/errors for a file and re-parse + insert it.
 
-    Single-file path kept for backward compat (used by `cairn update --file`).
-    Delegates to reindex_paths internally.
+    Single-file entry point used by `cairn update --file`. Delegates to
+    reindex_paths internally.
     """
     abs_path = str(repo_path / rel_path)
     # Derive workspace from repo_path.parent (multi-repo) or use explicit value.
@@ -333,8 +318,8 @@ def incremental_via_rebuild(
 ) -> dict:
     """Pragmatic incremental: rebuild only the repo(s) that changed.
 
-    Detects which repos have uncommitted changes and rebuilds just those.
-    Faster than full rebuild, correct, and reuses the tested builder path.
+    Detects which repos have uncommitted changes and rebuilds just those --
+    faster than a full rebuild, and reuses the tested builder path.
     """
     repos_all = [r.name for r in scanner_mod.discover_repos(workspace)]
     if repo:
