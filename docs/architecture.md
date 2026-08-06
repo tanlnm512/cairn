@@ -35,7 +35,7 @@ flowchart TD
     A["Agent / Human<br/>MCP tools • cairn CLI"] --> R["Router layer<br/>explore"]
     R --> L1["Graph layer<br/>9 tools: symbols, callers, callees,<br/>impact, search, deps, semantic_search, explore, viz"]
     R --> L2["Compass + Knowledge-base layer<br/>5 tools: get_compass, search_knowledge,<br/>ask_compass, trace_flow, generate_flow"]
-    R --> L4["Memory layer<br/>7 tools: recall_memory, record_memory..."]
+    R --> L4["Memory layer<br/>8 tools: recall_memory, record_memory..."]
     R --> L5["Knowledge layer<br/>5 tools: add, search, status, trace_workflow..."]
     L1 --> P["Tree-sitter parsers<br/>Kotlin • Java • Python • Swift<br/>TS • JS • Dart • ObjC • Go"]
     L1 --> DB[("SQLite store<br/>.kg")]
@@ -94,7 +94,7 @@ feature documentation at a level above symbols — lives here too, exposed throu
 return a skeleton — drill into the layer tools rather than treating that as "no
 info exists."
 
-### Layer 4 — Memory (7 tools)
+### Layer 4 — Memory (8 tools)
 
 Tribal knowledge: decisions, patterns, mistakes, workarounds. `recall_memory`
 retrieves by symbol name or title tokens; `record_memory` captures a learning

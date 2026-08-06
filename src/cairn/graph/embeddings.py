@@ -364,12 +364,28 @@ def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
 
     # We can't know pip's internal progress, so just tick elapsed time.
     # progress_bar's own throttling caps the actual redraw rate.
+    # Drain stdout in the loop: pip writes progress lines to the combined
+    # stdout/stderr pipe, and if its output exceeds the OS pipe buffer
+    # (~64 KB) pip blocks on write. A poll-only loop that never reads would
+    # deadlock there forever.
+    output_lines = []
     with progress_bar("Installing semantic deps", total=None, unit="") as bar:
         while proc.poll() is None:
             bar.advance(0)
+            # Drain any pending output so the pipe never fills.
+            if proc.stdout:
+                while True:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    output_lines.append(line)
             time.sleep(0.2)
+        # Drain any trailing output after the process exits.
+        if proc.stdout:
+            for line in proc.stdout:
+                output_lines.append(line)
 
-    output = proc.stdout.read() if proc.stdout else ""
+    output = "".join(output_lines)
     if proc.returncode != 0:
         # Print captured output so the user sees the actual pip error.
         if output:
@@ -483,13 +499,13 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
         c2 = 0
 
     tables = cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_%'").fetchall()
+    # Resolve the active ANN table name once (import outside the loop so an
+    # ImportError surfaces loudly rather than being swallowed per-iteration,
+    # which previously left stale vec0 tables accumulating forever).
+    from .ann_index import _table_name as ann_table_name
     for (tname,) in tables:
-        try:
-            from .ann_index import ann_table_name
-            if tname != ann_table_name(target_model):
-                cur.execute(f"DROP TABLE IF EXISTS {tname}")
-        except Exception:
-            pass
+        if tname != ann_table_name(target_model):
+            cur.execute(f"DROP TABLE IF EXISTS {tname}")
 
     conn.commit()
     return c1 + c2

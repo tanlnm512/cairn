@@ -61,6 +61,15 @@ TS_JS_MODIFIERS = {
 # Node types that declare a named type containing members (class-like).
 TYPE_DECL_NODES = {"class_declaration", "abstract_class_declaration", "interface_declaration"}
 
+# Declaration nodes whose own children include their `decorator`(s). In
+# tree-sitter-typescript, a class/method/function decorator is a CHILD of the
+# decorated node, so these nodes collect their decorators directly via
+# _own_decorators rather than through the pending queue.
+DECL_NODES_WITH_OWN_DECORATORS = TYPE_DECL_NODES | {
+    "method_definition",
+    "function_declaration",
+}
+
 # Node types treated as top-level-or-nested variable declarations.
 VAR_DECL_NODES = {"lexical_declaration", "variable_declaration"}
 
@@ -133,23 +142,26 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             return  # don't descend; nothing else useful inside
 
         if t == "decorator":
-            # `@Controller('users')` etc. Stash the full decorator text to
-            # attach to the NEXT declaration sibling (decorators always
-            # immediately precede their target in source order, so a simple
-            # accumulate-then-consume-on-next-declaration is correct here --
-            # unlike Dart's call chains, no indexed lookahead is needed).
-            # Deliberately NOT walked into: its inner call_expression
-            # (`Controller(...)`) is a decorator invocation, not a real call,
-            # and must not leak into the call graph as a spurious edge.
+            # `@Controller('users')` etc. The full decorator text attaches to
+            # its target declaration. In tree-sitter-typescript a decorator is
+            # a CHILD of the node it decorates (class_declaration /
+            # method_definition / function_declaration), NOT a preceding
+            # sibling -- so the declaration's own _parse_* picks it up via
+            # _own_decorators, and we must NOT also stash it on the pending
+            # queue (doing so would glom it onto the next method/sibling).
             #
-            # Parameter-position decorators (`getUser(@Param('id') id: ...)`)
-            # are a different beast: we don't track parameters as symbols at
-            # all, so there is nothing correct to attach them to. If they were
-            # pushed onto the same pending queue they'd incorrectly glom onto
-            # the NEXT class/method encountered instead. Drop them here by
-            # checking the immediate parent.
+            # Only decorators whose parent is NOT a declaration node (e.g. a
+            # standalone export-list decorator, or the legacy "preceding
+            # sibling" shape some emitters produce) fall through to the pending
+            # queue. Parameter-position decorators
+            # (`getUser(@Param('id') id: ...)`) are dropped entirely: we don't
+            # track parameters as symbols, so there's nothing correct to
+            # attach them to.
             parent_type = node.parent.type if node.parent is not None else None
             if parent_type in ("required_parameter", "optional_parameter"):
+                return
+            if parent_type in DECL_NODES_WITH_OWN_DECORATORS:
+                # The declaration visitor collects its own decorator children.
                 return
             self._pending_decorators.append(self._node_text(node, source).strip())
             return
@@ -262,6 +274,17 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         self._pending_decorators = []
         return decorators
 
+    def _own_decorators(self, node: Node, source: bytes) -> List[str]:
+        """Decorators that are direct children of ``node`` (e.g. a class's own
+        ``@Controller(...)``). In tree-sitter-typescript these are children of
+        the decorated node, so collect them here rather than via the pending
+        queue (which would mis-attach them to the first inner member)."""
+        return [
+            self._node_text(c, source).strip()
+            for c in node.children
+            if c.type == "decorator"
+        ]
+
     # --- declarations ------------------------------------------------------
 
     def _classify_type_decl(self, node: Node) -> str:
@@ -270,7 +293,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         return "class"  # class_declaration, abstract_class_declaration
 
     def _parse_type_decl(self, node: Node, source: bytes) -> Optional[Symbol]:
-        decorators = self._take_pending_decorators()
+        decorators = self._take_pending_decorators() + self._own_decorators(node, source)
         name = self._find_name(node, source, ("type_identifier", "identifier"))
         if not name:
             return None
@@ -306,7 +329,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_function(self, node: Node, source: bytes, kind: str) -> Optional[Symbol]:
-        decorators = self._take_pending_decorators()
+        decorators = self._take_pending_decorators() + self._own_decorators(node, source)
         name_types = ("property_identifier",) if node.type == "method_definition" else ("identifier",)
         name = self._find_name(node, source, name_types)
         if not name:

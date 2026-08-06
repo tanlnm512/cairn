@@ -11,14 +11,22 @@ from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 from ..mcp_server import lifecycle as lc
 
 @main.group(invoke_without_command=True)
+@click.option("--db", default=None, help="SQLite DB path (default: central store).")
+@click.option("--port", default=None, type=int, help="Port (for SSE transport).")
+@click.option(
+    "--read-only/--read-write",
+    "read_only",
+    default=None,
+    help="Open the graph DB read-only (default: read-only under SSE, read-write under stdio).",
+)
 @click.pass_context
-def serve(ctx):
+def serve(ctx, db, port, read_only):
     """Start the cairn MCP server, or manage the persistent SSE daemon.
 
     \b
     Run in the foreground (classic stdio / one-shot SSE):
       cairn serve                 # stdio (MCP clients spawn this)
-      cairn serve --port {{DEFAULT_PORT}}     # SSE, foreground, dies when terminal closes
+      cairn serve --port N        # SSE on port N, foreground
 
     \b
     Manage a persistent SSE daemon shared by all clients (macOS launchd):
@@ -28,8 +36,8 @@ def serve(ctx):
       cairn serve restart         # stop + start
     """
     if ctx.invoked_subcommand is None:
-        # `cairn serve` with no subcommand: foreground stdio mode.
-        _serve_foreground(db=None, port=None)
+        # `cairn serve` with no subcommand: foreground mode.
+        _serve_foreground(db=db, port=port, read_only=read_only)
 
 
 @serve.command("run")

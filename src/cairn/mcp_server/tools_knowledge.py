@@ -124,6 +124,7 @@ def knowledge_delete(doc_id: str) -> str:
     conn = _rw_conn()
     try:
         ok = delete_document(bundle, doc_id, conn=conn)
+        conn.commit()
     finally:
         conn.close()
     if not ok:

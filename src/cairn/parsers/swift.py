@@ -50,6 +50,13 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             hash=hashlib.sha256(source).hexdigest(),
             line_count=source.count(b"\n") + 1,
         )
+        # Parsers are cached singletons reused across files, so reset all
+        # per-file accumulators here -- otherwise edges/scope from file N bleed
+        # into file N+1's ParsedFile.
+        self._pending_edges = []
+        self._scope = []
+        self._scope_kinds = []
+        self._callable_scope = []
         self._walk(tree.root_node, source, pf)
         pf.edges.extend(self._pending_edges)
         return pf

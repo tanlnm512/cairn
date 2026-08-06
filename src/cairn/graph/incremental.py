@@ -111,7 +111,8 @@ def reindex_paths(
             # target_name/imported_path survive for the resolver to re-link
             # once the symbol reappears.
             cur.execute(
-                "UPDATE edges SET target_id = NULL WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+                "UPDATE edges SET target_id = NULL, resolution = 'unresolved' "
+                "WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
                 (file_id,),
             )
             cur.execute(

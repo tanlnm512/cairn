@@ -41,7 +41,7 @@ flowchart TB
     subgraph Layers["5 Layers"]
         L1["L1 Graph<br/>9 tools"]
         L2["L2 Compass + KB<br/>5 tools"]
-        L4["L4 Memory<br/>7 tools"]
+        L4["L4 Memory<br/>8 tools"]
         L5["L5 Knowledge<br/>5 tools"]
     end
 
@@ -83,7 +83,7 @@ fact-checked by a deterministic critic against the graph. See the
 |-------|-------|---------|-----------|
 | **L1 Graph** | 9 | The structural core: definitions, callers/callees, blast radius, semantic search, the `explore` aggregator, cross-repo deps, graph viz | `.kg` SQLite |
 | **L2 Compass + KB + Router** | 5 | Module navigation guides (`get_compass`), KB search (`search_knowledge`), the cross-layer router (`ask_compass`), flow tracing/generation (`trace_flow`, `generate_flow`) | `.knowledge/` + `.kg` |
-| **L4 Memory** | 7 | Tribal memory across tiers: record / recall / digest / promote / demote / decay / delete | `.knowledge/` + `.kg` (refs) |
+| **L4 Memory** | 8 | Tribal memory across tiers: record / recall / digest / promote / demote / evolve / decay / delete | `.knowledge/` + `.kg` (refs) |
 | **L5 Knowledge** | 5 | Business docs + procedural workflows: add / search / delete / status / trace_workflow | `.knowledge/` |
 
 > There is no separate "L3". The router (`ask_compass`) lives in the L2 group

@@ -232,6 +232,7 @@ def knowledge_remove(doc_id, db):
     conn = get_db(db)
     try:
         ok = delete_document(bundle, doc_id, conn=conn)
+        conn.commit()
     finally:
         conn.close()
     if ok:

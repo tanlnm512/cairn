@@ -197,10 +197,11 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
     if not file_path.exists():
         return False
     file_path.unlink()
-    # Clean up memory_refs in DB.
+    # Clean up memory_refs in DB. Do NOT commit here -- the caller owns the
+    # transaction boundary; committing a connection we don't own can either
+    # commit an in-flight caller transaction or hit "database is locked".
     if conn is not None:
         conn.execute("DELETE FROM memory_refs WHERE memory_path = ?", (cid,))
-        conn.commit()
     return True
 
 

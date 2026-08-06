@@ -173,9 +173,11 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
         rel_id = str(Path(doc_id).relative_to(bundle.root))
     except ValueError:
         rel_id = doc_id
+    # Clean up embeddings in DB. Do NOT commit here -- the caller owns the
+    # transaction boundary; committing a connection we don't own can either
+    # commit an in-flight caller transaction or hit "database is locked".
     if conn is not None:
         conn.execute("DELETE FROM knowledge_embeddings WHERE doc_id = ?", (rel_id,))
-        conn.commit()
     return True
 
 

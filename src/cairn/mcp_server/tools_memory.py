@@ -270,6 +270,7 @@ def memory_delete(memory_path: str) -> str:
     conn = _rw_conn()
     try:
         ok = dm(bundle, memory_path, conn=conn)
+        conn.commit()
     finally:
         conn.close()
     if not ok:

@@ -329,21 +329,6 @@ class GoParser(BaseParser, TreeSitterParserBase):
                     operand_text = self._node_text(child, source).strip()
         return field_name, operand_text
 
-    def _infer_receiver_type(self, receiver_text: Optional[str]) -> Optional[str]:
-        """Best-effort receiver type for the resolver.
-
-        The receiver is often a local variable or a package qualifier; we only
-        return it when it looks like a type (Capitalized), since the resolver's
-        type-aware tier matches on receiver type. Package qualifiers like
-        ``fmt`` are lowercase and won't match a class anyway.
-        """
-        if not receiver_text:
-            return None
-        # Heuristic: a capitalized leading char suggests a type, not a package.
-        if receiver_text and receiver_text[0].isupper():
-            return receiver_text
-        return None
-
     # ------------------------------------------------------------- import parse
 
     def _parse_imports(self, node: Node, source: bytes) -> List[Import]:

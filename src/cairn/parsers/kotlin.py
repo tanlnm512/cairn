@@ -82,7 +82,13 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             line_count=source.count(b"\n") + 1,
         )
 
-        # Stack of enclosing type names; empty = top-level.
+        # Parsers are cached singletons reused across files, so reset all
+        # per-file accumulators here -- otherwise edges/scope from file N bleed
+        # into file N+1's ParsedFile.
+        self._pending_edges = []
+        self._scope = []
+        self._scope_kinds = []
+        self._callable_scope = []
         # In-file receiver-type tracker. _var_types is a stack of
         # {var_name: type_name} scopes -- one per enclosing function, seeded
         # with `this` -> enclosing type and typed parameters, so a receiver

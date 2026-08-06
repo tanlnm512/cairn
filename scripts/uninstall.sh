@@ -279,7 +279,25 @@ if $DO_GRAPH; then
       if $DRY_RUN; then
         echo -e "  ${DIM}Would rm -rf $STORE${NC}"
       else
-        rm -rf "$STORE"
+        # SAFETY: normalize the resolved store path and refuse to rm anything
+        # that is not strictly under the cairn home. This guards against a
+        # mis-set CAIRN_HOME, an empty STORE, or resolve_store() falling back
+        # to an unexpected location. Applies even in --full (non-interactive)
+        # mode -- a wrong path here can wipe arbitrary data.
+        _cairn_home_norm="$(cd "$local_home" 2>/dev/null && pwd -P)" || \
+          _cairn_home_norm=""
+        _store_norm="$(cd "$STORE" 2>/dev/null && pwd -P)" || \
+          _store_norm=""
+        if [[ -z "$_store_norm" ]]; then
+          warn "Could not resolve '$STORE' (already gone?) — skipping rm"
+        elif [[ -z "$_cairn_home_norm" ]]; then
+          fail "Refusing to remove '$STORE': cairn home '$local_home' is not accessible"
+        elif [[ "$_store_norm" != "$_cairn_home_norm" && \
+                "$_store_norm" != "$_cairn_home_norm"/* ]]; then
+          fail "Refusing to remove '$STORE': not under cairn home '$_cairn_home_norm'. Set CAIRN_HOME correctly and re-run."
+        else
+          rm -rf "$_store_norm"
+        fi
 
         # Drop stale workspace entries from workspaces.json (whole-home removal
         # also wipes workspaces.json with the directory; single-store removal

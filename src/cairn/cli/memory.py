@@ -1,4 +1,4 @@
-"""Memory CLI: the memory group and 12 subcommands."""
+"""Memory CLI: the memory group and 14 subcommands."""
 from __future__ import annotations
 
 import click
@@ -322,6 +322,7 @@ def memory_forget(memory_path, db, knowledge):
     conn = get_db(db)
     try:
         ok = delete_memory(bundle, memory_path, conn=conn)
+        conn.commit()
     finally:
         conn.close()
     if ok:

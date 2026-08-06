@@ -238,7 +238,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
         if emb.embed_knowledge_count(conn) == 0:
             return []
 
-        model = emb.current_model()
+        model = emb.current_model(corpus="knowledge")
         q_blob, q_dim = emb.embed_query(query)
 
         # NO JOIN — just the embeddings table

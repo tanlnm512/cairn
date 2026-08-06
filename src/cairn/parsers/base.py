@@ -159,6 +159,21 @@ class TreeSitterParserBase:
             return self._scope[-1]
         return ""
 
+    def _infer_receiver_type(self, receiver_text: Optional[str]) -> Optional[str]:
+        """Best-effort receiver type for the resolver.
+
+        The receiver is often a local variable or a package qualifier; we only
+        return it when it looks like a type (Capitalized), since the resolver's
+        type-aware tier matches on receiver type. Package qualifiers like
+        ``fmt`` are lowercase and won't match a class anyway.
+        """
+        if not receiver_text:
+            return None
+        # Heuristic: a capitalized leading char suggests a type, not a package.
+        if receiver_text[0].isupper():
+            return receiver_text
+        return None
+
     # Max body chars captured per symbol. Large enough to hold a typical
     # method/function implementation; beyond this the embedding chunk would be
     # truncated by chunk_for_symbol anyway, and very long bodies tend to dilute

@@ -167,8 +167,7 @@ def instrument(fn):
     """
     import logging
     import traceback
-    from pathlib import Path
-    
+
     logger = logging.getLogger(__name__)
     
     @functools.wraps(fn)
@@ -183,30 +182,19 @@ def instrument(fn):
             return result
         except Exception as exc:
             duration_ms = (time.time() - t0) * 1000
-            
-            # Log full traceback server-side
+
+            # Log full traceback server-side.
             tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             logger.error(f"Error in {name}: {exc}\n{tb_str}")
 
-            # Sanitize error message to remove internal paths
-            error_msg = str(exc)
-            # Remove user-specific paths like /Users/tan.le/, /home/user/, etc.
-            # Also remove project root paths that might leak
-            home_dir = str(Path.home())
-            if home_dir in error_msg:
-                error_msg = error_msg.replace(home_dir, "~")
-            # Remove other common path patterns
-            parts_to_remove = [
-                "/Projects/", "/cairn/", "/src/", "/.knowledge/",
-                "/.cairn/", "\\.knowledge\\/", "\\.cairn\\/",
-            ]
-            for part in parts_to_remove:
-                error_msg = error_msg.replace(part, "/")
-            
-            # Return sanitized error string instead of raising
-            sanitized_result = f"[ERROR: {name} failed - {error_msg}]"
-            
             _log_metric(name, duration_ms, "error", str(exc))
-            return sanitized_result
+
+            # Re-raise so FastMCP's Tool.run converts the exception into a
+            # proper MCP error response (isError: true). Previously this
+            # returned a "[ERROR: ...]" prose string, which made every failure
+            # look like a successful HTTP-200 result -- clients that check
+            # isError never saw failures, and agents had to regex the error
+            # prefix out of prose.
+            raise
 
     return wrapper

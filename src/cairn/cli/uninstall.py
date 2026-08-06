@@ -323,12 +323,17 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
         ws = str(Path.cwd())
 
     # Decide which steps run. A bare `cairn uninstall` runs all four; any --*-only
-    # flag restricts to just that step. --full implies all four.
+    # flag restricts to just that step. --full implies all four and is mutually
+    # exclusive with --*-only (combining them previously silently ran all four
+    # because the `or full` term dominated every do_* line, defeating the
+    # --*-only intent on a destructive command).
+    if full and (agents_only or hooks_only or graph_only or package_only):
+        raise click.UsageError("--full cannot be combined with --agents-only/--hooks-only/--graph-only/--package-only.")
     any_only = agents_only or hooks_only or graph_only or package_only
-    do_agents = agents_only or not any_only or full
-    do_hooks = hooks_only or not any_only or full
-    do_graph = graph_only or not any_only or full
-    do_package = package_only or not any_only or full
+    do_agents = full or agents_only or not any_only
+    do_hooks = full or hooks_only or not any_only
+    do_graph = full or graph_only or not any_only
+    do_package = full or package_only or not any_only
 
     # --full targets the entire CAIRN_HOME regardless of which workspace
     # we're in. Otherwise the resolved workspace's own store (or, if it has

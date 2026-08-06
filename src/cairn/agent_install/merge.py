@@ -23,6 +23,54 @@ from ._common import (
 # File writers
 # --------------------------------------------------------------------------
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically.
+
+    Writes to a sibling temp file then ``os.replace``s it into place, which is
+    atomic on POSIX (and same-volume Windows). A crash (OOM, SIGKILL, full
+    disk) between truncate and full write would otherwise leave a zero-byte or
+    truncated config file that breaks the user's agent client entirely. The
+    temp file lives in the same directory so the rename never crosses a
+    filesystem boundary.
+    """
+    import os
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            tmp.write(content)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Clean up the temp file on any failure; never leave a dangling .tmp.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _load_json_or_none(path: Path):
+    """Load JSON from ``path``.
+
+    Returns the parsed value, or ``None`` if the file is missing or its JSON is
+    malformed. Callers MUST check for ``None`` and decide whether to skip,
+    back up, or raise -- silently overwriting a malformed user config with a
+    fresh cairn-only one loses their hand-edited data.
+    """
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def _write_file(path: Path, content: str, force: bool, result: InstallResult,
                 dry_run: bool = False) -> None:
     """Write a file unless it exists and !force. Records into result.
@@ -35,8 +83,7 @@ def _write_file(path: Path, content: str, force: bool, result: InstallResult,
     if path.exists() and not force:
         result.add(path, existed=True)
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _atomic_write_text(path, content)
     if path.suffix in (".py", ".sh") and "scripts" in path.parts:
         path.chmod(path.stat().st_mode | 0o111)
     result.add(path, existed=False)
@@ -84,11 +131,33 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
         return
     existing: dict = {}
     if path.exists():
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(existing, dict):
-                existing = {}
-        except (json.JSONDecodeError, OSError):
+        loaded = _load_json_or_none(path)
+        if loaded is None:
+            # Malformed/unreadable JSON: do NOT clobber the user's config. Back
+            # it up so the data is recoverable, then start fresh. (Previously
+            # this silently overwrote with a cairn-only config, losing whatever
+            # the user had -- e.g. a hand-edited file with a trailing comma,
+            # or one mid-edit by another tool.)
+            backup = path.with_suffix(path.suffix + ".bak")
+            try:
+                backup.write_bytes(path.read_bytes())
+                result.written.append(f"backed up malformed {path} -> {backup}")
+            except OSError:
+                # If even the backup fails, refuse to overwrite rather than
+                # destroy data.
+                raise RuntimeError(
+                    f"refusing to overwrite malformed config {path}: could not "
+                    f"back it up. Fix or remove the file and re-run."
+                )
+            existing = {}
+        elif isinstance(loaded, dict):
+            existing = loaded
+        else:
+            # Valid JSON but not an object (e.g. a bare array/string). Preserve
+            # it as-is by backing up and starting fresh.
+            backup = path.with_suffix(path.suffix + ".bak")
+            backup.write_bytes(path.read_bytes())
+            result.written.append(f"backed up non-object {path} -> {backup}")
             existing = {}
 
     # Detect whether our entry is already present.
@@ -97,8 +166,7 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
         return
 
     merged = _deep_merge(existing, merger, config_key=config_key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    _atomic_write_text(path, json.dumps(merged, indent=2) + "\n")
     result.add(path, existed=False)
 
 
@@ -252,17 +320,14 @@ def _rm_if_cairn(path: Path, res: InstallResult) -> None:
 
 def _strip_mcp(path: Path, res) -> None:
     """Remove the cairn server from an mcp.json, leaving others intact."""
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _load_json_or_none(path)
+    if not isinstance(data, dict):
         return
     servers = data.get("mcpServers", {})
     if "cairn" in servers:
         del servers["cairn"]
         data["mcpServers"] = servers
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
         res.written.append(f"stripped cairn from {path}")
 
 
@@ -272,11 +337,8 @@ def _strip_mcp_zcode(path: Path, res) -> None:
     Cleans up empty ``mcp`` and ``servers`` keys when cairn was the only
     server, so the file stays tidy.
     """
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _load_json_or_none(path)
+    if not isinstance(data, dict):
         return
     servers = data.get("mcp", {}).get("servers", {})
     if "cairn" in servers:
@@ -290,7 +352,7 @@ def _strip_mcp_zcode(path: Path, res) -> None:
             data["mcp"] = mcp
         else:
             data.pop("mcp", None)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
         res.written.append(f"stripped cairn from {path}")
 
 
@@ -302,11 +364,8 @@ def _strip_mcp_opencode(path: Path, res) -> None:
     only server. Also strips a stray ``.opencode/mcp.json`` if an earlier
     installer wrote one (opencode itself does not read it).
     """
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
+    data = _load_json_or_none(path)
+    if isinstance(data, dict):
         mcp = data.get("mcp", {})
         if "cairn" in mcp:
             del mcp["cairn"]
@@ -314,20 +373,17 @@ def _strip_mcp_opencode(path: Path, res) -> None:
                 data["mcp"] = mcp
             else:
                 data.pop("mcp", None)
-            path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
             res.written.append(f"stripped cairn from {path}")
     # Cleanup: an earlier installer wrote .opencode/mcp.json (wrong path,
     # never read by opencode). Remove it if present so uninstall is complete.
     stray = path.parent / ".opencode" / "mcp.json"
     if stray.exists():
         # Only treat it as ours if it carries our server.
-        try:
-            stray_data = json.loads(stray.read_text(encoding="utf-8"))
-            if "cairn" in (stray_data.get("mcpServers") or {}):
-                stray.unlink()
-                res.written.append(f"removed stray {stray}")
-        except (json.JSONDecodeError, OSError):
-            pass
+        stray_data = _load_json_or_none(stray)
+        if isinstance(stray_data, dict) and "cairn" in (stray_data.get("mcpServers") or {}):
+            stray.unlink()
+            res.written.append(f"removed stray {stray}")
 
 
 def _strip_hooks(path: Path, res: InstallResult) -> None:
@@ -337,11 +393,8 @@ def _strip_hooks(path: Path, res: InstallResult) -> None:
     regardless of how the python path was written (absolute, venv-relative,
     cd-prefixed).
     """
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _load_json_or_none(path)
+    if not isinstance(data, dict):
         return
     hooks = data.get("hooks", {})
     markers = _hook_markers()
@@ -372,17 +425,14 @@ def _strip_hooks(path: Path, res: InstallResult) -> None:
             data["hooks"] = hooks
         else:
             data.pop("hooks", None)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
         res.written.append(f"stripped cairn hooks from {path}")
 
 
 def _strip_cursor_hooks(path: Path, res: InstallResult) -> None:
     """Remove cairn entries from .cursor/hooks.json."""
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _load_json_or_none(path)
+    if not isinstance(data, dict):
         return
     hooks = data.get("hooks", {})
     markers = _hook_markers()
@@ -404,5 +454,5 @@ def _strip_cursor_hooks(path: Path, res: InstallResult) -> None:
             data["hooks"] = hooks
         else:
             data.pop("hooks", None)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
         res.written.append(f"stripped cairn hooks from {path}")

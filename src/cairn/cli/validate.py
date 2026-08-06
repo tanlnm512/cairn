@@ -1,6 +1,8 @@
 """Validate CLI: OKF conformance + stale path detection."""
 from __future__ import annotations
 
+import sys
+
 import click
 
 from .main import DEFAULT_DB_PATH, get_db, main
@@ -19,6 +21,8 @@ def validate(knowledge):
     click.echo(f"{len(errors)} conformance errors:")
     for e in errors:
         click.echo(f"  {e}")
+    # Exit non-zero so CI/scripts can detect conformance failure.
+    sys.exit(1)
 
 
 # --------------------------------------------------------------------------
@@ -56,5 +60,7 @@ def validate_paths(db, knowledge, mark):
 
     action = "marked" if mark else "found"
     click.echo(f"\n{action} {len(stale)} stale concept(s).")
+    # Exit non-zero so CI/scripts can detect stale concepts.
+    sys.exit(1)
 
 

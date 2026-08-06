@@ -362,7 +362,11 @@ def _extract_migration_name(migration_sql: str) -> str:
     Example: "ALTER TABLE edges ADD COLUMN resolution TEXT" -> "edges.resolution"
     """
     parts = migration_sql.split()
-    if "ADD COLUMN" in parts:
+    # ``parts`` holds whitespace-split tokens, so check for the ADD and COLUMN
+    # keywords separately (``"ADD COLUMN" in parts`` would look for a single
+    # two-word element that never exists, making every migration fall through
+    # to the md5 hash branch below).
+    if "ADD" in parts and "COLUMN" in parts:
         table_idx = parts.index("TABLE") + 1
         col_idx = parts.index("COLUMN") + 1
         table = parts[table_idx]

@@ -88,59 +88,52 @@ class TestInstrumentErrorSanitization:
     """Test L3: @instrument error normalization."""
 
     def test_instrument_sanitizes_error(self, caplog):
-        """Exception with internal path returns sanitized string, no paths leaked."""
+        """Exception is re-raised after being logged server-side (C3 fix).
+
+        Previously @instrument swallowed every exception into a
+        ``[ERROR: ...]`` prose string, which broke the MCP error contract --
+        clients checking ``isError`` never saw failures. Now it logs the full
+        traceback and re-raises so FastMCP shapes the proper MCP error
+        response.
+        """
         from cairn.mcp_server.metric_buffering import instrument
         import logging
-        
+
         caplog.set_level(logging.DEBUG)
-        
+
         @instrument
         def failing_function():
-            # Simulate an error that includes an internal path under the REAL
-            # home dir (machine-independent). The sanitizer strips Path.home()
-            # (replacing it with ~) plus path fragments like /.knowledge/ and
-            # /cairn/. Hardcoding an auditor-specific path (e.g.
-            # /Users/tan.le/...) made this test fail on any other machine.
             from pathlib import Path
             leaky = str(Path.home() / "Projects" / "cairn" / ".knowledge" / "compass" / "some-module.md")
             raise FileNotFoundError(f"No such file or directory: '{leaky}'")
 
-        # The function should return a sanitized error string, not raise
-        result = failing_function()
+        # The function must re-raise (not return a sanitized string), so
+        # FastMCP's Tool.run converts it into a proper MCP isError response.
+        with pytest.raises(FileNotFoundError):
+            failing_function()
 
-        # Should be a string, not an exception
-        assert isinstance(result, str)
-
-        # Should NOT contain the home dir prefix or internal path fragments
-        assert str(Path.home()) not in result
-        assert "/.knowledge/" not in result
-        assert "/cairn/" not in result
-        
-        # Should contain a generic error message
-        assert "error" in result.lower() or "failed" in result.lower()
-        assert "[ERROR:" in result
-        
-        # Should have logged the full traceback server-side
+        # The full exception should still be logged server-side for debugging.
         assert any("FileNotFoundError" in record.message for record in caplog.records), \
             "Full exception should be logged server-side"
 
     def test_instrument_records_error_metric(self, monkeypatch):
-        """Error is recorded as 'error' status in metrics."""
+        """Error is recorded as 'error' status in metrics before re-raising."""
         from cairn.mcp_server.metric_buffering import instrument, _METRIC_BUFFER, _METRIC_LOCK
-        
+
         @instrument
         def failing_function():
             raise ValueError("Test error")
-        
+
         # Clear the buffer
         with _METRIC_LOCK:
             _METRIC_BUFFER.clear()
-        
-        # Call the failing function
-        failing_function()
-        
+
+        # The function re-raises (C3 fix) but must still record the metric
+        # before propagating the exception.
+        with pytest.raises(ValueError):
+            failing_function()
+
         # Check that an error metric was logged
-        # We need to inspect what's in the buffer
         with _METRIC_LOCK:
             assert len(_METRIC_BUFFER) > 0
             metric = _METRIC_BUFFER[0]

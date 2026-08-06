@@ -68,6 +68,22 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
                 click.echo(concept.body)
                 return
 
+            fact_errors = outcome.get("fact_errors") or []
+            if fact_errors:
+                # Mirror the deterministic path: a concept that exhausted its
+                # revise cycles with remaining fact errors must NOT ship to
+                # disk. Previously the LLM path wrote unconditionally and only
+                # printed the errors, leaking an unverified concept.
+                conn.close()
+                click.echo(
+                    f"compass {concept.concept_id}: NOT written — "
+                    f"{len(fact_errors)} unresolved fact error(s) after "
+                    f"{outcome.get('cycles', 0)} revise cycle(s):"
+                )
+                for e in fact_errors[:5]:
+                    click.echo(f"    {e}")
+                sys.exit(1)
+
             bundle.write_concept(concept)
             conn.close()
             click.echo(f"Generated compass ({outcome['mode']}): {concept.concept_id}")
@@ -183,6 +199,8 @@ def compass_validate(db, knowledge):
             click.echo(f"      warn: {w}")
     conn.close()
     click.echo(f"\n{total_errors} total errors across {len(ids)} compass files.")
+    if total_errors:
+        sys.exit(1)
 
 
 @compass.command("gaps")
