@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import click
 import json
-import os
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries

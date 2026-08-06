@@ -20,7 +20,6 @@ BUGS.md#scip-importer-fake-resolution for the regressions that motivated these.
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from cairn.graph.builder import build_graph
@@ -167,7 +166,6 @@ def test_invariant_schema_migration_idempotent(fresh_db):
     # the second pass must not have dropped them). These column names come from
     # the MIGRATIONS list in cairn/graph/schema.py.
     expected_symbol_cols = {
-        "source",          # not a migration, but part of base; harmless to skip
         "metadata",
         "parameters",
         "return_type",
@@ -178,11 +176,11 @@ def test_invariant_schema_migration_idempotent(fresh_db):
     symbol_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(symbols)").fetchall()
     }
-    for col in ("metadata", "parameters", "return_type", "parent_scope",
-                "imports_summary", "body"):
-        assert col in symbol_cols, (
-            f"symbols.{col} should exist after schema apply (got {sorted(symbol_cols)})"
-        )
+    missing = expected_symbol_cols - symbol_cols
+    assert not missing, (
+        f"migration columns missing from symbols after re-apply: {sorted(missing)} "
+        f"(got {sorted(symbol_cols)})"
+    )
 
     edge_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(edges)").fetchall()

@@ -7,7 +7,6 @@ These verify:
   silently clobbering it.
 """
 import json
-import tempfile
 from pathlib import Path
 
 from cairn.agent_install.merge import _atomic_write_text, _merge_json_file, _load_json_or_none
@@ -31,14 +30,12 @@ class TestAtomicWrite:
     def test_no_temp_file_leaked_on_failure(self, tmp_path):
         """If the write fails (e.g. parent dir is read-only), the temp file
         must be cleaned up, not left dangling."""
-        import os
         import unittest.mock as mock
 
         path = tmp_path / "config.json"
         # Simulate a failure during the write by making os.replace raise.
         # The _atomic_write_text helper catches BaseException and unlinks
         # the temp file before re-raising.
-        original_replace = os.replace
 
         def failing_replace(src, dst):
             # Temp file exists at this point

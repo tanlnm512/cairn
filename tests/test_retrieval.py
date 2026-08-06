@@ -21,7 +21,6 @@ from cairn.retrieval import (
     Fusion,
     cosine_scan,
 )
-from cairn.retrieval import Retriever
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

@@ -103,7 +103,6 @@ class TestInstrumentErrorSanitization:
 
         @instrument
         def failing_function():
-            from pathlib import Path
             leaky = str(Path.home() / "Projects" / "cairn" / ".knowledge" / "compass" / "some-module.md")
             raise FileNotFoundError(f"No such file or directory: '{leaky}'")
 

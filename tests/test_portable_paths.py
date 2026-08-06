@@ -11,16 +11,12 @@ different workspace path and asserting reads still resolve.
 """
 from __future__ import annotations
 
-import os
 import shutil
-import sqlite3
-import tempfile
 from pathlib import Path
 
-import pytest
 
 from cairn.graph.builder import build_graph
-from cairn.graph.scanner import resolve_file_path, resolve_repo_path
+from cairn.graph.scanner import resolve_file_path
 from cairn.graph.schema import get_db
 
 
