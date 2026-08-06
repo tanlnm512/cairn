@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Vertical-rail flow UI for `cairn init` and `cairn build`.** Both commands
+  now render a clack-style vertical rail — `┌` open, `│` spacers between
+  groups, green `◆` step markers, animated sub-steps (`Scanning files`,
+  `Parsing code`, `Resolving refs`, `Persisting graph`) that settle in place,
+  and a guaranteed `└` close. Counts and durations in value positions are
+  highlighted (bold blue), while paths and identifiers are left unstyled. The
+  renderer is encoding-safe (ASCII fallback for cp1252/non-UTF-8 terminals),
+  no-op-robust (reordered/dropped progress events can never raise from the
+  renderer), and closes cleanly on every exit path including exceptions
+  (`✗ … — failed`, `└ Failed`). `cairn build` keeps its existing summary
+  panel; the rail replaces only its progress rendering. `cairn init` no
+  longer passes `verbose=True` to `build_graph`, so the per-file `print()`
+  noise the rail replaces is gone. `cairn build -v` renders the rail as plain
+  sequential lines (no live region) so verbose output can't corrupt it.
 - **Portable `.kg` database.** The code graph now stores file paths
   **repo-relative** (`files.path`, `parse_errors.file_path`,
   `skipped_files.path`, `pending_sync.path`) and `repos.path` **workspace-

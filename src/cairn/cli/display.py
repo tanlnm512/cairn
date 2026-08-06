@@ -7,12 +7,14 @@ to plain ``N/M`` text.
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
 from rich.console import Console
+from rich.live import Live
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -24,6 +26,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from rich.table import Table
+from rich.text import Text
 from rich.theme import Theme
 
 # One console for the whole CLI process. Pass through whatever stdout is so
@@ -275,12 +278,263 @@ def progress_bar(
             yield _RichProgressHandle(progress, task_id)
 
 
+# --- Vertical-rail flow ----------------------------------------------------
+# A clack-style continuous rail for multi-step CLI flows (init, build):
+# `┌` open, `│` spacers between groups, `◆` step markers, an animated
+# sub-step that settles in place, and a guaranteed `└` close.
+
+_GLYPHS = {
+    "open":      ("┌", "+"),
+    "rail":      ("│", "|"),
+    "close":     ("└", "+"),
+    "step":      ("◆", "*"),
+    "active":    ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", "|/-\\"),
+    "stat":      ("●", "o"),
+    "failed":    ("✗", "x"),
+    "warn":      ("!", "!"),
+    "separator": ("—", "-"),
+}
+
+_NUM_RE = re.compile(r"(?<![\w./-])\d[\d,]*(?:\.\d+)?[a-z]{0,2}\b")
+
+
+def _unicode_ok() -> bool:
+    """True iff the active console's encoding can encode the rail glyphs.
+
+    Probed once per Rail instance (not at import time) so ``CliRunner`` and
+    piped output re-resolve correctly against the console they're given.
+    """
+    enc = (getattr(console, "encoding", None) or "utf-8").lower()
+    try:
+        "┌│└◆●✗".encode(enc)
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
+def _value(s: str) -> Text:
+    """Build a Text with numbers (counts, durations) highlighted as ``number``.
+
+    Values are never passed as rich markup strings — a workspace path
+    containing ``[`` would corrupt markup, and init/build print user paths.
+    """
+    t = Text(s)
+    t.highlight_regex(_NUM_RE, "number")
+    return t
+
+
+class _ActiveLine:
+    """Renderable for the single in-progress sub-step: ``<frame> <label>``."""
+
+    def __init__(self, label: str, value: str, frame: str, ok: bool):
+        self.label = label
+        self.value = value
+        self.frame = frame
+        self.ok = ok
+
+    def __rich__(self) -> Text:
+        style = "info" if self.ok else "error"
+        t = Text()
+        t.append(self.frame, style=style)
+        t.append(" ")
+        t.append(self.label)
+        if self.value:
+            t.append(" — ")
+            t.append(_value(self.value))
+        return t
+
+
+class Rail:
+    """Imperative vertical-rail renderer. See :func:`rail`."""
+
+    def __init__(self, glyphs_ok: bool, animate: bool = True):
+        u = glyphs_ok
+        self._g = {k: (v[0] if u else v[1]) for k, v in _GLYPHS.items()}
+        self._frames = _GLYPHS["active"][0] if u else _GLYPHS["active"][1]
+        self._animate = animate and u
+        self._live: Optional[Live] = None
+        self._active: Optional[_ActiveLine] = None
+        self._prev_depth: Optional[int] = None
+        self._closed = False
+
+    # --- settled lines (permanent, printed through the console) ------------
+
+    def _spacer_if_needed(self, depth: int) -> None:
+        # A rail-only `│` line precedes every depth-0 line and the first
+        # depth-1 line of a run. detail() is invisible to this rule.
+        if depth == 0 or depth != self._prev_depth:
+            console.print(self._g["rail"], style="dim")
+
+    def _settle_active(self) -> None:
+        """Settle whatever sub-step is open, defaulting its value to "done".
+
+        The implicit settle path (a depth-0 call or a new ``start()`` while a
+        sub-step is open) treats the open sub-step as ``finish()`` with its
+        default value — so callers never have to track state.
+        """
+        if self._active is None:
+            return
+        a = self._active
+        self._stop_live()
+        value = a.value or "done"
+        line = Text()
+        line.append(f"{self._g['rail']}  ", style="dim")
+        line.append(self._g["step"], style="success")
+        line.append(f" {a.label}")
+        line.append(f" {self._g['separator']} ", style="dim")
+        line.append(_value(value))
+        console.print(line)
+        self._active = None
+        self._prev_depth = 1
+
+    def step(self, text: str, value: Optional[str] = None) -> None:
+        """Depth-0 success line: ``◆ text`` (optionally ``— value``)."""
+        self._settle_active()
+        self._spacer_if_needed(0)
+        line = Text(self._g["step"], style="success")
+        line.append(f" {text}")
+        if value is not None:
+            line.append(f" {self._g['separator']} ", style="dim")
+            line.append(_value(value))
+        console.print(line)
+        self._prev_depth = 0
+
+    def detail(self, label: str, value: str) -> None:
+        """Dim continuation line under the previous step (no marker)."""
+        line = Text()
+        line.append(f"{self._g['rail']}    ", style="dim")
+        line.append(f"{label:12}", style="dim")
+        # _value() returns a Text with numbers highlighted; copy it so the
+        # surrounding dim style stays applied without overriding 'number'.
+        line.append_text(_value(value))
+        console.print(line)
+
+    def warn(self, text: str) -> None:
+        """Depth-0 warning line: ``! text``."""
+        self._settle_active()
+        self._spacer_if_needed(0)
+        console.print(f"[warning]{self._g['warn']}[/warning] {text}")
+        self._prev_depth = 0
+
+    def stat(self, text: str) -> None:
+        """Depth-0 info line: ``● text``."""
+        self._settle_active()
+        self._spacer_if_needed(0)
+        line = Text(self._g["stat"], style="info")
+        line.append(" ")
+        line.append(_value(text))
+        console.print(line)
+        self._prev_depth = 0
+
+    # --- animated sub-step -------------------------------------------------
+
+    def start(self, label: str) -> None:
+        """Open an indented animated sub-step. Implicitly settles any open one."""
+        self._settle_active()
+        self._spacer_if_needed(1)
+        self._active = _ActiveLine(label, "", self._frame(), ok=True)
+        self._prev_depth = 1
+        if self._animate:
+            self._live = Live(
+                self._render_active(), console=console, transient=True,
+                refresh_per_second=10,
+            )
+            self._live.start()
+
+    def tick(self, value: str) -> None:
+        """Update the active sub-step's value (no-op if none open).
+
+        Does not force a redraw — the live refresh thread coalesces events."""
+        if self._active is None:
+            return
+        self._active.value = value
+        if self._live is not None:
+            self._live.update(self._render_active())
+
+    def finish(self, value: str = "done", ok: bool = True) -> None:
+        """Settle the active sub-step as ``◆ label — value``."""
+        if self._active is None:
+            return
+        self._active.value = value
+        self._active.ok = ok
+        self._settle_active()
+
+    # --- internals ---------------------------------------------------------
+
+    def _frame(self) -> str:
+        return self._frames[int(time.monotonic() * 8) % len(self._frames)]
+
+    def _render_active(self):
+        if self._live is not None and self._animate:
+            self._active.frame = self._frame()
+        return self._active
+
+    def _stop_live(self) -> None:
+        if self._live is not None:
+            try:
+                self._live.stop()
+            except Exception:
+                pass
+            self._live = None
+
+    # --- lifecycle (called by the rail() context manager) ------------------
+
+    def _open(self, title: str) -> None:
+        console.print(f"[bold]{self._g['open']} {title}[/bold]")
+        self._prev_depth = None
+
+    def _fail(self) -> None:
+        """Settle the active step as ✗ … — failed, then prepare the close."""
+        if self._active is not None:
+            self._active.value = "failed"
+            self._active.ok = False
+            self._stop_live()
+            line = Text()
+            line.append(f"{self._g['rail']}  ", style="dim")
+            line.append(self._g["failed"], style="error")
+            line.append(f" {self._active.label}")
+            line.append(f" {self._g['separator']} ", style="dim")
+            line.append("failed", style="error")
+            console.print(line)
+            self._active = None
+
+    def _close(self, label: str = "Done") -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stop_live()
+        if self._active is not None:
+            # Unsettled on normal exit: settle as done.
+            self._settle_active()
+        console.print(f"{self._g['rail']}", style="dim")
+        console.print(f"[success]{self._g['close']} {label}[/success]")
+
+
+@contextmanager
+def rail(title: str, animate: bool = True) -> Iterator[Rail]:
+    """Render a vertical-rail flow; ``└`` is written on every exit path.
+
+    Do not open a :func:`progress_bar` while a sub-step is active: rich permits
+    only one live display at a time per console. ``animate=False`` (used by
+    ``cairn build -v``) renders settled lines only, with no live region, so the
+    verbose path's raw ``print()`` output can't corrupt it.
+    """
+    r = Rail(_unicode_ok(), animate=animate)
+    r._open(title)
+    try:
+        yield r
+    except BaseException:  # includes KeyboardInterrupt
+        r._fail()
+        r._close("Failed")
+        raise
+    r._close("Done")
+
+
 # --- Banner / panel for final summaries -----------------------------------
 
 def summary_panel(title: str, kv_pairs: list[tuple[str, str]], subtitle: Optional[str] = None) -> None:
     """Print a final summary as a styled panel with ``kv_pairs`` lines inside."""
     from rich.panel import Panel
-    from rich.text import Text
 
     body = Text()
     for i, (label, value) in enumerate(kv_pairs):
