@@ -27,68 +27,120 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
     the central store (moved, not copied) so you don't rebuild the graph.
     """
     import shutil
+    import time
 
+    from . import display
     from ..paths import register_workspace, resolve_workspace
 
     ws = Path(ws_arg).resolve() if ws_arg else resolve_workspace()
     store = register_workspace(ws)
-    click.echo(f"Workspace:  {ws}")
-    click.echo(f"Store:      {store.home}")
-    click.echo(f"  .kg:         {store.db}")
-    click.echo(f"  .knowledge:  {store.knowledge}")
 
-    # Migrate legacy cairn/.kg + .knowledge if present.
-    legacy = Path(legacy_dir).resolve() if legacy_dir else ws / "cairn"
-    legacy_db = legacy / ".kg"
-    legacy_kn = legacy / ".knowledge"
-    migrated = []
-    if legacy_db.exists() and not store.db.exists():
-        size_kb = legacy_db.stat().st_size // 1024
-        store.db.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(legacy_db), str(store.db))
-        migrated.append(f".kg ({size_kb} KB)")
-    if legacy_kn.exists() and legacy_kn.is_dir():
-        # Merge: copy legacy knowledge tree into the store. Skip .DS_Store and
-        # files that already exist at the destination. Only count as a migration
-        # if at least one real file was copied.
-        copied = 0
-        for item in legacy_kn.rglob("*"):
-            if item.is_dir() or item.name == ".DS_Store":
-                continue
-            rel = item.relative_to(legacy_kn)
-            dst = store.knowledge / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if not dst.exists():
-                shutil.copy2(str(item), str(dst))
-                copied += 1
-        if copied:
-            migrated.append(f".knowledge/ ({copied} files)")
-    if migrated:
-        click.echo(f"Migrated from {legacy}: {', '.join(migrated)}")
+    with display.rail("Initializing cairn") as r:
+        r.step("Initialized in", str(ws))
+        r.step("Store", str(store.home))
+        r.detail(".kg", str(store.db))
+        r.detail(".knowledge", str(store.knowledge))
 
-    if not no_build and not store.db.exists():
-        click.echo("")
-        click.echo("Building graph...")
-        summary = builder.build_graph(workspace=str(ws), db_path=str(store.db), verbose=True)
-        click.echo(f"Built: {summary['repos']} repos, {summary['symbols']} symbols.")
-    elif store.db.exists():
-        click.echo("Graph already present. Use `cairn build` to rebuild.")
+        # Migrate legacy cairn/.kg + .knowledge if present.
+        legacy = Path(legacy_dir).resolve() if legacy_dir else ws / "cairn"
+        legacy_db = legacy / ".kg"
+        legacy_kn = legacy / ".knowledge"
+        migrated = []
+        if legacy_db.exists() and not store.db.exists():
+            size_kb = legacy_db.stat().st_size // 1024
+            store.db.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(legacy_db), str(store.db))
+            migrated.append(f".kg ({size_kb} KB)")
+        if legacy_kn.exists() and legacy_kn.is_dir():
+            # Merge: copy legacy knowledge tree into the store. Skip .DS_Store
+            # and files that already exist at the destination. Only count as a
+            # migration if at least one real file was copied.
+            copied = 0
+            for item in legacy_kn.rglob("*"):
+                if item.is_dir() or item.name == ".DS_Store":
+                    continue
+                rel = item.relative_to(legacy_kn)
+                dst = store.knowledge / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if not dst.exists():
+                    shutil.copy2(str(item), str(dst))
+                    copied += 1
+            if copied:
+                migrated.append(f".knowledge/ ({copied} files)")
+        if migrated:
+            r.step(f"Migrated from {legacy}", ", ".join(migrated))
 
-    # Auto-discover and ingest docs/**/*.md as knowledge.
-    if import_docs:
-        from cairn.knowledge.store import import_directory
-        from cairn.okf.bundle import OKFBundle
+        if not no_build and not store.db.exists():
+            # Scan completes before the first progress event fires, so open the
+            # sub-step before calling build_graph and settle it on `scan`.
+            r.start("Scanning files")
+            phase_state = {"scan_done": False, "resolve_started": False}
 
-        docs_dir = ws / "docs"
-        if docs_dir.is_dir():
-            store.ensure()
-            bundle = OKFBundle(str(store.knowledge))
-            imported = import_directory(bundle, str(docs_dir), doc_type="spec")
-            click.echo(f"Imported {len(imported)} doc(s) from docs/ as knowledge.")
-        else:
-            click.echo("No docs/ directory found; skipping --import-docs.")
+            def on_progress(phase, **kw):
+                if phase == "scan":
+                    files = kw.get("files", 0)
+                    r.tick(f"{files:,} found")
+                    r.finish(f"{files:,} found")
+                    r.start("Parsing code")
+                    phase_state["scan_done"] = True
+                elif phase == "parse_progress":
+                    total = kw.get("total", 0) or 1
+                    pct = 50 * kw.get("done", 0) // total
+                    r.tick(f"{pct}%")
+                elif phase == "insert_progress":
+                    total = kw.get("total", 0) or 1
+                    pct = 50 + 50 * kw.get("done", 0) // total
+                    r.tick(f"{pct}%")
+                elif phase == "resolve_start":
+                    if not phase_state["resolve_started"]:
+                        r.finish("done")
+                        r.start("Resolving refs")
+                        phase_state["resolve_started"] = True
+                    r.tick(kw.get("repo", ""))
+                elif phase == "persist":
+                    r.finish("done")
+                    r.start("Persisting graph")
 
-    click.echo("\nDone. `cairn config` to verify; `cairn serve` for the MCP server.")
+            t0 = time.time()
+            # verbose stays False: the rail replaces the per-file print() noise,
+            # and a stray writer would corrupt the live region. `cairn build -v`
+            # remains the way to get per-file detail.
+            summary = builder.build_graph(
+                workspace=str(ws), db_path=str(store.db), verbose=False,
+                progress=on_progress,
+            )
+            elapsed = time.time() - t0
+            # build_graph emits persist as its last event but never closes the
+            # sub-step; settle it before the closing lines.
+            r.finish("done")
+            if not summary.get("files"):
+                r.warn("No source files found")
+            else:
+                r.step(f"Indexed {summary['files']:,} files")
+                r.stat(
+                    f"{summary['symbols']:,} nodes, {summary['edges']:,} edges "
+                    f"in {elapsed:.1f}s"
+                )
+        elif store.db.exists():
+            r.warn("Graph already present. Use `cairn build` to rebuild.")
+
+        # Auto-discover and ingest docs/**/*.md as knowledge.
+        if import_docs:
+            from cairn.knowledge.store import import_directory
+            from cairn.okf.bundle import OKFBundle
+
+            docs_dir = ws / "docs"
+            if docs_dir.is_dir():
+                store.ensure()
+                bundle = OKFBundle(str(store.knowledge))
+                imported = import_directory(bundle, str(docs_dir), doc_type="spec")
+                r.step(f"Imported {len(imported)} doc(s) from docs/")
+            else:
+                r.warn("No docs/ directory found; skipping --import-docs")
+
+    # Trailing hint prints after the rail closes so `└ Done` stays the last
+    # rail line.
+    display.dim("`cairn config` to verify; `cairn serve` for the MCP server.")
 
 
 # --------------------------------------------------------------------------
@@ -198,103 +250,103 @@ def build(repo, workspace, db, verbose, staging):
 
     target_db = db + ".tmp" if staging else db
 
-    # Phase-event handler: drive one progress bar across all phases
-    # (scan -> parse -> insert -> resolve -> persist).
-    bar_state = {"bar": None, "task": None, "phase": None}
-
-    def on_progress(phase, **kw):
-        bar = bar_state["bar"]
-        if bar is None:
-            return
-        if phase == "scan":
-            total_files = kw.get("files", 0)
-            bar.set_total(total_files * 2)  # parse + insert each touch every file
-            bar.set_description("Parsing")
-        elif phase == "parse_progress":
-            bar.set_description("Parsing")
-            # Parse phase is the first half of the bar.
-            bar.update(bar_state["task"], completed=kw.get("done", 0))
-        elif phase == "parse_done":
-            # Nothing to render here; insert phase takes over below.
-            pass
-        elif phase == "insert_progress":
-            bar.set_description("Indexing")
-            done = kw.get("done", 0)
-            total = kw.get("total", done)
-            # Insert phase is the second half of the bar.
-            bar.update(bar_state["task"], completed=total + done)
-        elif phase == "resolve_start":
-            bar.set_description(f"Resolving {kw.get('repo', '')}")
-        elif phase == "resolve_done":
-            bar.set_description("Resolving")
-        elif phase == "persist":
-            # Set the bar to its final completed state so the (non-TTY)
-            # summary line shows "Indexed N/N" rather than "Persisting".
-            bar.set_description("Indexed")
-            total = bar.tasks[bar_state["task"]].total or 0
-            bar.update(bar_state["task"], completed=total)
-
     import time
     t0 = time.time()
 
-    with display.progress_bar(description="Scanning", total=None, unit="files") as bar:
-        bar_state["bar"] = bar
-        bar_state["task"] = bar._cg_task_id
+    # One rail across the whole flow. animate=not verbose: the -v path turns
+    # on builder._log's raw print(), which would corrupt a live region.
+    with display.rail("Building graph", animate=not verbose) as r:
+        r.start("Scanning files")
+        phase_state = {"scan_done": False, "resolve_started": False}
+
+        def on_progress(phase, **kw):
+            if phase == "scan":
+                files = kw.get("files", 0)
+                r.tick(f"{files:,} found")
+                r.finish(f"{files:,} found")
+                r.start("Parsing code")
+                phase_state["scan_done"] = True
+            elif phase == "parse_progress":
+                total = kw.get("total", 0) or 1
+                pct = 50 * kw.get("done", 0) // total
+                r.tick(f"{pct}%")
+            elif phase == "insert_progress":
+                total = kw.get("total", 0) or 1
+                pct = 50 + 50 * kw.get("done", 0) // total
+                r.tick(f"{pct}%")
+            elif phase == "resolve_start":
+                if not phase_state["resolve_started"]:
+                    r.finish("done")
+                    r.start("Resolving refs")
+                    phase_state["resolve_started"] = True
+                r.tick(kw.get("repo", ""))
+            elif phase == "persist":
+                r.finish("done")
+                r.start("Persisting graph")
+
         try:
             summary = builder.build_graph(
                 workspace=workspace, repo_filter=repo, db_path=target_db,
                 verbose=verbose, progress=on_progress,
             )
         except Exception:
-            bar_state["bar"] = None
             # --staging writes to a temp DB; remove the half-built temp DB on
-            # failure so a failed staging build doesn't leak.
+            # failure so a failed staging build doesn't leak. The rail's
+            # context manager closes as "└ Failed" on the re-raise.
             if staging and os.path.exists(target_db):
                 try:
                     os.remove(target_db)
                 except OSError:
                     pass
             raise
-        bar_state["bar"] = None
-    elapsed = time.time() - t0
+        # build_graph's last event (persist) opens a sub-step it never closes;
+        # settle it before the derived-index phases.
+        r.finish("done")
 
-    # Derived indexes: dataflow + transitive closure. Dataflow calls
-    # impact_analysis per public symbol and can be slow on large workspaces,
-    # so we show a live progress bar. Transitive closure is pure SQL and fast.
-    df_count = tc_count = None
-    df_error = None
-    conn = None
-    try:
-        conn = get_db(target_db)
-        from ..graph.dataflow import build_dataflow_index, build_transitive_closure
+        # Derived indexes: dataflow + transitive closure. Dataflow calls
+        # impact_analysis per public symbol and can be slow on large workspaces,
+        # so it gets its own animated sub-step. Transitive closure is pure SQL.
+        df_count = tc_count = None
+        df_error = None
+        conn = None
+        try:
+            conn = get_db(target_db)
+            from ..graph.dataflow import build_dataflow_index, build_transitive_closure
 
-        # Count public symbols first so the bar is determinate.
-        from ..graph.dataflow import _public_symbols
-        pub_total = len(_public_symbols(conn))
+            # Count public symbols first so the sub-step ticks are meaningful.
+            from ..graph.dataflow import _public_symbols
+            pub_total = len(_public_symbols(conn))
 
-        if pub_total > 0:
-            with display.progress_bar(description="Dataflow index", total=pub_total, unit="symbols") as bar:
-                bar_df_id = bar._cg_task_id
-                df_count = build_dataflow_index(conn, progress=lambda done: bar.update(bar_df_id, completed=done))
-            with display.progress_bar(description="Transitive closure", total=None, unit="") as bar:
+            if pub_total > 0:
+                r.start("Dataflow index")
+                df_count = build_dataflow_index(
+                    conn, progress=lambda done: r.tick(f"{done:,}/{pub_total:,}")
+                )
+                r.finish(f"{df_count:,} symbols")
+                r.start("Transitive closure")
                 tc_count = build_transitive_closure(conn)
-        else:
-            df_count = 0
-            tc_count = build_transitive_closure(conn)
+                r.finish(f"{tc_count:,} edges")
+            else:
+                df_count = 0
+                tc_count = build_transitive_closure(conn)
 
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-    except Exception as e:
-        df_error = str(e)
-    finally:
-        # Always close: a leaked connection can hold SQLite's writer lock and
-        # lock out subsequent `cairn build`/`cairn embed`.
-        if conn is not None:
-            conn.close()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except Exception as e:
+            df_error = str(e)
+        finally:
+            # Always close: a leaked connection can hold SQLite's writer lock
+            # and lock out subsequent `cairn build`/`cairn embed`.
+            if conn is not None:
+                conn.close()
+
+    elapsed = time.time() - t0
 
     if staging:
         os.replace(target_db, db)
 
-    # Final summary panel.
+    # Final summary panel (unchanged): repos/files/symbols/edges/imports +
+    # resolution breakdown + staging note. The rail replaced the progress
+    # rendering, not this detail table.
     kv_pairs = [
         ("repos", str(summary["repos"])),
         ("files", f"{summary['files']:,}"),
