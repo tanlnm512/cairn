@@ -25,6 +25,17 @@ Optional extras (see `pyproject.toml`): `[watch]` (file watching),
 `[semantic]` (sentence-transformers + numpy; pulls torch, large),
 `[ann]` (sqlite-vec native ANN index).
 
+Install the dev pre-commit hook (runs `ruff` on staged `.py` files; aborts
+on any unused-import / undefined-name / redefinition error so it's caught
+locally instead of in CI):
+
+```bash
+./scripts/install-dev-hooks.sh   # one-time; sets core.hooksPath -> scripts/hooks/
+```
+
+Bypass once with `git commit --no-verify`; uninstall with
+`git config --unset core.hooksPath`.
+
 ## Running tests
 
 There are two feedback loops:
