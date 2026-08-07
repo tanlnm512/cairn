@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- _Nothing yet._
+
+### Changed
+- _Nothing yet._
+
+### Fixed
+- _Nothing yet._
+
+### Removed
+- _Nothing yet._
+
+## [0.6.1] - 2026-08-07
+
+> **Focus:** post-audit hardening — incremental reindex correctness repairs
+> and a full code↔docs reconciliation. No user-facing API changes.
+
+### Added
 - **Vertical-rail flow UI for `cairn init` and `cairn build`.** Both commands
   now render a clack-style vertical rail — `┌` open, `│` spacers between
   groups, green `◆` step markers, animated sub-steps (`Scanning files`,
@@ -138,6 +155,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - _Nothing yet._
+
+### Audit findings fixed (code↔docs reconciliation)
+- **README/quickstart recommended `cairn update` as the first command**, but it
+  parses nothing on a fresh clone (`git diff HEAD` is empty). Switched to
+  `cairn build` for the first run.
+- **README's `--client claude,cursor` install example failed** under Click
+  `multiple=True`; fixed to repeated `--client`.
+- **`opencode` was installable but not removable via `--client`** — added to
+  both uninstall `click.Choice` lists.
+- **Skill `cli-fallback.md` documented a non-existent `compass flow-gaps
+  --as-workflow` flag** — removed.
+- **Stale `_INSTRUCTIONS_BODY` install template** regenerated three wrong
+  claims into every fresh AGENTS.md/CLAUDE.md (ANN backend "opt-in" vs the
+  on-by-default code, `recall_memory` "substring-only" vs multi-token + semantic
+  fallback, non-canonical layer breakdown). Synced with the committed AGENTS.md.
+- **"wiki generate is critic-gated" was false** — it runs the critic but still
+  writes. Scoped the safety guarantee to `compass generate` / `compass flow`.
+- **MCP `get_callers`/`get_callees` documented with `kind=` filter the wrappers
+  don't expose** — scoped to library/CLI layer.
+- **"cairn update does not rebuild derived indexes" was false** (already fixed
+  in code above) — docs updated.
+- **`configuration.md` SCIP row claimed tree-sitter is "skipped"** — rewritten
+  to the actual coexistence-then-merge model; stale `scip-kotlin` reference
+  corrected to `scip-java`.
+- **`architecture.md` mislabeled the 9th graph tool as "a blast-radius helper"**
+  — it is `visualize_graph`. Also documented the C/C++ scanner gap.
+- **Version drift**: README Status `v0.5.3` and SECURITY supported-versions
+  `0.5.x` refreshed to `0.6.x`; `architecture.html` "26 tools" → "27 tools".
 
 ## [0.6.0] - 2026-08-05
 
