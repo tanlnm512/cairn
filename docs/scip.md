@@ -18,18 +18,27 @@ coexist in the same workspace.
 Install the relevant compiler-backed indexer and point it at your repo:
 
 ```bash
-# Kotlin (scip-kotlin)
-scip-kotlin index --output build/scip/kotlin.scip .
+# Kotlin (scip-java — the canonical Java+Kotlin indexer; scip-kotlin is merged in)
+scip-java index --output build/scip/kotlin.scip
 
 # TypeScript (scip-typescript)
-scip-typescript index --output build/scip/typescript.scip .
+scip-typescript index --output build/scip/typescript.scip
 
 # Swift (scip-swift)
 scip-swift index /path/to/repo --output build/scip/swift.scip
+
+# Python (scip-python — npm package, not pip)
+scip-python index . --output=build/scip/python.scip
+
+# Go (scip-go)
+scip-go --output=build/scip/go.scip
+
+# Rust (rust-analyzer scip subcommand)
+rust-analyzer scip . --output build/scip/rust.scip
 ```
 
 See the [SCIP indexer list](https://github.com/sourcegraph/scip#indexers) for
-Java, Scala, Python, Go, Rust, etc. The output is a protobuf `.scip` file.
+Scala (via scip-java), and others. The output is a protobuf `.scip` file.
 
 > Commit the `.scip` file (or produce it in CI) — cairn reads it at build time
 > and never triggers regeneration.
@@ -75,11 +84,30 @@ exception to "cairn never generates indexes".
 
 Known indexers cairn can drive:
 
-| Language   | Tool              | Install / source                                            |
-|------------|-------------------|-------------------------------------------------------------|
-| `swift`    | `scip-swift`      | <https://github.com/phuongddx/scip-swift> (macOS/Xcode)     |
-| `kotlin`   | `scip-kotlin`     | <https://github.com/sourcegraph/scip-kotlin>                |
-| `typescript` | `scip-typescript` | <https://github.com/sourcegraph/scip-typescript>          |
+| Language     | Tool              | Install / source                                            |
+|--------------|-------------------|-------------------------------------------------------------|
+| `swift`      | `scip-swift`      | <https://github.com/phuongddx/scip-swift> (macOS/Xcode)     |
+| `java`       | `scip-java`       | <https://github.com/sourcegraph/scip-java> (Gradle/Maven)   |
+| `kotlin`     | `scip-java`       | same as Java — scip-kotlin is merged into scip-java         |
+| `typescript` | `scip-typescript` | <https://github.com/sourcegraph/scip-typescript>            |
+| `python`     | `scip-python`     | npm `@sourcegraph/scip-python`; <https://github.com/sourcegraph/scip-python> |
+| `go`         | `scip-go`         | `go install ...@latest`; <https://github.com/scip-code/scip-go> |
+| `rust`       | `rust-analyzer`   | `rust-analyzer scip` subcommand; <https://github.com/rust-lang/rust-analyzer> |
+
+> **Mixed Java + Kotlin projects.** `scip-java` is the canonical indexer for
+> *both* Java and Kotlin — one `scip-java index` run indexes mixed `.java` +
+> `.kt` sources into a single `.scip`, with each `Document.language` tagged per
+> source file. Declare both keys pointing at the same file:
+> `{"scip": {"java": "build/scip/jvm.scip", "kotlin": "build/scip/jvm.scip"}}`.
+> The orchestrator's idempotency check ensures the shared file is generated
+> once (whichever key runs first creates it; the second sees it exists and
+> skips).
+
+Languages without a usable single-binary SCIP indexer (Ruby, C/C++,
+Objective-C, C#, Haskell, OCaml) are not auto-generated; a committed index for
+them is still consumed unchanged. Dart and PHP indexers exist but lack an
+`--output` flag (they write `index.scip` in the CWD), so they aren't in the
+auto-generation registry — generate those out-of-band and commit the result.
 
 A committed or CI-produced index always wins — generation only fills gaps.
 

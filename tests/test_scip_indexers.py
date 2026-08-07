@@ -25,18 +25,33 @@ from cairn.parsers.scip_indexers import (
 # Registry
 # ---------------------------------------------------------------------------
 
-def test_registry_has_swift_kotlin_typescript():
-    """The three documented indexers are registered; Swift is one of them."""
-    langs = known_languages()
-    assert "swift" in langs
-    assert "kotlin" in langs
-    assert "typescript" in langs
+def test_registry_covers_supported_languages():
+    """Every language with a known single-binary SCIP indexer is registered."""
+    langs = set(known_languages())
+    assert {"swift", "java", "kotlin", "typescript", "python", "go", "rust"} <= langs
 
 
 def test_spec_for_unknown_language_is_none():
-    """An unregistered language (e.g. a lang with no known indexer) is None."""
-    assert spec_for("rust") is None
+    """An unregistered language (no known indexer / not a scanner language) is None."""
+    assert spec_for("ruby") is None  # scip-ruby is dead
+    assert spec_for("csharp") is None  # no indexer exists
     assert spec_for("not-a-language") is None
+
+
+def test_kotlin_uses_scip_java_not_deprecated_scip_kotlin():
+    """scip-kotlin is superseded; the kotlin key must invoke scip-java.
+
+    scip-java indexes mixed Java+Kotlin projects in one run and tags each
+    Document's language per source file, so both 'java' and 'kotlin' keys
+    pointing at scip-java is correct. Regression guard: don't let a future
+    edit reintroduce the deprecated scip-kotlin binary.
+    """
+    kotlin = spec_for("kotlin")
+    java = spec_for("java")
+    assert kotlin is not None and java is not None
+    assert kotlin.tool == "scip-java"
+    assert java.tool == "scip-java"
+    assert kotlin.build_command == java.build_command
 
 
 def test_swift_spec_command_shape():
@@ -45,27 +60,47 @@ def test_swift_spec_command_shape():
     assert spec is not None
     assert spec.tool == "scip-swift"
     cmd = spec.build_command("/repo", "/out/x.scip")
-    assert cmd[0] == "scip-swift"
-    assert "index" in cmd
-    assert "/repo" in cmd
-    assert "/out/x.scip" in cmd
+    assert cmd == ["scip-swift", "index", "/repo", "--output", "/out/x.scip"]
 
 
-def test_kotlin_spec_command_shape():
-    """scip-kotlin's documented CLI is `scip-kotlin index --output <out> <repo>`."""
-    spec = spec_for("kotlin")
+def test_java_spec_command_shape():
+    """scip-java: `scip-java index --output <out>` (no repo arg; run from root)."""
+    spec = spec_for("java")
     assert spec is not None
-    cmd = spec.build_command("/repo", "/out/k.scip")
-    # --output <out> precedes the repo path (matches docs/scip.md §1).
-    assert cmd.index("--output") < cmd.index("/repo")
+    cmd = spec.build_command("/repo", "/out/j.scip")
+    assert cmd == ["scip-java", "index", "--output", "/out/j.scip"]
 
 
 def test_typescript_spec_command_shape():
-    """scip-typescript mirrors scip-kotlin's argument order."""
+    """scip-typescript: `scip-typescript index --output <out>`."""
     spec = spec_for("typescript")
     assert spec is not None
     cmd = spec.build_command("/repo", "/out/t.scip")
-    assert cmd.index("--output") < cmd.index("/repo")
+    assert cmd == ["scip-typescript", "index", "--output", "/out/t.scip"]
+
+
+def test_python_spec_command_shape():
+    """scip-python: `scip-python index <repo> --output=<out>` (= form, npm pkg)."""
+    spec = spec_for("python")
+    assert spec is not None
+    cmd = spec.build_command("/repo", "/out/p.scip")
+    assert cmd == ["scip-python", "index", "/repo", "--output=/out/p.scip"]
+
+
+def test_go_spec_command_shape():
+    """scip-go: `scip-go --output=<out>` (no `index` subcommand)."""
+    spec = spec_for("go")
+    assert spec is not None
+    cmd = spec.build_command("/repo", "/out/g.scip")
+    assert cmd == ["scip-go", "--output=/out/g.scip"]
+
+
+def test_rust_spec_command_shape():
+    """rust-analyzer scip subcommand: `rust-analyzer scip <repo> --output <out>`."""
+    spec = spec_for("rust")
+    assert spec is not None
+    cmd = spec.build_command("/repo", "/out/r.scip")
+    assert cmd == ["rust-analyzer", "scip", "/repo", "--output", "/out/r.scip"]
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +111,13 @@ def test_generate_returns_false_for_unknown_language(tmp_path, monkeypatch):
     """An unregistered language short-circuits without spawning anything."""
     out = tmp_path / "x.scip"
     # Even if a tool were "installed", an unknown language must not spawn it.
+    # ruby is unregistered (scip-ruby is dead); cairn can't auto-generate it.
     monkeypatch.setattr(scip_indexers.shutil, "which", lambda tool: "/bin/" + tool)
     spawned = []
     monkeypatch.setattr(scip_indexers.subprocess, "run",
                         lambda cmd, **kw: spawned.append(cmd) or (_ for _ in ()).throw(AssertionError("must not spawn")))
 
-    ok = try_generate_index("rust", out, str(tmp_path), log=lambda *a, **k: None)
+    ok = try_generate_index("ruby", out, str(tmp_path), log=lambda *a, **k: None)
     assert ok is False
     assert spawned == []  # no subprocess spawned
     assert not out.exists()

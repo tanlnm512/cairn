@@ -60,14 +60,38 @@ def _swift_cmd(repo: str, out: str) -> List[str]:
     return ["scip-swift", "index", repo, "--output", out]
 
 
-def _kotlin_cmd(repo: str, out: str) -> List[str]:
-    # scip-kotlin: `scip-kotlin index --output <out> <repo>`.
-    return ["scip-kotlin", "index", "--output", out, repo]
+def _scip_java_cmd(repo: str, out: str) -> List[str]:
+    # scip-java: `scip-java index --output <out>` run from the project root.
+    # scip-java is the canonical indexer for BOTH Java and Kotlin (the old
+    # scip-kotlin has been merged in and is no longer maintained); one run
+    # indexes mixed .java + .kt sources into a single index, with per-document
+    # language tagged per source file. A cairn.json that declares both
+    # {"java": X, "kotlin": X} pointing at the same file indexes both.
+    return ["scip-java", "index", "--output", out]
 
 
-def _typescript_cmd(repo: str, out: str) -> List[str]:
-    # scip-typescript: `scip-typescript index --output <out> <repo>`.
-    return ["scip-typescript", "index", "--output", out, repo]
+def _scip_typescript_cmd(repo: str, out: str) -> List[str]:
+    # scip-typescript: `scip-typescript index --output <out>` (run from project
+    # root; auto-discovers tsconfig / infers one for JS).
+    return ["scip-typescript", "index", "--output", out]
+
+
+def _scip_python_cmd(repo: str, out: str) -> List[str]:
+    # scip-python: `scip-python index . --output=<out>`. Distributed via npm
+    # (@sourcegraph/scip-python), not pip -- it's a Node program (pyright fork).
+    return ["scip-python", "index", repo, f"--output={out}"]
+
+
+def _scip_go_cmd(repo: str, out: str) -> List[str]:
+    # scip-go: `scip-go --output=<out>` (no `index` subcommand; lsif-go is the
+    # deprecated LSIF emitter). Run from the dir containing go.mod.
+    return ["scip-go", f"--output={out}"]
+
+
+def _scip_rust_cmd(repo: str, out: str) -> List[str]:
+    # rust-analyzer's `scip` subcommand: `rust-analyzer scip <path> --output <out>`.
+    # (scip-code/scip-rust is a thin wrapper around this.)
+    return ["rust-analyzer", "scip", repo, "--output", out]
 
 
 # Registry of indexers cairn knows how to drive. Keyed by the scanner language
@@ -75,6 +99,17 @@ def _typescript_cmd(repo: str, out: str) -> List[str]:
 # ``{"scip": {"swift": "build/scip/swift.scip"}}`` looks up the swift spec.
 # Languages not in this map simply aren't auto-generated; a committed index for
 # them is still consumed unchanged.
+#
+# CLI shapes verified against each indexer's README / --help (see docs/scip.md
+# "Automatic generation" for the full table). Two entries can point at the same
+# binary: `java` and `kotlin` both use scip-java, which indexes mixed
+# Java+Kotlin projects in one run and tags each Document's language per file.
+_SCIP_JAVA_HINT = (
+    "scip-java is the canonical SCIP indexer for Java AND Kotlin (the old "
+    "scip-kotlin has been merged in). It requires a Gradle or Maven build. "
+    "See https://github.com/sourcegraph/scip-java"
+)
+
 _KNOWN_INDEXERS: Dict[str, IndexerSpec] = {
     "swift": IndexerSpec(
         language="swift",
@@ -85,22 +120,57 @@ _KNOWN_INDEXERS: Dict[str, IndexerSpec] = {
             "Mac (macOS/Xcode only): https://github.com/phuongddx/scip-swift"
         ),
     ),
+    "java": IndexerSpec(
+        language="java",
+        tool="scip-java",
+        build_command=_scip_java_cmd,
+        install_hint=_SCIP_JAVA_HINT,
+    ),
     "kotlin": IndexerSpec(
         language="kotlin",
-        tool="scip-kotlin",
-        build_command=_kotlin_cmd,
-        install_hint=(
-            "scip-kotlin is the SCIP indexer for Kotlin. "
-            "See https://github.com/sourcegraph/scip-kotlin"
-        ),
+        tool="scip-java",  # scip-kotlin is superseded; scip-java indexes Kotlin.
+        build_command=_scip_java_cmd,
+        install_hint=_SCIP_JAVA_HINT,
     ),
     "typescript": IndexerSpec(
         language="typescript",
         tool="scip-typescript",
-        build_command=_typescript_cmd,
+        build_command=_scip_typescript_cmd,
         install_hint=(
             "scip-typescript is the SCIP indexer for TypeScript/JavaScript. "
             "See https://github.com/sourcegraph/scip-typescript"
+        ),
+    ),
+    "python": IndexerSpec(
+        language="python",
+        tool="scip-python",
+        build_command=_scip_python_cmd,
+        install_hint=(
+            "scip-python is the SCIP indexer for Python. It's an npm package "
+            "(@sourcegraph/scip-python), not pip: "
+            "`npm install -g @sourcegraph/scip-python`. "
+            "See https://github.com/sourcegraph/scip-python"
+        ),
+    ),
+    "go": IndexerSpec(
+        language="go",
+        tool="scip-go",
+        build_command=_scip_go_cmd,
+        install_hint=(
+            "scip-go is the SCIP indexer for Go (lsif-go is the deprecated LSIF "
+            "emitter). Install: "
+            "`go install github.com/scip-code/scip-go/cmd/scip-go@latest`. "
+            "See https://github.com/scip-code/scip-go"
+        ),
+    ),
+    "rust": IndexerSpec(
+        language="rust",
+        tool="rust-analyzer",
+        build_command=_scip_rust_cmd,
+        install_hint=(
+            "rust-analyzer's `scip` subcommand indexes Rust. Install "
+            "rust-analyzer via your toolchain or rustup. "
+            "See https://github.com/rust-lang/rust-analyzer"
         ),
     ),
 }

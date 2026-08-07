@@ -56,13 +56,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is regenerated).
 - **Automatic SCIP index generation (bounded, opt-in).** When `cairn.json`
   declares a SCIP index for a language but the file is *missing*, and a known
-  indexer (`scip-swift`, `scip-kotlin`, `scip-typescript`) is on `PATH`,
-  `cairn build` runs the indexer once to produce it before importing — the one
-  bounded exception to "cairn never generates indexes". An existing index is
-  never rebuilt; a missing/failing/timeout indexer logs (under `-v`) and falls
-  back to tree-sitter for that language, so generation never breaks the build.
-  Swift is a new known indexer target alongside Kotlin/TypeScript. See
-  `docs/scip.md` § "Automatic generation".
+  indexer is on `PATH`, `cairn build` runs the indexer once to produce it
+  before importing — the one bounded exception to "cairn never generates
+  indexes". An existing index is never rebuilt; a missing/failing/timeout
+  indexer logs (under `-v`) and falls back to tree-sitter for that language, so
+  generation never breaks the build. Known indexers: `scip-swift` (Swift),
+  `scip-java` (Java **and** Kotlin — scip-kotlin is merged in and deprecated),
+  `scip-typescript` (TypeScript/JS), `scip-python` (Python, npm pkg),
+  `scip-go` (Go), `rust-analyzer scip` (Rust). Dart/PHP indexers exist but lack
+  an `--output` flag, so they're generate-out-of-band only. See `docs/scip.md`
+  § "Automatic generation".
 - **Portable `.kg` database.** The code graph now stores file paths
   **repo-relative** (`files.path`, `parse_errors.file_path`,
   `skipped_files.path`, `pending_sync.path`) and `repos.path` **workspace-
