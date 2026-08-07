@@ -187,3 +187,58 @@ def test_build_generation_failure_falls_back_to_tree_sitter(tmp_path, monkeypatc
     assert foo["source"] == "tree_sitter"
     assert "scip" not in summary
     conn.close()
+
+
+def test_unmatched_indexer_names_revert_to_pure_scip(tmp_path):
+    """When an indexer's names don't match tree-sitter (e.g. scip-swift USRs),
+    coexistence duplicates are harmful -- the two sources form disconnected
+    graphs and get_callers breaks for both. The build detects the zero-merge
+    rate and reverts that language to pure-SCIP (removes tree-sitter symbols,
+    keeps SCIP intact).
+
+    This simulates scip-swift's opaque USRs by using a descriptor whose
+    _short_name doesn't match tree-sitter's bare 'Foo'.
+    """
+    from cairn.parsers import _scip_pb2
+
+    ws = _make_workspace(tmp_path, "scip_unmatched")
+    (ws / "build" / "scip").mkdir(parents=True)
+
+    # A Kotlin index where the symbol name is an opaque ID (like a USR),
+    # NOT matching tree-sitter's bare 'Foo'.
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "demo/Foo.kt"
+    doc.language = "kotlin"
+    occ = doc.occurrences.add()
+    occ.symbol = "scip-kotlin com example `opaque_id_xyz`."  # short name = opaque_id_xyz
+    occ.symbol_roles = 1
+    occ.syntax_kind = 19
+    occ.single_line_range.line = 0
+    occ.single_line_range.start_character = 6
+    occ.single_line_range.end_character = 9
+    (ws / "build" / "scip" / "kotlin.scip").write_bytes(idx.SerializeToString())
+    (ws / "cairn.json").write_text(json.dumps({"scip": {"kotlin": "build/scip/kotlin.scip"}}))
+
+    db = str(tmp_path / "scip_unmatched.db")
+    summary = build_graph(workspace=str(ws), db_path=db)
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+
+    # The fallback fired: reverted_to_pure_scip is set.
+    assert summary["scip"]["kotlin"].get("reverted_to_pure_scip") is True
+
+    # No tree-sitter symbols remain for Kotlin (the 'Foo' that tree-sitter
+    # would have produced is gone). Only the standalone SCIP symbol survives.
+    ts_foo = conn.execute(
+        "SELECT COUNT(*) AS n FROM symbols WHERE name = 'Foo'"
+    ).fetchone()
+    assert ts_foo["n"] == 0, "tree-sitter Foo should be removed (pure-SCIP)"
+
+    scip_sym = conn.execute(
+        "SELECT source FROM symbols WHERE source = 'scip'"
+    ).fetchall()
+    assert len(scip_sym) >= 1, "SCIP symbol should survive the revert"
+    conn.close()

@@ -95,6 +95,23 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+# File extensions per scanner language, used by the per-language SCIP fallback
+# to identify tree-sitter rows that should be removed when an indexer's names
+# don't match (e.g. scip-swift USRs). Inverse of scanner.EXTENSION_MAP.
+_LANGUAGE_EXTENSIONS_CACHE: Dict[str, list] = {}
+
+
+def _language_extensions(language: str) -> list:
+    """Return the file extensions (with leading dot) for a scanner language."""
+    if not _LANGUAGE_EXTENSIONS_CACHE:
+        try:
+            for ext, lang in scanner_mod.EXTENSION_MAP.items():
+                _LANGUAGE_EXTENSIONS_CACHE.setdefault(lang, []).append(ext)
+        except Exception:
+            pass
+    return _LANGUAGE_EXTENSIONS_CACHE.get(language, [])
+
+
 def _scan_workspace_with_skips(
     workspace: str, repo_filter: Optional[str] = None
 ) -> tuple[list, list]:
@@ -504,13 +521,68 @@ def _build_graph_impl(
                         )
                         scip_import_stats[lang] = s
                         log(f"  SCIP[{lang}]: {s.get('symbols_added',0)} symbols, "
-                            f"{s.get('edges_added',0)} edges")
+                            f"{s.get('edges_added',0)} edges, "
+                            f"{s.get('symbols_merged',0)} merged")
                     except Exception as e:
                         log(f"  SCIP[{lang}] import failed: {e}; skipping")
                         # Don't fail the build over a bad SCIP index.
         except ImportError:
             log("  SCIP indexes configured but [scip] extra not installed; "
                 "using tree-sitter fallback")
+
+    # Per-language fallback: if an indexer's symbol names don't match
+    # tree-sitter's (merge rate ~0, e.g. scip-swift's opaque USRs), the
+    # coexistence duplicates are harmful -- two disconnected graphs for the
+    # same logical symbol, and get_callers breaks for both name forms. Revert
+    # that language to pure-SCIP: delete the tree-sitter rows for its files so
+    # only the SCIP data remains (clean, no dupes). Languages whose indexers
+    # have human-readable descriptors (scip-java, scip-typescript) keep the
+    # coexistence merge (source='merged').
+    for lang, s in scip_import_stats.items():
+        added = s.get("symbols_added", 0)
+        merged = s.get("symbols_merged", 0)
+        if added > 0 and merged == 0:
+            # Nothing merged -- the two sources don't share a name space.
+            # Delete tree-sitter symbols/edges for this language's files so
+            # only SCIP remains (reverts to the pre-coexistence skip model).
+            exts = _language_extensions(lang)
+            if exts:
+                like_clause = " OR ".join("path LIKE ?" for _ in exts)
+                cur = conn.cursor()
+                ts_file_ids = [
+                    r[0] for r in cur.execute(
+                        f"SELECT id FROM files WHERE ({like_clause}) "
+                        f"AND hash != 'scip_imported'",
+                        tuple(f"%{e}" for e in exts),
+                    ).fetchall()
+                ]
+                if ts_file_ids:
+                    fid_placeholders = ",".join("?" for _ in ts_file_ids)
+                    fids = tuple(ts_file_ids)
+                    # Delete only TREE-SITTER symbols (source != 'scip'), NOT
+                    # SCIP's -- after file_id reconciliation they share the
+                    # same file row, so a blanket delete would nuke SCIP too.
+                    ts_sym_ids = [
+                        r[0] for r in cur.execute(
+                            f"SELECT id FROM symbols WHERE file_id IN ({fid_placeholders}) "
+                            f"AND source != 'scip'",
+                            fids,
+                        ).fetchall()
+                    ]
+                    if ts_sym_ids:
+                        sid_placeholders = ",".join("?" for _ in ts_sym_ids)
+                        cur.execute(
+                            f"DELETE FROM edges WHERE source_id IN ({sid_placeholders})",
+                            tuple(ts_sym_ids),
+                        )
+                        cur.execute(
+                            f"DELETE FROM symbols WHERE id IN ({sid_placeholders})",
+                            tuple(ts_sym_ids),
+                        )
+                    log(f"  SCIP[{lang}]: 0/{added} symbols merged (indexer names "
+                        f"don't match tree-sitter); reverted to pure-SCIP "
+                        f"(removed {len(ts_sym_ids)} tree-sitter symbols)")
+                    s["reverted_to_pure_scip"] = True
 
     if in_memory:
         # Close out the single implicit transaction that's been open across

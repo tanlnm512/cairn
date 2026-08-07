@@ -88,11 +88,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survive the merge (SCIP has no inheritance role); its fuzzy `calls` edges are
   replaced by SCIP's exact ones. Matching by `(file_id, name, line_start)` with
   name normalization (e.g. `greet()` → `greet`).
-  - **Limitation:** scip-swift's opaque USRs (`` `s:...` ``) don't match
-    tree-sitter's human-readable names, so Swift SCIP data lands as standalone
-    `source='scip'` rows rather than merged. Indexers with human-readable
-    descriptors (scip-java, scip-typescript, scip-python, scip-go) merge
-    correctly. Validated end-to-end against real scip-java 0.10.4 output.
+  - **Per-language fallback:** when an indexer's symbol names don't match
+    tree-sitter's (merge rate ~0, e.g. scip-swift's opaque USRs), coexistence
+    duplicates are harmful — two disconnected graphs for the same logical
+    symbol break `get_callers` for both name forms. The build detects the zero
+    merge rate and reverts that language to pure-SCIP (removes tree-sitter
+    symbols, keeps SCIP intact). Languages whose indexers have human-readable
+    descriptors (scip-java, scip-typescript, scip-python, scip-go) keep the
+    coexistence merge. Validated end-to-end against real scip-java 0.10.4
+    (4/7 symbols merged) and scip-swift 0.1.2 (reverted to pure-SCIP).
 
 ### Fixed
 - **SCIP `project_root` now handles `file://` URLs.** scip-swift writes

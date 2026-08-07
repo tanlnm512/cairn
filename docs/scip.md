@@ -17,11 +17,12 @@ uses tree-sitter alone for that language.
 
 > **scip-swift limitation:** scip-swift uses opaque USRs (`` `s:...` ``) as
 > symbol names, which don't match tree-sitter's human-readable names. The merge
-> therefore can't fold scip-swift definitions into tree-sitter rows — Swift
-> SCIP data lands as standalone `source='scip'` rows alongside tree-sitter.
-> This is inherent to scip-swift's design (see its README "Known limitations").
-> Indexers with human-readable descriptors (scip-java, scip-typescript,
-> scip-python, scip-go) merge correctly.
+> can't fold scip-swift definitions into tree-sitter rows, so the build
+> **detects the zero merge rate and reverts Swift to pure-SCIP** (removes the
+> tree-sitter rows, keeps only SCIP) — avoiding the duplicate-row problem that
+> would otherwise break `get_callers` for both name forms. Indexers with
+> human-readable descriptors (scip-java, scip-typescript, scip-python, scip-go)
+> merge correctly and keep the coexistence benefit (source='merged').
 
 ## 1. Generate an index (out-of-band)
 
