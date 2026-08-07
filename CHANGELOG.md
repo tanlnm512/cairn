@@ -27,6 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer passes `verbose=True` to `build_graph`, so the per-file `print()`
   noise the rail replaces is gone. `cairn build -v` renders the rail as plain
   sequential lines (no live region) so verbose output can't corrupt it.
+- **Hybrid SCIP / tree-sitter indexing.** `cairn build` can now consume
+  pre-built SCIP (Sourcegraph Code Intelligence Protocol) indexes for
+  languages where compiler-grade symbol bindings beat tree-sitter's
+  heuristic resolver (Kotlin, Java, TypeScript, ...). Declare each language's
+  index in `cairn.json` under `scip` (e.g. `{"scip": {"kotlin":
+  "build/scip/kotlin.scip"}}`); at build time cairn skips tree-sitter for
+  languages whose index exists and imports the SCIP data instead, producing
+  **exact** cross-file call edges. A missing or undeclared index falls back
+  to tree-sitter for that language — both can coexist in one workspace.
+  Cairn is a consumer of SCIP indexes, never a producer (generate them
+  out-of-band with `scip-kotlin`/`scip-typescript`/etc.). See `docs/scip.md`.
+  - New optional `[scip]` extra: `pip install cairn-intel[scip]` (depends on
+    the real `protobuf` runtime; no PyPI package ships SCIP bindings, so a
+    vendored generated stub is checked in at
+    `src/cairn/parsers/_scip_pb2.py` — regenerate via
+    `scripts/regen_scip_pb2.sh`).
+  - `cairn config` now echoes the resolved SCIP config + whether each index
+    file exists.
+  - `cairn import-scip` gains a `--format` flag (`proto` default, `json`
+    legacy).
+  - `symbols.source` column (`'tree_sitter'` or `'scip'`) records provenance;
+    NULL on legacy rows is treated as `tree_sitter`. Run `cairn build` once
+    after upgrading to populate it.
+  - Incremental updates (`cairn update`, file watcher, MCP catch-up) fall
+    back to tree-sitter for an edited SCIP-covered file (bounded, self-healing
+    staleness — the next full build restores `source='scip'` once the index
+    is regenerated).
 - **Portable `.kg` database.** The code graph now stores file paths
   **repo-relative** (`files.path`, `parse_errors.file_path`,
   `skipped_files.path`, `pending_sync.path`) and `repos.path` **workspace-

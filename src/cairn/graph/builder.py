@@ -345,7 +345,47 @@ def _build_graph_impl(
     if not files:
         log("No source files found.")
         return {"repos": 0, "files": 0, "symbols": 0, "edges": 0, "imports": 0}
-    emit("scan", files=len(files), skips=len(skips))
+
+    # Capture the scanner's real yield before any SCIP skip so the 'scan' event
+    # reflects what was found, not the post-skip tree-sitter subset.
+    scan_total = len(files)
+
+    # SCIP hybrid: if cairn.json declares a pre-built SCIP index for a language
+    # and that index file exists, skip tree-sitter parsing for that language's
+    # files. The importer runs post-resolve (below) to contribute exact edges.
+    scip_languages: Dict[str, str] = {}
+    try:
+        from .config import load_config
+        cfg = load_config(workspace)
+        if cfg.scip:
+            ws_root_cfg = Path(workspace).resolve()
+            for lang, rel_path in cfg.scip.items():
+                idx_path = (ws_root_cfg / rel_path)
+                if idx_path.exists():
+                    scip_languages[lang] = str(idx_path)
+    except Exception:
+        # Config loading must never break the build: a malformed cairn.json or
+        # an unreadable path falls back to tree-sitter for everything.
+        scip_languages = {}
+    if scip_languages:
+        # Warn when a 'scip' key doesn't correspond to any known scanner
+        # language: such files won't be skipped, so the importer would double
+        # them up. Known = scanner extension map + languages actually scanned.
+        known_langs = set()
+        try:
+            known_langs.update(scanner_mod.EXTENSION_MAP.values())
+        except Exception:
+            pass
+        known_langs.update(f.language for f in files)
+        unmatched = [k for k in scip_languages if k not in known_langs]
+        if unmatched:
+            log(f"  warning: cairn.json 'scip' keys not recognized as languages: {unmatched} "
+                f"(known: {sorted(known_langs)}). Tree-sitter will NOT be skipped for them.")
+        files = [f for f in files if f.language not in scip_languages]
+        if not files:
+            log("All scanned languages have SCIP indexes; skipping tree-sitter entirely.")
+
+    emit("scan", files=scan_total, skips=len(skips))
 
     # Bucket files by repo once so the per-repo language inference below is
     # O(files) total rather than O(repos x files).
@@ -426,6 +466,42 @@ def _build_graph_impl(
     # Third pass: resolve all edge targets
     resolution_stats = _resolve_all(conn, repo_edges_by_file, in_memory, verbose, progress)
 
+    # SCIP post-resolve hook: import pre-built indexes for languages whose
+    # files were skipped above. SCIP's exact edges aren't re-resolved, so this
+    # runs AFTER _resolve_all (tree-sitter's resolver would otherwise try to
+    # re-link them) but BEFORE backup_to (so in-memory builds capture the
+    # SCIP data too). Runs before the CLI's dataflow/transitive passes so
+    # derived indexes cover SCIP symbols.
+    scip_import_stats: Dict[str, dict] = {}
+    if scip_languages:
+        try:
+            from ..parsers.scip_importer import scip_available, import_scip_file
+            if scip_available():
+                # repo_id for the importer: consistent with files.repo_id
+                # (repo basename for multi-repo, or the single repo's id).
+                for lang, idx_path in scip_languages.items():
+                    # Determine the repo id to attribute SCIP symbols to. Use
+                    # the first repo seen (typical single-repo case); for
+                    # multi-repo the index is still imported under one id.
+                    repo_for_scip = next(iter(repos_seen), "default") if repos_seen else "default"
+                    try:
+                        # ws_root lets the importer normalize each document's
+                        # path to (repo_id, repo-relative) so SCIP rows share
+                        # file identity with the scanner/incremental paths.
+                        s = import_scip_file(
+                            conn, idx_path, repo_id=repo_for_scip, fmt="proto",
+                            ws_root=ws_root,
+                        )
+                        scip_import_stats[lang] = s
+                        log(f"  SCIP[{lang}]: {s.get('symbols_added',0)} symbols, "
+                            f"{s.get('edges_added',0)} edges")
+                    except Exception as e:
+                        log(f"  SCIP[{lang}] import failed: {e}; skipping")
+                        # Don't fail the build over a bad SCIP index.
+        except ImportError:
+            log("  SCIP indexes configured but [scip] extra not installed; "
+                "using tree-sitter fallback")
+
     if in_memory:
         # Close out the single implicit transaction that's been open across
         # the whole build (no periodic commits for in-memory builds) before
@@ -435,8 +511,25 @@ def _build_graph_impl(
         log("  persisting in-memory graph to disk...")
         backup_to(conn, resolved_db)         # single dump
 
+    # Fold SCIP import stats into the top-level counts so the summary
+    # reflects the full build, not just the tree-sitter phase. Without this,
+    # an all-SCIP workspace reports repos=0/files=0/symbols=0.
+    scip_repo_count = 0
+    if scip_import_stats:
+        for s in scip_import_stats.values():
+            symbol_count += s.get("symbols_added", 0)
+            edge_count += s.get("edges_added", 0)
+            file_count += s.get("files_added", 0)
+        # If tree-sitter found no repos but SCIP imported data, count the SCIP
+        # file rows so the summary isn't structurally empty.
+        if not repos_seen:
+            scip_repo_count = cur.execute(
+                "SELECT COUNT(DISTINCT repo_id) FROM files WHERE hash = 'scip_imported'"
+            ).fetchone()[0]
+            # reflect SCIP repos in the summary without mutating repos_seen
+
     summary = {
-        "repos": len(repos_seen),
+        "repos": scip_repo_count if (not repos_seen and scip_import_stats) else len(repos_seen),
         "files": file_count,
         "symbols": symbol_count,
         "edges": edge_count,
@@ -444,6 +537,8 @@ def _build_graph_impl(
         "skipped": skip_count_summary,
         "resolution": resolution_stats,
     }
+    if scip_import_stats:
+        summary["scip"] = scip_import_stats
     log(f"Done: {summary}")
     return summary
 
@@ -628,8 +723,8 @@ def insert_parsed_file(
             """INSERT INTO symbols
                (id, file_id, name, qualified_name, kind, line_start, line_end,
                 column_start, column_end, docstring, modifiers, metadata,
-                parameters, return_type, parent_scope, imports_summary, body)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                parameters, return_type, parent_scope, imports_summary, body, source)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'tree_sitter')""",
             sym_rows,
         )
     if imp_rows:

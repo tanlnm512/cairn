@@ -52,8 +52,16 @@ def test_transitive_closure_builder():
 
 
 def test_scip_importer():
-    """Regression: the SCIP importer must produce a real exact-resolution edge,
-    not a fake/placeholder resolution. See BUGS.md#2026-08-06/scip-importer-fake-resolution."""
+    """Regression: the SCIP importer must produce a REAL resolution, not the
+    legacy placeholder that hardcoded resolution='exact' for every edge.
+
+    This fixture has helper as a reference (symbol_roles=0) with NO definition in
+    the payload, so the correct resolution is 'unresolved' (the reference points
+    at something the index doesn't define). The pre-rewrite importer wrongly
+    tagged this 'exact'; see docs/scip-hybrid-plan.md §Bugs and
+    BUGS.md#2026-08-06/scip-importer-fake-resolution. Cross-file exact resolution
+    is covered by tests/test_scip_importer.py against real protobuf indexes.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "test.db")
         conn = get_db(db_path)
@@ -73,12 +81,14 @@ def test_scip_importer():
 
         stats = import_scip_data(conn, scip_payload)
         assert stats["files_added"] == 1
-        assert stats["symbols_added"] == 1
+        assert stats["symbols_added"] == 1  # only main_func is a definition
         assert stats["edges_added"] == 1
 
-        exact_edge = conn.execute("SELECT resolution FROM edges WHERE target_name = 'helper'").fetchone()
-        assert exact_edge is not None
-        assert exact_edge["resolution"] == "exact"
+        # helper has no definition in the payload -> real resolution is
+        # 'unresolved', NOT the legacy placeholder 'exact'.
+        edge = conn.execute("SELECT resolution FROM edges WHERE target_name = 'helper'").fetchone()
+        assert edge is not None
+        assert edge["resolution"] == "unresolved"
 
 
 def test_memory_consolidation():
