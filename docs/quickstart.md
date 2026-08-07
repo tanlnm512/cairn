@@ -40,6 +40,17 @@ Verify it landed:
 cairn --help
 ```
 
+## Upgrading
+
+cairn can update itself in place — it detects how it was installed
+(`uv tool`, `pipx`, or `pip`) and re-installs the latest version from PyPI:
+
+```bash
+cairn upgrade          # update to the latest published version
+cairn upgrade --check  # only check what's latest, don't change anything
+cairn version          # print the installed version
+```
+
 ## Build the graph
 
 From your repository root (or any subdirectory of it):

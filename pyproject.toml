@@ -41,6 +41,7 @@ dependencies = [
     "mcp>=0.9.0,<2.0.0",  # SSE/streamable-http + uvicorn/starlette are core deps in mcp>=0.9; the legacy [sse] extra was removed upstream
     "pydantic>=2.0",  # used directly by mcp_server/structured.py; declared explicitly (not just transitive via mcp)
     "pathspec>=0.12",
+    "packaging>=21.0",  # PEP 440 version comparison in `cairn upgrade`; declared explicitly (transitively always present via pip/setuptools, but the CLI relies on it)
     "sqlite-vec>=0.1.0",
     # Progress display: spinners, progress bars, ETA/rate, themed tables.
     # Pure-Python, no network/torch -- keeps the default install lightweight.
