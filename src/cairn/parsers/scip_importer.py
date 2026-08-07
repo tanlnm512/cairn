@@ -124,6 +124,58 @@ def _enclosing_range(occ) -> Optional[Tuple[int, int, int, int]]:
     return (sl, sc, sl, er[2] if len(er) > 2 else sc)
 
 
+# --- language inference from path -------------------------------------------
+# Some indexers emit an empty Document.language (scip-java 0.10.4 leaves it
+# blank for both Java and Kotlin docs). The hybrid skip logic and downstream
+# tooling key off files.language, so fall back to the file extension when the
+# document doesn't declare one. Covers the languages cairn's scanner knows.
+_EXT_LANGUAGE: Dict[str, str] = {
+    ".swift": "swift", ".kt": "kotlin", ".kts": "kotlin",
+    ".java": "java", ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+    ".mts": "typescript", ".cts": "typescript", ".js": "javascript",
+    ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".dart": "dart", ".go": "go", ".rs": "rust",
+    ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp",
+    ".cxx": "cpp", ".m": "objc", ".mm": "objc",
+}
+
+
+def _resolve_real_file_id(conn, repo: str, rel: str, fallback: str) -> str:
+    """Return the file row id SCIP symbols/edges should reference.
+
+    In a coexistence build, tree-sitter parses every file first and creates a
+    ``files`` row with a uuid ``id`` and a real hash (``hash != 'scip_imported'``).
+    SCIP must link its symbols/edges to THAT row so JOINs work and the two
+    sources share one file identity. If no tree-sitter row exists (the
+    standalone ``import-scip`` escape hatch against a fresh DB), fall back to
+    the deterministic ``{repo}:{rel}`` shadow id and let the caller insert it.
+    """
+    try:
+        row = conn.execute(
+            "SELECT id FROM files WHERE repo_id = ? AND path = ? AND hash != 'scip_imported' "
+            "ORDER BY id LIMIT 1",
+            (repo, rel),
+        ).fetchone()
+    except Exception:
+        row = None
+    return row[0] if row else fallback
+
+
+def _language_for(rel_path: str, declared: str) -> str:
+    """Resolve a document's language, falling back to the file extension.
+
+    Real indexers don't all populate ``Document.language``: scip-java 0.10.4
+    leaves it empty for both Java and Kotlin, so the importer would store
+    ``'scip'`` and the hybrid skip logic couldn't tell those files apart.
+    Derive from the extension when the declared value is empty, and normalize
+    case (scip-swift emits ``"Swift"``; scanner keys are lowercase).
+    """
+    if declared:
+        return declared.lower()
+    suffix = Path(rel_path).suffix.lower()
+    return _EXT_LANGUAGE.get(suffix, "scip")
+
+
 # --- kind mapping -----------------------------------------------------------
 
 # Coarse SyntaxKind -> cairn kind. Graph traversal keys on edges, not kinds;
@@ -192,6 +244,166 @@ def _resolve_doc_path(
     return repo, rel_to_repo
 
 
+def _normalize_project_root(raw_root: str, ws_root: Path) -> Path:
+    """Normalize ``Metadata.project_root`` into an absolute ``Path``.
+
+    Real indexers use different conventions here:
+
+    - scip-swift writes a ``file://`` URL (it does
+      ``URL(fileURLWithPath: repoPath).absoluteString``), e.g.
+      ``file:///Users/me/repo``.
+    - scip-kotlin / scip-typescript emit a plain absolute path.
+    - Some emit a path relative to the workspace.
+
+    ``Path("file:///abs").is_absolute()`` is ``False`` (the ``file://`` prefix
+    isn't a POSIX path marker), so without scheme handling the old inline
+    expression joined the URL verbatim onto ``ws_root`` and produced garbage,
+    silently mis-attributing every document. Strip any ``file://`` scheme first,
+    then resolve absolute vs. relative exactly as before.
+    """
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    root = raw_root.strip()
+    if root.startswith("file:"):
+        parsed = urlparse(root)
+        # urlparse("file:///a/b") -> scheme="file", netloc="", path="/a/b"
+        # urlparse("file://localhost/a/b") -> netloc="localhost", path="/a/b"
+        host = parsed.netloc or parsed.hostname or ""
+        path = url2pathname(parsed.path)
+        if host and host not in ("localhost", ""):
+            # A non-empty non-localhost host is a network URL we can't map to a
+            # local path; fall back to resolving the raw value below.
+            local = None
+        else:
+            local = path
+        if local:
+            return Path(local).resolve()
+    if Path(root).is_absolute():
+        return Path(root).resolve()
+    return (ws_root / root).resolve()
+
+
+# --- coexistence merge ------------------------------------------------------
+
+# Edge kinds tree-sitter emits that SCIP has no equivalent for. These survive
+# the merge (SCIP replaces only call/reference/import edges; inheritance edges
+# from tree-sitter are kept since SCIP's role bitmask has no inheritance bit).
+_TS_ONLY_EDGE_KINDS = ("implements", "extends")
+
+# Edge kinds the merge replaces: tree-sitter's calls (fuzzy resolution) are
+# dropped in favor of SCIP's call/reference/import edges (exact resolution).
+_REPLACEABLE_EDGE_KINDS = ("calls", "call", "reference", "import")
+
+
+def _normalize_name_for_match(name: str) -> str:
+    """Normalize a symbol name for cross-source matching.
+
+    SCIP descriptors for callables often carry a trailing ``()`` (e.g.
+    ``greet()`` from scip-java's semanticdb format), while tree-sitter extracts
+    the bare identifier (``greet``). Strip trailing parens so the two match.
+    scip-swift's opaque USRs (``\\`s:...\\``` ) won't match tree-sitter names
+    regardless -- that's an inherent scip-swift limitation (opaque symbol
+    identity), documented in the README.
+    """
+    return name.rstrip("()").rstrip(".") or name
+
+
+def _merge_scip_defs_into_tree_sitter(conn, scip_def_rows: list) -> int:
+    """Fold each SCIP definition symbol into its matching tree-sitter row.
+
+    Coexistence model: tree-sitter parses every file (rich metadata), then SCIP
+    imports exact-resolution edges. To get one row per symbol carrying both,
+    each SCIP definition is matched to a tree-sitter symbol by
+    ``(file_id, name, line_start)`` (falling back to name-only if the line
+    disagrees). On a match:
+
+    1. UPDATE the tree-sitter symbol: adopt SCIP's richer ``qualified_name``,
+       ``docstring`` (when SCIP has one), and mark ``source='merged'``.
+       Tree-sitter's ``modifiers``, ``body``, ``parent_scope``,
+       ``imports_summary``, ``parameters``, ``return_type``, ``metadata`` are
+       preserved (SCIP doesn't populate them).
+    2. DELETE tree-sitter's calls/reference/import edges for that symbol
+       (fuzzy resolution) -- SCIP's exact edges (already INSERT OR REPLACE'd)
+       take over. ``implements``/``extends`` edges survive (SCIP can't emit
+       inheritance).
+    3. DELETE the SCIP shadow symbol row -- its data now lives on the merged
+       tree-sitter row.
+
+    Unmatched SCIP definitions (no tree-sitter row, e.g. a symbol tree-sitter's
+    grammar missed) are left as standalone ``source='scip'`` rows.
+
+    Returns the number of definitions merged.
+    """
+    if not scip_def_rows:
+        return 0
+    cur = conn.cursor()
+    merged = 0
+    for scip_sym_id, file_id, name, sl in scip_def_rows:
+        # Normalize for matching: scip-java emits "greet()", tree-sitter "greet".
+        match_name = _normalize_name_for_match(name)
+        # Match by (file_id, name, line_start); fall back to name-only if the
+        # exact line disagrees (tree-sitter and SCIP can differ on where a
+        # definition's anchor lands).
+        ts_row = cur.execute(
+            "SELECT id FROM symbols WHERE file_id = ? AND name = ? AND line_start = ? "
+            "AND id != ? AND source != 'scip' LIMIT 1",
+            (file_id, match_name, sl, scip_sym_id),
+        ).fetchone()
+        if ts_row is None:
+            ts_row = cur.execute(
+                "SELECT id FROM symbols WHERE file_id = ? AND name = ? "
+                "AND id != ? AND source != 'scip' LIMIT 1",
+                (file_id, match_name, scip_sym_id),
+            ).fetchone()
+        if ts_row is None:
+            continue  # no tree-sitter match -- leave the standalone SCIP row
+
+        ts_sym_id = ts_row[0]
+
+        # 1. Enrich the tree-sitter symbol with SCIP's higher-fidelity fields.
+        cur.execute(
+            "SELECT qualified_name, docstring FROM symbols WHERE id = ?",
+            (scip_sym_id,),
+        )
+        scip_data = cur.fetchone()
+        if scip_data:
+            scip_qn, scip_doc = scip_data
+            # COALESCE: keep tree-sitter's docstring if SCIP didn't carry one.
+            cur.execute(
+                """UPDATE symbols SET
+                     qualified_name = COALESCE(?, qualified_name),
+                     docstring = COALESCE(?, docstring),
+                     source = 'merged'
+                   WHERE id = ?""",
+                (scip_qn, scip_doc, ts_sym_id),
+            )
+
+        # 2. Drop tree-sitter's fuzzy call/reference edges for this symbol
+        #    FIRST, then re-point SCIP's exact edges from the shadow symbol to
+        #    the merged row. Order matters: the DELETE must run before the
+        #    re-point, otherwise the re-pointed SCIP edge (kind='call') gets
+        #    caught by the kind-IN-(calls,call,...) delete.
+        placeholders = ",".join("?" for _ in _REPLACEABLE_EDGE_KINDS)
+        cur.execute(
+            f"DELETE FROM edges WHERE source_id = ? AND kind IN ({placeholders})",
+            (ts_sym_id, *_REPLACEABLE_EDGE_KINDS),
+        )
+        cur.execute(
+            "UPDATE edges SET source_id = ? WHERE source_id = ?",
+            (ts_sym_id, scip_sym_id),
+        )
+        cur.execute(
+            "UPDATE edges SET target_id = ? WHERE target_id = ?",
+            (ts_sym_id, scip_sym_id),
+        )
+
+        # 3. Remove the now-merged SCIP shadow row.
+        cur.execute("DELETE FROM symbols WHERE id = ?", (scip_sym_id,))
+        merged += 1
+    return merged
+
+
 # --- protobuf import --------------------------------------------------------
 
 def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) -> dict:
@@ -207,6 +419,10 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     cur = conn.cursor()
     files_added = symbols_added = edges_added = 0
 
+    # Track SCIP definition rows inserted during Pass 2 so the merge pass can
+    # fold each into its matching tree-sitter symbol (coexistence model).
+    scip_def_rows: list[tuple] = []  # (scip_sym_id, file_id, name, line_start)
+
     # Real indexers emit Document.relative_path relative to their OWN
     # Metadata.project_root (the repo dir), not the workspace root. Read it once
     # per index and resolve against ws_root so per-document path resolution
@@ -217,7 +433,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
         meta = getattr(index, "metadata", None)
         raw_root = getattr(meta, "project_root", None) if meta is not None else None
         if raw_root:
-            project_root = (ws_root / raw_root).resolve() if not Path(raw_root).is_absolute() else Path(raw_root)
+            project_root = _normalize_project_root(raw_root, ws_root)
 
     # Pre-index SymbolInformation.documentation by descriptor for docstring
     # attachment on definition symbols.
@@ -238,13 +454,18 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     # same descriptor; a forward decl only fills in the map when no real def is
     # seen, so references still resolve without spurious symbol rows.
     doc_paths: Dict[int, Tuple[str, str]] = {}
+    doc_file_ids: Dict[int, str] = {}
     defs: Dict[str, Tuple[str, str, int, int]] = {}
     real_defs: set = set()
     for i, doc in enumerate(index.documents):
         rel = doc.relative_path
         doc_repo, rel_to_repo = _resolve_doc_path(rel, ws_root, repo_id, project_root=project_root)
         doc_paths[i] = (doc_repo, rel_to_repo)
-        file_id = f"{doc_repo}:{rel_to_repo}"
+        # Coexistence: link to the tree-sitter file row if it exists so both
+        # sources share one file identity (JOINs work, incremental clears both).
+        doc_file_ids[i] = _resolve_real_file_id(
+            conn, doc_repo, rel_to_repo, f"{doc_repo}:{rel_to_repo}")
+        file_id = doc_file_ids[i]
         for occ in doc.occurrences:
             roles = occ.symbol_roles
             if not (roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION)):
@@ -263,11 +484,13 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     # Pass 2: emit symbols + edges.
     for i, doc in enumerate(index.documents):
         doc_repo, rel = doc_paths[i]
-        lang = getattr(doc, "language", "") or ""
-        file_id = f"{doc_repo}:{rel}"
+        lang = _language_for(rel, getattr(doc, "language", "") or "")
+        file_id = doc_file_ids[i]
 
         # repos + files: INSERT OR IGNORE so we never overwrite tree-sitter
-        # metadata (hash/line_count/size/mtime).
+        # metadata (hash/line_count/size/mtime). When coexisting with
+        # tree-sitter, file_id already points at the real row and this is a
+        # no-op; in standalone mode it inserts the shadow row.
         cur.execute(
             "INSERT OR IGNORE INTO repos (id, name, path) VALUES (?, ?, ?)",
             (doc_repo, doc_repo, "."),
@@ -309,6 +532,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
                     )
                     if cur.rowcount > 0:
                         symbols_added += 1
+                        scip_def_rows.append((sym_id, file_id, name, sl))
                 file_defs_by_line.append((sl, sym_id))
                 continue
 
@@ -333,6 +557,16 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
                         source_id = did
                         break
 
+            # A file-level occurrence with no enclosing definition (top-level
+            # code in a Swift main.swift, a reference before any definition,
+            # etc.) has no owning symbol to attribute the edge to. Skip it --
+            # the tree-sitter path does the same (builder: "file-level call
+            # with no owning symbol; cannot attach"). edges.source_id is NOT
+            # NULL, so a NULL here would crash the import (found against real
+            # scip-swift output).
+            if source_id is None:
+                continue
+
             # Classify edge kind from roles.
             if occ.symbol_roles & _SCIP_ROLE_IMPORT:
                 edge_kind = "import"
@@ -351,8 +585,18 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
             if cur.rowcount > 0:
                 edges_added += 1
 
+    # Coexistence merge: fold each SCIP definition into its matching tree-sitter
+    # symbol so one row carries both sources' strengths (tree-sitter's
+    # modifiers/body/parent_scope + SCIP's exact edges/richer qualified_name).
+    merged = _merge_scip_defs_into_tree_sitter(conn, scip_def_rows)
+
     conn.commit()
-    return {"files_added": files_added, "symbols_added": symbols_added, "edges_added": edges_added}
+    return {
+        "files_added": files_added,
+        "symbols_added": symbols_added,
+        "edges_added": edges_added,
+        "symbols_merged": merged,
+    }
 
 
 # --- public API -------------------------------------------------------------
@@ -424,7 +668,7 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
         rel = doc.get("relative_path") or doc.get("path")
         if not rel:
             continue
-        lang = doc.get("language") or "scip"
+        lang = _language_for(rel, doc.get("language") or "")
         file_id = f"{repo_id}:{rel}"
 
         cur.execute(
@@ -479,6 +723,9 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 if dline <= sl:
                     source_id = did
                     break
+            # No enclosing definition -> no owning symbol (see proto path).
+            if source_id is None:
+                continue
             if roles & _SCIP_ROLE_IMPORT:
                 edge_kind = "import"
             elif roles & _SCIP_ROLE_ACCESS_MASK:

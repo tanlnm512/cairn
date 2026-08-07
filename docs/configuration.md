@@ -108,7 +108,7 @@ ignored (forward-compatible). Recognized keys:
 | `exclude` | list of gitignore globs | Patterns to skip during indexing, matched against repo-root-relative paths. Combined with the built-in skip set and `.gitignore`. |
 | `include` | list of gitignore globs | Patterns to force-include, overriding `exclude` and the default skip set. Use to pull a checked-in vendored dir back into the graph. |
 | `repo_namespaces` | object `prefix -> repo id` | Maps import-path prefixes to owning repo ids, used by `cairn deps` / `cross_repo_deps` to detect cross-repo links. When empty, falls back to the built-in default map and `CAIRN_REPO_NAMESPACES`. |
-| `scip` | object `language -> index path` | Maps a language to a pre-built [SCIP](https://github.com/sourcegraph/scip) index file (relative to workspace root). At build time, languages whose index file exists are skipped by tree-sitter and imported from SCIP instead (compiler-grade exact resolution); a missing file falls back to tree-sitter for that language. Requires the optional `[scip]` extra. Keys must match scanner language names exactly (lowercase: `kotlin`, `typescript`, `java`, …) — an unrecognized key is warned about and skipped. See [scip.md](./scip.md). |
+| `scip` | object `language -> index path` | Maps a language to a pre-built [SCIP](https://github.com/sourcegraph/scip) index file (relative to workspace root). At build time, languages whose index file exists are skipped by tree-sitter and imported from SCIP instead (compiler-grade exact resolution); a missing file falls back to tree-sitter for that language. Requires the optional `[scip]` extra. Keys must match scanner language names exactly (lowercase: `kotlin`, `typescript`, `java`, `swift`, …) — an unrecognized key is warned about and skipped. If a known indexer (`scip-swift`, `scip-kotlin`, `scip-typescript`) is on `PATH`, a missing index is auto-generated once before the fallback kicks in. See [scip.md](./scip.md). |
 
 Example:
 
@@ -123,7 +123,8 @@ Example:
   },
   "scip": {
     "kotlin": "build/scip/kotlin.scip",
-    "typescript": "build/scip/ts.scip"
+    "typescript": "build/scip/ts.scip",
+    "swift": "build/scip/swift.scip"
   }
 }
 ```

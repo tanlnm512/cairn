@@ -54,6 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     back to tree-sitter for an edited SCIP-covered file (bounded, self-healing
     staleness — the next full build restores `source='scip'` once the index
     is regenerated).
+- **Automatic SCIP index generation (bounded, opt-in).** When `cairn.json`
+  declares a SCIP index for a language but the file is *missing*, and a known
+  indexer is on `PATH`, `cairn build` runs the indexer once to produce it
+  before importing — the one bounded exception to "cairn never generates
+  indexes". An existing index is never rebuilt; a missing/failing/timeout
+  indexer logs (under `-v`) and falls back to tree-sitter for that language, so
+  generation never breaks the build. Known indexers: `scip-swift` (Swift),
+  `scip-java` (Java **and** Kotlin — scip-kotlin is merged in and deprecated),
+  `scip-typescript` (TypeScript/JS), `scip-python` (Python, npm pkg),
+  `scip-go` (Go), `rust-analyzer scip` (Rust). Dart/PHP indexers exist but lack
+  an `--output` flag, so they're generate-out-of-band only. See `docs/scip.md`
+  § "Automatic generation".
 - **Portable `.kg` database.** The code graph now stores file paths
   **repo-relative** (`files.path`, `parse_errors.file_path`,
   `skipped_files.path`, `pending_sync.path`) and `repos.path` **workspace-
@@ -66,6 +78,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   un-rebuilt DBs keep working until then (read paths tolerate both forms).
 
 ### Changed
+- **SCIP / tree-sitter coexistence (replaces hybrid skip).** `cairn build` no
+  longer skips tree-sitter for SCIP-covered languages. Both sources now run:
+  tree-sitter parses every file (providing modifiers, body, inheritance edges,
+  parent_scope that SCIP can't emit), then SCIP's exact-resolution edges and
+  richer qualified_name are merged onto the tree-sitter symbol rows. The result
+  is one row per symbol (`source='merged'`) carrying the strengths of both —
+  no query-layer dedup needed. Tree-sitter's `implements`/`extends` edges
+  survive the merge (SCIP has no inheritance role); its fuzzy `calls` edges are
+  replaced by SCIP's exact ones. Matching by `(file_id, name, line_start)` with
+  name normalization (e.g. `greet()` → `greet`).
+  - **Per-language fallback:** when an indexer's symbol names don't match
+    tree-sitter's (merge rate ~0, e.g. scip-swift's opaque USRs), coexistence
+    duplicates are harmful — two disconnected graphs for the same logical
+    symbol break `get_callers` for both name forms. The build detects the zero
+    merge rate and reverts that language to pure-SCIP (removes tree-sitter
+    symbols, keeps SCIP intact). Languages whose indexers have human-readable
+    descriptors (scip-java, scip-typescript, scip-python, scip-go) keep the
+    coexistence merge. Validated end-to-end against real scip-java 0.10.4
+    (4/7 symbols merged) and scip-swift 0.1.2 (reverted to pure-SCIP).
 - **`cairn upgrade` now uses PEP 440 version comparison and themed output.**
   The install/update flow no longer relies on naive string equality, so
   pre-release (`rc`), post-release (`.post1`), and local-segment (`+local`)
@@ -80,10 +111,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Upgrading** section documents `cairn upgrade` / `--check` / `cairn version`.
 
 ### Fixed
+- **SCIP `project_root` now handles `file://` URLs.** scip-swift writes
+  `Metadata.project_root` as `URL(fileURLWithPath:).absoluteString`
+  (`file:///abs/path`); the importer treated it as a relative path (joined it
+  verbatim onto the workspace root) and silently mis-attributed every Swift
+  document to the wrong repo id. The value is now scheme-stripped before
+  resolution, so absolute paths, workspace-relative paths, and `file://` URLs
+  (including the `file://localhost/` form) all resolve correctly.
+  (Found by validating against real scip-swift output.)
+- **SCIP importer no longer crashes on file-level occurrences.** A reference
+  with no enclosing definition (top-level code in a Swift `main.swift`, a
+  reference before any definition) used to insert `edges.source_id = NULL`,
+  violating the NOT NULL FK and crashing the whole import. Now skipped,
+  matching the tree-sitter path's "file-level call with no owning symbol"
+  handling. (Found against real scip-swift output.)
+- **SCIP `Document.language` now falls back to the file extension.** scip-java
+  0.10.4 emits an empty `language` field for both Java and Kotlin documents;
+  the importer stored `'scip'`, breaking the hybrid skip logic (which keys off
+  `files.language`). The language is now derived from the extension when the
+  document omits it, and normalized to lowercase (scip-swift emits `"Swift"`).
+  (Found against real scip-java output.)
 - **README documented `scripts/install.sh` flags that the script does not
   support.** The README listed `--agents`, `--scope`, and `--no-agents`;
   the script only supports `--semantic` and `--venv`. The from-source
   bootstrap block has been removed from the user-facing README.
+
+### Removed
+- _Nothing yet._
 
 ## [0.6.0] - 2026-08-05
 
