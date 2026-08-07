@@ -18,11 +18,20 @@ from cairn.cli import upgrade as upgrade_mod
 # --- Fixtures --------------------------------------------------------------
 
 def _set_versions(monkeypatch, installed=None, latest=None, reinstall=None):
-    """Stub the upgrade helpers. `reinstall` records calls instead of shelling."""
+    """Stub the upgrade helpers. `reinstall` records calls instead of shelling.
+
+    `installed`/`latest` are always patched when the helper is invoked -- using
+    a sentinel instead of `if x is not None` so that `latest=None` (the very
+    value the "PyPI unreachable" tests exercise) still replaces the real
+    ``_pypi_latest`` rather than letting it hit the network. Without this,
+    those tests leaked a real call to pypi.org and only stayed green while the
+    project was unpublished.
+    """
+    _UNSET = object()
     calls = []
-    if installed is not None:
+    if installed is not _UNSET:
         monkeypatch.setattr(upgrade_mod, "_installed_version", lambda: installed)
-    if latest is not None:
+    if latest is not _UNSET:
         monkeypatch.setattr(upgrade_mod, "_pypi_latest", lambda: latest)
     if reinstall is None:
         reinstall = lambda method, version: calls.append((method, version))
