@@ -52,7 +52,17 @@ dependencies = [
 [project.optional-dependencies]
 watch = ["watchdog>=3.0"]
 test = ["pytest>=7.0"]
-dev = ["pytest>=7.0", "watchdog>=3.0", "build", "ruff>=0.6", "grpcio-tools>=1.60"]
+dev = [
+    "pytest>=7.0",
+    "watchdog>=3.0",
+    "build",
+    "ruff>=0.6",
+    "grpcio-tools>=1.60",
+    # Release tooling: `cz bump` bumps the version across version_files and
+    # tags the release; CHANGELOG.md stays hand-maintained. See
+    # docs/release-checklist.md "Cutting a release".
+    "commitizen>=4.0",
+]
 # Phase 7: semantic search. Pulls torch (~hundreds of MB) via
 # sentence-transformers, hence strictly optional. The default install remains
 # zero-network and torch-free; `pip install cairn-intel[semantic]` opts in.
@@ -122,3 +132,34 @@ extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["F"]
+
+[tool.commitizen]
+# Release automation (see docs/release-checklist.md).
+#
+# `cz bump` does the mechanical parts of a release:
+#   1. reads conventional commits since the last tag
+#   2. computes the next SemVer bump (feat -> MINOR, fix -> PATCH, etc.)
+#   3. updates `version` here AND `__version__` in src/cairn/__init__.py
+#   4. commits ("bump: version X -> Y") and tags (v$version)
+#
+# update_changelog_on_bump is FALSE on purpose: commitizen's changelog
+# generator derives terse one-line entries from commit subjects, which would
+# replace the rich, hand-curated multi-paragraph entries this project keeps
+# (e.g. the 0.6.1 release notes). Instead CHANGELOG.md stays hand-maintained,
+# and `cz bump --dry-run --changelog-to-stdout` is used as a *drafting* aid --
+# it prints the commit-derived section for review, which can then be expanded
+# into the project's prose style under [Unreleased] -> [X.Y.Z].
+#
+# The custom template (.cz_templates/keepachangelog.j2) renders that draft in
+# the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
+# default `## X.Y.Z (YYYY-MM-DD)`.
+version = "0.6.1"
+version_scheme = "pep440"
+tag_format = "v$version"
+update_changelog_on_bump = false
+changelog_file = "CHANGELOG.md"
+template = ".cz_templates/keepachangelog.j2"
+version_files = [
+    "pyproject.toml:version",
+    "src/cairn/__init__.py:__version__",
+]

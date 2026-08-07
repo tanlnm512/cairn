@@ -55,3 +55,70 @@ If changes were made by sub-agents or bulk find-replace:
 - [ ] `ruff check` clean.
 - [ ] No string literals (help text, print output, error messages) were
       silently rewritten — these are executable, not comments.
+
+## Cutting a release
+
+The version bump, version-file updates, and tagging are automated with
+[commitizen](https://commitizen-tools.github.io/commitizen/) (`cz`), configured
+in `pyproject.toml` under `[tool.commitizen]`. The CHANGELOG stays hand-curated
+— `cz` drafts it, a human finalizes it. Install it once with
+`uv sync --extra dev`.
+
+### Conventional commits (the prerequisite)
+`cz` reads the conventional-commit history since the last tag to compute the
+bump and draft the changelog. This project already follows the convention:
+`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`, `chore:`, with an
+optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
+`BREAKING CHANGE:` footer (or `feat!:`/`fix!:`) → MAJOR.
+
+### Release steps (run locally, on `main` after merging the PR cycle)
+1. **Preview** the bump and the auto-drafted changelog section:
+   ```sh
+   cz bump --dry-run --changelog-to-stdout
+   ```
+   This prints the proposed `X.Y.Z`, which `version_files` it will touch, and
+   a commit-derived changelog section. Nothing is written.
+
+2. **Finalize `CHANGELOG.md` first.** Move the accumulated `[Unreleased]`
+   entries under a dated header (`## [X.Y.Z] - YYYY-MM-DD`), expanding the
+   terse auto-draft into the project's prose style if the release warrants it.
+   Why manually: commitizen's generator emits one-line entries from commit
+   subjects, which would discard the rich multi-paragraph entries this project
+   keeps (e.g. the 0.6.1 notes). `update_changelog_on_bump = false` in
+   `pyproject.toml` enforces this — `cz bump` will never rewrite CHANGELOG.md.
+   Commit this change on its own (`docs: prepare X.Y.Z changelog`) before the
+   bump so the bump commit only touches version files.
+
+3. **Bump** the version, commit, and tag in one step:
+   ```sh
+   cz bump --yes
+   ```
+   This updates `version` in `pyproject.toml` and `__version__` in
+   `src/cairn/__init__.py`, commits as `bump: version A -> B`, and tags
+   `v$version`. (If the pre-release checklist above isn't done yet, run
+   `cz bump --version-files-only` to update files without committing/tagging.)
+
+4. **Push the tag** — this is what triggers the release pipeline:
+   ```sh
+   git push origin main
+   git push origin v$version
+   ```
+   `.github/workflows/release.yml` then builds wheel + sdist, publishes to PyPI
+   via Trusted Publishing, and cuts the GitHub Release from the `[X.Y.Z]`
+   CHANGELOG section. Watch it: `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
+
+### Notes
+- **First release of a new PyPI project**: register a *pending* Trusted
+  Publisher on pypi.org before the first tag push (Account settings →
+  Publishing → add a pending publisher with owner/repo/workflow/`pypi`
+  environment). The first successful publish converts it to a normal publisher
+  and creates the project. See `docs/pypi-trusted-publishing.md`.
+- **Manual CHANGELOG section for a release**: `awk` extracts a version's
+  section (the release workflow uses this to build GitHub Release notes):
+  ```sh
+  awk -v v="X.Y.Z" '/^## \[/ { if ($0 ~ "\\["v"\\]") { in=1; print; next } else in=0 } in { print }' CHANGELOG.md
+  ```
+- **Recovery if the release workflow partially fails**: PyPI publish and GitHub
+  Release are separate jobs. If publish succeeds but release fails, the
+  artifacts are safe on PyPI — cut the GitHub Release manually with
+  `gh release create vX.Y.Z --notes-file <(awk …)` against the existing tag.
