@@ -8,15 +8,22 @@ import sys
 from .main import main
 
 
-@main.command()
-def version():
-    """Print the installed cairn version."""
+# --- Version helpers -------------------------------------------------------
+#
+# Version strings are PEP 440. Naive `==` comparison breaks across pre/post/
+# local segments (e.g. local "0.6.0" vs PyPI "0.6.0.post1", or "0.6.0" vs
+# "0.6.0rc1"). Use packaging.version.parse when available; degrade to string
+# equality if the import ever fails -- the upgrade command must never crash on
+# a version parse.
+
+
+def _is_up_to_date(current: str, latest: str) -> bool:
+    """True if ``current`` >= ``latest`` under PEP 440, else string equality."""
     try:
-        from importlib.metadata import version as _v
-        click.echo(f"cairn-intel {_v('cairn-intel')}")
+        from packaging.version import parse
+        return parse(current) >= parse(latest)
     except Exception:
-        from cairn import __version__
-        click.echo(f"cairn-intel {__version__} (source checkout)")
+        return current == latest
 
 
 def _installed_version() -> str:
@@ -74,6 +81,8 @@ def _detect_install_method() -> str:
 
 def _reinstall(method: str, version: str):
     """Re-install cairn-intel using the detected method."""
+    from . import display
+
     spec = f"cairn-intel=={version}"
     if method == "uv":
         cmd = ["uv", "tool", "install", "--force", spec]
@@ -82,42 +91,56 @@ def _reinstall(method: str, version: str):
     elif method == "pip":
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", spec]
     else:
-        click.echo(
+        display.warning(
             f"Cannot auto-upgrade (unknown install method). "
             f"Run manually: pip install --upgrade {spec}"
         )
         return
-    click.echo(f"Running: {' '.join(cmd)}")
+    display.info(f"Running: {' '.join(cmd)}")
     subprocess.run(cmd, check=False)
+
+
+# --- Commands --------------------------------------------------------------
+
+
+@main.command()
+def version():
+    """Print the installed cairn version."""
+    from . import display
+    try:
+        from importlib.metadata import version as _v
+        display.info(f"cairn-intel {_v('cairn-intel')}")
+    except Exception:
+        from cairn import __version__
+        display.info(f"cairn-intel {__version__} (source checkout)")
 
 
 @main.command()
 @click.option("--check", is_flag=True, help="Only check, don't upgrade")
 def upgrade(check):
     """Upgrade cairn. Detects install method and updates in place."""
+    from . import display
     current = _installed_version()
     latest = _pypi_latest()
 
     if latest is None:
         if check:
-            click.echo(f"cairn-intel {current} (could not reach PyPI)")
+            display.info(f"cairn-intel {current} (could not reach PyPI)")
         else:
-            click.echo(
+            display.warning(
                 "Cannot check for upgrades (PyPI unreachable). "
                 "Install manually: pip install --upgrade cairn-intel"
             )
         return
 
     if check:
-        click.echo(f"cairn-intel {current} (latest: {latest})")
+        display.info(f"cairn-intel {current} (latest: {latest})")
         return
 
-    if current == latest:
-        click.echo(f"cairn-intel {current} (already up to date)")
+    if _is_up_to_date(current, latest):
+        display.success(f"cairn-intel {current} (already up to date)")
         return
 
     method = _detect_install_method()
-    click.echo(f"Upgrading cairn-intel {current} -> {latest} (via {method})")
+    display.info(f"Upgrading cairn-intel {current} -> {latest} (via {method})")
     _reinstall(method, latest)
-
-

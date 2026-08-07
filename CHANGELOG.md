@@ -97,6 +97,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     descriptors (scip-java, scip-typescript, scip-python, scip-go) keep the
     coexistence merge. Validated end-to-end against real scip-java 0.10.4
     (4/7 symbols merged) and scip-swift 0.1.2 (reverted to pure-SCIP).
+- **`cairn upgrade` now uses PEP 440 version comparison and themed output.**
+  The install/update flow no longer relies on naive string equality, so
+  pre-release (`rc`), post-release (`.post1`), and local-segment (`+local`)
+  versions compare correctly. Output switched from raw `click.echo` to the
+  shared `display.*` helpers (`✓`/`⠿`/`!` glyphs) for consistency with the
+  rest of the CLI. Install-method detection (uv/pipx/pip) and the `--check`
+  flag are unchanged.
+- **`packaging` is now a declared direct dependency** (was transitive via
+  pip/setuptools). Required for the PEP 440 comparison in `cairn upgrade`.
+- **README rewritten to lead with PyPI install.** The from-source build/wheel
+  and bootstrap-script framing is retired from the user path; a new
+  **Upgrading** section documents `cairn upgrade` / `--check` / `cairn version`.
 
 ### Fixed
 - **SCIP `project_root` now handles `file://` URLs.** scip-swift writes
@@ -119,6 +131,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `files.language`). The language is now derived from the extension when the
   document omits it, and normalized to lowercase (scip-swift emits `"Swift"`).
   (Found against real scip-java output.)
+- **README documented `scripts/install.sh` flags that the script does not
+  support.** The README listed `--agents`, `--scope`, and `--no-agents`;
+  the script only supports `--semantic` and `--venv`. The from-source
+  bootstrap block has been removed from the user-facing README.
 
 ### Removed
 - _Nothing yet._
