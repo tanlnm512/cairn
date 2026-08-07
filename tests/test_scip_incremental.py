@@ -17,13 +17,18 @@ import pytest
 
 from cairn.graph.builder import build_graph
 from cairn.graph.incremental import reindex_paths
-from cairn.parsers import _scip_pb2
 from cairn.parsers.scip_importer import scip_available
 
+# NOTE: _scip_pb2 is imported lazily inside _kotlin_index() below, not at module
+# top level. A top-level import would raise ImportError during collection when
+# the optional [scip] extra isn't installed, turning a clean SKIP (via the
+# pytestmark below) into a hard collection ERROR -- defeating the skip guard.
 pytestmark = pytest.mark.skipif(not scip_available(), reason="[scip] extra not installed")
 
 
 def _kotlin_index() -> bytes:
+    from cairn.parsers import _scip_pb2  # deferred: see module-level note
+
     idx = _scip_pb2.Index()
     doc = idx.documents.add()
     doc.relative_path = "demo/Foo.kt"
