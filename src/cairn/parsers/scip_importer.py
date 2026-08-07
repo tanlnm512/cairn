@@ -284,6 +284,111 @@ def _normalize_project_root(raw_root: str, ws_root: Path) -> Path:
     return (ws_root / root).resolve()
 
 
+# --- coexistence merge ------------------------------------------------------
+
+# Edge kinds tree-sitter emits that SCIP has no equivalent for. These survive
+# the merge (SCIP replaces only call/reference/import edges; inheritance edges
+# from tree-sitter are kept since SCIP's role bitmask has no inheritance bit).
+_TS_ONLY_EDGE_KINDS = ("implements", "extends")
+
+# Edge kinds the merge replaces: tree-sitter's calls (fuzzy resolution) are
+# dropped in favor of SCIP's call/reference/import edges (exact resolution).
+_REPLACEABLE_EDGE_KINDS = ("calls", "call", "reference", "import")
+
+
+def _merge_scip_defs_into_tree_sitter(conn, scip_def_rows: list) -> int:
+    """Fold each SCIP definition symbol into its matching tree-sitter row.
+
+    Coexistence model: tree-sitter parses every file (rich metadata), then SCIP
+    imports exact-resolution edges. To get one row per symbol carrying both,
+    each SCIP definition is matched to a tree-sitter symbol by
+    ``(file_id, name, line_start)`` (falling back to name-only if the line
+    disagrees). On a match:
+
+    1. UPDATE the tree-sitter symbol: adopt SCIP's richer ``qualified_name``,
+       ``docstring`` (when SCIP has one), and mark ``source='merged'``.
+       Tree-sitter's ``modifiers``, ``body``, ``parent_scope``,
+       ``imports_summary``, ``parameters``, ``return_type``, ``metadata`` are
+       preserved (SCIP doesn't populate them).
+    2. DELETE tree-sitter's calls/reference/import edges for that symbol
+       (fuzzy resolution) -- SCIP's exact edges (already INSERT OR REPLACE'd)
+       take over. ``implements``/``extends`` edges survive (SCIP can't emit
+       inheritance).
+    3. DELETE the SCIP shadow symbol row -- its data now lives on the merged
+       tree-sitter row.
+
+    Unmatched SCIP definitions (no tree-sitter row, e.g. a symbol tree-sitter's
+    grammar missed) are left as standalone ``source='scip'`` rows.
+
+    Returns the number of definitions merged.
+    """
+    if not scip_def_rows:
+        return 0
+    cur = conn.cursor()
+    merged = 0
+    for scip_sym_id, file_id, name, sl in scip_def_rows:
+        # Match by (file_id, name, line_start); fall back to name-only if the
+        # exact line disagrees (tree-sitter and SCIP can differ on where a
+        # definition's anchor lands).
+        ts_row = cur.execute(
+            "SELECT id FROM symbols WHERE file_id = ? AND name = ? AND line_start = ? "
+            "AND id != ? AND source != 'scip' LIMIT 1",
+            (file_id, name, sl, scip_sym_id),
+        ).fetchone()
+        if ts_row is None:
+            ts_row = cur.execute(
+                "SELECT id FROM symbols WHERE file_id = ? AND name = ? "
+                "AND id != ? AND source != 'scip' LIMIT 1",
+                (file_id, name, scip_sym_id),
+            ).fetchone()
+        if ts_row is None:
+            continue  # no tree-sitter match -- leave the standalone SCIP row
+
+        ts_sym_id = ts_row[0]
+
+        # 1. Enrich the tree-sitter symbol with SCIP's higher-fidelity fields.
+        cur.execute(
+            "SELECT qualified_name, docstring FROM symbols WHERE id = ?",
+            (scip_sym_id,),
+        )
+        scip_data = cur.fetchone()
+        if scip_data:
+            scip_qn, scip_doc = scip_data
+            # COALESCE: keep tree-sitter's docstring if SCIP didn't carry one.
+            cur.execute(
+                """UPDATE symbols SET
+                     qualified_name = COALESCE(?, qualified_name),
+                     docstring = COALESCE(?, docstring),
+                     source = 'merged'
+                   WHERE id = ?""",
+                (scip_qn, scip_doc, ts_sym_id),
+            )
+
+        # 2. Drop tree-sitter's fuzzy call/reference edges for this symbol
+        #    FIRST, then re-point SCIP's exact edges from the shadow symbol to
+        #    the merged row. Order matters: the DELETE must run before the
+        #    re-point, otherwise the re-pointed SCIP edge (kind='call') gets
+        #    caught by the kind-IN-(calls,call,...) delete.
+        placeholders = ",".join("?" for _ in _REPLACEABLE_EDGE_KINDS)
+        cur.execute(
+            f"DELETE FROM edges WHERE source_id = ? AND kind IN ({placeholders})",
+            (ts_sym_id, *_REPLACEABLE_EDGE_KINDS),
+        )
+        cur.execute(
+            "UPDATE edges SET source_id = ? WHERE source_id = ?",
+            (ts_sym_id, scip_sym_id),
+        )
+        cur.execute(
+            "UPDATE edges SET target_id = ? WHERE target_id = ?",
+            (ts_sym_id, scip_sym_id),
+        )
+
+        # 3. Remove the now-merged SCIP shadow row.
+        cur.execute("DELETE FROM symbols WHERE id = ?", (scip_sym_id,))
+        merged += 1
+    return merged
+
+
 # --- protobuf import --------------------------------------------------------
 
 def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) -> dict:
@@ -298,6 +403,10 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     """
     cur = conn.cursor()
     files_added = symbols_added = edges_added = 0
+
+    # Track SCIP definition rows inserted during Pass 2 so the merge pass can
+    # fold each into its matching tree-sitter symbol (coexistence model).
+    scip_def_rows: list[tuple] = []  # (scip_sym_id, file_id, name, line_start)
 
     # Real indexers emit Document.relative_path relative to their OWN
     # Metadata.project_root (the repo dir), not the workspace root. Read it once
@@ -408,6 +517,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
                     )
                     if cur.rowcount > 0:
                         symbols_added += 1
+                        scip_def_rows.append((sym_id, file_id, name, sl))
                 file_defs_by_line.append((sl, sym_id))
                 continue
 
@@ -460,8 +570,18 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
             if cur.rowcount > 0:
                 edges_added += 1
 
+    # Coexistence merge: fold each SCIP definition into its matching tree-sitter
+    # symbol so one row carries both sources' strengths (tree-sitter's
+    # modifiers/body/parent_scope + SCIP's exact edges/richer qualified_name).
+    merged = _merge_scip_defs_into_tree_sitter(conn, scip_def_rows)
+
     conn.commit()
-    return {"files_added": files_added, "symbols_added": symbols_added, "edges_added": edges_added}
+    return {
+        "files_added": files_added,
+        "symbols_added": symbols_added,
+        "edges_added": edges_added,
+        "symbols_merged": merged,
+    }
 
 
 # --- public API -------------------------------------------------------------

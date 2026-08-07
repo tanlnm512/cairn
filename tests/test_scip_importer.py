@@ -225,6 +225,127 @@ def test_protobuf_reuses_tree_sitter_file_id_when_coexisting():
     assert len(files) == 1
 
 
+# ---------------------------------------------------------------------------
+# Coexistence merge: tree-sitter metadata + SCIP exact edges in one row
+# ---------------------------------------------------------------------------
+# The core feature: when both sources cover a file, the SCIP definition is
+# folded into the tree-sitter symbol. One row carries tree-sitter's modifiers/
+# body/parent_scope + SCIP's richer qualified_name and exact-resolution edges.
+
+def test_merge_folds_scip_definition_into_tree_sitter_symbol():
+    """A SCIP definition matching a tree-sitter symbol enriches it, not duplicates.
+
+    After merge: one symbol row (source='merged') with tree-sitter's modifiers
+    preserved and SCIP's qualified_name adopted. Tree-sitter call edges for the
+    symbol are replaced by SCIP's exact edges; inheritance edges survive.
+    """
+    conn = _conn()
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('demo','demo','.')")
+    conn.execute(
+        "INSERT INTO files (id, path, repo_id, hash, line_count, language) "
+        "VALUES ('ts-file-1', 'Foo.swift', 'demo', 'ts_hash', 10, 'swift')"
+    )
+    # Tree-sitter symbol with metadata SCIP can't provide.
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, "
+        "line_start, line_end, column_start, column_end, modifiers, source) "
+        "VALUES ('ts-sym-1', 'ts-file-1', 'Greeter', 'Greeter', 'class', "
+        "1, 5, 6, 13, '[\"public\",\"final\"]', 'tree_sitter')"
+    )
+    # Tree-sitter call edge (fuzzy resolution) + inheritance edge (SCIP can't emit).
+    conn.execute(
+        "INSERT INTO edges (id, source_id, target_name, kind, line, resolution) "
+        "VALUES ('ts-edge-1', 'ts-sym-1', 'helper', 'calls', 3, 'ambiguous')"
+    )
+    conn.execute(
+        "INSERT INTO edges (id, source_id, target_name, kind, line) "
+        "VALUES ('ts-edge-2', 'ts-sym-1', 'Base', 'implements', 1)"
+    )
+    conn.commit()
+
+    # SCIP index: same definition + an exact-resolution call edge.
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "Foo.swift"
+    doc.language = "swift"
+    # Definition at line 1 (matches tree-sitter's line_start=1).
+    _occ(doc, "scip-swift swift demo Greeter#", roles=1, syntax_kind=19,
+         line=0, start=6, end=13)  # 0-based line 0 = 1-based line 1
+    # Exact call edge inside Greeter.
+    ref = _occ(doc, "scip-swift swift demo helper#", roles=0, line=2, start=4, end=10)
+    ref.multi_line_enclosing_range.start_line = 0
+    ref.multi_line_enclosing_range.start_character = 0
+    ref.multi_line_enclosing_range.end_line = 5
+    ref.multi_line_enclosing_range.end_character = 0
+
+    stats = import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    assert stats["symbols_merged"] == 1
+
+    # One symbol row, source='merged', carrying tree-sitter's modifiers.
+    syms = conn.execute(
+        "SELECT source, modifiers, qualified_name FROM symbols WHERE name = 'Greeter'"
+    ).fetchall()
+    assert len(syms) == 1, f"expected 1 merged row, got {len(syms)}"
+    assert syms[0]["source"] == "merged"
+    assert syms[0]["modifiers"] == '["public","final"]'  # tree-sitter preserved
+    assert "scip-swift" in syms[0]["qualified_name"]  # SCIP adopted
+
+    # Tree-sitter call edge replaced; inheritance edge survived.
+    edges = conn.execute(
+        "SELECT kind, resolution FROM edges WHERE source_id = 'ts-sym-1'"
+    ).fetchall()
+    kinds = {e["kind"] for e in edges}
+    assert "implements" in kinds, "inheritance edge must survive merge"
+    # The fuzzy 'calls' edge is gone; SCIP's exact 'call' edge took over.
+    assert "calls" not in kinds, "tree-sitter calls edge should be replaced"
+    assert "call" in kinds, "SCIP exact call edge should be present"
+
+
+def test_merge_preserves_tree_sitter_docstring_when_scip_has_none():
+    """If SCIP doesn't carry a docstring, tree-sitter's survives (COALESCE)."""
+    conn = _conn()
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('demo','demo','.')")
+    conn.execute(
+        "INSERT INTO files (id, path, repo_id, hash, line_count, language) "
+        "VALUES ('ts-f', 'Bar.kt', 'demo', 'h', 5, 'kotlin')"
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, "
+        "line_start, modifiers, docstring, source) "
+        "VALUES ('ts-b', 'ts-f', 'Bar', 'Bar', 'class', 1, '[]', 'TS doc', 'tree_sitter')"
+    )
+    conn.commit()
+
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "Bar.kt"
+    doc.language = "kotlin"
+    _occ(doc, "scip-kotlin com example Bar#", roles=1, syntax_kind=19, line=0)
+
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    row = conn.execute("SELECT docstring FROM symbols WHERE name = 'Bar'").fetchone()
+    assert row["docstring"] == "TS doc"  # tree-sitter's docstring preserved
+
+
+def test_unmatched_scip_definition_left_as_standalone():
+    """A SCIP def with no tree-sitter match stays source='scip' (not lost)."""
+    conn = _conn()
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('demo','demo','.')")
+    conn.execute(
+        "INSERT INTO files (id, path, repo_id, hash, line_count, language) "
+        "VALUES ('ts-f', 'Baz.swift', 'demo', 'h', 5, 'swift')"
+    )
+    conn.commit()
+    # No tree-sitter symbol for "Baz" -- SCIP's row should stand alone.
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "Baz.swift"
+    _occ(doc, "scip-swift swift demo Baz#", roles=1, syntax_kind=19, line=0)
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    row = conn.execute("SELECT source FROM symbols WHERE name = 'Baz'").fetchone()
+    assert row["source"] == "scip"  # standalone, not merged
+
+
 def test_import_scip_file_proto_and_json(tmp_path):
     """import_scip_file reads both formats via the fmt flag."""
     # Proto
