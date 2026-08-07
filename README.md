@@ -57,13 +57,26 @@ for a worked example. Full design at
 ## Quick start
 
 ```bash
-pip install cairn-intel
-cairn update                       # parse the workspace and build the graph
-cairn def SomeSymbol               # find where a symbol is defined
-cairn ask "how does auth work"     # natural-language query across all layers
+pip install cairn-intel              # install from PyPI (the recommended path)
+cairn update                        # parse the workspace and build the graph
+cairn def SomeSymbol                # find where a symbol is defined
+cairn ask "how does auth work"      # natural-language query across all layers
 ```
 
 The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
+
+## Upgrading
+
+cairn can update itself in place — it detects how it was installed
+(`uv tool`, `pipx`, or `pip`) and re-installs the latest version from PyPI:
+
+```bash
+cairn upgrade          # update to the latest published version
+cairn upgrade --check  # only check what's latest, don't change anything
+cairn version          # print the installed version
+```
+
+If PyPI is unreachable, `cairn upgrade` prints the manual command instead.
 
 ## Install for AI agents
 
@@ -168,6 +181,7 @@ The `cairn` command groups the main functionality. Run `cairn --help`
 | `cairn compass …` | Generate / list / validate module compass guides |
 | `cairn wiki …` | Generate / search the architecture wiki |
 | `cairn install-agents` | Drop integration files into supported AI agents |
+| `cairn upgrade` | Update cairn in place from PyPI (detects install method; `--check` to preview) |
 | `cairn bench` | Performance / scalability benchmarks (`--save`/`--compare` for regression checks) |
 
 ## Development
@@ -177,38 +191,33 @@ pip install -e ".[dev]"   # pytest + watchdog + build
 pytest -m core            # fast <3s smoke subset (one test per core function)
 ```
 
-## Build & distribute
+## Semantic search
 
-Build a wheel + sdist for distribution:
-
-```bash
-make dist        # → dist/cairn_intel-<version>-py3-none-any.whl
-```
-
-Hand the `.whl` file to a teammate or upload to PyPI. Install from a wheel:
-
-```bash
-uv tool install ./cairn_intel-<version>-py3-none-any.whl
-```
-
-Semantic search deps (torch + sentence-transformers) are a one-time separate
-download that persists in `~/.cairn/lib/` (survives reinstalls):
+The default install is network- and torch-free. Semantic search deps
+(torch + sentence-transformers) are a one-time separate download that
+persists in `~/.cairn/lib/` (survives reinstalls):
 
 ```bash
 cairn embed --install-deps    # one-time: downloads bge-m3 (~836 MB)
 cairn embed                   # builds the embedding index
 ```
 
-**Bootstrap script** (install + wire agents in one shot):
+## Development
+
+cairn is developed on GitHub and released to PyPI. The recommended install
+for end users is `pip install cairn-intel` (see Quick start above). The
+following is for contributors only:
 
 ```bash
-./scripts/install.sh                       # install cairn + interactively pick agents
-./scripts/install.sh --agents all          # wire all detected clients
-./scripts/install.sh --scope global        # write agent configs to ~/.claude/ etc.
-./scripts/install.sh --no-agents           # install cairn only, skip agent wiring
+pip install -e ".[dev]"   # editable install: pytest + watchdog + build + ruff
+pytest -m core            # fast <3s smoke subset (one test per core function)
+pytest                    # full suite (the CI path)
+make dist                 # build wheel + sdist into dist/ (for releases)
 ```
 
-The full suite (no marker) is the CI path.
+Releases are cut by tagging `vX.Y.Z` — see the tag-triggered workflow in
+`.github/workflows/release.yml` and the pre-release checklist in
+`docs/release-checklist.md`.
 
 ## Dependency licenses
 
