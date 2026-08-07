@@ -1,0 +1,24 @@
+{# Commitizen changelog template -- Keep a Changelog format.
+   Matches the existing CHANGELOG.md `## [X.Y.Z] - YYYY-MM-DD` header style
+   and `### Added/Changed/Fixed` section style, so auto-generated entries are
+   visually consistent with the hand-written 0.4.0-0.6.1 history.
+   `entry.changes` is an ordered dict keyed by Conventional Commit type
+   (feat -> Features, fix -> Fixes, ...) as configured by commitizen. #}
+{% for entry in tree %}
+
+## [{{ entry.version | replace("v", "") }}]{% if entry.date %} - {{ entry.date }}{% endif %}
+
+{% for change_key, changes in entry.changes.items() %}
+
+{% if change_key %}
+### {{ change_key }}
+{% endif %}
+
+{% for change in changes %}
+{% if change.scope %}
+- **{{ change.scope }}**: {{ change.message }}
+{% elif change.message %}
+- {{ change.message }}
+{% endif %}
+{% endfor %}
+{% endfor %}{% endfor %}
