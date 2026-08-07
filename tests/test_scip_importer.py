@@ -257,3 +257,112 @@ def test_json_exact_when_definition_present():
     import_scip_data(conn, payload, repo_id="default")
     edge = conn.execute("SELECT resolution FROM edges WHERE target_name = 'helper'").fetchone()
     assert edge["resolution"] == "exact"
+
+
+# ---------------------------------------------------------------------------
+# project_root resolution (multi-repo path normalization)
+# ---------------------------------------------------------------------------
+# These are the only tests that pass ws_root to import_scip_bytes, so they
+# exercise the Metadata.project_root -> (repo_id, repo-relative) mapping that
+# the build-integrated path relies on. scip-swift writes project_root as a
+# file:// URL; without scheme handling the path joined garbage onto ws_root and
+# every document was silently mis-attributed.
+
+def _index_with_project_root(raw_root: str):
+    """Minimal index with one definition, metadata.project_root set to raw_root.
+
+    Document.relative_path is repo-relative ("demo/Foo.swift"); project_root
+    names the repo root so the importer should resolve the document under the
+    correct (repo_id, repo-relative path).
+    """
+    idx = _scip_pb2.Index()
+    idx.metadata.project_root = raw_root
+    doc = idx.documents.add()
+    doc.relative_path = "demo/Foo.swift"
+    doc.language = "swift"
+    occ = doc.occurrences.add()
+    occ.symbol = "scip-swift swift demo Greeter#"
+    occ.symbol_roles = 1  # Definition
+    occ.syntax_kind = 19  # IdentifierType -> class
+    occ.single_line_range.line = 0
+    occ.single_line_range.start_character = 6
+    occ.single_line_range.end_character = 13
+    return idx
+
+
+def test_project_root_file_url_resolves(tmp_path):
+    """scip-swift's file://-prefixed project_root must resolve to the real repo.
+
+    Regression: Path("file:///abs").is_absolute() is False, so the old inline
+    expression joined the URL onto ws_root and the document landed under the
+    fallback repo id with a broken path.
+    """
+    ws = tmp_path / "ws"
+    repo = ws / "demo"
+    (repo / ".git").mkdir(parents=True)
+
+    idx = _index_with_project_root(f"file://{repo}/")
+    conn = _conn()
+    import_scip_bytes(
+        conn, idx.SerializeToString(),
+        repo_id="default", ws_root=ws.resolve(),
+    )
+
+    # The file row's repo_id is the inferred repo ("demo"), NOT "default",
+    # and its path is repo-relative ("demo/Foo.swift"), proving the file://
+    # URL was stripped and resolved against the workspace.
+    row = conn.execute("SELECT repo_id, path FROM files").fetchone()
+    assert row["repo_id"] == "demo"
+    assert row["path"] == "demo/Foo.swift"
+
+
+def test_project_root_file_url_localhost_resolves(tmp_path):
+    """The file://localhost/ host form resolves the same way."""
+    ws = tmp_path / "ws"
+    repo = ws / "demo"
+    (repo / ".git").mkdir(parents=True)
+
+    idx = _index_with_project_root(f"file://localhost{repo}/")
+    conn = _conn()
+    import_scip_bytes(
+        conn, idx.SerializeToString(),
+        repo_id="default", ws_root=ws.resolve(),
+    )
+    row = conn.execute("SELECT repo_id, path FROM files").fetchone()
+    assert row["repo_id"] == "demo"
+    assert row["path"] == "demo/Foo.swift"
+
+
+def test_project_root_plain_absolute_resolves(tmp_path):
+    """A plain absolute path (scip-kotlin/scip-typescript convention) resolves."""
+    ws = tmp_path / "ws"
+    repo = ws / "demo"
+    (repo / ".git").mkdir(parents=True)
+
+    idx = _index_with_project_root(str(repo))
+    conn = _conn()
+    import_scip_bytes(
+        conn, idx.SerializeToString(),
+        repo_id="default", ws_root=ws.resolve(),
+    )
+    row = conn.execute("SELECT repo_id, path FROM files").fetchone()
+    assert row["repo_id"] == "demo"
+    assert row["path"] == "demo/Foo.swift"
+
+
+def test_project_root_relative_to_ws_resolves(tmp_path):
+    """A project_root relative to ws_root joins onto ws_root (single-repo case)."""
+    ws = tmp_path / "ws"
+    # Single-repo workspace: the repo IS the workspace root.
+    (ws / ".git").mkdir(parents=True)
+
+    idx = _index_with_project_root(".")  # relative -> ws_root
+    idx.documents[0].relative_path = "TopLevel.swift"
+    conn = _conn()
+    import_scip_bytes(
+        conn, idx.SerializeToString(),
+        repo_id="default", ws_root=ws.resolve(),
+    )
+    row = conn.execute("SELECT path FROM files").fetchone()
+    assert row["path"] == "TopLevel.swift"
+

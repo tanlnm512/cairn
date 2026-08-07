@@ -192,6 +192,46 @@ def _resolve_doc_path(
     return repo, rel_to_repo
 
 
+def _normalize_project_root(raw_root: str, ws_root: Path) -> Path:
+    """Normalize ``Metadata.project_root`` into an absolute ``Path``.
+
+    Real indexers use different conventions here:
+
+    - scip-swift writes a ``file://`` URL (it does
+      ``URL(fileURLWithPath: repoPath).absoluteString``), e.g.
+      ``file:///Users/me/repo``.
+    - scip-kotlin / scip-typescript emit a plain absolute path.
+    - Some emit a path relative to the workspace.
+
+    ``Path("file:///abs").is_absolute()`` is ``False`` (the ``file://`` prefix
+    isn't a POSIX path marker), so without scheme handling the old inline
+    expression joined the URL verbatim onto ``ws_root`` and produced garbage,
+    silently mis-attributing every document. Strip any ``file://`` scheme first,
+    then resolve absolute vs. relative exactly as before.
+    """
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    root = raw_root.strip()
+    if root.startswith("file:"):
+        parsed = urlparse(root)
+        # urlparse("file:///a/b") -> scheme="file", netloc="", path="/a/b"
+        # urlparse("file://localhost/a/b") -> netloc="localhost", path="/a/b"
+        host = parsed.netloc or parsed.hostname or ""
+        path = url2pathname(parsed.path)
+        if host and host not in ("localhost", ""):
+            # A non-empty non-localhost host is a network URL we can't map to a
+            # local path; fall back to resolving the raw value below.
+            local = None
+        else:
+            local = path
+        if local:
+            return Path(local).resolve()
+    if Path(root).is_absolute():
+        return Path(root).resolve()
+    return (ws_root / root).resolve()
+
+
 # --- protobuf import --------------------------------------------------------
 
 def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) -> dict:
@@ -217,7 +257,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
         meta = getattr(index, "metadata", None)
         raw_root = getattr(meta, "project_root", None) if meta is not None else None
         if raw_root:
-            project_root = (ws_root / raw_root).resolve() if not Path(raw_root).is_absolute() else Path(raw_root)
+            project_root = _normalize_project_root(raw_root, ws_root)
 
     # Pre-index SymbolInformation.documentation by descriptor for docstring
     # attachment on definition symbols.
