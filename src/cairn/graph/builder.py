@@ -361,6 +361,17 @@ def _build_graph_impl(
             ws_root_cfg = Path(workspace).resolve()
             for lang, rel_path in cfg.scip.items():
                 idx_path = (ws_root_cfg / rel_path)
+                if not idx_path.exists():
+                    # Auto-generation (bounded): if a known indexer is on PATH,
+                    # produce the missing index once before the existence gate.
+                    # Never raises -- a missing/failing tool falls back to
+                    # tree-sitter for this language. An existing index is never
+                    # rebuilt (the user/CI owns the regeneration cadence).
+                    try:
+                        from ..parsers.scip_indexers import try_generate_index
+                        try_generate_index(lang, idx_path, workspace, log)
+                    except Exception as e:
+                        log(f"  scip[{lang}]: index generation skipped ({e})")
                 if idx_path.exists():
                     scip_languages[lang] = str(idx_path)
     except Exception:

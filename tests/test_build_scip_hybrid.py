@@ -129,3 +129,75 @@ def test_no_config_is_pure_tree_sitter(tmp_path):
     assert "scip" not in sources
     assert "scip" not in summary
     conn.close()
+
+
+def test_build_auto_generates_missing_index(tmp_path, monkeypatch):
+    """A declared-but-absent index is auto-generated before the skip gate.
+
+    Verifies the orchestrator hook fires inside _build_graph_impl: when
+    cairn.json declares a language whose index file does NOT exist, cairn
+    invokes the registered indexer to produce it, and the freshly-generated
+    index is then imported (source='scip') instead of falling back to
+    tree-sitter. Monkeypatches the orchestrator so no real binary is needed.
+    """
+    ws = _make_workspace(tmp_path, "scip_autogen")
+    (ws / "cairn.json").write_text(
+        json.dumps({"scip": {"kotlin": "build/scip/kotlin.scip"}})
+    )
+    # The index is deliberately NOT created -- the orchestrator should make it.
+
+    from cairn.parsers import scip_indexers
+
+    def fake_generate(language, output_path, repo_path, log=lambda *a, **k: None):
+        # Simulate scip-kotlin writing the index file.
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(_kotlin_index())
+        return True
+
+    monkeypatch.setattr(scip_indexers, "try_generate_index", fake_generate)
+
+    db = str(tmp_path / "scip_autogen.db")
+    summary = build_graph(workspace=str(ws), db_path=db)
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    # The auto-generated index was imported: the symbol carries source='scip'.
+    scip_sym = conn.execute(
+        "SELECT source FROM symbols WHERE name = 'Foo'"
+    ).fetchone()
+    assert scip_sym is not None
+    assert scip_sym["source"] == "scip", "auto-generated index was not imported"
+    assert "scip" in summary and "kotlin" in summary["scip"]
+    conn.close()
+
+
+def test_build_generation_failure_falls_back_to_tree_sitter(tmp_path, monkeypatch):
+    """If the orchestrator fails to produce the index, tree-sitter is used.
+
+    The hook never raises, so a failed generation must degrade to the existing
+    "missing index" path rather than breaking the build.
+    """
+    ws = _make_workspace(tmp_path, "scip_autogen_fail")
+    (ws / "cairn.json").write_text(
+        json.dumps({"scip": {"kotlin": "build/scip/kotlin.scip"}})
+    )
+
+    from cairn.parsers import scip_indexers
+
+    def failing_generate(language, output_path, repo_path, log=lambda *a, **k: None):
+        return False  # simulate a missing/failing indexer
+
+    monkeypatch.setattr(scip_indexers, "try_generate_index", failing_generate)
+
+    db = str(tmp_path / "scip_autogen_fail.db")
+    summary = build_graph(workspace=str(ws), db_path=db)
+
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    # No index produced -> Foo came from tree-sitter, no SCIP data.
+    foo = conn.execute("SELECT source FROM symbols WHERE name = 'Foo'").fetchone()
+    assert foo["source"] == "tree_sitter"
+    assert "scip" not in summary
+    conn.close()

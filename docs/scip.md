@@ -2,8 +2,10 @@
 
 cairn can consume pre-built **SCIP** (Sourcegraph Code Intelligence Protocol)
 indexes for languages where compiler-grade symbol bindings beat tree-sitter's
-heuristic resolver — Kotlin, Java, and TypeScript in particular. Cairn stays a
-**consumer** of SCIP indexes; it never generates them.
+heuristic resolver — Kotlin, Java, Swift, and TypeScript in particular. Cairn
+stays a **consumer** of SCIP indexes; it never generates them (with one bounded
+exception for a missing index — see [Automatic generation](#automatic-generation-opt-in)
+below).
 
 When an index is configured **and present**, `cairn build` skips tree-sitter
 parsing for that language and imports the SCIP data instead (exact resolution —
@@ -21,6 +23,9 @@ scip-kotlin index --output build/scip/kotlin.scip .
 
 # TypeScript (scip-typescript)
 scip-typescript index --output build/scip/typescript.scip .
+
+# Swift (scip-swift)
+scip-swift index /path/to/repo --output build/scip/swift.scip
 ```
 
 See the [SCIP indexer list](https://github.com/sourcegraph/scip#indexers) for
@@ -28,6 +33,55 @@ Java, Scala, Python, Go, Rust, etc. The output is a protobuf `.scip` file.
 
 > Commit the `.scip` file (or produce it in CI) — cairn reads it at build time
 > and never triggers regeneration.
+
+### Swift / scip-swift notes
+
+`scip-swift` builds the target repo with indexing enabled
+(`swift build --enable-index-store` or
+`xcodebuild ... COMPILER_INDEX_STORE_ENABLE=YES`), then reads the resulting
+IndexStore. Two consequences worth knowing:
+
+- **macOS only.** Indexing anything that imports Apple-only frameworks
+  (`UIKit`, `WatchKit`, `WidgetKit`) requires Xcode + the iOS/watchOS SDK, which
+  Apple ships only on macOS. Generate the index on a Mac; cairn can consume the
+  `.scip` file on any platform.
+- **Opaque symbol identity.** scip-swift embeds the compiler's raw USR (e.g.
+  `_$s5Hello7GreeterC7sayHelloyySSF`) as an opaque, escaped descriptor rather
+  than a demangled `Hello.Greeter.sayHello()` chain. Cross-references still
+  resolve exactly (USR is compiler-guaranteed unique), but the symbol strings
+  are not human-readable the way `scip-kotlin`'s are.
+- **No call-specific role.** SCIP's `SymbolRole` has no call bit, so Swift call
+  sites are marked `ReadAccess` like any other reference. cairn therefore tags
+  Swift call edges as `kind='reference'`, not `kind='call'` — call-graph queries
+  (`get_callers`, `impact_analysis` keyed on `call` edges) will under-report for
+  Swift. This is inherent to the SCIP spec, not a bug.
+
+Build/install it from source on a Mac: <https://github.com/phuongddx/scip-swift>
+
+## Automatic generation (opt-in)
+
+Normally you generate the index out-of-band (CI, a make target) and commit it.
+As a convenience, if `cairn.json` declares a SCIP index for a language but the
+**file is missing** and a known indexer binary is on `PATH`, `cairn build` will
+run the indexer once to produce it before importing. This is the one bounded
+exception to "cairn never generates indexes".
+
+- **Bounded.** An existing index is never rebuilt — the user (or CI) owns the
+  regeneration cadence. Generation triggers only when the index is configured
+  *and absent*.
+- **Silent fallback.** If the indexer is missing, fails, times out, or exits
+  nonzero, cairn logs it (visible under `cairn build -v`) and falls back to
+  tree-sitter for that language. A generation failure never breaks the build.
+
+Known indexers cairn can drive:
+
+| Language   | Tool              | Install / source                                            |
+|------------|-------------------|-------------------------------------------------------------|
+| `swift`    | `scip-swift`      | <https://github.com/phuongddx/scip-swift> (macOS/Xcode)     |
+| `kotlin`   | `scip-kotlin`     | <https://github.com/sourcegraph/scip-kotlin>                |
+| `typescript` | `scip-typescript` | <https://github.com/sourcegraph/scip-typescript>          |
+
+A committed or CI-produced index always wins — generation only fills gaps.
 
 ## 2. Declare it in `cairn.json`
 
@@ -132,6 +186,11 @@ scanner so SCIP rows land under the correct `(repo_id, repo-relative path)` —
 the same file identity the scanner and incremental path use. Indexes that omit
 `Metadata.project_root` fall back to treating paths as workspace-relative,
 which is correct only when paths happen to be workspace-relative.
+
+The `project_root` value is normalized before use, so different indexers'
+conventions all resolve correctly: plain absolute paths (scip-kotlin,
+scip-typescript), workspace-relative paths, and `file://`-prefixed URLs
+(scip-swift, which writes `URL(fileURLWithPath:).absoluteString`).
 
 ## Regenerating the vendored stub
 

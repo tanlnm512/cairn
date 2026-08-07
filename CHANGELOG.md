@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     back to tree-sitter for an edited SCIP-covered file (bounded, self-healing
     staleness — the next full build restores `source='scip'` once the index
     is regenerated).
+- **Automatic SCIP index generation (bounded, opt-in).** When `cairn.json`
+  declares a SCIP index for a language but the file is *missing*, and a known
+  indexer (`scip-swift`, `scip-kotlin`, `scip-typescript`) is on `PATH`,
+  `cairn build` runs the indexer once to produce it before importing — the one
+  bounded exception to "cairn never generates indexes". An existing index is
+  never rebuilt; a missing/failing/timeout indexer logs (under `-v`) and falls
+  back to tree-sitter for that language, so generation never breaks the build.
+  Swift is a new known indexer target alongside Kotlin/TypeScript. See
+  `docs/scip.md` § "Automatic generation".
 - **Portable `.kg` database.** The code graph now stores file paths
   **repo-relative** (`files.path`, `parse_errors.file_path`,
   `skipped_files.path`, `pending_sync.path`) and `repos.path` **workspace-
@@ -69,7 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - _Nothing yet._
 
 ### Fixed
-- _Nothing yet._
+- **SCIP `project_root` now handles `file://` URLs.** scip-swift writes
+  `Metadata.project_root` as `URL(fileURLWithPath:).absoluteString`
+  (`file:///abs/path`); the importer treated it as a relative path (joined it
+  verbatim onto the workspace root) and silently mis-attributed every Swift
+  document to the wrong repo id. The value is now scheme-stripped before
+  resolution, so absolute paths, workspace-relative paths, and `file://` URLs
+  (including the `file://localhost/` form) all resolve correctly.
 
 ### Removed
 - _Nothing yet._
