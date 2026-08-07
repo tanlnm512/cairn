@@ -242,12 +242,12 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 | Tool | Behavior | Workaround |
 |------|----------|------------|
 | `ask_compass` | Routes correctly but returns empty body skeletons when wiki/compass coverage is thin. | Drill down with the specific layer tool; don't treat empty response as "no info exists". |
-| `recall_memory` | Substring search across title + description + body + tags. Finds the query only if the exact words appear somewhere in the memory. A query for "messaging" won't find a memory about EventBus unless "messaging" appears in its text. | For concept-level queries, try broader search terms or put synonyms in memory titles/bodies. |
+| `recall_memory` | Multi-token lexical matching, with a semantic fallback when lexical search comes up empty. | Natural-language and multi-token queries ("backoff retry policy") work, not just single symbol tokens. |
 | `impact_analysis` | Within-repo by default, but includes cross-repo consumer reach in its output. Precise mode only follows resolved edges, so common names can under-report. | Pair with `cross_repo_deps(repo)` for the full picture. Use `fuzzy=True` when precise impact looks suspiciously small for a widely-used symbol. |
 | `search_symbols` | FTS5 + phrase splitting handles underscored tokens (`*core_ui_v4*` matches correctly). For camelCase or non-prefix substring patterns, unions in a LIKE-based substring pass (FTS5's `*` is prefix-only; unicode61 doesn't split camelCase). | Wildcards and substring queries both work, on underscored and camelCase names alike. |
 | `get_callers`/`impact_analysis` on a Kotlin class invoked via `operator fun invoke` | A bare `someUseCase(params)` call (DI-injected property, the standard Android UseCase idiom) resolves the call edge to the *local property* in the calling file, not the class. The parser retargets these bare-call edges to the callee's declared type. | `this.someUseCase(params)` (explicit receiver) is a remaining gap; cross-check with `fuzzy=True` or a grep if that specific shape looks under-reported. |
 | `semantic_search` | Defaults to RRF fusion (BM25 + vector, `CAIRN_FUSION=1` default): the returned `score` is a rank-fusion number (~0.01-0.02), not cosine similarity, regardless of the `threshold` argument. Real cosine scores (0.3-0.6+ for genuinely on-topic hits with `local`/`BAAI/bge-m3`) only show when fusion is off. | Rank order is meaningful either way. Set `CAIRN_FUSION=0` if you need the score to reflect actual match strength (e.g. deciding how confident a hit is), not just relative order. |
-| `ann_backend_enabled` | Requires `CAIRN_ANN_BACKEND=sqlite-vec` set explicitly -- not enabled just because `sqlite_vec` is importable. | Fully opt-in; leave the env var unset to stay on the brute-force cosine scan. |
+| `ann_backend_enabled` | On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. It degrades silently to the brute-force cosine scan if the extension fails to load. | Set `CAIRN_ANN_BACKEND=off` to force the brute-force scan. |
 
 ## LLM Task Queue (agent-decoupled synthesis)
 Cairn never calls an LLM directly. To generate compass/wiki with LLM quality:
@@ -294,7 +294,7 @@ def _agents_instructions() -> str:
         "## MCP Server\n"
         "- Name: `cairn` (auto-connected at session start)\n"
         "- Transport: stdio\n"
-        "- 27 tools across 5 layers: graph (9), knowledge base + compass (4), memory (8), knowledge (5), router (1)\n"
+        "- 27 tools across 5 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (5)\n"
         "  (`explore` is the recommended first call -- it aggregates the graph layer)\n"
         "\n"
     ) + _INSTRUCTIONS_BODY

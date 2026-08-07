@@ -15,6 +15,10 @@ cairn is a **local, structural, agent-first** code intelligence system.
   symbols and call edges, then answers queries against that graph. "Who calls
   this?" is a graph traversal, not a guess. Parsers exist for nine languages:
   Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go.
+  (The scanner also recognizes C/C++/header extensions and header-sniffs `.h`
+  to objc/cpp/c, but no tree-sitter parser ships for C/C++ yet — those files
+  are scanned and hash-statted but recorded as `parse_errors` until a parser
+  lands. To index C/C++ today, configure a pre-built [SCIP](scip.md) index.)
 - **Agent-first.** The primary interface is an MCP server exposing 27 tools to
   AI agents. The CLI (`cairn`) mirrors the same capability for humans and as a
   fallback. The tool surfaces are designed for an agent to call repeatedly and
@@ -57,8 +61,9 @@ The structural core. Tree-sitter parses source into symbols (classes,
 functions, methods) and the call edges between them, with a resolver that
 tries to pin each edge to exactly one definition. Tools: `find_definition`,
 `search_symbols`, `get_callers`, `get_callees`, `impact_analysis`,
-`cross_repo_deps`, `semantic_search`, plus the aggregator `explore` and a
-blast-radius helper. Every "who depends on X" answer comes from this layer.
+`cross_repo_deps`, `semantic_search`, plus the aggregator `explore` and
+`visualize_graph` (graph rendering). Every "who depends on X" answer comes
+from this layer.
 Edge resolution is labelled `exact`, `ambiguous`, or `unresolved` (see
 [Resolution model](#resolution-model)).
 
@@ -76,9 +81,11 @@ groups that the traversal layer treats differently:
   another service), so including them in blast radius would inflate impact —
   contradicting the precise-by-default identity.
 
-`get_callers` / `get_callees` accept an optional `kind=` filter to query any
-single kind (e.g. `get_callees(name, fuzzy=True, kind='http_call')`). Service
-edges are produced by the post-parse pass in `parsers/service_calls.py`.
+`get_callers` / `get_callees` accept an optional `kind=` filter at the
+**library layer** (`cairn.graph.traversal`) and via the CLI to query any single
+kind (e.g. `get_callees(name, fuzzy=True, kind='http_call')`). The MCP tool
+wrappers do not currently expose `kind=`. Service edges are produced by the
+post-parse pass in `parsers/service_calls.py`.
 
 ### Layer 2 — Compass + Knowledge base (5 tools)
 
@@ -180,8 +187,11 @@ cairn task complete <id> --result-file <path>   # submit a result
 
 Every submitted result runs through a **deterministic critic** that fact-checks
 it against the graph: only files and symbols that actually exist in the index
-are allowed into the final document. An agent may hallucinate; the critic will
-not let a hallucinated symbol into compass or wiki.
+are allowed into the final document. An agent may hallucinate; for `compass
+generate` / `compass flow` the critic blocks the write outright (a hallucinated
+symbol can never land in a compass doc). `wiki generate` runs the critic and
+surfaces its verdict but still writes the concept, so the body is never silently
+lost — treat the printed errors as must-fix.
 
 The motivation is **verifiability**. A graph query returns an answer you can
 trace to source. A compass guide cites symbols the critic confirmed exist. If

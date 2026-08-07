@@ -155,11 +155,13 @@ write nothing), `--as-workflow`, `--max-steps 20`, `--use-llm`, `--db`, `--knowl
 `flow-gaps` options: `--min-edges 5`, `--generate`, `--limit 0` (0 = all),
 `--dry-run`, `--db`, `--knowledge`.
 
-> **Critic-gated writes.** `compass generate`, `compass flow`, and `wiki generate`
-> all run the deterministic critic (backtick file/symbol references verified
-> against the graph). `--dry-run` shows the verdict without writing; the critic's
-> errors/warnings are surfaced so you can see *why* a body was rejected. An agent
-> may hallucinate, but a hallucinated symbol can never land in a compass/wiki doc.
+> **Critic-gated writes.** `compass generate` and `compass flow` both run the
+> deterministic critic (backtick file/symbol references verified against the
+> graph) and **refuse to write on critic failure** — a hallucinated symbol can
+> never land in a compass doc. `wiki generate` runs the same critic and surfaces
+> the verdict/errors, but **does still write** the concept on failure (see the
+> generator docstring) so the body is never silently lost; treat the printed
+> errors as must-fix. `--dry-run` shows the verdict without writing for either.
 
 ### `cairn wiki` — architectural wiki
 

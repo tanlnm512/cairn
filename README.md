@@ -58,12 +58,18 @@ for a worked example. Full design at
 
 ```bash
 pip install cairn-intel              # install from PyPI (the recommended path)
-cairn update                        # parse the workspace and build the graph
+cairn build                         # parse the workspace and build the graph (first run)
+cairn update                        # incremental reindex after the first build
 cairn def SomeSymbol                # find where a symbol is defined
 cairn ask "how does auth work"      # natural-language query across all layers
 ```
 
 The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
+
+> **First run vs later runs.** `cairn build` parses every file from scratch.
+> `cairn update` reindexes only what changed since the last build (via `git diff
+> HEAD` plus the existing graph) — so on a fresh clone with a clean working tree,
+> use `cairn build` first, since `cairn update` would see no changes.
 
 ## Upgrading
 
@@ -113,7 +119,7 @@ Non-interactive flags for scripts/CI:
 
 ```bash
 cairn install-agents --yes                          # auto-install detected-not-installed
-cairn install-agents --client claude,cursor         # force specific clients
+cairn install-agents --client claude --client cursor  # force specific clients
 cairn install-agents --scope global                 # write to ~/.claude/ etc.
 cairn install-agents --force                        # overwrite existing files
 cairn install-agents --dry-run                      # preview without writing
@@ -170,7 +176,8 @@ The `cairn` command groups the main functionality. Run `cairn --help`
 | Command | What it does |
 |---------|--------------|
 | `cairn serve` | Run the stdio MCP server |
-| `cairn update` | Parse the workspace and rebuild the graph |
+| `cairn build` | Parse the workspace and build the graph (full; first run) |
+| `cairn update` | Incremental reindex of changed files (after the first build) |
 | `cairn def <symbol>` | Find a symbol's definition |
 | `cairn impact <symbol>` | Within-repo blast radius (precise by default; `--fuzzy` to audit) |
 | `cairn ask "<question>"` | Natural-language query routed across all layers |
@@ -234,7 +241,7 @@ end user at install time.
 
 ## Status
 
-**Beta — pre-1.0 (v0.5.3).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.6.0).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 

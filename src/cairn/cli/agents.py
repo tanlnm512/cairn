@@ -203,7 +203,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
 
 @main.command(name="uninstall-agents")
 @click.option("--client", "clients", multiple=True,
-              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "all"]),
+              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "all"]),
               help="Which clients to remove from (repeatable). Default: detected.")
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: resolved).")
 def uninstall_agents(clients, ws_arg):
