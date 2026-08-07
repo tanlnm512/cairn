@@ -184,6 +184,47 @@ def test_protobuf_does_not_clobber_existing_tree_sitter_rows():
     assert row["line_count"] == 42
 
 
+def test_protobuf_reuses_tree_sitter_file_id_when_coexisting():
+    """In coexistence mode, SCIP symbols link to the existing tree-sitter file row.
+
+    Tree-sitter creates file rows with uuid ids and a real hash; SCIP's id
+    format is ``{repo}:{rel}``. Without reconciliation, SCIP's INSERT OR IGNORE
+    no-ops on UNIQUE(repo_id, path) and SCIP symbols dangle off a non-existent
+    file_id, silently vanishing from every JOIN. The importer must look up the
+    real tree-sitter row and use ITS id.
+    """
+    conn = _conn()
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('demo','demo','.')")
+    # Tree-sitter creates this with a uuid id (not the {repo}:{rel} format).
+    ts_file_id = "a1b2c3d4e5f6"  # uuid-like, NOT "demo:src/Foo.swift"
+    conn.execute(
+        "INSERT INTO files (id, path, repo_id, hash, line_count, language) "
+        "VALUES (?, 'src/Foo.swift', 'demo', 'ts_hash_123', 10, 'swift')",
+        (ts_file_id,),
+    )
+    conn.commit()
+
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "src/Foo.swift"
+    doc.language = "swift"
+    _occ(doc, "scip-swift swift demo Foo#", roles=1, syntax_kind=19,
+         line=0, start=6, end=9)
+
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+
+    # The SCIP symbol must reference the TREE-SITTER file id, not a shadow.
+    sym = conn.execute("SELECT file_id FROM symbols").fetchone()
+    assert sym["file_id"] == ts_file_id, (
+        "SCIP symbol should link to the tree-sitter file row, not a shadow"
+    )
+    # Only ONE file row exists (no duplicate shadow).
+    files = conn.execute(
+        "SELECT id FROM files WHERE path = 'src/Foo.swift'"
+    ).fetchall()
+    assert len(files) == 1
+
+
 def test_import_scip_file_proto_and_json(tmp_path):
     """import_scip_file reads both formats via the fmt flag."""
     # Proto

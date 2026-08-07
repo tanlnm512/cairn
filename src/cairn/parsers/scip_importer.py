@@ -140,6 +140,27 @@ _EXT_LANGUAGE: Dict[str, str] = {
 }
 
 
+def _resolve_real_file_id(conn, repo: str, rel: str, fallback: str) -> str:
+    """Return the file row id SCIP symbols/edges should reference.
+
+    In a coexistence build, tree-sitter parses every file first and creates a
+    ``files`` row with a uuid ``id`` and a real hash (``hash != 'scip_imported'``).
+    SCIP must link its symbols/edges to THAT row so JOINs work and the two
+    sources share one file identity. If no tree-sitter row exists (the
+    standalone ``import-scip`` escape hatch against a fresh DB), fall back to
+    the deterministic ``{repo}:{rel}`` shadow id and let the caller insert it.
+    """
+    try:
+        row = conn.execute(
+            "SELECT id FROM files WHERE repo_id = ? AND path = ? AND hash != 'scip_imported' "
+            "ORDER BY id LIMIT 1",
+            (repo, rel),
+        ).fetchone()
+    except Exception:
+        row = None
+    return row[0] if row else fallback
+
+
 def _language_for(rel_path: str, declared: str) -> str:
     """Resolve a document's language, falling back to the file extension.
 
@@ -309,13 +330,18 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     # same descriptor; a forward decl only fills in the map when no real def is
     # seen, so references still resolve without spurious symbol rows.
     doc_paths: Dict[int, Tuple[str, str]] = {}
+    doc_file_ids: Dict[int, str] = {}
     defs: Dict[str, Tuple[str, str, int, int]] = {}
     real_defs: set = set()
     for i, doc in enumerate(index.documents):
         rel = doc.relative_path
         doc_repo, rel_to_repo = _resolve_doc_path(rel, ws_root, repo_id, project_root=project_root)
         doc_paths[i] = (doc_repo, rel_to_repo)
-        file_id = f"{doc_repo}:{rel_to_repo}"
+        # Coexistence: link to the tree-sitter file row if it exists so both
+        # sources share one file identity (JOINs work, incremental clears both).
+        doc_file_ids[i] = _resolve_real_file_id(
+            conn, doc_repo, rel_to_repo, f"{doc_repo}:{rel_to_repo}")
+        file_id = doc_file_ids[i]
         for occ in doc.occurrences:
             roles = occ.symbol_roles
             if not (roles & (_SCIP_ROLE_DEFINITION | _SCIP_ROLE_FORWARD_DEFINITION)):
@@ -335,10 +361,12 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     for i, doc in enumerate(index.documents):
         doc_repo, rel = doc_paths[i]
         lang = _language_for(rel, getattr(doc, "language", "") or "")
-        file_id = f"{doc_repo}:{rel}"
+        file_id = doc_file_ids[i]
 
         # repos + files: INSERT OR IGNORE so we never overwrite tree-sitter
-        # metadata (hash/line_count/size/mtime).
+        # metadata (hash/line_count/size/mtime). When coexisting with
+        # tree-sitter, file_id already points at the real row and this is a
+        # no-op; in standalone mode it inserts the shadow row.
         cur.execute(
             "INSERT OR IGNORE INTO repos (id, name, path) VALUES (?, ?, ?)",
             (doc_repo, doc_repo, "."),
