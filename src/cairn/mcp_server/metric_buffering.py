@@ -139,6 +139,13 @@ def _start_metric_flusher():
 def _log_metric(tool_name: str, duration_ms: float, status: str = "ok",
                 error_message: str = ""):
     """Record a tool invocation (buffered; flushes on a background thread)."""
+    # Read-only daemons open the DB with mode=ro, so INSERT INTO tool_metrics
+    # would fail every flush and buffer indefinitely (capped by deque maxlen).
+    # tool_metrics is analytics, not correctness -- skip the write entirely on
+    # a read-only server so the table doesn't silently stay empty and the flush
+    # thread doesn't spin on a guaranteed failure.
+    if os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes"):
+        return
     row = (
         tool_name,
         os.environ.get("CAIRN_SESSION", "unknown"),

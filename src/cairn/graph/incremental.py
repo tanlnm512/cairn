@@ -45,6 +45,11 @@ def reindex_paths(
 
     # Group paths by repo for batched resolver re-run.
     repo_edges_by_file: dict[str, dict[str, list]] = {}
+    # Names of symbols that were deleted+recreated per repo. The repair pass
+    # re-resolves INCOMING edges (from other files) whose target pointed at one
+    # of these names; without it they stay 'unresolved' until the caller's own
+    # file is edited or a full rebuild runs (see resolver.repair_incoming_edges).
+    repo_changed_target_names: dict[str, set[str]] = {}
 
     for abs_path in paths:
         abs_path = str(abs_path)
@@ -81,79 +86,112 @@ def reindex_paths(
         stored_repo = row["repo_id"] if row else repo
         stored_path = row["path"] if row else rel_to_repo  # normalize for delete
         file_id = row["id"] if row else None
+
+        # Snapshot the bare names of symbols currently in this file BEFORE
+        # deleting them. The repair pass uses these to re-resolve INCOMING
+        # edges (from other files) that pointed at a re-created symbol; without
+        # it they stay 'unresolved' until a full rebuild (see
+        # resolver.repair_incoming_edges).
+        deleted_names: set[str] = set()
         if file_id:
-            cur.execute(
-                "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
-                (file_id,),
-            )
-            # Cross-file edges/imports pointing INTO this file's symbols (as
-            # target) aren't touched by the DELETEs above. Null out those
-            # references before deleting the symbols below, or the FK
-            # (edges.target_id / imports.resolved_symbol_id -> symbols.id,
-            # no cascade) raises "FOREIGN KEY constraint failed". Nulling
-            # matches the unresolved-target convention: target_name/
-            # imported_path survive for the resolver to re-link.
-            cur.execute(
-                "UPDATE edges SET target_id = NULL, resolution = 'unresolved' "
-                "WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
-                (file_id,),
-            )
-            cur.execute(
-                "UPDATE imports SET resolved_symbol_id = NULL WHERE resolved_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)",
-                (file_id,),
-            )
-            cur.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
-            # Clear embeddings for these symbols BEFORE deleting them, or the
-            # FK (embeddings.symbol_id -> symbols.id) blocks the symbol delete.
-            # Re-embedding after reindex repopulates them.
-            try:
+            for r in cur.execute(
+                "SELECT name FROM symbols WHERE file_id = ?", (file_id,)
+            ):
+                if r["name"]:
+                    deleted_names.add(r["name"])
+
+        # BEGIN one transaction around the whole delete+re-parse+insert so a
+        # crash mid-file either keeps the old rows or installs the new ones,
+        # never leaves a gap (old deleted, new not yet written). Commit/rollback
+        # is explicit at each exit below.
+        try:
+            conn.execute("BEGIN")
+            if file_id:
                 cur.execute(
-                    "DELETE FROM embeddings WHERE symbol_id IN "
-                    "(SELECT id FROM symbols WHERE file_id = ?)",
+                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
                     (file_id,),
                 )
-            except sqlite3.OperationalError:
-                logger.debug("embeddings table missing", exc_info=True)
-            cur.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
-            cur.execute("DELETE FROM parse_errors WHERE file_path = ?", (stored_path,))
-            cur.execute("DELETE FROM files WHERE id = ?", (file_id,))
-            conn.commit()
-
-        # Check if file still exists on disk.
-        if not Path(abs_path).exists():
-            # Only count as deleted if we actually removed DB state (the file
-            # was indexed before this call). A ghost path that was never in the
-            # DB is a no-op, not a deletion.
-            if file_id is not None:
-                deleted += 1
-            # Also remove from pending_sync if tracking.
-            try:
-                conn.execute(
-                    "DELETE FROM pending_sync WHERE path IN (?, ?)",
-                    (abs_path, stored_path),
+                # Cross-file edges/imports pointing INTO this file's symbols (as
+                # target) aren't touched by the DELETEs above. Null out those
+                # references before deleting the symbols below, or the FK
+                # (edges.target_id / imports.resolved_symbol_id -> symbols.id,
+                # no cascade) raises "FOREIGN KEY constraint failed". Nulling
+                # matches the unresolved-target convention: target_name/
+                # imported_path survive for the resolver to re-link.
+                #
+                # IMPORTANT: a resolved edge has target_name already cleared to
+                # NULL (the resolver drops the bare name once target_id is set).
+                # Backfill target_name from the symbol we're about to delete
+                # BEFORE nulling target_id, so the repair pass can still match
+                # these edges by name and re-resolve them once the symbol is
+                # re-created. Without this, an incremental reindex of a callee
+                # file permanently orphans its incoming edges (target_id AND
+                # target_name both NULL -> unresolvable, invisible to precise
+                # callers, and even fuzzy mode can't recover the name).
+                cur.execute(
+                    "UPDATE edges SET "
+                    "  target_name = COALESCE(target_name, "
+                    "    (SELECT name FROM symbols WHERE id = edges.target_id)), "
+                    "  target_id = NULL, resolution = 'unresolved' "
+                    "WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+                    (file_id,),
                 )
-                conn.commit()
-            except sqlite3.OperationalError:
-                logger.debug("pending_sync table missing", exc_info=True)
-                pass  # table not present on this schema
-            continue
+                cur.execute(
+                    "UPDATE imports SET resolved_symbol_id = NULL WHERE resolved_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+                    (file_id,),
+                )
+                cur.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+                # Clear embeddings for these symbols BEFORE deleting them, or the
+                # FK (embeddings.symbol_id -> symbols.id) blocks the symbol delete.
+                # Re-embedding after reindex repopulates them.
+                try:
+                    cur.execute(
+                        "DELETE FROM embeddings WHERE symbol_id IN "
+                        "(SELECT id FROM symbols WHERE file_id = ?)",
+                        (file_id,),
+                    )
+                except sqlite3.OperationalError:
+                    logger.debug("embeddings table missing", exc_info=True)
+                cur.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
+                cur.execute("DELETE FROM parse_errors WHERE file_path = ?", (stored_path,))
+                cur.execute("DELETE FROM files WHERE id = ?", (file_id,))
 
-        # Re-parse and insert.
-        from .scanner import file_sha256, EXTENSION_MAP, resolve_file_language
+            # Check if file still exists on disk.
+            if not Path(abs_path).exists():
+                # Only count as deleted if we actually removed DB state (the file
+                # was indexed before this call). A ghost path that was never in
+                # the DB is a no-op, not a deletion.
+                if file_id is not None:
+                    deleted += 1
+                # Also remove from pending_sync if tracking.
+                try:
+                    conn.execute(
+                        "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                        (abs_path, stored_path),
+                    )
+                except sqlite3.OperationalError:
+                    logger.debug("pending_sync table missing", exc_info=True)
+                    pass  # table not present on this schema
+                conn.execute("COMMIT")
+                continue
 
-        suffix = Path(abs_path).suffix
-        if suffix not in EXTENSION_MAP:
-            continue
-        language = resolve_file_language(suffix, abs_path)
+            # Re-parse and insert.
+            from .scanner import file_sha256, EXTENSION_MAP, resolve_file_language
 
-        file_hash = file_sha256(Path(abs_path))
-        from .builder import get_parser, insert_parsed_file, insert_parse_error
+            suffix = Path(abs_path).suffix
+            if suffix not in EXTENSION_MAP:
+                conn.execute("COMMIT")
+                continue
+            language = resolve_file_language(suffix, abs_path)
 
-        parser = get_parser(language)
-        if not parser:
-            continue
+            file_hash = file_sha256(Path(abs_path))
+            from .builder import get_parser, insert_parsed_file, insert_parse_error
 
-        try:
+            parser = get_parser(language)
+            if not parser:
+                conn.execute("COMMIT")
+                continue
+
             pf = parser.parse(abs_path)
             name_to_symbol_ids = {}
             # Store files.path as repo-relative (portable); abs_path is only
@@ -162,24 +200,38 @@ def reindex_paths(
                 cur, stored_repo, rel_to_repo, abs_path, language, file_hash, pf,
                 name_to_symbol_ids, repo_edges_by_file,
             )
-            conn.commit()
             reindexed += 1
             # Clear pending_sync for successfully reindexed files. Match both
             # the rel form (current build contract) and abs form (DBs not yet
             # rebuilt to portable paths) so either clears its rows.
             try:
                 conn.execute("DELETE FROM pending_sync WHERE path IN (?, ?)", (rel_to_repo, abs_path))
-                conn.commit()
             except sqlite3.OperationalError:
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
+            conn.execute("COMMIT")
+            # Record the names that were deleted+recreated for the repair pass.
+            if deleted_names:
+                repo_changed_target_names.setdefault(stored_repo, set()).update(deleted_names)
         except Exception as e:
+            # Roll back the whole delete+reinsert so a failed re-parse leaves
+            # the old rows intact rather than a half-deleted gap.
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
             import traceback
-            insert_parse_error(cur, stored_repo, rel_to_repo, str(e), traceback.format_exc())
-            conn.commit()
+            # insert_parse_error opens its own implicit transaction; safe after
+            # the ROLLBACK above.
+            try:
+                insert_parse_error(cur, stored_repo, rel_to_repo, str(e), traceback.format_exc())
+                conn.commit()
+            except sqlite3.Error:
+                logger.debug("failed to record parse error", exc_info=True)
             errors.append(f"{abs_path}: {e}")
 
-    # Run resolver per repo (batched).
+    # Run resolver per repo (batched): re-resolves the edges of the files that
+    # were just re-parsed.
     for repo_name, edges_by_file in repo_edges_by_file.items():
         try:
             from . import resolver as resolver_mod
@@ -187,6 +239,19 @@ def reindex_paths(
             conn.commit()
         except Exception as e:
             errors.append(f"resolver/{repo_name}: {e}")
+
+    # Repair pass: re-resolve INCOMING edges from other files whose target was
+    # a symbol that got deleted+recreated with a new id. Without this, precise
+    # callers of an edited symbol silently drop after an incremental update.
+    for repo_name, names in repo_changed_target_names.items():
+        if not names:
+            continue
+        try:
+            from . import resolver as resolver_mod
+            resolver_mod.repair_incoming_edges(conn, repo_name, sorted(names))
+            conn.commit()
+        except Exception as e:
+            errors.append(f"repair/{repo_name}: {e}")
 
     return {"reindexed": reindexed, "deleted": deleted, "errors": errors}
 
@@ -201,9 +266,15 @@ def incremental_update(
     """Re-index only changed files since the last build.
 
     Uses `git diff` to find changed source files, deletes their old symbols/edges,
-    and re-parses + inserts them. Returns a summary. Uses a longer busy_timeout
-    than interactive MCP tool calls so it can wait out lock contention from
-    concurrently-running `cairn serve` processes rather than fail after 5s.
+    and re-parses + inserts them. After reindexing it also refreshes the derived
+    indexes (dataflow + transitive closure) so cached impact lookups and multi-hop
+    traversals reflect the change -- previously these were only rebuilt by a full
+    `cairn build`, leaving `cairn update` serving stale derived data.
+
+    Returns a summary dict including any per-file errors (re-parse failures,
+    resolver failures). Uses a longer busy_timeout than interactive MCP tool
+    calls so it can wait out lock contention from concurrently-running
+    `cairn serve` processes rather than fail after 5s.
     """
     conn = get_db(db_path, busy_timeout_ms=20000)
     repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
@@ -216,8 +287,46 @@ def incremental_update(
         for f in changed:
             all_paths.append(str(repo_path / f))
     result = reindex_paths(conn, workspace, all_paths)
+
+    # Refresh derived indexes when something actually changed. An incremental
+    # edit can change which symbols are public, who calls whom, and which edges
+    # are exact -- so the precomputed dataflow rows and transitive closure must
+    # be rebuilt, or cached lookups silently serve stale answers. Best-effort:
+    # a failure here is reported as an error but does not undo the reindex.
+    derived_errors: list[str] = []
+    if result["reindexed"] or result["deleted"]:
+        derived_errors = _rebuild_derived_indexes(conn)
+
     conn.close()
-    return {"repos_scanned": len(repos), "files_reindexed": result["reindexed"]}
+    return {
+        "repos_scanned": len(repos),
+        "files_reindexed": result["reindexed"],
+        "files_deleted": result["deleted"],
+        "errors": result["errors"] + derived_errors,
+    }
+
+
+def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
+    """Rebuild dataflow + transitive closure. Returns a list of error strings.
+
+    Best-effort: mirrors the post-build steps in cli/core.py so an incremental
+    update keeps the derived indexes consistent with the freshly reindexed
+    graph. Each phase is independent; a failure in one doesn't skip the other.
+    """
+    errors: list[str] = []
+    try:
+        from .dataflow import build_dataflow_index, build_transitive_closure
+        build_dataflow_index(conn)
+    except Exception as e:
+        logger.debug("dataflow rebuild failed", exc_info=True)
+        errors.append(f"dataflow: {e}")
+    try:
+        from .dataflow import build_transitive_closure
+        build_transitive_closure(conn)
+    except Exception as e:
+        logger.debug("transitive closure rebuild failed", exc_info=True)
+        errors.append(f"transitive_closure: {e}")
+    return errors
 
 
 def _changed_source_files(repo_path: Path, conn=None) -> List[str]:

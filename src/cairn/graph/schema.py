@@ -153,9 +153,11 @@ CREATE INDEX IF NOT EXISTS idx_skipped_path ON skipped_files(path);
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_path ON imports(imported_path);
 
--- pending_sync tracks files with unindexed edits (the debounce window). The
--- file watcher inserts on event; reindex_paths deletes on completion. MCP
--- tools check this table to prepend staleness banners.
+-- pending_sync tracks files with unindexed edits (the debounce window). A live
+-- filesystem watcher (the optional [watch] extra) inserts on event;
+-- reindex_paths deletes on completion. MCP tools check this table to prepend
+-- staleness banners. The default install has no live watcher (watcher.py is
+-- boot-time catch-up only), so this table stays empty unless [watch] is wired.
 CREATE TABLE IF NOT EXISTS pending_sync (
     path TEXT PRIMARY KEY,
     repo_id TEXT NOT NULL,
@@ -455,21 +457,7 @@ def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
     """Persist an in-memory build DB to disk with atomic swap and build locking."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Take advisory lock to prevent concurrent rebuilds
-    lock_path = db_path + ".build.lock"
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
-    try:
-        # Try to acquire exclusive lock (non-blocking)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError) as e:
-            if e.errno == errno.EWOULDBLOCK:
-                raise RuntimeError(
-                    f"Cannot rebuild: another build is already in progress. "
-                    f"If you believe this is incorrect, remove {lock_path} and retry."
-                )
-            raise
-
+    with build_lock(db_path):
         # Write to temp file in the same directory for atomic swap
         tmp_path = db_path + ".tmp"
         dest = sqlite3.connect(tmp_path)
@@ -486,10 +474,45 @@ def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
         # new connections see the fresh DB
         os.replace(tmp_path, db_path)
 
+
+# Imported here to avoid a circular import at module top (contextlib is stdlib).
+import contextlib
+
+
+@contextlib.contextmanager
+def build_lock(db_path: str):
+    """Advisory exclusive lock preventing concurrent rebuilds of ``db_path``.
+
+    The full-rebuild path (in-memory build -> backup_to) and the single-repo
+    path (init_db -> direct writes) both write the live DB. Without this lock
+    two ``cairn build --repo X`` runs (or a build racing an update) could
+    interleave writes with only SQLite's busy_timeout as a guard. The lock is
+    non-blocking: a second build raises RuntimeError immediately rather than
+    waiting, so the user knows to retry later.
+
+    Raises ``RuntimeError`` if another build holds the lock.
+    """
+    lock_path = str(db_path) + ".build.lock"
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
+    acquired = False
+    try:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except (IOError, OSError) as e:
+            if e.errno == errno.EWOULDBLOCK:
+                raise RuntimeError(
+                    f"Cannot rebuild: another build is already in progress. "
+                    f"If you believe this is incorrect, remove {lock_path} and retry."
+                )
+            raise
+        yield
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if acquired:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
-        # Clean up lock file if it exists
+        # Clean up the lock file so it doesn't outlive the build.
         if os.path.exists(lock_path):
             try:
                 os.unlink(lock_path)

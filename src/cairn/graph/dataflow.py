@@ -161,21 +161,29 @@ def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> in
         """, (d,))
         batch_inserted += cur.rowcount
         
-        # Case 2: fallback for unresolved edges (target_id IS NULL)
+        # Case 2: fallback for unresolved edges (target_id IS NULL). Only
+        # follow when the target_name maps to EXACTLY ONE symbol -- a name with
+        # multiple definitions is a collision, and following any one of them
+        # would re-introduce the name-collision inflation the precise-by-default
+        # design exists to prevent. Ambiguous names are skipped (left
+        # unextended) rather than guessed.
         cur.execute("""
             INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-            SELECT 
+            SELECT
                 t.source_id,
                 COALESCE(s_target.name, e.target_name) AS target_name,
                 e.target_id,
                 t.distance + 1
             FROM transitive_edges t
-            LEFT JOIN symbols s_mid ON s_mid.name = t.target_name
+            JOIN (
+                SELECT name FROM symbols
+                GROUP BY name HAVING COUNT(*) = 1
+            ) uniq ON uniq.name = t.target_name
+            JOIN symbols s_mid ON s_mid.name = uniq.name
             JOIN edges e ON e.source_id = s_mid.id
             LEFT JOIN symbols s_target ON s_target.id = e.target_id
-            WHERE t.distance = ? 
+            WHERE t.distance = ?
                 AND t.target_id IS NULL
-                AND s_mid.id IS NOT NULL
                 AND (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
         """, (d,))
         batch_inserted += cur.rowcount

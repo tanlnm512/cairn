@@ -54,16 +54,14 @@ def _detect_changed(conn, workspace: str) -> list[str]:
         except Exception:
             continue
 
-        # Safety net: if the repo_name-keyed lookup returns nothing, fall back
-        # to all rows so we don't mis-classify every file as "new" and re-index
-        # the whole workspace on every boot.
+        # If this repo has no rows, it likely hasn't been indexed yet (or its
+        # repo_id key doesn't match after a path/portability migration). Skip it
+        # rather than fall back to ALL rows: a broad fallback would mis-classify
+        # every other repo's file as "new" for this repo and trigger a full
+        # workspace reindex on every boot. The repo will be picked up by a
+        # later `cairn build`/`cairn update`.
         if not file_rows:
-            try:
-                file_rows = conn.execute(
-                    "SELECT path, size, mtime FROM files"
-                ).fetchall()
-            except Exception:
-                continue
+            continue
 
         for row in file_rows:
             # files.path is repo-relative; resolve to absolute via the chokepoint.
