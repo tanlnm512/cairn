@@ -350,9 +350,11 @@ def _build_graph_impl(
     # reflects what was found, not the post-skip tree-sitter subset.
     scan_total = len(files)
 
-    # SCIP hybrid: if cairn.json declares a pre-built SCIP index for a language
-    # and that index file exists, skip tree-sitter parsing for that language's
-    # files. The importer runs post-resolve (below) to contribute exact edges.
+    # SCIP coexistence: if cairn.json declares a pre-built SCIP index for a
+    # language and that index file exists, tree-sitter STILL parses those files
+    # (providing modifiers, body, inheritance edges, parent_scope that SCIP
+    # can't emit). The importer then merges SCIP's exact-resolution edges onto
+    # the tree-sitter rows post-resolve (below). One row per symbol after merge.
     scip_languages: Dict[str, str] = {}
     try:
         from .config import load_config
@@ -380,8 +382,8 @@ def _build_graph_impl(
         scip_languages = {}
     if scip_languages:
         # Warn when a 'scip' key doesn't correspond to any known scanner
-        # language: such files won't be skipped, so the importer would double
-        # them up. Known = scanner extension map + languages actually scanned.
+        # language -- the importer won't find matching tree-sitter rows to
+        # merge into, so the index contributes standalone rows only.
         known_langs = set()
         try:
             known_langs.update(scanner_mod.EXTENSION_MAP.values())
@@ -391,10 +393,7 @@ def _build_graph_impl(
         unmatched = [k for k in scip_languages if k not in known_langs]
         if unmatched:
             log(f"  warning: cairn.json 'scip' keys not recognized as languages: {unmatched} "
-                f"(known: {sorted(known_langs)}). Tree-sitter will NOT be skipped for them.")
-        files = [f for f in files if f.language not in scip_languages]
-        if not files:
-            log("All scanned languages have SCIP indexes; skipping tree-sitter entirely.")
+                f"(known: {sorted(known_langs)}). SCIP data for them won't merge with tree-sitter.")
 
     emit("scan", files=scan_total, skips=len(skips))
 
