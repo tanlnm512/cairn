@@ -124,6 +124,37 @@ def _enclosing_range(occ) -> Optional[Tuple[int, int, int, int]]:
     return (sl, sc, sl, er[2] if len(er) > 2 else sc)
 
 
+# --- language inference from path -------------------------------------------
+# Some indexers emit an empty Document.language (scip-java 0.10.4 leaves it
+# blank for both Java and Kotlin docs). The hybrid skip logic and downstream
+# tooling key off files.language, so fall back to the file extension when the
+# document doesn't declare one. Covers the languages cairn's scanner knows.
+_EXT_LANGUAGE: Dict[str, str] = {
+    ".swift": "swift", ".kt": "kotlin", ".kts": "kotlin",
+    ".java": "java", ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+    ".mts": "typescript", ".cts": "typescript", ".js": "javascript",
+    ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".dart": "dart", ".go": "go", ".rs": "rust",
+    ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp",
+    ".cxx": "cpp", ".m": "objc", ".mm": "objc",
+}
+
+
+def _language_for(rel_path: str, declared: str) -> str:
+    """Resolve a document's language, falling back to the file extension.
+
+    Real indexers don't all populate ``Document.language``: scip-java 0.10.4
+    leaves it empty for both Java and Kotlin, so the importer would store
+    ``'scip'`` and the hybrid skip logic couldn't tell those files apart.
+    Derive from the extension when the declared value is empty, and normalize
+    case (scip-swift emits ``"Swift"``; scanner keys are lowercase).
+    """
+    if declared:
+        return declared.lower()
+    suffix = Path(rel_path).suffix.lower()
+    return _EXT_LANGUAGE.get(suffix, "scip")
+
+
 # --- kind mapping -----------------------------------------------------------
 
 # Coarse SyntaxKind -> cairn kind. Graph traversal keys on edges, not kinds;
@@ -303,7 +334,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     # Pass 2: emit symbols + edges.
     for i, doc in enumerate(index.documents):
         doc_repo, rel = doc_paths[i]
-        lang = getattr(doc, "language", "") or ""
+        lang = _language_for(rel, getattr(doc, "language", "") or "")
         file_id = f"{doc_repo}:{rel}"
 
         # repos + files: INSERT OR IGNORE so we never overwrite tree-sitter
@@ -372,6 +403,16 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
                     if dline <= el_start:
                         source_id = did
                         break
+
+            # A file-level occurrence with no enclosing definition (top-level
+            # code in a Swift main.swift, a reference before any definition,
+            # etc.) has no owning symbol to attribute the edge to. Skip it --
+            # the tree-sitter path does the same (builder: "file-level call
+            # with no owning symbol; cannot attach"). edges.source_id is NOT
+            # NULL, so a NULL here would crash the import (found against real
+            # scip-swift output).
+            if source_id is None:
+                continue
 
             # Classify edge kind from roles.
             if occ.symbol_roles & _SCIP_ROLE_IMPORT:
@@ -464,7 +505,7 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
         rel = doc.get("relative_path") or doc.get("path")
         if not rel:
             continue
-        lang = doc.get("language") or "scip"
+        lang = _language_for(rel, doc.get("language") or "")
         file_id = f"{repo_id}:{rel}"
 
         cur.execute(
@@ -519,6 +560,9 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 if dline <= sl:
                     source_id = did
                     break
+            # No enclosing definition -> no owning symbol (see proto path).
+            if source_id is None:
+                continue
             if roles & _SCIP_ROLE_IMPORT:
                 edge_kind = "import"
             elif roles & _SCIP_ROLE_ACCESS_MASK:

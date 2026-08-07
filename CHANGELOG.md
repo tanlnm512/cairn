@@ -88,6 +88,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document to the wrong repo id. The value is now scheme-stripped before
   resolution, so absolute paths, workspace-relative paths, and `file://` URLs
   (including the `file://localhost/` form) all resolve correctly.
+  (Found by validating against real scip-swift output.)
+- **SCIP importer no longer crashes on file-level occurrences.** A reference
+  with no enclosing definition (top-level code in a Swift `main.swift`, a
+  reference before any definition) used to insert `edges.source_id = NULL`,
+  violating the NOT NULL FK and crashing the whole import. Now skipped,
+  matching the tree-sitter path's "file-level call with no owning symbol"
+  handling. (Found against real scip-swift output.)
+- **SCIP `Document.language` now falls back to the file extension.** scip-java
+  0.10.4 emits an empty `language` field for both Java and Kotlin documents;
+  the importer stored `'scip'`, breaking the hybrid skip logic (which keys off
+  `files.language`). The language is now derived from the extension when the
+  document omits it, and normalized to lowercase (scip-swift emits `"Swift"`).
+  (Found against real scip-java output.)
 
 ### Removed
 - _Nothing yet._

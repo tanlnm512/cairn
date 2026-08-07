@@ -366,3 +366,123 @@ def test_project_root_relative_to_ws_resolves(tmp_path):
     row = conn.execute("SELECT path FROM files").fetchone()
     assert row["path"] == "TopLevel.swift"
 
+
+# ---------------------------------------------------------------------------
+# source_id NOT NULL: file-level occurrences with no enclosing definition
+# ---------------------------------------------------------------------------
+# Found against REAL scip-swift output: a Swift main.swift has top-level code
+# (let g = Greeter(...); print(g.greet())) where references to stdlib symbols
+# (print, String interpolation) appear before any enclosing definition. The
+# importer used to insert these with source_id=NULL, crashing on the NOT NULL
+# FK on edges.source_id. Now they're skipped (matching tree-sitter's behavior).
+
+def test_protobuf_file_level_occurrence_without_enclosing_def_is_skipped():
+    """An occurrence with no enclosing definition must not crash (NOT NULL FK).
+
+    Regression: a reference at the top of a file (before any definition, or in
+    a file with only top-level code) has no source symbol. edges.source_id is
+    NOT NULL, so inserting it crashed the whole import. Now skipped, matching
+    the tree-sitter path's "file-level call with no owning symbol" handling.
+    """
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "main.swift"
+    doc.language = "swift"
+    # A definition on line 5...
+    _occ(doc, "scip-swift swift main Greeter#", roles=1, syntax_kind=19,
+         line=4, start=7, end=14)
+    # ...and a reference on line 0 (BEFORE the definition, so no preceding def).
+    # No enclosing_range is set, so source_id stays None.
+    _occ(doc, "scip-swift swift . print()", roles=0, line=0, start=0, end=5)
+    # (deliberately leave enclosing_range unset)
+
+    conn = _conn()
+    # Must not raise IntegrityError (NOT NULL constraint).
+    stats = import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    # The definition symbol is imported; the orphan reference is skipped.
+    assert stats["symbols_added"] == 1
+    # The print() reference had no enclosing def -> skipped, not stored.
+    orphan = conn.execute(
+        "SELECT COUNT(*) AS n FROM edges WHERE target_name = 'print()'"
+    ).fetchone()
+    assert orphan["n"] == 0
+
+
+def test_json_file_level_occurrence_without_enclosing_def_is_skipped():
+    """Same regression guard for the JSON path."""
+    payload = {
+        "documents": [{
+            "relative_path": "main.swift", "language": "swift",
+            "occurrences": [
+                # Definition on line 3 (0-based 2).
+                {"symbol": "scip-swift swift main Foo#", "symbol_roles": 1,
+                 "range": [2, 0, 3]},
+                # Reference on line 1 (0-based 0) -- before any definition.
+                {"symbol": "scip-swift swift . bar()", "symbol_roles": 0,
+                 "range": [0, 0, 3]},
+            ],
+        }]
+    }
+    conn = _conn()
+    # Must not raise.
+    import_scip_data(conn, payload, repo_id="demo")
+    orphan = conn.execute(
+        "SELECT COUNT(*) AS n FROM edges WHERE target_name = 'bar()'"
+    ).fetchone()
+    assert orphan["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Language inference: empty Document.language falls back to file extension
+# ---------------------------------------------------------------------------
+# Found against REAL scip-java 0.10.4 output: it emits language='' for both
+# Java and Kotlin documents. Without extension-based fallback the importer
+# stored 'scip', breaking the hybrid skip logic (which keys off files.language).
+
+def test_language_inferred_from_extension_when_document_omits_it():
+    """An empty Document.language is derived from the file extension.
+
+    scip-java 0.10.4 leaves language blank; the importer must still tag Java
+    files 'java' and Kotlin files 'kotlin' so the hybrid skip + downstream
+    tooling work.
+    """
+    idx = _scip_pb2.Index()
+    for rel, lang in [("src/Main.java", ""), ("src/Foo.kt", "")]:
+        doc = idx.documents.add()
+        doc.relative_path = rel
+        doc.language = lang  # empty -- the bug case
+        _occ(doc, f"semanticdb maven . . {rel}#Bar", roles=1, syntax_kind=19,
+             line=0)
+    conn = _conn()
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    langs = {r["path"]: r["language"] for r in conn.execute(
+        "SELECT path, language FROM files").fetchall()}
+    assert langs["src/Main.java"] == "java"
+    assert langs["src/Foo.kt"] == "kotlin"
+
+
+def test_language_normalized_to_lowercase():
+    """scip-swift emits 'Swift' (capitalized); scanner keys are lowercase."""
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "Sources/App/main.swift"
+    doc.language = "Swift"  # capitalized, as scip-swift actually emits
+    _occ(doc, "scip-swift swift main App#", roles=1, syntax_kind=19, line=0)
+    conn = _conn()
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    row = conn.execute("SELECT language FROM files").fetchone()
+    assert row["language"] == "swift"
+
+
+def test_language_falls_back_to_scip_for_unknown_extension():
+    """An unrecognized extension with no declared language stays 'scip'."""
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "weird.xyz"
+    doc.language = ""
+    _occ(doc, "scip-unknown unknown main Foo#", roles=1, syntax_kind=19, line=0)
+    conn = _conn()
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+    row = conn.execute("SELECT language FROM files").fetchone()
+    assert row["language"] == "scip"
+
