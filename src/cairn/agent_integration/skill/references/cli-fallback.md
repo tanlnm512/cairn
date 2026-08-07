@@ -20,6 +20,6 @@ If MCP tools are unavailable, use CLI commands (`cairn` is on PATH in the venv):
 - `cairn compass flow <entry> [--as-workflow] [--max-steps N] [--use-llm] [--dry-run]` -- trace a
   business flow's call chain and generate a flow compass (+ optional workflow)
 - `cairn compass flow-gaps [--min-edges 5] [--generate] [--limit N]` -- find undocumented
-  business flows; `--generate` batch-generates them
-- `cairn compass flow-gaps --generate --as-workflow` -- batch-generate flow compasses + workflows
+  business flows; `--generate` batch-generates flow compasses (no workflows — use
+  `cairn compass flow --as-workflow` per flow for that)
 - `cairn uninstall [--full|--agents-only|--graph-only]` -- full teardown (agents, hooks, graph, binary)

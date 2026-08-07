@@ -15,6 +15,7 @@ An edge is resolved only when exactly one candidate exists in a tier
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,7 @@ from ..parsers import routes as routes_mod
 from ..parsers import service_calls as service_calls_mod
 from . import scanner as scanner_mod
 from . import resolver as resolver_mod
-from .schema import init_db, get_build_db, backup_to
+from .schema import init_db, get_build_db, backup_to, build_lock
 from ..paths import resolve_store as _resolve_store
 
 # Language -> parser class.
@@ -659,18 +660,37 @@ def build_graph(
     """
     resolved_db = db_path or str(_resolve_store().db)
     in_memory = repo_filter is None
-    conn = get_build_db() if in_memory else init_db(resolved_db)
-    try:
-        return _build_graph_impl(
-            conn=conn,
-            workspace=workspace,
-            repo_filter=repo_filter,
-            db_path=db_path,
-            verbose=verbose,
-            progress=progress,
-        )
-    finally:
-        conn.close()
+    if in_memory:
+        # Full rebuild: bulk-load into memory, then persist once via backup_to
+        # (which takes the build lock itself for the on-disk swap).
+        conn = get_build_db()
+        try:
+            return _build_graph_impl(
+                conn=conn,
+                workspace=workspace,
+                repo_filter=repo_filter,
+                db_path=db_path,
+                verbose=verbose,
+                progress=progress,
+            )
+        finally:
+            conn.close()
+    # Single-repo rebuild: writes the live DB directly (can't clobber other
+    # repos), so take the advisory build lock to serialize against concurrent
+    # builds/updates of the same DB.
+    with build_lock(resolved_db):
+        conn = init_db(resolved_db)
+        try:
+            return _build_graph_impl(
+                conn=conn,
+                workspace=workspace,
+                repo_filter=repo_filter,
+                db_path=db_path,
+                verbose=verbose,
+                progress=progress,
+            )
+        finally:
+            conn.close()
 
 
 def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, str, Optional[ParsedFile], Optional[str], Optional[str]]:
@@ -878,6 +898,19 @@ def _clear_repo(conn, repo_name: str):
         "DELETE FROM imports WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
         (repo_name,),
     )
+    # 3b. Delete embeddings for this repo's symbols BEFORE the symbols go, so
+    # the FK (embeddings.symbol_id -> symbols.id) doesn't leave orphans. The
+    # incremental path deletes embeddings explicitly; a full repo rebuild must
+    # too or it leaves dangling embedding rows pointing at deleted symbols.
+    try:
+        cur.execute(
+            "DELETE FROM embeddings WHERE symbol_id IN "
+            "(SELECT id FROM symbols WHERE file_id IN "
+            "(SELECT id FROM files WHERE repo_id = ?))",
+            (repo_name,),
+        )
+    except sqlite3.OperationalError:
+        pass  # embeddings table missing on a DB that never had the semantic extra
     # 4. Now safe to delete symbols.
     cur.execute(
         "DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",

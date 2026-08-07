@@ -47,9 +47,28 @@ def update(repo, file_path, workspace, db):
 
     from ..graph.incremental import incremental_update
     result = incremental_update(repo=repo, workspace=workspace, db_path=db)
-    display.success(
-        f"Updated: reindexed {result['files_reindexed']} files across {result['repos_scanned']} repos"
-    )
+    errors = result.get("errors") or []
+    deleted = result.get("files_deleted", 0)
+
+    if errors:
+        # Surface failures rather than reporting a clean success when reindex
+        # actually failed. Show the count and the first few messages so the
+        # user can act on them.
+        display.warning(
+            f"Updated: reindexed {result['files_reindexed']} files "
+            f"({deleted} deleted) across {result['repos_scanned']} repos "
+            f"with {len(errors)} error(s)"
+        )
+        for msg in errors[:5]:
+            display.warning(f"  {msg}")
+        if len(errors) > 5:
+            display.warning(f"  ... and {len(errors) - 5} more")
+    else:
+        deleted_part = f", {deleted} deleted" if deleted else ""
+        display.success(
+            f"Updated: reindexed {result['files_reindexed']} files{deleted_part} "
+            f"across {result['repos_scanned']} repos"
+        )
     
     # Run memory decay after update to archive stale raw memories automatically.
     # This ensures raw memories don't grow unbounded over time.

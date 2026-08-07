@@ -272,7 +272,7 @@ def _dir_size(path: Path) -> int:
 @click.option("--graph-only", is_flag=True, help="Remove graph + knowledge data only.")
 @click.option("--package-only", is_flag=True, help="Remove the cairn binary only.")
 @click.option("--client", "clients", multiple=True,
-              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "all"]),
+              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "all"]),
               help="Limit agent removal to these clients (repeatable).")
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: resolved).")
 @click.option("--dry-run", is_flag=True, help="Show what would be removed; change nothing.")

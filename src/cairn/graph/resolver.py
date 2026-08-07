@@ -360,3 +360,78 @@ def resolve_repo_edges(
         updates,
     )
     return stats
+
+
+def repair_incoming_edges(
+    conn: sqlite3.Connection,
+    repo: str,
+    changed_target_names: List[str],
+) -> Dict[str, int]:
+    """Re-resolve edges in ``repo`` that may point at freshly re-created symbols.
+
+    When a file is re-indexed incrementally, its old symbols are deleted and
+    re-created with NEW ids. Edges in *other* files that previously resolved to
+    those symbols had their ``target_id`` nulled (resolution='unresolved') so
+    the FK wouldn't dangle. Without this repair pass those callers stay
+    permanently 'unresolved' (so precise callers() drops them) until the caller's
+    own file is edited or a full rebuild runs.
+
+    ``changed_target_names`` is the set of bare symbol names that were deleted
+    and re-created. Only edges whose ``target_name`` matches one of them (or was
+    left unresolved) need a second look -- this keeps the repair proportional to
+    the change rather than a full re-resolve of the repo.
+
+    Returns a counts dict ``{'exact': n, 'ambiguous': n, 'unresolved': n}``
+    over just the edges it touched.
+    """
+    if not changed_target_names:
+        return {"exact": 0, "ambiguous": 0, "unresolved": 0}
+
+    # Build indexes scoped to the repo. The symbol index is deliberately global
+    # so the same-repo and global tiers see the full workspace set, mirroring
+    # resolve_repo_edges.
+    symbols_by_name = build_symbol_index(conn)
+    imports_by_file = build_import_index(conn, repo_id=repo)
+    members_by_type = build_members_index(conn, repo_id=repo)
+    ancestors = build_ancestor_index(conn, repo_id=repo)
+
+    # Candidate edges: any edge in this repo whose target_name is one of the
+    # re-created names. These are exactly the edges the incremental path nulled
+    # out. Limit to the repo to bound the scan (idx_edges_kind is not selective
+    # here; target_name has no dedicated index, so this is a scan of the repo's
+    # edges, which is the right granularity).
+    name_placeholders = ",".join("?" for _ in changed_target_names)
+    rows = conn.execute(
+        f"""SELECT e.id AS eid, e.source_id AS src, e.target_name AS tname,
+                   e.line AS line, e.column AS col, f.id AS file_id, f.repo_id AS repo
+            FROM edges e
+            JOIN symbols s ON e.source_id = s.id
+            JOIN files f ON s.file_id = f.id
+            WHERE f.repo_id = ?
+              AND e.target_name IN ({name_placeholders})""",
+        (repo, *changed_target_names),
+    ).fetchall()
+
+    if not rows:
+        return {"exact": 0, "ambiguous": 0, "unresolved": 0}
+
+    stats = {"exact": 0, "ambiguous": 0, "unresolved": 0}
+    updates: List[Tuple[Optional[str], Optional[str], str, str]] = []
+    for r in rows:
+        target_name = r["tname"]
+        if not target_name:
+            continue
+        target_id, label = resolve_edge(
+            target_name, r["file_id"], repo, symbols_by_name, imports_by_file,
+            None, members_by_type, ancestors,
+        )
+        stored_name = None if target_id else target_name
+        updates.append((target_id, stored_name, label, r["eid"]))
+        stats[label] += 1
+
+    if updates:
+        conn.executemany(
+            "UPDATE edges SET target_id = ?, target_name = ?, resolution = ? WHERE id = ?",
+            updates,
+        )
+    return stats

@@ -56,13 +56,14 @@ cairn version          # print the installed version
 From your repository root (or any subdirectory of it):
 
 ```bash
-cairn update
+cairn build     # first run: parse every file and build the full graph
 ```
 
-`cairn update` reindexes from the git diff, so it is incremental and fast after the
-first run. For a fresh workspace, the first `update` parses everything; later
-runs only touch changed files. (For a forced full rebuild, `cairn build` exists
-separately.)
+`cairn build` parses the whole workspace from scratch. After the first build,
+use `cairn update` to reindex only what changed (it diffs against `git HEAD`
+plus the existing graph, so it is fast and incremental). On a fresh clone with a
+clean working tree, `cairn update` would see no changes — start with `cairn
+build`, then switch to `cairn update` for day-to-day edits.
 
 The store lives under `~/.cairn/<workspace-key>/` by default — a `.kg`
 SQLite database plus a `.knowledge/` bundle of markdown. See

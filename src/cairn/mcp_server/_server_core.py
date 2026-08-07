@@ -119,6 +119,13 @@ def _staleness_banner(conn, file_paths) -> str:
     """Return a staleness banner if any of ``file_paths`` has an unindexed edit
     pending in the ``pending_sync`` table; empty string otherwise.
 
+    NOTE: ``pending_sync`` is only populated by a live filesystem watcher
+    (the optional ``[watch]`` extra's ``watchdog.Observer``). cairn does not ship
+    a live watcher in the default install -- ``watcher.py`` is boot-time
+    stat-based catch-up only -- so in a default deployment this banner will not
+    fire. The check is cheap and correct when a watcher is present; it simply
+    stays inert otherwise.
+
     Guarded: when ``pending_sync`` is empty or the table is absent, this adds
     effectively zero latency (a single indexed ``SELECT ... WHERE path IN (...)``).
     """

@@ -198,9 +198,11 @@ sequenceDiagram
 - The **resolver** runs 5 tiers in order (type-aware → same-file → import-aware
   → same-repo → global) and stops at the first tier with a unique match;
   multiple matches in a tier → `ambiguous` (no fallthrough).
-- `cairn update` (incremental, from git diff) does **not** rebuild the derived
-  indexes — only `cairn build` does. `explore` and `impact_analysis` still work,
-  just via the live BFS path instead of the O(1) precomputed path.
+- `cairn update` (incremental, from git diff) **rebuilds the derived indexes**
+  (dataflow + transitive closure) whenever any file actually changed. So
+  `explore` and `impact_analysis` see fresh O(1) precomputed paths after an
+  update, not just the live BFS fallback. (If nothing changed, no rebuild is
+  performed — same as `cairn build` on a no-op tree.)
 
 ---
 
@@ -422,8 +424,8 @@ erDiagram
 - **FTS5** external-content table over `symbols` (name, qualified_name,
   docstring), synced by triggers, powers BM25-ranked lexical search.
 - **Derived tables**: `dataflow` (O(1) blast radius for public symbols),
-  `transitive_edges` (closure matrix, default depth 3) — both built by
-  `cairn build`, skipped by `cairn update`.
+  `transitive_edges` (closure matrix, default depth 3) — built by `cairn build`
+  and rebuilt by `cairn update` whenever any file changed.
 
 ### OKF markdown bundle (`.knowledge/`)
 
