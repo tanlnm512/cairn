@@ -1,11 +1,12 @@
-"""Tests for SCIP-aware incremental reindexing.
+"""Tests for SCIP-aware incremental reindexing under the coexistence model.
 
-Per docs/scip-hybrid-plan.md §Incremental updates: when a file that was
-originally SCIP-sourced is edited, ``reindex_paths`` falls back to tree-sitter
-for that single file (same as the "missing index" fallback), tagging it
-``source='tree_sitter'``. The next full ``cairn build`` restores
-``source='scip'`` once the out-of-band index is regenerated -- a bounded,
-self-healing staleness window rather than a silent permanent downgrade.
+In coexistence, tree-sitter always runs (providing modifiers/body/inheritance),
+and SCIP merges exact-resolution edges onto the tree-sitter rows at build time
+(source='merged'). When a file is edited, ``reindex_paths`` re-parses just that
+file with tree-sitter (source='tree_sitter') -- the SCIP merge doesn't run for
+a single-file incremental update, so the symbol temporarily loses its merged
+status. The next full ``cairn build`` re-imports SCIP and re-merges, restoring
+source='merged' -- a bounded, self-healing staleness window.
 
 Skipped when the optional ``[scip]`` extra isn't installed.
 """
@@ -43,8 +44,14 @@ def _kotlin_index() -> bytes:
     return idx.SerializeToString()
 
 
-def test_reindex_of_scip_file_falls_back_to_tree_sitter(tmp_path):
-    """Editing a SCIP-covered file re-parses it as source='tree_sitter'."""
+def test_reindex_of_merged_file_falls_back_to_tree_sitter(tmp_path):
+    """Editing a coexistence file re-parses it as source='tree_sitter'.
+
+    The incremental path re-parses only with tree-sitter (the SCIP merge runs
+    at full-build time, not per-file). So after reindex the symbol is
+    temporarily tree_sitter-only -- the merged status is restored on the next
+    full build.
+    """
     ws = tmp_path / "ws"
     repo = ws / "demo"
     (repo / ".git").mkdir(parents=True)
@@ -60,31 +67,30 @@ def test_reindex_of_scip_file_falls_back_to_tree_sitter(tmp_path):
     from cairn.graph.schema import get_db
     conn = get_db(db)
     try:
-        # Initially Foo is SCIP-sourced.
+        # Initially Foo is merged (tree-sitter + SCIP).
         before = conn.execute(
             "SELECT source FROM symbols WHERE name = 'Foo'"
         ).fetchone()
-        assert before["source"] == "scip"
+        assert before["source"] == "merged"
 
         # Edit the file and reindex just it.
         foo.write_text("class Foo { fun go() {} }\n")
         reindex_paths(conn, str(ws), [str(foo)])
 
-        # After reindex: Foo is now tree_sitter (SCIP importer didn't run for
-        # one file; the incremental path is language-blind by design).
+        # After reindex: Foo is tree_sitter (incremental doesn't re-run SCIP merge).
         after = conn.execute(
             "SELECT source FROM symbols WHERE name = 'Foo'"
         ).fetchone()
         assert after is not None
         assert after["source"] == "tree_sitter", (
-            f"expected tree_sitter after reindex of a SCIP file, got {after['source']!r}"
+            f"expected tree_sitter after reindex, got {after['source']!r}"
         )
     finally:
         conn.close()
 
 
-def test_full_build_restores_scip_after_incremental(tmp_path):
-    """A full rebuild re-imports SCIP, restoring source='scip' (self-healing)."""
+def test_full_build_restores_merged_after_incremental(tmp_path):
+    """A full rebuild re-imports SCIP and re-merges, restoring source='merged'."""
     ws = tmp_path / "ws"
     repo = ws / "demo"
     (repo / ".git").mkdir(parents=True)
@@ -107,13 +113,13 @@ def test_full_build_restores_scip_after_incremental(tmp_path):
     finally:
         conn.close()
 
-    # Full rebuild re-imports the SCIP index (unchanged) -> source flips back.
+    # Full rebuild re-imports SCIP and re-merges -> source flips back to 'merged'.
     build_graph(workspace=str(ws), db_path=db)
     conn = get_db(db)
     try:
         final = conn.execute("SELECT source FROM symbols WHERE name = 'Foo'").fetchone()
-        assert final["source"] == "scip", (
-            f"full build should restore source='scip', got {final['source']!r}"
+        assert final["source"] == "merged", (
+            f"full build should restore source='merged', got {final['source']!r}"
         )
     finally:
         conn.close()

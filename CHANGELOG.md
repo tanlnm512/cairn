@@ -78,7 +78,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   un-rebuilt DBs keep working until then (read paths tolerate both forms).
 
 ### Changed
-- _Nothing yet._
+- **SCIP / tree-sitter coexistence (replaces hybrid skip).** `cairn build` no
+  longer skips tree-sitter for SCIP-covered languages. Both sources now run:
+  tree-sitter parses every file (providing modifiers, body, inheritance edges,
+  parent_scope that SCIP can't emit), then SCIP's exact-resolution edges and
+  richer qualified_name are merged onto the tree-sitter symbol rows. The result
+  is one row per symbol (`source='merged'`) carrying the strengths of both —
+  no query-layer dedup needed. Tree-sitter's `implements`/`extends` edges
+  survive the merge (SCIP has no inheritance role); its fuzzy `calls` edges are
+  replaced by SCIP's exact ones. Matching by `(file_id, name, line_start)` with
+  name normalization (e.g. `greet()` → `greet`).
+  - **Limitation:** scip-swift's opaque USRs (`` `s:...` ``) don't match
+    tree-sitter's human-readable names, so Swift SCIP data lands as standalone
+    `source='scip'` rows rather than merged. Indexers with human-readable
+    descriptors (scip-java, scip-typescript, scip-python, scip-go) merge
+    correctly. Validated end-to-end against real scip-java 0.10.4 output.
 
 ### Fixed
 - **SCIP `project_root` now handles `file://` URLs.** scip-swift writes

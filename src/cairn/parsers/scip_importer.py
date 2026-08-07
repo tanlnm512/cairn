@@ -296,6 +296,19 @@ _TS_ONLY_EDGE_KINDS = ("implements", "extends")
 _REPLACEABLE_EDGE_KINDS = ("calls", "call", "reference", "import")
 
 
+def _normalize_name_for_match(name: str) -> str:
+    """Normalize a symbol name for cross-source matching.
+
+    SCIP descriptors for callables often carry a trailing ``()`` (e.g.
+    ``greet()`` from scip-java's semanticdb format), while tree-sitter extracts
+    the bare identifier (``greet``). Strip trailing parens so the two match.
+    scip-swift's opaque USRs (``\\`s:...\\``` ) won't match tree-sitter names
+    regardless -- that's an inherent scip-swift limitation (opaque symbol
+    identity), documented in the README.
+    """
+    return name.rstrip("()").rstrip(".") or name
+
+
 def _merge_scip_defs_into_tree_sitter(conn, scip_def_rows: list) -> int:
     """Fold each SCIP definition symbol into its matching tree-sitter row.
 
@@ -327,19 +340,21 @@ def _merge_scip_defs_into_tree_sitter(conn, scip_def_rows: list) -> int:
     cur = conn.cursor()
     merged = 0
     for scip_sym_id, file_id, name, sl in scip_def_rows:
+        # Normalize for matching: scip-java emits "greet()", tree-sitter "greet".
+        match_name = _normalize_name_for_match(name)
         # Match by (file_id, name, line_start); fall back to name-only if the
         # exact line disagrees (tree-sitter and SCIP can differ on where a
         # definition's anchor lands).
         ts_row = cur.execute(
             "SELECT id FROM symbols WHERE file_id = ? AND name = ? AND line_start = ? "
             "AND id != ? AND source != 'scip' LIMIT 1",
-            (file_id, name, sl, scip_sym_id),
+            (file_id, match_name, sl, scip_sym_id),
         ).fetchone()
         if ts_row is None:
             ts_row = cur.execute(
                 "SELECT id FROM symbols WHERE file_id = ? AND name = ? "
                 "AND id != ? AND source != 'scip' LIMIT 1",
-                (file_id, name, scip_sym_id),
+                (file_id, match_name, scip_sym_id),
             ).fetchone()
         if ts_row is None:
             continue  # no tree-sitter match -- leave the standalone SCIP row

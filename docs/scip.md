@@ -1,4 +1,4 @@
-# Hybrid SCIP / Tree-sitter Indexing
+# SCIP / Tree-sitter Coexistence Indexing
 
 cairn can consume pre-built **SCIP** (Sourcegraph Code Intelligence Protocol)
 indexes for languages where compiler-grade symbol bindings beat tree-sitter's
@@ -7,11 +7,21 @@ stays a **consumer** of SCIP indexes; it never generates them (with one bounded
 exception for a missing index — see [Automatic generation](#automatic-generation-opt-in)
 below).
 
-When an index is configured **and present**, `cairn build` skips tree-sitter
-parsing for that language and imports the SCIP data instead (exact resolution —
-every reference names the definition it points to). When the index is absent
-or undeclared, cairn falls back to tree-sitter for that language. Both can
-coexist in the same workspace.
+When an index is configured **and present**, `cairn build` runs **both**
+sources and merges them: tree-sitter parses every file (providing modifiers,
+body, inheritance edges, parent_scope that SCIP can't emit), then SCIP's
+exact-resolution call/reference edges and richer qualified_name are folded onto
+the tree-sitter symbol rows. The result is one row per symbol (`source='merged'`)
+carrying the strengths of both. When the index is absent or undeclared, cairn
+uses tree-sitter alone for that language.
+
+> **scip-swift limitation:** scip-swift uses opaque USRs (`` `s:...` ``) as
+> symbol names, which don't match tree-sitter's human-readable names. The merge
+> therefore can't fold scip-swift definitions into tree-sitter rows — Swift
+> SCIP data lands as standalone `source='scip'` rows alongside tree-sitter.
+> This is inherent to scip-swift's design (see its README "Known limitations").
+> Indexers with human-readable descriptors (scip-java, scip-typescript,
+> scip-python, scip-go) merge correctly.
 
 ## 1. Generate an index (out-of-band)
 
