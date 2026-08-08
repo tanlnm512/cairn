@@ -221,6 +221,13 @@ pip install -e ".[dev]"   # pytest + watchdog + build
 pytest -m core            # fast <3s smoke subset (one test per core function)
 ```
 
+The `-m core` suite includes a **"cairn on cairn" self-demo**
+(`tests/test_self_demo.py`): cairn indexes its own source tree in an isolated
+temp DB and asserts the core query commands return correct results for known
+symbols — and that the resolution invariant (every `exact` edge has a non-null
+`target_id`) holds on cairn's own code. It is the strongest dogfood: the
+verification contract, demonstrated on the verifier.
+
 ## Semantic search
 
 The default install is network- and torch-free. Semantic search deps

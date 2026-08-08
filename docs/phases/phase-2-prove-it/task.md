@@ -42,10 +42,10 @@
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| 2.3.1 | Write a checked-in script (or pytest `-m core`) that builds cairn's own repo in an isolated store (`CAIRN_HOME`/`tmp_path`). | todo | do not reuse ~/.cairn |
-| 2.3.2 | Assert non-empty correct output for `explore("build_graph")`, `impact("critic_concept")`, `get_compass(...)`. | todo | target symbols verified in tech-guide |
-| 2.3.3 | Add the demo to CI so it cannot rot. | todo | |
-| 2.3.4 | Reference the demo from the README quick-start as the verbatim walkthrough. | todo | |
+| 2.3.1 | Write a checked-in pytest (`-m core`) that builds cairn's own repo in an isolated temp DB. | done | `tests/test_self_demo.py` builds cairn on itself via explicit `--db`/`--workspace` flags (not `CAIRN_HOME`, which is bound at import); uses a tempdir, never touches ~/.cairn |
+| 2.3.2 | Assert correct output for `def`/`impact` on `build_graph` + `critic_concept`; plus the resolution invariant on cairn's own graph. | done | Two tests: build+query (def finds `builder`, `critic`), and the exact⟹target_id invariant holds on cairn's own freshly-built graph (promise #1 dogfooded) |
+| 2.3.3 | Add the demo to CI so it cannot rot. | done | `pytestmark = pytest.mark.core` — runs under `-m core` (26 tests, ~10s) |
+| 2.3.4 | Reference the demo from the README quick-start as the verbatim walkthrough. | done | README § Development now describes the self-demo and points to `tests/test_self_demo.py` |
 
 ## 2.4 — Methodology post
 
@@ -70,6 +70,6 @@ Phase 2 is done when **all four** hold (mirror of `plan.md` § Definition of don
 |------|-----------|------|-------|------|---------|---------|
 | 2.1 | 6 | 0 | 0 | 6 | 0 | 0 |
 | 2.2 | 4 | 4 | 0 | 0 | 0 | 0 |
-| 2.3 | 4 | 0 | 0 | 4 | 0 | 0 |
+| 2.3 | 4 | 4 | 0 | 0 | 0 | 0 |
 | 2.4 | 3 | 0 | 0 | 3 | 0 | 0 |
-| **Total** | **17** | **4** | **0** | **13** | **0** | **0** |
+| **Total** | **17** | **8** | **0** | **9** | **0** | **0** |
