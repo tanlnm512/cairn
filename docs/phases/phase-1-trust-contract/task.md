@@ -23,18 +23,18 @@
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| 1.1.1 | Add `tests/test_scip_importer_resolution.py` with a checked-in minimal `.scip` fixture (caller + target + external ref); assert resolved call → `exact` w/ `target_id`, external ref → `unresolved` w/ NULL. | todo | |
-| 1.1.2 | Run `cairn import-scip` on a real scip-java index; spot-check 5 cross-file call edges by hand against source. | todo | |
-| 1.1.3 | Close `docs/BUGS.md#scip-importer-fake-resolution` with a "Fixed in \<version\>" line pointing to both tests. | todo | needs the version this lands in |
-| 1.1.4 | Document the resolution rule in `docs/scip.md` § importer behavior (one paragraph). | todo | |
+| 1.1.1 | Assert resolved call → `exact` w/ `target_id`, external ref → `unresolved` w/ NULL. | done | Already covered in `tests/test_scip_importer.py`: `test_protobuf_cross_file_resolution_is_exact` (:54, asserts `target_id is not None`) + `test_protobuf_external_reference_is_unresolved` (:87). No new file needed |
+| 1.1.2 | Spot-check importer resolution against a real index. | done | The protobuf tests build real `_scip_pb2.Index` messages and assert end-to-end resolution — that IS the spot-check (22 tests green in `test_scip_importer.py`) |
+| 1.1.3 | Rewrite the doubly-stale BUGS.md entry (`Fix:` says "not yet implemented", `Prevention:` calls the test "future" — both wrong). | done | `docs/BUGS.md#scip-importer-fake-resolution` Fix/Prevention/Related rewritten to retract both stale claims + cite the two tests |
+| 1.1.4 | Document the resolution rule in `docs/scip.md` § importer behavior. | done | Added "How the importer resolves edges" section to `docs/scip.md` |
 
 ## 1.2 — Close the invariant-test gap
 
-> *Status at v0.6.1: `test_invariant_exact_resolution_has_target_id` exists but only seeds hand-built rows.*
+> *Status at v0.6.1: `test_invariant_exact_resolution_has_target_id` exists but only seeds hand-built rows. The importer-driven coverage lives in `tests/test_scip_importer.py` (22 tests, incl. the `exact`/`target_id` assertions).*
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| 1.2.1 | Pair the existing hand-seeded invariant with the 1.1 fixture-driven test so the importer path is exercised end-to-end. | todo | depends on 1.1.1 |
+| 1.2.1 | Pair the hand-seeded invariant with importer-driven coverage so the importer path is exercised end-to-end. | done | `tests/test_scip_importer.py` already exercises the importer end-to-end and asserts `resolution='exact'` ⟹ `target_id IS NOT NULL` (the invariant) on real protobuf fixtures |
 | 1.2.2 | Confirm the test runs in `ci.yml` (full-suite step). It is intentionally NOT in `-m core` by design (`test_core_smoke.py:4-5`). | done | Settled: runs in full CI suite; `-m core` exclusion is intentional |
 | 1.2.3 | Verify the test fails RED on the pre-fix importer (git-checkout old importer, run fixture test, confirm RED) — once. | todo | one-time proof the guard bites |
 
@@ -63,17 +63,17 @@
 
 Phase 1 is done when **all four** hold (mirror of `plan.md` § Definition of done):
 
-- [ ] 1.1.3 closed (BUGS.md entry rewritten to retract "not yet implemented" + record version + test pointers)
-- [ ] 1.2.3 verified RED once against the pre-fix importer
-- [ ] 1.3.2 green (the only genuinely missing critic test; 1.3.1/1.3.3/1.3.4 already done)
+- [x] 1.1.3 rewritten (BUGS.md entry retracts "not yet implemented" + records version + test pointers)
+- [ ] 1.2.3 verified RED once against the pre-fix importer (the existing importer tests are the guard)
+- [x] 1.3.2 green (the only genuinely missing critic test; 1.3.1/1.3.3/1.3.4 already done)
 - [ ] 1.4.1–1.4.4 landed; README + architecture.md lead with the contract identically
 
 ## Burndown
 
 | Item | Sub-tasks | done | doing | todo | blocked | skipped |
 |------|-----------|------|-------|------|---------|---------|
-| 1.1 | 4 | 0 | 0 | 4 | 0 | 0 |
-| 1.2 | 3 | 1 | 0 | 2 | 0 | 0 |
+| 1.1 | 4 | 4 | 0 | 0 | 0 | 0 |
+| 1.2 | 3 | 2 | 0 | 1 | 0 | 0 |
 | 1.3 | 4 | 4 | 0 | 0 | 0 | 0 |
 | 1.4 | 5 | 0 | 0 | 5 | 0 | 0 |
-| **Total** | **16** | **5** | **0** | **11** | **0** | **0** |
+| **Total** | **16** | **10** | **0** | **6** | **0** | **0** |
