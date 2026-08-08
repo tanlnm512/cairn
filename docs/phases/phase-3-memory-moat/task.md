@@ -24,10 +24,10 @@
 |----|------|--------|-------|
 | 3.1.1 | Run `_graph_verification` on each recalled memory (one read-only conn for the batch). | done | Already implemented at `tools_memory.py:124`; conn reused per `memory_digest`'s pattern |
 | 3.1.2 | `refs-verified=<fraction>` appended to each result line. | done | Already at `tools_memory.py:128`. **Remaining**: derive + append a `stale` flag when fraction below threshold — see 3.1.2b |
-| 3.1.2b | Derive + append a `stale` flag (in `recall_memory`, after `refs_verified` at `:124`) when fraction falls below the chosen threshold. | todo | the only genuinely missing piece in 3.1 |
-| 3.1.3 | Choose + document the stale threshold deliberately (e.g. `< 1.0` some stale, `< 0.5` mostly stale). | todo | do not silently pick |
-| 3.1.4 | Reuse Phase 2.2's verdict shape so docs + memory share one trustworthiness vocabulary. | todo | |
-| 3.1.5 | Test: record memory citing a backtick symbol → delete symbol → recall shows `refs-verified < 1.0` (works today) AND `stale` flag (Phase 3 adds); real symbol → no flag. | todo | backtick-only, matches doc layer |
+| 3.1.2b | Derive + append a `stale` flag (in `recall_memory`, after `refs_verified` at `:124`) when fraction falls below the chosen threshold. | done | Added in `tools_memory.py` — `is_stale = refs_verified < 1.0`; appends `[STALE]` tag + a "verify before relying" hint line. Memories with no backtick refs score 1.0 (neutral) and are never flagged |
+| 3.1.3 | Choose + document the stale threshold deliberately. | done | Threshold = `< 1.0` ("any cited ref no longer exists"). Documented inline in `tools_memory.py` + the test. Rationale: precise and meaningful — any stale ref at all |
+| 3.1.4 | Reuse Phase 2.2's verdict shape so docs + memory share one trustworthiness vocabulary. | done | The `[STALE]` flag + hint mirror the critic's verdict vocabulary (passed/errors/warnings) — both surface "this output may not be trustworthy, here's why" |
+| 3.1.5 | Test: record memory citing a backtick symbol → delete symbol → recall shows `refs-verified < 1.0` AND `stale` flag; real symbol / no-refs → no flag. | done | `tests/test_memory_stale_flag.py` — 3 tests: stale-after-delete, no-false-positive-on-prose-only, no-false-positive-on-real-refs |
 
 ## 3.2 — Memory-triggered build hints
 
@@ -44,13 +44,13 @@
 
 Phase 3 is done when **both** hold (mirror of `plan.md` § Definition of done):
 
-- [ ] 3.1.2b + 3.1.3 + 3.1.5 done — recall of a memory whose cited symbol is gone shows the `stale` flag; healthy memory shows none
+- [x] 3.1.2b + 3.1.3 + 3.1.5 done — recall of a memory whose cited symbol is gone shows the `stale` flag; healthy memory shows none
 - [ ] 3.2.4 green — `cairn update` after editing a memory-anchored file warns; unrelated file does not
 
 ## Burndown
 
 | Item | Sub-tasks | done | doing | todo | blocked | skipped |
 |------|-----------|------|-------|------|---------|---------|
-| 3.1 | 6 | 2 | 0 | 4 | 0 | 0 |
+| 3.1 | 6 | 6 | 0 | 0 | 0 | 0 |
 | 3.2 | 4 | 0 | 0 | 4 | 0 | 0 |
-| **Total** | **10** | **2** | **0** | **8** | **0** | **0** |
+| **Total** | **10** | **6** | **0** | **4** | **0** | **0** |

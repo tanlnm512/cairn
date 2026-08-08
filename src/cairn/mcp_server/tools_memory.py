@@ -124,8 +124,18 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
                 refs_verified = round(_graph_verification(c, conn), 3)
             except Exception:
                 refs_verified = "?"
+            # Stale flag: a discrete verdict derived from the fraction. A memory
+            # is stale when at least one cited backtick ref no longer exists in
+            # the graph (fraction < 1.0). Memories with no backtick refs score
+            # 1.0 (neutral) and are never flagged. This is the recall-side
+            # analog of the critic gate -- surfacing silent drift loudly.
+            # Threshold chosen deliberately: < 1.0 = "any ref stale".
+            is_stale = isinstance(refs_verified, (int, float)) and refs_verified < 1.0
             tag = " [SUPERSEDED]" if superseded else ""
-            out.append(f"  [{t} {score}, refs-verified={refs_verified}{prov_tag}] {c.title}{tag}")
+            stale_tag = " [STALE]" if is_stale else ""
+            out.append(f"  [{t} {score}, refs-verified={refs_verified}{prov_tag}] {c.title}{tag}{stale_tag}")
+            if is_stale:
+                out.append("    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory")
             if c.description:
                 out.append(f"    {c.description}")
     finally:
