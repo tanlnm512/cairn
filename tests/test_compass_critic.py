@@ -158,3 +158,37 @@ class TestCriticConceptIntegration:
         result = critic_concept(concept, conn)
         assert result.warnings == []
         assert result.errors == []
+
+    def test_unknown_symbol_ref_warns_not_blocks(self, fresh_db):
+        """Phase 1.3.2: an unknown symbol ref produces a non-blocking warning,
+        not a blocking error. This is the asymmetric critic contract -- file
+        refs block (see test_hallucinated_file_ref_flagged_as_error), symbol
+        refs only warn. A high-quality body still passes with the warning.
+        """
+        conn = _conn_with_fixture(fresh_db)
+        # 5-section body (quality 1.0) citing a symbol that does not exist in
+        # the graph. The warning raises the pass threshold to 0.7, but quality
+        # 1.0 clears it -- so passed stays True and the warning is informational.
+        concept = OKFConcept(
+            type="Compass",
+            title="test",
+            body=(
+                "# What Does This Module Do?\nCalls `TotallyMadeUpSymbol()`.\n"
+                "# Common Modification Patterns\n...\n"
+                "# Build-Failure Patterns\n...\n"
+                "# Cross-Module Dependencies\n...\n"
+                "# Tribal Knowledge\n...\n"
+            ),
+        )
+        result = critic_concept(concept, conn)
+        # The symbol ref is unknown -> warning present.
+        assert any("TotallyMadeUpSymbol" in w for w in result.warnings), (
+            f"expected a warning naming the unknown symbol, got {result.warnings}"
+        )
+        # It is NOT an error (file refs are errors; symbol refs are warnings).
+        assert result.errors == []
+        # And it does not block: high quality clears the raised threshold.
+        assert result.passed is True, (
+            "symbol-ref warnings are non-blocking by design; a high-quality body "
+            "should pass despite the warning"
+        )

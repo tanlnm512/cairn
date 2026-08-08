@@ -45,7 +45,7 @@
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
 | 1.3.1 | `test_critic_rejects_unknown_file_ref` — backtick path not in graph → `passed is False` + error present. | done | Covered in `tests/test_compass_critic.py:134` + `tests/test_core_smoke.py:308` (runs under `-m core`) |
-| 1.3.2 | Add `test_critic_warns_unknown_symbol_ref` — fake `Symbol(...)` → warning in `result.warnings` (NOT `passed is False`). | todo | do not over-assert; the only genuinely missing critic test |
+| 1.3.2 | Add `test_critic_warns_unknown_symbol_ref` — fake `Symbol(...)` → warning in `result.warnings` (NOT `passed is False`). | done | Added as `test_unknown_symbol_ref_warns_not_blocks` in `tests/test_compass_critic.py`; asserts warning present + non-blocking (passed stays True for high-quality body) |
 | 1.3.3 | `test_critic_passes_real_refs` — only graph-verified refs → no errors/warnings, passes. | done | Real-refs-pass covered in `tests/test_compass_critic.py:145` + `tests/test_core_smoke.py:319` |
 | 1.3.4 | Confirm coverage at the `critic_concept` level suffices for compass+wiki (memory does NOT call `critic_concept`). | done | Memory is not a `critic_concept` caller (grep of `src/cairn/memory/`); compass+wiki covered |
 
@@ -74,6 +74,6 @@ Phase 1 is done when **all four** hold (mirror of `plan.md` § Definition of don
 |------|-----------|------|-------|------|---------|---------|
 | 1.1 | 4 | 0 | 0 | 4 | 0 | 0 |
 | 1.2 | 3 | 1 | 0 | 2 | 0 | 0 |
-| 1.3 | 4 | 3 | 0 | 1 | 0 | 0 |
+| 1.3 | 4 | 4 | 0 | 0 | 0 | 0 |
 | 1.4 | 5 | 0 | 0 | 5 | 0 | 0 |
-| **Total** | **16** | **4** | **0** | **12** | **0** | **0** |
+| **Total** | **16** | **5** | **0** | **11** | **0** | **0** |
