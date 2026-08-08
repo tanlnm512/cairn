@@ -6,7 +6,19 @@ boundary, and where data lives on disk.
 
 ## What cairn is
 
-cairn is a **local, structural, agent-first** code intelligence system.
+cairn is a **local, structural, agent-first** code intelligence system. Its
+defining property is a **verification contract** — three promises cairn can
+machine-check:
+
+1. **Every `exact` edge is actually resolved** (`target_id IS NOT NULL`).
+2. **Every symbol in a compass / wiki / memory doc exists in the graph**
+   (critic gate).
+3. **Every answer is re-derivable from local data** (LLM never in the query path).
+
+The five layers below are how the contract is delivered; resolution-labeled
+edges are the *evidence* for promise #1, not the headline. See the
+[roadmap](roadmap.md) for the strategic framing of why this contract is cairn's
+moat.
 
 - **Local.** Everything runs on your machine. The store is a SQLite database
   plus a markdown tree under `~/.cairn/`. No network calls, no telemetry

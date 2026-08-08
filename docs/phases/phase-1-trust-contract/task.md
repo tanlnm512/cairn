@@ -36,7 +36,7 @@
 |----|------|--------|-------|
 | 1.2.1 | Pair the hand-seeded invariant with importer-driven coverage so the importer path is exercised end-to-end. | done | `tests/test_scip_importer.py` already exercises the importer end-to-end and asserts `resolution='exact'` ⟹ `target_id IS NOT NULL` (the invariant) on real protobuf fixtures |
 | 1.2.2 | Confirm the test runs in `ci.yml` (full-suite step). It is intentionally NOT in `-m core` by design (`test_core_smoke.py:4-5`). | done | Settled: runs in full CI suite; `-m core` exclusion is intentional |
-| 1.2.3 | Verify the test fails RED on the pre-fix importer (git-checkout old importer, run fixture test, confirm RED) — once. | todo | one-time proof the guard bites |
+| 1.2.3 | Verify the test fails RED on the pre-fix importer — once, to prove the guard bites. | done | RED proved 2026-08-09: temporarily forced `resolution='exact'` unconditionally in `scip_importer.py:542`; `test_protobuf_external_reference_is_unresolved` failed with `assert 'exact' == 'unresolved'`. Restored; 27 tests green. (The schema-level invariant in `test_invariants.py` did NOT catch it — it seeds its own rows — confirming both tests are needed.) |
 
 ## 1.3 — Critic invariant tests
 
@@ -53,27 +53,27 @@
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| 1.4.1 | Rewrite README "Why cairn?" to lead with the 3-promise verification contract. | todo | |
-| 1.4.2 | Move resolution-labeled edges content below the contract, framed as evidence for promise #1. | todo | |
-| 1.4.3 | Update `docs/architecture.md` § "What cairn is" to mirror; one shared 3-promise block, quoted in both. | todo | no drift |
-| 1.4.4 | Add a one-paragraph "verification contract" anchor linkable from roadmap + future docs. | todo | |
-| 1.4.5 | Scan AGENTS.md + `docs/mcp-tools.md` for claims contradicting the contract (e.g. "resolution labels are unique"). | todo | |
+| 1.4.1 | Rewrite README "Why cairn?" to lead with the 3-promise verification contract. | done | New "Why cairn? The verification contract" section leads README |
+| 1.4.2 | Move resolution-labeled edges content below the contract, framed as evidence for promise #1. | done | Demoted to "### Resolution-labeled edges (evidence for promise #1)" subsection |
+| 1.4.3 | Update `docs/architecture.md` § "What cairn is" to mirror; one shared 3-promise block, quoted in both. | done | Contract block added to architecture.md § "What cairn is"; load-bearing line appears once in each file (no drift) |
+| 1.4.4 | Add a one-paragraph "verification contract" anchor linkable from roadmap + future docs. | done | architecture.md contract block links to roadmap; roadmap links back |
+| 1.4.5 | Scan AGENTS.md + `docs/mcp-tools.md` for claims contradicting the contract (e.g. "resolution labels are unique"). | done | No contradictions found: AGENTS.md is neutral ("local knowledge graph"); mcp-tools.md only "trust" ref is index freshness. No changes needed |
 
 ## Phase exit gate
 
 Phase 1 is done when **all four** hold (mirror of `plan.md` § Definition of done):
 
 - [x] 1.1.3 rewritten (BUGS.md entry retracts "not yet implemented" + records version + test pointers)
-- [ ] 1.2.3 verified RED once against the pre-fix importer (the existing importer tests are the guard)
+- [x] 1.2.3 verified RED once against the pre-fix importer (the existing importer tests are the guard)
 - [x] 1.3.2 green (the only genuinely missing critic test; 1.3.1/1.3.3/1.3.4 already done)
-- [ ] 1.4.1–1.4.4 landed; README + architecture.md lead with the contract identically
+- [x] 1.4.1–1.4.4 landed; README + architecture.md lead with the contract identically
 
 ## Burndown
 
 | Item | Sub-tasks | done | doing | todo | blocked | skipped |
 |------|-----------|------|-------|------|---------|---------|
 | 1.1 | 4 | 4 | 0 | 0 | 0 | 0 |
-| 1.2 | 3 | 2 | 0 | 1 | 0 | 0 |
+| 1.2 | 3 | 3 | 0 | 0 | 0 | 0 |
 | 1.3 | 4 | 4 | 0 | 0 | 0 | 0 |
-| 1.4 | 5 | 0 | 0 | 5 | 0 | 0 |
-| **Total** | **16** | **10** | **0** | **6** | **0** | **0** |
+| 1.4 | 5 | 5 | 0 | 0 | 0 | 0 |
+| **Total** | **16** | **16** | **0** | **0** | **0** | **0** |

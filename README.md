@@ -23,10 +23,33 @@ the same store backs the `cairn` CLI and a 27-tool MCP server, making it
 **agent-first** — your coding agents query one local source of truth instead of
 re-reading the whole repo every turn.
 
-## Why cairn? Resolution-labeled edges
+## Why cairn? The verification contract
 
-Every code graph can tell you "who calls this." cairn is the one that tells
-you **whether to trust the answer.** The resolver labels each call edge:
+A code graph alone is commoditized — several tools now index symbols and call
+edges. Generic agent memory is ungrounded — it lets an LLM silently rewrite
+what it "remembers." cairn is the narrow intersection: a structural graph
+**fused with code-grounded memory, where every output is traceable to source
+and every synthesized doc is fact-checked before it lands.** The product is a
+**verification contract** — three promises cairn can machine-check:
+
+1. **Every `exact` edge is actually resolved.** The resolver pins each edge to
+   one definition before labeling it `exact` (`target_id IS NOT NULL`); an
+   invariant test guards this on every build.
+2. **Every symbol in a compass / wiki / memory doc exists in the graph.** A
+   deterministic critic fact-checks every LLM-synthesized doc against the graph
+   before it is written; hallucinated references are rejected or flagged.
+3. **Every answer is re-derivable from local data.** cairn never calls an LLM
+   in the query path — the LLM stays on a task queue with a critic gate, so
+   outputs are verifiable, not probabilistic.
+
+The five layers (graph + compass + memory + knowledge + wiki) are how the
+contract is delivered; resolution-labeled edges are the *evidence* for promise
+#1, not the headline.
+
+### Resolution-labeled edges (evidence for promise #1)
+
+Every code graph can tell you "who calls this." cairn tells you **whether to
+trust the answer.** The resolver labels each call edge:
 
 - **`exact`** — pinned to one definition. Trusted.
 - **`ambiguous`** — multiple candidates; the resolver declined to guess.
