@@ -71,11 +71,13 @@ An empty precise result means "no *resolvable* callers," **not** "unused" —
 retry with `--fuzzy` before concluding a symbol is dead. And `explore` surfaces
 `ambiguous` dispatch hops — polymorphism that grep fundamentally cannot see.
 
-This is measurable: see [docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
-for the precise-vs-fuzzy false-positive methodology, and
-[docs/examples/resolution-walkthrough.md](docs/examples/resolution-walkthrough.md)
-for a worked example. Full design at
-[docs/architecture.md § Resolution model](docs/architecture.md#resolution-model).
+This is measurable: see [docs/methodology-precise-vs-fuzzy.md](docs/methodology-precise-vs-fuzzy.md)
+for the false-positive methodology and measured numbers (76% of fuzzy results
+for common names are name-collision noise that precise mode excludes), and
+[docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
+for the harness. For a worked example, see
+[docs/examples/resolution-walkthrough.md](docs/examples/resolution-walkthrough.md).
+Full design at [docs/architecture.md § Resolution model](docs/architecture.md#resolution-model).
 
 ## Quick start
 

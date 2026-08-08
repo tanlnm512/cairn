@@ -58,6 +58,16 @@ works on a default (no-torch) install — it just exercises the lexical pipeline
 | L1     | 30      | _fill_    | _fill_ |
 | L5     | 10      | _fill_    | _fill_ |
 
+> **Measured on cairn's own repo (Python, 2026-08):** L1 recall@10 = 0.0,
+> L5 recall@10 = 0.0. This is an honest finding, not a quality regression:
+> the query set in `tests/eval/queries.yaml` targets generic codebase shapes,
+> not cairn's specific symbol names, so no expected fragment matches. It
+> measures the query set's fit to the corpus, not retrieval quality. A
+> corpus-tuned query set is future work. See
+> [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) for the
+> measurement that *does* characterize cairn's differentiator (the 76%
+> precise-vs-fuzzy false-positive rate on common names).
+
 ---
 
 ## Performance — `cairn bench --suite perf`
@@ -171,7 +181,16 @@ much a fuzzy graph would inflate impact estimates.
 
 | symbol          | precise callers | fuzzy candidates | fuzzy FP rate |
 |-----------------|-----------------|------------------|---------------|
-| _example_       | _fill_          | _fill_           | _fill_        |
+| `get`           | 0               | 200              | 100%          |
+| `append`        | 0               | 200              | 100%          |
+| `join`          | 0               | 169              | 100%          |
+| `execute`       | 200             | 200              | 0%            |
+| `close`         | 175             | 175              | 0%            |
+| **aggregate**   | **375**         | **1,560**        | **76%**       |
+
+Measured on cairn's own repo (Python, 2026-08): 1,929 symbols, 11,514 edges
+(4,066 exact / 1,020 ambiguous / 6,428 unresolved), 35% resolve rate, 4.0s
+build. Full writeup: [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md).
 
 ### `explore` surfaces ambiguous dispatch
 
