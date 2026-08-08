@@ -12,7 +12,9 @@ from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, main, scanner_mod
 @click.option("--file", "file_path", default=None, help="Specific file changed (for PostToolUse hooks)")
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
-def update(repo, file_path, workspace, db):
+@click.option("--knowledge", default=str(DEFAULT_KNOWLEDGE_PATH),
+              help="Knowledge bundle path (for the post-update memory staleness scan).")
+def update(repo, file_path, workspace, db, knowledge):
     """Incremental graph update from git diff (or a single changed file)."""
     from . import display
     from ..graph.schema import get_db
@@ -73,8 +75,7 @@ def update(repo, file_path, workspace, db):
     # Run memory decay after update to archive stale raw memories automatically.
     # This ensures raw memories don't grow unbounded over time.
     try:
-        knowledge_path = DEFAULT_KNOWLEDGE_PATH
-        bundle = OKFBundle(knowledge_path)
+        bundle = OKFBundle(knowledge)
         decay_result = decay(bundle)
         if decay_result.get("expired_raw", 0) > 0 or decay_result.get("archived_tribal", 0) > 0:
             display.success(
@@ -84,6 +85,47 @@ def update(repo, file_path, workspace, db):
     except Exception as e:
         # Don't fail the whole update if decay has an issue
         display.warning(f"Memory decay failed (non-critical): {e}")
+
+    # Memory-anchored-file hints (Phase 3.2): if a reindex changed symbols that
+    # a memory cites, the memory may now be stale. Scan all memory tiers
+    # (raw/drafts/tribal/archived) for any whose backtick refs no longer fully
+    # resolve (refs_verified < 1.0) and warn -- the graph just changed, so
+    # surface memories that may have drifted. Warning, not a block: `cairn
+    # update` must not fail on memory state. Only considers explicit backtick
+    # refs (never loose mentions), so a file named in prose alone is not an
+    # anchor.
+    if result.get("files_reindexed", 0) > 0 or result.get("files_deleted", 0) > 0:
+        try:
+            from ..memory.scoring import _graph_verification
+            from ..graph.schema import get_db as _get_db
+            conn = _get_db(db, busy_timeout_ms=20000)
+            try:
+                stale_mems = []
+                for cid in bundle.list_concepts(prefix="memory/"):
+                    try:
+                        c = bundle.read_concept(cid)
+                    except Exception:
+                        continue
+                    try:
+                        if _graph_verification(c, conn) < 1.0:
+                            stale_mems.append(cid)
+                    except Exception:
+                        continue
+            finally:
+                conn.close()
+            if stale_mems:
+                display.warning(
+                    f"{len(stale_mems)} memor(s) reference file/symbol(s) that "
+                    f"no longer fully resolve after this update -- verify before "
+                    f"relying on them:"
+                )
+                for cid in stale_mems[:5]:
+                    display.warning(f"  {cid}")
+                if len(stale_mems) > 5:
+                    display.warning(f"  ... and {len(stale_mems) - 5} more")
+        except Exception as e:
+            # Memory hints are advisory; never fail the update over them.
+            display.warning(f"Memory staleness scan failed (non-critical): {e}")
 
 
 

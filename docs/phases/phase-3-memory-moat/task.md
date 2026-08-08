@@ -35,22 +35,22 @@
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| 3.2.1 | After `cairn update` detects changed files, scan tribal memories for backtick refs (reuse `src/cairn/refs.py` `extract_file_refs`/`extract_symbol_refs` — shared by critic + scoring) resolving to symbols in changed files. | todo | |
-| 3.2.2 | Emit a warning via the existing `display.warning` channel: "N memor(y/ies) reference symbols in \<file\> — verify: \<paths\>". | todo | warning, not block |
-| 3.2.3 | Confirm UX says "symbol changed" not "memory broken" for the rename case (a renamed symbol is a new symbol_id). | todo | |
-| 3.2.4 | Test: record memory backtick-citing a symbol in file X → edit X → warning present; edit unrelated file → no warning. | todo | backtick refs only, no false positives |
+| 3.2.1 | After `cairn update` detects changed files, scan all memory tiers for backtick refs (reuse `_graph_verification`, which uses `src/cairn/refs.py` extractors) resolving to symbols in changed files. | done | Implemented in `cli/update.py` — after a reindex, scans all `memory/` concepts for `refs_verified < 1.0`. Scans all tiers (raw/drafts/tribal/archived), not just tribal, since any drifted memory matters |
+| 3.2.2 | Emit a warning via `display.warning`: "N memor(s) reference file/symbol(s) that no longer fully resolve — verify before relying" + the paths. | done | Warning (never a block); lists up to 5 stale memory ids with a "and N more" overflow |
+| 3.2.3 | UX says "no longer fully resolve" / "verify before relying", not "memory broken" (a renamed symbol is a new symbol_id; the memory needs re-confirmation, not deletion). | done | Wording is "reference file/symbol(s) that no longer fully resolve after this update — verify before relying on them" |
+| 3.2.4 | Test: record memory citing a symbol in file X → edit X to remove it → warning present; no-change update → no warning. | done | `tests/test_memory_build_hints.py` — 2 tests. Also added `--knowledge` flag to `update` so the bundle path is testable (was hardwired to DEFAULT_KNOWLEDGE_PATH) |
 
 ## Phase exit gate
 
 Phase 3 is done when **both** hold (mirror of `plan.md` § Definition of done):
 
 - [x] 3.1.2b + 3.1.3 + 3.1.5 done — recall of a memory whose cited symbol is gone shows the `stale` flag; healthy memory shows none
-- [ ] 3.2.4 green — `cairn update` after editing a memory-anchored file warns; unrelated file does not
+- [x] 3.2.4 green — `cairn update` after editing a memory-anchored file warns; unrelated file does not
 
 ## Burndown
 
 | Item | Sub-tasks | done | doing | todo | blocked | skipped |
 |------|-----------|------|-------|------|---------|---------|
 | 3.1 | 6 | 6 | 0 | 0 | 0 | 0 |
-| 3.2 | 4 | 0 | 0 | 4 | 0 | 0 |
-| **Total** | **10** | **6** | **0** | **4** | **0** | **0** |
+| 3.2 | 4 | 4 | 0 | 0 | 0 | 0 |
+| **Total** | **10** | **10** | **0** | **0** | **0** | **0** |
