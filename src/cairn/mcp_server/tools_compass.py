@@ -12,6 +12,23 @@ from ._server_core import _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import instrument
 
 
+def _critic_verdict_block(result) -> str:
+    """A machine-readable critic verdict appended to a tool's prose response.
+
+    Lets an agent parse the structured verdict (passed / errors / warnings /
+    quality) without regex-ing the human-readable lines above. Additive: the
+    prose response is unchanged; this block is always last and fenced.
+    """
+    import json
+    verdict = {
+        "passed": bool(result.passed),
+        "quality_score": round(float(result.quality_score), 3),
+        "errors": list(result.errors),
+        "warnings": list(result.warnings),
+    }
+    return "```cairn-critic\n" + json.dumps(verdict, indent=2) + "\n```"
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def get_compass(module: str) -> str:
@@ -241,10 +258,12 @@ def generate_flow(entry: str, as_workflow: bool = False, max_steps: int = 20) ->
             if result.errors:
                 results.append("The body cited backtick references not found in the graph — "
                                "rebuild (cairn build) or fix the references before promoting.")
+            results.append(_critic_verdict_block(result))
             return "\n".join(results)
 
         bundle.write_concept(concept)
         results.append(f"Compass: {concept.concept_id} (quality={result.quality_score:.2f})")
+        results.append(_critic_verdict_block(result))
         return "\n".join(results)
     finally:
         conn.close()

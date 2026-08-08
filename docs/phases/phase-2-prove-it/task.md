@@ -29,16 +29,14 @@
 
 ## 2.2 — Make the critic visible
 
-| ID | Task | Status | Notes |
-|----|------|--------|-------|
 > *Status at v0.6.1: the verdict is already surfaced in several places — MCP `generate_flow` (text string), `cairn compass validate`, `cairn validate-paths`, `cairn wiki generate`. The gaps: a unified single-doc `cairn verify` command, and a structured (dict) verdict field in MCP returns.*
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| 2.2.1 | Add `cairn verify <doc-path>` — thin wrapper over existing `cairn compass validate` (`cli/compass.py:170-199`), accepting any single concept path (compass/wiki/memory). | todo | ~80% exists; gap is the `verify` name + single-doc arg. Extend `validate.py`/`compass.py`, not a new file |
-| 2.2.2 | Promote MCP verdict from flattened text (`generate_flow`, `tools_compass.py:230-243`) to structured additive dict `critic: {passed, errors, warnings}` in `generate_flow` / `ask_compass`. CLI `wiki generate` already surfaces it. | todo | additive dict; keep existing return string for backward compat |
-| 2.2.3 | Keep file-ref errors and symbol-ref warnings distinct in the surfaced verdict (do not collapse). | todo | matches Phase 1.3 contract |
-| 2.2.4 | Test: structured verdict returned for a known-good and known-bad concept. | todo | |
+| 2.2.1 | Add `cairn verify <doc-path>` — thin wrapper over existing `cairn compass validate`, accepting any single concept id. | done | Added to `src/cairn/cli/validate.py`; loads via `OKFBundle.read_concept`, runs `critic_concept`, prints verdict, exit 1 on fail / 2 on missing doc |
+| 2.2.2 | Promote MCP verdict from flattened text to a structured additive block in `generate_flow` (both reject + accept branches). | done | Added `_critic_verdict_block` helper in `tools_compass.py`; appends a `cairn-critic` JSON block (passed/quality/errors/warnings) after the prose — additive, prose unchanged |
+| 2.2.3 | Keep file-ref errors and symbol-ref warnings distinct in the surfaced verdict. | done | The block surfaces `errors[]` and `warnings[]` as separate arrays; never collapsed |
+| 2.2.4 | Test: structured verdict + verify command for good/bad/missing concepts. | done | `tests/test_verify_cmd.py` — 4 tests: real-refs pass, unknown-file fail (exit 1), missing doc (exit 2), verdict block is valid JSON |
 
 ## 2.3 — "cairn on cairn" live demo
 
@@ -71,7 +69,7 @@ Phase 2 is done when **all four** hold (mirror of `plan.md` § Definition of don
 | Item | Sub-tasks | done | doing | todo | blocked | skipped |
 |------|-----------|------|-------|------|---------|---------|
 | 2.1 | 6 | 0 | 0 | 6 | 0 | 0 |
-| 2.2 | 4 | 0 | 0 | 4 | 0 | 0 |
+| 2.2 | 4 | 4 | 0 | 0 | 0 | 0 |
 | 2.3 | 4 | 0 | 0 | 4 | 0 | 0 |
 | 2.4 | 3 | 0 | 0 | 3 | 0 | 0 |
-| **Total** | **17** | **0** | **0** | **17** | **0** | **0** |
+| **Total** | **17** | **4** | **0** | **13** | **0** | **0** |

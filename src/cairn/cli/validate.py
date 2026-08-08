@@ -64,3 +64,50 @@ def validate_paths(db, knowledge, mark):
     sys.exit(1)
 
 
+# --------------------------------------------------------------------------
+# cairn verify <doc-path> (single-concept critic verdict, any type)
+# --------------------------------------------------------------------------
+@main.command()
+@click.argument("doc_path")
+@click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def verify(doc_path, db, knowledge):
+    """Run the deterministic critic on a single compass/wiki/memory concept.
+
+    DOC_PATH is a concept id relative to the .knowledge/ bundle WITHOUT the
+    .md suffix (e.g. `compass/some_module`). Prints the verdict -- passed,
+    errors (blocking, e.g. a file ref not in the graph), warnings (non-blocking,
+    e.g. an unknown symbol ref), and quality score -- with each offending
+    reference listed.
+
+    Read-only: it does not write. This is the user-facing front to the critic
+    gate that promise #2 of the verification contract rests on. (For scanning
+    all compass concepts at once, see `cairn compass validate`; for stale-path
+    detection across all types, see `cairn validate-paths`.)
+    """
+    from cairn.compass.critic import critic_concept
+    from cairn.okf.bundle import OKFBundle
+
+    conn = get_db(db)
+    try:
+        bundle = OKFBundle(knowledge)
+        try:
+            concept = bundle.read_concept(doc_path)
+        except Exception as e:
+            click.echo(f"Could not read concept '{doc_path}': {e}", err=True)
+            sys.exit(2)
+        result = critic_concept(concept, conn)
+    finally:
+        conn.close()
+
+    status = "OK" if result.passed else "FAIL"
+    click.echo(f"[{status}] {doc_path} (quality={result.quality_score:.2f})")
+    for e in result.errors:
+        click.echo(f"  ERROR: {e}")
+    for w in result.warnings:
+        click.echo(f"  warn: {w}")
+    # Non-zero exit on blocking errors so scripts/CI can detect a failed verify.
+    if not result.passed:
+        sys.exit(1)
+
+
