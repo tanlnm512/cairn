@@ -36,7 +36,7 @@
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
 | 3.2.1 | After `cairn update` detects changed files, scan all memory tiers for backtick refs (reuse `_graph_verification`, which uses `src/cairn/refs.py` extractors) resolving to symbols in changed files. | done | Implemented in `cli/update.py` — after a reindex, scans all `memory/` concepts for `refs_verified < 1.0`. Scans all tiers (raw/drafts/tribal/archived), not just tribal, since any drifted memory matters |
-| 3.2.2 | Emit a warning via `display.warning`: "N memor(s) reference file/symbol(s) that no longer fully resolve — verify before relying" + the paths. | done | Warning (never a block); lists up to 5 stale memory ids with a "and N more" overflow |
+| 3.2.2 | Emit a warning via `display.warning`: "N memor(y/ies) reference file/symbol(s) that no longer fully resolve — verify before relying" + the paths. | done | Warning (never a block); proper singular/plural; lists up to 5 stale memory ids with a "and N more" overflow |
 | 3.2.3 | UX says "no longer fully resolve" / "verify before relying", not "memory broken" (a renamed symbol is a new symbol_id; the memory needs re-confirmation, not deletion). | done | Wording is "reference file/symbol(s) that no longer fully resolve after this update — verify before relying on them" |
 | 3.2.4 | Test: record memory citing a symbol in file X → edit X to remove it → warning present; no-change update → no warning. | done | `tests/test_memory_build_hints.py` — 2 tests. Also added `--knowledge` flag to `update` so the bundle path is testable (was hardwired to DEFAULT_KNOWLEDGE_PATH) |
 
