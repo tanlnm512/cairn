@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,49 @@ def install_hint() -> str:
         "embeddings). Install it with: pip install 'cairn-intel[semantic]', then "
         "set CAIRN_RERANK=1."
     )
+
+
+def reranker_model_is_cached(model_name: Optional[str] = None) -> bool:
+    """Whether the reranker's weights are present in the local HuggingFace cache."""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return False
+    m_name = model_name or current_rerank_model()
+    # CrossEncoder models store config.json at the repo root like embedders.
+    return try_to_load_from_cache(m_name, "config.json") is not None
+
+
+def download_reranker_model(model_name: Optional[str] = None) -> bool:
+    """Download the reranker's weights into the local HuggingFace cache if absent.
+
+    Returns True if the model is available locally after the call (already
+    cached, or successfully downloaded). Mirrors ``embeddings.download_model``
+    so ``cairn download-reranker`` and ``cairn embed --download-model`` share
+    a shape. Does not require ``CAIRN_RERANK=1`` — pre-fetching the weights
+    should not depend on the feature being enabled at download time.
+    """
+    m_name = model_name or current_rerank_model()
+    if reranker_model_is_cached(m_name):
+        print(f"Reranker model '{m_name}' is already cached — skipping download.")
+        return True
+    try:
+        from sentence_transformers import CrossEncoder  # noqa: F401
+    except ImportError:
+        print(
+            f"Cannot download reranker '{m_name}': sentence-transformers is not "
+            f"installed. {install_hint()}"
+        )
+        return False
+    try:
+        print(f"Downloading reranker '{m_name}' weights into local cache...")
+        # Constructing a CrossEncoder fetches the weights into the HF cache.
+        CrossEncoder(m_name)
+        print(f"Reranker model '{m_name}' downloaded successfully.")
+        return True
+    except Exception as exc:
+        print(f"Failed to download reranker model '{m_name}': {exc}")
+        return False
 
 
 def _get_reranker():
