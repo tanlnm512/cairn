@@ -65,7 +65,7 @@ works on a default (no-torch) install — it just exercises the lexical pipeline
 > measures the query set's fit to the corpus, not retrieval quality. A
 > corpus-tuned query set is future work. See
 > [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) for the
-> measurement that *does* characterize cairn's differentiator (the 76%
+> measurement that *does* characterize cairn's differentiator (the 82%
 > precise-vs-fuzzy false-positive rate on common names).
 
 ---
@@ -181,16 +181,23 @@ much a fuzzy graph would inflate impact estimates.
 
 | symbol          | precise callers | fuzzy candidates | fuzzy FP rate |
 |-----------------|-----------------|------------------|---------------|
-| `get`           | 0               | 200              | 100%          |
-| `append`        | 0               | 200              | 100%          |
+| `get`           | 0               | 565              | 100%          |
+| `append`        | 0               | 664              | 100%          |
 | `join`          | 0               | 169              | 100%          |
-| `execute`       | 200             | 200              | 0%            |
-| `close`         | 175             | 175              | 0%            |
-| **aggregate**   | **375**         | **1,560**        | **76%**       |
+| `add`           | 0               | 94               | 100%          |
+| `exists`        | 0               | 108              | 100%          |
+| `mkdir`         | 0               | 107              | 100%          |
+| `fetchone`      | 0               | 112              | 100%          |
+| `strip`         | 0               | 197              | 100%          |
+| `execute`       | 493             | 493              | 0%            |
+| `close`         | 1               | 177              | 99%           |
+| **aggregate**   | **494**         | **2,686**        | **82%**       |
 
-Measured on cairn's own repo (Python, 2026-08): 1,929 symbols, 11,514 edges
-(4,066 exact / 1,020 ambiguous / 6,428 unresolved), 35% resolve rate, 4.0s
-build. Full writeup: [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md).
+Measured on cairn's own repo (Python, 2026-08): 1,942 symbols, 11,595 edges
+(3,924 exact / 1,199 ambiguous / 6,472 unresolved), 34% exact-pinned rate,
+~4s build. Counts use `limit=10000` so they reflect the true edge population,
+not the default 200 result cap. Full writeup:
+[methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md).
 
 ### `explore` surfaces ambiguous dispatch
 

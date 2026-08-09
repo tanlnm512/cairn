@@ -72,7 +72,7 @@ retry with `--fuzzy` before concluding a symbol is dead. And `explore` surfaces
 `ambiguous` dispatch hops — polymorphism that grep fundamentally cannot see.
 
 This is measurable: see [docs/methodology-precise-vs-fuzzy.md](docs/methodology-precise-vs-fuzzy.md)
-for the false-positive methodology and measured numbers (76% of fuzzy results
+for the false-positive methodology and measured numbers (82% of fuzzy results
 for common names are name-collision noise that precise mode excludes), and
 [docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
 for the harness. For a worked example, see

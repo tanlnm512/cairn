@@ -55,6 +55,6 @@ Phase 3 lands when **both** hold:
 |-------------------|------------|
 | `cairn memory digest` lifecycle cadence view | Roadmap "Beyond" |
 | Auto-promote grounded memories to compass/wiki | Phase 4 refinement |
-| First SCIP-leverage language (C/C++, Rust) | Roadmap "Beyond" (was 3.3) |
+| First SCIP-leverage language (C/C++, Rust) | Roadmap "Beyond" (Month 3 is memory-only by design) |
 | Cross-memory deduplication via shared symbol links | Phase 4 |
 | Semantic memory search (embeddings) | Already exists via `[semantic]`; not a Phase 3 task |

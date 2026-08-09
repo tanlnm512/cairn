@@ -106,7 +106,8 @@ def test_recall_no_stale_flag_for_memory_without_refs(db, bundle):
     )
     out = _recall("deploy", db, bundle)
     assert "[STALE]" not in out, out
-    assert "refs-verified=1.0" in out, out
+    # Zero refs → surfaced as "n/a (0 refs)", NOT a misleading 1.0.
+    assert "refs-verified=n/a (0 refs)" in out, out
 
 
 def test_recall_no_stale_flag_for_real_refs(db, bundle):
@@ -118,3 +119,55 @@ def test_recall_no_stale_flag_for_real_refs(db, bundle):
     )
     out = _recall("auth", db, bundle)
     assert "[STALE]" not in out, out
+
+
+def test_recall_partial_stale_when_one_of_two_refs_gone(db, bundle):
+    """Partial stale: 2 backtick refs, delete 1 → fraction 0.5 → STALE.
+
+    Covers the 0 < fraction < 1 middle case (only 0.0 and 1.0 were tested
+    before). The flag should fire on ANY stale ref, not just all-stale.
+    """
+    # Seed a second symbol so the memory can cite two.
+    db.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+        "VALUES (2, 1, 'logout', 'function', 'auth.logout', 12, 20)"
+    )
+    db.commit()
+    capture_memory(
+        db, bundle, type_="pattern", title="auth pair",
+        body="Use `login()` and `logout()` together. Why: session hygiene.",
+        confidence=0.7,
+    )
+    # Both exist → no stale, fraction 1.0.
+    out = _recall("auth", db, bundle)
+    assert "[STALE]" not in out, out
+    assert "refs-verified=1.0" in out, out
+    # Delete one of the two → fraction 0.5 → stale.
+    db.execute("DELETE FROM symbols WHERE name = 'logout'")
+    db.commit()
+    out = _recall("auth", db, bundle)
+    assert "[STALE]" in out, out
+    assert "refs-verified=0.5" in out, out
+
+
+def test_recall_does_not_crash_when_verification_raises(db, bundle, monkeypatch):
+    """If _graph_verification raises, recall must not crash and must not flag STALE.
+
+    Validates the isinstance guard on the refs_verified='?' exception path.
+    """
+    capture_memory(
+        db, bundle, type_="decision", title="auth login backoff",
+        body="`login()` retries with backoff. Why: flaky upstream.",
+        confidence=0.8,
+    )
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated DB error")
+
+    # Patch where recall_memory imports it from.
+    import cairn.memory.scoring as scoring
+    monkeypatch.setattr(scoring, "_graph_verification", _boom)
+    out = _recall("login", db, bundle)
+    # Did not crash; STALE not flagged (can't compute); '?' surfaced.
+    assert "[STALE]" not in out, out
+    assert "refs-verified=?" in out, out

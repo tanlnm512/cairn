@@ -12,8 +12,8 @@ target shares a name with your query — is inflated by name collisions. Ask
 "who calls `get`?" and you get every `get` in the repo, even though most of
 them call entirely different functions that merely happen to share the name.
 
-This is not a theoretical concern. On cairn's own codebase (1,929 symbols,
-11,514 edges), the common name `get` has **200 fuzzy call sites but 0 precise
+This is not a theoretical concern. On cairn's own codebase (1,942 symbols,
+11,595 edges), the common name `get` has **565 fuzzy call sites but 0 precise
 ones** — every single fuzzy result for `get` is a name collision, not a real
 caller of any single `get` definition.
 
@@ -43,29 +43,35 @@ name and in aggregate.
 
 ## The numbers (cairn on cairn, Python corpus)
 
-Measured on cairn's own source tree, freshly built (commit pinned below).
-Target: a set of common, collision-prone bare names.
+Measured on cairn's own source tree, freshly built (see corpus details below;
+re-run on your own repo — numbers are machine- and corpus-specific). Target: a
+set of common, collision-prone bare names. Counts use `get_callers(...,
+limit=10000)` so they reflect the true edge population, not the default 200
+result cap.
 
 | name | precise callers | fuzzy callers | false-positive rate |
 |------|----------------:|--------------:|--------------------:|
-| `get` | 0 | 200 | 100% |
-| `append` | 0 | 200 | 100% |
+| `get` | 0 | 565 | 100% |
+| `append` | 0 | 664 | 100% |
 | `join` | 0 | 169 | 100% |
 | `add` | 0 | 94 | 100% |
 | `exists` | 0 | 108 | 100% |
-| `mkdir` | 0 | 106 | 100% |
-| `fetchone` | 0 | 111 | 100% |
+| `mkdir` | 0 | 107 | 100% |
+| `fetchone` | 0 | 112 | 100% |
 | `strip` | 0 | 197 | 100% |
-| `execute` | 200 | 200 | 0% |
-| `close` | 175 | 175 | 0% |
-| **aggregate** | **375** | **1,560** | **76%** |
+| `execute` | 493 | 493 | 0% |
+| `close` | 1 | 177 | 99% |
+| **aggregate** | **494** | **2,686** | **82%** |
 
 **Interpretation.** For the eight names at 100%, the fuzzy graph is pure
-noise — every result is a name collision. For `execute` and `close`, cairn's
-resolver pins them precisely (0% false positives) because their definitions
-are unambiguous in scope. The aggregate **76% false-positive rate** means: on
-common names in this corpus, trusting the fuzzy graph would give you the wrong
-answer three times out of four.
+noise — every result is a name collision. `execute` resolves precisely (0%
+false positives) because there is exactly one `execute` definition in scope.
+`close` is near-100% false-positive here because the test fixtures define a
+second `close`, so the resolver correctly labels those calls `ambiguous`
+rather than guessing — note how this *raises* the FP rate, demonstrating that
+precise mode trades recall for precision exactly as designed. The aggregate
+**82% false-positive rate** means: on common names in this corpus, trusting
+the fuzzy graph would give you the wrong answer four times out of five.
 
 ### Empty precise ≠ unused
 
@@ -87,9 +93,13 @@ For the FP rate, compare the counts: `FP = 1 - precise/fuzzy`.
 ## Corpus details
 
 - **Corpus:** cairn's own source tree (`src/cairn/`, Python).
-- **Build:** 4.0s wall-clock; 1,929 symbols, 11,514 edges (4,066 exact / 1,020
-  ambiguous / 6,428 unresolved), 227 files, 15.4 MB SQLite store.
-- **Resolve rate:** 35% of edges pinned `exact` (4,066 / 11,514).
+- **Build:** ~4s wall-clock (machine-dependent); 1,942 symbols, 11,595 edges
+  (3,924 exact / 1,199 ambiguous / 6,472 unresolved), 229 files, 15.6 MB
+  SQLite store.
+- **Exact-pinned rate:** 34% of edges pinned `exact` (3,924 / 11,595). (The
+  `cairn bench --suite scaling` "resolve_rate" column uses a broader
+  definition `exact + ambiguous / total` = 44% — a different metric; do not
+  conflate the two.)
 - **Eval recall (Recall@10):** 0.0 on cairn's own repo. This is an honest
   finding: the eval query set (`tests/eval/queries.yaml`) targets generic
   codebase shapes, not cairn's specific symbol names, so no expected fragment

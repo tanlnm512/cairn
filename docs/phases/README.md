@@ -8,9 +8,9 @@
 
 | Phase | Folder | Roadmap milestone | Status |
 |-------|--------|-------------------|--------|
-| 1 | [`phase-1-trust-contract/`](phase-1-trust-contract/) | Month 1 — Make the contract real | Upcoming |
-| 2 | [`phase-2-prove-it/`](phase-2-prove-it/) | Month 2 — Prove it | Upcoming |
-| 3 | [`phase-3-memory-moat/`](phase-3-memory-moat/) | Month 3 — Turn proof into the memory moat | Upcoming |
+| 1 | [`phase-1-trust-contract/`](phase-1-trust-contract/) | Month 1 — Make the contract real | Done (16/16, audited) |
+| 2 | [`phase-2-prove-it/`](phase-2-prove-it/) | Month 2 — Prove it | Done (17/17, audited; Kotlin/TS + ask_compass/wiki verdict deferred) |
+| 3 | [`phase-3-memory-moat/`](phase-3-memory-moat/) | Month 3 — Turn proof into the memory moat | Done (10/10, audited) |
 
 Phase 4 ("Beyond 3 months") stays directional in the roadmap until the end of
 Q4, at which point it is promoted into its own phase folder.

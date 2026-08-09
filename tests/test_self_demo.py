@@ -58,20 +58,27 @@ def test_self_demo_build_and_query():
             main, ["def", "build_graph", *query_common], catch_exceptions=False
         )
         assert def_result.exit_code == 0, def_result.output
-        assert "builder" in def_result.output  # defined in graph/builder.py
+        # Full path, not a loose "builder" substring (the not-found path prints
+        # "No definition found for..." which contains no path).
+        assert "graph/builder.py" in def_result.output
 
-        # 3. impact_analysis: build_graph is reachable.
+        # 3. impact_analysis: build_graph has REAL impact (not just the symbol
+        # echoed back, which the empty-result path also does — guard against that
+        # vacuous match by asserting the non-empty path).
         impact = runner.invoke(
             main, ["impact", "build_graph", *query_common], catch_exceptions=False
         )
-        assert "build_graph" in impact.output
+        assert impact.exit_code == 0, impact.output
+        assert "No impacted symbols" not in impact.output, (
+            "impact for build_graph should be non-empty on cairn's own code"
+        )
 
         # 4. The critic gate exists and is queryable.
         critic_def = runner.invoke(
             main, ["def", "critic_concept", *query_common], catch_exceptions=False
         )
         assert critic_def.exit_code == 0, critic_def.output
-        assert "critic" in critic_def.output  # defined in compass/critic.py
+        assert "compass/critic.py" in critic_def.output  # full path, not loose "critic"
 
 
 def test_self_demo_resolution_invariant_holds():
@@ -90,6 +97,16 @@ def test_self_demo_resolution_invariant_holds():
 
         conn = sqlite3.connect(str(db))
         conn.row_factory = sqlite3.Row
+        # Guard against a vacuous pass: if a future build bug yielded ZERO
+        # exact edges, "violations == 0" would pass trivially. Require a
+        # non-trivial exact-edge set so the invariant is meaningful.
+        total_exact = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE resolution = 'exact'"
+        ).fetchone()[0]
+        assert total_exact > 1000, (
+            f"only {total_exact} exact edges in cairn's own graph -- expected "
+            "thousands; the invariant check below would be vacuous on an empty set"
+        )
         violations = conn.execute(
             "SELECT COUNT(*) FROM edges WHERE resolution = 'exact' AND target_id IS NULL"
         ).fetchone()[0]

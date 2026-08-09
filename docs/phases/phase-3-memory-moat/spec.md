@@ -44,9 +44,9 @@ phase.
 
 ## Out of scope
 
-- **New languages / SCIP wiring.** Phase 4. (The roadmap moved 3.3 — the
-  first SCIP-leverage language — to "Beyond 3 months" because memory is the
-  heart of the positioning and wins the capacity contest.)
+- **New languages / SCIP wiring.** Phase 4. (SCIP-leverage languages are
+  deferred to the roadmap's "Beyond 3 months" — Month 3 has always been
+  memory-only, since memory is the heart of the positioning.)
 - **Visible memory-lifecycle cadence** (`cairn memory digest` showing
   graduating/expiring). Roadmap "Beyond" item; useful but not contract-
   strengthening.

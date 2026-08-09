@@ -50,6 +50,12 @@ def test_update_warns_when_memory_cites_removed_symbol(tmp_path):
         env=env, catch_exceptions=False,
     )
     assert rec.exit_code == 0, rec.output
+    # Capture the recorded memory id so we can assert the warning names THIS
+    # memory specifically (not just any "memory/tribal/" substring).
+    import re
+    mem_match = re.search(r"(memory/tribal/\S+)", rec.output)
+    assert mem_match, f"could not parse memory id from record output: {rec.output}"
+    recorded_id = mem_match.group(1)
 
     # 3. Edit the source: remove `greet` (so the memory's cited symbol is gone).
     (repo / "hello.py").write_text("# greet was removed\n")
@@ -74,13 +80,22 @@ def test_update_warns_when_memory_cites_removed_symbol(tmp_path):
     )
     # update exits 0 (the memory hint is a warning, not a failure).
     assert upd.exit_code == 0, upd.output
-    # The warning names the now-stale memory.
+    # The warning names the now-stale memory BY ITS FULL ID (not just a loose
+    # "memory/tribal/" prefix that could match anything).
     assert "no longer fully resolve" in upd.output, upd.output
-    assert "memory/tribal/" in upd.output, upd.output
+    assert recorded_id in upd.output, (
+        f"warning should name the stale memory {recorded_id!r}; got:\n{upd.output}"
+    )
 
 
 def test_update_no_warning_when_memory_refs_still_valid(tmp_path):
-    """An update that does NOT invalidate a memory → no staleness warning."""
+    """A memory whose refs are still valid → no staleness warning on update.
+
+    This is the NON-vacuous negative case: the memory is in the scan scope
+    (--knowledge passed to update so the bundle is loaded), an edit happens so
+    the scan runs, but the cited symbol still exists → no warning. This is what
+    catches an 'always warn' mutation (which the positive test alone cannot).
+    """
     runner = CliRunner()
     repo = tmp_path / "repo"
     _make_repo(repo)
@@ -98,9 +113,17 @@ def test_update_no_warning_when_memory_refs_still_valid(tmp_path):
         env=env, catch_exceptions=False,
     )
 
-    # No edit → update detects no changes → no memory hint at all.
+    # Edit the file but KEEP greet (add a harmless line) so the symbol still
+    # exists after reindex -- the memory's ref stays valid.
+    (repo / "hello.py").write_text("def greet():\n    return 'hi'\n# extra\n")
+    import subprocess
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=False,
+                   env=env, capture_output=True)
+
+    # update WITH --knowledge so the memory is actually in scan scope.
     upd = runner.invoke(
-        main, ["update", "--db", str(db), "--workspace", str(tmp_path)],
+        main, ["update", "--db", str(db), "--workspace", str(tmp_path),
+               "--knowledge", str(knowledge)],
         env=env, catch_exceptions=False,
     )
     assert upd.exit_code == 0, upd.output

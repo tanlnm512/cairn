@@ -81,7 +81,7 @@ The phase where cairn stops *claiming* verifiability and starts *proving* it.
 |----|------|-----------|
 | 1.1 | **Rewrite the SCIP importer** to resolve `target_id` from a `{symbol_descriptor → def_id}` map, derive `source_id` from `enclosing_range`, and label `exact` *only* when `target_id` is found. (BUGS.md: scip-importer-fake-resolution.) | A pure-SCIP build of cairn's own repo has zero `exact` rows with NULL `target_id`. |
 | 1.2 | **Graph invariant test:** `resolution='exact'` ⟹ `target_id IS NOT NULL`, in CI. (BUGS.md calls this out explicitly.) | The test runs on every CI build and fails the build on violation. |
-| 1.3 | **Critic invariant test:** no compass / wiki / memory doc can name a symbol absent from the graph. | A unit test that submits a doc referencing a fake symbol is rejected by the critic. |
+| 1.3 | **Critic invariant test:** assert the critic's asymmetric contract — unknown **file refs block** (error), unknown **symbol refs warn** (non-blocking). | Unit tests cover both paths: a doc referencing a fake **file** is rejected; a doc referencing a fake **symbol** is warned but not blocked. |
 | 1.4 | **Reposition README + `architecture.md` "Why cairn?"** to lead with the 3-promise contract, then the 5 layers, then resolution labels as evidence. | The front page reads as "verifiable codebase memory," not "the resolution-label graph." |
 
 ### Month 2 — Prove it (Sep)
@@ -90,8 +90,8 @@ The phase where cairn *shows* the contract holds, with numbers and a live demo.
 
 | # | Work | Done when |
 |----|------|-----------|
-| 2.1 | **Fill the benchmark tables** (`cairn eval`, `cairn bench`) on three corpora: cairn's own repo (Python), a Kotlin repo, a TypeScript repo. Publish precise-vs-fuzzy **false-positive rates** — the methodology `benchmarks.md` already describes. | `benchmarks.md` tables are no longer `_fill_`; the methodology post (2.4) cites real numbers. |
-| 2.2 | **Make the critic visible.** Expose critic verdicts (verified / rejected / must-fix) in `ask_compass`, `wiki generate`, and a new `cairn verify <doc>` command. | A user can ask "is this compass guide trustworthy?" and get a machine-checked answer. |
+| 2.1 | **Fill the benchmark tables** (`cairn eval`, `cairn bench`) on three corpora: cairn's own repo (Python), a Kotlin repo, a TypeScript repo. Publish precise-vs-fuzzy **false-positive rates** — the methodology `benchmarks.md` already describes. | Python corpus measured (FP table + methodology post filled); Kotlin/TS deferred — they need corpus-tuned eval query sets, documented as future work. |
+| 2.2 | **Make the critic visible.** Add a `cairn verify <doc>` command and a structured critic verdict field in the MCP `generate_flow` tool. | A user can run `cairn verify <doc>` for a machine-checked verdict; MCP callers get a structured `critic` block. (Surfacing the verdict in `ask_compass` / a wiki-generate MCP tool is deferred — see Phase 2 spec.) |
 | 2.3 | **"cairn on cairn" live demo.** A single `cairn build` on this repo produces a reproducible `explore` + `impact` + `get_compass` walkthrough that a visitor can run verbatim. | The README quick-start, run on cairn's own repo, returns real, correct results. |
 | 2.4 | **Methodology post / shareable doc:** "precise vs fuzzy — a false-positive methodology for trusting a code graph." Uses 2.1's numbers. | A standalone artifact that makes the verification contract legible to someone who has never installed cairn. |
 
@@ -103,7 +103,7 @@ widen the market but don't strengthen the contract.
 
 | # | Work | Done when |
 |----|------|-----------|
-| 3.1 | **Graph-grounded memory recall.** Memories that cite symbols get symbol-verified on recall (reject / flag if the cited symbol no longer exists). Extends the critic concept to the memory layer. | A memory citing a deleted symbol is surfaced as stale, not served as truth. |
+| 3.1 | **Graph-grounded memory recall.** Memories that cite symbols get symbol-verified on recall and are **flagged stale** if a cited symbol no longer exists. Extends the critic concept to the memory layer. | A memory citing a deleted symbol is surfaced as stale (flagged, not served silently as truth). |
 | 3.2 | **Memory-triggered build hints.** `cairn update` after editing an anchored file reports "N memories reference this — review before relying on impact results." | Editing a memory-anchored file produces an actionable, graph-grounded warning. |
 
 ## Beyond 3 months (directional, not detailed)

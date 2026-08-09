@@ -120,20 +120,35 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
             prov = c.extensions.get("provenance", "")
             prov_tag = f", {prov}" if prov else ""
             superseded = c.extensions.get("memory_is_latest", True) is False
+            # Detect zero-refs separately so we surface "nothing was checked"
+            # distinctly from "all refs passed" -- otherwise a prose-only memory
+            # shows refs-verified=1.0 and looks fully verified when nothing was.
+            from cairn.refs import extract_file_refs, extract_symbol_refs
+            body = c.body or ""
+            n_refs = len(extract_file_refs(body)) + len(extract_symbol_refs(body))
             try:
                 refs_verified = round(_graph_verification(c, conn), 3)
             except Exception:
                 refs_verified = "?"
+            # Render: distinguish "n/a (0 refs)" from a real fraction.
+            if n_refs == 0:
+                refs_display = "n/a (0 refs)"
+            else:
+                refs_display = str(refs_verified)
             # Stale flag: a discrete verdict derived from the fraction. A memory
             # is stale when at least one cited backtick ref no longer exists in
-            # the graph (fraction < 1.0). Memories with no backtick refs score
-            # 1.0 (neutral) and are never flagged. This is the recall-side
-            # analog of the critic gate -- surfacing silent drift loudly.
-            # Threshold chosen deliberately: < 1.0 = "any ref stale".
-            is_stale = isinstance(refs_verified, (int, float)) and refs_verified < 1.0
+            # the graph (fraction < 1.0). Memories with no backtick refs have
+            # nothing to verify (n/a) and are never flagged stale. This is the
+            # recall-side analog of the critic gate -- surfacing silent drift
+            # loudly. Threshold chosen deliberately: < 1.0 = "any ref stale".
+            is_stale = (
+                n_refs > 0
+                and isinstance(refs_verified, (int, float))
+                and refs_verified < 1.0
+            )
             tag = " [SUPERSEDED]" if superseded else ""
             stale_tag = " [STALE]" if is_stale else ""
-            out.append(f"  [{t} {score}, refs-verified={refs_verified}{prov_tag}] {c.title}{tag}{stale_tag}")
+            out.append(f"  [{t} {score}, refs-verified={refs_display}{prov_tag}] {c.title}{tag}{stale_tag}")
             if is_stale:
                 out.append("    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory")
             if c.description:

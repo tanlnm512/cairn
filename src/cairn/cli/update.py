@@ -115,9 +115,9 @@ def update(repo, file_path, workspace, db, knowledge):
                 conn.close()
             if stale_mems:
                 display.warning(
-                    f"{len(stale_mems)} memor(s) reference file/symbol(s) that "
-                    f"no longer fully resolve after this update -- verify before "
-                    f"relying on them:"
+                    f"{len(stale_mems)} memor{'y' if len(stale_mems) == 1 else 'ies'} "
+                    f"reference file/symbol(s) that no longer fully resolve after "
+                    f"this update -- verify before relying on them:"
                 )
                 for cid in stale_mems[:5]:
                     display.warning(f"  {cid}")

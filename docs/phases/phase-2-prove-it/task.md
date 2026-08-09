@@ -23,8 +23,8 @@
 | 2.1.1 | Pick + pin corpora at exact commits; record SHAs in benchmarks.md. | done | Python corpus (cairn on itself) measured 2026-08; Kotlin/TS deferred — they need external repo clones + corpus-tuned query sets (see 2.1.2 note) |
 | 2.1.2 | Build corpus; run `cairn eval` (Recall@10, MRR) for L1 + L5. | done | Ran on cairn's own repo: L1=0.0, L5=0.0. Honest finding: `tests/eval/queries.yaml` targets generic shapes, not cairn's symbols → no fragment matches. Documented in benchmarks.md + methodology post. Multi-corpus eval needs tuned query sets |
 | 2.1.3 | Run `cairn bench --suite perf` (build/embed/query latency). | done | Build: 4.0s wall (cairn on itself, 227 files) |
-| 2.1.4 | Run `cairn bench --suite scaling` (build/embed/DB-MB/resolve_rate). | done | 1,929 symbols / 11,514 edges (4,066 exact=35% / 1,020 ambiguous / 6,428 unresolved) / 15.4 MB |
-| 2.1.5 | Compute precise-vs-fuzzy false-positive rate. | done | **76% aggregate** across 10 common names (get/append/join/...); 100% for 8 of them, 0% for execute/close. The methodology number — see methodology post |
+| 2.1.4 | Run `cairn bench --suite scaling` (build/embed/DB-MB/resolve_rate). | done | 1,942 symbols / 11,595 edges (3,924 exact=34% / 1,199 ambiguous / 6,472 unresolved) / 15.6 MB |
+| 2.1.5 | Compute precise-vs-fuzzy false-positive rate. | done | **82% aggregate** across 10 common names (get/append/join/...); 100% for 8 of them, 0% for execute, 99% for close. The methodology number — see methodology post |
 | 2.1.6 | Fill the result-template tables in benchmarks.md; record version + hardware. | done | Recall table + false-positive table filled in benchmarks.md with the Python-corpus numbers |
 
 ## 2.2 — Make the critic visible
@@ -57,10 +57,13 @@
 
 ## Phase exit gate
 
-Phase 2 is done when **all four** hold (mirror of `plan.md` § Definition of done):
+Phase 2 is done when **all four** hold (mirror of `plan.md` § Definition of done).
+Note: the roadmap's original 2.1 (three corpora) and 2.2 (verdict in
+`ask_compass` + `wiki generate`) scopes were narrowed during implementation —
+see the deferred items below:
 
-- [x] 2.1.6 tables filled (Python corpus; Kotlin/TS deferred — need tuned query sets)
-- [x] 2.2.1 `cairn verify` prints verdicts; 2.2.2 MCP returns verdict additively
+- [x] 2.1.6 Python-corpus tables filled; **Kotlin/TS deferred** (need corpus-tuned eval query sets — documented in methodology post)
+- [x] 2.2.1 `cairn verify` prints verdicts; 2.2.2 structured verdict in `generate_flow` MCP. **Deferred**: verdict field in `ask_compass` and a wiki-generate MCP tool — not yet wired (see spec § 2.2 scope note)
 - [x] 2.3.3 self-demo green in CI; 2.3.4 referenced from README
 - [x] 2.4.1 post exists with real numbers; 2.4.3 linked from README + benchmarks.md
 
