@@ -59,8 +59,8 @@ and the variables are inert. See also the `CAIRN_FUSION` note below.
 | `CAIRN_EMBED_FP16` | `0`/`1`, default unset | When `1`, loads the local model with `torch_dtype=float16` (halves GPU/CPU memory). |
 | `CAIRN_EMBED_MAX_SEQ_LEN` | int, default `512` | Max sequence length passed to the local model. Raise for long functions; lower to trade recall for speed. |
 | `CAIRN_EMBED_TRUST_REMOTE_CODE` | `0`/`1`, default unset | When `1`, sets `trust_remote_code=True` on model load — required by some custom-architecture models. |
-| `CAIRN_RERANK` | `0`/`1`, default unset | When `1`/`true`/`on`, runs a CrossEncoder reranker over retrieval results. Needs the `[semantic]` extra (no separate install). |
-| `CAIRN_RERANK_MODEL` | string, default `cross-encoder/ms-marco-MiniLM-L-6-v2` | CrossEncoder model used when reranking is enabled. |
+| `CAIRN_RERANK` | `0`/`1`, default unset | When `1`/`true`/`on`, runs a CrossEncoder reranker over retrieval results. Also auto-enabled by a successful `cairn download-reranker` (writes a `~/.cairn/rerank_enabled` marker). Set to `0`/`false`/`off` to force it OFF (hard kill switch — wins over the marker). Needs the `[semantic]` extra (no separate install); if the configured model isn't cached, falls back to hybrid (vector + BM25 + RRF) order. |
+| `CAIRN_RERANK_MODEL` | string, default `BAAI/bge-reranker-base` | CrossEncoder model used when reranking. The default is the natural pair for the `bge-m3` embedder (same BAAI family). |
 
 ### Disabling fusion to read real cosine scores
 

@@ -268,6 +268,7 @@ The navigation tools; the recommended first move from code is `cairn def` or
 |---------|-------------|
 | `cairn embed` | Build the semantic embedding index over the symbol corpus. |
 | `cairn semantic QUERY` | Semantic (concept) search: find code by meaning. |
+| `cairn download-reranker` | Download the CrossEncoder reranker weights and enable reranking. |
 
 `embed` options: `--db`, `--batch-size 64`, `--limit`, `--no-reap`,
 `--build-index`, `--install-deps`, `--download-model`.
@@ -278,9 +279,17 @@ survives reinstalls, then exits without building the index. This is the
 recommended one-time way to get the default `BAAI/bge-m3` model — run
 `cairn embed --install-deps`, then `cairn embed` to build the index.
 
+`download-reranker` options: `--model` (default `BAAI/bge-reranker-base`, the
+natural pair for the bge-m3 embedder; honors `$CAIRN_RERANK_MODEL` if set).
+Fetches the weights into the local HuggingFace cache and writes a
+`~/.cairn/rerank_enabled` marker so reranking is on for subsequent queries —
+no `CAIRN_RERANK=1` needed. Set `CAIRN_RERANK=0` to turn it back off. If the
+configured model is later missing/evicted from the cache, queries fall back to
+the hybrid (vector + BM25 + RRF) order rather than failing.
+
 `semantic` options: `QUERY` (argument), `--db`, `--limit 20`, `--threshold 0.3`,
-`--json`, `--include-callers`. Set `CAIRN_RERANK=1` for a cross-encoder
-rerank stage.
+`--json`, `--include-callers`. Rerank runs when enabled (auto after
+`download-reranker`, or `CAIRN_RERANK=1`).
 
 ### Natural-language and context
 

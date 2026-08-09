@@ -200,7 +200,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 
 | Extra | Adds | Key env var |
 |-------|------|-------------|
-| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CAIRN_RERANK=1`; fusion is governed by `CAIRN_FUSION` (default on) |
+| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | reranking auto-enables after `cairn download-reranker` (default model `BAAI/bge-reranker-base`); `CAIRN_RERANK=1`/`=0` to override; fusion governed by `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/scip.md) indexes for compiler-grade exact call edges (Kotlin/Java/Swift/TypeScript) alongside tree-sitter | declare indexes in `cairn.json` under `scip` |
 | `[watch]` | `watchdog` — live graph rebuilds on filesystem change | — |
