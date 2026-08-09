@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- _Nothing yet._
+
+### Changed
+- _Nothing yet._
+
+### Fixed
+- _Nothing yet._
+
+### Removed
+- _Nothing yet._
+
+## [0.7.0] - 2026-08-10
+
 > **Focus:** the verification contract becomes the product — a machine-checked
 > promise that every `exact` edge is resolved, every doc symbol is
 > graph-verified, and the LLM is never in the query path. Plus a memory moat
