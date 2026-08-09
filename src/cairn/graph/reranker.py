@@ -18,19 +18,59 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
 
 # Cache the loaded CrossEncoder so repeated calls within a process (e.g. one
 # long-lived MCP server) don't reload weights on every semantic_search call.
 _RERANKER_CACHE: dict = {}
 
 
+def _rerank_marker_path():
+    """Persistent marker file (<CAIRN_HOME>/rerank_enabled) recording that
+    `cairn download-reranker` succeeded and reranking should be auto-enabled.
+
+    A CLI process cannot export an env var into its parent shell, so successful
+    pre-download writes this marker and `rerank_enabled()` honors it as if
+    CAIRN_RERANK=1 had been set. Imported lazily so importing this module never
+    forces paths.CAIRN_HOME resolution (which would pin the home dir at import
+    time and break tests that relocate it).
+    """
+    from ..paths import CAIRN_HOME
+    return CAIRN_HOME / "rerank_enabled"
+
+
+def set_rerank_enabled_persistently():
+    """Write the auto-enable marker. Called after a successful download-reranker."""
+    try:
+        marker = _rerank_marker_path()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        # Write the resolved model name so a later model switch is detectable.
+        marker.write_text(current_rerank_model() + "\n")
+    except OSError as exc:
+        logger.debug("could not write rerank marker: %s", exc)
+
+
 def rerank_enabled() -> bool:
     """Whether the rerank stage should run at all.
 
-    Opt-in via CAIRN_RERANK=1.
+    Enabled if ANY of:
+      - CAIRN_RERANK is set to a truthy value (1/true/on), OR
+      - the persistent auto-enable marker exists (written by a successful
+        `cairn download-reranker`).
+    Disabled if CAIRN_RERANK is set to a falsy value (0/false/off) — this
+    explicit OFF always wins, even if the marker exists, so users have a hard
+    kill switch.
     """
-    return os.environ.get("CAIRN_RERANK", "").strip().lower() in ("1", "true", "on")
+    env = os.environ.get("CAIRN_RERANK", "").strip().lower()
+    if env in ("0", "false", "off"):
+        return False
+    if env in ("1", "true", "on"):
+        return True
+    # Env unset: honor the persistent marker if present.
+    try:
+        return _rerank_marker_path().exists()
+    except Exception:
+        return False
 
 
 def current_rerank_model() -> str:
@@ -118,14 +158,31 @@ def rerank(query: str, candidates: List[dict], limit: int) -> Tuple[List[dict], 
     """Rerank a candidate shortlist; returns (results, reranked).
 
     ``candidates`` must each have a ``"chunk"`` key. Non-fatal on any failure
-    (disabled, uninstalled, or a `predict()` exception): falls back to
-    ``candidates[:limit]`` unchanged with ``reranked=False``. On success, each
+    (disabled, uninstalled, model not cached, or a `predict()` exception): falls
+    back to ``candidates[:limit]`` unchanged with ``reranked=False`` — i.e. the
+    hybrid (vector + BM25 + RRF) order is returned as-is. On success, each
     returned dict gains a ``"rerank_score"`` float and the list is truncated
     to ``limit`` by that score, descending.
+
+    The model-cache check is proactive (before `_get_reranker`) so a missing
+    or evicted model logs once at info and returns the hybrid fallback, rather
+    than attempting a network download mid-query or crashing.
     """
     if not candidates:
         return candidates[:limit], False
     if not rerank_enabled() or not reranker_available():
+        return candidates[:limit], False
+    # Proactive guard: is the configured model actually cached locally? If not,
+    # fall back to the hybrid order rather than blocking on a download or
+    # surfacing a load error. (Auto-enable via the download marker guarantees a
+    # model was cached at enable time, but the cache can be evicted later.)
+    m_name = current_rerank_model()
+    if not reranker_model_is_cached(m_name):
+        logger.info(
+            "rerank enabled but model '%s' is not cached locally; falling back "
+            "to hybrid order. Run `cairn download-reranker` to fetch it.",
+            m_name,
+        )
         return candidates[:limit], False
     try:
         model = _get_reranker()
@@ -142,5 +199,5 @@ def rerank(query: str, candidates: List[dict], limit: int) -> Tuple[List[dict], 
         return out, True
     except Exception:
         # Never let a reranker problem take down semantic search.
-        logger.debug("rerank failed, returning unranked", exc_info=True)
+        logger.debug("rerank failed, returning hybrid order", exc_info=True)
         return candidates[:limit], False
