@@ -106,6 +106,62 @@ def test_protobuf_external_reference_is_unresolved():
     assert edge["resolution"] == "unresolved"
 
 
+def test_invariant_exact_implies_target_id_holds_on_importer_data():
+    """The graph invariant (resolution='exact' ⟹ target_id IS NOT NULL) holds
+    over a DB populated by the SCIP importer — not just hand-seeded rows.
+
+    Pairs the schema-level invariant (tests/test_invariants.py, which hand-seeds)
+    with importer-produced data: builds a multi-edge protobuf fixture with a mix
+    of resolvable and external references, imports it, then runs the invariant
+    SQL over the WHOLE edges table. This is the test the hand-seeded invariant's
+    own docstring (test_invariants.py:219-221) admits it cannot be.
+    """
+    idx = _scip_pb2.Index()
+    doc = idx.documents.add()
+    doc.relative_path = "src/app.py"
+    doc.language = "python"
+    # Three definitions in one file.
+    _occ(doc, "scip-python python app main#", roles=1, syntax_kind=16, line=0)
+    _occ(doc, "scip-python python app helper#", roles=1, syntax_kind=16, line=5)
+    _occ(doc, "scip-python python app util#", roles=1, syntax_kind=16, line=10)
+    # Reference to helper (resolvable -> exact).
+    ref1 = _occ(doc, "scip-python python app helper#", roles=0, syntax_kind=15, line=2)
+    ref1.multi_line_enclosing_range.start_line = 0
+    ref1.multi_line_enclosing_range.start_character = 0
+    ref1.multi_line_enclosing_range.end_line = 20
+    ref1.multi_line_enclosing_range.end_character = 0
+    # Reference to util (resolvable -> exact).
+    ref2 = _occ(doc, "scip-python python app util#", roles=0, syntax_kind=15, line=3)
+    ref2.multi_line_enclosing_range.start_line = 0
+    ref2.multi_line_enclosing_range.start_character = 0
+    ref2.multi_line_enclosing_range.end_line = 20
+    ref2.multi_line_enclosing_range.end_character = 0
+    # Reference to an external symbol (unresolvable -> unresolved, NULL target).
+    _occ(doc, "scip-python python . println()", roles=0, line=4)
+
+    conn = _conn()
+    import_scip_bytes(conn, idx.SerializeToString(), repo_id="demo")
+
+    # The invariant over importer-populated data: no exact edge has NULL target.
+    violations = conn.execute(
+        "SELECT COUNT(*) FROM edges WHERE resolution = 'exact' AND target_id IS NULL"
+    ).fetchone()[0]
+    assert violations == 0, (
+        f"{violations} exact edge(s) with NULL target_id in importer-produced data "
+        "— the resolution='exact' label must always carry a resolved target_id"
+    )
+    # Sanity: the import actually produced both exact (resolvable) and unresolved
+    # (external) edges, so the invariant ran over a non-trivial mix — not vacuous.
+    exact = conn.execute(
+        "SELECT COUNT(*) FROM edges WHERE resolution = 'exact'"
+    ).fetchone()[0]
+    unresolved = conn.execute(
+        "SELECT COUNT(*) FROM edges WHERE resolution = 'unresolved'"
+    ).fetchone()[0]
+    assert exact >= 2, f"expected >=2 exact edges, got {exact}"
+    assert unresolved >= 1, f"expected >=1 unresolved edge, got {unresolved}"
+
+
 def test_protobuf_symbols_tagged_source_scip():
     """Every imported symbol carries source='scip' provenance."""
     idx = _scip_pb2.Index()

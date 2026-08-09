@@ -109,12 +109,31 @@ def ask_compass(query: str, file_path: str = "") -> str:
         parts = [p for p in file_path.split("/") if p]
         module_guess = "/".join(parts[:4]) if len(parts) >= 4 else file_path
         out = [f"Context for {file_path}:", f"  inferred module: {module_guess}"]
-        # Compass whose resource overlaps the path.
-        for cid in bundle.list_concepts(prefix="compass/"):
-            c = bundle.read_concept(cid)
-            if c.resource and (c.resource in file_path or file_path in c.resource):
-                out.append(f"\n# Compass: {c.title}\n{c.body}")
-                break
+        conn = _conn()
+        loaded_compass_concept = None
+        try:
+            # Compass whose resource overlaps the path.
+            for cid in bundle.list_concepts(prefix="compass/"):
+                c = bundle.read_concept(cid)
+                if c.resource and (c.resource in file_path or file_path in c.resource):
+                    out.append(f"\n# Compass: {c.title}\n{c.body}")
+                    loaded_compass_concept = c
+                    break
+        finally:
+            # Keep conn open for the critic verdict below if a concept loaded.
+            if loaded_compass_concept is None:
+                conn.close()
+        # If a compass concept was loaded, surface its critic verdict so the
+        # caller knows whether the context they just got is graph-verified
+        # (promise #2). The verdict is additive (appended after the concept body).
+        if loaded_compass_concept is not None:
+            try:
+                from cairn.compass.critic import critic_concept
+                out.append(_critic_verdict_block(critic_concept(loaded_compass_concept, conn)))
+            except Exception:
+                pass  # verdict is advisory; never block a context load
+            finally:
+                conn.close()
         # Wiki mentioning path segments.
         seg = parts[-1].replace(".kt", "").replace(".java", "") if parts else ""
         if seg:

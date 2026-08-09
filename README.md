@@ -1,27 +1,31 @@
 # cairn
 
-> Local codebase intelligence system: structural graph + compass + wiki + agent memory.
+> Verifiable codebase memory for AI agents: a structural graph + compass + wiki + tribal memory, all local, all traceable to source.
 
 [![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
 [![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
 [![Python versions](https://img.shields.io/pypi/pyversions/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
-cairn builds a precise, language-aware structural graph of your codebase and
-exposes it to both humans (the `cairn` CLI) and AI agents (a stdio MCP server with
-27 tools). Symbols, call edges, definitions, blast radius, and tribal memory all
-live in a local SQLite store — no network call, no torch in the default install.
+cairn is the **verifiable memory of your codebase for AI agents.** It parses
+your repos with tree-sitter into a precise structural graph (symbols, call
+edges, blast radius) and fuses it with code-grounded tribal memory — all in a
+local SQLite store, all behind one MCP server (27 tools) + a `cairn` CLI. The
+product is a **verification contract**: every `exact` edge is actually resolved,
+every symbol in a compass/wiki/memory doc is graph-verified by a deterministic
+critic, and the LLM is never in the query path. No network call, no torch in
+the default install.
 
 ## What is cairn?
 
-cairn is a **local** codebase intelligence system. It parses your repos with
-tree-sitter into a **structural graph** (definitions, call edges, cross-repo
-dependencies) stored in SQLite, then layers a **compass** (per-module navigation
-guides), a **wiki** (architecture docs), **memory** (decisions / patterns /
-mistakes / workarounds), and a **knowledge** store on top. It is **MCP-native**:
-the same store backs the `cairn` CLI and a 27-tool MCP server, making it
-**agent-first** — your coding agents query one local source of truth instead of
-re-reading the whole repo every turn.
+cairn is a **local, verifiable, agent-first** codebase memory system. It parses
+your repos with tree-sitter into a **structural graph** (definitions, call
+edges, cross-repo dependencies) stored in SQLite, then layers a **compass**
+(per-module navigation guides), a **wiki** (architecture docs), **memory**
+(decisions / patterns / mistakes / workarounds), and a **knowledge** store on
+top. It is **MCP-native**: the same store backs the `cairn` CLI and a 27-tool
+MCP server, making it **agent-first** — your coding agents query one local
+source of truth instead of re-reading the whole repo every turn.
 
 ## Why cairn? The verification contract
 
@@ -86,6 +90,7 @@ pip install cairn-intel              # install from PyPI (the recommended path)
 cairn build                         # parse the workspace and build the graph (first run)
 cairn update                        # incremental reindex after the first build
 cairn def SomeSymbol                # find where a symbol is defined
+cairn impact SomeSymbol             # within-repo blast radius (precise by default; --fuzzy to audit)
 cairn ask "how does auth work"      # natural-language query across all layers
 ```
 
@@ -95,6 +100,24 @@ The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
 > `cairn update` reindexes only what changed since the last build (via `git diff
 > HEAD` plus the existing graph) — so on a fresh clone with a clean working tree,
 > use `cairn build` first, since `cairn update` would see no changes.
+
+### Try it on cairn itself (the verification contract, demonstrated)
+
+cairn indexes its own source as a dogfood. Clone this repo and run the exact
+commands above — then verify the contract holds on the verifier's own code:
+
+```bash
+git clone https://github.com/tanlnm512/cairn && cd cairn
+cairn build                                     # ~4s; builds ~1,900 symbols / ~11,500 edges
+cairn def build_graph                           # -> src/cairn/graph/builder.py
+cairn impact build_graph                        # -> real transitive callers (non-empty)
+# Promise #1, checked directly: no exact edge has a NULL target_id.
+sqlite3 "$(cairn config --db)" \
+  "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
+```
+
+The `-m core` test suite runs this same build + invariant check in CI
+(`tests/test_self_demo.py`), so the dogfood cannot silently rot.
 
 ## Upgrading
 
