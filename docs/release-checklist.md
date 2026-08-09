@@ -98,9 +98,26 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
    `v$version`. (If the pre-release checklist above isn't done yet, run
    `cz bump --version-files-only` to update files without committing/tagging.)
 
-4. **Push the tag** — this is what triggers the release pipeline:
+4. **Land the release commits on `main`, then push the tag.** `main` is
+   branch-protected (changes must go through a PR with required status checks),
+   so a direct `git push origin main` is rejected. Two equivalent paths:
+
+   - **Fast path (PR):** push a branch off the current (post-bump) `main`,
+     open a PR, and merge it once checks pass — then push the tag (below).
+     ```sh
+     git checkout -b release/$version-sync
+     git push -u origin release/$version-sync
+     gh pr create --title "release: sync main with $version" --body "..."
+     # merge the PR, then locally:
+     git checkout main && git pull --ff-only
+     ```
+   - **Tag-first path** (used for 0.7.0): push the tag immediately to trigger
+     the release, then sync `main` via a PR afterward. PyPI publishes from the
+     tag, so the release isn't blocked on `main` — but `main` MUST be synced
+     afterward so it matches the released tag.
+
+   Either way, the tag push triggers the pipeline:
    ```sh
-   git push origin main
    git push origin v$version
    ```
    `.github/workflows/release.yml` then builds wheel + sdist, publishes to PyPI
