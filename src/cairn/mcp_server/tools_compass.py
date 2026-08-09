@@ -12,6 +12,23 @@ from ._server_core import _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import instrument
 
 
+def _critic_verdict_block(result) -> str:
+    """A machine-readable critic verdict appended to a tool's prose response.
+
+    Lets an agent parse the structured verdict (passed / errors / warnings /
+    quality) without regex-ing the human-readable lines above. Additive: the
+    prose response is unchanged; this block is always last and fenced.
+    """
+    import json
+    verdict = {
+        "passed": bool(result.passed),
+        "quality_score": round(float(result.quality_score), 3),
+        "errors": list(result.errors),
+        "warnings": list(result.warnings),
+    }
+    return "```cairn-critic\n" + json.dumps(verdict, indent=2) + "\n```"
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def get_compass(module: str) -> str:
@@ -92,12 +109,31 @@ def ask_compass(query: str, file_path: str = "") -> str:
         parts = [p for p in file_path.split("/") if p]
         module_guess = "/".join(parts[:4]) if len(parts) >= 4 else file_path
         out = [f"Context for {file_path}:", f"  inferred module: {module_guess}"]
-        # Compass whose resource overlaps the path.
-        for cid in bundle.list_concepts(prefix="compass/"):
-            c = bundle.read_concept(cid)
-            if c.resource and (c.resource in file_path or file_path in c.resource):
-                out.append(f"\n# Compass: {c.title}\n{c.body}")
-                break
+        conn = _conn()
+        loaded_compass_concept = None
+        try:
+            # Compass whose resource overlaps the path.
+            for cid in bundle.list_concepts(prefix="compass/"):
+                c = bundle.read_concept(cid)
+                if c.resource and (c.resource in file_path or file_path in c.resource):
+                    out.append(f"\n# Compass: {c.title}\n{c.body}")
+                    loaded_compass_concept = c
+                    break
+        finally:
+            # Keep conn open for the critic verdict below if a concept loaded.
+            if loaded_compass_concept is None:
+                conn.close()
+        # If a compass concept was loaded, surface its critic verdict so the
+        # caller knows whether the context they just got is graph-verified
+        # (promise #2). The verdict is additive (appended after the concept body).
+        if loaded_compass_concept is not None:
+            try:
+                from cairn.compass.critic import critic_concept
+                out.append(_critic_verdict_block(critic_concept(loaded_compass_concept, conn)))
+            except Exception:
+                pass  # verdict is advisory; never block a context load
+            finally:
+                conn.close()
         # Wiki mentioning path segments.
         seg = parts[-1].replace(".kt", "").replace(".java", "") if parts else ""
         if seg:
@@ -241,10 +277,12 @@ def generate_flow(entry: str, as_workflow: bool = False, max_steps: int = 20) ->
             if result.errors:
                 results.append("The body cited backtick references not found in the graph — "
                                "rebuild (cairn build) or fix the references before promoting.")
+            results.append(_critic_verdict_block(result))
             return "\n".join(results)
 
         bundle.write_concept(concept)
         results.append(f"Compass: {concept.concept_id} (quality={result.quality_score:.2f})")
+        results.append(_critic_verdict_block(result))
         return "\n".join(results)
     finally:
         conn.close()

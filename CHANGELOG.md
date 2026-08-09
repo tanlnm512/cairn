@@ -12,14 +12,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Focus:** the verification contract becomes the product — a machine-checked
+> promise that every `exact` edge is resolved, every doc symbol is
+> graph-verified, and the LLM is never in the query path. Plus a memory moat
+> (stale-flag + build hints) and a one-command rerank setup.
+
 ### Added
-- _Nothing yet._
+- **`cairn verify <doc-id>`** — run the deterministic critic on any single
+  compass/wiki/memory concept and print the verdict (passed, errors, warnings,
+  quality). Read-only; exit 1 on blocking errors, 2 on a missing doc, 0 on
+  pass. The user-facing front to the critic gate that promise #2 rests on.
+- **Structured critic verdict in MCP `generate_flow`** — `generate_flow` now
+  appends a fenced `cairn-critic` JSON block (`passed` / `quality_score` /
+  `errors` / `warnings`) after its prose, so agents can parse the verdict
+  without regex. Additive: the existing response string is unchanged.
+  `ask_compass`'s file-path-aware mode also surfaces the verdict when it loads
+  a compass concept.
+- **`cairn download-reranker`** — a dedicated command to pre-fetch the
+  CrossEncoder reranker weights into the local HuggingFace cache, so the first
+  reranked query isn't blocked on a download. `--model` overrides; default is
+  `BAAI/bge-reranker-base`.
+- **Memory-recall STALE flag.** `recall_memory` now derives a discrete `[STALE]`
+  verdict from the `refs-verified` fraction it already computed: a memory is
+  flagged when any cited backtick file/symbol no longer exists in the graph.
+  Prose-only memories (no backtick refs) surface as `refs-verified=n/a (0 refs)`
+  rather than a misleading `1.0`, so "nothing was checked" is no longer
+  indistinguishable from "all refs passed." This is the recall-side analog of
+  the critic gate — silent drift surfaced loudly.
+- **Memory-triggered build hints.** `cairn update` now warns (advisory,
+  non-blocking) when a reindex invalidates a memory — naming each stale memory
+  by its full concept path so a user can open and review it. The warning uses
+  the existing `display.warning` channel; `update` still exits 0. `update`
+  gains a `--knowledge` flag so the bundle path is overridable.
+- **"cairn on cairn" self-demo**, CI-gated under `-m core`
+  (`tests/test_self_demo.py`): builds cairn's own source tree in an isolated
+  temp DB and asserts `def`/`impact` return correct results for known symbols
+  AND the resolution invariant (`exact ⟹ target_id IS NOT NULL`) holds on
+  cairn's own code. The strongest dogfood — the verification contract
+  demonstrated on the verifier.
+- **False-positive-rate methodology post**
+  (`docs/methodology-precise-vs-fuzzy.md`) — a standalone, install-free writeup
+  of the precise-vs-fuzzy tradeoff with measured Python-corpus numbers: **82%
+  of fuzzy results for common names are name-collision noise** that precise
+  mode excludes. Linked from the README and `benchmarks.md`.
 
 ### Changed
-- _Nothing yet._
+- **Narrative repositioned to the verification contract.** README and
+  `architecture.md` now lead with the 3-promise contract (every `exact` edge
+  resolved; every doc symbol graph-verified by a deterministic critic; LLM
+  never in the query path). Resolution-labeled edges are demoted to *evidence
+  for promise #1*, not the headline — reflecting that the labeling scheme
+  itself is commoditized, while the verified 5-layer stack + critic is owned
+  white space.
+- **Default rerank model is now `BAAI/bge-reranker-base`** (was
+  `cross-encoder/ms-marco-MiniLM-L-6-v2`). The natural pair for the `bge-m3`
+  embedder — same BAAI family. The change applies consistently to both
+  download and reranking, so they can't split-brain.
+- **Reranking auto-enables after `cairn download-reranker`.** A CLI process
+  can't export an env var to its parent shell, so a successful download writes
+  a persistent `~/.cairn/rerank_enabled` marker, and `rerank_enabled()` honors
+  it as if `CAIRN_RERANK=1` were set. `CAIRN_RERANK=0` remains a hard kill
+  switch (always wins, even with the marker). Before attempting a rerank, the
+  configured model is checked for local cache presence; if missing/evicted,
+  the query falls back to the hybrid (vector + BM25 + RRF) order rather than
+  blocking on a download or crashing. `[semantic]` (sentence-transformers) is
+  unchanged as the dependency.
+- **SCIP importer BUGS entry corrected.** `docs/BUGS.md#scip-importer-fake-resolution`
+  was doubly stale — its `Fix:` said "not yet implemented" and its
+  `Prevention:` called the invariant test "future," when both the fix
+  (`scip_importer.py:540-542`) and the tests existed. Rewritten to retract
+  both claims and cite the guards. Added a "How the importer resolves edges"
+  section to `docs/scip.md`.
 
 ### Fixed
-- _Nothing yet._
+- **Critic test coverage gap closed.** The critic's asymmetric contract (file
+  refs block, symbol refs warn) was only tested for the file-rejects and
+  real-refs-pass cases; the symbol-ref-warns path was missing. Added
+  `test_unknown_symbol_ref_warns_not_blocks`. Added a partial-stale test
+  (`0 < fraction < 1`) and an exception-path test for the STALE flag's
+  `isinstance` guard, plus an invariant test that runs the `exact ⟹ target_id`
+  SQL over importer-populated data (the hand-seeded invariant's own docstring
+  admitted it couldn't catch the importer path).
+- **CI: reranker success-path test was environment-dependent.**
+  `test_rerank_resorts_by_fake_model_score` passed locally (a real model was
+  cached) but failed in CI (no model) because the proactive cache guard
+  short-circuited the fake-model path. Fixed by stubbing the cache check so
+  the test is cache-independent.
 
 ### Removed
 - _Nothing yet._

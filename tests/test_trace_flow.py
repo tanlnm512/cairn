@@ -806,6 +806,22 @@ class TestMCPFlowTools:
             tc._bundle = orig_bundle
         assert "Compass" in result
         assert "compass/flow-checkout" in result
+        # The structured critic verdict is returned through the MCP response
+        # (not just the _critic_verdict_block helper in isolation). It's an
+        # additive fenced block at the end of the response string.
+        assert "```cairn-critic" in result, (
+            f"expected the structured critic block in generate_flow's response; "
+            f"got:\n{result}"
+        )
+        # The block carries the verdict fields an agent would parse.
+        import json
+        block_start = result.index("```cairn-critic\n") + len("```cairn-critic\n")
+        block_end = result.index("\n```", block_start)
+        verdict = json.loads(result[block_start:block_end])
+        assert "passed" in verdict
+        assert "quality_score" in verdict
+        assert "errors" in verdict
+        assert "warnings" in verdict
         # File should be written
         files = list(Path(know).rglob("compass/flow-checkout.md"))
         assert len(files) == 1

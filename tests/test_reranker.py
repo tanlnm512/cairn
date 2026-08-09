@@ -17,6 +17,15 @@ import pytest
 pytestmark = pytest.mark.usefixtures("hash_backend")
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_rerank_marker(monkeypatch):
+    """Default: pretend no persistent rerank marker exists, so tests are
+    deterministic regardless of whether `cairn download-reranker` was run on
+    this machine. Tests that exercise the marker override this patch."""
+    from cairn.graph import reranker as rrk
+    monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: _no_marker_path())
+
+
 def _seed_symbols(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO repos (id, name, path) VALUES ('test', 'test', '/tmp/test')")
     conn.execute(
@@ -38,17 +47,51 @@ def _conn_with_symbols(fresh_db) -> sqlite3.Connection:
     return fresh_db
 
 
+def _no_marker_path():
+    """A path guaranteed not to exist — used to neutralize the real persistent
+    rerank marker so tests are deterministic on machines where
+    `cairn download-reranker` has been run."""
+    from pathlib import Path
+    return Path("/nonexistent/cairn-test-marker-does-not-exist")
+
+
 class TestRerankEnabled:
     def test_disabled_by_default(self, monkeypatch):
+        # No env var AND no persistent marker → off.
         monkeypatch.delenv("CAIRN_RERANK", raising=False)
         from cairn.graph import reranker as rrk
-
         assert rrk.rerank_enabled() is False
 
     def test_enabled_via_env_var(self, monkeypatch):
         monkeypatch.setenv("CAIRN_RERANK", "1")
         from cairn.graph import reranker as rrk
+        assert rrk.rerank_enabled() is True
 
+    def test_enabled_via_download_marker(self, monkeypatch, tmp_path):
+        """A successful download-reranker writes a marker; rerank_enabled()
+        honors it even when CAIRN_RERANK is unset."""
+        from cairn.graph import reranker as rrk
+        marker = tmp_path / "rerank_enabled"
+        marker.write_text("BAAI/bge-reranker-base\n")
+        monkeypatch.delenv("CAIRN_RERANK", raising=False)
+        monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: marker)
+
+        assert rrk.rerank_enabled() is True
+
+    def test_env_off_overrides_marker(self, monkeypatch, tmp_path):
+        """CAIRN_RERANK=0 is a hard kill switch — wins even if the marker exists."""
+        from cairn.graph import reranker as rrk
+        marker = tmp_path / "rerank_enabled"
+        marker.write_text("BAAI/bge-reranker-base\n")
+        monkeypatch.setenv("CAIRN_RERANK", "0")
+        monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: marker)
+
+        assert rrk.rerank_enabled() is False
+
+    def test_env_on_overrides_missing_marker(self, monkeypatch):
+        """CAIRN_RERANK=1 enables even without the marker (env is explicit)."""
+        from cairn.graph import reranker as rrk
+        monkeypatch.setenv("CAIRN_RERANK", "1")
         assert rrk.rerank_enabled() is True
 
 
@@ -72,6 +115,23 @@ class TestRerankFallback:
         out, reranked = rrk.rerank("query", candidates, limit=2)
         assert reranked is False
         assert out == candidates[:2]
+
+    def test_enabled_but_model_not_cached_falls_back_to_hybrid(self, monkeypatch):
+        """Rerank enabled + installed, but the configured model is missing from
+        the cache → fall back to the hybrid (unchanged) order, not a download
+        or a crash. This is the proactive guard added so auto-enable (via the
+        download marker) is safe even if the cache is later evicted."""
+        monkeypatch.setenv("CAIRN_RERANK", "1")
+        from cairn.graph import reranker as rrk
+        monkeypatch.setattr(rrk, "reranker_available", lambda: True)
+        # Simulate the model NOT being cached locally.
+        monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda name=None: False)
+
+        candidates = [{"chunk": "a", "score": 0.9}, {"chunk": "b", "score": 0.5}]
+        out, reranked = rrk.rerank("query", candidates, limit=2)
+        assert reranked is False
+        # Hybrid order preserved — no reranking applied, candidates unchanged.
+        assert out == candidates
 
     def test_empty_candidates_short_circuits(self, monkeypatch):
         monkeypatch.setenv("CAIRN_RERANK", "1")
@@ -98,6 +158,11 @@ class TestRerankSuccessPath:
 
         monkeypatch.setenv("CAIRN_RERANK", "1")
         monkeypatch.setattr(rrk, "reranker_available", lambda: True)
+        # The proactive cache guard (added with auto-enable) checks the model
+        # is cached before loading; stub it True so the fake-model path runs
+        # in CI where no real model is downloaded. (Locally a real model may
+        # be cached, which masked this — the test was environment-dependent.)
+        monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda name=None: True)
 
         class FakeModel:
             def predict(self, pairs):

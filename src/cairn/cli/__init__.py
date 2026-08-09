@@ -23,6 +23,7 @@ from . import bench        # noqa: F401
 from . import compass      # noqa: F401
 from . import core         # noqa: F401
 from . import dataflow     # noqa: F401
+from . import download_reranker  # noqa: F401
 from . import embed        # noqa: F401
 from . import hooks_viz    # noqa: F401
 from . import knowledge    # noqa: F401

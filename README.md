@@ -1,32 +1,59 @@
 # cairn
 
-> Local codebase intelligence system: structural graph + compass + wiki + agent memory.
+> Verifiable codebase memory for AI agents: a structural graph + compass + wiki + tribal memory, all local, all traceable to source.
 
 [![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
 [![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
 [![Python versions](https://img.shields.io/pypi/pyversions/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
-cairn builds a precise, language-aware structural graph of your codebase and
-exposes it to both humans (the `cairn` CLI) and AI agents (a stdio MCP server with
-27 tools). Symbols, call edges, definitions, blast radius, and tribal memory all
-live in a local SQLite store — no network call, no torch in the default install.
+cairn is the **verifiable memory of your codebase for AI agents.** It parses
+your repos with tree-sitter into a precise structural graph (symbols, call
+edges, blast radius) and fuses it with code-grounded tribal memory — all in a
+local SQLite store, all behind one MCP server (27 tools) + a `cairn` CLI. The
+product is a **verification contract**: every `exact` edge is actually resolved,
+every symbol in a compass/wiki/memory doc is graph-verified by a deterministic
+critic, and the LLM is never in the query path. No network call, no torch in
+the default install.
 
 ## What is cairn?
 
-cairn is a **local** codebase intelligence system. It parses your repos with
-tree-sitter into a **structural graph** (definitions, call edges, cross-repo
-dependencies) stored in SQLite, then layers a **compass** (per-module navigation
-guides), a **wiki** (architecture docs), **memory** (decisions / patterns /
-mistakes / workarounds), and a **knowledge** store on top. It is **MCP-native**:
-the same store backs the `cairn` CLI and a 27-tool MCP server, making it
-**agent-first** — your coding agents query one local source of truth instead of
-re-reading the whole repo every turn.
+cairn is a **local, verifiable, agent-first** codebase memory system. It parses
+your repos with tree-sitter into a **structural graph** (definitions, call
+edges, cross-repo dependencies) stored in SQLite, then layers a **compass**
+(per-module navigation guides), a **wiki** (architecture docs), **memory**
+(decisions / patterns / mistakes / workarounds), and a **knowledge** store on
+top. It is **MCP-native**: the same store backs the `cairn` CLI and a 27-tool
+MCP server, making it **agent-first** — your coding agents query one local
+source of truth instead of re-reading the whole repo every turn.
 
-## Why cairn? Resolution-labeled edges
+## Why cairn? The verification contract
 
-Every code graph can tell you "who calls this." cairn is the one that tells
-you **whether to trust the answer.** The resolver labels each call edge:
+A code graph alone is commoditized — several tools now index symbols and call
+edges. Generic agent memory is ungrounded — it lets an LLM silently rewrite
+what it "remembers." cairn is the narrow intersection: a structural graph
+**fused with code-grounded memory, where every output is traceable to source
+and every synthesized doc is fact-checked before it lands.** The product is a
+**verification contract** — three promises cairn can machine-check:
+
+1. **Every `exact` edge is actually resolved.** The resolver pins each edge to
+   one definition before labeling it `exact` (`target_id IS NOT NULL`); an
+   invariant test guards this on every build.
+2. **Every symbol in a compass / wiki / memory doc exists in the graph.** A
+   deterministic critic fact-checks every LLM-synthesized doc against the graph
+   before it is written; hallucinated references are rejected or flagged.
+3. **Every answer is re-derivable from local data.** cairn never calls an LLM
+   in the query path — the LLM stays on a task queue with a critic gate, so
+   outputs are verifiable, not probabilistic.
+
+The five layers (graph + compass + memory + knowledge + wiki) are how the
+contract is delivered; resolution-labeled edges are the *evidence* for promise
+#1, not the headline.
+
+### Resolution-labeled edges (evidence for promise #1)
+
+Every code graph can tell you "who calls this." cairn tells you **whether to
+trust the answer.** The resolver labels each call edge:
 
 - **`exact`** — pinned to one definition. Trusted.
 - **`ambiguous`** — multiple candidates; the resolver declined to guess.
@@ -48,11 +75,13 @@ An empty precise result means "no *resolvable* callers," **not** "unused" —
 retry with `--fuzzy` before concluding a symbol is dead. And `explore` surfaces
 `ambiguous` dispatch hops — polymorphism that grep fundamentally cannot see.
 
-This is measurable: see [docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
-for the precise-vs-fuzzy false-positive methodology, and
-[docs/examples/resolution-walkthrough.md](docs/examples/resolution-walkthrough.md)
-for a worked example. Full design at
-[docs/architecture.md § Resolution model](docs/architecture.md#resolution-model).
+This is measurable: see [docs/methodology-precise-vs-fuzzy.md](docs/methodology-precise-vs-fuzzy.md)
+for the false-positive methodology and measured numbers (82% of fuzzy results
+for common names are name-collision noise that precise mode excludes), and
+[docs/benchmarks.md](docs/benchmarks.md#the-resolution-label-methodology-cairns-differentiator)
+for the harness. For a worked example, see
+[docs/examples/resolution-walkthrough.md](docs/examples/resolution-walkthrough.md).
+Full design at [docs/architecture.md § Resolution model](docs/architecture.md#resolution-model).
 
 ## Quick start
 
@@ -61,6 +90,7 @@ pip install cairn-intel              # install from PyPI (the recommended path)
 cairn build                         # parse the workspace and build the graph (first run)
 cairn update                        # incremental reindex after the first build
 cairn def SomeSymbol                # find where a symbol is defined
+cairn impact SomeSymbol             # within-repo blast radius (precise by default; --fuzzy to audit)
 cairn ask "how does auth work"      # natural-language query across all layers
 ```
 
@@ -70,6 +100,24 @@ The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
 > `cairn update` reindexes only what changed since the last build (via `git diff
 > HEAD` plus the existing graph) — so on a fresh clone with a clean working tree,
 > use `cairn build` first, since `cairn update` would see no changes.
+
+### Try it on cairn itself (the verification contract, demonstrated)
+
+cairn indexes its own source as a dogfood. Clone this repo and run the exact
+commands above — then verify the contract holds on the verifier's own code:
+
+```bash
+git clone https://github.com/tanlnm512/cairn && cd cairn
+cairn build                                     # ~4s; builds ~1,900 symbols / ~11,500 edges
+cairn def build_graph                           # -> src/cairn/graph/builder.py
+cairn impact build_graph                        # -> real transitive callers (non-empty)
+# Promise #1, checked directly: no exact edge has a NULL target_id.
+sqlite3 "$(cairn config --db)" \
+  "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
+```
+
+The `-m core` test suite runs this same build + invariant check in CI
+(`tests/test_self_demo.py`), so the dogfood cannot silently rot.
 
 ## Upgrading
 
@@ -152,7 +200,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 
 | Extra | Adds | Key env var |
 |-------|------|-------------|
-| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CAIRN_RERANK=1`; fusion is governed by `CAIRN_FUSION` (default on) |
+| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | reranking auto-enables after `cairn download-reranker` (default model `BAAI/bge-reranker-base`); `CAIRN_RERANK=1`/`=0` to override; fusion governed by `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/scip.md) indexes for compiler-grade exact call edges (Kotlin/Java/Swift/TypeScript) alongside tree-sitter | declare indexes in `cairn.json` under `scip` |
 | `[watch]` | `watchdog` — live graph rebuilds on filesystem change | — |
@@ -197,6 +245,13 @@ The `cairn` command groups the main functionality. Run `cairn --help`
 pip install -e ".[dev]"   # pytest + watchdog + build
 pytest -m core            # fast <3s smoke subset (one test per core function)
 ```
+
+The `-m core` suite includes a **"cairn on cairn" self-demo**
+(`tests/test_self_demo.py`): cairn indexes its own source tree in an isolated
+temp DB and asserts the core query commands return correct results for known
+symbols — and that the resolution invariant (every `exact` edge has a non-null
+`target_id`) holds on cairn's own code. It is the strongest dogfood: the
+verification contract, demonstrated on the verifier.
 
 ## Semantic search
 

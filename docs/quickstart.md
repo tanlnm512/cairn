@@ -34,6 +34,18 @@ pip install cairn-intel[watch]      # watchdog: file-watch hooks for live re-ind
 `[semantic]` is heavy (torch, hundreds of MB) — skip it unless you want
 `semantic_search` / reranking. The base install is plenty for structural queries.
 
+To turn on reranking (one command downloads `BAAI/bge-reranker-base`, the
+natural pair for the bge-m3 embedder, and enables it for subsequent queries):
+
+```bash
+cairn download-reranker                  # ~1.1GB one-time download + auto-enable
+cairn semantic "how does auth work"      # now reranks the top results
+```
+
+Set `CAIRN_RERANK=0` to turn it back off; `--model` picks a different
+CrossEncoder. If the model is missing/evicted, queries fall back to the hybrid
+(vector + BM25 + RRF) order rather than failing.
+
 Verify it landed:
 
 ```bash

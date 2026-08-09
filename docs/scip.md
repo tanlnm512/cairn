@@ -212,8 +212,27 @@ was generated against (see the header comment in `_scip_pb2.py`). The `[scip]`
 extra's `protobuf` floor is kept in sync with that check — if you regenerate
 the stub, re-pin the floor in `pyproject.toml` together (see below). A missing
 runtime, or one too old for the stub, degrades to "SCIP extra not installed"
-with the install hint rather than crashing the build — tree-sitter-only builds
+with an install hint rather than crashing the build — tree-sitter-only builds
 never import the stub.
+
+## How the importer resolves edges
+
+cairn's importer resolves SCIP references to real `target_id`s in two passes
+(`scip_importer.py`): pass 1 builds a `{symbol_descriptor → def_symbol_id}` map
+from definition occurrences (role bit `Definition`); pass 2 walks every
+non-definition occurrence and looks its descriptor up in that map. Resolution
+follows one rule — `resolution='exact'` is set **only** when `target_id` is
+found; a reference with no in-index definition (stdlib, external) is tagged
+`resolution='unresolved'`, never `'exact'`. The `source_id` (the enclosing
+symbol that owns the edge) is derived from each occurrence's
+`enclosing_range`, with a nearest-preceding-definition fallback for occurrences
+that omit it. This is the property precise-by-default queries depend on: an
+`exact` edge is guaranteed to point at a real symbol. It is guarded by
+`tests/test_invariants.py::test_invariant_exact_resolution_has_target_id`
+(schema level) and the importer-driven
+`tests/test_scip_importer.py::test_protobuf_cross_file_resolution_is_exact` /
+`test_protobuf_external_reference_is_unresolved` (end-to-end).
+
 
 ## How paths are resolved (multi-repo)
 

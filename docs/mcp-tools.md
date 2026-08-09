@@ -53,9 +53,11 @@ into specific relationships.
   (~0.01-0.02), **not** cosine similarity, regardless of the `threshold`
   argument. Each result's `provenance` (`semantic`, `bm25`, or
   `fused(bm25+semantic)`) is shown. Rank order is meaningful either way; set
-  `CAIRN_FUSION=0` for true 0..1 cosine scores. Set `CAIRN_RERANK=1`
-  for a cross-encoder rerank stage (labelled `[rerank X.XX]` when it ran; it
-  silently falls back if the model is unavailable).
+  `CAIRN_FUSION=0` for true 0..1 cosine scores. Rerank runs when enabled
+  (auto-on after `cairn download-reranker`, or `CAIRN_RERANK=1`); each reranked
+  result is labelled `[rerank X.XX]`. If the configured rerank model is
+  missing/evicted from the cache, it falls back to the hybrid order rather than
+  failing. Set `CAIRN_RERANK=0` to force it off.
 - **`search_symbols`**: FTS5 + phrase splitting handles underscored tokens,
   and unions in a LIKE-based substring pass for non-prefix patterns, so
   wildcards and substring queries both work on underscored and camelCase names.
