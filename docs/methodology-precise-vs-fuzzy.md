@@ -1,8 +1,7 @@
 # Precise vs Fuzzy: A False-Positive Methodology for Trusting a Code Graph
 
 > A standalone methodology note — legible without installing cairn. Linked
-> from the [README](../README.md) and [benchmarks](benchmarks.md). Part of
-> Phase 2 ("Prove it") of the [roadmap](roadmap.md).
+> from the [README](../README.md) and [benchmarks](benchmarks.md).
 
 ## The problem
 

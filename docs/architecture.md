@@ -16,9 +16,7 @@ machine-check:
 3. **Every answer is re-derivable from local data** (LLM never in the query path).
 
 The five layers below are how the contract is delivered; resolution-labeled
-edges are the *evidence* for promise #1, not the headline. See the
-[roadmap](roadmap.md) for the strategic framing of why this contract is cairn's
-moat.
+edges are the *evidence* for promise #1, not the headline.
 
 - **Local.** Everything runs on your machine. The store is a SQLite database
   plus a markdown tree under `~/.cairn/`. No network calls, no telemetry

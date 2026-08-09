@@ -158,6 +158,11 @@ class TestRerankSuccessPath:
 
         monkeypatch.setenv("CAIRN_RERANK", "1")
         monkeypatch.setattr(rrk, "reranker_available", lambda: True)
+        # The proactive cache guard (added with auto-enable) checks the model
+        # is cached before loading; stub it True so the fake-model path runs
+        # in CI where no real model is downloaded. (Locally a real model may
+        # be cached, which masked this — the test was environment-dependent.)
+        monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda name=None: True)
 
         class FakeModel:
             def predict(self, pairs):
