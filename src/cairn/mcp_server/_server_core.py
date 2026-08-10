@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import warnings
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
+from pydantic_settings.exceptions import IncompleteFieldDefinitionWarning
 
 from cairn.graph.queries import find_definition
 from cairn.graph.schema import get_db
@@ -59,7 +61,14 @@ async def app_lifespan(server: FastMCP):
 # log_level is pinned to WARNING so constructing this singleton (imported by
 # every CLI invocation) doesn't reconfigure the root logger and clobber other
 # commands' output.
-mcp = FastMCP("cairn", lifespan=app_lifespan, log_level="WARNING")
+#
+# mcp's own Settings.lifespan field has an unresolved forward reference to
+# FastMCP (the mcp SDK never calls model_rebuild() after FastMCP is defined),
+# so pydantic-settings warns on every construction. Upstream bug, harmless --
+# suppressed narrowly so it doesn't fire on every CLI invocation.
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
+    mcp = FastMCP("cairn", lifespan=app_lifespan, log_level="WARNING")
 
 
 def _store():
