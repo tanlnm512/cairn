@@ -33,7 +33,16 @@ def capture_memory(
     cosine similarity; if a match exceeds ``supersedes_threshold``, the new
     memory supersedes the old one (chains the version history and flips the
     old to ``memory_is_latest: false``). Returns ``superseded`` in the result.
+
+    The body is redacted via :func:`strip_private_data` before scoring and
+    storage, so secrets (API keys, bearer tokens, ``<private>`` tags) never
+    reach disk regardless of which caller reached this function. The hook
+    path already redacts before calling here; this is the floor for every
+    other caller (the MCP ``record_memory`` tool, the CLI).
     """
+    from .privacy import strip_private_data
+
+    body = strip_private_data(body)
     superseded_id = _find_supersession_candidate(
         conn, bundle, type_, title, body, supersedes_threshold
     )
