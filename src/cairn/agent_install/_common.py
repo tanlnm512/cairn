@@ -197,6 +197,20 @@ _INSTRUCTIONS_BODY = """## Workflow: explore-first
    - `get_callers` / `get_callees` / `impact_analysis` -- deeper call-graph traversal
    - `search_knowledge` / `recall_memory` -- knowledge-layer questions `explore` doesn't cover
 
+### When to escalate beyond explore (one trigger per tool)
+`explore` makes three trade-offs by design. Escalate only when you hit a limit:
+
+| explore's limit | You need... | Escalate to |
+|-----------------|-------------|-------------|
+| Blast radius is depth-2 only | Recursive callers (breaking change) | `impact_analysis(name)` + `cross_repo_deps(repo)` |
+| Neighborhood is unordered | Execution order (what runs when) | `trace_flow(entry)` |
+| Results are pure L1 structural | Why/decisions/wiki/tribal knowledge | `ask_compass(query)` or `recall_memory(query)` |
+| FTS5 seeds are token-based | Meaning-based match (synonyms) | `semantic_search(query)` |
+
+Escalations are additive -- call them *after* `explore` to go deeper, not
+instead of it. `explore` already gave you the seed names and file locations
+the escalation tools need.
+
 ### Before editing a file, ALWAYS:
 1. Call `ask_compass(file_path="<path>")` to load compass + memory context
 2. Call `find_definition` for any symbol you need to understand
