@@ -207,7 +207,10 @@ def _parse_all(files, verbose: bool, progress=None) -> tuple[list, int]:
             parsed_results.append((path, rel_path, language, repo, fi_hash, pf, err, st))
             emit("parse_progress", done=i + 1, total=len(tasks))
 
-    parse_errors = sum(1 for r in parsed_results if r[5] is not None)
+    # Tuple shape: (path, rel_path, language, repo, fi_hash, pf, err, st).
+    # Count the `err` slot (index 6), not `pf` (index 5) -- pf is the
+    # successful-parse payload, non-None on success.
+    parse_errors = sum(1 for r in parsed_results if r[6] is not None)
     emit("parse_done", parsed=len(parsed_results), errors=parse_errors)
     return parsed_results, parse_errors
 
@@ -525,7 +528,19 @@ def _build_graph_impl(
                             f"{s.get('edges_added',0)} edges, "
                             f"{s.get('symbols_merged',0)} merged")
                     except Exception as e:
-                        log(f"  SCIP[{lang}] import failed: {e}; skipping")
+                        # Roll back any partial writes the importer left on the
+                        # shared connection before it raised. import_scip_file
+                        # commits at the end of a successful import but does not
+                        # roll back on failure, so rows inserted before the
+                        # exception point would otherwise ride along on the next
+                        # unrelated conn.commit() in the build — silently mixing
+                        # a half-imported SCIP index into the graph. Rolling
+                        # back here scopes the revert to only this import's
+                        # pending writes (earlier, committed work in the build
+                        # is already durably committed and unaffected).
+                        conn.rollback()
+                        log(f"  SCIP[{lang}] import failed: {e}; skipping "
+                            f"(partial writes rolled back)")
                         # Don't fail the build over a bad SCIP index.
         except ImportError:
             log("  SCIP indexes configured but [scip] extra not installed; "
@@ -880,11 +895,16 @@ def _clear_repo(conn, repo_name: str):
     #     stale skip rows.
     cur.execute("DELETE FROM skipped_files WHERE repo_id = ?", (repo_name,))
     # 1. Null target_id on any edge (from any repo) pointing at this repo's symbols.
-    #    Preserve the target name so callers() by name still works.
+    #    Preserve the target name so callers() by name still works. Reset
+    #    resolution to 'unresolved' — the orphaned edge no longer has a pinned
+    #    target, so precise-mode queries (get_callers, impact_analysis) must
+    #    not treat it as resolved. Mirrors graph/incremental.py's equivalent
+    #    UPDATE (without this, dangling edges keep resolution='exact' and
+    #    silently pollute blast-radius results after a single-repo rebuild).
     cur.execute(
         f"UPDATE edges SET target_name = "
         f"COALESCE(target_name, (SELECT name FROM symbols WHERE id = edges.target_id)), "
-        f"target_id = NULL "
+        f"target_id = NULL, resolution = 'unresolved' "
         f"WHERE target_id IN ({repo_symbol_ids_subquery})",
         (repo_name,),
     )
