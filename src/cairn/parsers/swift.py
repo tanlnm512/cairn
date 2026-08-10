@@ -119,9 +119,15 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         mods = []
         for child in node.children:
             if child.type == "modifiers":
+                # The nested modifiers node can contain non-modifier children
+                # (e.g. an `attribute` like @available(...)). Filter through
+                # SWIFT_MODIFIERS so only real modifier keywords are kept --
+                # matching the direct-child path below and the Java/Kotlin
+                # extractors' pattern. Without this, an attribute's text
+                # pollutes the symbol's modifier list.
                 for m in child.children:
                     txt = self._node_text(m, source).strip()
-                    if txt:
+                    if txt and txt in SWIFT_MODIFIERS:
                         mods.append(txt)
             else:
                 txt = self._node_text(child, source).strip()

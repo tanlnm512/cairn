@@ -107,7 +107,14 @@ def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = N
     slug = slugify(concept.title) or "memory"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if t == "raw":
-        concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}"
+        # Raw tier keeps the date prefix (so decay can purge by age) but now
+        # also gets a uuid suffix like every other tier — without it, two
+        # same-day captures with identically-slugified titles (common from
+        # the generic titles the auto-capture hooks produce) silently
+        # overwrite each other via bundle.write_concept.
+        import uuid
+        unique_suffix = uuid.uuid4().hex[:6]
+        concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}-{unique_suffix}"
     else:
         # Add UUID suffix for non-raw tiers to prevent same-title collisions
         import uuid
