@@ -214,9 +214,13 @@ def knowledge_impact(query, db, limit):
             click.echo(f"  affects_repos: {', '.join(r['affects_repos'])}")
         if r.get("graph_deps"):
             for repo, deps in r["graph_deps"].items():
+                # cross_repo_deps returns {dependencies: [{repo, ...}], ...}.
+                # Extract repo names; pre-fix read a nonexistent `depends_on` key.
                 if isinstance(deps, dict):
-                    if deps.get("depends_on"):
-                        click.echo(f"  {repo} → depends on: {', '.join(deps['depends_on'])}")
+                    if deps.get("dependencies"):
+                        dep_repos = [d["repo"] for d in deps["dependencies"] if d.get("repo")]
+                        if dep_repos:
+                            click.echo(f"  {repo} → depends on: {', '.join(dep_repos)}")
 
 
 @knowledge.command("remove")

@@ -306,3 +306,35 @@ class TestPrivacyFilter:
 
     def test_empty_string(self):
         assert strip_private_data("") == ""
+
+
+# ---------------------------------------------------------------------------
+# Regression: capture_memory must redact secrets before persisting (P1).
+# The hook path already redacts; this covers every other caller (MCP
+# record_memory, CLI).
+# ---------------------------------------------------------------------------
+
+class TestCaptureMemoryRedaction:
+
+    def test_secret_in_body_is_redacted_before_storage(self, db, bundle):
+        """A secret in the body never reaches disk verbatim."""
+        secret = "api_key=sk-1234567890abcdef1234567890abcdef"
+        result = capture_memory(
+            db, bundle, type_="mistake", title="leaked config",
+            body=f"Deploy failed because {secret} was rotated.", confidence=0.8,
+        )
+        stored = bundle.read_concept(result["path"])
+        assert secret not in stored.body
+        assert "sk-1234567890" not in stored.body
+        assert "REDACTED_SECRET" in stored.body
+
+    def test_non_secret_body_is_preserved(self, db, bundle):
+        """Normal technical content is not altered by the redaction floor."""
+        body = "ApiFactory.create() builds the client per flavor."
+        result = capture_memory(
+            db, bundle, type_="pattern", title="client factory",
+            body=body, confidence=0.8,
+        )
+        stored = bundle.read_concept(result["path"])
+        assert stored.body == body
+

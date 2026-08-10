@@ -247,13 +247,13 @@ class TestStructuredContent:
 
 
 class TestLifespan:
-    """Phase 3.4: FastMCP is constructed with the lifespan pattern."""
+    """Phase 3.4: FastMCP is constructed with the lifespan pattern.
 
-    def test_app_context_dataclass_exists(self):
-        from cairn.mcp_server._server_core import AppContext
-
-        fields = {f.name for f in __import__("dataclasses").fields(AppContext)}
-        assert {"db_path", "knowledge_path", "read_only"}.issubset(fields)
+    Note: the AppContext dataclass was removed in the 2026-08-10 audit
+    remediation (A1) — it was dead scaffolding no tool consumed. The lifespan
+    remains as a minimal no-op (FastMCP requires one for hooks); config flows
+    through _conn()/_store(). See docs/audit-remediation/tasks.md Phase 11.
+    """
 
     def test_app_lifespan_is_async_context_manager(self):
         from cairn.mcp_server._server_core import app_lifespan

@@ -182,8 +182,11 @@ def semantic_search(
         try:
             from cairn.graph.fusion import rrf_fuse
 
-            # Fetch BM25 candidates
-            bm25_raw = search_symbols(conn, query, limit=30)
+            # Fetch BM25 candidates. search_symbols returns sqlite3.Row,
+            # which has no .get() — convert to dict at this boundary so the
+            # shared .get("id") access below works on both BM25 rows and the
+            # candidate dicts (which are already plain dicts).
+            bm25_raw = [dict(r) for r in search_symbols(conn, query, limit=30)]
             bm25_map = {}
             bm25_ids = []
             for r in bm25_raw:
@@ -231,8 +234,11 @@ def semantic_search(
 
             candidates = fused_candidates
         except Exception:
-            logger.debug("fusion degraded to vector-only", exc_info=True)
-            pass  # Degrade gracefully to vector-only if fusion fails
+            # Degrade to vector-only rather than failing the search, but log
+            # at WARNING (not debug): this path was once silently broken by a
+            # .get()-on-Row AttributeError swallowed here, so a future regression
+            # must be visible. The debug-level exc_info still gives the traceback.
+            logger.warning("RRF fusion degraded to vector-only", exc_info=True)
 
     if rerank_on:
         final, reranked = rrk.rerank(query, candidates, limit)

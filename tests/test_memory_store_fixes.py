@@ -88,7 +88,9 @@ def test_store_twice_same_title_distinct_ids_h4(tmp_path, fresh_db):
 
     assert id1_archived != id2_archived, "Same-title archived memories must have distinct IDs"
 
-    # Test raw tier - should keep date-prefixed IDs (no UUID suffix)
+    # Test raw tier - now collision-safe with the same uuid suffix scheme as
+    # every other tier (fixed in the 2026-08-10 audit remediation, P7). It
+    # keeps the date prefix (so decay can purge by age) AND appends a uuid.
     mem1_raw = create_memory(
         type_="pattern",
         title="raw capture",
@@ -107,17 +109,17 @@ def test_store_twice_same_title_distinct_ids_h4(tmp_path, fresh_db):
         assert len(uuid_part) == 6, f"UUID suffix should be 6 chars, got: {uuid_part}"
         assert re.match(r"^[0-9a-f]{6}$", uuid_part), f"UUID suffix should be hex, got: {uuid_part}"
 
-    # Verify raw tier ID doesn't have UUID suffix (date prefix only)
-    # Raw tier format: memory/raw/2026-07-30-raw-capture (date + slugified title)
+    # Raw tier now also carries the uuid suffix (P7 fix). Format:
+    # memory/raw/YYYY-MM-DD-slug-XXXXXX — date prefix kept for decay, uuid
+    # added for collision safety.
     raw_filename = id1_raw.split("/")[-1]
-    # First part should be a date (YYYY-MM-DD), not a 6-char hex UUID
     raw_parts = raw_filename.split("-")
-    # Raw has format: YYYY-MM-DD-slug (where slug may have dashes)
-    # So it should have at least 3 parts and the first should be a 4-digit year
     assert len(raw_parts) >= 3, f"Raw ID should have date prefix, got: {raw_filename}"
     assert re.match(r"^\d{4}$", raw_parts[0]), f"Raw ID first part should be 4-digit year, got: {raw_parts[0]}"
-    # The last part should NOT be a 6-char hex UUID like non-raw tiers
-    assert not re.match(r"^[0-9a-f]{6}$", raw_parts[-1]), "Raw tier should not have UUID suffix"
+    # The last part should now BE a 6-char hex uuid (the collision-safety suffix).
+    assert re.match(r"^[0-9a-f]{6}$", raw_parts[-1]), (
+        f"Raw tier should have uuid suffix for collision safety, got: {raw_parts[-1]}"
+    )
 
 
 def test_delete_exact_no_sibling_clobber_h5(tmp_path, fresh_db):

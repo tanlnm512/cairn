@@ -24,6 +24,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - _Nothing yet._
 
+## [0.7.1] - 2026-08-10
+
+> **Focus:** a full-codebase audit remediation — 10 verified defects (P1–P10)
+> and one architecture cleanup (A1), each with a regression test and a
+> `docs/BUGS.md` entry. Plus a query-strategy decision tree for agents and a
+> restructured, scannable bug registry.
+
+### Added
+- **Query decision-tree skill reference**
+  (`agent_integration/skill/references/decision-tree.md`) — a top-down
+  "what's your question → which tool" map with the full decision tree, the
+  precise/fuzzy axis, and the pre-edit checklist. The `explore`-first
+  workflow's escalation triggers (depth-2 blast radius → `impact_analysis`;
+  unordered → `trace_flow`; pure L1 → `ask_compass`; token-based →
+  `semantic_search`) are mirrored into all three agent-definition surfaces
+  (SKILL.md, the AGENTS.md/CLAUDE.md generator, Cursor rules).
+
+### Fixed
+- **P1 — `record_memory` persisted secrets verbatim.** The hook auto-capture
+  path redacted via `strip_private_data`; the primary MCP write path did not.
+  Redaction now happens at the shared `capture_memory` chokepoint, so every
+  caller (MCP, CLI, hook) gets it for free.
+- **P2 — inverted parse-error telemetry.** `builder.py` counted the
+  successful-parse payload slot (`r[5]`) instead of the error slot (`r[6]`),
+  so a clean build reported ~100% errors. Off-by-one into the wrong tuple
+  position.
+- **P3 — `semantic_search` RRF fusion silently never ran.** The fusion path
+  called `.get("id")` on a `sqlite3.Row` (no `.get()`), and the resulting
+  `AttributeError` was swallowed by a bare `except Exception: pass` logged at
+  `debug`. BM25 rows are now converted to `dict` at the boundary, and the
+  degrade log moved to `warning` so a future regression is visible.
+- **P4 — `_clear_repo` left `resolution='exact'` on orphaned edges.** After a
+  single-repo rebuild, precise-mode queries (`get_callers`,
+  `impact_analysis`) treated dangling, `target_id=NULL` edges as resolved.
+  Now resets `resolution='unresolved'` in the same UPDATE, mirroring the
+  incremental path.
+- **P5 — failed SCIP import left partial writes uncommitted-but-persisted.**
+  The builder caught the exception but never rolled back the shared
+  connection; a later unrelated commit persisted the half-imported index.
+  The except block now calls `conn.rollback()`.
+- **P6 — schema "initialized" flag set before migration applied.** A
+  mid-migration failure (disk full, locked file) permanently marked the path
+  initialized, so every later `get_db()` skipped schema setup. The flag now
+  sets after migration+commit succeed.
+- **P7 — raw memory tier `concept_id` collision.** Raw captures used only
+  `date + slug`, unlike every other tier which appends a uuid suffix. Two
+  same-day captures with the same title overwrote each other. Now uses the
+  same uuid-suffix scheme, keeping the date prefix for decay.
+- **P8 — `knowledge_status` missing the scope guard `knowledge_delete` has.**
+  `knowledge_status` could archive a compass/wiki/memory concept via a crafted
+  `doc_id`. Now applies the same `knowledge/` namespace guard.
+- **P9 — dead `depends_on` key in `knowledge_search`.** The cross-repo
+  enrichment line read `deps.get("depends_on")`, but `cross_repo_deps`
+  returns `dependencies` — so the documented "cross-repo bridge" line never
+  printed, in both the MCP tool and the CLI. Fixed the key and value
+  extraction (list of dicts, not strings) in both.
+- **P10 — Swift modifier extraction polluted by attribute text.** The nested
+  `modifiers`-node path appended any child text unconditionally; the
+  direct-child path filtered through `SWIFT_MODIFIERS`. The tree-sitter Swift
+  grammar nests `@available` attributes inside `modifiers`, so attribute text
+  leaked into the modifier list. Both paths now filter through
+  `SWIFT_MODIFIERS`, matching Java/Kotlin.
+- **`IncompleteFieldDefinitionWarning` import hardened.** The 0.7.0 warning
+  suppression imported the class unconditionally, but `pydantic_settings`
+  2.14.x doesn't define it. The import is now defensive so the module loads
+  on both old and new versions.
+
+### Changed
+- **A1 — removed dead `AppContext` lifespan scaffolding.** `AppContext` /
+  `app_lifespan` were wired to thread config through requests, but no
+  `@mcp.tool()` consumed the lifespan context — a half-finished refactor
+  implying a contract that didn't hold. Removed the dataclass; kept
+  `app_lifespan` as a minimal no-op (FastMCP requires it); documented
+  `_conn()`/`_store()` as the single config source of truth. The
+  more-correct fix (wire `ctx` through all 28 tools) is deferred to a
+  separate spec.
+- **`docs/BUGS.md` restructured** for scannability: an index table (date,
+  slug, area, one-line symptom) as the navigation layer; a TL;DR line under
+  each entry heading as a scan-anchor; entries stay chronological and
+  append-only.
+
 ## [0.7.0] - 2026-08-10
 
 > **Focus:** the verification contract becomes the product — a machine-checked

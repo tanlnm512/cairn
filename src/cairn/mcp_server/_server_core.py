@@ -9,10 +9,18 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import warnings
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
+
+# IncompleteFieldDefinitionWarning was added to pydantic-settings in a later
+# release; older versions (e.g. 2.14.x) don't define it and never emit it.
+# Import defensively so this module loads on both old and new versions.
+try:
+    from pydantic_settings.exceptions import IncompleteFieldDefinitionWarning
+except ImportError:  # pragma: no cover - depends on installed version
+    IncompleteFieldDefinitionWarning = None  # type: ignore[assignment,misc]
 
 from cairn.graph.queries import find_definition
 from cairn.graph.schema import get_db
@@ -20,36 +28,31 @@ from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
 
 
-# --- Lifespan-managed shared state ---------------------------------------
-# Shared state is yielded once by ``app_lifespan`` as an ``AppContext``,
-# accessed inside tools via ``ctx.request_context.lifespan_context``. The
-# module-level helpers below stay so existing tools keep working; new tools may
-# take a ``ctx`` param and read from ``AppContext`` directly.
-
-@dataclass
-class AppContext:
-    """Shared server state, yielded once by ``app_lifespan``."""
-
-    db_path: str
-    knowledge_path: str
-    read_only: bool
-
+# --- Lifespan + shared state ----------------------------------------------
+#
+# Config resolution: every tool resolves the DB path, knowledge path, and
+# read-only flag through the module-level ``_conn()`` / ``_store()`` /
+# ``_read_only_mode()`` helpers below, which read ``CAIRN_*`` env vars (set by
+# ``cairn serve``) or fall back to the workspace store. This is the single
+# source of truth — there is intentionally no per-request ``AppContext``
+# threaded through ``ctx.request_context.lifespan_context``. An earlier
+# iteration scaffolded one (``AppContext`` dataclass + ``app_lifespan`` body),
+# but no tool consumed it; it was dead code that implied a threading contract
+# that didn't exist. Removed to avoid confusing future readers.
+#
+# If per-request config (e.g. testable read-only overrides without env vars)
+# is ever needed, wire ``ctx: Context`` through the tools and read from a
+# revived lifespan context — see docs/audit-remediation/spec.md (A1).
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
-    """Resolve shared state once at server startup; tear down on shutdown.
+    """Minimal lifespan: FastMCP requires one for startup/shutdown hooks.
 
-    Reads CAIRN_DB / CAIRN_KNOWLEDGE (set by ``cairn serve``) or falls back to
-    the workspace store. Yields an ``AppContext``.
+    Yields nothing — tools resolve config via ``_conn()``/``_store()``, not
+    via the lifespan context (see the note above).
     """
-    store = resolve_store()
-    ctx = AppContext(
-        db_path=os.environ.get("CAIRN_DB") or str(store.db),
-        knowledge_path=os.environ.get("CAIRN_KNOWLEDGE") or str(store.knowledge),
-        read_only=os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes"),
-    )
     try:
-        yield ctx
+        yield None
     finally:
         pass
 
@@ -59,7 +62,17 @@ async def app_lifespan(server: FastMCP):
 # log_level is pinned to WARNING so constructing this singleton (imported by
 # every CLI invocation) doesn't reconfigure the root logger and clobber other
 # commands' output.
-mcp = FastMCP("cairn", lifespan=app_lifespan, log_level="WARNING")
+#
+# mcp's own Settings.lifespan field has an unresolved forward reference to
+# FastMCP (the mcp SDK never calls model_rebuild() after FastMCP is defined),
+# so pydantic-settings warns on every construction (on versions that define
+# IncompleteFieldDefinitionWarning). Upstream bug, harmless -- suppressed
+# narrowly so it doesn't fire on every CLI invocation. On older pydantic-
+# settings that doesn't define the warning class, the filter is skipped.
+with warnings.catch_warnings():
+    if IncompleteFieldDefinitionWarning is not None:
+        warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
+    mcp = FastMCP("cairn", lifespan=app_lifespan, log_level="WARNING")
 
 
 def _store():

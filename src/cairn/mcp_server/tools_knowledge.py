@@ -85,8 +85,14 @@ def knowledge_search(query: str, limit: int = 20) -> str:
             out.append(f"    affects_repos: {', '.join(r['affects_repos'])}")
         if r.get("graph_deps"):
             for repo, deps in r["graph_deps"].items():
-                if isinstance(deps, dict) and deps.get("depends_on"):
-                    out.append(f"    {repo} → depends on: {', '.join(deps['depends_on'])}")
+                # cross_repo_deps returns {dependencies: [{repo, ...}], dependents: [...]}.
+                # Extract the repo names from each dependency entry. Pre-fix this
+                # read `depends_on` (a key that never existed), so the enrichment
+                # line never rendered.
+                if isinstance(deps, dict) and deps.get("dependencies"):
+                    dep_repos = [d["repo"] for d in deps["dependencies"] if d.get("repo")]
+                    if dep_repos:
+                        out.append(f"    {repo} → depends on: {', '.join(dep_repos)}")
     return "\n".join(out)
 
 
@@ -141,9 +147,28 @@ def knowledge_status(doc_id: str, new_status: str) -> str:
     unlike the read-only knowledge_search it advertises readOnlyHint=False and
     idempotentHint=False (re-applying a forward status transition can fail or be
     a no-op depending on the current lifecycle state)."""
-    from cairn.knowledge.store import update_status
+    from cairn.knowledge.store import get_document, update_status
 
     bundle = _bundle()
+    # Scope check: same guard knowledge_delete enforces, so an LLM client
+    # can't archive a compass/wiki/memory concept that was never a knowledge
+    # doc via a crafted doc_id.
+    concept = get_document(bundle, doc_id)
+    if concept is not None:
+        resolved = concept.concept_id
+        try:
+            resolved = str(Path(resolved).resolve().relative_to(Path(bundle.root).resolve()))
+        except ValueError:
+            pass
+        if not (resolved == "knowledge/" or resolved.startswith("knowledge/")):
+            logger.warning(
+                "knowledge_status refused out-of-namespace target: requested=%r resolved=%r",
+                doc_id, resolved,
+            )
+            return (
+                f"Refused: '{doc_id}' resolves outside the knowledge/ namespace "
+                f"(resolved to '{resolved}'). knowledge_status only updates knowledge docs."
+            )
     ok = update_status(bundle, doc_id, new_status)
     if not ok:
         return f"Knowledge document not found: '{doc_id}'."

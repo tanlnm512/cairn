@@ -18,6 +18,7 @@ lives alongside it and is loaded on demand:
 
 - `references/tools.md` -- full signature + description for every MCP tool
 - `references/golden-rules.md` -- full rationale/examples for each rule below
+- `references/decision-tree.md` -- top-down "what's your question → which tool" map
 - `references/tool-behaviors.md` -- empirically-verified gotchas per tool
 - `references/task-queue.md` -- LLM synthesis task queue (compass/wiki generation)
 - `references/cli-fallback.md` -- `cairn` CLI commands for when MCP is unavailable
@@ -38,12 +39,27 @@ Full descriptions: `references/tools.md`. Names by layer:
 ## Workflow: explore-first
 
 Start with `explore` for any structural question, drill down with layer-specific
-tools only when `explore` is thin.
+tools only when `explore` is thin. Full decision tree (with all escalation
+paths): `references/decision-tree.md`.
 
 ### For almost any question -- "how does X work", a flow, surveying an area:
 1. `explore(query)` -- returns source + call paths + blast radius in one call
 2. If `explore` is thin, reach for `ask_compass(query)` (cross-layer routing:
    graph + wiki + compass + memory), then the specific layer tool.
+
+### When to escalate beyond explore (one trigger per tool)
+`explore` makes three trade-offs by design. Escalate only when you hit a limit:
+
+| explore's limit | You need... | Escalate to |
+|-----------------|-------------|-------------|
+| Blast radius is depth-2 only | Recursive callers (breaking change) | `impact_analysis(name)` + `cross_repo_deps(repo)` (Rule 9) |
+| Neighborhood is unordered | Execution order (what runs when) | `trace_flow(entry)` |
+| Results are pure L1 structural | Why/decisions/wiki/tribal knowledge | `ask_compass(query)` or `recall_memory(query)` |
+| FTS5 seeds are token-based | Meaning-based match (synonyms) | `semantic_search(query)` |
+
+Escalations are additive -- call them *after* `explore` to go deeper, not
+instead of it. `explore` already gave you the seed names and file locations
+the escalation tools need.
 
 ### Before editing a file, ALWAYS:
 1. `ask_compass(file_path="<path>")` -- load compass + memory for this file
@@ -92,6 +108,7 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 | "What calls this function?" | get_callers (precise; fuzzy for common names) | Within-repo graph traversal |
 | "What breaks if I change X?" | impact_analysis + cross_repo_deps (or `scripts/impact_guard.py` if X might be a common name) | Impact is within-repo (precise by default; fuzzy=True if suspiciously small); cross-repo needs cross_repo_deps |
 | "How does dispatch work?" | ask_compass, then search_knowledge(type_filter="Wiki") | Router first; drill down if thin |
+| "What happens when entry runs? (ordered chain)" | trace_flow(entry) | Downward call chain -- explore's neighborhood is unordered |
 | "I need to edit PaymentVM.kt" | ask_compass(file_path="...") | Load compass + memory |
 | "What traps exist in flavors?" | get_compass or search_knowledge(type_filter="Pattern") | Tribal knowledge |
 | "Why did we choose StateFlow?" | recall_memory (by symbol/title) | Past decision |

@@ -419,16 +419,20 @@ def get_db(
     # The schema work + commit and marking the path initialized must be atomic
     # under _INIT_LOCK so a second thread calling get_db() for the same path
     # cannot observe the key as initialized on a connection whose migrations
-    # have not yet been applied.
+    # have not yet been applied. The flag is set AFTER the migration+commit
+    # succeed — if _apply_schema raises mid-migration (disk full, locked file),
+    # the path must NOT be marked initialized, or every later get_db(path) in
+    # this process will skip schema application permanently.
     with _INIT_LOCK:
         already_initialized = key in _INITIALIZED_PATHS
         # Only a writable connection can apply the schema (it writes). A
         # read-only connection must NOT mark the path initialized.
         if not already_initialized and not read_only:
-            _INITIALIZED_PATHS.add(key)
             _apply_schema(conn)
             _maybe_backfill_fts(conn)
             conn.commit()
+            # Only flag initialized once the migration is durably committed.
+            _INITIALIZED_PATHS.add(key)
     return conn
 
 
