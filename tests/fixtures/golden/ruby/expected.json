@@ -84,18 +84,18 @@
       "receiver_type": null
     },
     {
-      "source_name": "App.User",
-      "kind": "extends",
-      "target_name": "Base",
-      "line": 5,
+      "source_name": "User",
+      "kind": "calls",
+      "target_name": "attr_accessor",
+      "line": 6,
       "column": 0,
       "receiver_type": null
     },
     {
       "source_name": "User",
-      "kind": "calls",
-      "target_name": "attr_accessor",
-      "line": 6,
+      "kind": "extends",
+      "target_name": "Base",
+      "line": 5,
       "column": 0,
       "receiver_type": null
     },
@@ -112,6 +112,30 @@
       "kind": "calls",
       "target_name": "info",
       "line": 14,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "new",
+      "line": 13,
+      "column": 0,
+      "receiver_type": "Logger"
+    },
+    {
+      "source_name": "greet_all",
+      "kind": "calls",
+      "target_name": "each",
+      "line": 25,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet_all",
+      "kind": "calls",
+      "target_name": "greet",
+      "line": 25,
       "column": 0,
       "receiver_type": null
     },

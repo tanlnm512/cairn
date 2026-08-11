@@ -3,6 +3,7 @@ namespace App\Models;
 
 require_once __DIR__ . "/helpers.php";
 use App\Services\Logger;
+use App\Utils\{Formatter, Validator};
 
 interface Greeter {
     public function greet(): string;
@@ -16,16 +17,28 @@ trait NameAware {
     }
 }
 
+enum Suit: string {
+    case Hearts = "hearts";
+    case Spades = "spades";
+
+    public function color(): string {
+        return "red";
+    }
+}
+
 class User implements Greeter {
     use NameAware;
 
-    public function __construct(string $name) {
-        $this->name = $name;
+    public string $role;
+    public string $status;
+
+    public function __construct(public string $name, private int $id) {
+        $this->role = "member";
     }
 
     public function greet(): string {
         $logger = new Logger();
-        $logger->info("greet called");
+        $logger?->info("greet called");
         return "Hello " . $this->getName();
     }
 }

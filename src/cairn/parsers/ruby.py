@@ -1,20 +1,28 @@
 """Tree-sitter Ruby parser.
 
-Extracts modules, classes, methods, singleton methods, call edges, and imports
-(``require`` / ``require_relative`` / ``load``) into the shared ParsedFile model.
+Extracts modules, classes, methods, singleton methods, inheritance edges,
+call edges, and imports (``require`` / ``require_relative`` / ``load``) into
+the shared ParsedFile model.
 
 Node-type reference (tree-sitter-ruby):
 
 - ``module`` -> Symbol(class). Ruby modules serve as namespaces (and mixins);
   both map to ``class`` since cairn has no separate "module" symbol kind.
-- ``class`` -> Symbol(class).
-- ``method`` -> Symbol(method).
-- ``singleton_method`` (``def self.foo``) -> Symbol(method).
-- ``call`` -> Edge(calls). A ``call`` node is only a real call when it carries
-  an ``argument_list`` child; bare ``identifier`` references (local var reads)
-  show up as ``call`` nodes without one and are skipped. ``obj.method`` is a
-  ``call`` whose first child is the receiver (``identifier`` or ``constant``)
-  and whose trailing ``identifier`` is the method name.
+- ``class`` -> Symbol(class). The class name may be a plain ``constant`` or a
+  ``scope_resolution`` (``class A::B``). The optional ``superclass`` child
+  -> Edge(extends); the superclass name may be a ``constant`` or
+  ``scope_resolution`` (``< ::Base``, ``< User::Base``) -- the trailing
+  constant is recorded as the target so the resolver's bare-name index can
+  match it.
+- ``method`` -> Symbol(method). The name is an ``identifier`` child (operators
+  like ``def +`` are captured too -- see ``_method_name``).
+- ``singleton_method`` (``def obj.foo`` / ``def self.foo``) -> Symbol(method).
+- ``call`` -> Edge(calls). Every ``call`` node is a real call in tree-sitter-
+  ruby: zero-argument calls (``X.new``, ``user.name``), parenless calls, and
+  safe-navigation calls (``obj&.name``) are all ``call`` nodes. Calls with a
+  block (``each do ... end``, ``map { ... }``) are also calls. The proc-call
+  shorthand ``p.(1)`` has no method ``identifier`` and is skipped. Local-
+  variable reads are plain ``identifier`` nodes, not ``call`` nodes.
 - top-level ``call`` to ``require``/``require_relative``/``load`` -> Import.
 
 Ruby has no canonical qualified-name scheme; we scope-qualify via ``_scope``
@@ -71,12 +79,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         t = node.type
 
         if t in ("class", "module"):
-            sym = self._parse_type_decl(node, source)
-            if sym:
-                pf.symbols.append(sym)
-                self._scope.append(sym.name)
-                self._walk(node, source, pf)
-                self._scope.pop()
+            self._visit_type_decl(node, source, pf)
             return
 
         if t in ("method", "singleton_method"):
@@ -86,6 +89,9 @@ class RubyParser(BaseParser, TreeSitterParserBase):
                 self._callable_scope.append(sym.name)
                 self._walk(node, source, pf)
                 self._callable_scope.pop()
+            else:
+                # Still walk so a body under an unparseable name isn't lost.
+                self._walk(node, source, pf)
             return
 
         if t == "call":
@@ -104,43 +110,85 @@ class RubyParser(BaseParser, TreeSitterParserBase):
 
     # -------------------------------------------------------- declaration parse
 
-    def _parse_type_decl(self, node: Node, source: bytes) -> Optional[Symbol]:
-        # class/module: keyword constant [('<' superclass)] body_statement 'end'
-        name = None
-        superclass = None
-        for child in node.children:
-            if child.type == "constant" and name is None:
-                name = self._node_text(child, source).strip()
-            elif child.type == "superclass":
-                sc = self._child_of_type(child, ("constant",))
-                if sc is not None:
-                    superclass = self._node_text(sc, source).strip()
+    def _visit_type_decl(self, node: Node, source: bytes, pf: ParsedFile):
+        """Parse a class/module, push scope, and walk its body.
+
+        The superclass subtree is skipped during the body walk: it is consumed
+        here for the ``extends`` edge, and walking it would otherwise emit
+        spurious ``calls`` edges when the superclass expression is itself a
+        call (e.g. ``class C < Factory.build``).
+        """
+        name = self._type_name(node, source)
+        superclass = self._superclass_name(node, source)
         if not name:
-            return None
-        sym = Symbol(
-            name=name,
-            kind="class",
-            qualified_name=self._qualified_name(name),
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            column_start=node.start_point[1],
-            column_end=node.end_point[1],
-        )
-        # Record inheritance as an edge owned by the class itself.
-        if superclass:
-            pf_edge_owner = self._qualified_name(name)
-            self._pending_edges.append(
-                Edge(pf_edge_owner, "extends", superclass, node.start_point[0] + 1)
+            # Name extraction failed (e.g. an unrecognized shape) -- still
+            # walk the body so nested declarations aren't lost.
+            self._walk_excluding_superclass(node, source, pf)
+            return
+        pf.symbols.append(
+            Symbol(
+                name=name,
+                kind="class",
+                qualified_name=self._qualified_name(name),
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                column_start=node.start_point[1],
+                column_end=node.end_point[1],
             )
-        return sym
+        )
+        if superclass:
+            # ``source_name`` must be the bare name (matching the symbol's
+            # ``name`` field) so the builder's same-file name lookup resolves
+            # the edge's source_id. Using _qualified_name here would break for
+            # nested classes (builder.py:824-832 keys on bare name).
+            self._pending_edges.append(
+                Edge(name, "extends", superclass, node.start_point[0] + 1)
+            )
+        self._scope.append(name)
+        self._walk_excluding_superclass(node, source, pf)
+        self._scope.pop()
+
+    def _walk_excluding_superclass(self, node: Node, source: bytes, pf: ParsedFile):
+        """Walk a class/module body, skipping the consumed ``superclass`` child."""
+        for child in node.children:
+            if child.type == "superclass":
+                continue
+            self._visit(child, source, pf)
+
+    def _type_name(self, node: Node, source: bytes) -> Optional[str]:
+        """Class/module name: ``constant`` or ``scope_resolution`` (``A::B``)."""
+        for child in node.children:
+            if child.type == "constant":
+                return self._node_text(child, source).strip()
+            if child.type == "scope_resolution":
+                # A::B -> take the trailing constant.
+                for sc in reversed(child.children):
+                    if sc.type == "constant":
+                        return self._node_text(sc, source).strip()
+        return None
+
+    def _superclass_name(self, node: Node, source: bytes) -> Optional[str]:
+        """Trailing constant of the ``superclass`` child (``< Base``/``< A::B``)."""
+        sc = self._child_of_type(node, ("superclass",))
+        if sc is None:
+            return None
+        inner = self._child_of_type(sc, ("constant", "scope_resolution"))
+        if inner is None:
+            return None
+        if inner.type == "constant":
+            return self._node_text(inner, source).strip()
+        # scope_resolution: take the trailing constant.
+        for c in reversed(inner.children):
+            if c.type == "constant":
+                return self._node_text(c, source).strip()
+        return None
 
     def _parse_method(self, node: Node, source: bytes) -> Optional[Symbol]:
-        # method: 'def' identifier method_parameters? body_statement 'end'
-        # singleton_method: 'def' ('self' | receiver) '.' identifier ...
-        name = None
-        for child in node.children:
-            if child.type == "identifier" and name is None:
-                name = self._node_text(child, source).strip()
+        # method: 'def' <name> method_parameters? body_statement 'end'
+        # singleton_method: 'def' <receiver> '.' <name> method_parameters? ...
+        #   (receiver may be 'self' or an identifier/constant).
+        # The name is the LAST identifier/operator before method_parameters.
+        name = self._method_name(node, source)
         if not name:
             return None
         return Symbol(
@@ -153,18 +201,34 @@ class RubyParser(BaseParser, TreeSitterParserBase):
             column_end=node.end_point[1],
         )
 
+    def _method_name(self, node: Node, source: bytes) -> Optional[str]:
+        """Method name: the identifier/operator immediately before params/body.
+
+        For ``def foo`` -> "foo". For ``def obj.helper`` -> "helper" (skipping
+        the receiver ``obj``). For ``def self.bar`` -> "bar". For ``def +`` ->
+        "+" (operator). For ``def []`` -> "[]" (element reference).
+        """
+        # Take the last identifier before the first method_parameters / body.
+        last_id = None
+        for child in node.children:
+            if child.type in ("method_parameters", "body_statement"):
+                break
+            if child.type in ("identifier", "operator"):
+                last_id = self._node_text(child, source).strip()
+        return last_id
+
     # ------------------------------------------------------------ call parsing
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
-        """A ``call`` node with an argument_list is a real call; else skip.
+        """A ``call`` node -> Edge(calls).
 
-        ``obj.method(args)`` -- trailing identifier is the callee, the leading
-        receiver (identifier/constant) feeds receiver_type. ``bare(args)`` --
-        the leading identifier is the callee.
+        Every ``call`` in tree-sitter-ruby is a real call: zero-arg
+        (``X.new``), parenless (``puts "x"``), safe-navigation (``a&.b``), and
+        block-bearing (``each do ... end``). The proc-call shorthand ``p.(1)``
+        has no method identifier and is skipped. ``obj.method`` records the
+        trailing identifier as the callee and the leading receiver for the
+        resolver's type-aware tier.
         """
-        has_args = any(c.type == "argument_list" for c in node.children)
-        if not has_args:
-            return None
         callee, receiver = self._split_call(node, source)
         if not callee:
             return None
@@ -177,17 +241,51 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         )
 
     def _split_call(self, node: Node, source: bytes):
-        # Gather the meaningful name children in order.
-        ids = [c for c in node.children if c.type in ("identifier", "constant")]
-        has_dot = any(c.type == "." for c in node.children)
-        if has_dot and len(ids) >= 2:
-            # receiver.method -> take the last identifier as the callee and the
-            # first as the receiver.
-            callee = self._node_text(ids[-1], source).strip()
-            receiver = self._node_text(ids[0], source).strip()
-            return callee, receiver
+        """Split a ``call`` node into (callee_name, receiver_text).
+
+        Shapes handled:
+          - bare call:        ``foo(args)`` or ``foo`` -> ("foo", None)
+          - method call:      ``obj.method(args)`` -> ("method", "obj")
+          - safe navigation:  ``obj&.method`` -> ("method", "obj")
+          - block call:       ``items.each do ... end`` -> ("each", "items")
+          - receiver types:   identifier, constant (``X.new``), self
+          - proc shorthand:   ``p.(1)`` -> (None, None) [no method identifier;
+            receiver is a bare identifier/constant with ``.`` immediately
+            followed by ``argument_list``]
+        """
+        # Receiver candidates: identifiers (local vars), constants (types/modules),
+        # and the implicit self. The method name is always an identifier.
+        ids = [c for c in node.children if c.type == "identifier"]
+        constants = [c for c in node.children if c.type == "constant"]
+        has_dot = any(c.type in (".", "&.") for c in node.children)
+        # Proc shorthand: ``p.(1)`` -- identifier + '.' + argument_list, no
+        # second identifier to act as the method name. Detect by checking that
+        # an argument_list is a direct child immediately after the dot.
+        has_arg = any(c.type == "argument_list" for c in node.children)
+        if has_dot:
+            # ``X.new`` -> ids=["new"], constants=["X"]; receiver is the constant.
+            # ``obj.method`` -> ids=["obj","method"]; callee is last id.
+            # ``p.(1)`` -> ids=["p"], constants=[], has_arg True, no second id.
+            if len(ids) >= 2:
+                callee = self._node_text(ids[-1], source).strip()
+                receiver = self._node_text(ids[0], source).strip()
+                return callee, receiver
+            if len(ids) == 1 and constants:
+                # Constant receiver, identifier method: ``X.new``.
+                callee = self._node_text(ids[0], source).strip()
+                receiver = self._node_text(constants[0], source).strip()
+                return callee, receiver
+            if len(ids) == 1 and not constants and has_arg:
+                # ``p.(1)`` proc shorthand: single identifier receiver, no
+                # method name. Skip.
+                return None, None
+            # len(ids) == 1 and not constants and not has_arg: a zero-arg
+            # method call on an implicit receiver (rare). Treat the identifier
+            # as the callee.
+            if len(ids) == 1:
+                return self._node_text(ids[0], source).strip(), None
         if ids:
-            # bare call -- leading identifier is the callee.
+            # Bare call: leading identifier is the callee.
             return self._node_text(ids[0], source).strip(), None
         return None, None
 
@@ -217,16 +315,14 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         return Import(imported_path=path, line=node.start_point[0] + 1)
 
     def _require_argument(self, node: Node, source: bytes) -> Optional[str]:
-        """Extract the string literal argument of a require/load call."""
+        """Extract the string-literal/symbol argument of a require/load call."""
         args = self._child_of_type(node, ("argument_list",))
         if args is None:
             return None
         for child in args.children:
             if child.type == "string":
-                # string: '"' string_content '"'  -> strip quotes
                 return self._string_literal(child, source)
             if child.type == "simple_symbol":
-                # :name -- strip leading colon
                 return self._node_text(child, source).strip().lstrip(":")
         return None
 
