@@ -436,7 +436,13 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
                         )
                     )
                 if value is not None:
-                    self._walk(value, source, pf)
+                    # Visit the value node itself (not just its children) so a
+                    # call_expression / new_expression / jsx_*_element that IS
+                    # the initializer dispatches through _visit and emits its
+                    # edge. _walk only visits children, which would skip the
+                    # value node's own type and silently drop the edge (e.g.
+                    # `const x = getUser()` lost the calls edge).
+                    self._visit(value, source, pf)
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
         spec = None

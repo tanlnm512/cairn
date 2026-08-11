@@ -1,6 +1,9 @@
 """JSX reference tracking: `<UserCard/>` emits a `references` edge from the
 enclosing component to the UserCard symbol.
 
+Also covers the variable-declarator initializer fix (call_expression / JSX as
+the direct value of ``const x = ...``), which previously dropped the edge.
+
 These are parser-level tests (TypeScriptParser on `.tsx`, JavaScriptParser on
 `.jsx`); the resolver/builder pipeline is exercised by the smoke test in the
 implementation task, not here.
@@ -29,6 +32,11 @@ def _parse(parser_cls, source: bytes, suffix: str):
 def _ref_targets(pf):
     """All `references` edge target_names from a ParsedFile."""
     return [e.target_name for e in pf.edges if e.kind == "references"]
+
+
+def _call_targets(pf):
+    """All `calls` edge target_names from a ParsedFile."""
+    return [e.target_name for e in pf.edges if e.kind == "calls"]
 
 
 # --------------------------------------------------------------------------- TSX
@@ -84,25 +92,12 @@ class TestTsxReferences:
         assert len(ref_edges) == 1
         assert ref_edges[0].source_name == "App"
 
-    def test_reference_at_module_top_level_has_empty_owner(self):
-        # JSX with no enclosing function: the reference is emitted with an
-        # empty source_name (no owning callable). The builder drops such edges
-        # for lack of a symbol to attach them to, which is correct -- a bare
-        # top-level JSX fragment has no component to attribute the ref to.
-        #
-        # NOTE: when JSX is the *direct initializer* of a top-level const
-        # (``const elem = <UserCard/>``), a separate pre-existing quirk in
-        # _handle_var_decl means the value node is walked via _walk (children
-        # only) and the jsx_self_closing_element dispatch never fires. We use
-        # a returned JSX fragment instead, which is the realistic shape and
-        # does emit the edge.
-        src = b"""
-const renderCard = () => <UserCard />;
-"""
+    def test_reference_in_arrow_const_at_top_level(self):
+        # ``const X = () => <UserCard/>`` -- the arrow const becomes a
+        # kind=function symbol on _callable_scope, so the ref attributes to X.
+        src = b"const renderCard = () => <UserCard />;\n"
         pf = _parse(TypeScriptParser, src, ".tsx")
         ref_edges = [e for e in pf.edges if e.kind == "references"]
-        # renderCard is an arrow const -> kind=function -> on _callable_scope,
-        # so the ref attributes to it (not empty).
         assert len(ref_edges) == 1
         assert ref_edges[0].source_name == "renderCard"
         assert ref_edges[0].target_name == "UserCard"
@@ -116,16 +111,12 @@ const App = () => {
 };
 """
         pf = _parse(TypeScriptParser, src, ".tsx")
-        call_targets = [e.target_name for e in pf.edges if e.kind == "calls"]
-        assert "renderContent" in call_targets
+        assert "renderContent" in _call_targets(pf)
         assert "Layout" in _ref_targets(pf)
 
-    def test_existing_call_edges_unaffected(self):
+    def test_calls_and_references_coexist(self):
         # A normal function call co-existing with JSX -- both edge kinds
-        # present, correctly classified. (The call must be a standalone
-        # expression statement; a call in a variable-declarator initializer
-        # is subject to a separate, pre-existing _handle_var_decl quirk that
-        # drops it, unrelated to JSX.)
+        # present, correctly classified.
         src = b"""
 const App = () => {
   getUser();
@@ -136,6 +127,76 @@ const App = () => {
         kinds = {e.kind for e in pf.edges}
         assert "calls" in kinds
         assert "references" in kinds
+
+    # --- variable-declarator initializer (previously dropped) ---------------
+
+    def test_jsx_as_var_declarator_initializer(self):
+        # ``const x = <UserCard/>`` -- previously the JSX ref was dropped
+        # because _handle_var_decl walked the value's children rather than
+        # visiting the value node itself. Now fixed.
+        src = b"const App = () => { const x = <UserCard />; };\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        assert _ref_targets(pf) == ["UserCard"]
+
+    def test_call_as_var_declarator_initializer(self):
+        # ``const x = getUser()`` -- the var-declarator fix also recovers
+        # dropped call edges (the bug predated JSX work and affected calls).
+        src = b"function App() { const x = getUser(); }\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        assert "getUser" in _call_targets(pf)
+
+    def test_new_expression_as_var_declarator_initializer(self):
+        # ``let r = new Foo()`` -- recovered after the fix.
+        src = b"function App() { let r = new Foo(); }\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        assert "Foo" in _call_targets(pf)
+
+    def test_var_declarator_no_double_emission(self):
+        # Nested call as initializer must emit exactly one edge per call.
+        src = b"function App() { const x = foo(bar()); }\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        assert _call_targets(pf).count("foo") == 1
+        assert _call_targets(pf).count("bar") == 1
+
+    # --- real-world React patterns ------------------------------------------
+
+    def test_conditional_rendering_both_branches(self):
+        # {cond ? <A/> : <B/>} -- both branches captured.
+        src = b"const App = ({cond}) => cond ? <A /> : <B />;\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        assert sorted(_ref_targets(pf)) == ["A", "B"]
+
+    def test_list_rendering_callback_ownership(self):
+        # {items.map(i => <Row key={i.id} />)} -- Row captured, owned by the
+        # enclosing component (not the anonymous arrow).
+        src = b"""
+const App = ({items}) => (
+  <ul>{items.map(i => <Row key={i.id} />)}</ul>
+);
+"""
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        ref_edges = [e for e in pf.edges if e.kind == "references"]
+        row_edges = [e for e in ref_edges if e.target_name == "Row"]
+        assert len(row_edges) == 1
+        # Attributed to App, not the anonymous map callback.
+        assert row_edges[0].source_name == "App"
+
+    def test_spread_attributes(self):
+        src = b"const App = () => <UserCard {...props} />;\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        assert _ref_targets(pf) == ["UserCard"]
+
+    def test_react_forwardref_emits_inner_reference(self):
+        # The HOC pattern: React.forwardRef((props, ref) => <Widget/>).
+        # The forwardRef call edge is emitted with empty source (dropped by
+        # builder, correct -- no owning symbol), but the inner <Widget/> ref
+        # survives and attributes to the anonymous arrow (source "").
+        src = b"const X = React.forwardRef((props, ref) => <Widget />);\n"
+        pf = _parse(TypeScriptParser, src, ".tsx")
+        # The forwardRef call edge is present at parse time.
+        assert "forwardRef" in _call_targets(pf)
+        # The inner Widget reference is captured.
+        assert "Widget" in _ref_targets(pf)
 
 
 # ----------------------------------------------------------------- JavaScript
