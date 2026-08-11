@@ -51,6 +51,8 @@ EXTENSION_MAP = {
     ".php5": "php",
     ".rb": "ruby",
     ".rbw": "ruby",
+    ".cs": "csharp",
+    ".csx": "csharp",
     ".m": "objc",
     ".mm": "objc",
     # `.h` is ambiguous across C/C++/Objective-C, so it routes to the sentinel

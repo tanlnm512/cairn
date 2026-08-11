@@ -4,7 +4,7 @@ Centralizes tree-sitter runtime setup so each language parser only deals with
 AST traversal. Uses tree-sitter 0.26 + per-language wheels (tree-sitter-kotlin,
 tree-sitter-java, tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
 tree-sitter-javascript, tree-sitter-dart, tree-sitter-objc, tree-sitter-php,
-tree-sitter-ruby).
+tree-sitter-ruby, tree-sitter-c-sharp, tree-sitter-c, tree-sitter-cpp).
 
 Most language modules expose a bare language() function returning a PyCapsule.
 tree-sitter-typescript is the exception: one wheel ships two grammars via
@@ -126,6 +126,9 @@ def _load_language_module(language: str):
         "objc": "tree_sitter_objc",
         "go": "tree_sitter_go",
         "ruby": "tree_sitter_ruby",
+        "csharp": "tree_sitter_c_sharp",
+        "c": "tree_sitter_c",
+        "cpp": "tree_sitter_cpp",
     }
     mod_name = mapping.get(language)
     if mod_name is None:

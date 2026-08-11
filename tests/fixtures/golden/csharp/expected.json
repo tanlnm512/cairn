@@ -1,0 +1,240 @@
+{
+  "language": "csharp",
+  "symbols": [
+    {
+      "name": "BaseEntity",
+      "kind": "class",
+      "qualified_name": "App.Models.BaseEntity",
+      "line_start": 12,
+      "line_end": 15,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "abstract",
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "App.Models.User",
+      "line_start": 17,
+      "line_end": 38,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "Status",
+      "kind": "enum",
+      "qualified_name": "App.Models.Status",
+      "line_start": 40,
+      "line_end": 44,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "Active",
+      "kind": "enum_case",
+      "qualified_name": "App.Models.Active",
+      "line_start": 42,
+      "line_end": 42,
+      "column_start": 8,
+      "column_end": 14,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Inactive",
+      "kind": "enum_case",
+      "qualified_name": "App.Models.Inactive",
+      "line_start": 43,
+      "line_end": 43,
+      "column_start": 8,
+      "column_end": 16,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "IGreeter",
+      "kind": "interface",
+      "qualified_name": "App.Models.IGreeter",
+      "line_start": 7,
+      "line_end": 10,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "GetName",
+      "kind": "method",
+      "qualified_name": "App.Models.User.GetName",
+      "line_start": 32,
+      "line_end": 32,
+      "column_start": 8,
+      "column_end": 43,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "Greet",
+      "kind": "method",
+      "qualified_name": "App.Models.IGreeter.Greet",
+      "line_start": 9,
+      "line_end": 9,
+      "column_start": 8,
+      "column_end": 23,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Greet",
+      "kind": "method",
+      "qualified_name": "App.Models.User.Greet",
+      "line_start": 26,
+      "line_end": 30,
+      "column_start": 8,
+      "column_end": 9,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "method",
+      "qualified_name": "App.Models.User.User",
+      "line_start": 21,
+      "line_end": 24,
+      "column_start": 8,
+      "column_end": 9,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "method",
+      "qualified_name": "App.Models.User.User",
+      "line_start": 34,
+      "line_end": 37,
+      "column_start": 8,
+      "column_end": 9,
+      "docstring": null,
+      "modifiers": [
+        "public",
+        "static"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "Id",
+      "kind": "property",
+      "qualified_name": "App.Models.BaseEntity.Id",
+      "line_start": 14,
+      "line_end": 14,
+      "column_start": 8,
+      "column_end": 35,
+      "docstring": null,
+      "modifiers": [
+        "public"
+      ],
+      "metadata": null
+    },
+    {
+      "name": "_logger",
+      "kind": "property",
+      "qualified_name": "App.Models.User._logger",
+      "line_start": 19,
+      "line_end": 19,
+      "column_start": 8,
+      "column_end": 41,
+      "docstring": null,
+      "modifiers": [
+        "private",
+        "readonly"
+      ],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "Greet",
+      "kind": "calls",
+      "target_name": "GetName",
+      "line": 29,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "Greet",
+      "kind": "calls",
+      "target_name": "Info",
+      "line": 28,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "calls",
+      "target_name": "User",
+      "line": 36,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "BaseEntity",
+      "line": 17,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "implements",
+      "target_name": "IGreeter",
+      "line": 17,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "App.Services",
+      "line": 3
+    },
+    {
+      "imported_path": "System",
+      "line": 1
+    },
+    {
+      "imported_path": "System.Collections.Generic",
+      "line": 2
+    }
+  ]
+}

@@ -49,6 +49,9 @@ def get_parser(language: str) -> Optional[BaseParser]:
             "go": None,
             "php": None,
             "ruby": None,
+            "csharp": None,
+            "c": None,
+            "cpp": None,
         }.get(language)
         # Lazy imports to avoid loading all parsers if only one language is used.
         if language == "java":
@@ -91,6 +94,18 @@ def get_parser(language: str) -> Optional[BaseParser]:
             from ..parsers.ruby import RubyParser
 
             _parser_instances["ruby"] = RubyParser()
+        elif language == "csharp":
+            from ..parsers.csharp import CSharpParser
+
+            _parser_instances["csharp"] = CSharpParser()
+        elif language == "c":
+            from ..parsers.c_family import CParser
+
+            _parser_instances["c"] = CParser()
+        elif language == "cpp":
+            from ..parsers.c_family import CppParser
+
+            _parser_instances["cpp"] = CppParser()
         elif cls is not None:
             _parser_instances[language] = cls()
         else:
