@@ -24,6 +24,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - _Nothing yet._
 
+## [0.9.0] - 2026-08-11
+
+> **Focus:** backend language coverage — C#, C, and C++ parsers.
+
+### Added
+- **C# language support.** First-class tree-sitter indexing for C#: classes,
+  interfaces, structs, records, enums with enum members, methods, constructors,
+  properties, fields, call edges (invocation + `new` object creation), and
+  `extends` / `implements` edges from base lists. Namespaces scope qualified
+  names (`App.Models.User.Greet`). `using` directives captured as imports.
+- **C language support.** First-class tree-sitter indexing for C: functions,
+  structs (`typedef struct` → class symbol), call edges (including
+  `p->method()` field-expression calls), and `#include` imports.
+- **C++ language support.** First-class tree-sitter indexing for C++: classes
+  with methods, namespaces (scope-qualified FQNs), inheritance edges
+  (`base_class_clause`, with access-specifier skipping — `: public Engine`),
+  template functions, field-expression calls (`obj->method()`) and
+  template-function calls (`max_val<int>()`). A shared `_CFamilyParser`
+  traversal drives both C and C++ (tree-sitter-cpp is a superset of
+  tree-sitter-c), mirroring the TypeScript/JavaScript pattern.
+- Parser modules now cover **14 languages**: Kotlin, Java, Python, Swift,
+  TypeScript, JavaScript, Dart, Objective-C, Go, PHP, Ruby, C#, C, C++. The
+  extension map gains `.cs/.csx`. C/C++ extensions (`.c/.cpp/.cc/.cxx/.hpp`)
+  were already in the scanner; they now have parsers instead of silently
+  failing with "No parser for c".
+
 ## [0.8.0] - 2026-08-11
 
 > **Focus:** web-language coverage expansion — PHP and Ruby parsers, JSX

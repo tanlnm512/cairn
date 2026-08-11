@@ -192,7 +192,7 @@ blast-radius summary in a single round trip.
 
 ## Supported languages
 
-Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go, PHP, Ruby
+Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go, PHP, Ruby, C#, C, C++
 
 ## Optional features
 
@@ -296,7 +296,7 @@ end user at install time.
 
 ## Status
 
-**Beta — pre-1.0 (v0.8.0).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.9.0).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 
