@@ -19,9 +19,9 @@ This guide gets you from zero to querying a real repo in a few minutes.
 pip install cairn-intel
 ```
 
-That pulls the core: tree-sitter, parsers for 9 languages (Kotlin, Java, Python,
-Swift, TypeScript, JavaScript, Dart, Objective-C, Go), the SQLite store, and the
-MCP server. It is zero-network and torch-free by default.
+That pulls the core: tree-sitter, parsers for 11 languages (Kotlin, Java, Python,
+Swift, TypeScript, JavaScript, Dart, Objective-C, Go, PHP, Ruby), the SQLite
+store, and the MCP server. It is zero-network and torch-free by default.
 
 Optional extras, for when you need them:
 

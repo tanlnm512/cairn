@@ -51,7 +51,7 @@ flowchart TB
     end
 
     subgraph Build["Build pipeline"]
-        P["tree-sitter parsers<br/>9 languages"]
+        P["tree-sitter parsers<br/>11 languages"]
         R["resolver<br/>5 tiers"]
         D["dataflow + closure<br/>precompute"]
     end
@@ -148,7 +148,7 @@ emitting a progress event, and ends with precomputed derived indexes.
 ```mermaid
 flowchart TB
     START([cairn build]) --> SCAN["1. scan<br/>gitignore + cairn.json filters<br/>+ default skip set"]
-    SCAN --> PARSE["2. parse<br/>tree-sitter (9 langs)<br/>+ route + service-call detection"]
+    SCAN --> PARSE["2. parse<br/>tree-sitter (11 langs)<br/>+ route + service-call detection"]
     PARSE --> INSERT["3. insert<br/>symbols, edges, imports<br/>+ FTS5 sync triggers"]
     INSERT --> RESOLVE["4. resolve<br/>5-tier edge resolution<br/>label exact/ambiguous/unresolved"]
     RESOLVE --> PERSIST{in-memory<br/>build?}
