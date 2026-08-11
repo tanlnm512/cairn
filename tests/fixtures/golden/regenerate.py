@@ -15,6 +15,10 @@ from cairn.parsers.typescript import TypeScriptParser, JavaScriptParser
 from cairn.parsers.dart import DartParser
 from cairn.parsers.objc import ObjCParser
 from cairn.parsers.go import GoParser
+from cairn.parsers.php import PhpParser
+from cairn.parsers.ruby import RubyParser
+from cairn.parsers.csharp import CSharpParser
+from cairn.parsers.c_family import CParser, CppParser
 
 LANG_CONFIG = {
     "kotlin": (KotlinParser, "sample.kt"),
@@ -26,6 +30,11 @@ LANG_CONFIG = {
     "dart": (DartParser, "sample.dart"),
     "objc": (ObjCParser, "sample.m"),
     "go": (GoParser, "sample.go"),
+    "php": (PhpParser, "sample.php"),
+    "ruby": (RubyParser, "sample.rb"),
+    "csharp": (CSharpParser, "sample.cs"),
+    "c": (CParser, "sample.c"),
+    "cpp": (CppParser, "sample.cpp"),
 }
 
 GOLDEN_DIR = Path(__file__).parent

@@ -23,8 +23,9 @@ edges are the *evidence* for promise #1, not the headline.
   upstream, no remote API. You can read every byte of the output.
 - **Structural.** It parses source with tree-sitter into a typed graph of
   symbols and call edges, then answers queries against that graph. "Who calls
-  this?" is a graph traversal, not a guess. Parsers exist for nine languages:
-  Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go.
+  this?" is a graph traversal, not a guess. Parsers exist for fourteen languages:
+  Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go,
+  PHP, Ruby, C#, C, C++.
   (The scanner also recognizes C/C++/header extensions and header-sniffs `.h`
   to objc/cpp/c, but no tree-sitter parser ships for C/C++ yet — those files
   are scanned and hash-statted but recorded as `parse_errors` until a parser
@@ -51,7 +52,7 @@ flowchart TD
     R --> L2["Compass + Knowledge-base layer<br/>5 tools: get_compass, search_knowledge,<br/>ask_compass, trace_flow, generate_flow"]
     R --> L4["Memory layer<br/>8 tools: recall_memory, record_memory..."]
     R --> L5["Knowledge layer<br/>5 tools: add, search, status, trace_workflow..."]
-    L1 --> P["Tree-sitter parsers<br/>Kotlin • Java • Python • Swift<br/>TS • JS • Dart • ObjC • Go"]
+    L1 --> P["Tree-sitter parsers<br/>Kotlin • Java • Python • Swift<br/>TS • JS • Dart • ObjC • Go • PHP • Ruby<br/>C# • C • C++"]
     L1 --> DB[("SQLite store<br/>.kg")]
     L2 --> KB[(".knowledge/<br/>compass/ • wiki/")]
     L4 --> KB
@@ -79,11 +80,18 @@ Edge resolution is labelled `exact`, `ambiguous`, or `unresolved` (see
 
 #### Edge-kind taxonomy
 
-Every edge carries a free-text `kind` (indexed). The kinds fall into two
+Every edge carries a free-text `kind` (indexed). The kinds fall into three
 groups that the traversal layer treats differently:
 
 - **Structural** (followed by `impact_analysis` / `trace_flow` by default):
   `calls`, `extends`, `implements`. These represent in-codebase relationships.
+- **Component references** (resolved like `calls` but excluded from
+  `STRUCTURAL_EDGE_KINDS`, so `impact_analysis` / `trace_flow` don't traverse
+  them — a JSX ref is a usage, not a transitive call): `references`. Emitted
+  by the TypeScript/JavaScript parser for JSX component usage (`<UserCard/>`),
+  linking the enclosing component to the referenced one, and by `routes.py`
+  for route→handler links. Surfaced by `get_callers` / `get_callees` once
+  resolved.
 - **Service/topology** (excluded by default; opt in via
   `include_service_edges=True`): `http_call` (a call to an HTTP client —
   `fetch`, `axios`, `http.Get`, OkHttp/Retrofit), `service_call` (a call from a

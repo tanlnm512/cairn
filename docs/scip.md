@@ -119,6 +119,9 @@ Objective-C, C#, Haskell, OCaml) are not auto-generated; a committed index for
 them is still consumed unchanged. Dart and PHP indexers exist but lack an
 `--output` flag (they write `index.scip` in the CWD), so they aren't in the
 auto-generation registry — generate those out-of-band and commit the result.
+PHP and Ruby now have native tree-sitter parsers (no SCIP required for basic
+symbol/call-graph indexing); a committed SCIP index still wins when available
+and adds compiler-grade resolution on top.
 
 A committed or CI-produced index always wins — generation only fills gaps.
 

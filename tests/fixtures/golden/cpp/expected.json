@@ -1,0 +1,137 @@
+{
+  "language": "cpp",
+  "symbols": [
+    {
+      "name": "Engine",
+      "kind": "class",
+      "qualified_name": "app.Engine",
+      "line_start": 7,
+      "line_end": 15,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "V8",
+      "kind": "class",
+      "qualified_name": "app.V8",
+      "line_start": 17,
+      "line_end": 22,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "max_val",
+      "kind": "function",
+      "qualified_name": "app.max_val",
+      "line_start": 25,
+      "line_end": 27,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "run",
+      "kind": "function",
+      "qualified_name": "app.run",
+      "line_start": 29,
+      "line_end": 32,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Engine",
+      "kind": "method",
+      "qualified_name": "app.Engine.Engine",
+      "line_start": 9,
+      "line_end": 9,
+      "column_start": 4,
+      "column_end": 40,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "getPower",
+      "kind": "method",
+      "qualified_name": "app.Engine.getPower",
+      "line_start": 11,
+      "line_end": 11,
+      "column_start": 4,
+      "column_end": 43,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "start",
+      "kind": "method",
+      "qualified_name": "app.V8.start",
+      "line_start": 19,
+      "line_end": 21,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "V8",
+      "kind": "extends",
+      "target_name": "Engine",
+      "line": 17,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "run",
+      "kind": "calls",
+      "target_name": "getPower",
+      "line": 30,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "run",
+      "kind": "calls",
+      "target_name": "max_val",
+      "line": 31,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "start",
+      "kind": "calls",
+      "target_name": "launch",
+      "line": 20,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "\"engine.h\"",
+      "line": 3
+    },
+    {
+      "imported_path": "<memory>",
+      "line": 2
+    },
+    {
+      "imported_path": "<vector>",
+      "line": 1
+    }
+  ]
+}

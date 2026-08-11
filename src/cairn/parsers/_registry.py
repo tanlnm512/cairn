@@ -3,7 +3,8 @@
 Centralizes tree-sitter runtime setup so each language parser only deals with
 AST traversal. Uses tree-sitter 0.26 + per-language wheels (tree-sitter-kotlin,
 tree-sitter-java, tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
-tree-sitter-javascript, tree-sitter-dart, tree-sitter-objc).
+tree-sitter-javascript, tree-sitter-dart, tree-sitter-objc, tree-sitter-php,
+tree-sitter-ruby, tree-sitter-c-sharp, tree-sitter-c, tree-sitter-cpp).
 
 Most language modules expose a bare language() function returning a PyCapsule.
 tree-sitter-typescript is the exception: one wheel ships two grammars via
@@ -43,6 +44,11 @@ _SPECIAL_LOADERS = {
     "typescript": ("tree_sitter_typescript", "language_typescript"),
     "tsx": ("tree_sitter_typescript", "language_tsx"),
     "javascript": ("tree_sitter_javascript", "language"),
+    # tree-sitter-php ships two grammars with non-standard entry points:
+    # language_php() (PHP+HTML, "program" nodes) and language_php_only() (pure
+    # PHP AST, no HTML wrapper). We use php_only so the parser sees clean
+    # declaration nodes instead of an embedded-html tree.
+    "php": ("tree_sitter_php", "language_php_only"),
 }
 
 
@@ -119,6 +125,10 @@ def _load_language_module(language: str):
         "dart": "tree_sitter_dart",
         "objc": "tree_sitter_objc",
         "go": "tree_sitter_go",
+        "ruby": "tree_sitter_ruby",
+        "csharp": "tree_sitter_c_sharp",
+        "c": "tree_sitter_c",
+        "cpp": "tree_sitter_cpp",
     }
     mod_name = mapping.get(language)
     if mod_name is None:

@@ -43,6 +43,16 @@ EXTENSION_MAP = {
     ".cjs": "javascript",
     ".dart": "dart",
     ".go": "go",
+    # PHP/Ruby web languages.
+    ".php": "php",
+    ".phtml": "php",
+    ".php3": "php",
+    ".php4": "php",
+    ".php5": "php",
+    ".rb": "ruby",
+    ".rbw": "ruby",
+    ".cs": "csharp",
+    ".csx": "csharp",
     ".m": "objc",
     ".mm": "objc",
     # `.h` is ambiguous across C/C++/Objective-C, so it routes to the sentinel

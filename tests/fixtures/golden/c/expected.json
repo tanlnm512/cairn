@@ -1,0 +1,85 @@
+{
+  "language": "c",
+  "symbols": [
+    {
+      "name": "Point",
+      "kind": "class",
+      "qualified_name": "Point",
+      "line_start": 5,
+      "line_end": 8,
+      "column_start": 8,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Point",
+      "kind": "class",
+      "qualified_name": "Point",
+      "line_start": 14,
+      "line_end": 14,
+      "column_start": 18,
+      "column_end": 30,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "add",
+      "kind": "function",
+      "qualified_name": "add",
+      "line_start": 10,
+      "line_end": 12,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "greet",
+      "kind": "function",
+      "qualified_name": "greet",
+      "line_start": 14,
+      "line_end": 17,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "add",
+      "line": 16,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "printf",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "\"utils.h\"",
+      "line": 3
+    },
+    {
+      "imported_path": "<stdio.h>",
+      "line": 1
+    },
+    {
+      "imported_path": "<string.h>",
+      "line": 2
+    }
+  ]
+}

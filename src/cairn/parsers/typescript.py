@@ -28,6 +28,14 @@ Node-type reference:
   call_expression                               -> Edge(calls)
   class_heritage (extends_clause/implements_clause),
   extends_type_clause (interface extends)       -> Edge(extends|implements)
+  jsx_opening_element / jsx_self_closing_element -> Edge(references)
+    (capitalized name only; lowercase `<div>`/`<span>` are HTML host tags and
+    skipped). `<UserCard/>` records a reference from the enclosing component to
+    UserCard, so `cairn callers UserCard` finds JSX usage -- the largest source
+    of inter-component relationships in React/RN code. `references` resolves
+    through the same tiers as `calls` but is excluded from
+    STRUCTURAL_EDGE_KINDS, so impact_analysis/trace_flow won't traverse it
+    (a JSX ref isn't a transitive call).
 
 Decorator modifiers are what route detection (src/parsers/routes.py) reads
 to recognize NestJS `@Controller`/`@Get`/`@Post`/etc.
@@ -241,6 +249,18 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             self._walk(node, source, pf)
             return
 
+        # JSX element usage: <UserCard/> or <UserCard>...</UserCard>. The
+        # opening element is visited for both forms (a jsx_element's open_tag
+        # child descends here); the closing element is skipped to avoid
+        # duplicate edges. Lowercase-first names are HTML host tags, not
+        # components.
+        if t in ("jsx_opening_element", "jsx_self_closing_element"):
+            edge = self._parse_jsx_ref(node, source)
+            if edge:
+                pf.edges.append(edge)
+            self._walk(node, source, pf)
+            return
+
         self._walk(node, source, pf)
 
     # --- name & modifier helpers -----------------------------------------
@@ -416,7 +436,13 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
                         )
                     )
                 if value is not None:
-                    self._walk(value, source, pf)
+                    # Visit the value node itself (not just its children) so a
+                    # call_expression / new_expression / jsx_*_element that IS
+                    # the initializer dispatches through _visit and emits its
+                    # edge. _walk only visits children, which would skip the
+                    # value node's own type and silently drop the edge (e.g.
+                    # `const x = getUser()` lost the calls edge).
+                    self._visit(value, source, pf)
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
         spec = None
@@ -506,6 +532,43 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
                 if child.type == "property_identifier":
                     return self._node_text(child, source).strip()
         return None
+
+    def _parse_jsx_ref(self, node: Node, source: bytes) -> Optional[Edge]:
+        """jsx_opening_element / jsx_self_closing_element -> Edge(references).
+
+        The component name lives in the ``name`` field (an ``identifier`` for
+        ``<UserCard/>``, a ``member_expression`` for ``<UI.Card/>``, or a
+        ``jsx_namespace_name`` for ``<foo:Bar/>``). Lowercase-first names are
+        HTML host tags (``<div>``, ``<span>``) and are skipped -- only
+        Capitalized names are React component references.
+        """
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return None
+        if name_node.type == "identifier":
+            name = self._node_text(name_node, source).strip()
+        elif name_node.type == "member_expression":
+            # <UI.Card/> -> resolve to the property name "Card" (matches how
+            # _extract_callee treats member_expression calls, and what the
+            # resolver's bare-name index expects).
+            name = self._extract_callee(name_node, source)
+        elif name_node.type == "jsx_namespace_name":
+            # <foo:Bar/> -> take the trailing identifier.
+            name = None
+            for child in reversed(name_node.children):
+                if child.type == "identifier":
+                    name = self._node_text(child, source).strip()
+                    break
+        else:
+            return None
+        if not name or not name[0].isupper():
+            return None  # HTML host tag or unrecognizable name shape
+        return Edge(
+            source_name=self._current_edge_owner(),
+            kind="references",
+            target_name=name,
+            line=node.start_point[0] + 1,
+        )
 
 
 class TypeScriptParser(_JSFamilyParser):

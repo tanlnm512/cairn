@@ -1,0 +1,161 @@
+{
+  "language": "ruby",
+  "symbols": [
+    {
+      "name": "App",
+      "kind": "class",
+      "qualified_name": "App",
+      "line_start": 4,
+      "line_end": 22,
+      "column_start": 0,
+      "column_end": 3,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "App.User",
+      "line_start": 5,
+      "line_end": 21,
+      "column_start": 2,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "find",
+      "kind": "method",
+      "qualified_name": "App.User.find",
+      "line_start": 18,
+      "line_end": 20,
+      "column_start": 4,
+      "column_end": 7,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "greet",
+      "kind": "method",
+      "qualified_name": "App.User.greet",
+      "line_start": 12,
+      "line_end": 16,
+      "column_start": 4,
+      "column_end": 7,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "greet_all",
+      "kind": "method",
+      "qualified_name": "greet_all",
+      "line_start": 24,
+      "line_end": 26,
+      "column_start": 0,
+      "column_end": 3,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "initialize",
+      "kind": "method",
+      "qualified_name": "App.User.initialize",
+      "line_start": 8,
+      "line_end": 10,
+      "column_start": 4,
+      "column_end": 7,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "",
+      "kind": "calls",
+      "target_name": "greet_all",
+      "line": 28,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "calls",
+      "target_name": "attr_accessor",
+      "line": 6,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "User",
+      "kind": "extends",
+      "target_name": "Base",
+      "line": 5,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "find",
+      "kind": "calls",
+      "target_name": "new",
+      "line": 19,
+      "column": 0,
+      "receiver_type": "User"
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "info",
+      "line": 14,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "new",
+      "line": 13,
+      "column": 0,
+      "receiver_type": "Logger"
+    },
+    {
+      "source_name": "greet_all",
+      "kind": "calls",
+      "target_name": "each",
+      "line": 25,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet_all",
+      "kind": "calls",
+      "target_name": "greet",
+      "line": 25,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet_all",
+      "kind": "calls",
+      "target_name": "puts",
+      "line": 25,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "./helpers",
+      "line": 2
+    },
+    {
+      "imported_path": "logger",
+      "line": 1
+    }
+  ]
+}
