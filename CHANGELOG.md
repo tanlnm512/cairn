@@ -24,6 +24,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - _Nothing yet._
 
+## [0.8.0] - 2026-08-11
+
+> **Focus:** web-language coverage expansion — PHP and Ruby parsers, JSX
+> component-reference tracking, and parser hardening from a deep audit.
+
+### Added
+- **PHP language support.** First-class tree-sitter indexing for PHP: classes,
+  interfaces, traits, enums (PHP 8.1+) with enum cases, functions, methods,
+  properties (including constructor property promotion), three call shapes
+  (function / member / nullsafe `?->` / scoped `::`), `extends` / `implements`
+  edges, and `require` / `include` / `use` imports (single, multi, and grouped
+  `use Foo\{A, B};`). Uses the `php_only` grammar for clean declaration nodes.
+- **Ruby language support.** First-class tree-sitter indexing for Ruby:
+  modules, classes (including `class A::B` scope-resolution syntax), methods,
+  singleton methods (`def self.foo`, `def obj.foo`), inheritance edges
+  (including qualified superclasses `< ::Base`, `< User::Base`), call edges
+  (zero-arg, parenless, safe-navigation `&.`, and block-bearing `each do ...
+  end`), and `require` / `require_relative` / `load` imports.
+- **JSX component-reference tracking.** The TypeScript / JavaScript parser now
+  emits a `references` edge when it sees a capitalized JSX element
+  (`<UserCard/>`), linking the enclosing component to the referenced
+  component. This closes the largest blind spot in React / React Native
+  codebases — previously JSX usage was invisible, so `cairn callers UserCard`
+  missed roughly half of real inter-component relationships. Lowercase host
+  tags (`<div>`, `<span>`) are skipped; member expressions (`<UI.Card/>`) and
+  namespace names (`<foo:Bar/>`) resolve to the property / trailing name. The
+  `references` kind resolves through the same tiers as `calls` and is surfaced
+  by `get_callers` / `get_callees`, but is excluded from
+  `STRUCTURAL_EDGE_KINDS` so `impact_analysis` / `trace_flow` treat a JSX ref
+  as a usage, not a transitive call.
+- Parser modules now cover **11 languages**: Kotlin, Java, Python, Swift,
+  TypeScript, JavaScript, Dart, Objective-C, Go, PHP, Ruby. The extension map
+  gains `.php/.phtml/.php3-5` and `.rb/.rbw`.
+
+### Fixed
+- **TypeScript / JavaScript variable-declarator initializer edges.** A
+  pre-existing bug in `_handle_var_decl` dropped edges when a call,
+  new-expression, or JSX element was the direct initializer of a variable
+  declarator (`const x = getUser()`, `let r = new Foo()`,
+  `const x = <UserCard/>`). The branch walked the value's children instead of
+  visiting the value node itself, so the value's own type never dispatched
+  through `_visit` and its edge was never emitted. Now fixed; verified no
+  double-emission for nested calls. Predates the JSX work and affected calls
+  too.
+- **Ruby zero-argument and block-bearing calls.** The `argument_list` gate
+  was based on a wrong assumption about the tree-sitter-ruby grammar: every
+  `call` node is a real call (local-var reads are plain `identifier` nodes).
+  `X.new`, `user.name`, `obj&.name`, `items.each do ... end`, and
+  `users.map { }` now produce edges.
+- **Ruby nested-class inheritance edges** no longer silently dropped. The
+  `source_name` now uses the bare class name (matching the builder's same-file
+  name lookup) instead of the qualified name.
+- **PHP enums, nullsafe calls, and anonymous classes** now handled (previously
+  dropped or polluting the enclosing scope). See the PHP parser module
+  docstring for the full node-type reference.
+
 ## [0.7.1] - 2026-08-10
 
 > **Focus:** a full-codebase audit remediation — 10 verified defects (P1–P10)
