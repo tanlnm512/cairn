@@ -1,0 +1,157 @@
+{
+  "language": "php",
+  "symbols": [
+    {
+      "name": "User",
+      "kind": "class",
+      "qualified_name": "User",
+      "line_start": 19,
+      "line_end": 31,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "greet_all",
+      "kind": "function",
+      "qualified_name": "greet_all",
+      "line_start": 33,
+      "line_end": 37,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "Greeter",
+      "kind": "interface",
+      "qualified_name": "Greeter",
+      "line_start": 7,
+      "line_end": 9,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "__construct",
+      "kind": "method",
+      "qualified_name": "User.__construct",
+      "line_start": 22,
+      "line_end": 24,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "getName",
+      "kind": "method",
+      "qualified_name": "NameAware.getName",
+      "line_start": 14,
+      "line_end": 16,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "greet",
+      "kind": "method",
+      "qualified_name": "Greeter.greet",
+      "line_start": 8,
+      "line_end": 8,
+      "column_start": 4,
+      "column_end": 36,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "greet",
+      "kind": "method",
+      "qualified_name": "User.greet",
+      "line_start": 26,
+      "line_end": 30,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "name",
+      "kind": "property",
+      "qualified_name": "NameAware.name",
+      "line_start": 12,
+      "line_end": 12,
+      "column_start": 4,
+      "column_end": 27,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "NameAware",
+      "kind": "trait",
+      "qualified_name": "NameAware",
+      "line_start": 11,
+      "line_end": 17,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "",
+      "kind": "calls",
+      "target_name": "greet_all",
+      "line": 39,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "getName",
+      "line": 29,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
+      "target_name": "info",
+      "line": 28,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet_all",
+      "kind": "calls",
+      "target_name": "greet",
+      "line": 35,
+      "column": 0,
+      "receiver_type": null
+    }
+  ],
+  "imports": [
+    {
+      "imported_path": "App\\Services\\Logger",
+      "line": 5
+    },
+    {
+      "imported_path": "require_once __DIR__ . \"/helpers.php\"",
+      "line": 4
+    }
+  ]
+}

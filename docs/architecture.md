@@ -23,8 +23,9 @@ edges are the *evidence* for promise #1, not the headline.
   upstream, no remote API. You can read every byte of the output.
 - **Structural.** It parses source with tree-sitter into a typed graph of
   symbols and call edges, then answers queries against that graph. "Who calls
-  this?" is a graph traversal, not a guess. Parsers exist for nine languages:
-  Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go.
+  this?" is a graph traversal, not a guess. Parsers exist for eleven languages:
+  Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go,
+  PHP, Ruby.
   (The scanner also recognizes C/C++/header extensions and header-sniffs `.h`
   to objc/cpp/c, but no tree-sitter parser ships for C/C++ yet — those files
   are scanned and hash-statted but recorded as `parse_errors` until a parser

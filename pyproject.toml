@@ -36,6 +36,8 @@ dependencies = [
     "tree-sitter-dart==0.1.0",
     "tree-sitter-objc==3.0.2",
     "tree-sitter-go==0.25.0",
+    "tree-sitter-php==0.24.1",
+    "tree-sitter-ruby==0.23.1",
     "click>=8.0",
     "pyyaml>=6.0",
     "mcp>=0.9.0,<2.0.0",  # SSE/streamable-http + uvicorn/starlette are core deps in mcp>=0.9; the legacy [sse] extra was removed upstream

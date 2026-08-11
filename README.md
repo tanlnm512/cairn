@@ -192,7 +192,7 @@ blast-radius summary in a single round trip.
 
 ## Supported languages
 
-Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go
+Kotlin, Java, Python, Swift, TypeScript, JavaScript, Dart, Objective-C, Go, PHP, Ruby
 
 ## Optional features
 

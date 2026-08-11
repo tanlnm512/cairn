@@ -47,6 +47,8 @@ def get_parser(language: str) -> Optional[BaseParser]:
             "dart": None,
             "objc": None,
             "go": None,
+            "php": None,
+            "ruby": None,
         }.get(language)
         # Lazy imports to avoid loading all parsers if only one language is used.
         if language == "java":
@@ -81,6 +83,14 @@ def get_parser(language: str) -> Optional[BaseParser]:
             from ..parsers.go import GoParser
 
             _parser_instances["go"] = GoParser()
+        elif language == "php":
+            from ..parsers.php import PhpParser
+
+            _parser_instances["php"] = PhpParser()
+        elif language == "ruby":
+            from ..parsers.ruby import RubyParser
+
+            _parser_instances["ruby"] = RubyParser()
         elif cls is not None:
             _parser_instances[language] = cls()
         else:
