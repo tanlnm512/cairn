@@ -17,9 +17,12 @@ from .concept import OKFConcept
 
 logger = logging.getLogger(__name__)
 
-# flock() locks are per-fd, not per-process, so nested lock() calls in the
-# same thread must not re-open+flock (they'd block forever waiting on
-# themselves) -- tracked here instead of re-acquiring the OS lock.
+# flock() locks are per open-file-description: a second os.open() of the same
+# file -- even in the same thread/process -- gets an independent lock that
+# conflicts with the first (EAGAIN under LOCK_NB). So nested lock() calls must
+# NOT re-open+flock; the inner flock would hit the outer's lock and, because the
+# acquire path uses LOCK_NB, busy-wait to a spurious TimeoutError rather than
+# block forever. Tracked via a thread-local depth counter instead.
 _LOCK_DEPTH = threading.local()
 
 

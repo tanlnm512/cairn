@@ -2,17 +2,21 @@
 re-entrancy guard that serializes cross-process/cross-thread read-modify-write
 of an OKF bundle (the centerpiece of the SSE-daemon lock-contention fix).
 
-Covers re-entrancy, timeout, release, and scope. Two contention strategies,
-because ``flock`` is per-process on macOS (a second ``os.open``+``flock`` in
-the *same* test thread does not block, so the cheap same-process pre-acquire
-trick can't reproduce exclusion there):
+flock semantics (verified on Darwin 25 / matches Linux flock(2)): locks are
+per *open file description*, so a second ``os.open()`` of the same file -- even
+within the same thread/process -- gets an independent lock that conflicts with
+the first (EAGAIN under ``LOCK_NB``). That is exactly why the re-entrancy guard
+in ``bundle._okf_bundle_lock`` is load-bearing: without it, a nested ``lock()``
+would flock a fresh fd and hit its own outer lock.
+
+Covers re-entrancy, timeout, release, and scope. Two contention strategies:
 
 * ``test_contention_timeout_logic`` patches ``fcntl.flock`` to always report
-  EAGAIN -- deterministic, fast, exercises the busy-wait/deadline/TimeoutError
-  wrapping logic every run.
+  EAGAIN -- deterministic and fast, isolates the busy-wait/deadline/TimeoutError
+  wrapping logic from any process/thread coordination.
 * ``test_cross_process_contention_and_release`` spawns a real child process
-  holding the lock -- the only reliable way to exercise genuine flock conflict
-  (and release) on macOS.
+  holding the lock -- exercises genuine flock conflict *and* the release path
+  (the actual deployment scenario: SSE daemon vs ``cairn build``).
 """
 from __future__ import annotations
 
