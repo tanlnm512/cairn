@@ -14,25 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install ruff
-        run: pip install "ruff>=0.6"
-
-      # Conservative gate: pyflakes (F) only. Catches real defects (undefined
-      # names, unused imports, redefinitions) without style noise.
-      - name: Ruff check
-        run: ruff check
-
   # --- Security: supply-chain + code scanning -----------------------------
   # pip-audit is a HARD gate: a known-vulnerable dependency blocks the PR.
   # bandit is ADVISORY (continue-on-error): it surfaces NEW security
@@ -40,9 +21,10 @@ jobs:
   # codebase's known-benign findings. B608 is skipped via -s because every SQL
   # query here is parameterized (f-strings interpolate only the `?,?,?`
   # placeholder list; values pass separately to execute()) -- the 26 B608 hits
-  # are false positives. The remaining 5 (B324 hashlib content-IDs, B310 urllib
-  # fetches with timeout) are benign; quiet B324 in code via
-  # usedforsecurity=False in a follow-up.
+  # are false positives. The B324 hashlib findings were silenced at the call
+  # sites with usedforsecurity=False (content-addressing IDs, not crypto); the
+  # only remaining hits are 2 B310 urllib fetches (timeout-bounded, to known
+  # URLs) -- benign.
   security:
     name: Security (pip-audit + bandit)
     runs-on: ubuntu-latest
@@ -116,10 +98,11 @@ jobs:
 
   # --- pre-commit: server-side enforcement of all Layer-0 gates ------------
   # Closes the gap where a dev who skipped `pre-commit install` could bypass
-  # local gates. Critically, this is the ONLY place gitleaks (secrets) runs in
-  # CI -- ruff is covered by the `lint` job, but gitleaks and the yaml/toml/
-  # large-file/debug checks exist only in .pre-commit-config.yaml, so without
-  # this job they are advisory, not binding.
+  # local gates. This is the single server-side home for ALL Layer-0 checks --
+  # ruff (F-only), gitleaks (secrets), and the yaml/toml/large-file/debug
+  # checks all live in .pre-commit-config.yaml and are binding only because
+  # this job runs them. (The old standalone `lint` job was removed as
+  # redundant: it ran the same `ruff check` this job runs.)
   pre-commit:
     name: pre-commit (all local gates)
     runs-on: ubuntu-latest
@@ -154,7 +137,7 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    needs: lint
+    needs: pre-commit
     strategy:
       fail-fast: false
       matrix:
@@ -184,7 +167,7 @@ jobs:
         run: pytest -m core -q
 
       - name: Run full test suite
-        run: pytest -q --junitxml=test-results.xml
+        run: pytest -q --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
 
       - name: Publish test summary
         if: always()
@@ -213,6 +196,21 @@ jobs:
                         f"✗ {fail} failures | "
                         f"⚠ {err} errors | "
                         f"⊘ {skip} skipped")
+          EOF
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          try:
+              root = ET.parse("coverage.xml").getroot()
+              rate = float(root.get("line-rate", "0")) * 100
+              print(f"## Coverage (Python ${{ matrix.python-version }})")
+              print()
+              print(f"**{rate:.1f}%** line coverage")
+          except Exception:
+              print("_(coverage report unavailable)_")
           EOF
 
   build:

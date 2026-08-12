@@ -59,6 +59,8 @@ watch = ["watchdog>=3.0"]
 test = ["pytest>=7.0"]
 dev = [
     "pytest>=7.0",
+    # Coverage reporting in CI (Layer 1 test job). Reporting-only, no threshold.
+    "pytest-cov>=4.0",
     "watchdog>=3.0",
     "build",
     "ruff>=0.6",

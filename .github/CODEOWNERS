@@ -1,0 +1,8 @@
+# CODEOWNERS -- auto-requests review on PRs (GitHub native).
+# Format: <path pattern> <owner(s)>
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Default owner for everything in the repo. Replace with the right handle/team
+# and add per-area path rules below to route changes to the relevant reviewer
+# (e.g. `src/cairn/parsers/  @parser-maintainer`).
+* @tanlnm512

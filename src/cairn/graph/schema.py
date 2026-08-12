@@ -358,7 +358,9 @@ def _extract_migration_name(migration_sql: str) -> str:
     else:
         # For non-ADD COLUMN migrations, use a hash or truncated SQL as key
         import hashlib
-        return hashlib.md5(migration_sql.encode()).hexdigest()[:16]
+        # usedforsecurity=False: this is a content key (migration fingerprint),
+        # not a cryptographic hash -- also silences bandit B324.
+        return hashlib.md5(migration_sql.encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
