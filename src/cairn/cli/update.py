@@ -76,7 +76,13 @@ def update(repo, file_path, workspace, db, knowledge):
     # This ensures raw memories don't grow unbounded over time.
     try:
         bundle = OKFBundle(knowledge)
-        decay_result = decay(bundle)
+        # Pass a writable conn so decay also reaps embedding rows orphaned by
+        # the tier moves (dead vectors otherwise accumulate in memory_embeddings).
+        reap_conn = get_db(db, busy_timeout_ms=20000)
+        try:
+            decay_result = decay(bundle, conn=reap_conn)
+        finally:
+            reap_conn.close()
         if decay_result.get("expired_raw", 0) > 0 or decay_result.get("archived_tribal", 0) > 0:
             display.success(
                 f"Memory decay: archived {decay_result['expired_raw']} stale raw memories, "

@@ -427,3 +427,65 @@ class TestUnembeddedHint:
 
     def test_no_hint_when_corpus_empty(self, db, bundle):
         assert unembedded_memory_hint(db, bundle) == ""
+
+
+# ---------------------------------------------------------------------------
+# 8. decay reaps embedding rows orphaned by tier moves
+# ---------------------------------------------------------------------------
+
+
+class TestDecayReapsOrphans:
+    def test_decay_with_conn_reaps_orphaned_embedding(self, db, bundle):
+        """decay moves a stale memory to a new concept_id, orphaning its
+        embedding row at the old address. With a conn, decay reaps that orphan
+        instead of leaving a dead vector to bloat the brute-force cosine scan."""
+        from datetime import datetime, timedelta, timezone
+        from cairn.memory.promotion import decay
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        concept = OKFConcept(
+            type="Raw", title="Stale raw memory", description="Stale raw memory",
+            body="Body.", timestamp=old_ts, tags=[],
+            concept_id="memory/raw/stale-abc123",
+            extensions={"memory_tier": "raw", "memory_is_latest": True, "memory_type": "decision"},
+        )
+        bundle.write_concept(concept)
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
+        assert memory_is_embedded(db, concept.concept_id)  # baseline: row exists
+
+        result = decay(bundle, conn=db)
+        db.commit()
+
+        assert result["expired_raw"] >= 1, "stale raw memory should be archived"
+        # The row at the OLD concept_id is orphaned by the move and must be reaped.
+        assert not memory_is_embedded(db, concept.concept_id)
+        assert result["reaped_embeddings"] >= 1
+
+    def test_decay_without_conn_leaves_orphan(self, db, bundle):
+        """Without a conn, decay can't reap -- the orphan survives (the gap that
+        passing conn closes). This pins the behavior so the conn param stays
+        load-bearing rather than silently dropping the reap."""
+        from datetime import datetime, timedelta, timezone
+        from cairn.memory.promotion import decay
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        concept = OKFConcept(
+            type="Raw", title="Stale raw memory 2", description="Stale raw memory 2",
+            body="Body.", timestamp=old_ts, tags=[],
+            concept_id="memory/raw/stale-def456",
+            extensions={"memory_tier": "raw", "memory_is_latest": True, "memory_type": "decision"},
+        )
+        bundle.write_concept(concept)
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
+        old_id = concept.concept_id
+
+        decay(bundle, conn=None)  # no conn -> no reap
+        db.commit()
+
+        # The row is now orphaned (concept moved) but NOT reaped.
+        rows = db.execute(
+            "SELECT COUNT(*) AS c FROM memory_embeddings WHERE doc_id = ?", (old_id,)
+        ).fetchone()
+        assert rows["c"] > 0, "without conn, decay must leave the orphan in place"

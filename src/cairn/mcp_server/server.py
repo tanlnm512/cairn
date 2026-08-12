@@ -217,7 +217,14 @@ def run(transport: str = "stdio", port: int | None = None):
 
             knowledge_path = str(resolve_store().knowledge)
             bundle = OKFBundle(knowledge_path)
-            decay_result = decay(bundle)
+            # Open a writable conn so decay can also reap embedding rows orphaned
+            # by the tier moves (otherwise dead vectors accumulate and tax the
+            # brute-force memory cosine scan on every recall).
+            reap_conn = get_db(db_path)
+            try:
+                decay_result = decay(bundle, conn=reap_conn)
+            finally:
+                reap_conn.close()
             if decay_result.get("expired_raw", 0) > 0 or decay_result.get("archived_tribal", 0) > 0:
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

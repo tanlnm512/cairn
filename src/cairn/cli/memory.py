@@ -322,14 +322,21 @@ def memory_promote(path, db, knowledge):
 
 
 @memory.command("decay")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_decay(knowledge):
+def memory_decay(db, knowledge):
     """Expire raw memories >7d, archive tribal >90d stale."""
     from ..memory.promotion import decay
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    result = decay(bundle)
+    # Pass a writable conn so decay also reaps embedding rows orphaned by the
+    # tier moves (dead vectors otherwise accumulate in memory_embeddings).
+    conn = get_db(db)
+    try:
+        result = decay(bundle, conn=conn)
+    finally:
+        conn.close()
     click.echo(f"Expired raw: {result['expired_raw']}, archived tribal: {result['archived_tribal']}")
 
 

@@ -427,8 +427,14 @@ def batch_critic(
     return {"processed": len(drafts), "tribal": tribal, "dropped": dropped, "remaining_drafts": promoted}
 
 
-def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90) -> Dict:
-    """Expire raw memories older than raw_max_days; archive tribal past staleness."""
+def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, conn=None) -> Dict:
+    """Expire raw memories older than raw_max_days; archive tribal past staleness.
+
+    If ``conn`` is provided, also reap embedding rows orphaned by the tier moves
+    (a decay moves a memory to a new concept_id, leaving its embedding row
+    stranded at the old address). Reap is best-effort and also cleans orphans
+    left by other paths; it never fails decay.
+    """
     expired = 0
     archived = 0
     with bundle.lock():
@@ -445,7 +451,19 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90) 
                 old_id = concept.concept_id
                 store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
                 archived += 1
-    return {"expired_raw": expired, "archived_tribal": archived}
+    reaped = 0
+    if conn is not None and (expired or archived):
+        # The moves above orphan embedding rows at the old concept_ids; clean
+        # them now rather than letting dead vectors accumulate in the table
+        # (memory search is a brute-force cosine scan, so orphans tax every
+        # recall). Reap also catches orphans from other paths.
+        from cairn.graph import embeddings as _emb
+        try:
+            reaped = _emb.reap_orphaned_memory_embeddings(conn, bundle)
+        except Exception:
+            logger.debug("memory embed reap during decay failed", exc_info=True)
+            reaped = 0
+    return {"expired_raw": expired, "archived_tribal": archived, "reaped_embeddings": reaped}
 
 
 def tribal_digest(bundle: OKFBundle, limit: int = 10) -> List[OKFConcept]:
