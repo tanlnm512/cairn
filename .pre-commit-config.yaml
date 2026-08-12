@@ -1,0 +1,52 @@
+# Layer 0 of the review/audit pipeline: the local gate.
+#
+# Design rules this file follows (see the corresponding pyproject.toml comment
+# at [tool.ruff]): the codebase predates ruff and intentionally gates on
+# pyflakes (F) only -- real defects, low false-positive rate. This config
+# inherits that selection from pyproject rather than re-declaring rules, so the
+# gate stays in lockstep with CI.
+#
+# Install (once):  uv run pre-commit install
+# Update revs:     uv run pre-commit autoupdate
+# Run on everything: uv run pre-commit run --all-files
+
+default_language_version:
+  python: python3
+
+repos:
+  # --- Lint. Bare `ruff check` mirrors CI exactly: reads the F-only selection
+  # from pyproject, no --fix (the hook should GATE, not rewrite files -- the
+  # codebase has not adopted automated formatting). Adding ruff-format is
+  # deliberately deferred to a dedicated cleanup PR, same as the CI stance.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff
+
+  # --- Secret scanning. Catches API keys / tokens / .env blobs before they
+  # reach the remote. Cheap insurance for a repo that ships agent-integration
+  # templates and CLI wiring.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # --- Read-only hygiene. Zero first-run churn: none of these modify files,
+  # they only fail. Safe to adopt on a mature codebase without a cleanup commit.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml          # workflows, agent templates, .cairn YAML
+      - id: check-toml          # pyproject.toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: debug-statements    # catch pdb/breakpoint() left in
+
+  # NOTE: scripts/verify_no_code_change.py is deliberately NOT wired here.
+  # It compares the *working tree* against HEAD, but pre-commit always stashes
+  # unstaged changes and runs against the *staged* tree -- so as a hook it
+  # would silently Skip precisely when you need it (unstaged comment edits).
+  # Keep it as a direct invocation, which sees the real working tree:
+  #   make verify-no-code-change            # uncommitted edits
+  #   make verify-no-code-change REF=HEAD~1 # a just-made commit

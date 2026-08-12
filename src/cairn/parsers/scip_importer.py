@@ -575,7 +575,7 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
             else:
                 edge_kind = "call"
 
-            edge_id = f"{file_id}:{name}:{sl}:{sc}:{hashlib.sha1(sym_descriptor.encode('utf-8')).hexdigest()[:8]}"
+            edge_id = f"{file_id}:{name}:{sl}:{sc}:{hashlib.sha1(sym_descriptor.encode('utf-8'), usedforsecurity=False).hexdigest()[:8]}"
             cur.execute(
                 """INSERT OR REPLACE INTO edges
                    (id, source_id, target_id, target_name, kind, line, column, resolution)
@@ -732,7 +732,7 @@ def import_scip_data(conn: sqlite3.Connection, scip_dict: Dict[str, Any], repo_i
                 edge_kind = "reference"
             else:
                 edge_kind = "call"
-            edge_id = f"{file_id}:{name}:{sl}:{sc}:{hashlib.sha1(sym_desc.encode('utf-8')).hexdigest()[:8]}"
+            edge_id = f"{file_id}:{name}:{sl}:{sc}:{hashlib.sha1(sym_desc.encode('utf-8'), usedforsecurity=False).hexdigest()[:8]}"
             cur.execute(
                 """INSERT OR REPLACE INTO edges
                    (id, source_id, target_id, target_name, kind, line, column, resolution)

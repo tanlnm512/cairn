@@ -10,6 +10,23 @@ All AI coding agents working in this workspace should use these tools.
   (`explore` is the recommended first call -- it aggregates the graph layer;
   `ask_compass` is the cross-layer router)
 
+## Shipping a change — MANDATORY workflow (agent trigger)
+TRIGGER: the moment you finish editing and are about to commit, push, or open a
+PR — STOP and follow `docs/contribution-workflow.md` end to end:
+`branch → pre-commit run --all-files → conventional commit → push feature branch
+→ PR (fill the audit checklist) → watch CI → fix on the same branch → post-merge
+cairn update + record_memory`.
+
+Hard rules (do not violate):
+- Never push directly to `main` (it skips the PR-title/dependency-review gates and the review layer).
+- Never `git commit --no-verify` past a pre-commit failure (that defeats Layer 0; only a human may decide to).
+- Commit AND PR title must be conventional: `type(optional-scope): subject` (`feat fix chore docs ci refactor perf test build style revert`).
+- Do not skip the PR template's audit checklist — it is the Layer 2-3 review gate.
+
+The explore-first / before-editing / after-task sections below are the *how*;
+`docs/contribution-workflow.md` is the *procedure* for landing a change. CI
+(Layers 0-1) enforces the automatable parts; this workflow covers the rest.
+
 ## Workflow: explore-first
 
 ### For almost any question -- "how does X work", a flow, surveying an area:
@@ -74,6 +91,21 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
    - type="mistake" for errors others should avoid
    - type="workaround" for non-obvious solutions used
 3. Set confidence (0.0-1.0) based on how sure you are
+
+## PR review (the audit gate)
+Before requesting or approving review on a PR (feature, improvement, or bugfix),
+follow `docs/review-checklist.md`. It uses cairn's own tools to verify, for
+every change:
+- **Blast radius** — `explore` + `impact_analysis` (and `cross_repo_deps` for
+  public-API changes) on changed symbols.
+- **Layering** — `ask_compass` on changed files against the documented architecture.
+- **Post-task hygiene** — that `cairn update` and `record_memory` (above) actually
+  ran, not just were claimed.
+
+The PR template (`.github/PULL_REQUEST_TEMPLATE.md`) carries the author
+checklist; `docs/review-checklist.md` is the procedure behind each box.
+Layers 0-1 (pre-commit + CI: pip-audit, bandit, mypy, PR-title) are automated;
+this is the human/agent layer that catches what they can't.
 
 ## Tool Quirks (empirically verified)
 
