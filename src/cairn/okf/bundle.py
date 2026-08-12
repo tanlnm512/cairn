@@ -1,7 +1,13 @@
 """OKF bundle manager: read/write/list/search concepts in a .knowledge/ tree."""
 from __future__ import annotations
 
+import contextlib
+import errno
+import fcntl
 import logging
+import os
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -10,6 +16,58 @@ from typing import Any, Dict, List, Optional
 from .concept import OKFConcept
 
 logger = logging.getLogger(__name__)
+
+# flock() locks are per-fd, not per-process, so nested lock() calls in the
+# same thread must not re-open+flock (they'd block forever waiting on
+# themselves) -- tracked here instead of re-acquiring the OS lock.
+_LOCK_DEPTH = threading.local()
+
+
+@contextlib.contextmanager
+def _okf_bundle_lock(root: Path, timeout: float = 5.0):
+    """Advisory cross-process lock over mutations to the bundle at ``root``."""
+    key = str(root.resolve())
+    depth = getattr(_LOCK_DEPTH, "depth", None)
+    if depth is None:
+        depth = {}
+        _LOCK_DEPTH.depth = depth
+
+    if depth.get(key, 0) > 0:
+        # Already held by this thread (a nested call) -- no-op.
+        depth[key] += 1
+        try:
+            yield
+        finally:
+            depth[key] -= 1
+        return
+
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / ".okf.lock"
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY, 0o644)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as e:
+                if e.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out after {timeout}s waiting for the OKF bundle "
+                        f"lock at {lock_path} -- another process is mutating "
+                        f"{root}."
+                    )
+                time.sleep(0.05)
+        depth[key] = 1
+        try:
+            yield
+        finally:
+            depth[key] = 0
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 class OKFBundle:
@@ -22,6 +80,10 @@ class OKFBundle:
         # call and invalidated by any mutation (write/delete) so it can never
         # go stale.
         self._index: Optional[Dict[str, Dict[str, Any]]] = None
+
+    def lock(self, timeout: float = 5.0):
+        """Advisory cross-process lock guarding a read-modify-write sequence."""
+        return _okf_bundle_lock(self.root, timeout=timeout)
 
     def _validate_concept_path(self, concept_id: str) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)

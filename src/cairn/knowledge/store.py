@@ -120,17 +120,18 @@ def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
     """
     if new_status not in DOC_STATUSES:
         return False
-    concept = get_document(bundle, doc_id)
-    if not concept:
-        return False
-    current = concept.extensions.get("doc_status", "active")
-    if current not in DOC_STATUSES:
-        current = "active"
-    if DOC_STATUSES.index(new_status) < DOC_STATUSES.index(current):
-        return False
-    concept.extensions["doc_status"] = new_status
-    bundle.write_concept(concept)
-    return True
+    with bundle.lock():
+        concept = get_document(bundle, doc_id)
+        if not concept:
+            return False
+        current = concept.extensions.get("doc_status", "active")
+        if current not in DOC_STATUSES:
+            current = "active"
+        if DOC_STATUSES.index(new_status) < DOC_STATUSES.index(current):
+            return False
+        concept.extensions["doc_status"] = new_status
+        bundle.write_concept(concept)
+        return True
 
 
 def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
@@ -139,19 +140,20 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
     Removes the .md file from the bundle and optionally cleans up
     knowledge_embeddings rows in the database.
     """
-    concept = get_document(bundle, doc_id)
-    if concept is not None:
-        doc_id = concept.concept_id
-    # Route the file path through the write-path validator so a malformed /
-    # malicious doc_id can't escape the bundle root. Raises ValueError on
-    # escape; treat that as "nothing to delete".
-    try:
-        file_path = bundle._validate_concept_path(doc_id)
-    except ValueError:
-        return False
-    if not file_path.exists():
-        return False
-    file_path.unlink()
+    with bundle.lock():
+        concept = get_document(bundle, doc_id)
+        if concept is not None:
+            doc_id = concept.concept_id
+        # Route the file path through the write-path validator so a malformed /
+        # malicious doc_id can't escape the bundle root. Raises ValueError on
+        # escape; treat that as "nothing to delete".
+        try:
+            file_path = bundle._validate_concept_path(doc_id)
+        except ValueError:
+            return False
+        if not file_path.exists():
+            return False
+        file_path.unlink()
     # Clean up embeddings in DB. Normalize doc_id to relative for DB lookup.
     try:
         rel_id = str(Path(doc_id).relative_to(bundle.root))

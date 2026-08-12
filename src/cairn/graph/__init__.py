@@ -9,10 +9,11 @@ semantic, vector_math) hold the actual implementations; the ``queries``
 shim re-exports the same names for backward compatibility.
 
 A small set of shared text/vector primitives (``simple_tokenize``,
-``BASE_STOP_WORDS``, ``l2norm``, ``dot``) and the ``embeddings`` module are
-also exposed here as the public surface for higher layers (knowledge L5,
-memory L4) to consume without reaching into submodule internals. They load
-lazily via ``__getattr__`` so a structural-only import stays embeddings-free.
+``BASE_STOP_WORDS``, ``l2norm``, ``dot``, ``rrf_fuse``) and the ``embeddings``
+module are also exposed here as the public surface for higher layers
+(knowledge L5, memory L4) to consume without reaching into submodule
+internals. They load lazily via ``__getattr__`` so a structural-only import
+stays embeddings-free.
 """
 from .cross_repo import cross_repo_deps
 from .explore import explore
@@ -43,6 +44,11 @@ def __getattr__(name):
         globals()["l2norm"] = _l
         globals()["dot"] = _d
         return _l if name == "l2norm" else _d
+    if name == "rrf_fuse":
+        from .fusion import rrf_fuse as _r
+
+        globals()["rrf_fuse"] = _r
+        return _r
     if name == "embeddings":
         # Use import_module (not `from . import embeddings`) to avoid
         # re-triggering this __getattr__ recursively: `from . import embeddings`
@@ -73,5 +79,6 @@ __all__ = [
     "BASE_STOP_WORDS",
     "l2norm",
     "dot",
+    "rrf_fuse",
     "embeddings",
 ]
