@@ -13,6 +13,14 @@ reused by delete+reinsert).
 On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. Set it to
 `off` to force the brute-force cosine scan. Any load failure degrades to the
 brute-force scan.
+
+Scope: this index covers ONLY the code-corpus ``embeddings`` table (the path
+that ``graph.semantic.semantic_search`` and ``explore`` consume). The
+``knowledge_embeddings`` and ``memory_embeddings`` tables intentionally have
+no vec0 index: those corpora are small and curated (dozens to low hundreds of
+rows), so a brute-force ``cosine_scan`` is sub-millisecond and not worth the
+per-write vec0 sync cost. If either corpus ever grows large, the pattern here
+(rebuild from the source table) is the template for adding one.
 """
 from __future__ import annotations
 

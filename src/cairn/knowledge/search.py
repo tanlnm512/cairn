@@ -250,7 +250,10 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
             (model,),
         ).fetchall()
 
-        # Cosine scan — dual path (numpy or pure-Python)
+        # Cosine scan — dual path (numpy or pure-Python). Deliberately brute-force:
+        # the knowledge corpus is small and curated, so a full-table scan is
+        # sub-millisecond and not worth a vec0 index (see graph/ann_index.py for
+        # the ANN path, which covers only the code-corpus embeddings table).
         scored = _cosine_scan(rows, q_blob, q_dim, threshold)
         scored.sort(key=lambda x: -x[0])
 

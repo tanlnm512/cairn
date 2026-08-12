@@ -209,10 +209,14 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
 TIER_ORDER = ["tribal", "drafts", "raw", "archived"]
 
 
-def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw") -> Optional[str]:
+def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw", conn=None) -> Optional[str]:
     """Demote a memory to a lower tier. Returns new path or None.
 
     Rejects promotions — target_tier must be strictly lower than current.
+
+    If ``conn`` is provided, the memory's persisted embedding row is renamed
+    from the old concept_id to the new one in place (content is unchanged by a
+    demote), avoiding a re-embed of identical text. The caller owns the commit.
     """
     with bundle.lock():
         concept = get_memory(bundle, memory_path)
@@ -235,6 +239,12 @@ def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw")
             pass  # keep as-is if not under bundle root
         concept.extensions["memory_tier"] = target_tier
         new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id)
+        # Carry the embedding forward in place (a demote never changes content,
+        # so re-embedding would be wasted work). old_id is already relative here.
+        # Import via the cairn.graph public surface per the layering rule.
+        if conn is not None:
+            from ..graph import embeddings as _emb
+            _emb.rename_memory_embedding(conn, old_id, new_id)  # caller commits
         return new_id
 
 

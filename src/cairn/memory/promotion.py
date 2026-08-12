@@ -1,6 +1,7 @@
 """Memory promotion, critic, decay, and search."""
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,8 @@ from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
 from . import store as store_mod
 from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
+
+logger = logging.getLogger(__name__)
 
 
 def capture_memory(
@@ -282,6 +285,10 @@ def _semantic_memory_search(
             (model,),
         ).fetchall()
         triples = [(r["vec"], r["dim"], r["doc_id"]) for r in rows]
+        # Deliberately brute-force: the memory corpus is small and curated, so a
+        # full-table cosine scan is sub-millisecond and not worth a vec0 index.
+        # (graph/ann_index.py's ANN path covers only the code-corpus embeddings
+        # table; see its module docstring for when to extend it here.)
         scored = cosine_scan(q_blob, q_dim, triples, threshold=0.1)
 
         # Stamp provenance so callers know these are semantic, not lexical;
@@ -308,14 +315,23 @@ def _semantic_memory_search(
                 break
         return out
     except Exception:
+        # Never let semantic ranking break recall_memory, but leave a debug
+        # breadcrumb (schema drift / malformed blob shouldn't vanish silently).
+        logger.debug("semantic memory search failed; returning []", exc_info=True)
         return []  # never let semantic ranking break recall_memory
 
 
-def promote_memory(bundle: OKFBundle, memory_path: str) -> Optional[str]:
+def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[str]:
     """Force-promote a memory to canonical (compass or wiki).
 
     Moves the file from its tier dir into compass/ (for decisions/patterns) or
-    wiki/ (for architecture). Returns the new concept_id or None on failure.
+    wiki/ (for the architecture). Returns the new concept_id or None on failure.
+
+    If ``conn`` is provided, the memory's persisted embedding row is renamed
+    from the old concept_id to the new one in place (content is unchanged by a
+    promote), avoiding a re-embed of identical text. The caller is responsible
+    for committing/owning the transaction; pass ``conn=None`` to skip (in which
+    case the caller should enqueue a fresh embed at the new id).
     """
     with bundle.lock():
         concept = store_mod.get_memory(bundle, memory_path)
@@ -341,6 +357,13 @@ def promote_memory(bundle: OKFBundle, memory_path: str) -> Optional[str]:
         # an unpromoted memory.
         concept.extensions.pop("memory_tier", None)
         old_id = concept.concept_id
+        # from_file leaves concept_id as an ABSOLUTE path, but embedding doc_ids
+        # are stored relative (they originate from store_memory's return value).
+        # Normalize so the embedding rename below matches the persisted row.
+        try:
+            old_id = str(Path(old_id).relative_to(bundle.root))
+        except ValueError:
+            pass  # already relative, or escapes root -- keep as-is
         concept.concept_id = new_id
         # Append the promotion-history entry BEFORE writing so the new file is
         # written exactly once with history included (no crash window between
@@ -348,6 +371,13 @@ def promote_memory(bundle: OKFBundle, memory_path: str) -> Optional[str]:
         _append_promotion(concept, "force_promote", concept.extensions.get("memory_score", 0.0))
         # Write the new file (with history) first...
         bundle.write_concept(concept)
+        # Carry the embedding forward in place instead of orphaning it (a
+        # promote never changes content, so re-embedding would be wasted work).
+        # Import via the cairn.graph public surface (not the internal submodule)
+        # per the layering rule enforced by test_layer_direction.
+        if conn is not None:
+            from cairn.graph import embeddings as _emb
+            _emb.rename_memory_embedding(conn, old_id, new_id)  # caller commits
         # ...and only once the new file is safely on disk, remove the old one.
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():

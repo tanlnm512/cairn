@@ -49,6 +49,10 @@ def memory_digest(limit: int = 10) -> str:
             out.append(f"  [{score}, refs-verified={refs_verified}] {c.title}")
             if c.description:
                 out.append(f"    {c.description}")
+        from cairn.graph.embeddings import unembedded_memory_hint
+        hint = unembedded_memory_hint(conn, bundle)
+        if hint:
+            out.append(hint)
     finally:
         conn.close()
     return "\n".join(out)
@@ -154,6 +158,13 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
                 out.append("    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory")
             if c.description:
                 out.append(f"    {c.description}")
+        # Footnote: surface the gap when some memories lack embeddings (e.g.
+        # after an upgrade, before `cairn memory embed` has run) so the user
+        # knows semantic recall is partial. Read-only; never writes.
+        from cairn.graph.embeddings import unembedded_memory_hint
+        hint = unembedded_memory_hint(conn, bundle)
+        if hint:
+            out.append(hint)
     finally:
         conn.close()
     return "\n".join(out)
@@ -242,17 +253,24 @@ def memory_promote(memory_path: str) -> str:
     """Force-promote a memory to canonical (compass/wiki). Moves it into
     compass/ (decisions/patterns/mistakes/workarounds) or wiki/features/
     (architecture), bypassing the raw→drafts→tribal tiers entirely."""
+    from cairn.graph.embeddings import memory_is_embedded
     from cairn.memory.promotion import promote_memory
     from . import embed_buffering
 
     bundle = _bundle()
-    new_id = promote_memory(bundle, memory_path)
-    if new_id is None:
-        return f"Error: could not find memory at '{memory_path}'."
-    # Re-embeds at the new address rather than carrying the old row forward --
-    # content is unchanged, so this is cheap, and it's simpler than a SQL
-    # rename since promote_memory itself has no DB connection to do one with.
-    embed_buffering.enqueue(new_id)
+    conn = _rw_conn()
+    try:
+        new_id = promote_memory(bundle, memory_path, conn=conn)
+        if new_id is None:
+            return f"Error: could not find memory at '{memory_path}'."
+        conn.commit()
+        # promote_memory renamed the embedding row in place (content unchanged),
+        # so only enqueue a fresh embed when the memory had no embedding yet.
+        already_embedded = memory_is_embedded(conn, new_id)
+    finally:
+        conn.close()
+    if not already_embedded:
+        embed_buffering.enqueue(new_id)
     return f"Promoted '{memory_path}' -> {new_id}"
 
 
@@ -262,12 +280,24 @@ def memory_demote(memory_path: str, tier: str = "raw") -> str:
     """Demote a memory to a lower tier (tribal→drafts→raw→archived).
     Validates downward-only; rejects promotions via this tool — use
     memory_promote instead."""
+    from cairn.graph.embeddings import memory_is_embedded
     from cairn.memory.store import demote_memory
     from . import embed_buffering
 
     bundle = _bundle()
-    new_path = demote_memory(bundle, memory_path, target_tier=tier)
-    if new_path is not None:
+    conn = _rw_conn()
+    try:
+        new_path = demote_memory(bundle, memory_path, target_tier=tier, conn=conn)
+        already_embedded = False
+        if new_path is not None:
+            conn.commit()
+            # demote_memory renamed the embedding row in place (content
+            # unchanged), so only enqueue a fresh embed when the memory had no
+            # embedding yet.
+            already_embedded = memory_is_embedded(conn, new_path)
+    finally:
+        conn.close()
+    if new_path is not None and not already_embedded:
         embed_buffering.enqueue(new_path)
     if new_path is None:
         return (

@@ -111,6 +111,10 @@ def memory_search(query, tier, db, knowledge):
         except Exception:
             refs = "?"
         click.echo(f"  [{t} {score}, refs-verified={refs}] {c.title}  ({c.concept_id})")
+    from ..graph.embeddings import unembedded_memory_hint
+    hint = unembedded_memory_hint(conn, bundle)
+    if hint:
+        click.echo(hint)
     conn.close()
 
 
@@ -280,6 +284,11 @@ def memory_digest(limit, db, knowledge):
                 except Exception:
                     pass
             click.echo(f"  [{score}, refs-verified={refs}] {c.title}")
+        if conn is not None:
+            from ..graph.embeddings import unembedded_memory_hint
+            hint = unembedded_memory_hint(conn, bundle)
+            if hint:
+                click.echo(hint)
     finally:
         if conn is not None:
             conn.close()
@@ -287,14 +296,24 @@ def memory_digest(limit, db, knowledge):
 
 @memory.command("promote")
 @click.argument("path")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_promote(path, knowledge):
+def memory_promote(path, db, knowledge):
     """Force-promote a memory to canonical (compass/wiki)."""
     from ..memory.promotion import promote_memory
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    new_id = promote_memory(bundle, path)
+    # Pass a writable conn so promote_memory renames the persisted embedding
+    # row to the new concept_id in place (content is unchanged by a promote),
+    # instead of orphaning + re-embedding identical text.
+    conn = get_db(db)
+    try:
+        new_id = promote_memory(bundle, path, conn=conn)
+        if new_id:
+            conn.commit()
+    finally:
+        conn.close()
     if new_id:
         click.echo(f"Promoted to {new_id}")
     else:

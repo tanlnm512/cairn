@@ -16,15 +16,19 @@ import sqlite3
 
 import pytest
 
+import cairn.graph.embeddings as emb
 from cairn.graph.embeddings import (
     chunk_memory_body,
     embed_memory,
     embed_memory_concepts,
     embed_memory_count,
+    memory_is_embedded,
     reap_orphaned_memory_embeddings,
+    rename_memory_embedding,
+    unembedded_memory_hint,
 )
 from cairn.graph.schema import _apply_schema
-from cairn.memory.promotion import _semantic_memory_search, search_memory
+from cairn.memory.promotion import _semantic_memory_search, promote_memory, search_memory
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 
@@ -156,6 +160,27 @@ class TestEmbedMemoryConcepts:
             "SELECT chunk_index FROM memory_embeddings WHERE doc_id = ?", (concept.concept_id,)
         ).fetchall()
         assert len(rows) == 1, "stale chunk rows from the longer body must not survive a re-embed"
+
+    def test_batch_embeds_all_concepts_in_one_embed_call(self, db, bundle, monkeypatch):
+        """All chunks across every concept are embedded in a SINGLE _embed call
+        (not one per concept) -- the backfill/flusher perf optimization."""
+        real_embed = emb._embed
+        calls = []
+
+        def counting_embed(texts):
+            calls.append(len(texts))
+            return real_embed(texts)
+
+        monkeypatch.setattr(emb, "_embed", counting_embed)
+        _write_memory(bundle, "memory/tribal/a", "A", "Why: a.\nHow to apply: b.")
+        _write_memory(bundle, "memory/tribal/c", "C", "Why: c.\nHow to apply: d.")
+        n = embed_memory_concepts(db, bundle, ["memory/tribal/a", "memory/tribal/c"])
+        db.commit()
+        assert n == 2
+        assert len(calls) == 1, "both concepts should share one _embed call"
+        # And that one call carried all chunks from both concepts (2 each:
+        # title+Why, and How-to-apply).
+        assert calls[0] == 4
 
 
 class TestEmbedMemoryBackfill:
@@ -305,3 +330,100 @@ class TestEmbedBuffering:
         ebuf._flush()  # must not raise
 
         assert list(ebuf._QUEUE) == ["memory/tribal/foo"], "failed flush must not drop the batch"
+
+
+# ---------------------------------------------------------------------------
+# 5. rename-on-tier-move (promote/demote carry the embedding forward in place)
+# ---------------------------------------------------------------------------
+
+
+class TestRenameOnTierMove:
+    def test_memory_is_embedded_truthiness(self, db, bundle):
+        concept = _write_memory(bundle, "memory/tribal/foo", "T", "Body.")
+        assert not memory_is_embedded(db, concept.concept_id)
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
+        assert memory_is_embedded(db, concept.concept_id)
+
+    def test_rename_moves_rows_in_place(self, db, bundle):
+        concept = _write_memory(bundle, "memory/tribal/foo", "T", "Body text.")
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
+        moved = rename_memory_embedding(db, concept.concept_id, "compass/promoted-x")
+        db.commit()
+        assert moved > 0
+        # The row now lives at the new address; nothing left at the old one.
+        assert not memory_is_embedded(db, concept.concept_id)
+        assert memory_is_embedded(db, "compass/promoted-x")
+
+    def test_promote_with_conn_renames_embedding(self, db, bundle):
+        concept = _write_memory(
+            bundle, "memory/tribal/foo", "Decision X",
+            "Why: a.\nHow to apply: b.", tier="tribal",
+        )
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
+
+        new_id = promote_memory(bundle, concept.concept_id, conn=db)
+        db.commit()
+
+        assert new_id is not None
+        # The embedding followed the (unchanged) content to the new address --
+        # no orphaned old row, no duplicate, no re-embed.
+        assert not memory_is_embedded(db, concept.concept_id)
+        assert memory_is_embedded(db, new_id)
+
+
+# ---------------------------------------------------------------------------
+# 6. _semantic_memory_search observability (logs, never raises)
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticSearchLogging:
+    def test_logs_and_returns_empty_on_error(self, db, bundle, monkeypatch, caplog):
+        """recall_memory must stay available, so _semantic_memory_search never
+        raises -- but it now leaves a debug breadcrumb instead of swallowing
+        errors silently."""
+        import logging
+
+        # Need at least one embedded row so the function proceeds past the
+        # embed_memory_count==0 guard and reaches embed_query.
+        _write_memory(bundle, "memory/tribal/foo", "T", "Body.")
+        embed_memory_concepts(db, bundle, ["memory/tribal/foo"])
+        db.commit()
+
+        def _boom(_q):
+            raise RuntimeError("induced")
+
+        monkeypatch.setattr(emb, "embed_query", _boom)
+        with caplog.at_level(logging.DEBUG, logger="cairn.memory.promotion"):
+            result = _semantic_memory_search(db, bundle, "anything")
+        assert result == []
+        assert any(
+            "semantic memory search failed" in r.message for r in caplog.records
+        ), "expected a debug breadcrumb for the swallowed error"
+
+
+# ---------------------------------------------------------------------------
+# 7. unembedded_memory_hint (recall/digest footnote)
+# ---------------------------------------------------------------------------
+
+
+class TestUnembeddedHint:
+    def test_hint_when_some_memories_unembedded(self, db, bundle):
+        _write_memory(bundle, "memory/tribal/a", "A", "Body A.")
+        _write_memory(bundle, "memory/tribal/b", "B", "Body B.")
+        embed_memory_concepts(db, bundle, ["memory/tribal/a"])
+        db.commit()
+        hint = unembedded_memory_hint(db, bundle)
+        assert "1 of 2" in hint
+        assert "cairn memory embed" in hint
+
+    def test_no_hint_when_all_embedded(self, db, bundle):
+        _write_memory(bundle, "memory/tribal/a", "A", "Body A.")
+        embed_memory_concepts(db, bundle, ["memory/tribal/a"])
+        db.commit()
+        assert unembedded_memory_hint(db, bundle) == ""
+
+    def test_no_hint_when_corpus_empty(self, db, bundle):
+        assert unembedded_memory_hint(db, bundle) == ""
