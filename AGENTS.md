@@ -75,6 +75,21 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
    - type="workaround" for non-obvious solutions used
 3. Set confidence (0.0-1.0) based on how sure you are
 
+## PR review (the audit gate)
+Before requesting or approving review on a PR (feature, improvement, or bugfix),
+follow `docs/review-checklist.md`. It uses cairn's own tools to verify, for
+every change:
+- **Blast radius** — `explore` + `impact_analysis` (and `cross_repo_deps` for
+  public-API changes) on changed symbols.
+- **Layering** — `ask_compass` on changed files against the documented architecture.
+- **Post-task hygiene** — that `cairn update` and `record_memory` (above) actually
+  ran, not just were claimed.
+
+The PR template (`.github/PULL_REQUEST_TEMPLATE.md`) carries the author
+checklist; `docs/review-checklist.md` is the procedure behind each box.
+Layers 0-1 (pre-commit + CI: pip-audit, bandit, mypy, PR-title) are automated;
+this is the human/agent layer that catches what they can't.
+
 ## Tool Quirks (empirically verified)
 
 | Tool | Behavior | Workaround |

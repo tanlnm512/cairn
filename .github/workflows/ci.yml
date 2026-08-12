@@ -33,6 +33,124 @@ jobs:
       - name: Ruff check
         run: ruff check
 
+  # --- Security: supply-chain + code scanning -----------------------------
+  # pip-audit is a HARD gate: a known-vulnerable dependency blocks the PR.
+  # bandit is ADVISORY (continue-on-error): it surfaces NEW security
+  # regressions (eval/exec/pickle/shell/weak-crypto) without churning on the
+  # codebase's known-benign findings. B608 is skipped via -s because every SQL
+  # query here is parameterized (f-strings interpolate only the `?,?,?`
+  # placeholder list; values pass separately to execute()) -- the 26 B608 hits
+  # are false positives. The remaining 5 (B324 hashlib content-IDs, B310 urllib
+  # fetches with timeout) are benign; quiet B324 in code via
+  # usedforsecurity=False in a follow-up.
+  security:
+    name: Security (pip-audit + bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (with dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: pip-audit (hard gate -- known-vulnerable deps fail here)
+        run: pip-audit
+      - name: bandit (advisory)
+        continue-on-error: true
+        run: bandit -r src -ii -ll -s B608
+
+  # --- Type checking: ADVISORY at adoption --------------------------------
+  # mypy reports ~60 errors at default settings today (--ignore-missing-imports
+  # because tree-sitter & friends ship no stubs). Same philosophy as the ruff
+  # gate: ship advisory so NEW type regressions are visible without blocking
+  # CI, then drive the count down and remove `continue-on-error` to make it a
+  # hard gate.
+  typecheck:
+    name: Type check (mypy, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (with dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: mypy
+        run: mypy --ignore-missing-imports src
+
+  # --- Conventional Commit PR-title gate (hard) ---------------------------
+  # Mirrors the commitizen convention that `cz bump` derives the SemVer bump
+  # from. Fails the PR if the title isn't `type(optional-scope): subject`.
+  pr-title:
+    name: PR title (conventional commits)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Types match commitizen's defaults + the ones in this repo's history.
+          types: |
+            feat
+            fix
+            chore
+            docs
+            ci
+            refactor
+            perf
+            test
+            build
+            style
+            revert
+          requireScope: false
+
+  # --- pre-commit: server-side enforcement of all Layer-0 gates ------------
+  # Closes the gap where a dev who skipped `pre-commit install` could bypass
+  # local gates. Critically, this is the ONLY place gitleaks (secrets) runs in
+  # CI -- ruff is covered by the `lint` job, but gitleaks and the yaml/toml/
+  # large-file/debug checks exist only in .pre-commit-config.yaml, so without
+  # this job they are advisory, not binding.
+  pre-commit:
+    name: pre-commit (all local gates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Cache pre-commit hook envs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Install pre-commit
+        run: pip install "pre-commit>=4.0"
+      - name: Run all hooks
+        run: pre-commit run --all-files
+
+  # --- Dependency review for PRs (supply-chain, complements pip-audit) -----
+  # pip-audit scans the fully-resolved environment; this checks the *delta* a
+  # PR introduces (new/changed deps) against the GitHub Advisory DB + licenses.
+  dependency-review:
+    name: Dependency review (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/dependency-review-action@v4
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

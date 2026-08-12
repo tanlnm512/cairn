@@ -62,7 +62,18 @@ dev = [
     "watchdog>=3.0",
     "build",
     "ruff>=0.6",
+    # Review/audit pipeline (Layer 1 CI gates). Run locally before pushing:
+    #   mypy --ignore-missing-imports src
+    #   bandit -r src -ii -ll -s B608   # -s B608: every query is parameterized,
+    #                                   # so B608 is endemic-but-safe noise
+    #   pip-audit
+    "mypy>=1.10",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
     "grpcio-tools>=1.60",
+    # Local review/audit gate (Layer 0 of the review pipeline): defines the
+    # pre-commit hooks (.pre-commit-config.yaml) that run before every commit.
+    "pre-commit>=4.0",
     # Release tooling: `cz bump` bumps the version across version_files and
     # tags the release; CHANGELOG.md stays hand-maintained. See
     # docs/release-checklist.md "Cutting a release".
