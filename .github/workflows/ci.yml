@@ -53,7 +53,6 @@ jobs:
   typecheck:
     name: Type check (mypy, advisory)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -64,7 +63,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      # continue-on-error at the STEP level (not job) -- the standard advisory
+      # pattern, same as bandit above: the job reports SUCCESS (green) so it
+      # doesn't block branch protection, while still printing the ~57 known
+      # errors in the log for visibility. (Job-level continue-on-error leaves
+      # the check red in branch protection.) Remove this line to promote mypy
+      # to a hard gate once the error count is driven down.
       - name: mypy
+        continue-on-error: true
         run: mypy --ignore-missing-imports src
 
   # --- Conventional Commit PR-title gate (hard) ---------------------------

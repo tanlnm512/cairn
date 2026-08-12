@@ -259,7 +259,7 @@ requires-dist = [
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.60" },
     { name = "mcp", specifier = ">=0.9.0,<2.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = "==2.3.0" },
     { name = "numpy", marker = "extra == 'semantic'", specifier = ">=1.24" },
     { name = "packaging", specifier = ">=21.0" },
     { name = "pathspec", specifier = ">=0.12" },

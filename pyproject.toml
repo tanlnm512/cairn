@@ -69,7 +69,10 @@ dev = [
     #   bandit -r src -ii -ll -s B608   # -s B608: every query is parameterized,
     #                                   # so B608 is endemic-but-safe noise
     #   pip-audit
-    "mypy>=1.10",
+    # Pinned (not >=) so local and CI run the SAME mypy -- a floating mypy
+    # caused CI-only version drift. ~58 known errors (advisory: continue-on-error
+    # in CI; drive the count down, then remove continue-on-error to promote it).
+    "mypy==2.3.0",
     "bandit>=1.7",
     "pip-audit>=2.7",
     "grpcio-tools>=1.60",
