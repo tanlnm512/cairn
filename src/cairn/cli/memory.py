@@ -32,6 +32,7 @@ def memory_record(mtype, title, body, resource, confidence, db, knowledge):
     Skip anything cheaper to re-derive than recall: facts the graph already
     answers, plain git history, or ephemeral session-only state.
     """
+    from ..graph.embeddings import embed_memory_concepts
     from ..memory.promotion import capture_memory
     from ..okf.bundle import OKFBundle
 
@@ -41,6 +42,8 @@ def memory_record(mtype, title, body, resource, confidence, db, knowledge):
         conn, bundle, type_=mtype, title=title, body=body or title,
         resource=resource, confidence=confidence,
     )
+    embed_memory_concepts(conn, bundle, [result["path"]])
+    conn.commit()
     conn.close()
     signals = result["signals"]
     click.echo(f"Recorded {mtype} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})")
@@ -59,6 +62,7 @@ def memory_evolve(memory_path, title, body, db, knowledge):
     --include-superseded) and its version chain is inherited, preserving
     the full decision history.
     """
+    from ..graph.embeddings import embed_memory_concepts
     from ..memory.promotion import evolve_memory
     from ..okf.bundle import OKFBundle
 
@@ -67,6 +71,9 @@ def memory_evolve(memory_path, title, body, db, knowledge):
     result = evolve_memory(
         conn, bundle, memory_path, new_title=title, new_body=body
     )
+    if result is not None:
+        embed_memory_concepts(conn, bundle, [result["path"]])
+        conn.commit()
     conn.close()
     if result is None:
         click.echo(f"Memory not found: '{memory_path}'.")
@@ -126,6 +133,7 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
     both are given the stdin form wins.
     """
 
+    from ..graph.embeddings import embed_memory_concepts
     from ..llm.tasks import create_task
     from ..memory.promotion import capture_memory
     from ..okf.bundle import OKFBundle
@@ -152,9 +160,10 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
 
     # If we got candidates, record them now.
     recorded = 0
+    captured_paths = []
     for cand in candidates:
         try:
-            capture_memory(
+            result = capture_memory(
                 conn, bundle,
                 type_=cand.get("type", "decision"),
                 title=cand.get("title", "untitled"),
@@ -162,9 +171,14 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
                 confidence=float(cand.get("confidence", 0.6)),
                 session_origin=session_id,
             )
+            captured_paths.append(result["path"])
             recorded += 1
         except Exception:
             continue
+
+    if captured_paths:
+        embed_memory_concepts(conn, bundle, captured_paths)
+        conn.commit()
 
     if recorded:
         click.echo(f"Captured {recorded} memories from session {session_id}.")
@@ -273,17 +287,14 @@ def memory_digest(limit, db, knowledge):
 
 @memory.command("promote")
 @click.argument("path")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_promote(path, db, knowledge):
+def memory_promote(path, knowledge):
     """Force-promote a memory to canonical (compass/wiki)."""
     from ..memory.promotion import promote_memory
     from ..okf.bundle import OKFBundle
 
-    conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    new_id = promote_memory(bundle, path, conn=conn)
-    conn.close()
+    new_id = promote_memory(bundle, path)
     if new_id:
         click.echo(f"Promoted to {new_id}")
     else:
@@ -301,6 +312,36 @@ def memory_decay(knowledge):
     bundle = OKFBundle(knowledge)
     result = decay(bundle)
     click.echo(f"Expired raw: {result['expired_raw']}, archived tribal: {result['archived_tribal']}")
+
+
+@memory.command("embed")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--batch-size", default=64, type=int)
+@click.option("--reap/--no-reap", default=True,
+              help="Also delete embedding rows whose memory no longer exists "
+                   "(left behind by promote/demote/decay tier moves). Default on.")
+def memory_embed(db, knowledge, batch_size, reap):
+    """Backfill semantic embeddings for memories captured before this existed,
+    or after an embedding-model swap. Ongoing capture/evolve embed on their
+    own; this is for catching up the rest."""
+    from cairn.graph import embeddings as emb
+    from ..okf.bundle import OKFBundle
+
+    bundle = OKFBundle(knowledge)
+    conn = get_db(db)
+    try:
+        if reap:
+            reaped = emb.reap_orphaned_memory_embeddings(conn, bundle)
+            if reaped:
+                click.echo(f"Reaped {reaped} orphaned embedding row(s).")
+        summary = emb.embed_memory(conn, bundle, batch_size=batch_size)
+        click.echo(
+            f"Embedded {summary['embedded']} memory concept(s) with {summary['model']} "
+            f"({summary['skipped']} already up to date, {summary['total']} total)."
+        )
+    finally:
+        conn.close()
 
 
 @memory.command("batch-critic")

@@ -196,6 +196,25 @@ CREATE TABLE IF NOT EXISTS knowledge_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_embeddings_model ON knowledge_embeddings(model);
 
+-- semantic embeddings for memory concepts (decisions/patterns/mistakes under
+-- memory/). doc_id is a concept_id path on disk (NOT a DB row, and NOT
+-- stable -- promote/demote/decay move a memory to a new concept_id), so
+-- there is no foreign key constraint and a row can go stale on a tier move
+-- (skipped at read time when doc_id no longer resolves in the bundle).
+-- chunk_index lets a long body be split into multiple embedded pieces
+-- (see chunk_memory_body) instead of one embedding per whole concept.
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    doc_id TEXT NOT NULL,          -- concept_id path (e.g. "memory/tribal/foo-a1b2c3")
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    model TEXT NOT NULL,           -- for invalidation on model swap
+    dim INTEGER NOT NULL,
+    vec BLOB NOT NULL,             -- float32 little-endian
+    chunk TEXT NOT NULL,           -- the text that was embedded
+    embedded_at TIMESTAMP,
+    PRIMARY KEY (doc_id, chunk_index, model)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model ON memory_embeddings(model);
+
 -- precomputed dataflow index for public/exported symbols. Within-repo
 -- impacted symbols and cross-repo consumer repos are materialised so lookups
 -- are O(1) instead of re-running impact_analysis + cross_repo_deps on each

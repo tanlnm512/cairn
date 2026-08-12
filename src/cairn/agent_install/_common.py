@@ -291,23 +291,40 @@ You can read these files directly when MCP is unavailable.
 """
 
 
-def _claude_instructions() -> str:
+def _transport_note(transport: str = "stdio", sse_url: str | None = None) -> str:
+    """One-line transport description; must match what mcp_config_json() writes."""
+    if transport == "sse":
+        from ..mcp_server import lifecycle as lc
+
+        url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        return (
+            f"- Transport: SSE, shared daemon at {url} (one process serves every "
+            "MCP client; managed via `cairn serve start` / `stop` / `status`).\n"
+            "- Do NOT run `cairn serve` yourself in this workspace -- a stray stdio "
+            "server would hold SQLite's writer lock and bring back \"database is "
+            "locked\" for every other client."
+        )
+    return "- Transport: stdio (one `cairn serve` process per client, spawned automatically by the MCP client)."
+
+
+def _claude_instructions(transport: str = "stdio", sse_url: str | None = None) -> str:
     return (
         "# Codebase Intelligence (Cairn)\n\n"
         "This workspace is connected to the cairn knowledge system. Use these tools\n"
         "to understand the codebase before making changes. Start with the router, drill\n"
         "down with layer-specific tools.\n\n"
+        f"{_transport_note(transport, sse_url)}\n\n"
     ) + _INSTRUCTIONS_BODY
 
 
-def _agents_instructions() -> str:
+def _agents_instructions(transport: str = "stdio", sse_url: str | None = None) -> str:
     return (
         "# Codebase Intelligence System\n\n"
         "This workspace uses a local knowledge graph (cairn) for codebase intelligence.\n"
         "All AI coding agents working in this workspace should use these tools.\n\n"
         "## MCP Server\n"
         "- Name: `cairn` (auto-connected at session start)\n"
-        "- Transport: stdio\n"
+        f"{_transport_note(transport, sse_url)}\n"
         "- 27 tools across 5 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (5)\n"
         "  (`explore` is the recommended first call -- it aggregates the graph layer)\n"
         "\n"

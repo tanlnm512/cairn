@@ -103,10 +103,11 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
             f"captured -- see the Memory Capture Workflow in the skill."
         )
     out = [f"{len(results)} memories matching '{query}':"]
-    # If any hit came via the semantic fallback, surface the backend quality:
-    # the hash fallback carries token-overlap signal, not real semantic meaning.
-    # One-time warning is enough -- provenance on each line carries it too.
-    if any(c.extensions.get("provenance", "").startswith("semantic") for c in results):
+    # If any hit involved the semantic/fused ranking, surface the backend
+    # quality: the hash fallback carries token-overlap signal, not real
+    # semantic meaning. One-time warning is enough -- provenance on each line
+    # carries it too.
+    if any(c.extensions.get("provenance") for c in results):
         from cairn.graph import embeddings as _emb
         _emb.warn_hash_fallback_once(logger, context="recall_memory")
     # Reuse the already-open conn for verification.
@@ -179,9 +180,10 @@ def record_memory(
     Every raw capture still costs review/decay cycles even if never promoted.
     """
     from cairn.memory.promotion import capture_memory
+    from . import embed_buffering
 
     bundle = _bundle()
-    conn = _rw_conn()
+    conn = _conn()
     try:
         result = capture_memory(
             conn, bundle, type_=type, title=title, body=body,
@@ -189,6 +191,7 @@ def record_memory(
         )
     finally:
         conn.close()
+    embed_buffering.enqueue(result["path"])
     signals = result["signals"]
     superseded = result.get("superseded")
     msg = f"Recorded {type} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})"
@@ -211,9 +214,10 @@ def memory_evolve(memory_path: str, title: str = "", body: str = "") -> str:
     At least one of title or body must be provided (and differ from the old).
     """
     from cairn.memory.promotion import evolve_memory
+    from . import embed_buffering
 
     bundle = _bundle()
-    conn = _rw_conn()
+    conn = _conn()
     try:
         result = evolve_memory(
             conn, bundle, memory_path,
@@ -224,6 +228,7 @@ def memory_evolve(memory_path: str, title: str = "", body: str = "") -> str:
         conn.close()
     if result is None:
         return f"Error: could not find memory at '{memory_path}'."
+    embed_buffering.enqueue(result["path"])
     signals = result["signals"]
     return (
         f"Evolved '{memory_path}' -> {result['path']} "
@@ -238,15 +243,16 @@ def memory_promote(memory_path: str) -> str:
     compass/ (decisions/patterns/mistakes/workarounds) or wiki/features/
     (architecture), bypassing the raw→drafts→tribal tiers entirely."""
     from cairn.memory.promotion import promote_memory
+    from . import embed_buffering
 
     bundle = _bundle()
-    conn = _rw_conn()
-    try:
-        new_id = promote_memory(bundle, memory_path, conn=conn)
-    finally:
-        conn.close()
+    new_id = promote_memory(bundle, memory_path)
     if new_id is None:
         return f"Error: could not find memory at '{memory_path}'."
+    # Re-embeds at the new address rather than carrying the old row forward --
+    # content is unchanged, so this is cheap, and it's simpler than a SQL
+    # rename since promote_memory itself has no DB connection to do one with.
+    embed_buffering.enqueue(new_id)
     return f"Promoted '{memory_path}' -> {new_id}"
 
 
@@ -257,9 +263,12 @@ def memory_demote(memory_path: str, tier: str = "raw") -> str:
     Validates downward-only; rejects promotions via this tool — use
     memory_promote instead."""
     from cairn.memory.store import demote_memory
+    from . import embed_buffering
 
     bundle = _bundle()
     new_path = demote_memory(bundle, memory_path, target_tier=tier)
+    if new_path is not None:
+        embed_buffering.enqueue(new_path)
     if new_path is None:
         return (
             f"Error: cannot demote '{memory_path}' to '{tier}'. "

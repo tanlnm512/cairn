@@ -31,9 +31,15 @@ from cairn.paths import resolve_store
 # the first @instrument-wrapped tool call would otherwise hit a None factory.
 # _conn in _server_core is exactly the connection factory metric_buffering
 # needs (open graph DB for the current workspace).
-from ._server_core import _conn, mcp
+from ._server_core import _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import configure_conn
 configure_conn(_conn)
+
+# Memory-embed buffering needs a genuinely writable connection (unlike
+# metrics, it must not skip under CAIRN_READ_ONLY), so it's wired with
+# _rw_conn rather than _conn.
+from . import embed_buffering
+embed_buffering.configure(_rw_conn, _bundle)
 
 # Importing the tools_*.py modules registers every @mcp.tool() on the shared
 # `mcp` instance via decorator side effects. The names aren't used directly
