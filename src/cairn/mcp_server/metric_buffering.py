@@ -37,9 +37,39 @@ _METRIC_FLUSHER_STARTED = False
 MAX_RESULT_CHARS = int(os.environ.get("CAIRN_MAX_RESULT_CHARS", "60000"))
 
 
+def _chars_bucket(n: int) -> str:
+    """Bucket a result length into a fixed low-cardinality set (spec §6.4).
+
+    Truncation is observable analytics, not correctness: a coarse bucket is
+    enough to see ``explore`` blowing past 60k chars vs ``search_symbols``
+    clipping at ~2k -- the exact count carries no extra diagnostic value and
+    would balloon the ``events`` row cardinality.
+    """
+    if n <= 500:
+        return "<=500"
+    if n <= 2000:
+        return "500-2k"
+    if n <= 10000:
+        return "2k-10k"
+    return ">10k"
+
+
 def _truncate_result(name: str, result: str) -> str:
     if len(result) <= MAX_RESULT_CHARS:
         return result
+    # Over-cap: emit a durable truncate_result event so truncation rate is
+    # measurable per tool (spec §4.2 gap 8). Emitted ONLY on the actual
+    # truncation branch, not every call. The import is lazy (mirrors the lazy
+    # cairn.telemetry.sink imports in configure_conn / _start_metric_flusher,
+    # kept lazy to avoid any boot-order cycle) and the whole block is guarded
+    # so a telemetry bug can never fail a tool call -- ``_truncate_result``
+    # runs inside ``instrument``'s try block, but telemetry is best-effort.
+    try:
+        from cairn.telemetry import TRUNCATE_RESULT, emit as _emit
+
+        _emit(TRUNCATE_RESULT, tool=name, chars_bucket=_chars_bucket(len(result)))
+    except Exception:
+        pass
     head = result[:MAX_RESULT_CHARS]
     # Cut at the last newline so the truncation note doesn't land mid-line.
     cut = head.rfind("\n")

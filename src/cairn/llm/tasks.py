@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
+from ..telemetry import TASK_LIFECYCLE, emit as _emit
 
 TASK_DIR = "_tasks"
 MAX_REVISE_CYCLES = 3
@@ -151,6 +152,14 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
         task.assigned_to = assigned_to
         task.claimed_at = _now()
         bundle.write_concept(_task_to_concept(task))
+        # task_lifecycle: claimed -- emit is best-effort (never raises), so a
+        # telemetry outage can't block a claim (spec §5.6).
+        _emit(
+            TASK_LIFECYCLE,
+            task_kind=task.task_kind,
+            event="claimed",
+            attempt=task.attempt,
+        )
         return task
     except Exception:
         # Something went wrong - clean up marker and re-raise
@@ -313,6 +322,12 @@ def complete_task(
                     bundle.write_concept(flow_concept)
                     promoted = True
 
+                _emit(
+                    TASK_LIFECYCLE,
+                    task_kind=task.task_kind,
+                    event="completed",
+                    attempt=task.attempt,
+                )
                 return {
                     "task_id": task_id,
                     "promoted": promoted,
@@ -342,7 +357,13 @@ def complete_task(
                         },
                         parent_attempt=task.attempt,
                     )
-                    
+
+                    _emit(
+                        TASK_LIFECYCLE,
+                        task_kind=task.task_kind,
+                        event="revised",
+                        attempt=task.attempt,
+                    )
                     return {
                         "task_id": task_id,
                         "promoted": False,
@@ -353,6 +374,12 @@ def complete_task(
                     }
                 else:
                     # Max cycles reached - drop the task
+                    _emit(
+                        TASK_LIFECYCLE,
+                        task_kind=task.task_kind,
+                        event="dropped",
+                        attempt=task.attempt,
+                    )
                     return {
                         "task_id": task_id,
                         "promoted": False,

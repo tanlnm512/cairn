@@ -273,21 +273,39 @@ def run(transport: str = "stdio", port: int | None = None):
         mcp.run()
 
 
+def _run_stray_sweep(db_path: str) -> int:
+    """One stray-sweep pass: kill orphan ``cairn serve`` PIDs + emit when any die.
+
+    Factored out of ``_install_stray_sweeper``'s loop so the
+    emit-on-genuine-kill behavior (spec §6.4 ``stray_swept``) is unit-testable
+    without spinning the daemon thread (which sleeps ``interval_s`` between
+    ticks). Returns the count killed. The emit fires ONLY when a pass actually
+    killed something -- an idle sweep (the common case) emits nothing, so a
+    healthy daemon doesn't generate a ``stray_swept`` row every 60s.
+    """
+    from ..mcp_server import lifecycle as lc
+    from cairn.telemetry import STRAY_SWEPT, emit as _emit
+
+    killed = lc.sweep_strays(db_path, log=True)
+    if killed:
+        # emit is best-effort (never raises); count is a small int (bounded).
+        _emit(STRAY_SWEPT, count=killed)
+    return killed
+
+
 def _install_stray_sweeper(db_path: str, interval_s: float = 60.0):
     """Background daemon thread that periodically evicts orphan `cairn serve` PIDs.
 
     Called only from the SSE daemon path (see run()). Best-effort: the sweep
     logs one line per kill to stderr. Idempotent start.
     """
-    from ..mcp_server import lifecycle as lc
-
     def _loop():
         # Delay the first sweep so a freshly-started daemon doesn't race a
         # still-initializing sibling it shouldn't touch.
         time.sleep(interval_s)
         while True:
             try:
-                lc.sweep_strays(db_path, log=True)
+                _run_stray_sweep(db_path)
             except Exception:
                 # The sweeper must never take the daemon down.
                 pass
