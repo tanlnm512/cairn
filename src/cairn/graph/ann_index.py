@@ -29,6 +29,8 @@ import re
 import sqlite3
 from typing import List, Optional, Tuple
 
+from .schema import note_contention
+
 _logger = logging.getLogger(__name__)
 
 
@@ -212,5 +214,6 @@ def ann_query(
             (q_blob, k),
         ).fetchall()
     except sqlite3.OperationalError:
+        note_contention("ann_index.ann_query")
         return None
     return [(r["symbol_id"], 1.0 - float(r["distance"])) for r in rows]

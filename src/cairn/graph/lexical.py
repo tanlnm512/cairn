@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlite3
 from typing import List, Optional
 
+from .schema import note_contention
+
 
 def _is_fts_prefix_pattern(pattern: str) -> bool:
     """True iff ``pattern`` is a pure single-trailing-wildcard token (``"Api*"``).
@@ -159,6 +161,7 @@ def search_symbols(
     try:
         rows = list(conn.execute(sql, params).fetchall())
     except sqlite3.OperationalError:
+        note_contention("lexical.fts_search")
         # FTS5 missing, table absent, or malformed query: degrade to LIKE.
         return _search_like(conn, pattern, kind, limit)
 

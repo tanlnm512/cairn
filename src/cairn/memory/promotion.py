@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
+from ..graph import note_contention
 from . import store as store_mod
 from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
 
@@ -113,6 +114,7 @@ def record_reference(
         )
         conn.commit()
     except sqlite3.OperationalError:
+        note_contention("promotion.record_reference")
         # Lock contention or read-only connection -- ref counting is analytics.
         pass
 
@@ -142,6 +144,7 @@ def record_references_batch(
         )
         conn.commit()
     except sqlite3.OperationalError:
+        note_contention("promotion.record_references_batch")
         # Lock contention or read-only connection -- ref counting is analytics.
         pass
 

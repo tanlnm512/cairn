@@ -17,6 +17,8 @@ import struct
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
 
+from .schema import note_contention
+
 # ---------------------------------------------------------------------------
 # Model identity. Stored per-row so a model swap invalidates and re-embeds.
 # Bumping this string forces embed_all to re-embed every symbol on the next run.
@@ -696,6 +698,7 @@ def embed_all(
             conn.commit()
             embedded += len(batch)
         except sqlite3.OperationalError:
+            note_contention("embeddings.batch_flush")
             # Lock contention (e.g. daemon holding the WAL) — the batch is
             # buffered in the connection; a later commit or retry will flush it.
             failed_batches += 1

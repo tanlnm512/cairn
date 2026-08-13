@@ -49,6 +49,16 @@ def __getattr__(name):
 
         globals()["rrf_fuse"] = _r
         return _r
+    if name == "note_contention":
+        # Cross-cutting lock-contention observability helper, called at every
+        # ``except sqlite3.OperationalError`` swallow site -- including
+        # higher-layer ones (memory/promotion.py). Exposed here so L4/L5 reach
+        # it via the graph public API rather than the internal schema submodule
+        # (enforced by test_layer_direction).
+        from .schema import note_contention as _nc
+
+        globals()["note_contention"] = _nc
+        return _nc
     if name == "embeddings":
         # Use import_module (not `from . import embeddings`) to avoid
         # re-triggering this __getattr__ recursively: `from . import embeddings`
@@ -80,5 +90,6 @@ __all__ = [
     "l2norm",
     "dot",
     "rrf_fuse",
+    "note_contention",
     "embeddings",
 ]

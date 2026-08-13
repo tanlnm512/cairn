@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import logging
 import os
 import sqlite3
 import threading
@@ -321,6 +322,48 @@ from cairn.paths import resolve_store  # noqa: E402
 
 DEFAULT_DB_PATH = resolve_store().db
 
+_logger = logging.getLogger(__name__)
+
+# Process-global guard so each contention site warns at most once per process.
+# Keyed by ``site`` so distinct call points warn independently. Guarded by a
+# lock because swallow sites are reachable from flusher daemon threads
+# (metric_buffering / embed_buffering) concurrently with the main thread.
+_CONTENTION_WARNED: dict[str, bool] = {}
+_CONTENTION_LOCK = threading.Lock()
+
+
+def note_contention(site: str) -> None:
+    """Emit one lock-contention warning per (process, site).
+
+    Called at every ``except sqlite3.OperationalError`` swallow site so a
+    silently-absorbed "database is locked" surfaces at least once instead of
+    vanishing. Another cairn process holds the DB; ``busy_timeout`` retried and
+    absorbed the contention (the operation completed or degraded gracefully).
+    Distinct ``site`` tags warn independently; the same site warns at most once
+    per process -- mirrors ``warn_hash_fallback_once`` (graph/embeddings.py) and
+    ``warn_ann_fallback_once`` (graph/ann_index.py).
+
+    ``site`` is a stable, low-cardinality ``module.function`` tag (NO line
+    numbers -- they drift). P1 (T07/T11) will swap this body for a counter
+    without touching the call sites again.
+
+    Thread-safe: the guard dict is mutated only under ``_CONTENTION_LOCK``; the
+    log call happens after the lock is released so logging can't serialize
+    concurrent swallow sites.
+    """
+    with _CONTENTION_LOCK:
+        if _CONTENTION_WARNED.get(site):
+            return
+        _CONTENTION_WARNED[site] = True
+    _logger.warning(
+        "SQLite lock contention absorbed at %s -- another cairn process holds "
+        "the DB; busy_timeout retried/absorbed this so the operation completed "
+        "(or degraded gracefully). Repeated contention is diagnosable via "
+        "`cairn serve start` (single-daemon SSE mode serializes access and "
+        "avoids cross-process lock waits).",
+        site,
+    )
+
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     """Create tables/indexes/FTS (idempotent) and run additive migrations."""
@@ -344,6 +387,7 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
                 (migration_name, "applied")
             )
         except sqlite3.OperationalError as e:
+            note_contention("schema.migration")
             error_msg = str(e).lower()
             if "duplicate column" in error_msg:
                 # Idempotent: column already exists, mark as applied
@@ -396,6 +440,7 @@ def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
         if token_rows == 0 and sym_count > 0:
             conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
     except sqlite3.OperationalError:
+        note_contention("schema.backfill_fts")
         pass  # FTS5 unavailable, table missing, or no shadow table -- LIKE fallback
 
 

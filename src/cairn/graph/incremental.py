@@ -14,7 +14,7 @@ from typing import List, Optional
 from ..utils.git import _run_git
 from . import builder
 from . import scanner as scanner_mod
-from .schema import get_db
+from .schema import get_db, note_contention
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,7 @@ def reindex_paths(
                         (file_id,),
                     )
                 except sqlite3.OperationalError:
+                    note_contention("incremental.delete_embeddings")
                     logger.debug("embeddings table missing", exc_info=True)
                 cur.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
                 cur.execute("DELETE FROM parse_errors WHERE file_path = ?", (stored_path,))
@@ -170,6 +171,7 @@ def reindex_paths(
                         (abs_path, stored_path),
                     )
                 except sqlite3.OperationalError:
+                    note_contention("incremental.pending_sync_delete")
                     logger.debug("pending_sync table missing", exc_info=True)
                     pass  # table not present on this schema
                 conn.execute("COMMIT")
@@ -207,6 +209,7 @@ def reindex_paths(
             try:
                 conn.execute("DELETE FROM pending_sync WHERE path IN (?, ?)", (rel_to_repo, abs_path))
             except sqlite3.OperationalError:
+                note_contention("incremental.pending_sync_clear")
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
             conn.execute("COMMIT")

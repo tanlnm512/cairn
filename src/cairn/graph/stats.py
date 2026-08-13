@@ -11,6 +11,8 @@ from __future__ import annotations
 import sqlite3
 from typing import List
 
+from .schema import note_contention
+
 
 def get_stats(conn: sqlite3.Connection) -> dict:
     """Aggregate counts for repos, files, symbols, edges, imports."""
@@ -51,6 +53,7 @@ def get_stats(conn: sqlite3.Connection) -> dict:
             ).fetchall()
         }
     except sqlite3.OperationalError:
+        note_contention("stats.skipped_files")
         stats["skipped_total"] = 0
         stats["skipped_by_reason"] = {}
     return stats

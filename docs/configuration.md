@@ -38,6 +38,7 @@ database and a `.knowledge/` markdown bundle. Resolution order is
 
 | Variable | Type / Default | Effect |
 |----------|----------------|--------|
+| `CAIRN_LOG_LEVEL` | string, default `WARNING` | Log threshold for the `cairn` namespace logger. One of `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`, matched case-insensitively (`debug`, `Debug`, `DEBUG` all work). An invalid value falls back to `WARNING` with a single notice on stderr — never raised, so a typo can't break `cairn build` or server boot. The `-v`/`--verbose` CLI flag forces `DEBUG` and wins over this env var; it must precede the subcommand (`cairn -v build`, not `cairn build -v`), because click parses it as a group option — for position-independent control, set `CAIRN_LOG_LEVEL=DEBUG`. Records go to **stderr only** (stdout stays clean as the JSON-RPC channel under the stdio MCP transport), and only the `cairn` logger is configured — never the root logger. |
 | `CAIRN_READ_ONLY` | `0`/`1`, default unset (writable) | When `1`/`true`/`yes`, the MCP server opens the DB read-only. Set automatically by the SSE daemon (the safe shared-instance mode) and by `cairn serve` when read-only is requested. |
 | `CAIRN_WORKERS` | int, default = CPU count | Number of parallel parse/build workers. Honored by the builder; uncapped so you can raise it on big machines. |
 | `CAIRN_MAX_RESULT_CHARS` | int, default `60000` | Cap on the character count of MCP tool results. Truncates oversized responses to keep agent context windows bounded. |

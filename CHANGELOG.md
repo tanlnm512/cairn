@@ -13,7 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- **Observability (P0 quick wins, T01–T05).** Central logging config and
+  visibility for previously silent degradations. `cairn.utils.logging.configure_logging()`
+  is the single config point for the `cairn` namespace logger, wired into both
+  the CLI group callback and the MCP server `run()`. It reads
+  `CAIRN_LOG_LEVEL` (default `WARNING`; `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`,
+  case-insensitive; an invalid value falls back to `WARNING` with one stderr
+  notice) and forces `DEBUG` when the `-v`/`--verbose` flag is set. The handler
+  is **stderr-only** and never touches the root logger, so stdio stdout stays
+  pure JSON-RPC and `caplog` still works in tests. The ANN brute-force fallback
+  (when `sqlite-vec` is unavailable) now emits a one-time `WARNING` via
+  `warn_ann_fallback_once`; an explicit `CAIRN_ANN_BACKEND=off` stays silent as
+  an informed choice rather than a degradation. `cairn status` surfaces
+  `parse_errors` (total count plus the newest five, silent when the table is
+  empty) so a partially-failed build is no longer invisible. The previously-
+  untested metric instrument/flush path is now covered by `tests/test_metrics.py`
+  (decorator success/error paths, `_truncate_result` at `CAIRN_MAX_RESULT_CHARS`,
+  and `_flush_metrics` drain/retry/read-only-skip).
 
 ### Changed
 - _Nothing yet._

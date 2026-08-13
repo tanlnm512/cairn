@@ -27,7 +27,7 @@ from ..parsers import routes as routes_mod
 from ..parsers import service_calls as service_calls_mod
 from . import scanner as scanner_mod
 from . import resolver as resolver_mod
-from .schema import init_db, get_build_db, backup_to, build_lock
+from .schema import init_db, get_build_db, backup_to, build_lock, note_contention
 from ..paths import resolve_store as _resolve_store
 
 # Language -> parser class.
@@ -955,6 +955,7 @@ def _clear_repo(conn, repo_name: str):
             (repo_name,),
         )
     except sqlite3.OperationalError:
+        note_contention("builder.delete_repo_embeddings")
         pass  # embeddings table missing on a DB that never had the semantic extra
     # 4. Now safe to delete symbols.
     cur.execute(
