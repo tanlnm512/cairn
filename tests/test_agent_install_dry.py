@@ -71,8 +71,39 @@ def test_cairn_prep_grep_count():
     print(f"grep count verified: {len(matches)} match")
 
 
+def test_rm_tree_if_cairn_refuses_non_cairn_dir(tmp_path):
+    """_rm_tree_if_cairn must NOT delete a directory that isn't cairn-scoped.
+
+    Regression for the guard-in-name-only footgun: the function promised a
+    content check but deleted any existing dir. A broader path must be refused.
+    """
+    from cairn.agent_install.merge import _rm_tree_if_cairn
+    from cairn.agent_install._common import InstallResult
+
+    # A user directory NOT named 'cairn' -- must survive.
+    victim = tmp_path / ".claude"
+    victim.mkdir()
+    (victim / "settings.json").write_text("{}")
+    res = InstallResult(client="test")
+    _rm_tree_if_cairn(victim, res)
+    assert victim.exists(), "non-cairn directory was deleted"
+    assert (victim / "settings.json").exists()
+    assert any("not cairn-scoped" in n for n in res.notes)
+
+    # A cairn-named directory -- removed as before.
+    skill = tmp_path / ".claude" / "skills" / "cairn"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("x")
+    res2 = InstallResult(client="test")
+    _rm_tree_if_cairn(skill, res2)
+    assert not skill.exists()
+    assert any("removed" in w for w in res2.written)
+
+
 if __name__ == "__main__":
     test_slash_commands_constant_exists()
     test_slash_commands_constant_is_used()
     test_cairn_prep_grep_count()
+    # test_rm_tree_if_cairn_refuses_non_cairn_dir needs pytest's tmp_path fixture.
+    print("Run pytest for the full suite (incl. tmp_path fixtures).")
     print("All tests passed!")

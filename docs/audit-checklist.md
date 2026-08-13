@@ -179,7 +179,8 @@ swallowed `.get()` once disabled fusion entirely.
 
 ## Scope 5 — Parser correctness
 
-**What:** the 13 tree-sitter parsers + SCIP importer. Steady drip of edge cases;
+**What:** the 14 languages (12 tree-sitter parser modules; c+cpp share c_family,
+ts+js share typescript) + SCIP importer. Steady drip of edge cases;
 run after adding/touching a parser.
 
 **Load context:** `explore("parse")`, `explore("language inference")`,
@@ -258,7 +259,7 @@ memory). Run per release.
 
 - [ ] **Version refs** — version string consistent across README, CHANGELOG,
       cli-reference, architecture docs, pyproject.
-- [ ] **Tool counts / language counts** — "27 tools", "13 parsers" etc. match
+- [ ] **Tool counts / language counts** — "27 tools", "14 languages" etc. match
       reality (recount, don't trust the doc).
 - [ ] **BUGS.md structure** — index table present, one TL;DR per entry, each entry
       maps to a regression test (per the structure convention).

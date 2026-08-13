@@ -144,6 +144,27 @@ class TestEvolveMemory:
         result = evolve_memory(db, bundle, "memory/tribal/nonexistent", new_body="x")
         assert result is None
 
+    def test_evolve_redacts_secret_in_new_body(self, db, bundle):
+        """A secret in an evolved body never reaches disk verbatim.
+
+        Regression for the evolve_memory redaction bypass: capture_memory
+        redacts, but evolve_memory once passed new_body straight through.
+        """
+        secret = "api_key=sk-1234567890abcdef1234567890abcdef"
+        r1 = capture_memory(
+            db, bundle, type_="pattern", title="evolve redact",
+            body="original clean body", confidence=0.7,
+        )
+        result = evolve_memory(
+            db, bundle, r1["path"],
+            new_body=f"Updated: rotated {secret} during deploy.",
+        )
+        assert result is not None
+        stored = bundle.read_concept(result["path"])
+        assert secret not in stored.body
+        assert "sk-1234567890" not in stored.body
+        assert "REDACTED_SECRET" in stored.body
+
 
 # ---------------------------------------------------------------------------
 # FEATURE 2: Exponential freshness + reinforcement

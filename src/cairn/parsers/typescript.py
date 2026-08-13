@@ -228,6 +228,13 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             sym = self._parse_field(node, source)
             if sym:
                 pf.symbols.append(sym)
+            # Descend into the initializer so call edges in field initializers
+            # (e.g. `defaultRepo = createRepo()`) are emitted. function_declaration
+            # and method_definition call _walk for the same reason; a field
+            # initializer is not a new function scope, so _callable_scope /
+            # _func_depth are left untouched. Without this, every call inside a
+            # class-field initializer was silently dropped.
+            self._walk(node, source, pf)
             return
 
         if t in VAR_DECL_NODES:

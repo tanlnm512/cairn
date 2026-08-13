@@ -303,10 +303,25 @@ def _rm_if_exists(path: Path, res: InstallResult) -> None:
 
 
 def _rm_tree_if_cairn(path: Path, res: InstallResult) -> None:
-    """Remove a dir tree only if it contains cairn content."""
-    if path.is_dir() and path.exists():
-        shutil.rmtree(path)
-        res.written.append(f"removed {path}/")
+    """Remove a dir tree only if it is cairn-scoped.
+
+    All callers target a directory *named* ``cairn`` (e.g.
+    ``.claude/skills/cairn``). The name check is the guard the function's name
+    promises: without it a future caller passing a broader path (say
+    ``.claude`` itself) would ``rmtree`` the user's whole directory. If the
+    final path component isn't ``cairn``, refuse and record a note rather than
+    delete something that isn't ours.
+    """
+    if not (path.is_dir() and path.exists()):
+        return
+    if path.name != "cairn":
+        res.notes.append(
+            f"refused to remove {path}/: not cairn-scoped (directory must be "
+            f"named 'cairn'). Remove manually if intended."
+        )
+        return
+    shutil.rmtree(path)
+    res.written.append(f"removed {path}/")
 
 
 def _rm_if_cairn(path: Path, res: InstallResult) -> None:

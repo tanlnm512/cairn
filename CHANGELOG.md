@@ -24,6 +24,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - _Nothing yet._
 
+## [0.9.1] - 2026-08-13
+
+> **Focus:** memory semantic recall + MCP lock-contention hardening (PR #23),
+> plus a scope-audit pass that closed secret-redaction and dropped-edge gaps.
+
+### Added
+- **Memory + MCP server:** semantic recall pipeline and MCP server
+  lock-contention hardening (#23). `recall_memory` now falls back to semantic
+  similarity when lexical matching comes up empty; remaining MCP server
+  lock-contention gaps are closed; orphaned memory embeddings are reaped at
+  decay sites; lock behavior is covered by new tests.
+
+### Changed
+- **MCP server:** the background memory-embed flusher escalates to a `WARNING`
+  log after repeated failures instead of retrying invisibly at `debug` level
+  every 15s forever, so a chronically broken embed model is observable.
+- **CI:** mypy is now advisory (step-level `continue-on-error`) so the ~60
+  known type errors don't block PRs; new type regressions still print in the
+  log for visibility.
+
+### Fixed
+- **Memory:** `evolve_memory` (the `memory_evolve` MCP tool / `cairn memory`
+  evolve CLI) now redacts secrets from the new body before storage, matching
+  `capture_memory`'s floor. A secret in an evolved body was previously
+  persisted verbatim -- the same two-codepath divergence that once left
+  `record_memory` unredacted.
+- **Parsers:** constructor calls (`new Foo()`) in Java and PHP, and call edges
+  inside class-field initializers in TypeScript and Java (`repo = createRepo()`),
+  are now indexed as `calls` edges. They were previously dropped silently --
+  the same edge-drop family as the `var-declarator` fix.
+- **Agent install:** `cairn agents uninstall` now refuses to delete a directory
+  that isn't cairn-scoped (named `cairn`). The `_rm_tree_if_cairn` helper
+  promised this guard in its name but never enforced it; current callers were
+  safe, but a broader path would have been wiped.
+
+### Removed
+- _Nothing yet._
+
 ## [0.9.0] - 2026-08-11
 
 > **Focus:** backend language coverage — C#, C, and C++ parsers.

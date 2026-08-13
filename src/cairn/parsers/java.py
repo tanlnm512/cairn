@@ -86,10 +86,26 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         if t == "field_declaration":
             for sym in self._parse_field(node, source):
                 pf.symbols.append(sym)
+            # Descend into initializers so calls in field initializers (e.g.
+            # `private final Repo repo = createRepo();`) emit edges. Mirrors
+            # method_declaration above; without this, field-initializer calls
+            # were silently dropped.
+            self._walk(node, source, pf)
             return
 
         if t == "method_invocation":
             edge = self._parse_call(node, source)
+            if edge:
+                pf.edges.append(edge)
+            self._walk(node, source, pf)
+            return
+
+        if t == "object_creation_expression":
+            # `new Foo()` -- a constructor call. Emit a calls edge to the
+            # constructed type so get_callers/impact_analysis see it (C# does
+            # the same for its object_creation_expression). Without this,
+            # every `new Foo()` in Java produced no edge at all.
+            edge = self._parse_new(node, source)
             if edge:
                 pf.edges.append(edge)
             self._walk(node, source, pf)
@@ -273,3 +289,25 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             line=node.start_point[0] + 1,
             receiver_type=self._infer_receiver_type(receiver_text),
         )
+
+    def _parse_new(self, node: Node, source: bytes) -> Optional[Edge]:
+        # object_creation_expression: 'new' <type> argument_list. The
+        # constructed type is the type node after 'new' (type_identifier for a
+        # simple name; class_type/scoped_type_identifier when qualified). Use
+        # the trailing identifier so the resolver can match it to the class
+        # symbol, mirroring the method-name-only call convention.
+        owner = self._current_edge_owner()
+        for child in node.children:
+            if child.type == "argument_list":
+                break
+            if child.type in ("type_identifier", "class_type", "scoped_type_identifier"):
+                txt = self._node_text(child, source).strip()
+                callee = txt.split(".")[-1]
+                return Edge(
+                    source_name=owner,
+                    kind="calls",
+                    target_name=callee,
+                    line=node.start_point[0] + 1,
+                    receiver_type=None,
+                )
+        return None
