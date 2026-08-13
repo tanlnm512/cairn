@@ -19,6 +19,8 @@ Covers:
   5. Regression: a fresh-DB init (single process, new file) stays silent -- the
      idempotent "duplicate column" migration path is NOT contention and must not
      trip a false-positive warning.
+  6. ``note_contention`` emits a durable ``lock_contention`` telemetry event
+     (for doctor/metrics aggregation) alongside its WARNING.
 """
 from __future__ import annotations
 
@@ -246,4 +248,34 @@ def test_fresh_db_init_emits_no_contention_warning(tmp_path, caplog):
     )
     assert "schema.migration" not in schema._CONTENTION_WARNED, (
         "duplicate-column idempotent re-run must not set the contention guard"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. note_contention emits a durable lock_contention event (spec §6.4)
+# ---------------------------------------------------------------------------
+
+
+def test_note_contention_emits_lock_contention_event(monkeypatch):
+    """note_contention emits a ``lock_contention`` telemetry event alongside its
+    WARNING, so ``cairn doctor`` / ``cairn metrics --contention`` can aggregate
+    contention trends rather than rely on a one-time log line.
+
+    The event is gated by ``CAIRN_TELEMETRY`` internally; the WARNING is
+    unconditional (operational). This test asserts the event path; the log path
+    is covered by sections 1-4 above.
+    """
+    from cairn.telemetry import sink as _sink, LOCK_CONTENTION
+
+    monkeypatch.delenv("CAIRN_TELEMETRY", raising=False)  # default: on-but-local
+    _sink._BUFFER.clear()  # single-threaded test; ignore events from other tests
+    note_contention("test.event_site")
+
+    rows = list(_sink._BUFFER)
+    names = [r[1] for r in rows]
+    assert LOCK_CONTENTION in names, "note_contention must emit a lock_contention event"
+    # The site tag rides in the attrs_json slot (4th tuple element).
+    event_rows = [r for r in rows if r[1] == LOCK_CONTENTION]
+    assert any("test.event_site" in (r[3] or "") for r in event_rows), (
+        "site tag must be carried in the event attrs"
     )

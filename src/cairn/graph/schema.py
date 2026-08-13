@@ -377,17 +377,30 @@ def note_contention(site: str) -> None:
     ``warn_ann_fallback_once`` (graph/ann_index.py).
 
     ``site`` is a stable, low-cardinality ``module.function`` tag (NO line
-    numbers -- they drift). P1 (T07/T11) will swap this body for a counter
-    without touching the call sites again.
+    numbers -- they drift). Also emits a durable ``lock_contention`` telemetry
+    event (spec §6.4) so ``cairn doctor`` / ``cairn metrics --contention`` can
+    aggregate contention trends, not just log a one-time line. The event is
+    gated by ``CAIRN_TELEMETRY`` internally; the WARNING stays unconditional
+    (an operational signal, not telemetry data) -- turning telemetry off stops
+    recording but does not silence the operational warning.
 
     Thread-safe: the guard dict is mutated only under ``_CONTENTION_LOCK``; the
-    log call happens after the lock is released so logging can't serialize
+    emit + log calls happen after the lock is released so they can't serialize
     concurrent swallow sites.
     """
     with _CONTENTION_LOCK:
         if _CONTENTION_WARNED.get(site):
             return
         _CONTENTION_WARNED[site] = True
+    # Durable event for doctor/metrics aggregation (best-effort; gated by
+    # CAIRN_TELEMETRY). Lazy import: schema is imported very early, so this
+    # keeps the telemetry package out of the import graph until first contention.
+    try:
+        from cairn.telemetry import LOCK_CONTENTION, emit as _emit
+
+        _emit(LOCK_CONTENTION, site=site)
+    except Exception:
+        pass
     _logger.warning(
         "SQLite lock contention absorbed at %s -- another cairn process holds "
         "the DB; busy_timeout retried/absorbed this so the operation completed "
