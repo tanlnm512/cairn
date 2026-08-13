@@ -258,7 +258,12 @@ class TestSearchMemoryFusion:
         # bundle.read_concept() rewrites concept_id to an absolute path, so
         # match on title rather than the pre-write relative concept_id.
         hit = next(c for c in results if c.title == concept.title)
-        assert hit.extensions.get("provenance") == "fused"
+        # Found both ways -> a "fused" provenance. The exact string is
+        # backend-dependent: real vectors give "fused", the dep-free hash
+        # fallback (token-overlap, e.g. on CI without the embedding model)
+        # gives "fused (hash backend)". Both are correct fused results; only a
+        # non-fused provenance ("semantic"/"lexical") would fail this.
+        assert hit.extensions.get("provenance", "").startswith("fused")
 
     def test_chunk_dedup_returns_one_entry_per_concept(self, db, bundle):
         """A memory with 3 embedded chunks must appear once in results, not
