@@ -233,5 +233,26 @@ export function greet(name: string): string {
         assert any(s.kind == "function" for s in pf.symbols)
 
 
+# --------------------------------------------- class-field initializer call edges
+
+class TestFieldInitializerCallEdges:
+    """Call edges inside class field initializers (e.g. ``repo = createRepo()``).
+
+    Regression: ``public_field_definition`` returned without descending into
+    the initializer, so every call there was dropped -- the same family as the
+    var-declarator edge-drop fix covered above.
+    """
+
+    def test_call_in_field_initializer_is_emitted(self):
+        src = b"class Service {\n  defaultRepo = createRepo();\n}\n"
+        pf = _parse(TypeScriptParser, src, ".ts")
+        assert "createRepo" in _call_targets(pf)
+
+    def test_single_call_emits_exactly_one_edge(self):
+        src = b"class S { a = build(); }\n"
+        pf = _parse(TypeScriptParser, src, ".ts")
+        assert _call_targets(pf).count("build") == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

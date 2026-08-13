@@ -226,6 +226,14 @@
     {
       "source_name": "greet",
       "kind": "calls",
+      "target_name": "Logger",
+      "line": 40,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "greet",
+      "kind": "calls",
       "target_name": "getName",
       "line": 42,
       "column": 0,

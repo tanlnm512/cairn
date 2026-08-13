@@ -58,6 +58,7 @@ _CALL_NODES = frozenset(
         "member_call_expression",
         "nullsafe_member_call_expression",  # $obj?->method()
         "scoped_call_expression",           # Class::method() / $inst::method()
+        "object_creation_expression",       # new Foo() -- constructor call
     }
 )
 # Declaration node types that introduce a named type (class/interface/trait/enum).
@@ -346,6 +347,8 @@ class PhpParser(BaseParser, TreeSitterParserBase):
             callee, receiver = self._split_function_call(node, source)
         elif node.type in ("member_call_expression", "nullsafe_member_call_expression"):
             callee, receiver = self._split_member_call(node, source)
+        elif node.type == "object_creation_expression":
+            callee, receiver = self._split_object_creation(node, source)
         else:  # scoped_call_expression: Class::method() / $inst::method()
             callee, receiver = self._split_scoped_call(node, source)
         if not callee:
@@ -357,6 +360,16 @@ class PhpParser(BaseParser, TreeSitterParserBase):
             line=node.start_point[0] + 1,
             receiver_type=self._infer_receiver_type(receiver),
         )
+
+    def _split_object_creation(self, node: Node, source: bytes):
+        # object_creation_expression: 'new' name arguments. The constructed
+        # class is the `name` child. (new Foo() -> Foo.)
+        for child in node.children:
+            if child.type == "name":
+                return self._strip_leading_backslash(
+                    self._node_text(child, source).strip()
+                ), None
+        return None, None
 
     def _split_function_call(self, node: Node, source: bytes):
         # function_call_expression: name | qualified_name, arguments
