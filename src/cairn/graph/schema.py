@@ -243,6 +243,39 @@ CREATE TABLE IF NOT EXISTS tool_metrics (
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_tool ON tool_metrics(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_session ON tool_metrics(session_id);
 
+-- One row per indexing pass (full build / incremental sync / embed) so build
+-- history, phase timings, and resolution quality survive the process that
+-- produced them (spec observability-telemetry 6.2). Additive-only: plain
+-- CREATE TABLE IF NOT EXISTS rides the idempotent executescript in
+-- _apply_schema with NO MIGRATIONS entry, so existing DBs gain the table on
+-- next connect -- the same pattern tool_metrics used.
+CREATE TABLE IF NOT EXISTS build_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    duration_s REAL,
+    phase_timings TEXT,
+    repos INTEGER, files INTEGER, symbols INTEGER, edges INTEGER,
+    resolution_exact INTEGER, resolution_ambiguous INTEGER, resolution_unresolved INTEGER,
+    parse_errors INTEGER, skipped INTEGER,
+    workers INTEGER,
+    session_id TEXT
+);
+
+-- Generic low-cardinality event log (ann_fallback, lock_contention, ...).
+-- attrs is JSON of enums/short tags/bucketed values only -- no paths or free
+-- text -- so the distinct-value space stays bounded. Written by the telemetry
+-- sink, which also prunes retention opportunistically.
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TIMESTAMP NOT NULL,
+    name TEXT NOT NULL,
+    session_id TEXT,
+    attrs TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_name ON events(name);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+
 -- Transitive closure graph matrix for O(1) multi-hop call graph lookups
 CREATE TABLE IF NOT EXISTS transitive_edges (
     source_id TEXT NOT NULL,
