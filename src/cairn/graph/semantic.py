@@ -130,7 +130,8 @@ def semantic_search(
     q_blob, q_dim = emb.embed_query(query)
 
     candidates = None
-    if ann.ann_backend_enabled():
+    ann_enabled = ann.ann_backend_enabled()
+    if ann_enabled:
         ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
         if ann_hits is not None:
             # ANN path available and an index exists for this model.
@@ -139,6 +140,16 @@ def semantic_search(
     if candidates is None:
         # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
         # fetchall() can't grow unbounded with corpus size.
+        #
+        # Surface the degradation once when sqlite-vec was *expected* but is
+        # unavailable. When ann_enabled is False it's either that or an
+        # explicit CAIRN_ANN_BACKEND=off (the helper stays silent on the
+        # opt-out). When ann_enabled is True we only land here pre-rebuild (no
+        # index built yet -- a normal setup state, not a degradation) or after
+        # a load failure that already warned inside try_load, so we don't warn
+        # in that branch.
+        if not ann_enabled:
+            ann.warn_ann_fallback_once(logger, context="semantic_search")
         brute_force_limit = 50000
         rows = conn.execute(
             "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "

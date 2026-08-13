@@ -79,6 +79,21 @@ def status(db, knowledge):
             ).fetchall()
         except Exception:
             pending_rows = []
+
+        # Parse errors are written by the builder/incremental indexer but read
+        # by zero commands -- surface the newest few so a degraded build isn't
+        # invisible. Silent when the table is empty (clean DB output unchanged).
+        try:
+            parse_err_total = conn.execute(
+                "SELECT COUNT(*) FROM parse_errors"
+            ).fetchone()[0]
+            parse_err_rows = conn.execute(
+                "SELECT file_path, error_message FROM parse_errors "
+                "ORDER BY timestamp DESC LIMIT 5"
+            ).fetchall()
+        except Exception:
+            parse_err_total = 0
+            parse_err_rows = []
     finally:
         conn.close()
 
@@ -96,6 +111,16 @@ def status(db, knowledge):
             display.dim(f"  {_shorten(row['path'])}")
         if len(pending_rows) > 20:
             display.dim(f"  ... and {len(pending_rows) - 20} more")
+
+    if parse_err_total:
+        display.warning(f"Parse errors: {parse_err_total}")
+        for row in parse_err_rows:
+            msg = row["error_message"] or ""
+            if len(msg) > 100:
+                msg = msg[:100] + "..."
+            display.dim(f"  {_shorten(row['file_path'])} — {msg}")
+        if parse_err_total > len(parse_err_rows):
+            display.dim(f"  ... and {parse_err_total - len(parse_err_rows)} more")
 
 
 # --------------------------------------------------------------------------

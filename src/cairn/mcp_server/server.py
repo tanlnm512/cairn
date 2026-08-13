@@ -26,6 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from cairn.graph.schema import get_db
 from cairn.paths import resolve_store
+from cairn.utils.logging import configure_logging
 
 # Wire the metric-buffering conn factory BEFORE importing any tools_*.py:
 # the first @instrument-wrapped tool call would otherwise hit a None factory.
@@ -129,6 +130,15 @@ def run(transport: str = "stdio", port: int | None = None):
     down. Tool calls do not re-check freshness per-query, so edits made while
     this process is running require a restart to be picked up.
     """
+    # Central logging config for the server surface: reads CAIRN_LOG_LEVEL
+    # (default WARNING) and attaches a stderr handler to the `cairn` logger
+    # only — never root. stdout is the JSON-RPC channel under stdio, so every
+    # other diagnostic in this file is already hand-stamped to stderr; the
+    # logger handler follows the same rule. FastMCP pins its own level
+    # (_server_core.py:75) to avoid reconfiguring root, which this complements
+    # rather than fights (it configures the `cairn` namespace, not root).
+    configure_logging()
+
     # Fail fast if tool registration drifted.
     verify_tool_count()
 

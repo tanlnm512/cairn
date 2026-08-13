@@ -24,9 +24,12 @@ per-write vec0 sync cost. If either corpus ever grows large, the pattern here
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from typing import List, Optional, Tuple
+
+_logger = logging.getLogger(__name__)
 
 
 def ann_backend_enabled() -> bool:
@@ -42,6 +45,57 @@ def ann_backend_enabled() -> bool:
         return True
     except ImportError:
         return False
+
+
+# Process-global guard so the one-time warning fires at most once per process.
+_ANN_FALLBACK_WARNED: bool = False
+
+
+def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
+    """Emit one ANN-fallback warning per process.
+
+    Mirrors ``embeddings.warn_hash_fallback_once``: a process-global guard
+    ensures the degradation surfaces at most once, so repeated brute-force
+    scans don't spam the log.
+
+    No-op when the brute-force backend was explicitly chosen
+    (``CAIRN_ANN_BACKEND`` set to anything other than ``sqlite-vec``, e.g.
+    ``off``): that is an informed user decision, not a silent degradation, so
+    it must not warn. Only fires when sqlite-vec was *expected* (env unset or
+    ``=sqlite-vec``) but is unavailable or failed to load.
+
+    ``context`` is a short string identifying the calling path (e.g.
+    ``"semantic_search"``); ``reason`` classifies why ANN is unavailable -- if
+    omitted, it is inferred cheaply from whether ``sqlite_vec`` imports.
+    """
+    global _ANN_FALLBACK_WARNED
+    if _ANN_FALLBACK_WARNED:
+        return
+    import os
+
+    val = os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
+    if val != "sqlite-vec":
+        # Explicit opt-out (e.g. "off"): an intentional choice, not a
+        # degradation -- stay silent (mirrors the rationale in
+        # ann_backend_enabled()).
+        return
+    if not reason:
+        try:
+            import sqlite_vec  # noqa: F401
+
+            reason = "load failed or no index built"
+        except ImportError:
+            reason = "sqlite-vec not installed"
+    suffix = f" [{context}]" if context else ""
+    logger.warning(
+        "Semantic search is using the brute-force cosine scan instead of the "
+        "native sqlite-vec ANN index (%s). Results stay correct but slower for "
+        "large corpora. Install sqlite-vec with `cairn embed --install-deps` "
+        "(CAIRN_ANN_BACKEND=sqlite-vec is the default).%s",
+        reason,
+        suffix,
+    )
+    _ANN_FALLBACK_WARNED = True
 
 
 def _table_name(model: str) -> str:
@@ -71,7 +125,21 @@ def try_load(conn: sqlite3.Connection) -> bool:
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
         return True
+    except ImportError:
+        # Package not installed -- the most common degradation. Gated by the
+        # explicit-opt-out check inside the helper, so CAIRN_ANN_BACKEND=off
+        # stays silent.
+        warn_ann_fallback_once(
+            _logger, context="ann_index.try_load", reason="sqlite-vec not installed"
+        )
+        return False
     except Exception:
+        # sqlite-vec is importable but the extension won't load into this
+        # connection (e.g. this Python wasn't built with extension-loading
+        # support, or a platform shared-library load failure).
+        warn_ann_fallback_once(
+            _logger, context="ann_index.try_load", reason="load failed"
+        )
         return False
 
 
