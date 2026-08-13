@@ -88,6 +88,20 @@ def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
             reason = "load failed or no index built"
         except ImportError:
             reason = "sqlite-vec not installed"
+    # Durable event (spec §6.4) with an enum reason for doctor/metrics
+    # aggregation; the WARNING below keeps the human-readable detail. Map the
+    # human reason to the spec's bounded enum so the attr value domain is fixed.
+    _REASON_ENUM = {
+        "sqlite-vec not installed": "not_installed",
+        "load failed": "load_failed",
+        "load failed or no index built": "load_failed",
+    }
+    try:
+        from cairn.telemetry import ANN_FALLBACK, emit as _emit
+
+        _emit(ANN_FALLBACK, reason=_REASON_ENUM.get(reason, "load_failed"))
+    except Exception:
+        pass
     suffix = f" [{context}]" if context else ""
     logger.warning(
         "Semantic search is using the brute-force cosine scan instead of the "

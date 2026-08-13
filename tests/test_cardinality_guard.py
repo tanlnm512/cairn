@@ -175,7 +175,6 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
 }
 
 # Events that actually emit at a live site today (the dynamic sweep drives each).
-# Kept explicit so the gap (ann_fallback / hash_fallback) is visible at a glance.
 LIVE_EVENTS = frozenset(
     {
         SEMANTIC_BACKEND,
@@ -184,9 +183,13 @@ LIVE_EVENTS = frozenset(
         TRUNCATE_RESULT,
         TASK_LIFECYCLE,
         STRAY_SWEPT,
+        ANN_FALLBACK,
+        HASH_FALLBACK,
     }
 )
-NO_EMITTER_EVENTS = frozenset({ANN_FALLBACK, HASH_FALLBACK})
+# All 8 catalog events now have a live emitter (ann_fallback / hash_fallback
+# were wired into warn_*_fallback_once).
+NO_EMITTER_EVENTS = frozenset()
 
 
 def _catalog_event_names() -> set[str]:
@@ -297,10 +300,9 @@ def test_every_catalog_event_has_cardinality_declaration():
 def test_live_and_no_emitter_partitions_cover_catalog():
     """LIVE_EVENTS + NO_EMITTER_EVENTS == the catalog (no event unaccounted for).
 
-    Pins the documentation of which events have a live emitter (dynamic sweep
-    covers them) vs. which are catalog-only today. If an emitter is later wired
-    for ``ann_fallback`` / ``hash_fallback``, move it into LIVE_EVENTS so the
-    sweep starts driving it.
+    Every catalog event has a live emitter the dynamic sweep drives
+    (NO_EMITTER_EVENTS is empty). A new event constant in events.py without a
+    cardinality declaration fails here and in the catalog-coverage test below.
     """
     assert LIVE_EVENTS | NO_EMITTER_EVENTS == _catalog_event_names()
     assert not (LIVE_EVENTS & NO_EMITTER_EVENTS), "an event can't be both"
@@ -452,6 +454,26 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "sweep_strays", lambda db_path, log=False: 1)
     server._run_stray_sweep("/fake/db.sqlite")
 
+    # 6. ann_fallback (warn_ann_fallback_once emits with an enum reason). The
+    # semantic drive above set CAIRN_ANN_BACKEND=off; clear it so the helper
+    # doesn't early-return on the explicit opt-out.
+    from cairn.graph import ann_index as _ann
+    import logging as _logging
+
+    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
+    _ann._ANN_FALLBACK_WARNED = False
+    _ann.warn_ann_fallback_once(
+        _logging.getLogger("test"), reason="sqlite-vec not installed"
+    )
+
+    # 7. hash_fallback (warn_hash_fallback_once emits when the hash backend is
+    # active -- forced here so the drive is hermetic).
+    from cairn.graph import embeddings as _emb
+
+    _emb._HASH_FALLBACK_WARNED = False
+    monkeypatch.setattr(_emb, "is_hash_fallback", lambda: True)
+    _emb.warn_hash_fallback_once(_logging.getLogger("test"))
+
     for name, attrs in _buffered_events():
         captured[name].append(attrs)
 
@@ -575,25 +597,8 @@ def test_task_lifecycle_event_literals_are_within_declared_set():
 
 
 # ===========================================================================
-# 6. ann_fallback / hash_fallback: declared but no live emitter (source gap)
+# 6. ann_fallback / hash_fallback now have live emitters
 # ===========================================================================
-
-
-def test_ann_and_hash_fallback_have_no_live_emitter_documented():
-    """ann_fallback / hash_fallback are catalog-declared but not emitted today.
-
-    FINDING (reported, not fixed here -- this is a test-only task): spec §6.4
-    says ``ann_fallback`` is "Emitted from ann_index.try_load / ann_query /
-    semantic.py fallback branch" and ``hash_fallback`` from "embeddings.
-    warn_hash_fallback_once callers", but those code paths only call the
-    ``warn_*_fallback_once`` *logging* helpers -- they do NOT emit an ``events``
-    row. So the two events are unreachable. This test pins that fact: if/when an
-    emitter is wired, it MUST be moved into LIVE_EVENTS above so the sweep
-    validates its attrs. Until then the declaration (ANN_FALLBACK.reason domain)
-    is the only contract.
-    """
-    assert ANN_FALLBACK in ALLOWED_ATTR_VALUES
-    assert HASH_FALLBACK in ALLOWED_ATTR_VALUES
-    # The reason domain is declared per spec §6.4 even though nothing emits it.
-    assert ALLOWED_ATTR_VALUES[ANN_FALLBACK]["reason"] == _ANN_REASONS
-    assert ALLOWED_ATTR_VALUES[HASH_FALLBACK] == {}
+# (Wired into warn_*_fallback_once; validated by the parametrized live-emit
+# sweep in section 5 above. This section previously documented them as a source
+# gap -- closed.)

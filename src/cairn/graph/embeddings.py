@@ -270,6 +270,13 @@ def warn_hash_fallback_once(logger, context: str = "") -> None:
     """
     global _HASH_FALLBACK_WARNED
     if not _HASH_FALLBACK_WARNED and is_hash_fallback():
+        # Durable event (spec §6.4); the WARNING below keeps the human detail.
+        try:
+            from cairn.telemetry import HASH_FALLBACK, emit as _emit
+
+            _emit(HASH_FALLBACK)
+        except Exception:
+            pass
         suffix = f" [{context}]" if context else ""
         logger.warning(
             "Embeddings are using the dep-free hash backend (%s). Results carry "
