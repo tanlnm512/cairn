@@ -13,12 +13,56 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 from typing import List, Tuple
 
 from .lexical import search_symbols
 from .traversal import get_callers, get_callees
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Telemetry bucketing (spec §6.4 -- enums/buckets only, no free text/paths).
+#
+# `semantic_search` emits one `semantic_backend` event per call on its return
+# path; wall-time and result-count are collapsed to fixed low-cardinality tags
+# so the `events` table can't grow an unbounded distinct-value set. Both
+# helpers are pure O(1); `emit()` itself is best-effort and never raises.
+# ---------------------------------------------------------------------------
+
+_MS_BUCKETS = (
+    (10.0, "0-10ms"),
+    (100.0, "10-100ms"),
+    (1000.0, "100-1000ms"),
+)
+_MS_BUCKET_MAX = ">1000ms"
+
+_N_BUCKETS = (
+    (5, "1-5"),
+    (10, "6-10"),
+    (50, "11-50"),
+)
+_N_BUCKET_ZERO = "0"
+_N_BUCKET_MAX = ">50"
+
+
+def _ms_bucket(ms: float) -> str:
+    """Bucket a wall-clock duration (ms) into a fixed low-cardinality tag."""
+    for bound, label in _MS_BUCKETS:
+        if ms < bound:
+            return label
+    return _MS_BUCKET_MAX
+
+
+def _n_results_bucket(n: int) -> str:
+    """Bucket a result count into a fixed low-cardinality tag (0 handled first)."""
+    if n <= 0:
+        return _N_BUCKET_ZERO
+    for bound, label in _N_BUCKETS:
+        if n <= bound:
+            return label
+    return _N_BUCKET_MAX
 
 
 def _candidates_from_ann_hits(
@@ -114,6 +158,10 @@ def semantic_search(
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
     from cairn.graph import ann_index as ann
+    # Lazy import mirrors metric_buffering.py's discipline to avoid any
+    # boot-order cycle with the telemetry package. emit() is best-effort and
+    # never raises (spec §5.6); the import is cached after the first call.
+    from cairn.telemetry import emit, SEMANTIC_BACKEND, EMPTY_RESULT
 
     # Under the dep-free hash fallback the embedding carries only token-overlap
     # signal, so annotate provenance strings to surface the degradation.
@@ -122,6 +170,45 @@ def semantic_search(
     _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
 
     rerank_on = rrk.rerank_enabled()
+    # Hoisted above the early-return path so the semantic_backend telemetry can
+    # report it. Same expression explore.py / tools_graph.py use: fusion defaults
+    # ON (anything other than the literal "0" leaves it on).
+    fusion_enabled = os.environ.get("CAIRN_FUSION", "1") != "0"
+    # Wall-clock start for the `ms` telemetry bucket; _ann_used flips the
+    # backend tag to "ann" only when the native vec0 query actually produced
+    # this call's candidates (not merely when it was enabled).
+    _t0 = time.perf_counter()
+    _ann_used = False
+
+    def _finish(results: List[dict]) -> List[dict]:
+        """Emit `semantic_backend` (+ `empty_result` when empty); return results.
+
+        Single funnel for both return paths so the event fires exactly once per
+        call regardless of which branch produced the list. `backend` precedence
+        is hash > ann > brute: the hash-embed fallback is the worst degradation
+        (token-overlap vectors carry no real semantic signal), so a query that
+        ran on hash vectors is tagged ``hash`` whether or not the cosine scan
+        used the native ANN index. Cardinality is bounded to enums + fixed
+        buckets (spec §6.4). emit() never raises; the wrap is belt-and-
+        suspenders so a bucketing bug can't fail the search (spec §5.6).
+        """
+        try:
+            elapsed_ms = (time.perf_counter() - _t0) * 1000.0
+            backend = "hash" if _hash else ("ann" if _ann_used else "brute")
+            emit(
+                SEMANTIC_BACKEND,
+                backend=backend,
+                fusion=1 if fusion_enabled else 0,
+                rerank=1 if rerank_on else 0,
+                ms=_ms_bucket(elapsed_ms),
+                n_results=_n_results_bucket(len(results)),
+            )
+            if not results:
+                emit(EMPTY_RESULT, query_kind="semantic_search", backend=backend)
+        except Exception:
+            logger.debug("semantic_search telemetry emit failed", exc_info=True)
+        return results
+
     # When reranking, retrieve a wider shortlist for the cross-encoder to
     # re-sort; plain cosine ordering slices to exactly `limit`.
     pool_size = max(limit * 5, 50) if rerank_on else limit
@@ -136,6 +223,7 @@ def semantic_search(
         if ann_hits is not None:
             # ANN path available and an index exists for this model.
             candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
+            _ann_used = True
 
     if candidates is None:
         # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
@@ -162,7 +250,7 @@ def semantic_search(
             (model, brute_force_limit),
         ).fetchall()
         if not rows:
-            return []
+            return _finish([])
 
         # Prefer numpy for the scan; fall back to pure Python. Both produce
         # identical cosine scores. Shared via cairn.retrieval.cosine_scan.
@@ -187,8 +275,7 @@ def semantic_search(
                 }
             )
 
-    # RRF Hybrid fusion.
-    fusion_enabled = os.environ.get("CAIRN_FUSION", "1") != "0"
+    # RRF Hybrid fusion (fusion_enabled hoisted above for the early-return path).
     if fusion_enabled and candidates is not None:
         try:
             from cairn.graph.fusion import rrf_fuse
@@ -263,7 +350,7 @@ def semantic_search(
     if include_callers:
         _attach_callers(conn, final)
 
-    return final
+    return _finish(final)
 
 
 def _attach_callers(conn: sqlite3.Connection, results: List[dict], neighbor_limit: int = 5) -> None:
