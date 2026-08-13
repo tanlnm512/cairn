@@ -19,7 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - _Nothing yet._
 
 ### Fixed
-- _Nothing yet._
+- **Memory:** `evolve_memory` (the `memory_evolve` MCP tool / `cairn memory`
+  evolve CLI) now redacts secrets from the new body before storage, matching
+  `capture_memory`'s floor. A secret in an evolved body was previously
+  persisted verbatim -- the same two-codepath divergence that once left
+  `record_memory` unredacted.
+- **Parsers:** constructor calls (`new Foo()`) in Java and PHP, and call edges
+  inside class-field initializers in TypeScript and Java (`repo = createRepo()`),
+  are now indexed as `calls` edges. They were previously dropped silently --
+  the same edge-drop family as the `var-declarator` fix.
+- **Agent install:** `cairn agents uninstall` now refuses to delete a directory
+  that isn't cairn-scoped (named `cairn`). The `_rm_tree_if_cairn` helper
+  promised this guard in its name but never enforced it; current callers were
+  safe, but a broader path would have been wiped.
+- **MCP server:** the background memory-embed flusher now escalates to a
+  `WARNING` log after repeated failures instead of retrying invisibly at
+  `debug` level every 15s forever, so a broken embed model is observable.
 
 ### Removed
 - _Nothing yet._
