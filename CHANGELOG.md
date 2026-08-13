@@ -30,9 +30,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   untested metric instrument/flush path is now covered by `tests/test_metrics.py`
   (decorator success/error paths, `_truncate_result` at `CAIRN_MAX_RESULT_CHARS`,
   and `_flush_metrics` drain/retry/read-only-skip).
+- **Observability (P1 telemetry pipeline, T07–T11, T15).** A local-only event
+  sink (`src/cairn/telemetry/`) generalizes the proven `metric_buffering`
+  buffered-writer pattern: a deque + daemon flush (every 30s) + `atexit` +
+  backlog cap, with one shared flush thread per process. Every previously-silent
+  degradation path now emits at least one durable, low-cardinality signal into
+  two additive SQLite tables — `events` and `build_runs` (`CREATE TABLE IF NOT
+  EXISTS`; old DBs upgrade on connect, no migration entry needed). The event
+  catalog: `ann_fallback`/`hash_fallback` (closes the silent ANN/hash backend
+  gaps), `lock_contention` (emitted alongside the P0 one-time warning so the
+  v0.9.x lock-wait class is now aggregatable, not just logged), `truncate_result`,
+  `empty_result`, `semantic_backend` (backend/fusion/rerank/ms/n-results — so
+  retrieval provenance stops evaporating), `task_lifecycle`, and `stray_swept`.
+  `build_runs` persists one row per build/sync/embed/incremental pass (repos,
+  files, symbols, edges, the exact/ambiguous/unresolved resolution mix, parse
+  errors, skipped, phase timings), so resolver precision and build cost become a
+  queryable trend rather than a forgotten summary dict. Attributes are enums,
+  short fixed tags, or bucketed values only — never paths or free text — and a
+  parametrized cardinality-guard test asserts every emitter's attr values stay
+  in their declared enum sets (`tests/test_telemetry.py`). The new
+  `CAIRN_TELEMETRY` env var (default `on`) is the master kill switch: `off`
+  makes `emit`/`warn_once`/`note_contention` near-zero-cost no-ops. Turning it
+  off stops **recording** but does not silence the one-time operational WARNING
+  logs (lock-contention, ANN fallback, hash fallback) — those are operational
+  signals, not telemetry data.
+- **Observability (P1 health surfaces, T12–T14).** Three ways to consume the
+  new data, all read-only and preserving the 27-tool MCP contract (no new tool):
+  `cairn doctor` runs 8 health checks (schema integrity, embeddings backend,
+  ANN, freshness, parse errors, lock contention, per-tool error/latency health,
+  config echo), each PASS/WARN/FAIL, exiting 0 unless any check FAILs — so an
+  agent or CI step can gate on it, and the previously-invisible `parse_errors`
+  table is finally read by a command. `cairn metrics` gains `--builds` (build-run
+  trend with the resolution mix), `--quality` (empty-result/truncation rate +
+  backend mix), and `--contention` (lock events by site); the flagless output is
+  unchanged. The `cairn://status` MCP resource appends a `health` block (active
+  backend degradations, pending-sync count, last-build age, 24h tool error rate)
+  so a single resource read answers "is this store degraded?".
 
 ### Changed
-- _Nothing yet._
+- **`mcp_server/metric_buffering` now writes through the shared telemetry sink.**
+  `tool_metrics` recording is refactored onto `src/cairn/telemetry/` (one flush
+  thread per process instead of two); the `tool_metrics` table shape and the
+  flagless `cairn metrics` output are byte-for-byte unchanged, and the P0
+  `tests/test_metrics.py` suite passes unmodified.
 
 ### Fixed
 - **Telemetry: fresh-DB init no longer emits a spurious lock-contention warning.**

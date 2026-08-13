@@ -65,45 +65,48 @@ work lands; each PR references the task IDs it completes.
 
 ## Phase 1 — event pipeline, build history, doctor (0.10.0)
 
-- [ ] **T07 — `src/cairn/telemetry/` module**
-  - [ ] `sink.py`: buffered writer — deque + daemon flush (30s) + `atexit` + `CAIRN_TELEMETRY`/`CAIRN_READ_ONLY` gates + retention pruning (5000 events / 500 runs)
-  - [ ] `events.py`: `emit(name, **attrs)`, `warn_once(key, logger, msg)`, `note_contention(site)`, catalog constants
-  - [ ] Refactor `metric_buffering.py` onto the shared sink; T05 tests pass unmodified
+- [x] **T07 — `src/cairn/telemetry/` module**
+  - [x] `sink.py`: buffered writer — deque + daemon flush (30s) + `atexit` + `CAIRN_TELEMETRY`/`CAIRN_READ_ONLY` gates + retention pruning (5000 events / 500 runs)
+  - [x] `events.py`: `emit(name, **attrs)`, `warn_once(key, logger, msg)`, `note_contention(site)`, catalog constants
+  - [x] Refactor `metric_buffering.py` onto the shared sink; T05 tests pass unmodified
   - Acceptance: `CAIRN_TELEMETRY=off` makes `emit` a no-op; sink failure never raises into callers.
 
-- [ ] **T08 — Schema: `build_runs` + `events`**
-  - [ ] `SCHEMA_SQL` additions per spec §6.2; indexes on `events(name, ts)`
-  - [ ] Extend `tests/test_schema_versioning.py`: old DB upgrades in place
+- [x] **T08 — Schema: `build_runs` + `events`**
+  - [x] `SCHEMA_SQL` additions per spec §6.2; indexes on `events(name, ts)`
+  - [x] Extend `tests/test_schema_versioning.py`: old DB upgrades in place
   - Acceptance: fresh + migrated DBs both pass `_apply_schema` idempotently.
 
-- [ ] **T09 — Build-run instrumentation**
-  - [ ] `builder.build_graph` summary → `build_runs` row; phase timings via `on_progress`
-  - [ ] `cli/embed.py`, `sync`, `incremental` emit their `kind` rows
+- [x] **T09 — Build-run instrumentation**
+  - [x] `builder.build_graph` summary → `build_runs` row; phase timings via `on_progress`
+  - [x] `cli/embed.py`, `sync`, `incremental` emit their `kind` rows
   - Acceptance: two builds → `cairn metrics --builds` shows both + resolution mix.
 
-- [ ] **T10 — Semantic-path events**
-  - [ ] `semantic_backend` (backend/fusion/rerank/ms-bucket/n-results-bucket) on return path; `empty_result` when 0
+- [x] **T10 — Semantic-path events**
+  - [x] `semantic_backend` (backend/fusion/rerank/ms-bucket/n-results-bucket) on return path; `empty_result` when 0
   - Acceptance: hash-backend + `CAIRN_ANN_BACKEND=off` fixture run produces correctly-tagged events.
 
-- [ ] **T11 — Remaining emitters**
-  - [ ] `_truncate_result` → `truncate_result`; `llm/tasks.py` → `task_lifecycle`; stray sweeper → `stray_swept`
+- [x] **T11 — Remaining emitters**
+  - [x] `_truncate_result` → `truncate_result`; `llm/tasks.py` → `task_lifecycle`; stray sweeper → `stray_swept`
+  - Gap closed: the `ann_fallback`/`hash_fallback` emit paths were also wired into the existing `warn_ann_fallback_once` / `warn_hash_fallback_once` helpers (P1.3 gap), and `lock_contention` is emitted from `note_contention` alongside the unconditional WARNING.
   - Acceptance: each emitter covered by one focused test.
 
-- [ ] **T12 — `cairn doctor`**
-  - [ ] 8 checks per spec §6.5; PASS/WARN/FAIL; exit 0/1; `--json`
-  - [ ] Fixtures: hash backend, ANN off, stale `pending_sync`, parse errors, contention events
+- [x] **T12 — `cairn doctor`**
+  - [x] 8 checks per spec §6.5; PASS/WARN/FAIL; exit 0/1; `--json`
+  - [x] Fixtures: hash backend, ANN off, stale `pending_sync`, parse errors, contention events
   - Acceptance: each FAIL condition independently provable in tests; clean fixture exits 0.
 
-- [ ] **T13 — `cairn metrics` extensions** — `--builds`, `--quality`, `--contention`; default output unchanged; `--json` for all three.
+- [x] **T13 — `cairn metrics` extensions** — `--builds`, `--quality`, `--contention`; default output unchanged; `--json` for all three.
   - Acceptance: flags render from real tables; empty tables don't crash.
 
-- [ ] **T14 — `cairn://status` health block** — degradations, pending-sync, last-build age, 24h error rate. No new MCP tool.
+- [x] **T14 — `cairn://status` health block** — degradations, pending-sync, last-build age, 24h error rate. No new MCP tool.
   - Acceptance: resource snapshot test includes health block; tool count still 27.
 
-- [ ] **T15 — P1 tests** — `tests/test_telemetry.py`: sink flush/retry/cap/gates; emission points; doctor checks; **cardinality guard** (attr values ∈ enum sets, parametrized).
+- [x] **T15 — P1 tests** — `tests/test_telemetry.py`: sink flush/retry/cap/gates; emission points; doctor checks; **cardinality guard** (attr values ∈ enum sets, parametrized).
+  - The cardinality guard asserts every emitter's attr values stay in their declared enum sets; the `ann_fallback`/`hash_fallback`/`lock_contention` emit gaps it pins were the P1.3 close.
   - Acceptance: full suite green; `pytest -m core` runtime budget unchanged.
 
-- [ ] **T16 — P1 docs + release** — `docs/configuration.md` (`CAIRN_TELEMETRY`), `docs/cli-reference.md` (doctor, metrics flags), CHANGELOG, version 0.10.0, release-checklist sweep (version-drift surfaces list from memory).
+- [x] **T16 — P1 docs + release** — `docs/configuration.md` (`CAIRN_TELEMETRY`), `docs/cli-reference.md` (doctor, metrics flags), CHANGELOG, version 0.10.0, release-checklist sweep (version-drift surfaces list from memory).
+  - Docs done: `CAIRN_TELEMETRY` added to configuration.md, `cairn doctor` (8 checks) + `metrics --builds/--quality/--contention` documented in cli-reference.md, P1 consolidated under `[Unreleased]`. The **0.10.0 version bump + `make release`/`cz bump` + release-checklist sweep is deferred** to a separate release session (out of this docs-only task's scope); version-drift surfaces reported there: `pyproject.toml:version` (×2: `[project]` + `[tool.commitizen]`), `src/cairn/__init__.py:__version__`, plus hand-maintained `README.md` (v0.9.1) and `SECURITY.md` (`0.9.x` line).
 
 ## Phase 2 — workflow integration & optional export
 
