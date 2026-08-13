@@ -596,7 +596,18 @@ def evolve_memory(
     ``memory_supersedes``, flips the old to ``memory_is_latest: false``, and
     stores the new version. At least one of new_title / new_body must differ
     from the old memory.
+
+    The new body is redacted via :func:`strip_private_data` before storage,
+    mirroring ``capture_memory``'s floor -- the MCP ``memory_evolve`` tool and
+    the CLI both reach this function, so without redaction here a secret in an
+    evolved body would persist verbatim (the same two-codepath divergence that
+    once left ``record_memory`` unredacted). ``new_body`` is None when only the
+    title changes; the old body was already redacted at capture time.
     """
+    from .privacy import strip_private_data
+
+    if new_body is not None:
+        new_body = strip_private_data(new_body)
     with bundle.lock():
         old = store_mod.get_memory(bundle, memory_path)
         if old is None:
