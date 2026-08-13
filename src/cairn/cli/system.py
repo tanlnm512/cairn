@@ -223,6 +223,8 @@ def sync(workspace, db):
             return
 
         from . import display
+        import time
+        sync_started = time.time()
         with display.progress_bar(description=f"Syncing {len(changed)} files", total=len(changed), unit="files") as bar:
             # reindex_paths doesn't expose per-file progress; show an indeterminate
             # bar that completes when it returns. For small N this is instant.
@@ -241,6 +243,22 @@ def sync(workspace, db):
             display.warning(f"{len(result['errors'])} errors")
             for e in result["errors"][:5]:
                 display.dim(f"  {e}")
+
+        # Persist a 'sync' build_runs row (best-effort; record_build_run
+        # swallows all errors). reindex_paths returns reindexed/deleted only;
+        # resolution mix / parse-error breakdown / phase_timings stay NULL
+        # (the sync path has no scan/parse/resolve phase contract). Recorded
+        # here in the CLI command rather than inside the shared reindex_paths
+        # so the `cairn update` path records its own 'incremental' row.
+        from ..graph.builder import record_build_run
+        record_build_run(
+            db,
+            "sync",
+            started_at=sync_started,
+            duration_s=time.time() - sync_started,
+            files=result["reindexed"],
+            skipped=result["deleted"],
+        )
     finally:
         conn.close()
 

@@ -150,6 +150,21 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
                     f"ANN index rebuilt: {idx_summary['indexed']:,} vectors, "
                     f"dim={idx_summary['dim']}, model='{idx_summary['model']}'"
                 )
+
+        # Persist an 'embed' build_runs row (best-effort; record_build_run
+        # swallows all errors). Only the symbol/skipped counts are meaningful
+        # for an embedding pass -- repos/files/edges/resolution/phase_timings
+        # stay NULL (no scan/parse/resolve phases run here). t0 was captured
+        # at the start of the embed phase.
+        from ..graph.builder import record_build_run
+        record_build_run(
+            db,
+            "embed",
+            started_at=t0,
+            duration_s=elapsed,
+            symbols=summary["embedded"],
+            skipped=summary["skipped"],
+        )
     finally:
         conn.close()
 

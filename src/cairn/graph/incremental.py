@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -279,6 +280,7 @@ def incremental_update(
     calls so it can wait out lock contention from concurrently-running
     `cairn serve` processes rather than fail after 5s.
     """
+    started = time.time()
     conn = get_db(db_path, busy_timeout_ms=20000)
     repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
     all_paths: list[str] = []
@@ -301,6 +303,21 @@ def incremental_update(
         derived_errors = _rebuild_derived_indexes(conn)
 
     conn.close()
+
+    # Persist an 'incremental' build_runs row. Best-effort (record_build_run
+    # swallows all errors). reindex_paths returns reindexed/deleted counts but
+    # no resolution mix or parse-error breakdown, so those columns stay NULL --
+    # best-available per spec 6.2 rather than a refactor of the progress
+    # contract. Recorded here (not inside the shared reindex_paths) so the
+    # `cairn sync` CLI path records its own 'sync' row without double-counting.
+    builder.record_build_run(
+        db_path,
+        "incremental",
+        started_at=started,
+        duration_s=time.time() - started,
+        files=result["reindexed"],
+        skipped=result["deleted"],
+    )
     return {
         "repos_scanned": len(repos),
         "files_reindexed": result["reindexed"],

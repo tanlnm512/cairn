@@ -15,7 +15,10 @@ An edge is resolved only when exactly one candidate exists in a tier
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,8 +30,10 @@ from ..parsers import routes as routes_mod
 from ..parsers import service_calls as service_calls_mod
 from . import scanner as scanner_mod
 from . import resolver as resolver_mod
-from .schema import init_db, get_build_db, backup_to, build_lock, note_contention
+from .schema import init_db, get_build_db, get_db, backup_to, build_lock, note_contention
 from ..paths import resolve_store as _resolve_store
+
+_logger = logging.getLogger(__name__)
 
 # Language -> parser class.
 PARSERS: Dict[str, BaseParser] = {}
@@ -658,6 +663,7 @@ def _build_graph_impl(
         "edges": edge_count,
         "imports": import_count,
         "skipped": skip_count_summary,
+        "parse_errors": parse_errors,
         "resolution": resolution_stats,
     }
     if scip_import_stats:
@@ -700,37 +706,227 @@ def build_graph(
     """
     resolved_db = db_path or str(_resolve_store().db)
     in_memory = repo_filter is None
+
+    # Capture phase timings from the progress callbacks (spec observability-
+    # telemetry 6.2). First-seen timestamp for phase-start markers, last-seen
+    # for done markers, so a multi-repo resolve span covers the whole window.
+    # The caller's own progress callback still receives every event unchanged
+    # (the golden progress-event test continues to pass).
+    started_epoch = time.time()
+    phase_ts: dict[str, float] = {}
+    user_progress = progress
+
+    def _timing_progress(phase, *args, **kwargs):
+        _record_phase_ts(phase_ts, phase, time.time())
+        if user_progress is not None:
+            return user_progress(phase, *args, **kwargs)
+
     if in_memory:
         # Full rebuild: bulk-load into memory, then persist once via backup_to
         # (which takes the build lock itself for the on-disk swap).
         conn = get_build_db()
         try:
-            return _build_graph_impl(
+            summary = _build_graph_impl(
                 conn=conn,
                 workspace=workspace,
                 repo_filter=repo_filter,
                 db_path=db_path,
                 verbose=verbose,
-                progress=progress,
+                progress=_timing_progress,
             )
         finally:
             conn.close()
-    # Single-repo rebuild: writes the live DB directly (can't clobber other
-    # repos), so take the advisory build lock to serialize against concurrent
-    # builds/updates of the same DB.
-    with build_lock(resolved_db):
-        conn = init_db(resolved_db)
+    else:
+        # Single-repo rebuild: writes the live DB directly (can't clobber other
+        # repos), so take the advisory build lock to serialize against concurrent
+        # builds/updates of the same DB.
+        with build_lock(resolved_db):
+            conn = init_db(resolved_db)
+            try:
+                summary = _build_graph_impl(
+                    conn=conn,
+                    workspace=workspace,
+                    repo_filter=repo_filter,
+                    db_path=db_path,
+                    verbose=verbose,
+                    progress=_timing_progress,
+                )
+            finally:
+                conn.close()
+
+    # Persist a build_runs row on the resolved (on-disk) DB. For an in-memory
+    # build backup_to() has already swapped the graph to disk by now, so the
+    # row lands in the same DB as the rest of the graph. Best-effort: a
+    # telemetry write must never fail a build (record_build_run swallows all
+    # errors and logs at DEBUG -- spec 5.4/5.6, analytics not correctness).
+    duration_s = time.time() - started_epoch
+    _record_build(resolved_db, "build", summary, started_epoch, duration_s, phase_ts)
+    return summary
+
+
+def _record_build(
+    db_path: Optional[str],
+    kind: str,
+    summary: dict,
+    started_epoch: float,
+    duration_s: float,
+    phase_ts: dict[str, float],
+) -> None:
+    """Extract count/resolution columns from a build summary and persist them.
+
+    Thin adapter so ``build_graph`` stays readable; the other entry points
+    (embed/sync/incremental) call :func:`record_build_run` directly with the
+    fewer columns they have.
+    """
+    resolution = summary.get("resolution") or {}
+    phase_timings = _phase_durations(phase_ts, started_epoch, started_epoch + duration_s)
+    record_build_run(
+        db_path,
+        kind,
+        started_at=started_epoch,
+        duration_s=duration_s,
+        phase_timings=phase_timings or None,
+        repos=summary.get("repos"),
+        files=summary.get("files"),
+        symbols=summary.get("symbols"),
+        edges=summary.get("edges"),
+        resolution_exact=resolution.get("exact"),
+        resolution_ambiguous=resolution.get("ambiguous"),
+        resolution_unresolved=resolution.get("unresolved"),
+        parse_errors=summary.get("parse_errors"),
+        skipped=summary.get("skipped"),
+    )
+
+
+# Phase markers whose FIRST occurrence bounds a phase. Everything else (done
+# markers, progress ticks) is recorded last-seen so a multi-repo resolve_done
+# spans the full window rather than just the first repo.
+_PHASE_FIRST_SEEN = frozenset({"scan", "parse_done", "resolve_start", "persist"})
+
+
+def _record_phase_ts(phase_ts: dict[str, float], phase: str, ts: float) -> None:
+    if phase in _PHASE_FIRST_SEEN:
+        phase_ts.setdefault(phase, ts)
+    else:
+        phase_ts[phase] = ts
+
+
+def _phase_durations(phase_ts: dict[str, float], started: float, ended: float) -> dict:
+    """Best-available per-phase durations in seconds, keyed by phase name.
+
+    Returns only the phases whose boundary markers actually fired (a single-repo
+    build emits no ``persist``; an empty workspace emits nothing). Each value is
+    rounded to milliseconds -- good enough for trending, avoids float noise.
+    """
+    scan = phase_ts.get("scan")
+    parse_done = phase_ts.get("parse_done")
+    resolve_start = phase_ts.get("resolve_start")
+    # resolve_done is last-seen (multi-repo): the final repo's completion.
+    resolve_done = phase_ts.get("resolve_done")
+    out: dict[str, float] = {}
+    if scan:
+        out["scan"] = round(scan - started, 3)
+    if scan and parse_done:
+        out["parse"] = round(parse_done - scan, 3)
+    if parse_done and resolve_start:
+        out["insert"] = round(resolve_start - parse_done, 3)
+    if resolve_start and resolve_done:
+        out["resolve"] = round(resolve_done - resolve_start, 3)
+    if resolve_done:
+        out["persist"] = round(ended - resolve_done, 3)
+    return out
+
+
+def _cairn_workers() -> Optional[int]:
+    """Resolved worker count from CAIRN_WORKERS, or None when unset/invalid.
+
+    Mirrors the clamping in ``_parse_all`` so the recorded value reflects the
+    parse fan-out that actually ran.
+    """
+    raw = os.environ.get("CAIRN_WORKERS")
+    if not raw:
+        return None
+    try:
+        return max(1, min(int(raw), 256))
+    except ValueError:
+        return None
+
+
+def _iso_ts(epoch: Optional[float]) -> str:
+    """ISO-8601 UTC timestamp from an epoch (or now), matching ``_now()`` shape."""
+    if epoch is None:
+        return datetime.now(timezone.utc).isoformat()
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def record_build_run(
+    db_path: Optional[str],
+    kind: str,
+    *,
+    started_at: Optional[float] = None,
+    duration_s: Optional[float] = None,
+    phase_timings: Optional[dict] = None,
+    repos: Optional[int] = None,
+    files: Optional[int] = None,
+    symbols: Optional[int] = None,
+    edges: Optional[int] = None,
+    resolution_exact: Optional[int] = None,
+    resolution_ambiguous: Optional[int] = None,
+    resolution_unresolved: Optional[int] = None,
+    parse_errors: Optional[int] = None,
+    skipped: Optional[int] = None,
+    workers: Optional[int] = None,
+    session_id: Optional[str] = None,
+) -> None:
+    """Persist one ``build_runs`` row. Best-effort: never raises.
+
+    ``build_runs`` is a structured per-run record (not a low-cardinality
+    event), so this writes a direct INSERT on a short-lived connection rather
+    than routing through the buffered telemetry sink. Telemetry is analytics,
+    not correctness: every failure is swallowed and logged at DEBUG so a
+    metrics write can never fail a build/sync/embed/incremental pass (spec
+    observability-telemetry 5.4/5.6).
+
+    ``db_path`` None resolves to the central store for the workspace (mirrors
+    ``schema.get_db``). Count columns are all optional -- each entry point
+    populates what it cheaply has and leaves the rest NULL.
+
+    ``workers`` and ``session_id`` default from the environment
+    (``CAIRN_WORKERS`` / ``CAIRN_SESSION``) so callers don't repeat that logic.
+    """
+    try:
+        conn = get_db(db_path)
         try:
-            return _build_graph_impl(
-                conn=conn,
-                workspace=workspace,
-                repo_filter=repo_filter,
-                db_path=db_path,
-                verbose=verbose,
-                progress=progress,
+            conn.execute(
+                """INSERT INTO build_runs
+                   (kind, started_at, duration_s, phase_timings, repos, files,
+                    symbols, edges, resolution_exact, resolution_ambiguous,
+                    resolution_unresolved, parse_errors, skipped, workers,
+                    session_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    kind,
+                    _iso_ts(started_at),
+                    duration_s,
+                    json.dumps(phase_timings) if phase_timings is not None else None,
+                    repos,
+                    files,
+                    symbols,
+                    edges,
+                    resolution_exact,
+                    resolution_ambiguous,
+                    resolution_unresolved,
+                    parse_errors,
+                    skipped,
+                    workers if workers is not None else _cairn_workers(),
+                    session_id or os.environ.get("CAIRN_SESSION", "unknown"),
+                ),
             )
+            conn.commit()
         finally:
             conn.close()
+    except Exception:
+        _logger.debug("build_runs insert failed (kind=%s)", kind, exc_info=True)
 
 
 def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, str, Optional[ParsedFile], Optional[str], Optional[str]]:
