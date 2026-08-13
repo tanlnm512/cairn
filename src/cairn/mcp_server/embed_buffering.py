@@ -29,6 +29,15 @@ _QUEUE: collections.deque = collections.deque(maxlen=500)
 _LOCK = threading.Lock()
 _FLUSHER_STARTED = False
 _FLUSH_INTERVAL = 15.0  # seconds
+# Consecutive flush-failure count (mutated only by the single flusher thread).
+# Failures are expected to be transient (lock contention, a model hiccup), so
+# the batch is retried indefinitely rather than dropped -- but a CHRONIC
+# failure (e.g. a broken embed model) would otherwise retry invisibly at debug
+# level every 15s forever. After _WARN_AFTER consecutive failures we escalate
+# to WARNING so the broken flusher is observable. Reset to 0 on the first
+# success.
+_FAILURES = 0
+_WARN_AFTER = 4
 
 _conn_factory: Optional[Callable[[], "object"]] = None
 _bundle_factory: Optional[Callable[[], "object"]] = None
@@ -60,6 +69,7 @@ def _flush() -> None:
     from cairn.graph import embeddings as emb
 
     conn = None
+    global _FAILURES
     try:
         conn = _conn_factory()
         bundle = _bundle_factory()
@@ -67,8 +77,22 @@ def _flush() -> None:
         conn.commit()
     except Exception:
         # Lock contention or a transient error -- leave the batch queued for
-        # the next flush attempt rather than dropping it.
-        logger.debug("memory embed flush failed; %d concept(s) remain queued", len(batch), exc_info=True)
+        # the next flush attempt rather than dropping it (a poison concept_id
+        # is already skipped per-cid inside embed_memory_concepts, so a failure
+        # here is environmental, not a bad cid). Escalate to WARNING once the
+        # failure is chronic so a broken embed model doesn't fail silently.
+        _FAILURES += 1
+        if _FAILURES >= _WARN_AFTER:
+            logger.warning(
+                "memory embed flush has failed %d consecutive times; "
+                "%d concept(s) remain queued. Check the embed model / DB.",
+                _FAILURES, len(batch), exc_info=True,
+            )
+        else:
+            logger.debug(
+                "memory embed flush failed (%d); %d concept(s) remain queued",
+                _FAILURES, len(batch), exc_info=True,
+            )
         return
     finally:
         if conn is not None:
@@ -76,6 +100,7 @@ def _flush() -> None:
                 conn.close()
             except Exception:
                 pass
+    _FAILURES = 0
     with _LOCK:
         for cid in batch:
             try:
