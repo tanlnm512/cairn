@@ -10,18 +10,18 @@ Covers (spec §6.1/§6.2 acceptance):
   1. ``emit`` -- appends a ``(ts, name, session_id, attrs_json)`` row; attrs
      are JSON-serialized, oversized values truncated, non-serializable values
      coerced (never raises); ``CAIRN_SESSION`` stamps ``session_id``.
-  2. Gates -- ``CAIRN_TELEMETRY=off`` makes ``emit``/``warn_once``/
-     ``note_contention`` no-ops; ``CAIRN_READ_ONLY`` truthy skips the emit
-     write (a mode=ro daemon would fail every flush).
+  2. Gates -- ``CAIRN_TELEMETRY=off`` makes ``emit``/``warn_once`` no-ops;
+     ``CAIRN_READ_ONLY`` truthy skips the emit write (a mode=ro daemon would
+     fail every flush).
   3. ``_flush_events`` / ``flush`` -- success drains exactly the flushed
      batch (rows appended *during* the flush survive); a failed flush (factory
      raises, or executemany raises) retains the rows for retry; an empty
      buffer or a missing factory are no-ops. A sink failure NEVER raises.
   4. Retention pruning -- the flush trims the ``events`` table to the newest N
      rows inside the same transaction (bounded DB growth, spec §6.2).
-  5. ``warn_once`` / ``note_contention`` -- process-global guard fires at most
-     once per key/site; ``note_contention`` emits a ``lock_contention`` event
-     AND warns.
+  5. ``warn_once`` -- process-global guard fires at most once per key.
+     (``note_contention`` is owned by ``graph.schema``; covered in
+     ``tests/test_contention_visibility.py``.)
   6. ``start_flusher`` is idempotent (one shared thread per process).
 
 The ``events`` / ``build_runs`` tables are NOT in ``schema.py`` yet (T08 adds
@@ -45,7 +45,6 @@ from cairn.telemetry import sink
 from cairn.telemetry import (
     emit,
     warn_once,
-    note_contention,
     configure_conn,
     flush,
     ANN_FALLBACK,
@@ -272,15 +271,6 @@ def test_telemetry_off_makes_warn_once_a_noop(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         warn_once("k", logging.getLogger("test"), "should not fire")
     assert all("should not fire" not in r.message for r in caplog.records)
-
-
-def test_telemetry_off_makes_note_contention_a_noop(monkeypatch, caplog):
-    """CAIRN_TELEMETRY=off -> note_contention neither emits nor logs."""
-    monkeypatch.setenv("CAIRN_TELEMETRY", "off")
-    with caplog.at_level(logging.WARNING):
-        note_contention("schema.get_db")
-    assert len(sink._BUFFER) == 0
-    assert all("lock contention" not in r.message.lower() for r in caplog.records)
 
 
 def test_read_only_skips_emit_write(monkeypatch):
@@ -513,32 +503,6 @@ def test_warn_once_fires_only_once_per_key(caplog):
     msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
     assert msgs.count("ann degraded") == 1, "same key warns once"
     assert msgs.count("hash degraded") == 1, "distinct key warns independently"
-
-
-def test_note_contention_emits_event_and_warns_once_per_site(caplog):
-    """note_contention emits a lock_contention event + warns once per site.
-
-    This is the P1 upgrade of schema.note_contention (P0: log-only). The event
-    makes contention observable by doctor / metrics; the warn_once keeps the
-    log from spamming on repeated contention at the same site.
-    """
-    with caplog.at_level(logging.WARNING, logger="cairn.telemetry.events"):
-        note_contention("schema.get_db")
-        note_contention("schema.get_db")  # same site -> second call is a no-op
-        note_contention("lexical.search")  # distinct site -> independent
-
-    # Exactly one event per call (3 emits); events are not rate-limited.
-    assert len(sink._BUFFER) == 3
-    names = [row[1] for row in sink._BUFFER]
-    assert names == [LOCK_CONTENTION, LOCK_CONTENTION, LOCK_CONTENTION]
-    sites = [json.loads(row[3])["site"] for row in sink._BUFFER]
-    assert sites == ["schema.get_db", "schema.get_db", "lexical.search"]
-
-    # But the WARNING fires once per site (2 distinct sites -> 2 warnings).
-    contention_msgs = [
-        r.message for r in caplog.records if "lock contention" in r.message.lower()
-    ]
-    assert len(contention_msgs) == 2, "one warning per distinct site"
 
 
 # ---------------------------------------------------------------------------

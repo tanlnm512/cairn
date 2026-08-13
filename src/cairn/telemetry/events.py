@@ -6,9 +6,8 @@ pre-shaped row to the shared sink (:mod:`cairn.telemetry.sink`) for buffered
 flush. :func:`warn_once` generalizes the process-global one-time-warning
 pattern (``graph.embeddings.warn_hash_fallback_once``,
 ``graph.ann_index.warn_ann_fallback_once``) so each degradation class surfaces
-at most once per process. :func:`note_contention` is the P1 event+log upgrade
-of ``graph.schema.note_contention`` (the P0 log-only helper); T11 will swap the
-13 call sites over -- this helper just needs to exist and be ready.
+at most once per process. (``note_contention`` is owned by
+``graph.schema`` -- see the pointer at the bottom of this module.)
 
 Cardinality discipline (spec §6.4): attrs are enums, short fixed tags, or
 bucketed values (``"0-10ms"``, ``"ann"``/``"brute"``/``"hash"``, ...). No
@@ -139,33 +138,10 @@ def warn_once(key: str, warn_logger: logging.Logger, msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# note_contention -- P1 event+log upgrade of schema.note_contention (spec §6.3)
-#
-# The P0 helper (graph/schema.py::note_contention) only logs. This upgraded
-# version ALSO emits a durable ``lock_contention`` event so ``cairn doctor``
-# and ``cairn metrics --contention`` can surface contention trends, not just a
-# one-time log line. T11 swaps the 13 call sites from the P0 helper to this
-# one; until then it just needs to exist and be ready (it is NOT wired at any
-# site in this task -- schema.py and its callers are owned by T11).
+# note_contention lives in graph/schema.py -- it owns the per-site once-guard,
+# the unconditional operational WARNING, and emits the lock_contention event
+# via emit() above (best-effort, CAIRN_TELEMETRY-gated). It is the single
+# canonical helper (the two-helper split that T07 spec'd was collapsed: only
+# schema's is wired at the 13 swallow sites, with the behavior we want -- the
+# warning stays operational even under CAIRN_TELEMETRY=off).
 # ---------------------------------------------------------------------------
-def note_contention(site: str) -> None:
-    """Emit a ``lock_contention`` event AND warn once per (process, site).
-
-    Combines a durable telemetry signal (for doctor / metrics aggregation) with
-    the P0 behavior of one WARNING per site. ``site`` is a stable, low-
-    cardinality ``module.function`` tag (no line numbers -- they drift). The
-    emit is gated by ``CAIRN_READ_ONLY`` internally; the whole call is a no-op
-    under ``CAIRN_TELEMETRY=off``.
-    """
-    if sink.is_telemetry_off():
-        return
-    emit(LOCK_CONTENTION, site=site)
-    warn_once(
-        f"lock_contention:{site}",
-        logger,
-        "SQLite lock contention absorbed at %s -- another cairn process holds "
-        "the DB; busy_timeout retried/absorbed this so the operation completed "
-        "(or degraded gracefully). Repeated contention is diagnosable via "
-        "`cairn serve start` (single-daemon SSE mode serializes access and "
-        "avoids cross-process lock waits)." % site,
-    )

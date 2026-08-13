@@ -427,10 +427,13 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
 
     semantic_search(fresh_db, "anything-at-all", limit=5)
 
-    # 2. lock_contention.
-    from cairn.telemetry import note_contention
+    # 2. lock_contention (schema.note_contention is the canonical helper; reset
+    # its process-global once-guard so the drive is deterministic regardless of
+    # test ordering).
+    from cairn.graph import schema as _schema
 
-    note_contention("schema.get_db")
+    _schema._CONTENTION_WARNED.clear()
+    _schema.note_contention("schema.get_db")
 
     # 3. truncate_result (over-cap branch only).
     from cairn.mcp_server import metric_buffering as mb

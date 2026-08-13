@@ -12,8 +12,8 @@ Typical use::
     emit(ANN_FALLBACK, reason="load_failed")
 
 Gates:
-  * ``CAIRN_TELEMETRY=off`` -> :func:`emit` / :func:`warn_once` /
-    :func:`note_contention` become no-ops (near-zero overhead; spec §6.1).
+  * ``CAIRN_TELEMETRY=off`` -> :func:`emit` / :func:`warn_once` become no-ops
+    (near-zero overhead; spec §6.1).
   * ``CAIRN_READ_ONLY`` truthy -> :func:`emit` skips the write (a mode=ro
     daemon would fail every flush; mirrors ``metric_buffering._log_metric``).
 
@@ -34,7 +34,6 @@ from .events import (
     TASK_LIFECYCLE,
     TRUNCATE_RESULT,
     emit,
-    note_contention,
     warn_once,
 )
 from .sink import configure_conn, flush, start_flusher
@@ -43,7 +42,6 @@ __all__ = [
     # Emission API
     "emit",
     "warn_once",
-    "note_contention",
     # Sink wiring / flush hooks
     "configure_conn",
     "flush",
