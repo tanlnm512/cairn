@@ -387,16 +387,22 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
                 (migration_name, "applied")
             )
         except sqlite3.OperationalError as e:
-            note_contention("schema.migration")
             error_msg = str(e).lower()
             if "duplicate column" in error_msg:
-                # Idempotent: column already exists, mark as applied
+                # Idempotent: column already exists. This is the expected path on
+                # a fresh DB whose CREATE TABLE already declares the column (e.g.
+                # transitive_edges.target_id) -- the migration is retained only to
+                # upgrade pre-existing DBs. It is NOT lock contention, so it must
+                # stay silent; warning here would fire on every first-run DB init
+                # and dilute the note_contention signal with a false positive.
                 conn.execute(
                     "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
                     (migration_name, "applied")
                 )
             else:
-                # Real error - raise it
+                # Genuine error (e.g. "database is locked"). Surface the
+                # contention once before propagating so the failure isn't silent.
+                note_contention("schema.migration")
                 raise
 
     # Deferred until after MIGRATIONS: the target_id column may not exist on a

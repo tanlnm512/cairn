@@ -16,6 +16,9 @@ Covers:
   4. Integration: a simulated ``OperationalError`` at the ``ann_query`` swallow
      site produces exactly one warning across two calls and leaves the swallow
      semantics unchanged (still returns ``None``).
+  5. Regression: a fresh-DB init (single process, new file) stays silent -- the
+     idempotent "duplicate column" migration path is NOT contention and must not
+     trip a false-positive warning.
 """
 from __future__ import annotations
 
@@ -198,3 +201,49 @@ def test_second_swallow_site_is_independent_of_ann(monkeypatch, caplog):
     warnings = _warning_records(caplog)
     assert len(warnings) == 2
     assert {w.args[0] for w in warnings} == {"ann_index.ann_query", "other.site"}
+
+
+# ---------------------------------------------------------------------------
+# 5. Regression -- a fresh-DB init must NOT trip a contention false positive
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_db_init_emits_no_contention_warning(tmp_path, caplog):
+    """A first-run DB init (single process, brand-new file) must stay silent.
+
+    Regression guard: ``transitive_edges`` declares ``target_id`` in its CREATE
+    TABLE, so the retained ``TRANSITIVE_EDGES_TARGET_ID_MIGRATION`` raises
+    "duplicate column name" on every fresh DB. That idempotent re-application
+    is NOT lock contention -- it must not trip ``note_contention("schema.
+    migration")``, or every first-run ``cairn build`` would cry wolf ("another
+    cairn process holds the DB") and train users to ignore the very signal T03
+    exists to surface.
+    """
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    db_path = str(tmp_path / "fresh.db")
+    conn = schema.get_db(db_path)  # creates the file + applies all migrations
+    try:
+        # Sanity: the migration that previously caused the false positive ran
+        # and was recorded as applied via the idempotent duplicate-column path.
+        applied = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = ?",
+            ("transitive_edges.target_id",),
+        ).fetchone()
+        assert applied is not None and applied[0] == "applied"
+    finally:
+        conn.close()
+
+    # No contention warning fired, and the guard was never set for this site.
+    contention_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "contention" in r.getMessage()
+    ]
+    assert contention_warnings == [], (
+        "fresh-DB init must not warn about contention; got: "
+        f"{[r.getMessage() for r in contention_warnings]}"
+    )
+    assert "schema.migration" not in schema._CONTENTION_WARNED, (
+        "duplicate-column idempotent re-run must not set the contention guard"
+    )

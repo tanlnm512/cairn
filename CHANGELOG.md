@@ -35,7 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - _Nothing yet._
 
 ### Fixed
-- _Nothing yet._
+- **Telemetry: fresh-DB init no longer emits a spurious lock-contention warning.**
+  `note_contention("schema.migration")` was firing on every first-run `cairn build`,
+  because the retained `transitive_edges.target_id` migration raises "duplicate
+  column name" on a fresh DB (its `CREATE TABLE` already declares the column) and
+  the contention call sat *before* the idempotent-duplicate check. That path is not
+  lock contention — it now stays silent; only a genuine error (e.g. "database is
+  locked") surfaces the warning. Regression guard:
+  `tests/test_contention_visibility.py::test_fresh_db_init_emits_no_contention_warning`.
 
 ### Removed
 - _Nothing yet._

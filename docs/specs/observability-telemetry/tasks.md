@@ -32,34 +32,35 @@ work lands; each PR references the task IDs it completes.
 
 ## Phase 0 — close today's worst holes (no schema change)
 
-- [ ] **T01 — Central logging config**
-  - [ ] `cli/main.py`: configure `cairn` namespace in `main` callback; `CAIRN_LOG_LEVEL` (default WARNING); `-v/--verbose` → DEBUG; never root logger
-  - [ ] `mcp_server/server.py::run()`: same env read for the server path
-  - [ ] Verify: stdio stdout stays pure JSON-RPC (existing transport tests)
-  - Acceptance: `CAIRN_LOG_LEVEL=DEBUG cairn build` shows debug lines; `cairn build -v` shows debug lines; default output unchanged.
+- [x] **T01 — Central logging config**
+  - [x] `cli/main.py`: configure `cairn` namespace in `main` callback; `CAIRN_LOG_LEVEL` (default WARNING); `-v/--verbose` → DEBUG; never root logger
+  - [x] `mcp_server/server.py::run()`: same env read for the server path
+  - [x] Verify: stdio stdout stays pure JSON-RPC (existing transport tests)
+  - Acceptance: `CAIRN_LOG_LEVEL=DEBUG cairn build` shows debug lines; `cairn -v build` shows debug lines (the `-v` group flag must precede the subcommand — click rejects `cairn build -v`; `CAIRN_LOG_LEVEL=DEBUG` is the position-independent form); default output unchanged.
 
-- [ ] **T02 — ANN fallback one-time warning**
-  - [ ] Add `warn_ann_fallback_once` mirroring `graph/embeddings.py:263` pattern
-  - [ ] Call from `ann_index.try_load` failure + `semantic.py` brute-force branch; include reason class + `CAIRN_ANN_BACKEND` hint
+- [x] **T02 — ANN fallback one-time warning**
+  - [x] Add `warn_ann_fallback_once` mirroring `graph/embeddings.py:263` pattern
+  - [x] Call from `ann_index.try_load` failure + `semantic.py` brute-force branch; include reason class + `CAIRN_ANN_BACKEND` hint
   - Acceptance: with sqlite-vec unavailable, first semantic query logs one warning; subsequent queries silent; `CAIRN_ANN_BACKEND=off` (explicit choice) does not warn.
 
-- [ ] **T03 — Lock-contention visibility**
-  - [ ] `graph/schema.py::note_contention(site)` helper (P0 body: rate-limited `logger.warning`)
-  - [ ] Wire at the 13 sites (spec §4.2 gap 3)
+- [x] **T03 — Lock-contention visibility**
+  - [x] `graph/schema.py::note_contention(site)` helper (P0 body: rate-limited `logger.warning`)
+  - [x] Wire at the 13 sites (spec §4.2 gap 3)
+  - Follow-up fix: gated `note_contention("schema.migration")` to the genuine-error branch only — the idempotent "duplicate column" path (fired by the retained `transitive_edges.target_id` migration on every fresh DB) is not contention and was producing a false-positive WARNING on first-run init. Regression: `test_fresh_db_init_emits_no_contention_warning`.
   - Acceptance: simulated `database is locked` produces ≤1 warning per site per process; swallow semantics unchanged (tests still pass).
 
-- [ ] **T04 — Surface `parse_errors`**
-  - [ ] `cairn status`: count + newest 5 (paths shortened via `_shorten`); silent when empty
+- [x] **T04 — Surface `parse_errors`**
+  - [x] `cairn status`: count + newest 5 (paths shortened via `_shorten`); silent when empty
   - Acceptance: fixture DB with parse errors shows the block; clean DB output identical to today.
 
-- [ ] **T05 — `tests/test_metrics.py`** (new; the path is untested today)
-  - [ ] `instrument`: ok path writes row; error path records status/error + re-raises; truncation applies at `CAIRN_MAX_RESULT_CHARS`
-  - [ ] `_flush_metrics`: success drains; failure retains buffer; read-only skip
+- [x] **T05 — `tests/test_metrics.py`** (new; the path is untested today)
+  - [x] `instrument`: ok path writes row; error path records status/error + re-raises; truncation applies at `CAIRN_MAX_RESULT_CHARS`
+  - [x] `_flush_metrics`: success drains; failure retains buffer; read-only skip
   - Acceptance: `pytest tests/test_metrics.py` green in core-marker runtime.
 
-- [ ] **T06 — P0 docs**
-  - [ ] `docs/configuration.md` "Server and runtime": `CAIRN_LOG_LEVEL`
-  - [ ] `CHANGELOG.md` entry
+- [x] **T06 — P0 docs**
+  - [x] `docs/configuration.md` "Server and runtime": `CAIRN_LOG_LEVEL`
+  - [x] `CHANGELOG.md` entry
   - Acceptance: doc drift sweep clean (memory: version refs across ~10 surfaces).
 
 ## Phase 1 — event pipeline, build history, doctor (0.10.0)
