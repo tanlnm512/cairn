@@ -130,7 +130,7 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
     if scope == "workspace":
         claude_md = ws / "CLAUDE.md"
         if not claude_md.exists():
-            _write_file(claude_md, _claude_instructions(), force=False, result=res, dry_run=dry_run)
+            _write_file(claude_md, _claude_instructions(transport, sse_url), force=False, result=res, dry_run=dry_run)
         else:
             res.skipped.append(str(claude_md) + " (exists; not overwritten)")
 

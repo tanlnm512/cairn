@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import sqlite3
 import struct
 from datetime import datetime, timezone
@@ -26,12 +27,18 @@ HASH_MODEL = "hash-256-v1"  # deterministic fallback; tests + offline smoke
 DEFAULT_DIM = 256           # dimensionality of the hash fallback embedder
 
 
+_CORPUS_MODEL_ENV = {
+    "knowledge": "CAIRN_EMBED_KNOWLEDGE_MODEL",
+    "memory": "CAIRN_EMBED_MEMORY_MODEL",
+}
+
+
 def current_model(corpus: str = "code") -> str:
     """The model name rows are stamped with for the effective backend.
 
-    ``corpus`` selects between the code corpus (default) and the knowledge
-    corpus, which can be pinned to a different local model via
-    CAIRN_EMBED_KNOWLEDGE_MODEL (falls back to CAIRN_EMBED_LOCAL_MODEL).
+    ``corpus`` selects between the code corpus (default) and the
+    knowledge/memory corpora, each of which can be pinned to a different
+    local model via its own env var (falls back to CAIRN_EMBED_LOCAL_MODEL).
     Only applies to the local backend.
     """
     backend = _effective_backend()
@@ -39,10 +46,11 @@ def current_model(corpus: str = "code") -> str:
         return HASH_MODEL
     if backend == "openai":
         return os.environ.get("CAIRN_EMBED_OPENAI_MODEL", "text-embedding-3-small")
-    if corpus == "knowledge":
-        kn_model = os.environ.get("CAIRN_EMBED_KNOWLEDGE_MODEL")
-        if kn_model:
-            return kn_model.strip()
+    env_name = _CORPUS_MODEL_ENV.get(corpus)
+    if env_name:
+        corpus_model = os.environ.get(env_name)
+        if corpus_model:
+            return corpus_model.strip()
     return (os.environ.get("CAIRN_EMBED_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL).strip()
 
 
@@ -455,6 +463,10 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
         c2 = cur.execute("DELETE FROM knowledge_embeddings WHERE model != ?", (target_model,)).rowcount
     except Exception:
         c2 = 0
+    try:
+        c3 = cur.execute("DELETE FROM memory_embeddings WHERE model != ?", (target_model,)).rowcount
+    except Exception:
+        c3 = 0
 
     tables = cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_%'").fetchall()
     # Resolve the active ANN table name once so an ImportError surfaces loudly
@@ -465,7 +477,7 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
             cur.execute(f"DROP TABLE IF EXISTS {tname}")
 
     conn.commit()
-    return c1 + c2
+    return c1 + c2 + c3
 
 
 def _embed_local(texts: Sequence[str]) -> Tuple[List[bytes], int]:
@@ -790,3 +802,217 @@ def embed_knowledge_count(conn):
         (current_model(corpus="knowledge"),),
     ).fetchone()
     return r["c"] if r else 0
+
+
+# ---------------------------------------------------------------------------
+# Memory embeddings — chunked, keyed by concept_id (see memory_embeddings
+# table). Unlike knowledge docs, a memory's concept_id is NOT stable
+# (promote/demote/decay move it to a new path with a fresh uuid suffix), so
+# rows here can go stale on a tier move; reap_orphaned_memory_embeddings
+# cleans those up periodically rather than every write path carrying the old
+# row forward.
+# ---------------------------------------------------------------------------
+
+_CHUNK_SPLIT_RE = re.compile(r"\n(?=Why:|How to apply:)")
+MAX_MEMORY_CHUNKS = 5
+
+
+def chunk_memory_body(concept) -> List[str]:
+    """Split a memory concept into embeddable chunks.
+
+    record_memory's own guidance asks agents to structure a memory body as
+    the fact, then a `Why:` line and a `How to apply:` line -- a natural,
+    marker-based chunk boundary that needs no NLP. Falls back to blank-line
+    paragraph splits for memories that don't follow that structure. The
+    title is prepended to the first chunk for context (description is
+    skipped: create_memory always sets it equal to title, so including both
+    would just duplicate it). Capped at MAX_MEMORY_CHUNKS so a very long body
+    can't blow up embedding cost.
+    """
+    body = concept.body or ""
+    parts = [p for p in _CHUNK_SPLIT_RE.split(body) if p.strip()]
+    if len(parts) < 2:
+        parts = [p for p in body.split("\n\n") if p.strip()]
+    if not parts:
+        parts = [body]
+    header = concept.title or ""
+    chunks = []
+    for i, part in enumerate(parts[:MAX_MEMORY_CHUNKS]):
+        text = f"{header} {part}".strip() if i == 0 else part.strip()
+        if text:
+            chunks.append(text)
+    return chunks or ([header] if header else [])
+
+
+def embed_memory_concepts(conn: sqlite3.Connection, bundle, concept_ids: Sequence[str]) -> int:
+    """(Re-)embed specific memory concepts by concept_id. Returns count embedded.
+
+    Delete+reinsert rather than upsert: a re-embed of an edited memory may
+    have a different chunk count than before, so there is no stable
+    chunk_index to upsert against.
+
+    Batches the (potentially expensive) ``_embed`` call: all chunks across
+    every concept in ``concept_ids`` are embedded in a SINGLE call, then
+    sliced back out per concept for the DELETE+INSERT. Read failures are
+    still isolated per concept (a deleted/moved concept is skipped before any
+    embedding happens), so one bad concept_id can't abort the batch.
+    """
+    model = current_model(corpus="memory")
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Phase 1: read + chunk each concept, isolating read failures per-cid.
+    plan: List[Tuple[str, List[str]]] = []  # (cid, [chunks])
+    for cid in concept_ids:
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue  # deleted/moved since being queued -- nothing to embed
+        chunks = chunk_memory_body(concept)
+        if chunks:
+            plan.append((cid, chunks))
+    if not plan:
+        return 0
+
+    # Phase 2: ONE embed call for every chunk across every concept.
+    all_chunks = [chunk for _cid, chunks in plan for chunk in chunks]
+    blobs, _dim = _embed(all_chunks)
+
+    # Phase 3: slice the flat blob list back out per concept and persist.
+    embedded = 0
+    offset = 0
+    for cid, chunks in plan:
+        cid_blobs = blobs[offset:offset + len(chunks)]
+        offset += len(chunks)
+        conn.execute(
+            "DELETE FROM memory_embeddings WHERE doc_id = ? AND model = ?", (cid, model)
+        )
+        for idx, (chunk, blob) in enumerate(zip(chunks, cid_blobs)):
+            dim = len(blob) // 4
+            conn.execute(
+                "INSERT INTO memory_embeddings "
+                "(doc_id, chunk_index, model, dim, vec, chunk, embedded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (cid, idx, model, dim, blob, chunk, now),
+            )
+        embedded += 1
+    return embedded
+
+
+def embed_memory(conn, bundle, batch_size=64, progress=None):
+    """Embed all memory concepts not yet embedded under the current model.
+
+    Batch backfill for memories captured before this feature existed, or
+    after a model swap. Ongoing capture/evolve calls embed via the buffered
+    per-concept path (embed_memory_concepts) instead of waiting for this.
+    """
+    model = current_model(corpus="memory")
+    cids = bundle.list_concepts(prefix="memory/")
+    if not cids:
+        return {"model": model, "embedded": 0, "skipped": 0, "total": 0}
+
+    existing = {
+        r[0] for r in conn.execute(
+            "SELECT doc_id FROM memory_embeddings WHERE model = ? AND chunk_index = 0",
+            (model,),
+        ).fetchall()
+    }
+    to_embed = [cid for cid in cids if cid not in existing]
+
+    total = len(to_embed)
+    embedded = 0
+    for i in range(0, total, batch_size):
+        batch = to_embed[i:i + batch_size]
+        embedded += embed_memory_concepts(conn, bundle, batch)
+        conn.commit()
+        if progress:
+            progress(min(i + batch_size, total), total)
+
+    return {"model": model, "embedded": embedded, "skipped": total - embedded, "total": total}
+
+
+def embed_memory_count(conn):
+    """Count memory embeddings (distinct concepts, chunk_index=0) under current model."""
+    r = conn.execute(
+        "SELECT COUNT(*) AS c FROM memory_embeddings WHERE model = ? AND chunk_index = 0",
+        (current_model(corpus="memory"),),
+    ).fetchone()
+    return r["c"] if r else 0
+
+
+def memory_is_embedded(conn: sqlite3.Connection, doc_id: str) -> bool:
+    """True if ``doc_id`` has at least one embedding row under the current memory model."""
+    r = conn.execute(
+        "SELECT 1 FROM memory_embeddings WHERE doc_id = ? AND model = ? LIMIT 1",
+        (doc_id, current_model(corpus="memory")),
+    ).fetchone()
+    return r is not None
+
+
+def unembedded_memory_hint(conn: sqlite3.Connection, bundle) -> str:
+    """One-line footnote for recall/digest output when some memories lack embeddings.
+
+    Returns "" when every memory is embedded (or none exist), so callers can
+    append it unconditionally. Compares the persisted embedding count against
+    the on-disk memory concept count; the ``list_concepts`` scan is cheap
+    because the curated memory corpus stays small. recall/digest use a
+    read-only conn, so this never writes -- it only tells the user to run
+    ``cairn memory embed`` on the writable side.
+    """
+    total = len(bundle.list_concepts(prefix="memory/"))
+    if total == 0:
+        return ""
+    embedded = embed_memory_count(conn)
+    if embedded < total:
+        return (
+            f"({total - embedded} of {total} memories not yet embedded -- "
+            "run `cairn memory embed` for semantic recall)"
+        )
+    return ""
+
+
+def rename_memory_embedding(conn: sqlite3.Connection, old_id: str, new_id: str) -> int:
+    """Move a memory's embedding row(s) from ``old_id`` to ``new_id`` in place.
+
+    Used by promote/demote, which move a memory to a new concept_id WITHOUT
+    changing its content: renaming the persisted embedding avoids re-running
+    the embedder on unchanged text (and the orphan+re-embed it would otherwise
+    leave behind). Rows for ALL models are moved so a stale prior-model row
+    travels too (harmless -- reads are model-scoped). Does NOT commit; the
+    caller owns the transaction boundary. Returns rows moved (0 when the
+    memory had no embedding yet, in which case the caller should embed at
+    ``new_id`` instead).
+    """
+    cur = conn.execute(
+        "UPDATE memory_embeddings SET doc_id = ? WHERE doc_id = ?",
+        (new_id, old_id),
+    )
+    return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+
+
+def reap_orphaned_memory_embeddings(conn: sqlite3.Connection, bundle) -> int:
+    """Delete memory_embeddings rows whose concept no longer resolves in the bundle.
+
+    Covers rows left behind by promote/demote/decay tier moves (which change
+    a memory's concept_id without carrying its embedding forward). Safe to
+    call any time; best-effort like the rest of the embedding pipeline.
+    """
+    doc_ids = {
+        r[0] for r in conn.execute("SELECT DISTINCT doc_id FROM memory_embeddings").fetchall()
+    }
+    orphaned = [cid for cid in doc_ids if not _concept_exists(bundle, cid)]
+    if not orphaned:
+        return 0
+    placeholders = ",".join("?" for _ in orphaned)
+    cur = conn.execute(
+        f"DELETE FROM memory_embeddings WHERE doc_id IN ({placeholders})", orphaned
+    )
+    conn.commit()
+    return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+
+
+def _concept_exists(bundle, concept_id: str) -> bool:
+    try:
+        bundle.read_concept(concept_id)
+        return True
+    except Exception:
+        return False

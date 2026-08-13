@@ -84,7 +84,7 @@ def install_zcode(workspace: str, force: bool, dry_run: bool,
     # ZCode uses AGENTS.md as its instruction file.
     agents_md = ws / "AGENTS.md"
     if not agents_md.exists():
-        _write_file(agents_md, _agents_instructions(), force=False, result=res, dry_run=dry_run)
+        _write_file(agents_md, _agents_instructions(transport, sse_url), force=False, result=res, dry_run=dry_run)
     else:
         res.skipped.append(str(agents_md) + " (exists; not overwritten)")
 

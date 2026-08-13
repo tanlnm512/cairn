@@ -31,9 +31,15 @@ from cairn.paths import resolve_store
 # the first @instrument-wrapped tool call would otherwise hit a None factory.
 # _conn in _server_core is exactly the connection factory metric_buffering
 # needs (open graph DB for the current workspace).
-from ._server_core import _conn, mcp
+from ._server_core import _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import configure_conn
 configure_conn(_conn)
+
+# Memory-embed buffering needs a genuinely writable connection (unlike
+# metrics, it must not skip under CAIRN_READ_ONLY), so it's wired with
+# _rw_conn rather than _conn.
+from . import embed_buffering
+embed_buffering.configure(_rw_conn, _bundle)
 
 # Importing the tools_*.py modules registers every @mcp.tool() on the shared
 # `mcp` instance via decorator side effects. The names aren't used directly
@@ -211,7 +217,14 @@ def run(transport: str = "stdio", port: int | None = None):
 
             knowledge_path = str(resolve_store().knowledge)
             bundle = OKFBundle(knowledge_path)
-            decay_result = decay(bundle)
+            # Open a writable conn so decay can also reap embedding rows orphaned
+            # by the tier moves (otherwise dead vectors accumulate and tax the
+            # brute-force memory cosine scan on every recall).
+            reap_conn = get_db(db_path)
+            try:
+                decay_result = decay(bundle, conn=reap_conn)
+            finally:
+                reap_conn.close()
             if decay_result.get("expired_raw", 0) > 0 or decay_result.get("archived_tribal", 0) > 0:
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

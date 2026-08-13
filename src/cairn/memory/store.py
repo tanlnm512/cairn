@@ -176,27 +176,28 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
     # when the concept_id escapes the bundle root. Catch it here so a
     # traversal attempt is a controlled refusal (returns False), not an
     # unhandled exception.
-    try:
-        concept = get_memory(bundle, memory_path)
-    except ValueError:
-        return False
-    if concept is not None:
-        cid = concept.concept_id
-        # Normalize to relative for DB lookup.
+    with bundle.lock():
         try:
-            cid = str(Path(cid).relative_to(bundle.root))
+            concept = get_memory(bundle, memory_path)
         except ValueError:
-            pass
-    # Route the file path through the write-path validator so a malformed
-    # concept_id can't escape the bundle root via the delete path. Raises
-    # ValueError if cid escapes root; treat that as "nothing to delete".
-    try:
-        file_path = bundle._validate_concept_path(cid)
-    except ValueError:
-        return False
-    if not file_path.exists():
-        return False
-    file_path.unlink()
+            return False
+        if concept is not None:
+            cid = concept.concept_id
+            # Normalize to relative for DB lookup.
+            try:
+                cid = str(Path(cid).relative_to(bundle.root))
+            except ValueError:
+                pass
+        # Route the file path through the write-path validator so a malformed
+        # concept_id can't escape the bundle root via the delete path. Raises
+        # ValueError if cid escapes root; treat that as "nothing to delete".
+        try:
+            file_path = bundle._validate_concept_path(cid)
+        except ValueError:
+            return False
+        if not file_path.exists():
+            return False
+        file_path.unlink()
     # Clean up memory_refs in DB. Do NOT commit here -- the caller owns the
     # transaction boundary; committing a connection we don't own can either
     # commit an in-flight caller transaction or hit "database is locked".
@@ -208,50 +209,62 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
 TIER_ORDER = ["tribal", "drafts", "raw", "archived"]
 
 
-def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw") -> Optional[str]:
+def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw", conn=None) -> Optional[str]:
     """Demote a memory to a lower tier. Returns new path or None.
 
     Rejects promotions — target_tier must be strictly lower than current.
+
+    If ``conn`` is provided, the memory's persisted embedding row is renamed
+    from the old concept_id to the new one in place (content is unchanged by a
+    demote), avoiding a re-embed of identical text. The caller owns the commit.
     """
-    concept = get_memory(bundle, memory_path)
-    if concept is None:
-        return None
-    current_tier = concept.extensions.get("memory_tier", "drafts")
-    try:
-        # TIER_ORDER is highest-first: tribal=0, drafts=1, raw=2, archived=3.
-        # Demotion means target index > current index. Reject promotions (target < current)
-        # and same-tier moves.
-        if TIER_ORDER.index(target_tier) <= TIER_ORDER.index(current_tier):
-            return None  # target is same or higher — not a demotion
-    except ValueError:
-        return None  # invalid tier name
-    # Normalize concept_id to relative (from_file sets absolute paths).
-    old_id = concept.concept_id
-    try:
-        old_id = str(Path(old_id).relative_to(bundle.root))
-    except ValueError:
-        pass  # keep as-is if not under bundle root
-    concept.extensions["memory_tier"] = target_tier
-    new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id)
-    return new_id
+    with bundle.lock():
+        concept = get_memory(bundle, memory_path)
+        if concept is None:
+            return None
+        current_tier = concept.extensions.get("memory_tier", "drafts")
+        try:
+            # TIER_ORDER is highest-first: tribal=0, drafts=1, raw=2, archived=3.
+            # Demotion means target index > current index. Reject promotions (target < current)
+            # and same-tier moves.
+            if TIER_ORDER.index(target_tier) <= TIER_ORDER.index(current_tier):
+                return None  # target is same or higher — not a demotion
+        except ValueError:
+            return None  # invalid tier name
+        # Normalize concept_id to relative (from_file sets absolute paths).
+        old_id = concept.concept_id
+        try:
+            old_id = str(Path(old_id).relative_to(bundle.root))
+        except ValueError:
+            pass  # keep as-is if not under bundle root
+        concept.extensions["memory_tier"] = target_tier
+        new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id)
+        # Carry the embedding forward in place (a demote never changes content,
+        # so re-embedding would be wasted work). old_id is already relative here.
+        # Import via the cairn.graph public surface per the layering rule.
+        if conn is not None:
+            from ..graph import embeddings as _emb
+            _emb.rename_memory_embedding(conn, old_id, new_id)  # caller commits
+        return new_id
 
 
 def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
     """Delete archived memories older than max_days. Returns count purged."""
     now = datetime.now(timezone.utc)
     purged = 0
-    for concept in list_memories(bundle, tier="archived"):
-        ts = concept.timestamp
-        if ts:
-            try:
-                age = (now - datetime.fromisoformat(ts)).days
-            except (ValueError, TypeError):
-                age = 0
-            if age > max_days:
-                file_path = Path(bundle.root) / f"{concept.concept_id}.md"
-                if file_path.exists():
-                    file_path.unlink()
-                purged += 1
+    with bundle.lock():
+        for concept in list_memories(bundle, tier="archived"):
+            ts = concept.timestamp
+            if ts:
+                try:
+                    age = (now - datetime.fromisoformat(ts)).days
+                except (ValueError, TypeError):
+                    age = 0
+                if age > max_days:
+                    file_path = Path(bundle.root) / f"{concept.concept_id}.md"
+                    if file_path.exists():
+                        file_path.unlink()
+                    purged += 1
     return purged
 
 
@@ -273,67 +286,68 @@ def consolidate_memories(bundle: OKFBundle) -> int:
     promotes the consolidated memory to 'tribal', and archives raw duplicates.
     Returns the number of memories consolidated.
     """
-    raw_ids = bundle.list_concepts(prefix="memory/raw")
-    if len(raw_ids) < 2:
-        return 0
+    with bundle.lock():
+        raw_ids = bundle.list_concepts(prefix="memory/raw")
+        if len(raw_ids) < 2:
+            return 0
 
-    concepts = []
-    for cid in raw_ids:
-        try:
-            concepts.append(bundle.read_concept(cid))
-        except Exception:
-            pass
+        concepts = []
+        for cid in raw_ids:
+            try:
+                concepts.append(bundle.read_concept(cid))
+            except Exception:
+                pass
 
-    groups: dict[str, list[OKFConcept]] = {}
-    for c in concepts:
-        key = (c.title or "").strip().lower()
-        if not key:
-            continue
-        groups.setdefault(key, []).append(c)
+        groups: dict[str, list[OKFConcept]] = {}
+        for c in concepts:
+            key = (c.title or "").strip().lower()
+            if not key:
+                continue
+            groups.setdefault(key, []).append(c)
 
-    consolidated_count = 0
-    for title_key, group in groups.items():
-        if len(group) < 2:
-            continue
+        consolidated_count = 0
+        for title_key, group in groups.items():
+            if len(group) < 2:
+                continue
 
-        primary = group[0]
-        merged_body_lines = [primary.body or ""]
-        for c in group[1:]:
-            if c.body and c.body not in merged_body_lines:
-                merged_body_lines.append(c.body)
+            primary = group[0]
+            merged_body_lines = [primary.body or ""]
+            for c in group[1:]:
+                if c.body and c.body not in merged_body_lines:
+                    merged_body_lines.append(c.body)
 
-        new_title = primary.title or title_key.title()
-        # UUID suffix so distinct consolidations that share a title don't
-        # clobber each other via write_concept's atomic os.replace.
-        import uuid
-        unique_suffix = uuid.uuid4().hex[:6]
-        unified_concept = OKFConcept(
-            type="TribalMemory",
-            title=new_title,
-            description=primary.description or f"Consolidated memory for {new_title}",
-            body="\n\n---\n\n".join(merged_body_lines),
-            tags=list(set(sum([c.tags for c in group if c.tags], []))),
-            concept_id=f"memory/tribal/{_slugify(new_title)}-{unique_suffix}",
-            extensions={
-                "memory_tier": "tribal",
-                "consolidated_from": [c.concept_id for c in group],
-            },
-        )
-        bundle.write_concept(unified_concept)
+            new_title = primary.title or title_key.title()
+            # UUID suffix so distinct consolidations that share a title don't
+            # clobber each other via write_concept's atomic os.replace.
+            import uuid
+            unique_suffix = uuid.uuid4().hex[:6]
+            unified_concept = OKFConcept(
+                type="TribalMemory",
+                title=new_title,
+                description=primary.description or f"Consolidated memory for {new_title}",
+                body="\n\n---\n\n".join(merged_body_lines),
+                tags=list(set(sum([c.tags for c in group if c.tags], []))),
+                concept_id=f"memory/tribal/{_slugify(new_title)}-{unique_suffix}",
+                extensions={
+                    "memory_tier": "tribal",
+                    "consolidated_from": [c.concept_id for c in group],
+                },
+            )
+            bundle.write_concept(unified_concept)
 
-        for c in group:
-            if c.concept_id and c.concept_id != unified_concept.concept_id:
-                try:
-                    c.extensions["memory_tier"] = "archived"
-                    # UUID suffix (same format as store_memory's non-raw tier)
-                    # so distinct memories that share a title don't clobber
-                    # each other via write_concept's atomic os.replace.
-                    archived_suffix = uuid.uuid4().hex[:6]
-                    c.concept_id = f"memory/archived/{_slugify(c.title or 'memory')}-{archived_suffix}"
-                    bundle.write_concept(c)
-                except Exception:
-                    pass
+            for c in group:
+                if c.concept_id and c.concept_id != unified_concept.concept_id:
+                    try:
+                        c.extensions["memory_tier"] = "archived"
+                        # UUID suffix (same format as store_memory's non-raw tier)
+                        # so distinct memories that share a title don't clobber
+                        # each other via write_concept's atomic os.replace.
+                        archived_suffix = uuid.uuid4().hex[:6]
+                        c.concept_id = f"memory/archived/{_slugify(c.title or 'memory')}-{archived_suffix}"
+                        bundle.write_concept(c)
+                    except Exception:
+                        pass
 
-        consolidated_count += len(group)
+            consolidated_count += len(group)
 
     return consolidated_count

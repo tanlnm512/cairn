@@ -4,7 +4,7 @@ Covers the fix for silent degradation under the dep-free hash fallback:
   1. is_hash_fallback() — the shared detector (replaces inline checks)
   2. warn_hash_fallback_once — one-time-per-process warning
   3. Provenance enrichment on the query-time paths:
-     - memory recall (_semantic_memory_fallback stamps provenance)
+     - memory recall (_semantic_memory_search stamps provenance)
      - semantic_search (semantic/fused provenance under hash)
      - knowledge search (semantic_knowledge provenance under hash)
 
@@ -177,19 +177,22 @@ def _write_memory(bundle, title="Test memory", body="a body"):
 
 
 class TestMemoryRecallProvenance:
-    """_semantic_memory_fallback stamps hash-backend provenance."""
+    """_semantic_memory_search stamps hash-backend provenance."""
 
     def test_provenance_under_hash_fallback(self, db, bundle, monkeypatch):
-        from cairn.memory.promotion import _semantic_memory_fallback
+        from cairn.graph.embeddings import embed_memory_concepts
+        from cairn.memory.promotion import _semantic_memory_search
 
-        _write_memory(bundle, title="Use JWT auth", body="Use JWT for authentication")
+        concept = _write_memory(bundle, title="Use JWT auth", body="Use JWT for authentication")
         monkeypatch.setattr(
             "cairn.graph.embeddings.is_hash_fallback", lambda: True
         )
         # embeddings_available() must be True for the path to run (hash returns True).
         monkeypatch.setattr("cairn.graph.embeddings.embeddings_available", lambda: True)
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
 
-        out = _semantic_memory_fallback(db, bundle, "JWT authentication")
+        out = _semantic_memory_search(db, bundle, "JWT authentication")
         assert out, "expected at least one semantic hit"
         for c in out:
             assert c.extensions["provenance"] == "semantic (hash backend)", (
@@ -197,15 +200,18 @@ class TestMemoryRecallProvenance:
             )
 
     def test_provenance_under_real_backend(self, db, bundle, monkeypatch):
-        from cairn.memory.promotion import _semantic_memory_fallback
+        from cairn.graph.embeddings import embed_memory_concepts
+        from cairn.memory.promotion import _semantic_memory_search
 
-        _write_memory(bundle, title="Use JWT auth", body="Use JWT for authentication")
+        concept = _write_memory(bundle, title="Use JWT auth", body="Use JWT for authentication")
         monkeypatch.setattr(
             "cairn.graph.embeddings.is_hash_fallback", lambda: False
         )
         monkeypatch.setattr("cairn.graph.embeddings.embeddings_available", lambda: True)
+        embed_memory_concepts(db, bundle, [concept.concept_id])
+        db.commit()
 
-        out = _semantic_memory_fallback(db, bundle, "JWT authentication")
+        out = _semantic_memory_search(db, bundle, "JWT authentication")
         # The hash embedder still runs in the test env, so we get hits; the point
         # is the provenance label reflects a real backend (no hash annotation).
         for c in out:

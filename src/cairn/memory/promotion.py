@@ -1,6 +1,7 @@
 """Memory promotion, critic, decay, and search."""
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,8 @@ from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
 from . import store as store_mod
 from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
+
+logger = logging.getLogger(__name__)
 
 
 def capture_memory(
@@ -43,38 +46,39 @@ def capture_memory(
     from .privacy import strip_private_data
 
     body = strip_private_data(body)
-    superseded_id = _find_supersession_candidate(
-        conn, bundle, type_, title, body, supersedes_threshold
-    )
+    with bundle.lock():
+        superseded_id = _find_supersession_candidate(
+            conn, bundle, type_, title, body, supersedes_threshold
+        )
 
-    supersedes_chain: list[str] = []
-    if superseded_id:
-        # Inherit the old version chain so memory_supersedes is the full history.
-        old = store_mod.get_memory(bundle, superseded_id)
-        if old is not None:
-            norm_id = _norm_cid(bundle, superseded_id)
-            old_chain = [_norm_cid(bundle, cid) for cid in (old.extensions.get("memory_supersedes") or [])]
-            supersedes_chain = [norm_id] + old_chain
+        supersedes_chain: list[str] = []
+        if superseded_id:
+            # Inherit the old version chain so memory_supersedes is the full history.
+            old = store_mod.get_memory(bundle, superseded_id)
+            if old is not None:
+                norm_id = _norm_cid(bundle, superseded_id)
+                old_chain = [_norm_cid(bundle, cid) for cid in (old.extensions.get("memory_supersedes") or [])]
+                supersedes_chain = [norm_id] + old_chain
 
-    concept = store_mod.create_memory(
-        type_=type_,
-        title=title,
-        body=body,
-        resource=resource,
-        confidence=confidence,
-        session_origin=session_origin,
-        tags=tags,
-        supersedes=supersedes_chain or None,
-    )
-    signals = score_memory(concept, conn, bundle)
-    apply_score(concept, signals)
-    tier = store_mod.tier_for_score(signals["score"])
-    path = store_mod.store_memory(concept, bundle, tier=tier)
+        concept = store_mod.create_memory(
+            type_=type_,
+            title=title,
+            body=body,
+            resource=resource,
+            confidence=confidence,
+            session_origin=session_origin,
+            tags=tags,
+            supersedes=supersedes_chain or None,
+        )
+        signals = score_memory(concept, conn, bundle)
+        apply_score(concept, signals)
+        tier = store_mod.tier_for_score(signals["score"])
+        path = store_mod.store_memory(concept, bundle, tier=tier)
 
-    # Flip the old memory to is_latest=false AFTER the new one is safely on disk.
-    if superseded_id:
-        _mark_superseded(bundle, superseded_id, path)
-        _append_promotion(concept, "supersede", signals["score"])
+        # Flip the old memory to is_latest=false AFTER the new one is safely on disk.
+        if superseded_id:
+            _mark_superseded(bundle, superseded_id, path)
+            _append_promotion(concept, "supersede", signals["score"])
 
     return {
         "path": path,
@@ -170,57 +174,74 @@ def search_memory(
     session_id: Optional[str] = None,
     include_superseded: bool = False,
 ) -> List[OKFConcept]:
-    """Search tribal + canonical memories. Records a reference for each result.
+    """Search tribal + canonical memories via fused lexical + semantic ranking.
 
-    Falls back to a semantic scan over the memory corpus when the lexical
-    substring search (bundle.search) returns nothing. Superseded memories
-    (``memory_is_latest: false``) are filtered out by default; pass
+    Runs a lexical scan (substring + multi-token broaden) and a semantic scan
+    (cosine over persisted memory_embeddings) and fuses both ranked lists with
+    RRF (same technique as the code-search hybrid), so a semantically related
+    memory with no shared keywords can surface instead of only being tried
+    once lexical comes up completely empty. Semantic degrades to a no-op
+    (pure lexical results) until at least one memory has been embedded --
+    embedding happens out-of-band at capture/evolve time, not here. Superseded
+    memories (``memory_is_latest: false``) are filtered out by default; pass
     ``include_superseded=True`` to traverse the version chain.
     """
-    results = bundle.search(query, limit=20)
-    # Filter to memory concepts only.
-    results = [
-        c
-        for c in results
-        if c.concept_id.startswith("memory/") or c.extensions.get("memory_tier")
+    def _visible(c: OKFConcept) -> bool:
+        if tier and not c.extensions.get("memory_tier", "").startswith(tier):
+            return False
+        if not include_superseded and c.extensions.get("memory_is_latest", True) is False:
+            return False
+        return True
+
+    lexical_hits = [
+        c for c in bundle.search(query, limit=20)
+        if (c.concept_id.startswith("memory/") or c.extensions.get("memory_tier")) and _visible(c)
     ]
-    if tier:
-        results = [c for c in results if c.extensions.get("memory_tier", "").startswith(tier)]
+    resolved: Dict[str, OKFConcept] = {c.concept_id: c for c in lexical_hits}
 
-    # Drop superseded versions unless explicitly requested. A memory is
-    # superseded when memory_is_latest is explicitly false; older memories
-    # without this key default to True (treated as latest).
-    if not include_superseded:
-        results = [
-            c for c in results if c.extensions.get("memory_is_latest", True) is not False
-        ]
-
-    # Lexical broaden: if initial results are thin (empty or very few), run a
-    # multi-token keyword scan over all memory concepts to recover matches
-    # where query tokens are spread across fields.
-    if len(results) <= 2:
+    # Lexical broaden: only pay the cost of reading every memory concept from
+    # disk when substring search alone came up thin.
+    if len(lexical_hits) <= 2:
         all_mem = [
-            c
-            for cid in bundle.list_concepts(prefix="memory/")
-            if (c := bundle.read_concept(cid)) is not None
+            c for cid in bundle.list_concepts(prefix="memory/")
+            if (c := bundle.read_concept(cid)) is not None and _visible(c)
         ]
-        if not include_superseded:
-            all_mem = [
-                c for c in all_mem if c.extensions.get("memory_is_latest", True) is not False
-            ]
-        lexical = _lexical_memory_match(all_mem, query)
-        seen = {c.concept_id for c in results}
-        for c in lexical:
+        for c in all_mem:
+            resolved.setdefault(c.concept_id, c)
+        seen = {c.concept_id for c in lexical_hits}
+        for c in _lexical_memory_match(all_mem, query):
             if c.concept_id not in seen:
-                results.append(c)
+                lexical_hits.append(c)
                 seen.add(c.concept_id)
 
-    # Semantic fallback when lexical search comes up empty. Embeds the query
-    # and cosine-ranks every memory concept by its title+description+body.
-    if not results:
-        results = _semantic_memory_fallback(
-            conn, bundle, query, tier=tier, include_superseded=include_superseded
-        )
+    semantic_hits = _semantic_memory_search(
+        conn, bundle, query, tier=tier, include_superseded=include_superseded
+    )
+    # Overwrite (not setdefault): the semantic object already carries the
+    # provenance stamp that needs to survive into the returned result, so it
+    # must win over the provenance-less lexical object for any id in both.
+    for c in semantic_hits:
+        resolved[c.concept_id] = c
+
+    lexical_ids = [c.concept_id for c in lexical_hits]
+    semantic_ids = [c.concept_id for c in semantic_hits]
+
+    if semantic_ids:
+        from cairn.graph import rrf_fuse
+
+        # _semantic_memory_search already stamped "semantic"/"semantic (hash
+        # backend)" on its own hits; upgrade any hit found BOTH ways to
+        # "fused"/"fused (hash backend)" -- mirrors the code-search hybrid's
+        # bm25/semantic/fused labeling. Lexical-only hits stay unstamped.
+        lexical_id_set = set(lexical_ids)
+        for c in semantic_hits:
+            if c.concept_id in lexical_id_set:
+                c.extensions["provenance"] = c.extensions["provenance"].replace("semantic", "fused")
+
+        fused = rrf_fuse([lexical_ids, semantic_ids], k=60)
+        results = [resolved[cid] for cid, _score in fused if cid in resolved]
+    else:
+        results = lexical_hits
 
     # Record references for tribal/canonical (not raw/drafts) in ONE batched
     # transaction instead of one write per result, to avoid N write-lock
@@ -235,7 +256,7 @@ def search_memory(
     return results
 
 
-def _semantic_memory_fallback(
+def _semantic_memory_search(
     conn: sqlite3.Connection,
     bundle: OKFBundle,
     query: str,
@@ -243,104 +264,125 @@ def _semantic_memory_fallback(
     limit: int = 20,
     include_superseded: bool = False,
 ) -> List[OKFConcept]:
-    """Semantic recall over memory concepts when lexical search misses.
+    """Cosine scan over persisted memory_embeddings, ranked by best-matching chunk.
 
-    Embeds the query with the configured backend and cosine-ranks every memory
-    concept (by its title + description + body text). Returns [] if embedding is
-    unavailable. Under the dep-free hash fallback the stamped provenance is
-    ``semantic (hash backend)`` so callers can flag the degraded signal.
+    Returns [] if nothing has been embedded yet (fresh install, or before a
+    backfill has run) or on any error -- never raises, mirroring
+    knowledge/search.py's _semantic_search. A memory can have multiple
+    embedded chunks (see chunk_memory_body); this dedupes to one entry per
+    concept_id, keeping its single best-scoring chunk's rank.
     """
     try:
         from cairn.graph import embeddings as emb
         from cairn.retrieval import cosine_scan
 
-        if not emb.embeddings_available():
+        if emb.embed_memory_count(conn) == 0:
             return []
-        concepts = [
-            c
-            for c in (bundle.read_concept(cid) for cid in bundle.list_concepts())
-            if c is not None
-            and (
-                c.concept_id.startswith("memory/")
-                or c.extensions.get("memory_tier")
-            )
-        ]
-        if not include_superseded:
-            concepts = [
-                c for c in concepts
-                if c.extensions.get("memory_is_latest", True) is not False
-            ]
-        if tier:
-            concepts = [
-                c for c in concepts
-                if c.extensions.get("memory_tier", "").startswith(tier)
-            ]
-        if not concepts:
-            return []
-        texts = [
-            " ".join(filter(None, [c.title, c.description, c.body]))
-            for c in concepts
-        ]
-        # Embed the query + every memory text with the SAME backend so the
-        # dimensions and embedding space line up.
-        q_blob, dim = emb.embed_query(query)
-        mem_blobs, _ = emb._embed(texts)
+        model = emb.current_model(corpus="memory")
+        q_blob, q_dim = emb.embed_query(query)
+        rows = conn.execute(
+            "SELECT doc_id, vec, dim FROM memory_embeddings WHERE model = ?",
+            (model,),
+        ).fetchall()
+        triples = [(r["vec"], r["dim"], r["doc_id"]) for r in rows]
+        # Deliberately brute-force: the memory corpus is small and curated, so a
+        # full-table cosine scan is sub-millisecond and not worth a vec0 index.
+        # (graph/ann_index.py's ANN path covers only the code-corpus embeddings
+        # table; see its module docstring for when to extend it here.)
+        scored = cosine_scan(q_blob, q_dim, triples, threshold=0.1)
 
-        # Unified cosine scan over the shared vector_math helpers.
-        rows = [
-            (blob if isinstance(blob, bytes) else bytes(blob), len(blob) // 4, concept)
-            for concept, blob in zip(concepts, mem_blobs)
-        ]
-        # Mild threshold: this is a fallback, so we surface candidates even when
-        # similarity is modest. Below 0.1 the match is essentially noise.
-        scored = cosine_scan(q_blob, dim, rows, threshold=0.1)
-        out = [c for s, c in scored[:limit]]
-        # Stamp provenance so callers know these are semantic, not lexical.
+        # Stamp provenance so callers know these are semantic, not lexical;
+        # search_memory upgrades this to "fused" for hits found both ways.
         prov = "semantic (hash backend)" if emb.is_hash_fallback() else "semantic"
-        for c in out:
-            c.extensions["provenance"] = prov
+
+        seen_ids: set = set()
+        out = []
+        for _score, doc_id in scored:
+            if doc_id in seen_ids:
+                continue  # keep only the best-scoring chunk per concept
+            seen_ids.add(doc_id)
+            try:
+                concept = bundle.read_concept(doc_id)
+            except Exception:
+                continue  # row orphaned by a since-moved/deleted memory
+            if tier and not concept.extensions.get("memory_tier", "").startswith(tier):
+                continue
+            if not include_superseded and concept.extensions.get("memory_is_latest", True) is False:
+                continue
+            concept.extensions["provenance"] = prov
+            out.append(concept)
+            if len(out) >= limit:
+                break
         return out
     except Exception:
-        return []  # never let the fallback break recall_memory
+        # Never let semantic ranking break recall_memory, but leave a debug
+        # breadcrumb (schema drift / malformed blob shouldn't vanish silently).
+        logger.debug("semantic memory search failed; returning []", exc_info=True)
+        return []  # never let semantic ranking break recall_memory
 
 
 def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[str]:
     """Force-promote a memory to canonical (compass or wiki).
 
     Moves the file from its tier dir into compass/ (for decisions/patterns) or
-    wiki/ (for architecture). Returns the new concept_id or None on failure.
+    wiki/ (for the architecture). Returns the new concept_id or None on failure.
+
+    If ``conn`` is provided, the memory's persisted embedding row is renamed
+    from the old concept_id to the new one in place (content is unchanged by a
+    promote), avoiding a re-embed of identical text. The caller is responsible
+    for committing/owning the transaction; pass ``conn=None`` to skip (in which
+    case the caller should enqueue a fresh embed at the new id).
     """
-    concept = store_mod.get_memory(bundle, memory_path)
-    if concept is None:
-        return None
-    mtype = concept.extensions.get("memory_type", "decision")
-    # Decisions/patterns/mistakes -> compass; architecture-ish -> wiki.
-    if mtype in ("decision", "pattern", "mistake", "workaround"):
-        new_type = "Compass"
-        new_id = f"compass/promoted-{store_mod.slugify(concept.title)}"
-    else:
-        new_type = "Wiki-Feature"
-        new_id = f"wiki/features/promoted-{store_mod.slugify(concept.title)}"
-    concept.type = new_type
-    concept.extensions["memory_status"] = "canonical"
-    # Clear the tier label: search_memory()/router.py filter on truthy
-    # memory_tier to decide whether a result is a memory hit, so a stale
-    # label here would make a promoted, canonical concept keep showing up as
-    # an unpromoted memory.
-    concept.extensions.pop("memory_tier", None)
-    old_id = concept.concept_id
-    concept.concept_id = new_id
-    # Append the promotion-history entry BEFORE writing so the new file is
-    # written exactly once with history included (no crash window between
-    # unlinking the old file and the rewrite).
-    _append_promotion(concept, "force_promote", concept.extensions.get("memory_score", 0.0))
-    # Write the new file (with history) first...
-    bundle.write_concept(concept)
-    # ...and only once the new file is safely on disk, remove the old one.
-    old_file = Path(bundle.root) / f"{old_id}.md"
-    if old_file.exists():
-        old_file.unlink()
-    return new_id
+    with bundle.lock():
+        concept = store_mod.get_memory(bundle, memory_path)
+        if concept is None:
+            return None
+        mtype = concept.extensions.get("memory_type", "decision")
+        # UUID suffix avoids same-title collisions; safe since callers always
+        # use the returned concept_id rather than reconstructing this slug.
+        import uuid
+        unique_suffix = uuid.uuid4().hex[:6]
+        # Decisions/patterns/mistakes -> compass; architecture-ish -> wiki.
+        if mtype in ("decision", "pattern", "mistake", "workaround"):
+            new_type = "Compass"
+            new_id = f"compass/promoted-{store_mod.slugify(concept.title)}-{unique_suffix}"
+        else:
+            new_type = "Wiki-Feature"
+            new_id = f"wiki/features/promoted-{store_mod.slugify(concept.title)}-{unique_suffix}"
+        concept.type = new_type
+        concept.extensions["memory_status"] = "canonical"
+        # Clear the tier label: search_memory()/router.py filter on truthy
+        # memory_tier to decide whether a result is a memory hit, so a stale
+        # label here would make a promoted, canonical concept keep showing up as
+        # an unpromoted memory.
+        concept.extensions.pop("memory_tier", None)
+        old_id = concept.concept_id
+        # from_file leaves concept_id as an ABSOLUTE path, but embedding doc_ids
+        # are stored relative (they originate from store_memory's return value).
+        # Normalize so the embedding rename below matches the persisted row.
+        try:
+            old_id = str(Path(old_id).relative_to(bundle.root))
+        except ValueError:
+            pass  # already relative, or escapes root -- keep as-is
+        concept.concept_id = new_id
+        # Append the promotion-history entry BEFORE writing so the new file is
+        # written exactly once with history included (no crash window between
+        # unlinking the old file and the rewrite).
+        _append_promotion(concept, "force_promote", concept.extensions.get("memory_score", 0.0))
+        # Write the new file (with history) first...
+        bundle.write_concept(concept)
+        # Carry the embedding forward in place instead of orphaning it (a
+        # promote never changes content, so re-embedding would be wasted work).
+        # Import via the cairn.graph public surface (not the internal submodule)
+        # per the layering rule enforced by test_layer_direction.
+        if conn is not None:
+            from cairn.graph import embeddings as _emb
+            _emb.rename_memory_embedding(conn, old_id, new_id)  # caller commits
+        # ...and only once the new file is safely on disk, remove the old one.
+        old_file = Path(bundle.root) / f"{old_id}.md"
+        if old_file.exists():
+            old_file.unlink()
+        return new_id
 
 
 def batch_critic(
@@ -385,24 +427,43 @@ def batch_critic(
     return {"processed": len(drafts), "tribal": tribal, "dropped": dropped, "remaining_drafts": promoted}
 
 
-def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90) -> Dict:
-    """Expire raw memories older than raw_max_days; archive tribal past staleness."""
+def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, conn=None) -> Dict:
+    """Expire raw memories older than raw_max_days; archive tribal past staleness.
+
+    If ``conn`` is provided, also reap embedding rows orphaned by the tier moves
+    (a decay moves a memory to a new concept_id, leaving its embedding row
+    stranded at the old address). Reap is best-effort and also cleans orphans
+    left by other paths; it never fails decay.
+    """
     expired = 0
     archived = 0
-    for concept in store_mod.list_memories(bundle, tier="raw"):
-        ts = concept.timestamp
-        if ts and _age_days(ts) > raw_max_days:
-            old_id = concept.concept_id
-            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
-            expired += 1
-    for concept in store_mod.list_memories(bundle, tier="tribal"):
-        ts = concept.timestamp
-        age = _age_days(ts) if ts else 0
-        if age > tribal_max_stale:
-            old_id = concept.concept_id
-            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
-            archived += 1
-    return {"expired_raw": expired, "archived_tribal": archived}
+    with bundle.lock():
+        for concept in store_mod.list_memories(bundle, tier="raw"):
+            ts = concept.timestamp
+            if ts and _age_days(ts) > raw_max_days:
+                old_id = concept.concept_id
+                store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
+                expired += 1
+        for concept in store_mod.list_memories(bundle, tier="tribal"):
+            ts = concept.timestamp
+            age = _age_days(ts) if ts else 0
+            if age > tribal_max_stale:
+                old_id = concept.concept_id
+                store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
+                archived += 1
+    reaped = 0
+    if conn is not None and (expired or archived):
+        # The moves above orphan embedding rows at the old concept_ids; clean
+        # them now rather than letting dead vectors accumulate in the table
+        # (memory search is a brute-force cosine scan, so orphans tax every
+        # recall). Reap also catches orphans from other paths.
+        from cairn.graph import embeddings as _emb
+        try:
+            reaped = _emb.reap_orphaned_memory_embeddings(conn, bundle)
+        except Exception:
+            logger.debug("memory embed reap during decay failed", exc_info=True)
+            reaped = 0
+    return {"expired_raw": expired, "archived_tribal": archived, "reaped_embeddings": reaped}
 
 
 def tribal_digest(bundle: OKFBundle, limit: int = 10) -> List[OKFConcept]:
@@ -536,30 +597,31 @@ def evolve_memory(
     stores the new version. At least one of new_title / new_body must differ
     from the old memory.
     """
-    old = store_mod.get_memory(bundle, memory_path)
-    if old is None:
-        return None
-    mtype = old.extensions.get("memory_type", "decision")
-    norm_old = _norm_cid(bundle, old.concept_id)
-    old_chain = [_norm_cid(bundle, cid) for cid in (old.extensions.get("memory_supersedes") or [])]
-    chain = [norm_old] + old_chain
-    confidence = old.extensions.get("memory_signals", {}).get("agent_confidence", 0.7)
-    concept = store_mod.create_memory(
-        type_=mtype,
-        title=new_title or old.title or "memory",
-        body=new_body or old.body or "",
-        resource=old.resource,
-        confidence=confidence,
-        tags=old.tags,
-        supersedes=chain,
-    )
-    signals = score_memory(concept, conn, bundle)
-    apply_score(concept, signals)
-    tier = store_mod.tier_for_score(signals["score"])
-    new_path = store_mod.store_memory(concept, bundle, tier=tier)
-    _mark_superseded(bundle, old.concept_id, new_path)
-    _append_promotion(concept, "evolve", signals["score"])
-    return {"path": new_path, "tier": tier, "signals": signals, "superseded": old.concept_id}
+    with bundle.lock():
+        old = store_mod.get_memory(bundle, memory_path)
+        if old is None:
+            return None
+        mtype = old.extensions.get("memory_type", "decision")
+        norm_old = _norm_cid(bundle, old.concept_id)
+        old_chain = [_norm_cid(bundle, cid) for cid in (old.extensions.get("memory_supersedes") or [])]
+        chain = [norm_old] + old_chain
+        confidence = old.extensions.get("memory_signals", {}).get("agent_confidence", 0.7)
+        concept = store_mod.create_memory(
+            type_=mtype,
+            title=new_title or old.title or "memory",
+            body=new_body or old.body or "",
+            resource=old.resource,
+            confidence=confidence,
+            tags=old.tags,
+            supersedes=chain,
+        )
+        signals = score_memory(concept, conn, bundle)
+        apply_score(concept, signals)
+        tier = store_mod.tier_for_score(signals["score"])
+        new_path = store_mod.store_memory(concept, bundle, tier=tier)
+        _mark_superseded(bundle, old.concept_id, new_path)
+        _append_promotion(concept, "evolve", signals["score"])
+        return {"path": new_path, "tier": tier, "signals": signals, "superseded": old.concept_id}
 
 
 # --- helpers -------------------------------------------------------------

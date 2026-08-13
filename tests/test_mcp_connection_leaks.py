@@ -12,8 +12,8 @@ The 12 leaky tools are:
 
 The 5 correct tools already use try/finally:
 - tools_graph.py: semantic_search
-- tools_memory.py: memory_promote, memory_delete
-- tools_memory.py: memory_demote (no DB, so no leak)
+- tools_memory.py: memory_delete
+- tools_memory.py: memory_promote, memory_demote (no DB, so no leak)
 - tools_compass.py: get_compass, search_knowledge (no DB, so no leak)
 
 Note (pruned 2026-07-31): this file previously had 22 tests -- one exception
@@ -192,8 +192,8 @@ class TestMCPConnectionLeaks:
     def test_record_memory_closes_conn_on_exception(self, mock_conn):
         """record_memory must close conn even when query raises.
 
-        record_memory uses _rw_conn() (a writable connection) rather than the
-        read-only _conn(), since its purpose is to write -- patch _rw_conn here.
+        capture_memory only reads through this connection (scoring lookups),
+        so record_memory uses the read-only _conn() -- patch that here.
         """
         from cairn.mcp_server.tools_memory import record_memory
 
@@ -201,7 +201,7 @@ class TestMCPConnectionLeaks:
             raise RuntimeError("Query failed")
 
         with patch("cairn.mcp_server.tools_memory._bundle", return_value=MagicMock()):
-            with patch("cairn.mcp_server.tools_memory._rw_conn", return_value=mock_conn):
+            with patch("cairn.mcp_server.tools_memory._conn", return_value=mock_conn):
                 with patch("cairn.memory.promotion.capture_memory", mock_capture_raises):
                     try:
                         record_memory("decision", "test_title", "test_body")
