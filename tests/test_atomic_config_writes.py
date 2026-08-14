@@ -138,3 +138,75 @@ class TestMergeMalformedBackup:
         assert data["mcpServers"]["other"]["command"] == "y"
         # Cairn updated
         assert data["mcpServers"]["cairn"]["command"] == "new"
+
+
+class TestNonObjectKeyBackup:
+    """F6: a non-object value under a key the merge writes (mcpServers / mcp /
+    hooks -- e.g. ``"mcp": true``) is treated like a malformed config: backed
+    up, then merged fresh, instead of crashing with AttributeError."""
+
+    def test_non_object_mcp_value_backed_up(self, tmp_path):
+        path = tmp_path / ".zcode" / "config.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"mcp": True}))
+
+        merger = {"mcp": {"servers": {"cairn": {"type": "stdio", "command": "x", "args": ["serve"]}}}}
+        result = InstallResult("test")
+        _merge_json_file(path, merger, force=True, result=result, config_key="zcode")
+
+        bak = path.with_suffix(".json.bak")
+        assert bak.exists(), "the user's broken-but-valid value must be backed up"
+        assert json.loads(bak.read_text()) == {"mcp": True}
+        data = json.loads(path.read_text())
+        assert "cairn" in data["mcp"]["servers"]
+
+    def test_non_object_mcp_servers_value_backed_up(self, tmp_path):
+        path = tmp_path / "mcp.json"
+        path.write_text(json.dumps({"mcpServers": "nope"}))
+
+        merger = {"mcpServers": {"cairn": {"command": "x", "args": ["serve"]}}}
+        result = InstallResult("test")
+        _merge_json_file(path, merger, force=True, result=result)
+
+        assert path.with_suffix(".json.bak").exists()
+        assert "cairn" in json.loads(path.read_text())["mcpServers"]
+
+    def test_non_object_hooks_value_backed_up(self, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({"hooks": []}))
+
+        merger = {"hooks": {"Stop": [{"hooks": [{"command": "x"}]}]}}
+        result = InstallResult("test")
+        _merge_json_file(path, merger, force=True, result=result)
+
+        assert path.with_suffix(".json.bak").exists()
+        assert "Stop" in json.loads(path.read_text())["hooks"]
+
+    def test_unrelated_non_object_keys_do_not_trigger_backup(self, tmp_path):
+        """Only the keys the merge actually touches count. A string under a
+        key we don't write must survive untouched, with no backup."""
+        path = tmp_path / "mcp.json"
+        path.write_text(json.dumps({"mcp": "user-list-format", "theme": "dark"}))
+
+        merger = {"mcpServers": {"cairn": {"command": "x", "args": ["serve"]}}}
+        result = InstallResult("test")
+        _merge_json_file(path, merger, force=True, result=result)
+
+        assert not path.with_suffix(".json.bak").exists()
+        data = json.loads(path.read_text())
+        assert data["mcp"] == "user-list-format"
+        assert data["theme"] == "dark"
+        assert "cairn" in data["mcpServers"]
+
+    def test_non_object_key_dry_run_reports_backup_without_touching_disk(self, tmp_path):
+        path = tmp_path / "config.json"
+        original = json.dumps({"mcpServers": "nope"})
+        path.write_text(original)
+
+        merger = {"mcpServers": {"cairn": {"command": "x", "args": ["serve"]}}}
+        result = InstallResult("test")
+        _merge_json_file(path, merger, force=True, result=result, dry_run=True)
+
+        assert path.read_text() == original, "dry-run must not rewrite the file"
+        assert not path.with_suffix(".json.bak").exists(), "dry-run must not create backups"
+        assert any("would back up" in w for w in result.written)

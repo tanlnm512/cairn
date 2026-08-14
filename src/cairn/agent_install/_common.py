@@ -48,6 +48,22 @@ class InstallResult:
 # Path / command resolution
 # --------------------------------------------------------------------------
 
+def _uninstall_bases(ws: Path, scope: str) -> list[Path]:
+    """Base dirs an uninstall should strip for the given install scope.
+
+    Mirrors how the installers resolve their base: ``scope="workspace"`` (the
+    historical default) writes under ``<ws>``, ``scope="global"`` under
+    ``Path.home()``. ``"all"`` covers both so a full teardown also removes a
+    global install. Order is workspace-first to match the install-then-uninstall
+    reading direction; the strip helpers are idempotent so overlap is harmless.
+    """
+    if scope == "global":
+        return [Path.home()]
+    if scope == "all":
+        return [ws, Path.home()]
+    return [ws]
+
+
 def resolve_cg_command() -> list[str]:
     """Resolve a cairn invocation for generated configs.
 

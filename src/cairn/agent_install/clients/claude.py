@@ -26,12 +26,14 @@ from .._common import (
     _claude_command_md,
     _claude_hook_command,
     _claude_instructions,
+    _uninstall_bases,
     mcp_config_json,
     resolve_cg_command,
 )
 from ..merge import (
     _merge_json_file,
     _rm_if_exists,
+    _rm_if_ours,
     _rm_tree_if_cairn,
     _strip_hooks,
     _write_file,
@@ -137,15 +139,58 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
     return res
 
 
-def uninstall(ws: Path, res: InstallResult) -> None:
-    """Remove cairn files/entries for Claude Code."""
+def _mcp_remove_user_scope(res: InstallResult) -> None:
+    """Undo the user-scope MCP registration a global install created.
+
+    Mirrors install's ``claude mcp add --scope user`` subprocess pattern
+    (list-args, capture_output, timeout, check=False). Best-effort: a missing
+    CLI or a failed call is recorded as a note, never a crash.
+    """
+    if not shutil.which("claude"):
+        res.notes.append(
+            "NOTE: could not remove a user-scope MCP registration -- the "
+            "`claude` CLI was not found on PATH."
+        )
+        return
+    try:
+        subprocess.run(
+            ["claude", "mcp", "remove", "cairn", "--scope", "user"],
+            capture_output=True, timeout=15, check=False,
+        )
+        res.notes.append("Removed user-scope MCP registration via `claude mcp remove cairn --scope user`.")
+    except (subprocess.SubprocessError, OSError) as e:
+        res.notes.append(
+            f"WARNING: `claude mcp remove cairn --scope user` failed ({e}); "
+            "the registration may remain."
+        )
+
+
+def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
+    """Remove cairn files/entries for Claude Code.
+
+    ``scope="workspace"`` (the default, and the historical behavior) strips
+    only ``<ws>/.mcp.json`` and ``<ws>/.claude/`` entries. ``scope="global"``
+    strips the home-dir tree a global install wrote (``~/.claude/`` skills,
+    commands, agents, hooks) and removes the user-scope MCP registration via
+    ``claude mcp remove --scope user``. ``scope="all"`` does both.
+
+    Commands/agents are only removed when byte-identical to what the
+    installer writes -- a user's own file at the same path (which install
+    skipped) survives.
+    """
     from ..merge import _strip_mcp
 
-    _strip_mcp(ws / ".mcp.json", res)
-    _rm_tree_if_cairn(ws / ".claude" / "skills" / "cairn", res)
-    for n in _SLASH_COMMANDS:
-        _rm_if_exists(ws / ".claude" / "commands" / f"{n}.md", res)
-    _rm_if_exists(ws / ".claude" / "agents" / "cairn-explorer.md", res)
-    _rm_if_exists(ws / ".claude" / "agents" / "knowledge-steward.md", res)
-    _rm_if_exists(ws / ".claude" / "agents" / "cairn-agent.md", res)  # legacy filename cleanup
-    _strip_hooks(ws / ".claude" / "settings.json", res)
+    for base in _uninstall_bases(ws, scope):
+        _strip_mcp(base / ".mcp.json", res)
+        _rm_tree_if_cairn(base / ".claude" / "skills" / "cairn", res)
+        for n in _SLASH_COMMANDS:
+            _rm_if_ours(base / ".claude" / "commands" / f"{n}.md",
+                        _claude_command_md(n), res)
+        _rm_if_ours(base / ".claude" / "agents" / "cairn-explorer.md",
+                    _claude_agent_md(), res)
+        _rm_if_ours(base / ".claude" / "agents" / "knowledge-steward.md",
+                    _claude_agent_md("cursor/knowledge-steward.json"), res)
+        _rm_if_exists(base / ".claude" / "agents" / "cairn-agent.md", res)  # legacy filename cleanup
+        _strip_hooks(base / ".claude" / "settings.json", res)
+    if scope in ("global", "all"):
+        _mcp_remove_user_scope(res)

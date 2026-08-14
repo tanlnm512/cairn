@@ -13,7 +13,6 @@ from pathlib import Path
 
 from ._common import (
     InstallResult,
-    _claude_hook_command,
     _hook_markers,
     _HOOK_ENTRYPOINTS,
 )
@@ -76,12 +75,15 @@ def _write_file(path: Path, content: str, force: bool, result: InstallResult,
     """Write a file unless it exists and !force. Records into result.
 
     In dry-run mode, records the would-be action without touching the disk.
+    The exists-check runs BEFORE the dry-run decision so the report matches a
+    real run: a file that is already present (and not forced) shows up as
+    skipped, not as a phantom "would write".
     """
-    if dry_run:
-        result.written.append(f"would write {path}")
-        return
     if path.exists() and not force:
         result.add(path, existed=True)
+        return
+    if dry_run:
+        result.written.append(f"would write {path}")
         return
     _atomic_write_text(path, content)
     if path.suffix in (".py", ".sh") and "scripts" in path.parts:
@@ -114,6 +116,46 @@ def _write_tree(dest_dir: Path, src_dir: Path, force: bool, result: InstallResul
                     dry_run=dry_run)
 
 
+def _backup_to_bak(path: Path, reason: str, result: InstallResult,
+                   dry_run: bool = False) -> dict:
+    """Back up ``path`` beside itself as ``<name>.bak`` and return ``{}``.
+
+    Used when the existing config cannot be merged into safely (malformed
+    JSON, a non-object file, or a non-object value under a top-level key the
+    merge touches): the user's data is preserved in the backup while the
+    merge starts from a fresh object. In dry-run mode nothing is written --
+    the would-be backup is only reported.
+    """
+    backup = path.with_suffix(path.suffix + ".bak")
+    if dry_run:
+        result.written.append(f"would back up {reason} {path} -> {backup}")
+        return {}
+    try:
+        backup.write_bytes(path.read_bytes())
+    except OSError:
+        # If even the backup fails, refuse to overwrite rather than destroy data.
+        raise RuntimeError(
+            f"refusing to overwrite {reason} config {path}: could not "
+            f"back it up. Fix or remove the file and re-run."
+        )
+    result.written.append(f"backed up {reason} {path} -> {backup}")
+    return {}
+
+
+# Top-level keys the merge writes into; a non-object value under any of them
+# (e.g. ``"mcp": true`` or ``"hooks": []``) makes the merge crash or destroy
+# the user's value, so the file is treated like a malformed config.
+_MERGE_TOUCHED_KEYS = ("mcpServers", "mcp", "hooks")
+
+
+def _merge_keys_non_object(existing: dict, merger: dict) -> bool:
+    """True if a top-level key the merge writes holds a non-object value."""
+    return any(
+        k in merger and k in existing and not isinstance(existing[k], dict)
+        for k in _MERGE_TOUCHED_KEYS
+    )
+
+
 def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResult, *,
                      config_key: str = "mcpServers", dry_run: bool = False) -> None:
     """Merge `merger` into a JSON file at `path` (deep-merge top-level keys).
@@ -125,41 +167,37 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
     hook entries (skipping duplicates that already mention cairn).
 
     In dry-run mode, records the would-be action without touching the disk.
+    The idempotency checks run BEFORE the dry-run decision so the report
+    matches a real run: an already-installed (or malformed-to-be-backed-up)
+    config is reported as such, not as a blanket "would merge".
     """
-    if dry_run:
-        result.written.append(f"would merge into {path}")
-        return
     existing: dict = {}
     if path.exists():
         loaded = _load_json_or_none(path)
         if loaded is None:
             # Malformed/unreadable JSON: do NOT clobber the user's config. Back
             # it up so the data is recoverable, then start fresh.
-            backup = path.with_suffix(path.suffix + ".bak")
-            try:
-                backup.write_bytes(path.read_bytes())
-                result.written.append(f"backed up malformed {path} -> {backup}")
-            except OSError:
-                # If even the backup fails, refuse to overwrite rather than
-                # destroy data.
-                raise RuntimeError(
-                    f"refusing to overwrite malformed config {path}: could not "
-                    f"back it up. Fix or remove the file and re-run."
-                )
-            existing = {}
+            existing = _backup_to_bak(path, "malformed", result, dry_run)
         elif isinstance(loaded, dict):
-            existing = loaded
+            if _merge_keys_non_object(loaded, merger):
+                # Valid object, but a key we must merge into (mcpServers/mcp/
+                # hooks) holds a non-object value. Same discipline as malformed:
+                # back up, then start fresh.
+                existing = _backup_to_bak(path, "non-object", result, dry_run)
+            else:
+                existing = loaded
         else:
             # Valid JSON but not an object (e.g. a bare array/string). Preserve
             # it as-is by backing up and starting fresh.
-            backup = path.with_suffix(path.suffix + ".bak")
-            backup.write_bytes(path.read_bytes())
-            result.written.append(f"backed up non-object {path} -> {backup}")
-            existing = {}
+            existing = _backup_to_bak(path, "non-object", result, dry_run)
 
     # Detect whether our entry is already present.
     if _already_installed(existing, merger, config_key=config_key) and not force:
         result.add(path, existed=True)
+        return
+
+    if dry_run:
+        result.written.append(f"would merge into {path}")
         return
 
     merged = _deep_merge(existing, merger, config_key=config_key)
@@ -176,11 +214,15 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
 
     For MCP (config_key="mcpServers"): checks mcpServers.cairn.
     For ZCode (config_key="zcode"): checks mcp.servers.cairn.
-    For hooks: checks hooks.<Event> for cairn hook commands.
+    For hooks: checks hooks.<Event> for BOTH cairn hook entrypoints
+    (post_edit AND session_end), in either on-disk shape (Claude's nested
+    entries or Cursor's flat ones). Requiring both means a partially-stripped
+    hooks config reads as absent and the next install re-heals it.
     """
     if config_key == "zcode" and "mcp" in merger:
-        cur = existing.get("mcp", {}).get("servers", {}).get("cairn")
-        if not cur:
+        mcp = existing.get("mcp")
+        cur = mcp.get("servers", {}).get("cairn") if isinstance(mcp, dict) else None
+        if not isinstance(cur, dict):
             return False
         new = merger["mcp"]["servers"]["cairn"]
         cur_cmd = cur.get("command", "") + " " + " ".join(cur.get("args", []))
@@ -190,8 +232,9 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         # opencode: mcp.<name> = {type, command:[...], enabled}. The command is
         # a single array (no separate args), so compare it joined. Remote
         # servers carry `url` instead; compare that.
-        cur = existing.get("mcp", {}).get("cairn")
-        if not cur:
+        mcp = existing.get("mcp")
+        cur = mcp.get("cairn") if isinstance(mcp, dict) else None
+        if not isinstance(cur, dict):
             return False
         new = merger["mcp"]["cairn"]
         if new.get("type") == "remote":
@@ -200,8 +243,9 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         new_cmd = " ".join(new.get("command", []))
         return cur_cmd.strip() == new_cmd.strip()
     if "mcpServers" in merger:
-        cur = existing.get("mcpServers", {}).get("cairn")
-        if not cur:
+        servers = existing.get("mcpServers")
+        cur = servers.get("cairn") if isinstance(servers, dict) else None
+        if not isinstance(cur, dict):
             return False
         new = merger["mcpServers"]["cairn"]
         # Compare the full command (command + args joined) so path changes register.
@@ -212,31 +256,69 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         # Also compare env (Claude Desktop pins CAIRN_WORKSPACE here). Absent
         # env == {}, so this is a no-op for clients that don't set one.
         return (cur.get("env") or {}) == (new.get("env") or {})
-    # Hooks shape: any of our hook commands present in the event lists?
+    # Hooks shape: BOTH of our hook entrypoints present in the event lists?
     if "hooks" in merger:
-        our_cmds = {_claude_hook_command("post_edit"), _claude_hook_command("session_end")}
-        for event, entries in existing.get("hooks", {}).items():
-            for entry in entries if isinstance(entries, list) else []:
-                for h in entry.get("hooks", []) if isinstance(entry, dict) else []:
-                    cmd = h.get("command", "") if isinstance(h, dict) else ""
-                    if any(oc in cmd for oc in our_cmds):
-                        return True
+        hooks = existing.get("hooks")
+        found: set[str] = set()
+        if isinstance(hooks, dict):
+            for entries in hooks.values():
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    if isinstance(entry, dict):
+                        found |= _entry_entrypoints(entry)
+        return _HOOK_ENTRYPOINTS <= found
     return False
+
+
+def _entry_entrypoints(entry: dict) -> set[str]:
+    """Which cairn hook entrypoints does this hook entry carry?
+
+    Handles both on-disk shapes: Claude Code's nested
+    ``{"matcher": ..., "hooks": [{"command": ...}]}`` and Cursor's flat
+    ``{"command": ..., "timeout": ...}``. Matches on the module-qualified
+    ``cairn.hooks.claude_hooks <entrypoint>`` marker (and the legacy
+    ``src.hooks.claude_hooks`` one), so the python path it was written with
+    doesn't matter.
+    """
+    cmds: list[str] = []
+    inner = entry.get("hooks", [])
+    if isinstance(inner, list):
+        for h in inner:
+            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                cmds.append(h["command"])
+    if isinstance(entry.get("command"), str):
+        cmds.append(entry["command"])
+    eps: set[str] = set()
+    for cmd in cmds:
+        for ep in _HOOK_ENTRYPOINTS:
+            if (f"cairn.hooks.claude_hooks {ep}" in cmd
+                    or f"src.hooks.claude_hooks {ep}" in cmd):
+                eps.add(ep)
+    return eps
 
 
 def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers") -> dict:
     """Deep-merge addition into existing. For lists under hooks.<Event>, append
     new entries (dedup by command substring). For dicts, recurse. For mcpServers
-    or mcp.servers (ZCode), replace the named server."""
+    or mcp.servers (ZCode), replace the named server.
+
+    Non-object values under the keys we merge into (a user's ``"mcp": true``,
+    say) are treated as absent rather than crashed on -- though
+    ``_merge_json_file`` backs such a file up before we ever get here.
+    """
     out = dict(existing)
     for key, val in addition.items():
         if key == "mcpServers" and isinstance(val, dict):
-            servers = dict(out.get("mcpServers", {}))
+            prev = out.get("mcpServers")
+            servers = dict(prev) if isinstance(prev, dict) else {}
             servers.update(val)
             out["mcpServers"] = servers
         elif key == "mcp" and config_key == "zcode" and isinstance(val, dict):
-            mcp_out = dict(out.get("mcp", {}))
-            servers = dict(mcp_out.get("servers", {}))
+            prev = out.get("mcp")
+            mcp_out = dict(prev) if isinstance(prev, dict) else {}
+            prev_servers = mcp_out.get("servers")
+            servers = dict(prev_servers) if isinstance(prev_servers, dict) else {}
             servers.update(val.get("servers", {}))
             mcp_out["servers"] = servers
             out["mcp"] = mcp_out
@@ -245,25 +327,27 @@ def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers
         elif key == "mcp" and config_key == "opencode" and isinstance(val, dict):
             # opencode: mcp.<name> = {...}; replace the named server in place.
             # Unlike ZCode there is no nested "servers" sub-key.
-            mcp_out = dict(out.get("mcp", {}))
+            prev = out.get("mcp")
+            mcp_out = dict(prev) if isinstance(prev, dict) else {}
             mcp_out.update(val)
             out["mcp"] = mcp_out
         elif key == "hooks" and isinstance(val, dict):
-            out_hooks = dict(out.get("hooks", {}))
+            prev = out.get("hooks")
+            out_hooks = dict(prev) if isinstance(prev, dict) else {}
             for event, entries in val.items():
                 if not isinstance(entries, list):
                     continue
                 cur = out_hooks.get(event, [])
                 if not isinstance(cur, list):
                     cur = []
-                # Append entries whose commands aren't already present.
+                # Append entries whose entrypoints aren't already present.
                 for entry in entries:
                     if not _entry_present(cur, entry):
                         cur.append(entry)
                 out_hooks[event] = cur
             out["hooks"] = out_hooks
         elif isinstance(val, dict) and isinstance(out.get(key), dict):
-            out[key] = _deep_merge(out[key], val)
+            out[key] = _deep_merge(out[key], val, config_key=config_key)
         else:
             out[key] = val
     return out
@@ -272,24 +356,17 @@ def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers
 def _entry_present(entries: list, candidate: dict) -> bool:
     """Is `candidate` (a hook entry) already in `entries`?
 
-    Matches on the cairn hook entrypoint name (post_edit / session_end)
-    rather than the full command string, so re-installs after a path change
-    don't create duplicates.
+    Matches on the cairn hook entrypoint (post_edit / session_end) rather than
+    the full command string, so re-installs after a path change don't create
+    duplicates. Both on-disk shapes are recognized -- a flat Cursor entry
+    carrying an entrypoint suppresses the re-append just like a nested Claude
+    one, so Cursor's hooks.json stays at one entry per event across re-installs.
     """
-    cand_eps = {ep for ep in _HOOK_ENTRYPOINTS
-                for h in candidate.get("hooks", []) if isinstance(h, dict)
-                if ep in h.get("command", "")}
+    cand_eps = _entry_entrypoints(candidate)
     if not cand_eps:
         return False
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        for h in entry.get("hooks", []):
-            if isinstance(h, dict):
-                cmd = h.get("command", "")
-                if any(ep in cmd for ep in cand_eps):
-                    return True
-    return False
+    return any(isinstance(e, dict) and cand_eps & _entry_entrypoints(e)
+               for e in entries)
 
 
 # --------------------------------------------------------------------------
@@ -324,10 +401,27 @@ def _rm_tree_if_cairn(path: Path, res: InstallResult) -> None:
     res.written.append(f"removed {path}/")
 
 
-def _rm_if_cairn(path: Path, res: InstallResult) -> None:
-    if path.exists():
-        path.unlink()
-        res.written.append(f"removed {path}")
+def _rm_if_ours(path: Path, expected: str, res: InstallResult) -> None:
+    """Remove ``path`` only if it is byte-identical to what the installer writes.
+
+    Install skips files that already exist (unless --force), so a user file
+    that merely shares a cairn filename was never ours. Comparing against the
+    installer's generated content keeps uninstall from deleting a file the
+    installer itself declined to overwrite. A mismatch (user-edited, or
+    written by an older cairn version) is left in place and recorded in
+    ``skipped`` -- remove it manually if it really is cairn's.
+    """
+    if not path.exists():
+        return
+    try:
+        ours = path.read_text(encoding="utf-8") == expected
+    except (OSError, UnicodeDecodeError):
+        ours = False
+    if not ours:
+        res.skipped.append(f"{path} (not cairn-written; left in place)")
+        return
+    path.unlink()
+    res.written.append(f"removed {path}")
 
 
 def _strip_mcp(path: Path, res) -> None:

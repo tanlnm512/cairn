@@ -16,11 +16,12 @@ from .._common import (
     _agents_instructions,
     _claude_agent_md,
     _claude_command_md,
+    _uninstall_bases,
     resolve_cg_command,
 )
 from ..merge import (
     _merge_json_file,
-    _rm_if_exists,
+    _rm_if_ours,
     _rm_tree_if_cairn,
     _strip_mcp_zcode,
     _write_file,
@@ -92,11 +93,25 @@ def install_zcode(workspace: str, force: bool, dry_run: bool,
     return res
 
 
-def uninstall(ws: Path, res: InstallResult) -> None:
-    """Remove cairn files/entries for ZCode."""
-    _strip_mcp_zcode(ws / ".zcode" / "config.json", res)
-    _rm_tree_if_cairn(ws / ".zcode" / "skills" / "cairn", res)
-    for n in _SLASH_COMMANDS:
-        _rm_if_exists(ws / ".zcode" / "commands" / f"{n}.md", res)
-    _rm_if_exists(ws / ".zcode" / "agents" / "cairn-explorer.md", res)
-    _rm_if_exists(ws / ".zcode" / "agents" / "knowledge-steward.md", res)
+def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
+    """Remove cairn files/entries for ZCode.
+
+    ``scope="workspace"`` (the default, historical behavior) strips
+    ``<ws>/.zcode/``. ``scope="global"`` strips ``~/.zcode/`` -- where a
+    ``--scope global`` install wrote config.json, skills, commands, and
+    agents. ``scope="all"`` does both. AGENTS.md is never removed (install
+    writes it create-if-absent only).
+
+    Commands/agents are only removed when byte-identical to what the
+    installer writes, so a user's own file at the same path survives.
+    """
+    for base in _uninstall_bases(ws, scope):
+        _strip_mcp_zcode(base / ".zcode" / "config.json", res)
+        _rm_tree_if_cairn(base / ".zcode" / "skills" / "cairn", res)
+        for n in _SLASH_COMMANDS:
+            _rm_if_ours(base / ".zcode" / "commands" / f"{n}.md",
+                        _claude_command_md(n), res)
+        _rm_if_ours(base / ".zcode" / "agents" / "cairn-explorer.md",
+                    _claude_agent_md(), res)
+        _rm_if_ours(base / ".zcode" / "agents" / "knowledge-steward.md",
+                    _claude_agent_md("cursor/knowledge-steward.json"), res)
