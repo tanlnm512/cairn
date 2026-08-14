@@ -287,6 +287,24 @@ def test_graceful_on_missing_store(tmp_path):
     assert "cannot open database" in schema["detail"]
 
 
+def test_missing_store_in_existing_dir_never_created(tmp_path):
+    """A missing store in an existing dir degrades without materializing.
+
+    report is a read-only diagnostic; creating the store would mask a typo'd
+    --db and put an empty fresh-install bundle in its place.
+    """
+    db = tmp_path / "typo.db"
+    assert not db.exists()
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    schema = next(r for r in data["doctor"] if r["name"] == "schema")
+    assert schema["status"] == "FAIL"
+    assert "store not found" in schema["detail"]
+    assert not db.exists(), "report must not materialize a store"
+
+
 def test_graceful_on_corrupt_store(tmp_path):
     """A garbage (non-SQLite) file still produces a bundle; schema FAILs."""
     db = tmp_path / "garbage.db"

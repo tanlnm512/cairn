@@ -129,6 +129,24 @@ def test_schema_fail_unopenable_db(tmp_path):
     assert "cannot open database" in schema["detail"]
 
 
+def test_missing_store_fails_instead_of_creating(tmp_path):
+    """A missing store in an existing dir FAILs; doctor never creates it.
+
+    get_db creates missing stores; a read-only diagnostic silently doing so
+    would mask a typo'd --db with an all-PASS "fresh install" and hand
+    exit-code-gating agents a false green.
+    """
+    db = tmp_path / "typo.db"
+    assert not db.exists()
+
+    result = _run(db, "--json")
+    assert result.exit_code == 1, result.output
+    schema = _by_name(json.loads(result.stdout), "schema")
+    assert schema["status"] == "FAIL"
+    assert "store not found" in schema["detail"]
+    assert not db.exists(), "doctor must not materialize a store"
+
+
 def test_schema_fail_corrupt_db(tmp_path):
     """A garbage file (not a SQLite DB) FAILs the integrity check.
 

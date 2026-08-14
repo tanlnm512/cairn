@@ -1116,15 +1116,24 @@ def _run_doctor(db: str) -> list[dict]:
     """Execute the 8 checks against ``db``. Never raises.
 
     A store that can't be opened FAILs the schema check and degrades the
-    remaining DB-dependent checks to WARN.
+    remaining DB-dependent checks to WARN. A store whose path doesn't EXIST
+    is reported the same way instead of being silently created: doctor is a
+    read-only diagnostic, and creating a fresh store would mask a typo'd
+    ``--db`` with an all-PASS "fresh install".
     """
     conn = None
     db_error: Exception | None = None
-    try:
-        conn = get_db(db)
-    except Exception as e:  # OperationalError (can't open) / DatabaseError (corrupt) / ...
-        db_error = e
-        _log.debug("doctor: get_db(%s) raised %r", db, e)
+    if not Path(db).exists():
+        db_error = FileNotFoundError(
+            f"store not found at {db} -- run `cairn init` + `cairn build` first"
+        )
+        _log.debug("doctor: store missing at %s", db)
+    else:
+        try:
+            conn = get_db(db)
+        except Exception as e:  # OperationalError (can't open) / DatabaseError (corrupt) / ...
+            db_error = e
+            _log.debug("doctor: get_db(%s) raised %r", db, e)
 
     if conn is None:
         return _db_unavailable_results(db_error)
@@ -1275,7 +1284,12 @@ def _open_report_conn(db: str):
 
     Mirrors doctor's graceful-degradation contract: a missing/read-only/corrupt
     store degrades the DB-dependent sections to empty/FAIL rather than crashing.
+    A path that doesn't exist is NOT created -- the report is a read-only
+    diagnostic and must not materialize a store (or mask a typo'd ``--db``).
     """
+    if not Path(db).exists():
+        _log.debug("report: store missing at %s", db)
+        return None
     try:
         return get_db(db)
     except Exception as e:  # OperationalError / DatabaseError / ...
