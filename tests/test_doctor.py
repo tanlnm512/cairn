@@ -364,6 +364,57 @@ def test_freshness_warn_pending_sync(tmp_path):
     assert "pending-sync" in row["detail"]
 
 
+def test_freshness_warn_interrupted_repo_rebuild(tmp_path):
+    """A stale 'building' marker -> freshness WARN with the recovery hint.
+
+    builder._set_repo_build_state writes the marker before clearing a repo
+    for an on-disk rebuild and removes it only after the SCIP hook; a crash
+    in between leaves the repo partial. Doctor is the surface that makes
+    the marker observable (the detection contract repo_build_state exists
+    for).
+    """
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        conn.execute(
+            "INSERT INTO repo_build_state (repo_id, state, started_at) "
+            "VALUES ('demo', 'building', ?)",
+            ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),),
+        )
+        # A recent successful build for another repo so ONLY the marker warns.
+        conn.execute(
+            "INSERT INTO build_runs (kind, started_at) VALUES ('build', ?)",
+            ((datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),),
+        )
+
+    _make_db(db, setup)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output  # WARN, not FAIL
+    row = _by_name(json.loads(result.stdout), "freshness")
+    assert row["status"] == "WARN"
+    assert "interrupted rebuild of demo" in row["detail"]
+    assert "cairn build --repo demo" in (row.get("hint") or "")
+
+
+def test_freshness_pass_when_marker_cleared(tmp_path):
+    """No marker -> the interrupted-rebuild arm adds nothing (regression)."""
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        conn.execute(
+            "INSERT INTO build_runs (kind, started_at) VALUES ('build', ?)",
+            ((datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),),
+        )
+
+    _make_db(db, setup)
+
+    result = _run(db, "--json")
+    row = _by_name(json.loads(result.stdout), "freshness")
+    assert row["status"] == "PASS"
+    assert "interrupted" not in row["detail"]
+
+
 def test_freshness_warn_stale_build(tmp_path):
     """Last build_runs row older than STALE_BUILD_DAYS -> freshness WARN."""
     db = tmp_path / "graph.db"

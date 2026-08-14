@@ -505,8 +505,9 @@ def _build_graph_impl(
     if repo_filter:
         # Crash-window marker: durable BEFORE _clear_repo commits, so a crash
         # at any later commit boundary (clear, periodic 500-file commits,
-        # resolve) leaves a detectable 'building' row instead of a silently
-        # partial repo. Cleared after the final resolve commit below.
+        # resolve, SCIP import) leaves a detectable 'building' row instead of
+        # a silently partial repo. Cleared after the SCIP post-resolve hook;
+        # `cairn doctor` surfaces a stale marker as an interrupted rebuild.
         _set_repo_build_state(conn, repo_filter)
         _clear_repo(conn, repo_filter)  # on-disk, single repo: still needed
     elif not in_memory:
@@ -537,12 +538,6 @@ def _build_graph_impl(
 
     # Third pass: resolve all edge targets
     resolution_stats = _resolve_all(conn, repo_edges_by_file, in_memory, verbose, progress)
-
-    if repo_filter:
-        # Single-repo rebuild complete and committed (insert final commit +
-        # per-repo resolve commits): out of the crash window, clear the marker.
-        # An exception above leaves it in place -- the repo really is partial.
-        _clear_repo_build_state(conn, repo_filter)
 
     # SCIP post-resolve hook: import pre-built indexes for languages whose
     # files were skipped above. SCIP's exact edges aren't re-resolved, so this
@@ -646,6 +641,15 @@ def _build_graph_impl(
                         f"don't match tree-sitter); reverted to pure-SCIP "
                         f"(removed {len(ts_sym_ids)} tree-sitter symbols)")
                     s["reverted_to_pure_scip"] = True
+
+    if repo_filter:
+        # Single-repo rebuild complete and committed (insert final commit +
+        # per-repo resolve commits + the SCIP post-resolve hook above): out of
+        # the crash window, clear the marker. An exception anywhere above
+        # leaves it in place -- the repo really is partial. The clear is
+        # deliberately AFTER the SCIP hook: SCIP writes more symbols/edges for
+        # the repo, so a crash during import must stay detectable too.
+        _clear_repo_build_state(conn, repo_filter)
 
     if in_memory:
         # Close out the single implicit transaction that's been open across

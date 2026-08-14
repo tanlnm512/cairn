@@ -860,17 +860,21 @@ def _check_ann(conn) -> dict:
 
 
 def _check_freshness(conn) -> dict:
-    """4. Freshness: pending_sync edits + last build age.
+    """4. Freshness: pending_sync edits, interrupted rebuilds, last build age.
 
     WARN when ``pending_sync`` has rows (the debounce window holds unindexed
-    edits) or the last ``build_runs`` row is older than ``STALE_BUILD_DAYS``.
-    PASS otherwise, including a fresh install (no symbols, no builds). A graph
-    with symbols but no ``build_runs`` row (a pre-instrumentation DB) also
-    WARNs so the gap is visible.
+    edits), when ``repo_build_state`` holds a stale 'building' marker (a
+    single-repo rebuild crashed mid-flight and left the repo partial --
+    recovery is ``cairn build --repo <repo>``), or the last ``build_runs``
+    row is older than ``STALE_BUILD_DAYS``. PASS otherwise, including a fresh
+    install (no symbols, no builds). A graph with symbols but no
+    ``build_runs`` row (a pre-instrumentation DB) also WARNs so the gap is
+    visible.
     """
     now = datetime.now(timezone.utc)
     parts: list[str] = []
     status = _PASS
+    hint: str | None = None
 
     try:
         row = conn.execute("SELECT COUNT(*), MIN(changed_at) FROM pending_sync").fetchone()
@@ -881,6 +885,28 @@ def _check_freshness(conn) -> dict:
     if pending_n:
         status = _WARN
         parts.append(f"{pending_n} pending-sync file(s), oldest {_age_str(now, oldest)}")
+
+    # Interrupted single-repo rebuild: a 'building' marker nobody cleared.
+    # The marker is only written by the on-disk repo path, so rows here mean
+    # that process died mid-rebuild (builder.repo_build_in_progress is the
+    # programmatic reader).
+    try:
+        stale = [
+            r[0]
+            for r in conn.execute(
+                "SELECT repo_id FROM repo_build_state WHERE state = 'building' "
+                "ORDER BY started_at"
+            ).fetchall()
+        ]
+    except Exception:
+        stale = []
+    if stale:
+        status = _WARN
+        parts.append(
+            f"interrupted rebuild of {', '.join(stale)} "
+            f"(marker from a crashed `cairn build --repo`)"
+        )
+        hint = f"re-run `cairn build --repo {stale[0]}` to rebuild the partial repo"
 
     try:
         brow = conn.execute(
@@ -907,7 +933,9 @@ def _check_freshness(conn) -> dict:
         else:
             parts.append("no builds yet (fresh install)")
 
-    return _result("freshness", status, "; ".join(parts) if parts else "up to date")
+    return _result(
+        "freshness", status, "; ".join(parts) if parts else "up to date", hint=hint
+    )
 
 
 def _check_parse_errors(conn) -> dict:
