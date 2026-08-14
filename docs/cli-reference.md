@@ -339,21 +339,22 @@ plus the telemetry-trend flags `--builds`, `--quality`, `--contention`, `--tasks
 
 `cairn doctor` runs eight read-only checks and prints one PASS/WARN/FAIL row
 per check (color-coded `✓`/`!`/`✗`, plus a remediation `hint` where useful).
-It **never writes** to the store. The **exit code is 0 when every check is
-PASS or WARN, and 1 the moment any check is FAIL**, so an agent or CI step can
-gate on it (`cairn doctor --json && …`). Absence of an optional backend
-(`sentence-transformers`, `sqlite-vec`) degrades to WARN (functional-but-
-slower), never FAIL — FAIL is reserved for "broken": a corrupt store or one
-that can't be opened.
+It **never writes** to the store — a missing `--db` path is reported as a
+`schema` FAIL ("store not found"), never silently created. The **exit code is
+0 when every check is PASS or WARN, and 1 the moment any check is FAIL**, so
+an agent or CI step can gate on it (`cairn doctor --json && …`). Absence of an
+optional backend (`sentence-transformers`, `sqlite-vec`) degrades to WARN
+(functional-but-slower), never FAIL — FAIL is reserved for "broken": a
+corrupt store, one that can't be opened, or no store at all.
 
 | # | Check | FAIL / WARN triggers |
 |---|-------|----------------------|
-| 1 | `schema` | FAIL on a `PRAGMA quick_check` integrity error (corrupt/not-a-database). |
+| 1 | `schema` | FAIL on a `PRAGMA quick_check` integrity error (corrupt/not-a-database) or when the store path doesn't exist. |
 | 2 | `embeddings` | WARN when the dep-free hash backend is silently active (retrieval degraded). An explicit `CAIRN_EMBED_BACKEND=hash` stays PASS. |
 | 3 | `ann` | WARN when `sqlite-vec` is *expected* (env unset/`=sqlite-vec`) but unavailable or failed to load; surfaces the latest `ann_fallback` reason. An explicit `CAIRN_ANN_BACKEND=off` stays PASS. |
-| 4 | `freshness` | WARN on unindexed `pending_sync` edits or a `build_runs` row older than 7d (or symbols indexed with no recorded build). |
+| 4 | `freshness` | WARN on unindexed `pending_sync` edits, a stale repo-rebuild crash marker (an interrupted `cairn build --repo` left the repo partial — re-run it), or a `build_runs` row older than 7d (or symbols indexed with no recorded build). |
 | 5 | `parse_errors` | WARN when `parse_errors` has rows (a file was skipped during indexing); shows the newest 5. |
-| 6 | `concurrency` | WARN on any `lock_contention` event in the last 7d. `stray_swept` totals are reported but never WARN (sweeping is the stdio-leak fix *working*). |
+| 6 | `concurrency` | WARN on any `lock_contention` event in the last 7d (genuinely lock-shaped errors only — schema/FTS failures don't count as contention). `stray_swept` totals are reported but never WARN (sweeping is the stdio-leak fix *working*). |
 | 7 | `tool_health` | WARN when any MCP tool's 7-day error rate exceeds 10% or its p95 latency exceeds 5s. |
 | 8 | `config` | Always PASS — a transparency echo of the effective `CAIRN_*` knobs (workers, read-only, fusion, ann/embed backend, telemetry, log level). |
 
@@ -369,7 +370,8 @@ keyed by section name):
 
 - `--builds` — recent `build_runs` rows with the resolution mix
   (`exact`/`ambiguous`/`unresolved`), so resolver precision becomes a trend,
-  not a forgotten panel.
+  not a forgotten panel. History accumulates across full rebuilds and staged
+  builds (the analytics tables are carried over the whole-file swap).
 - `--quality` — retrieval-quality aggregates: the empty-result rate (scoped to
   `semantic_search` — the only query kind with a recorded at-risk denominator —
   plus an `empty by kind` breakdown across semantic/explore/search_symbols),
@@ -401,13 +403,16 @@ goes to stdout (and optionally a file). The bundle has four sections:
 - **Config** — the effective `CAIRN_*` knobs (the same list `doctor` echoes).
 
 **Privacy gate (observability-telemetry spec §7):** every string field is
-passed through `memory.privacy.strip_private_data` before inclusion, so known
-secret shapes (API keys, bearer tokens, JWTs, …) and `<private>` tags are
-redacted to `[REDACTED_SECRET]` / `[REDACTED]`. Note `strip_private_data` is
-secret-shaped only — review the bundle before pasting if your error messages
-embed sensitive paths. Best-effort throughout: a missing, read-only, or corrupt
-store degrades to empty sections and a `schema` FAIL (mirroring `cairn doctor`)
-and never raises.
+passed through `memory.privacy.strip_private_data` (known secret shapes — API
+keys, bearer tokens, JWTs, … — and `<private>` tags become
+`[REDACTED_SECRET]` / `[REDACTED]`) and then through path redaction: absolute
+local filesystem paths (POSIX, `~/…`, Windows drive letters) collapse to
+`[PATH]/<basename>`, keeping the failing file's name for debuggability while
+hiding your directory structure. Workspace-relative paths (`src/main.py`) and
+URL path portions survive — they're the useful, non-identifying signals.
+Best-effort throughout: a missing, read-only, or corrupt store degrades to
+empty sections and a `schema` FAIL (mirroring `cairn doctor`) and never
+raises.
 
 `--json` emits the bundle as a JSON object; `--out PATH` additionally writes
 the bundle to a file (JSON with `--json`, otherwise the same human-readable

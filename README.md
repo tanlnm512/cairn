@@ -278,8 +278,18 @@ following is for contributors only:
 pip install -e ".[dev]"   # editable install: pytest + watchdog + build + ruff
 pytest -m core            # fast <3s smoke subset (one test per core function)
 pytest                    # full suite (the CI path)
+make ci-local             # clean-room CI replication in a Linux container
 make dist                 # build wheel + sdist into dist/ (for releases)
 ```
+
+`make ci-local` re-runs the GitHub Actions CI jobs in a bare Linux container
+via Apple's [`container`](https://github.com/apple/container) CLI (no Docker
+required) — no host PATH, HOME, or agent CLIs leak in, so it catches
+non-hermetic tests before you push. It mirrors `.github/workflows/ci.yml`
+job-by-job (`test`, `security`, `typecheck`, `precommit`, `build`, `bench`;
+`make ci-local-all` covers the 3.10–3.14 matrix). Caches persist under
+`.cache/ci-local/`; see `scripts/ci-local.sh` for flags, including
+`CI_LOCAL_ARCH=linux/amd64` for GitHub-runner parity via Rosetta.
 
 Releases are cut by tagging `vX.Y.Z` — see the tag-triggered workflow in
 `.github/workflows/release.yml` and the pre-release checklist in
