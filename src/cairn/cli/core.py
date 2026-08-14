@@ -364,6 +364,20 @@ def build(repo, workspace, db, verbose, staging):
         elapsed = time.time() - t0
 
         if staging:
+            # Carry analytics history from the DB about to be replaced before
+            # the swap (build_runs/events/tool_metrics -- same rationale as
+            # backup_to; the staged build only recorded its OWN build_runs row
+            # into the temp DB so far). Still inside build_lock.
+            from ..graph.schema import copy_telemetry_tables
+
+            stage_conn = get_db(target_db)
+            try:
+                copy_telemetry_tables(stage_conn, db)
+            finally:
+                try:
+                    stage_conn.close()
+                except Exception:
+                    pass
             # WAL-safe atomic swap (schema.swap_db_file): the old <db>-wal must
             # not replay over the swapped-in main DB.
             swap_db_file(target_db, db)

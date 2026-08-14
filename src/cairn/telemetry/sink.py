@@ -150,9 +150,13 @@ def _prune(conn):
     """Bounded growth: keep the newest N rows per table (spec §6.2).
 
     Runs inside the flush transaction so the prune + the insert are atomic.
-    Guarded so a missing ``build_runs`` table (pre-T08 DB) or a read-only
-    connection doesn't raise -- prune is best-effort, and a failure here must
-    not abort the insert (the rows are already committed-worthy on their own).
+    "Newest" is TIME-ordered (ts / started_at), not id-ordered: rows carried
+    across a whole-file rebuild swap (schema.copy_telemetry_tables) are
+    appended with fresh ids AFTER the current build's row, so id order stops
+    being a proxy for recency there. Guarded so a missing ``build_runs``
+    table (pre-T08 DB) or a read-only connection doesn't raise -- prune is
+    best-effort, and a failure here must not abort the insert (the rows are
+    already committed-worthy on their own).
 
     Untyped (no annotations) deliberately, mirroring
     ``metric_buffering._flush_metrics``: the injected connection is an opaque
@@ -163,7 +167,7 @@ def _prune(conn):
     try:
         conn.execute(
             "DELETE FROM events WHERE id NOT IN "
-            "(SELECT id FROM events ORDER BY id DESC LIMIT ?)",
+            "(SELECT id FROM events ORDER BY ts DESC, id DESC LIMIT ?)",
             (_MAX_EVENTS_ROWS,),
         )
     except Exception:
@@ -172,7 +176,7 @@ def _prune(conn):
     try:
         conn.execute(
             "DELETE FROM build_runs WHERE id NOT IN "
-            "(SELECT id FROM build_runs ORDER BY id DESC LIMIT ?)",
+            "(SELECT id FROM build_runs ORDER BY started_at DESC, id DESC LIMIT ?)",
             (_MAX_BUILD_RUNS_ROWS,),
         )
     except Exception:

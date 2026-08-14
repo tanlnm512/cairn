@@ -633,6 +633,68 @@ def swap_db_file(tmp_path: str, db_path: str) -> None:
     _remove_db_sidecars(tmp_path)
 
 
+# Analytics tables carried across a whole-file DB swap (full rebuild /
+# staged build). The swap replaces the entire file, so without this list the
+# build history, degradation events, and tool health reset to empty on every
+# rebuild -- defeating the retention contract that makes build trends,
+# contention history, and doctor's freshness/tool-health windows useful
+# (spec observability-telemetry §6.2). ``pending_sync`` is deliberately NOT
+# carried: it is operational state (files with unindexed edits) tied to the
+# pre-swap graph's rows, and a full rebuild has recomputed that graph.
+_TELEMETRY_TABLE_COLUMNS = {
+    "build_runs": (
+        "kind, started_at, duration_s, phase_timings, repos, files, symbols, "
+        "edges, resolution_exact, resolution_ambiguous, resolution_unresolved, "
+        "parse_errors, skipped, workers, session_id"
+    ),
+    "events": "ts, name, session_id, attrs",
+    "tool_metrics": "tool_name, session_id, invoked_at, duration_ms, status, error_message",
+}
+
+
+def copy_telemetry_tables(dest_conn: sqlite3.Connection, old_db_path: str) -> None:
+    """Carry the analytics tables from ``old_db_path`` into ``dest_conn``.
+
+    Called inside ``build_lock`` immediately before a whole-file swap
+    (:func:`backup_to` and the staged-build swap in ``cli.core``), with the
+    freshly built DB open on ``dest_conn`` and the DB being replaced still at
+    ``old_db_path``. Rows are appended with FRESH ids (the id space of the new
+    DB is not empty on the staged path, where this build's own ``build_runs``
+    row already landed), preserving source order so time-ordered consumers
+    stay correct. Best-effort throughout: a missing old DB (first build), a
+    pre-telemetry old DB (missing tables), or any copy error degrades to
+    starting the analytics history fresh -- analytics must never fail a build.
+    """
+    if not os.path.exists(old_db_path):
+        return
+    try:
+        dest_conn.execute("ATTACH DATABASE ? AS srcdb", (old_db_path,))
+    except sqlite3.Error:
+        return
+    try:
+        for table, columns in _TELEMETRY_TABLE_COLUMNS.items():
+            try:
+                exists = dest_conn.execute(
+                    "SELECT 1 FROM srcdb.sqlite_master "
+                    "WHERE type = 'table' AND name = ?",
+                    (table,),
+                ).fetchone()
+                if not exists:
+                    continue  # pre-telemetry source DB -- nothing to carry
+                dest_conn.execute(
+                    f"INSERT INTO {table} ({columns}) "
+                    f"SELECT {columns} FROM srcdb.{table} ORDER BY id"
+                )
+            except sqlite3.Error:
+                pass  # best-effort per table (analytics, not correctness)
+        dest_conn.commit()
+    finally:
+        try:
+            dest_conn.execute("DETACH DATABASE srcdb")
+        except sqlite3.Error:
+            pass
+
+
 def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
     """Persist an in-memory build DB to disk with atomic swap and build locking."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -647,6 +709,11 @@ def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
                     mem_conn.backup(dest)          # C-level page copy, no row iteration
                 dest.execute("PRAGMA foreign_keys = ON")
                 dest.execute("PRAGMA journal_mode = WAL")  # serving mode for readers
+                # Carry analytics history from the DB about to be replaced --
+                # the swap below discards the whole old file, and without
+                # this every full rebuild reset build_runs/events/tool_metrics
+                # to empty (see copy_telemetry_tables).
+                copy_telemetry_tables(dest, db_path)
                 dest.commit()
             except BaseException:
                 # A failed backup must not leave a half-written "<db>.tmp" on
