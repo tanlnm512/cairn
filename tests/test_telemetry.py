@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 
 import pytest
 
@@ -381,6 +382,60 @@ def test_flush_keeps_rows_appended_during_flush(events_db):
     # Only the two pre-flush rows were written.
     rows = events_db.execute("SELECT name FROM events ORDER BY id").fetchall()
     assert [r["name"] for r in rows] == [ANN_FALLBACK, LOCK_CONTENTION]
+
+
+def test_concurrent_flushes_neither_duplicate_nor_drop(events_db):
+    """Two overlapping flush cycles write each row exactly once.
+
+    The daemon tick, the server watchdog drain, ``flush()`` callers, and the
+    atexit handler can overlap in normal server operation. Before the flush
+    cycle was serialized (``_FLUSH_LOCK``), two concurrent ``_flush_events``
+    runs snapshotted the SAME rows, both wrote them (duplicate ``events``
+    rows), and the second count-based popleft dropped rows appended in
+    between that were never written.
+
+    The barrier makes the overlap explicit: if both threads ever reached
+    ``executemany`` simultaneously the barrier would release and the table
+    would end up with duplicates. With serialization, the second thread
+    blocks on ``_FLUSH_LOCK`` (or finds the buffer empty) and the barrier
+    breaks on timeout instead -- harmless.
+
+    Uses its own ``check_same_thread=False`` connection rather than the
+    ``events_db`` fixture: flush runs on worker threads here, and a default
+    sqlite connection refuses cross-thread use (the failure would be
+    silently retained, not raised).
+    """
+    barrier = threading.Barrier(2, timeout=1.0)
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_EVENTS_DDL)
+    conn.commit()
+    try:
+        class _BarrierConn(_UnclosableConn):
+            def executemany(self, sql, params):
+                try:
+                    barrier.wait()  # releases only if a second flush got this far
+                except threading.BrokenBarrierError:
+                    pass  # serialized: no second flush arrived -- proceed alone
+                return self._real.executemany(sql, params)
+
+        configure_conn(lambda: _BarrierConn(conn))
+        for _ in range(4):
+            emit(ANN_FALLBACK, reason="load_failed")
+        assert len(sink._BUFFER) == 4
+
+        t1 = threading.Thread(target=flush)
+        t2 = threading.Thread(target=flush)
+        t1.start()
+        t2.start()
+        t1.join(10)
+        t2.join(10)
+
+        written = conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
+        assert written == 4, "each buffered row written exactly once (no duplicates)"
+        assert len(sink._BUFFER) == 0, "buffer fully drained (no dropped rows)"
+    finally:
+        conn.close()
 
 
 def test_flush_factory_failure_never_raises_and_retains():

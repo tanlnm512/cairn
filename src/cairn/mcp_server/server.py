@@ -60,18 +60,24 @@ def _drain_buffered_telemetry() -> None:
     The parent-death watchdog exits via ``os._exit(0)`` from a non-main
     thread, which bypasses ``atexit`` entirely -- so the sinks' atexit drains
     (telemetry sink ``_flush_all``, ``embed_buffering._flush``) never run and
-    up to 30s of buffered events/tool_metrics plus 15s of queued memory
-    embeddings would be silently lost on a NORMAL session end (client
-    disconnect). Direct flush calls are the robust route: ``atexit`` only
-    fires on main-thread interpreter shutdown, so there is nothing to hook
-    from the watchdog thread. Each flush is individually isolated so one
-    failing sink can't block the others, and a drain failure must never
-    prevent the exit that follows it.
+    up to 30s of buffered events/tool_metrics, the OTLP side buffer, and 15s
+    of queued memory embeddings would be silently lost on a NORMAL session
+    end (client disconnect). Direct flush calls are the robust route:
+    ``atexit`` only fires on main-thread interpreter shutdown, so there is
+    nothing to hook from the watchdog thread. Each flush is individually
+    isolated so one failing sink can't block the others, and a drain failure
+    must never prevent the exit that follows it.
     """
     try:
         from cairn.telemetry import flush as _telemetry_flush
 
         _telemetry_flush()  # events buffer
+    except Exception:
+        pass
+    try:
+        from cairn.telemetry import otel as _otel
+
+        _otel.flush()  # OTLP side buffer (no-op unless CAIRN_OTEL_ENDPOINT)
     except Exception:
         pass
     try:

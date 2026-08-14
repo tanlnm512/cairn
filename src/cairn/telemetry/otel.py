@@ -24,8 +24,21 @@ Design (why a side buffer, not a tap on ``sink._BUFFER``):
   * Draining mirrors ``sink._flush_events``: snapshot without clearing, export,
     then pop exactly the exported rows on success. A failed export retains the
     rows for the next tick (best-effort, at-least-once across process
-    restarts; duplicates within a process are impossible because the side
-    buffer is only popped after a successful export).
+    restarts).
+  * Export is SYNCHRONOUS and failure-observing: the exporter is wrapped in
+    :class:`_TrackingExporter` behind ``SimpleLogRecordProcessor``, so each
+    ``logger.emit`` performs the HTTP export on the calling thread and the
+    wrapper sees the exporter's own ``LogExportResult.FAILURE`` return (the
+    SDK's http exporter catches network exceptions itself and NEVER raises).
+    ``BatchLogRecordProcessor`` cannot be used here: its worker thread pops the
+    batch before exporting, swallows exporter failures, and reports
+    ``force_flush()`` success -- which would make every row pop as "exported"
+    during a collector outage, silently losing exactly the data this feature
+    exists to deliver.
+  * The whole flush cycle runs under ``_FLUSH_LOCK`` (mirroring
+    ``sink._flush_events``): the daemon tick, the server watchdog drain, and
+    atexit can overlap, and two concurrent drains would double-export and
+    double-pop.
 
 Lazy-import discipline (spec §3 non-goals + §7): this module imports NOTHING
 from OpenTelemetry and no network library at module scope. The ``opentelemetry``
@@ -61,6 +74,12 @@ _ENDPOINT_ENV = "CAIRN_OTEL_ENDPOINT"
 _PENDING: collections.deque = collections.deque(maxlen=2000)
 _LOCK = threading.Lock()
 
+# Serializes whole flush cycles (snapshot -> export -> pop), mirroring
+# ``sink._FLUSH_LOCK``: the daemon tick, the server watchdog drain, ``flush()``
+# callers, and atexit can overlap; two concurrent drains would double-export
+# the same rows and double-pop rows never written.
+_FLUSH_LOCK = threading.Lock()
+
 # Exporter lifecycle. ``_DISABLED`` is a one-way latch: set after a missing
 # SDK or a construction failure so the flusher never retries the import
 # (warn_once already told the user; retrying every 30s would only spam
@@ -68,11 +87,16 @@ _LOCK = threading.Lock()
 _REGISTERED = False
 _DISABLED = False
 
+# Per-export HTTP timeout (seconds). Bounds how long one dead-endpoint flush
+# stalls the shared flusher thread -- and the atexit drain, where it would
+# otherwise visibly hang process exit on a black-holed endpoint.
+_EXPORT_TIMEOUT_S = 5.0
+
 # Lazily-built OTel handles. Untyped (Any) on purpose: the OpenTelemetry SDK
 # is an optional extra that is usually absent, and these are only ever
 # constructed behind the env gate in _get_logger.
 _otlp_logger: Any = None
-_otlp_provider: Any = None
+_otlp_tracker: Any = None
 _log_record_cls: Any = None
 
 
@@ -154,6 +178,38 @@ def _warn_once_and_disable(msg: str) -> None:
         _PENDING.clear()
 
 
+class _TrackingExporter:
+    """Delegate wrapper that remembers whether an export failed.
+
+    The SDK's http exporter catches its own network exceptions and returns
+    ``LogExportResult.FAILURE`` -- it never raises -- so a dead collector is
+    observable only on the return value. Duck-typed on purpose:
+    ``LogExportResult`` lives in the optional SDK, while
+    ``getattr(result, "name", "SUCCESS")`` matches it without an import, and
+    an unrecognized result object fails OPEN (treated as success) so an SDK
+    quirk can't wedge the buffer into a permanent retry loop.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.ok = True
+
+    def export(self, batch: Any) -> Any:
+        result = self.inner.export(batch)
+        if getattr(result, "name", "SUCCESS") != "SUCCESS":
+            self.ok = False
+        return result
+
+    def shutdown(self) -> None:
+        try:
+            self.inner.shutdown()
+        except Exception:
+            pass
+
+    def force_flush(self, timeout_millis: float = 0) -> bool:
+        return True
+
+
 def _get_logger() -> Any:
     """Build the OTLP logger on first use; None when the SDK is unusable.
 
@@ -161,8 +217,15 @@ def _get_logger() -> Any:
     this function, which is only reachable when the endpoint is set, telemetry
     is on, and there are pending rows. The default install path never executes
     a single line of this function.
+
+    Synchronous by design (see module docstring): the exporter is wrapped in
+    :class:`_TrackingExporter` behind ``SimpleLogRecordProcessor``, so
+    ``logger.emit`` performs the HTTP export on the calling thread and its
+    success/failure is observable when it returns. ``shutdown_on_exit=False``
+    keeps the SDK from registering its own atexit hook, whose LIFO ordering
+    against this sink's atexit drain is SDK-version-dependent.
     """
-    global _otlp_logger, _otlp_provider, _log_record_cls
+    global _otlp_logger, _otlp_tracker, _log_record_cls
     if _DISABLED:
         return None
     if _otlp_logger is not None:
@@ -176,7 +239,7 @@ def _get_logger() -> Any:
             LogRecord,
         )
         from opentelemetry.sdk._logs.export import (  # type: ignore[import-not-found]
-            BatchLogRecordProcessor,
+            SimpleLogRecordProcessor,
         )
         from opentelemetry.sdk.resources import (  # type: ignore[import-not-found]
             Resource,
@@ -190,13 +253,15 @@ def _get_logger() -> Any:
         )
         return None
     try:
-        provider = LoggerProvider(resource=Resource.create(
-            {"service.name": "cairn"}
-        ))
-        provider.add_log_record_processor(
-            BatchLogRecordProcessor(OTLPLogExporter(endpoint=endpoint()))
+        provider = LoggerProvider(
+            resource=Resource.create({"service.name": "cairn"}),
+            shutdown_on_exit=False,
         )
-        _otlp_provider = provider
+        tracker = _TrackingExporter(
+            OTLPLogExporter(endpoint=endpoint(), timeout=_EXPORT_TIMEOUT_S)
+        )
+        provider.add_log_record_processor(SimpleLogRecordProcessor(tracker))
+        _otlp_tracker = tracker
         _otlp_logger = provider.get_logger("cairn.telemetry")
         _log_record_cls = LogRecord
     except Exception:
@@ -219,55 +284,78 @@ def _flush_otlp() -> None:
     Registered with ``sink.register_flusher``; invoked by the shared daemon
     tick and the atexit drain, each flusher isolated by ``sink._flush_all``.
     Mirrors ``sink._flush_events``: snapshot WITHOUT clearing, export, then
-    pop exactly the exported rows on success -- a failed export leaves the
-    rows queued for the next tick.
+    pop exactly the exported rows on success -- a failed export (exception,
+    or the tracker observing ``LogExportResult.FAILURE``) leaves the rows
+    queued for the next tick. The whole cycle runs under ``_FLUSH_LOCK``.
     """
-    # Master switch + read-only gate re-checked on the flush path: turning
-    # telemetry off mid-process must stop export too (rows already buffered
-    # for OTLP are telemetry, so they are dropped with everything else), and
-    # a read-only daemon must not open network egress either.
-    if sink.is_telemetry_off() or sink.is_read_only():
-        with _LOCK:
-            _PENDING.clear()
-        return
-    if _DISABLED:
-        return
-    with _LOCK:
-        if not _PENDING:
+    with _FLUSH_LOCK:
+        # Master switch + read-only gate re-checked on the flush path: turning
+        # telemetry off mid-process must stop export too (rows already
+        # buffered for OTLP are telemetry, so they are dropped with everything
+        # else), and a read-only daemon must not open network egress either.
+        if sink.is_telemetry_off() or sink.is_read_only():
+            with _LOCK:
+                _PENDING.clear()
             return
-        batch = list(_PENDING)
-    otlp_logger = _get_logger()
-    if otlp_logger is None:
-        return
-    try:
-        for ts, name, session_id, attrs_json in batch:
-            otlp_logger.emit(
-                _log_record_cls(
-                    timestamp=int(ts * 1_000_000_000),
-                    severity_text="INFO",
-                    body=name,
-                    attributes=_attributes(attrs_json, session_id),
+        if _DISABLED:
+            return
+        with _LOCK:
+            if not _PENDING:
+                return
+            batch = list(_PENDING)
+        try:
+            otlp_logger = _get_logger()
+        except Exception:
+            # A non-ImportError SDK import failure (corrupt install, plugin
+            # raising at import) must not break the never-raise contract.
+            logger.debug("otlp: exporter setup raised", exc_info=True)
+            return
+        if otlp_logger is None:
+            return
+        tracker = _otlp_tracker
+        if tracker is None:
+            return
+        tracker.ok = True
+        try:
+            for ts, name, session_id, attrs_json in batch:
+                otlp_logger.emit(
+                    _log_record_cls(
+                        timestamp=int(ts * 1_000_000_000),
+                        severity_text="INFO",
+                        body=name,
+                        attributes=_attributes(attrs_json, session_id),
+                    )
                 )
+                if not tracker.ok:
+                    # Collector rejected the record. Stop here instead of
+                    # hammering a dead endpoint (each further record costs a
+                    # full export timeout) and retain the whole batch --
+                    # at-least-once, re-exported on the next tick.
+                    break
+        except Exception:
+            # Collector down / timeout / SDK bug: retain the rows for the
+            # next tick, log at debug, never propagate (sink._flush_all also
+            # guards, but this keeps the failure scoped to this exporter).
+            logger.debug(
+                "otlp export failed; %d events retained", len(batch), exc_info=True
             )
-        # BatchLogRecordProcessor queues asynchronously; force_flush drains to
-        # the wire before we declare the batch exported.
-        _otlp_provider.force_flush()
-    except Exception:
-        # Collector down / timeout / SDK bug: retain the rows for the next
-        # tick, log at debug, never propagate (sink._flush_all also guards,
-        # but this keeps the failure scoped to this exporter).
-        logger.debug(
-            "otlp export failed; %d events retained", len(batch), exc_info=True
-        )
-        return
-    # Export acknowledged -> drop exactly these rows. Rows appended during
-    # the export sit to the right of the drained ones and stay queued.
-    with _LOCK:
-        for _ in range(len(batch)):
-            try:
-                _PENDING.popleft()
-            except IndexError:
-                break
+            return
+        if not tracker.ok:
+            logger.debug(
+                "otlp export rejected %d-event batch (collector unhealthy); "
+                "retained for retry", len(batch),
+            )
+            return
+        # Export acknowledged -> drop exactly these rows. Rows appended during
+        # the export sit to the right of the drained ones and stay queued.
+        # _FLUSH_LOCK guarantees no other drain is mid-cycle, so the leftmost
+        # len(batch) rows are exactly ``batch``.
+        with _LOCK:
+            for _ in range(len(batch)):
+                try:
+                    _PENDING.popleft()
+                except IndexError:
+                    break
 
 
 def flush() -> None:

@@ -83,7 +83,7 @@ def _clear_everything() -> None:
     otel._DISABLED = False
     otel._REGISTERED = False
     otel._otlp_logger = None
-    otel._otlp_provider = None
+    otel._otlp_tracker = None
     otel._log_record_cls = None
     with sink._LOCK:
         while otel._flush_otlp in sink._FLUSHERS:
@@ -128,23 +128,35 @@ class _ImportGate:
 
 def _install_stub_sdk(
     monkeypatch: pytest.MonkeyPatch,
-    emit_fails_first: int = 0,
+    export_fails_first: int = 0,
     exporter_raises: bool = False,
+    export_raises: bool = False,
 ) -> dict[str, Any]:
     """Inject stub ``opentelemetry`` modules into ``sys.modules``.
 
-    The stubs record everything the exporter does (constructed exporter +
-    endpoint, resource attrs, processor, emitted records, force_flush calls)
-    into the returned dict. ``emit_fails_first`` simulates a collector that
-    rejects the first N flushes then recovers (retry-path coverage without a
-    network); ``exporter_raises`` simulates a rejected endpoint.
+    The stubs mirror the SYNCHRONOUS export design: ``logger.emit`` reaches
+    ``exporter.export`` on the calling thread via SimpleLogRecordProcessor,
+    and failures are reported the way the real SDK does -- a returned
+    ``LogExportResult.FAILURE``, not a raised exception (``export_raises``
+    additionally covers the raising path). Everything the exporter does
+    (constructed exporter + endpoint + timeout, provider wiring, exported
+    records) is recorded into the returned dict. ``export_fails_first``
+    simulates a collector that rejects the first N exports then recovers
+    (retry-path coverage without a network); ``exporter_raises`` simulates a
+    rejected endpoint at construction.
     """
     seen: dict[str, Any] = {
         "records": [],  # every LogRecord constructed
-        "emitted": [],  # records actually handed to logger.emit
-        "force_flushes": 0,
-        "emit_failures_remaining": emit_fails_first,
+        "exported": [],  # records actually handed to exporter.export
+        "exports": 0,  # number of exporter.export calls
+        "export_failures_remaining": export_fails_first,
     }
+
+    class _Success:
+        name = "SUCCESS"
+
+    class _Failure:
+        name = "FAILURE"
 
     class _StubResource:
         created: Any = None
@@ -160,36 +172,55 @@ def _install_stub_sdk(
             seen["records"].append(self)
 
     class _StubExporter:
-        def __init__(self, endpoint: str = "", **kwargs: Any) -> None:
+        def __init__(self, endpoint: str = "", timeout: Any = None, **kwargs: Any) -> None:
             if exporter_raises:
                 raise ValueError("simulated bad endpoint")
             seen["exporter_endpoint"] = endpoint
+            seen["exporter_timeout"] = timeout
 
-    class _StubProcessor:
+        def export(self, batch: Any) -> Any:
+            seen["exports"] += 1
+            seen["exported"].extend(batch)
+            if seen["export_failures_remaining"] > 0:
+                seen["export_failures_remaining"] -= 1
+                if export_raises:
+                    raise RuntimeError("simulated collector outage")
+                return _Failure()
+            return _Success()
+
+    class _StubSimpleProcessor:
+        # Mirrors the real SimpleLogRecordProcessor: export runs synchronously
+        # in the calling thread. ``exporter`` here is cairn's _TrackingExporter
+        # wrapper -- exactly the production wiring.
         def __init__(self, exporter: Any) -> None:
+            self.exporter = exporter
             seen["processor_exporter"] = exporter
 
-    class _StubLogger:
         def emit(self, record: Any) -> None:
-            if seen["emit_failures_remaining"] > 0:
-                seen["emit_failures_remaining"] -= 1
-                raise RuntimeError("simulated collector outage")
-            seen["emitted"].append(record)
+            self.exporter.export((record,))
+
+    class _StubLogger:
+        def __init__(self) -> None:
+            self.processor: Any = None
+
+        def emit(self, record: Any) -> None:
+            if self.processor is not None:
+                self.processor.emit(record)
+
+    _stub_logger = _StubLogger()
 
     class _StubProvider:
-        def __init__(self, resource: Any = None) -> None:
+        def __init__(self, resource: Any = None, shutdown_on_exit: bool = True) -> None:
             seen["provider_resource"] = resource
+            seen["shutdown_on_exit"] = shutdown_on_exit
 
         def add_log_record_processor(self, processor: Any) -> None:
             seen["processor"] = processor
+            _stub_logger.processor = processor
 
         def get_logger(self, name: str) -> _StubLogger:
             seen["logger_name"] = name
-            return _StubLogger()
-
-        def force_flush(self, timeout_millis: int = 0) -> bool:
-            seen["force_flushes"] += 1
-            return True
+            return _stub_logger
 
     mods = {
         "opentelemetry": types.ModuleType("opentelemetry"),
@@ -217,7 +248,9 @@ def _install_stub_sdk(
     }
     mods["opentelemetry.sdk._logs"].LoggerProvider = _StubProvider
     mods["opentelemetry.sdk._logs"].LogRecord = _StubLogRecord
-    mods["opentelemetry.sdk._logs.export"].BatchLogRecordProcessor = _StubProcessor
+    mods["opentelemetry.sdk._logs.export"].SimpleLogRecordProcessor = (
+        _StubSimpleProcessor
+    )
     mods["opentelemetry.sdk.resources"].Resource = _StubResource
     mods["opentelemetry.exporter.otlp.proto.http.log_exporter"].OTLPLogExporter = (
         _StubExporter
@@ -333,9 +366,11 @@ def test_sdk_present_exports_records_with_name_and_attrs(monkeypatch):
     """Happy path: each event becomes a LogRecord (body=name, attrs mapped).
 
     Also pins the wiring contract: the exporter is built with the env
-    endpoint URL, the resource is service.name=cairn (no paths/PII), the
-    batch is force-flushed, the side buffer drains, and the SQLite-bound
-    rows are untouched (DB stays the source of truth).
+    endpoint URL and a bounded timeout, the resource is service.name=cairn
+    (no paths/PII), the provider registers no atexit hook of its own, export
+    is synchronous (records reach the exporter within the flush call), the
+    side buffer drains, and the SQLite-bound rows are untouched (DB stays the
+    source of truth).
     """
     monkeypatch.setenv("CAIRN_OTEL_ENDPOINT", _ENDPOINT)
     monkeypatch.setenv("CAIRN_SESSION", "trace-19")
@@ -351,10 +386,12 @@ def test_sdk_present_exports_records_with_name_and_attrs(monkeypatch):
     otel.flush()
 
     assert seen["exporter_endpoint"] == _ENDPOINT
+    assert seen["exporter_timeout"] == otel._EXPORT_TIMEOUT_S
     assert seen["resource_attrs"] == {"service.name": "cairn"}
     assert seen["logger_name"] == "cairn.telemetry"
-    assert seen["force_flushes"] == 1, "batch drained to the wire"
-    assert len(seen["emitted"]) == 2, "both events forwarded"
+    assert seen["shutdown_on_exit"] is False, "no SDK atexit hook (drain is ours)"
+    assert seen["exports"] == 2, "synchronous export: one export per record"
+    assert len(seen["exported"]) == 2, "both events forwarded"
 
     first, second = seen["records"]
     assert first.kwargs["severity_text"] == "INFO"
@@ -376,24 +413,71 @@ def test_sdk_present_export_failure_retains_then_recovers(monkeypatch):
 
     Mirrors sink._flush_events: snapshot-without-clear semantics -- the failed
     batch stays in the side buffer and the next successful flush drains it.
+    Failure is reported the way the real SDK reports it: a returned
+    LogExportResult.FAILURE, not a raised exception.
     """
     monkeypatch.setenv("CAIRN_OTEL_ENDPOINT", _ENDPOINT)
-    seen = _install_stub_sdk(monkeypatch, emit_fails_first=1)
+    seen = _install_stub_sdk(monkeypatch, export_fails_first=1)
 
     emit(ANN_FALLBACK, reason="load_failed")
     assert len(otel._PENDING) == 1
 
-    otel.flush()  # collector rejects the batch -- must not raise
+    otel.flush()  # collector rejects the export -- must not raise
 
-    assert len(seen["records"]) == 1, "record was constructed and emit attempted"
-    assert len(seen["emitted"]) == 0
+    assert len(seen["records"]) == 1, "record was constructed and export attempted"
+    assert seen["exports"] == 1
+    assert len(seen["exported"]) == 1
     assert len(otel._PENDING) == 1, "failed batch retained for retry"
 
     otel.flush()  # collector recovered -> backlog drains
 
     assert len(seen["records"]) == 2, "the retained row was re-exported"
-    assert len(seen["emitted"]) == 1
+    assert len(seen["exported"]) == 2
     assert len(otel._PENDING) == 0
+
+
+def test_sdk_present_export_exception_retains(monkeypatch):
+    """An exporter that RAISES (instead of returning FAILURE) also retains.
+
+    The SDK's http exporter normally catches its own network errors, but an
+    exception must not escape the flush contract either.
+    """
+    monkeypatch.setenv("CAIRN_OTEL_ENDPOINT", _ENDPOINT)
+    seen = _install_stub_sdk(monkeypatch, export_fails_first=1, export_raises=True)
+
+    emit(ANN_FALLBACK, reason="load_failed")
+    otel.flush()  # must not raise
+
+    assert len(seen["exported"]) == 1, "export was attempted"
+    assert len(otel._PENDING) == 1, "failed batch retained for retry"
+
+    otel.flush()  # recovered
+    assert len(otel._PENDING) == 0
+
+
+def test_sdk_present_outage_short_circuits_batch(monkeypatch):
+    """A rejected export stops the batch instead of hammering the endpoint.
+
+    With a backlog and a dead collector, only ONE export timeout is paid per
+    flush cycle; the remaining rows stay queued whole for the next tick
+    (at-least-once).
+    """
+    monkeypatch.setenv("CAIRN_OTEL_ENDPOINT", _ENDPOINT)
+    seen = _install_stub_sdk(monkeypatch, export_fails_first=1)
+
+    for _ in range(5):
+        emit(ANN_FALLBACK, reason="load_failed")
+    assert len(otel._PENDING) == 5
+
+    otel.flush()
+
+    assert seen["exports"] == 1, "stopped after the first rejected record"
+    assert len(otel._PENDING) == 5, "whole batch retained"
+
+    otel.flush()  # collector back: the full backlog exports and drains
+
+    assert len(otel._PENDING) == 0
+    assert len(seen["exported"]) == 6  # 1 rejected + all 5 on the retry
 
 
 def test_sdk_present_bad_construction_warns_and_disables(monkeypatch, caplog):

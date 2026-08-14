@@ -53,6 +53,15 @@ _LOCK = threading.Lock()
 _FLUSHER_STARTED = False
 _FLUSH_INTERVAL = 30.0  # seconds
 
+# Serializes whole flush cycles (snapshot -> write -> pop). The daemon tick,
+# the parent-death watchdog drain, ``flush()`` callers, and the atexit handler
+# can overlap in normal server operation; without this lock two concurrent
+# ``_flush_events`` runs snapshot the SAME rows, both insert them (duplicate
+# ``events`` rows), and the second count-based popleft then drops rows that
+# were appended in between and never written. ``_LOCK`` alone can't help: it
+# guards individual buffer mutations, not the flush cycle spanning DB I/O.
+_FLUSH_LOCK = threading.Lock()
+
 # External flush callables registered by subsystems (e.g.
 # ``metric_buffering._flush_metrics``). The daemon invokes each on every tick,
 # in addition to this module's own :func:`_flush_events`. Idempotent by
@@ -173,11 +182,15 @@ def _prune(conn):
 def _flush_events():
     """Drain the event buffer into the ``events`` table (best-effort).
 
-    Mirrors ``metric_buffering._flush_metrics`` exactly: snapshot WITHOUT
-    clearing (a failed flush leaves rows queued for retry), write via
-    ``executemany``, prune, commit, then ``popleft`` exactly ``len(batch)``
-    rows on success. A failure at any point logs at debug and returns without
-    draining -- telemetry must never raise or hold a user lock.
+    Mirrors ``metric_buffering._flush_metrics``: snapshot WITHOUT clearing (a
+    failed flush leaves rows queued for retry), write via ``executemany``,
+    prune, commit, then ``popleft`` exactly ``len(batch)`` rows on success. A
+    failure at any point logs at debug and returns without draining --
+    telemetry must never raise or hold a user lock.
+
+    The whole cycle runs under ``_FLUSH_LOCK`` so concurrent flushers (daemon
+    tick vs. watchdog drain vs. atexit) cannot snapshot the same batch twice
+    or pop rows another flush has not written yet.
 
     Untyped (no annotations) deliberately, mirroring
     ``metric_buffering._flush_metrics``: the injected connection is an opaque
@@ -186,41 +199,45 @@ def _flush_events():
     """
     if _conn_factory is None:
         return
-    with _LOCK:
-        if not _BUFFER:
+    with _FLUSH_LOCK:
+        with _LOCK:
+            if not _BUFFER:
+                return
+            batch = list(_BUFFER)
+        conn = None
+        try:
+            conn = _conn_factory()
+            conn.executemany(
+                "INSERT INTO events (ts, name, session_id, attrs) VALUES (?, ?, ?, ?)",
+                batch,
+            )
+            _prune(conn)
+            conn.commit()
+        except Exception:
+            # Couldn't flush this batch -- leave it buffered for the next
+            # attempt. Telemetry is best-effort and must never raise into a
+            # caller or hold a lock, but log at debug so silent drops/backlog
+            # are still observable.
+            logger.debug(
+                "event flush failed; %d rows remain buffered", len(batch), exc_info=True
+            )
             return
-        batch = list(_BUFFER)
-    conn = None
-    try:
-        conn = _conn_factory()
-        conn.executemany(
-            "INSERT INTO events (ts, name, session_id, attrs) VALUES (?, ?, ?, ?)",
-            batch,
-        )
-        _prune(conn)
-        conn.commit()
-    except Exception:
-        # Couldn't flush this batch -- leave it buffered for the next attempt.
-        # Telemetry is best-effort and must never raise into a caller or hold a
-        # lock, but log at debug so silent drops/backlog are still observable.
-        logger.debug(
-            "event flush failed; %d rows remain buffered", len(batch), exc_info=True
-        )
-        return
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    # Commit succeeded -> safe to drop these rows from the buffer. Only remove
-    # the rows we actually wrote; newer rows appended during the flush stay.
-    with _LOCK:
-        for _ in range(len(batch)):
-            try:
-                _BUFFER.popleft()
-            except IndexError:
-                break
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        # Commit succeeded -> safe to drop these rows from the buffer. Only
+        # remove the rows we actually wrote; newer rows appended during the
+        # flush stay. _FLUSH_LOCK guarantees no other flush is mid-cycle, so
+        # the leftmost len(batch) rows are exactly ``batch``.
+        with _LOCK:
+            for _ in range(len(batch)):
+                try:
+                    _BUFFER.popleft()
+                except IndexError:
+                    break
 
 
 def _flush_all() -> None:
