@@ -13,89 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`cairn doctor` surfaces interrupted repo rebuilds.** The single-repo
-  crash-recovery marker (`repo_build_state`, previously written and cleared
-  but read by nothing) now feeds doctor's `freshness` check: a stale
-  `building` row WARNs with a "re-run `cairn build --repo <repo>`" hint, so
-  a repo left partial by a crashed rebuild is finally observable. The marker
-  is also cleared only after the SCIP post-resolve import hook, so a crash
-  during SCIP import stays detectable too.
-- **`make ci-local` — clean-room CI replication via Apple's `container`.**
-  `scripts/ci-local.sh` mirrors `.github/workflows/ci.yml` job-by-job
-  (`test`, `test-all` for the 3.10–3.14 matrix, `security`, `typecheck`,
-  `precommit`, `build`, `bench`) inside a bare Linux container driven by the
-  Virtualization-framework `container` CLI — no Docker required. Host
-  PATH/HOME/agent CLIs never leak in, so non-hermetic tests fail locally
-  instead of on the runner. Venv/pip/pre-commit caches persist under
-  `.cache/ci-local/`; `CI_LOCAL_ARCH=linux/amd64` runs the x86-64 image via
-  Rosetta for GitHub-runner parity. (The old `make ci-local` target required
-  Docker and ran only the pytest suite.)
+- _Nothing yet._
 
 ### Changed
-- **`cairn doctor` / `cairn report` no longer create a missing store.** Both
-  are read-only diagnostics, but they opened the DB with `get_db`, which
-  materializes missing files — so a typo'd `--db` produced an empty
-  all-PASS "fresh install" (and a false-green exit code for gating agents)
-  instead of an error. Both now stat the path first and degrade to their
-  existing `schema` FAIL path with a "store not found" detail.
-- **`cairn report` redacts absolute filesystem paths.** The privacy gate now
-  collapses absolute local paths (POSIX, `~/…`, Windows) in every string
-  field to `[PATH]/<basename>`, after the existing secret scrub — error
-  text routinely embeds such paths via `str(exc)`, and the bundle is meant
-  to be pasted into public issues. Workspace-relative paths and URL path
-  portions survive.
+- _Nothing yet._
 
 ### Fixed
-- **Telemetry history survives full rebuilds and staged builds.** The
-  whole-file DB swap silently wiped `build_runs`/`events`/`tool_metrics` on
-  every `cairn build`, resetting build trends, contention history, and
-  doctor's freshness/tool-health windows. The analytics tables are now
-  carried across the swap (fresh ids, time order preserved; `pending_sync`
-  is deliberately dropped — a full rebuild recomputed that state).
-- **OTLP export no longer silently loses data during a collector outage.**
-  `BatchLogRecordProcessor` pops the batch before exporting and swallows
-  exporter failures, so a dead endpoint popped every row as "exported".
-  Export is now synchronous and failure-observing (a tracking wrapper
-  around the OTLP/http exporter behind `SimpleLogRecordProcessor`): failed
-  exports retain the rows for the next tick, an outage short-circuits the
-  batch after one timeout (5s cap), and the OTLP side buffer is drained on
-  normal MCP session end (previously up to 30s of export was lost per
-  session).
-- **Telemetry flush cycles are serialized.** The 30s daemon tick, the
-  parent-death watchdog drain, `flush()` callers, and `atexit` can overlap;
-  two concurrent flushes snapshotted the same rows, double-inserted them,
-  and dropped never-written rows on the second pop. Both sinks (events,
-  OTLP) now hold a flush mutex across snapshot → write → pop.
-- **Session transcripts can no longer bypass redaction via the subprocess
-  fallback.** With `CAIRN_LLM_BACKEND` set but the agent CLI unavailable,
-  `SubprocessBackend.extract` fell back to `FileQueueBackend` carrying the
-  raw transcript, persisting it unredacted into the task file — the exact
-  codepath-divergence class the redaction audit claimed closed. `create_task`
-  now applies the same `memory-*` privacy floor as `complete_task`.
-- **`lock_contention` only means lock contention.** `note_contention` fired
-  on any `OperationalError`, so FTS5-unavailable and missing-table failures
-  (the reasons those `except` clauses exist) emitted phantom contention
-  events that doctor's concurrency check and `metrics --contention` counted
-  as real. Every swallow site now passes its caught exception and only
-  genuinely lock-shaped errors ("database is locked/busy") emit the signal.
-- **Telemetry event attrs enforce their policy at the coercion chokepoint.**
-  Oversized strings nested in dicts/lists bypassed the truncation cap,
-  `default=str` persisted `str(exc)` verbatim (routinely embedding secrets
-  and absolute paths) into `events` — and, with OTLP on, onto the network —
-  and no whole-blob bound existed. Attrs are now truncated recursively,
-  stringified objects are scrubbed, and blobs over 4 KB drop to NULL (the
-  event itself always survives).
-- **CI flake: `test_to_file_writes_atomically`.** The test recomputed the
-  expected content after the write while `to_markdown()` stamped
-  `datetime.now()` at call time, racing the wall-clock second boundary
-  (~1-in-1000 on any Python). The concept's timestamp is now pinned.
+- _Nothing yet._
+
+### Removed
+- _Nothing yet._
 
 ## [0.10.0] - 2026-08-14
 
 > **Focus:** observability & telemetry — the full spec (T01–T20): local-only
 > event pipeline, build history, `cairn doctor`, metrics trends, optional
 > OTLP export, and workflow wiring; plus a full 9-scope audit (4 P1 / 27 P2
-> findings, all fixed same day).
+> findings, all fixed same day) and a post-review remediation pass (report
+> path redaction, telemetry retention across rebuilds, OTLP failure
+> semantics, flush serialization, transcript redaction).
 
 ### Added
 - **Observability (P0 quick wins, T01–T05).** Central logging config and
@@ -166,12 +102,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module-level SDK imports; the default install stays OTel-free), best-effort
   (never blocks the flush), and fully off by default.
 
+- **`cairn doctor` surfaces interrupted repo rebuilds.** The single-repo
+  crash-recovery marker (`repo_build_state`, previously written and cleared
+  but read by nothing) now feeds doctor's `freshness` check: a stale
+  `building` row WARNs with a "re-run `cairn build --repo <repo>`" hint, so
+  a repo left partial by a crashed rebuild is finally observable. The marker
+  is also cleared only after the SCIP post-resolve import hook, so a crash
+  during SCIP import stays detectable too.
+- **`make ci-local` — clean-room CI replication via Apple's `container`.**
+  `scripts/ci-local.sh` mirrors `.github/workflows/ci.yml` job-by-job
+  (`test`, `test-all` for the 3.10–3.14 matrix, `security`, `typecheck`,
+  `precommit`, `build`, `bench`) inside a bare Linux container driven by the
+  Virtualization-framework `container` CLI — no Docker required. Host
+  PATH/HOME/agent CLIs never leak in, so non-hermetic tests fail locally
+  instead of on the runner. Venv/pip/pre-commit caches persist under
+  `.cache/ci-local/`; `CI_LOCAL_ARCH=linux/amd64` runs the x86-64 image via
+  Rosetta for GitHub-runner parity. (The old `make ci-local` target required
+  Docker and ran only the pytest suite.)
+
 ### Changed
 - **`mcp_server/metric_buffering` now writes through the shared telemetry sink.**
   `tool_metrics` recording is refactored onto `src/cairn/telemetry/` (one flush
   thread per process instead of two); the `tool_metrics` table shape and the
   flagless `cairn metrics` output are byte-for-byte unchanged, and the P0
   `tests/test_metrics.py` suite passes unmodified.
+
+- **`cairn doctor` / `cairn report` no longer create a missing store.** Both
+  are read-only diagnostics, but they opened the DB with `get_db`, which
+  materializes missing files — so a typo'd `--db` produced an empty
+  all-PASS "fresh install" (and a false-green exit code for gating agents)
+  instead of an error. Both now stat the path first and degrade to their
+  existing `schema` FAIL path with a "store not found" detail.
+- **`cairn report` redacts absolute filesystem paths.** The privacy gate now
+  collapses absolute local paths (POSIX, `~/…`, Windows) in every string
+  field to `[PATH]/<basename>`, after the existing secret scrub — error
+  text routinely embeds such paths via `str(exc)`, and the bundle is meant
+  to be pasted into public issues. Workspace-relative paths and URL path
+  portions survive.
 
 ### Fixed
 - **Full 9-scope audit remediation (2026-08-14).** All 4 P1 and 25 P2 findings
@@ -203,6 +170,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock contention — it now stays silent; only a genuine error (e.g. "database is
   locked") surfaces the warning. Regression guard:
   `tests/test_contention_visibility.py::test_fresh_db_init_emits_no_contention_warning`.
+
+- **Telemetry history survives full rebuilds and staged builds.** The
+  whole-file DB swap silently wiped `build_runs`/`events`/`tool_metrics` on
+  every `cairn build`, resetting build trends, contention history, and
+  doctor's freshness/tool-health windows. The analytics tables are now
+  carried across the swap (fresh ids, time order preserved; `pending_sync`
+  is deliberately dropped — a full rebuild recomputed that state).
+- **OTLP export no longer silently loses data during a collector outage.**
+  `BatchLogRecordProcessor` pops the batch before exporting and swallows
+  exporter failures, so a dead endpoint popped every row as "exported".
+  Export is now synchronous and failure-observing (a tracking wrapper
+  around the OTLP/http exporter behind `SimpleLogRecordProcessor`): failed
+  exports retain the rows for the next tick, an outage short-circuits the
+  batch after one timeout (5s cap), and the OTLP side buffer is drained on
+  normal MCP session end (previously up to 30s of export was lost per
+  session).
+- **Telemetry flush cycles are serialized.** The 30s daemon tick, the
+  parent-death watchdog drain, `flush()` callers, and `atexit` can overlap;
+  two concurrent flushes snapshotted the same rows, double-inserted them,
+  and dropped never-written rows on the second pop. Both sinks (events,
+  OTLP) now hold a flush mutex across snapshot → write → pop.
+- **Session transcripts can no longer bypass redaction via the subprocess
+  fallback.** With `CAIRN_LLM_BACKEND` set but the agent CLI unavailable,
+  `SubprocessBackend.extract` fell back to `FileQueueBackend` carrying the
+  raw transcript, persisting it unredacted into the task file — the exact
+  codepath-divergence class the redaction audit claimed closed. `create_task`
+  now applies the same `memory-*` privacy floor as `complete_task`.
+- **`lock_contention` only means lock contention.** `note_contention` fired
+  on any `OperationalError`, so FTS5-unavailable and missing-table failures
+  (the reasons those `except` clauses exist) emitted phantom contention
+  events that doctor's concurrency check and `metrics --contention` counted
+  as real. Every swallow site now passes its caught exception and only
+  genuinely lock-shaped errors ("database is locked/busy") emit the signal.
+- **Telemetry event attrs enforce their policy at the coercion chokepoint.**
+  Oversized strings nested in dicts/lists bypassed the truncation cap,
+  `default=str` persisted `str(exc)` verbatim (routinely embedding secrets
+  and absolute paths) into `events` — and, with OTLP on, onto the network —
+  and no whole-blob bound existed. Attrs are now truncated recursively,
+  stringified objects are scrubbed, and blobs over 4 KB drop to NULL (the
+  event itself always survives).
+- **CI flake: `test_to_file_writes_atomically`.** The test recomputed the
+  expected content after the write while `to_markdown()` stamped
+  `datetime.now()` at call time, racing the wall-clock second boundary
+  (~1-in-1000 on any Python). The concept's timestamp is now pinned.
 
 ### Removed
 - _Nothing yet._
