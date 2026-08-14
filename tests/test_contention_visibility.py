@@ -279,3 +279,71 @@ def test_note_contention_emits_lock_contention_event(monkeypatch):
     assert any("test.event_site" in (r[3] or "") for r in event_rows), (
         "site tag must be carried in the event attrs"
     )
+
+
+# ---------------------------------------------------------------------------
+# 7. note_contention discriminates: non-lock OperationalErrors are NOT contention
+# ---------------------------------------------------------------------------
+
+
+def test_non_lock_operational_error_is_not_contention(monkeypatch, caplog):
+    """A schema/availability-shaped OperationalError must not fire the signal.
+
+    The FTS backfill and migration swallow sites catch OperationalError for
+    reasons that are NOT contention ("no such module: FTS5", "no such table",
+    "duplicate column"). Before the discrimination, each emitted a WARNING
+    asserting another process held the DB plus a durable lock_contention
+    event -- phantom signals that doctor's concurrency check and
+    ``metrics --contention`` counted as real contention.
+    """
+    from cairn.telemetry import sink as _sink, LOCK_CONTENTION
+
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+    _sink._BUFFER.clear()  # single-threaded test; ignore events from other tests
+
+    for msg in (
+        "no such module: FTS5",
+        "no such table: symbols_fts_data",
+        "duplicate column name: target_id",
+        "unknown error",
+    ):
+        note_contention("test.discriminated", error=sqlite3.OperationalError(msg))
+
+    assert _warning_records(caplog) == [], "non-lock errors must not warn"
+    assert schema._CONTENTION_WARNED.get("test.discriminated") is None, (
+        "non-lock errors must not consume the once-per-site guard either"
+    )
+    names = [r[1] for r in _sink._BUFFER]
+    assert LOCK_CONTENTION not in names, "no phantom lock_contention event"
+
+    # The same site with a genuine lock error still fires exactly once.
+    note_contention(
+        "test.discriminated",
+        error=sqlite3.OperationalError("database is locked"),
+    )
+    assert len(_warning_records(caplog)) == 1
+    names = [r[1] for r in _sink._BUFFER]
+    assert LOCK_CONTENTION in names
+
+
+def test_backfill_fts_missing_module_emits_no_contention(tmp_path, caplog):
+    """End-to-end: an FTS5-unavailable DB degrades silently, no contention.
+
+    Drives _maybe_backfill_fts against a DB whose FTS shadow table is missing
+    (the availability failure the except clause exists for) and asserts no
+    lock_contention warning fires -- the exact false positive the audit
+    flagged on doctor's concurrency check.
+    """
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+    conn = sqlite3.connect(str(tmp_path / "nofts.db"))
+    try:
+        schema._apply_schema(conn)
+        conn.execute("DROP TABLE symbols_fts_data")
+        conn.commit()
+        schema._maybe_backfill_fts(conn)
+    finally:
+        conn.close()
+
+    assert _warning_records(caplog) == [], (
+        "FTS-unavailability must not be reported as lock contention"
+    )

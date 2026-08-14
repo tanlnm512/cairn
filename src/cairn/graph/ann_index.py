@@ -29,7 +29,7 @@ import re
 import sqlite3
 from typing import List, Optional, Tuple
 
-from .schema import note_contention
+from .schema import note_contention, _is_lock_contention
 
 _logger = logging.getLogger(__name__)
 
@@ -253,9 +253,8 @@ def ann_query(
         # failure -- misattributing it to contention would send doctor's
         # concurrency check chasing a phantom lock. The spec's `query_error`
         # reason (§6.4) carries it durably instead.
-        msg = str(e).lower()
-        if "locked" in msg or "busy" in msg:
-            note_contention("ann_index.ann_query")
+        if _is_lock_contention(e):
+            note_contention("ann_index.ann_query", error=e)
         else:
             warn_ann_fallback_once(
                 _logger, context="ann_index.ann_query", reason="query error"

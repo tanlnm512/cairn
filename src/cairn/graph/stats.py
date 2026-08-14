@@ -52,8 +52,8 @@ def get_stats(conn: sqlite3.Connection) -> dict:
                 "GROUP BY reason ORDER BY c DESC"
             ).fetchall()
         }
-    except sqlite3.OperationalError:
-        note_contention("stats.skipped_files")
+    except sqlite3.OperationalError as e:
+        note_contention("stats.skipped_files", error=e)
         stats["skipped_total"] = 0
         stats["skipped_by_reason"] = {}
     return stats

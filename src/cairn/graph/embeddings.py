@@ -721,8 +721,8 @@ def embed_all(
         try:
             conn.commit()
             embedded += len(batch)
-        except sqlite3.OperationalError:
-            note_contention("embeddings.batch_flush")
+        except sqlite3.OperationalError as e:
+            note_contention("embeddings.batch_flush", error=e)
             # Lock contention (e.g. daemon holding the WAL) — the batch is
             # buffered in the connection; a later commit or retry will flush it.
             failed_batches += 1

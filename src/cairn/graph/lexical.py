@@ -10,7 +10,7 @@ import logging
 import sqlite3
 from typing import List, Optional
 
-from .schema import note_contention
+from .schema import note_contention, _is_lock_contention
 
 _logger = logging.getLogger(__name__)
 
@@ -171,9 +171,8 @@ def search_symbols(
         # LIKE degrade is BY DESIGN -- a quiet once-per-process warning is
         # enough, and misattributing it to contention would pollute the
         # lock_contention signal doctor aggregates on.
-        msg = str(e).lower()
-        if "locked" in msg or "busy" in msg:
-            note_contention("lexical.fts_search")
+        if _is_lock_contention(e):
+            note_contention("lexical.fts_search", error=e)
         else:
             try:
                 from cairn.telemetry import warn_once
@@ -182,7 +181,7 @@ def search_symbols(
                     "lexical.fts_non_contention",
                     _logger,
                     "FTS5 query failed (%s) -- degrading to the LIKE scan; "
-                    "results stay correct but unranked." % msg,
+                    "results stay correct but unranked." % e,
                 )
             except Exception:
                 pass

@@ -137,8 +137,8 @@ def record_reference(
             ),
         )
         conn.commit()
-    except sqlite3.OperationalError:
-        note_contention("promotion.record_reference")
+    except sqlite3.OperationalError as e:
+        note_contention("promotion.record_reference", error=e)
         # Lock contention or read-only connection -- ref counting is analytics.
         pass
 
@@ -169,8 +169,8 @@ def record_references_batch(
             rows,
         )
         conn.commit()
-    except sqlite3.OperationalError:
-        note_contention("promotion.record_references_batch")
+    except sqlite3.OperationalError as e:
+        note_contention("promotion.record_references_batch", error=e)
         # Lock contention or read-only connection -- ref counting is analytics.
         pass
 

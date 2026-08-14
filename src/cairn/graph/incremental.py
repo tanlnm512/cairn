@@ -152,8 +152,8 @@ def reindex_paths(
                         "(SELECT id FROM symbols WHERE file_id = ?)",
                         (file_id,),
                     )
-                except sqlite3.OperationalError:
-                    note_contention("incremental.delete_embeddings")
+                except sqlite3.OperationalError as e:
+                    note_contention("incremental.delete_embeddings", error=e)
                     logger.debug("embeddings table missing", exc_info=True)
                 cur.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
                 cur.execute("DELETE FROM parse_errors WHERE file_path = ?", (stored_path,))
@@ -172,8 +172,8 @@ def reindex_paths(
                         "DELETE FROM pending_sync WHERE path IN (?, ?)",
                         (abs_path, stored_path),
                     )
-                except sqlite3.OperationalError:
-                    note_contention("incremental.pending_sync_delete")
+                except sqlite3.OperationalError as e:
+                    note_contention("incremental.pending_sync_delete", error=e)
                     logger.debug("pending_sync table missing", exc_info=True)
                     pass  # table not present on this schema
                 conn.execute("COMMIT")
@@ -210,8 +210,8 @@ def reindex_paths(
             # rebuilt to portable paths) so either clears its rows.
             try:
                 conn.execute("DELETE FROM pending_sync WHERE path IN (?, ?)", (rel_to_repo, abs_path))
-            except sqlite3.OperationalError:
-                note_contention("incremental.pending_sync_clear")
+            except sqlite3.OperationalError as e:
+                note_contention("incremental.pending_sync_clear", error=e)
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
             conn.execute("COMMIT")

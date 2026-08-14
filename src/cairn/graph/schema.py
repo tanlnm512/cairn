@@ -379,16 +379,34 @@ _CONTENTION_WARNED: dict[str, bool] = {}
 _CONTENTION_LOCK = threading.Lock()
 
 
-def note_contention(site: str) -> None:
+def _is_lock_contention(error: Exception) -> bool:
+    """True when an ``OperationalError`` is genuinely lock contention/busy.
+
+    "database is locked"/"database is busy" mean another writer holds the DB;
+    "no such table", "no such module", "duplicate column", ... are schema- or
+    availability-shaped failures that must not pollute the ``lock_contention``
+    signal doctor and ``metrics --contention`` aggregate on.
+    """
+    msg = str(error).lower()
+    return "locked" in msg or "busy" in msg
+
+
+def note_contention(site: str, error: Exception | None = None) -> None:
     """Emit one lock-contention warning per (process, site).
 
-    Called at every ``except sqlite3.OperationalError`` swallow site so a
+    Called at ``except sqlite3.OperationalError`` swallow sites so a
     silently-absorbed "database is locked" surfaces at least once instead of
     vanishing. Another cairn process holds the DB; ``busy_timeout`` retried and
     absorbed the contention (the operation completed or degraded gracefully).
     Distinct ``site`` tags warn independently; the same site warns at most once
     per process -- mirrors ``warn_hash_fallback_once`` (graph/embeddings.py) and
     ``warn_ann_fallback_once`` (graph/ann_index.py).
+
+    ``error``: pass the caught exception whenever the ``except`` clause is
+    broader than pure lock contention. A non-lock-shaped OperationalError
+    ("no such table", "no such module: FTS5", "duplicate column") is a schema/
+    availability failure, not contention -- it is skipped (debug-logged) so
+    phantom contention events don't dilute the doctor/metrics signal.
 
     ``site`` is a stable, low-cardinality ``module.function`` tag (NO line
     numbers -- they drift). Also emits a durable ``lock_contention`` telemetry
@@ -402,6 +420,11 @@ def note_contention(site: str) -> None:
     emit + log calls happen after the lock is released so they can't serialize
     concurrent swallow sites.
     """
+    if error is not None and not _is_lock_contention(error):
+        _logger.debug(
+            "note_contention(%s) skipped: %r is not lock-shaped", site, error
+        )
+        return
     with _CONTENTION_LOCK:
         if _CONTENTION_WARNED.get(site):
             return
@@ -460,9 +483,11 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
                     (migration_name, "applied")
                 )
             else:
-                # Genuine error (e.g. "database is locked"). Surface the
-                # contention once before propagating so the failure isn't silent.
-                note_contention("schema.migration")
+                # Genuine error. Surface lock contention once before
+                # propagating so the failure isn't silent; other shapes
+                # ("no such table" on a corrupt DB) are not contention and
+                # are skipped by note_contention's discrimination.
+                note_contention("schema.migration", error=e)
                 raise
 
     # Deferred until after MIGRATIONS: the target_id column may not exist on a
@@ -505,9 +530,11 @@ def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         if token_rows == 0 and sym_count > 0:
             conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
-    except sqlite3.OperationalError:
-        note_contention("schema.backfill_fts")
-        pass  # FTS5 unavailable, table missing, or no shadow table -- LIKE fallback
+    except sqlite3.OperationalError as e:
+        # FTS5 unavailable, table missing, or no shadow table -- LIKE fallback.
+        # None of those is contention; note_contention's discrimination skips
+        # them so only a genuine "database is locked" emits the signal.
+        note_contention("schema.backfill_fts", error=e)
 
 
 # Paths whose schema has already been applied+backfilled in this process.

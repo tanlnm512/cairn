@@ -184,8 +184,8 @@ def _query_graph_hybrid(conn: sqlite3.Connection, tokens: List[str]) -> Dict:
     for term in search_terms:
         try:
             rows = search_symbols(conn, term, limit=per_token_limit)
-        except sqlite3.OperationalError:
-            note_contention("router.query_graph_hybrid")
+        except sqlite3.OperationalError as e:
+            note_contention("router.query_graph_hybrid", error=e)
             continue
         for r in rows:
             d = dict(r)

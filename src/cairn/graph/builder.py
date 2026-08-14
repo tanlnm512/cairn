@@ -1217,8 +1217,8 @@ def _clear_repo(conn, repo_name: str):
             "(SELECT id FROM files WHERE repo_id = ?))",
             (repo_name,),
         )
-    except sqlite3.OperationalError:
-        note_contention("builder.delete_repo_embeddings")
+    except sqlite3.OperationalError as e:
+        note_contention("builder.delete_repo_embeddings", error=e)
         pass  # embeddings table missing on a DB that never had the semantic extra
     # 4. Now safe to delete symbols.
     cur.execute(
