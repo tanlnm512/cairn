@@ -306,6 +306,7 @@ the hybrid (vector + BM25 + RRF) order rather than failing.
 |---------|-------------|
 | `cairn validate` | Check OKF conformance of the `.knowledge/` bundle. |
 | `cairn validate-paths` | Check all concepts for stale file/symbol references against the graph (`--mark`). |
+| `cairn verify CONCEPT` | Run the deterministic critic on a single compass/wiki/memory concept (concept id relative to `.knowledge/`, no `.md` suffix). Prints the verdict — passed/errors/warnings + quality score — read-only; the single-concept front to the critic gate behind the verification contract's promise #2. |
 | `cairn import-scip SCIP_FILE` | Import compiler-grade symbol bindings from a SCIP index file. |
 
 `import-scip` options: `SCIP_FILE` (argument), `--db`, `--repo default`,
@@ -369,8 +370,11 @@ keyed by section name):
 - `--builds` — recent `build_runs` rows with the resolution mix
   (`exact`/`ambiguous`/`unresolved`), so resolver precision becomes a trend,
   not a forgotten panel.
-- `--quality` — retrieval-quality aggregates: empty-result rate, truncation
-  count, and the semantic-backend mix (`ann`/`brute`/`hash`, fusion, rerank).
+- `--quality` — retrieval-quality aggregates: the empty-result rate (scoped to
+  `semantic_search` — the only query kind with a recorded at-risk denominator —
+  plus an `empty by kind` breakdown across semantic/explore/search_symbols),
+  truncation count, and the semantic-backend mix (`ann`/`brute`/`hash`, fusion,
+  rerank).
 - `--contention` — `lock_contention` events grouped by site, so repeated
   cross-process lock waits are diagnosable.
 

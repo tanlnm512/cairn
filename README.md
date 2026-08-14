@@ -238,6 +238,9 @@ The `cairn` command groups the main functionality. Run `cairn --help`
 | `cairn install-agents` | Drop integration files into supported AI agents |
 | `cairn upgrade` | Update cairn in place from PyPI (detects install method; `--check` to preview) |
 | `cairn bench` | Performance / scalability benchmarks (`--save`/`--compare` for regression checks) |
+| `cairn doctor` | 8 system health checks (PASS/WARN/FAIL each; exit code gates CI/agents) |
+| `cairn metrics` | Tool-call metrics, plus `--builds`/`--quality`/`--contention` telemetry trends |
+| `cairn report` | Redacted diagnostic bundle for bug reports (`--json`/`--out`; never uploads) |
 
 ## Development
 

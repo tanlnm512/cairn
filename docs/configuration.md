@@ -59,6 +59,7 @@ and the variables are inert. See also the `CAIRN_FUSION` note below.
 | `CAIRN_EMBED_LOCAL_MODEL` | string, default `BAAI/bge-m3` | HuggingFace model id for the `local` backend. |
 | `CAIRN_EMBED_OPENAI_MODEL` | string, default `text-embedding-3-small` | Model name for the `openai` backend. |
 | `CAIRN_EMBED_KNOWLEDGE_MODEL` | string, default unset | Optional separate model for embedding the `.knowledge/` markdown corpus (lets docs use a different model than code). Falls back to the main model. |
+| `CAIRN_EMBED_MEMORY_MODEL` | string, default unset | Optional separate model for embedding the tribal-memory corpus (the `memory recall` pipeline). Falls back to `CAIRN_EMBED_LOCAL_MODEL`. Local backend only. |
 | `CAIRN_EMBED_FP16` | `0`/`1`, default unset | When `1`, loads the local model with `torch_dtype=float16` (halves GPU/CPU memory). |
 | `CAIRN_EMBED_MAX_SEQ_LEN` | int, default `512` | Max sequence length passed to the local model. Raise for long functions; lower to trade recall for speed. |
 | `CAIRN_EMBED_TRUST_REMOTE_CODE` | `0`/`1`, default unset | When `1`, sets `trust_remote_code=True` on model load — required by some custom-architecture models. |
