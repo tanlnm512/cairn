@@ -89,6 +89,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_metrics.py` suite passes unmodified.
 
 ### Fixed
+- **Full 9-scope audit remediation (2026-08-14).** All 4 P1 and 25 P2 findings
+  from the scope-audit pass, each ground-verified before fixing. Highlights:
+  the atomic-swap no longer leaves the old WAL sidecar (silent build loss —
+  found independently by two auditors); the build lock can no longer be
+  defeated by its own error path (loser-unlink double-acquire); the knowledge
+  layer redacts at the store chokepoint and session transcripts are stripped
+  before queueing (4th incarnation of the codepath-divergence class, now
+  closed at the store layer everywhere); `CAIRN_TELEMETRY=off` now provably
+  stops ALL recording (build_runs + tool_metrics included);
+  `semantic_backend` reports fusion/rerank execution truth with degraded
+  flags; ANN no-index/stale-index states surface in doctor + the status
+  health block; `cairn build --staging --repo` is rejected instead of
+  destroying other repos; the stdio watchdog drains telemetry/metric/embed
+  buffers before exit (was losing ≤30s of data per session end); the stray
+  sweeper matches real editor spawn shapes, kills only lsof-verified
+  db-holders, and re-verifies pids before SIGKILL; Ruby chained calls, PHP
+  namespaced calls, and Kotlin class-body properties are recovered (dropped
+  edges/symbols that golden fixtures had baked in); tool_metrics error
+  messages are redacted at write time; store-chokepoint namespace guards
+  protect CLI twins of guarded MCP ops; URI-embedded credentials are redacted.
+  7 new BUGS.md entries record the classes; ~150 new tests across 6 commits.
 - **Telemetry: fresh-DB init no longer emits a spurious lock-contention warning.**
   `note_contention("schema.migration")` was firing on every first-run `cairn build`,
   because the retained `transitive_edges.target_id` migration raises "duplicate

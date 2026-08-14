@@ -326,7 +326,7 @@ and wiring them into `cairn.json` for build-time hybrid indexing.
 | `cairn bench` | Run performance or scalability benchmarks. |
 
 `metrics` options: `--db`, `--tool NAME` (default aggregation only), `--json`,
-plus the telemetry-trend flags `--builds`, `--quality`, `--contention`.
+plus the telemetry-trend flags `--builds`, `--quality`, `--contention`, `--tasks`.
 `doctor` options: `--db`, `--json`.
 `report` options: `--db`, `--json`, `--out PATH`.
 `status` options: `--db`, `--knowledge`.
@@ -377,6 +377,8 @@ keyed by section name):
   rerank).
 - `--contention` — `lock_contention` events grouped by site, so repeated
   cross-process lock waits are diagnosable.
+- `--tasks` — task-queue lifecycle history: `task_lifecycle` events counted
+  by transition (claimed/completed/dropped/revised) and by `task_kind`.
 
 `--tool NAME` filters the default aggregation only; it has no effect on the
 three trend flags.

@@ -46,6 +46,13 @@ keeps the registry scannable; detail lives separately.
 | 2026-08-10 | dead-depends-on-key-in-knowledge-search | retrieval | Cross-repo bridge line in `knowledge_search` never printed (wrong dict key). |
 | 2026-08-10 | swift-modifier-attribute-pollution | parser | Swift modifier extraction included `@available` attribute text. |
 | 2026-08-10 | dead-appcontext-lifespan-scaffolding | architecture | `AppContext` lifespan was wired but no tool consumed it — dead contract. |
+| 2026-08-14 | wal-sidecar-swap-build-loss | graph | `--staging`/`backup_to` swap left the old `-wal`; new connections read the PRE-BUILD graph — build silently lost. |
+| 2026-08-14 | build-lock-loser-unlink | graph | Failed flock acquire unlinked the WINNER'S lock file → deterministic double-acquire → corrupted swap. |
+| 2026-08-14 | knowledge-layer-unredacted | security | Knowledge add/import/workflow persisted title+body verbatim — 4th codepath-divergence redaction incarnation. |
+| 2026-08-14 | watchdog-exit-bypasses-atexit | server | stdio parent-death `os._exit(0)` skipped atexit → ≤30s metrics/events + 15s embeddings lost per session end. |
+| 2026-08-14 | sweeper-matched-nothing | server | Stray-sweeper patterns matched argv shapes editors never spawn → orphans (the leak class) stayed invisible; fallback could kill other-DB servers. |
+| 2026-08-14 | parser-golden-self-validation | parser | Golden fixtures regenerated from parser output — systematic drops (Ruby chains, PHP ns-calls, Kotlin properties) shipped green. |
+| 2026-08-14 | telemetry-config-vs-execution | telemetry | `semantic_backend` reported configured fusion/rerank, not what ran — provenance metric lied on degrade. |
 
 ## Entries
 
@@ -135,7 +142,7 @@ keeps the registry scannable; detail lives separately.
 
 **Fix:** `capture_memory` (`memory/promotion.py`) now calls `strip_private_data(body)` before scoring/storing. Every caller (MCP tool, CLI, hook) gets the redaction for free.
 
-**Prevention:** Put security-sensitive transformations at the shared chokepoint, not each caller boundary — a new caller can always forget the per-call redaction. Regression test: `tests/test_audit_remediation.py::test_p1` family + `tests/test_memory_lifecycle.py::TestCaptureMemoryRedaction`.
+**Prevention:** Put security-sensitive transformations at the shared chokepoint, not each caller boundary — a new caller can always forget the per-call redaction. Regression tests: `tests/test_redaction_chokepoints.py` (41 tests, every entry point incl. the store-chokepoint guards added 2026-08-14) + `tests/test_memory_lifecycle.py::TestCaptureMemoryRedaction`.
 
 **Related:** `src/cairn/memory/promotion.py`, `src/cairn/memory/privacy.py`.
 
@@ -288,3 +295,71 @@ keeps the registry scannable; detail lives separately.
 **Prevention:** Half-finished abstractions are worse than no abstraction — they imply a contract that doesn't hold. Either finish the refactor (wire all consumers) or delete it.
 
 **Related:** `src/cairn/mcp_server/_server_core.py`.
+
+---
+
+### wal-sidecar-swap-build-loss (2026-08-14)
+
+**TL;DR:** The atomic-swap replaced only the main DB file; a surviving old `-wal` made every new connection read the pre-build graph — the build was silently lost while `integrity_check` passed.
+
+**Symptom:** After `cairn build --staging` (or any `backup_to` persist) that coincided with an open WAL writer — the SSE daemon's 30s flush window, an in-flight tool call, or a crash-leftover wal — new connections served the OLD graph and the old connection's close-checkpoint then overwrote the new inode with old pages.
+
+**Root cause:** SQLite WAL frames live in the shared `<db>-wal` sidecar, not inside the replaced inode. `os.replace` swapped the main file only.
+
+**Fix:** Under the build lock: checkpoint the old DB (best-effort), then unlink `<db>-wal`/`<db>-shm` immediately before `os.replace`. Open connections keep their fds on the unlinked inodes. Regression: `tests/test_swap_wal_safety.py` (holds a WAL writer with committed frames across the swap). Found independently by two auditors in the same audit.
+
+**Prevention:** Any file-replacement persistence over a WAL-mode SQLite must treat `-wal`/`-shm` as part of the database. Never swap the main file alone.
+
+### build-lock-loser-unlock (2026-08-14)
+
+**TL;DR:** A FAILED flock acquire unlinked the WINNER'S lock file — a third process then acquired a fresh inode while the winner still built (deterministic double-acquire; two builders wrote the same `.tmp`).
+
+**Root cause:** The `finally` block ran `os.unlink(lock_path)` unconditionally — on the failure path it deleted a file it did not own. flock is inode-based; recreating the path mints a new lockable inode.
+
+**Fix:** The lock file is deliberately never unlinked, by winner or loser — a stale zero-byte `.build.lock` is harmless because only flock state matters and it dies with the holder's fd. Regression: `test_failed_acquire_never_unlinks_winners_lock_file`.
+
+**Prevention:** Never unlink a lock file you didn't successfully lock. With flock, the file's existence is irrelevant; the kernel-held lock is the truth.
+
+### knowledge-layer-unredacted (2026-08-14)
+
+**TL;DR:** The knowledge layer (add_document/add_workflow/import_directory) persisted title+body verbatim — the redaction chokepoint existed only in the memory layer. Fourth incarnation of the codepath-divergence class.
+
+**Fix:** Redaction at the store chokepoints (knowledge add path strips title/body BEFORE slug derivation; capture/evolve strip titles; `tool_metrics.error_message` strips before buffering; namespace guards enforced in the stores so every caller inherits them). 41 tests in `tests/test_redaction_chokepoints.py`.
+
+**Prevention:** Security-sensitive transformations live at the shared chokepoint — this is the same prevention line as 2026-08-10's `record-memory-unredacted-secrets`, and it failed again because the fix landed at a caller. Audit check: grep for NEW persistence paths, not for old fixes.
+
+### watchdog-exit-bypasses-atexit (2026-08-14)
+
+**TL;DR:** The stdio parent-death watchdog exited via `os._exit(0)`, which never runs atexit — up to 30s of tool_metrics/events and 15s of queued memory embeddings were silently lost on every normal MCP client disconnect.
+
+**Root cause:** `os._exit` skips cleanup by design, and atexit does not fire from the watchdog's exit path (verified empirically). The buffered sinks relied on atexit for the final drain.
+
+**Fix:** The watchdog explicitly drains all three buffers (telemetry flush, `_flush_metrics`, embed flush — each isolated) before `os._exit(0)`. Tests: `TestWatchdogBufferDrain`.
+
+**Prevention:** Any `os._exit` in a process with buffered state must drain explicitly. atexit is main-thread-shutdown-only.
+
+### sweeper-matched-nothing (2026-08-14)
+
+**TL;DR:** The stray-process sweeper — the remediation for the stdio-leak/"database is locked" class — matched argv shapes editors never spawn (`cairn serve.*<db>` with db in env, launchd's `serve run`), so orphans stayed invisible; its broad fallback could kill a legitimate server on a different DB/workspace.
+
+**Fix:** Three-gate pipeline: pgrep superset → per-pid cmdline anchored token check (argv[0] ends in `cairn`, argv[1] == `serve`) → lsof-on-db verification; kills only verified db-holders, never when verification is impossible; cmdline re-checked before SIGTERM/SIGKILL (pid-reuse guard). 20 mocked tests in `tests/test_stray_sweeper_safety.py`.
+
+**Prevention:** Process-matching rules must be derived from how processes are ACTUALLY spawned (read the launcher code), not from how they were in one deployment. Killing requires positive verification, not pattern absence.
+
+### parser-golden-self-validation (2026-08-14)
+
+**TL;DR:** Golden fixtures are regenerated from parser output, so systematic drops self-validate — Ruby chained calls, PHP namespaced calls, and ALL Kotlin class-body properties shipped green with zero failing tests.
+
+**Root cause:** `regenerate.py` bakes current behavior into `expected.json`; a parser that silently drops a construct produces fixtures that assert the drop.
+
+**Fix:** The three drops fixed with hand-curated direct regression tests (`tests/test_parser_audit_fixes.py`, 18 tests) that parse idiom snippets and assert the edge/symbol EXISTS — independent of golden regeneration.
+
+**Prevention:** Generated fixtures can pin behavior but cannot detect omissions. Every language needs at least a few hand-written positive assertions for its signature idioms, and audits must probe real-world constructs (fixtures alone are insufficient — noted at PHP/Ruby addition, now enforced).
+
+### telemetry-config-vs-execution (2026-08-14)
+
+**TL;DR:** `semantic_backend` emitted the fusion/rerank the user CONFIGURED, not what RAN — a degraded call reported `fusion=1, rerank=1`, so the provenance metric measured configuration and the exact degradations the telemetry spec existed to expose stayed invisible.
+
+**Fix:** Outcome flags threaded from the fusion/rerank branches into the emit; `fusion_degraded`/`rerank_degraded` attrs added (declared in the cardinality guard). Plus: `ann_fallback` gains the never-emitted `no_index`/`query_error` reasons with OperationalError discrimination, doctor probes index existence + staleness, new `semantic_unavailable`/`embed_flush_stalled` events, `cairn metrics --tasks`.
+
+**Prevention:** A telemetry attr must be derived from the code path that did the work, not from the config that requested it. When adding a signal, ask "what would this report if the feature silently failed?" — if the answer is "success", the signal is wired wrong.
