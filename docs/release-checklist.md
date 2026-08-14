@@ -5,7 +5,7 @@ Each item maps to a real failure mode hit in this project's history —
 don't skip on "I'm sure it's fine."
 
 ## Tests
-- [ ] `uv run pytest tests/ -q` — full suite (~650 tests). CI runs this too
+- [ ] `uv run pytest tests/ -q` — full suite (~1100 tests). CI runs this too
       (after a `core` smoke pass), but confirm locally before pushing so you
       aren't waiting on a CI round-trip for a local failure. Note the
       pass/skip/fail count; compare to the last green run.

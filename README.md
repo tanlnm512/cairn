@@ -204,6 +204,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 | `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/scip.md) indexes for compiler-grade exact call edges (Kotlin/Java/Swift/TypeScript) alongside tree-sitter | declare indexes in `cairn.json` under `scip` |
 | `[watch]` | `watchdog` — live graph rebuilds on filesystem change | — |
+| `[otlp]` | `opentelemetry-sdk` — forward cairn's local telemetry events to an OTLP endpoint as OpenTelemetry LogRecords | `CAIRN_OTEL_ENDPOINT` (unset = off; export is best-effort and never blocks) |
 
 ## Architecture (5 layers)
 
