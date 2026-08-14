@@ -6,7 +6,7 @@
       "kind": "class",
       "qualified_name": "User",
       "line_start": 29,
-      "line_end": 44,
+      "line_end": 49,
       "column_start": 0,
       "column_end": 1,
       "docstring": null,
@@ -53,8 +53,20 @@
       "name": "greet_all",
       "kind": "function",
       "qualified_name": "greet_all",
-      "line_start": 46,
-      "line_end": 50,
+      "line_start": 51,
+      "line_end": 55,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "sanitize_all",
+      "kind": "function",
+      "qualified_name": "sanitize_all",
+      "line_start": 57,
+      "line_end": 59,
       "column_start": 0,
       "column_end": 1,
       "docstring": null,
@@ -127,6 +139,18 @@
       "qualified_name": "User.greet",
       "line_start": 39,
       "line_end": 43,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "label",
+      "kind": "method",
+      "qualified_name": "User.label",
+      "line_start": 45,
+      "line_end": 48,
       "column_start": 4,
       "column_end": 5,
       "docstring": null,
@@ -211,7 +235,23 @@
       "source_name": "",
       "kind": "calls",
       "target_name": "greet_all",
-      "line": 52,
+      "line": 61,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "",
+      "kind": "calls",
+      "target_name": "sanitize",
+      "line": 63,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "",
+      "kind": "calls",
+      "target_name": "sanitize_all",
+      "line": 62,
       "column": 0,
       "receiver_type": null
     },
@@ -251,7 +291,39 @@
       "source_name": "greet_all",
       "kind": "calls",
       "target_name": "greet",
-      "line": 48,
+      "line": 53,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "label",
+      "kind": "calls",
+      "target_name": "Formatter",
+      "line": 46,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "label",
+      "kind": "calls",
+      "target_name": "format",
+      "line": 47,
+      "column": 0,
+      "receiver_type": "Formatter"
+    },
+    {
+      "source_name": "label",
+      "kind": "calls",
+      "target_name": "getName",
+      "line": 47,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "sanitize_all",
+      "kind": "calls",
+      "target_name": "sanitize",
+      "line": 58,
       "column": 0,
       "receiver_type": null
     }

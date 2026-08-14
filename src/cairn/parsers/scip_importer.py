@@ -129,6 +129,10 @@ def _enclosing_range(occ) -> Optional[Tuple[int, int, int, int]]:
 # blank for both Java and Kotlin docs). The hybrid skip logic and downstream
 # tooling key off files.language, so fall back to the file extension when the
 # document doesn't declare one. Covers the languages cairn's scanner knows.
+# NOTE: ``.h`` maps to "c" here only as the LAST-resort fallback (no workspace
+# root to read the file from). When the file is reachable, _language_for
+# sniffs its content via the scanner's detect_header_language so an objc/cpp
+# header gets files.language='objc'/'cpp' exactly like the tree-sitter path.
 _EXT_LANGUAGE: Dict[str, str] = {
     ".swift": "swift", ".kt": "kotlin", ".kts": "kotlin",
     ".java": "java", ".py": "python", ".ts": "typescript", ".tsx": "typescript",
@@ -161,7 +165,9 @@ def _resolve_real_file_id(conn, repo: str, rel: str, fallback: str) -> str:
     return row[0] if row else fallback
 
 
-def _language_for(rel_path: str, declared: str) -> str:
+def _language_for(
+    rel_path: str, declared: str, abs_path: Optional[str] = None
+) -> str:
     """Resolve a document's language, falling back to the file extension.
 
     Real indexers don't all populate ``Document.language``: scip-java 0.10.4
@@ -169,10 +175,19 @@ def _language_for(rel_path: str, declared: str) -> str:
     ``'scip'`` and the hybrid skip logic couldn't tell those files apart.
     Derive from the extension when the declared value is empty, and normalize
     case (scip-swift emits ``"Swift"``; scanner keys are lowercase).
+
+    ``.h`` headers are ambiguous (objc/cpp/c): when ``abs_path`` is given
+    (workspace-rooted import), sniff the file content with the scanner's
+    ``detect_header_language`` so SCIP's files.language matches what the
+    tree-sitter path would record for the same file. Without an abs_path
+    (standalone import with no workspace), keep the extension fallback.
     """
     if declared:
         return declared.lower()
     suffix = Path(rel_path).suffix.lower()
+    if suffix == ".h" and abs_path is not None:
+        from cairn.graph import scanner
+        return scanner.detect_header_language(abs_path)
     return _EXT_LANGUAGE.get(suffix, "scip")
 
 
@@ -215,7 +230,7 @@ def _resolve_doc_path(
     fallback_repo: str,
     project_root: Optional[Path] = None,
 ):
-    """Map a SCIP Document.relative_path to (repo_id, repo_relative_path).
+    """Map a SCIP Document.relative_path to (repo_id, repo-relative path, abs).
 
     Real indexers emit ``relative_path`` relative to their OWN
     ``Metadata.project_root`` (the repo dir), NOT the workspace root. When
@@ -225,10 +240,12 @@ def _resolve_doc_path(
     so the incremental path (``reindex_paths``) and the scanner agree on a
     file's identity. When ``ws_root`` is given, resolve each path through the
     scanner; otherwise fall back to the legacy single-repo shape
-    (repo_id=fallback, path=rel_path).
+    (repo_id=fallback, path=rel_path). The third element is the resolved
+    absolute path when one exists (None with no ws_root) -- used by
+    ``_language_for`` to content-sniff ``.h`` headers.
     """
     if ws_root is None:
-        return fallback_repo, rel_path
+        return fallback_repo, rel_path, None
     from cairn.graph import scanner
     base = project_root if project_root is not None else ws_root
     abs_path = str(base / rel_path)
@@ -241,7 +258,7 @@ def _resolve_doc_path(
         # repo_root; fall back to the raw relative_path. Other errors (OSError,
         # permission denied, ...) must propagate, not be swallowed.
         rel_to_repo = rel_path
-    return repo, rel_to_repo
+    return repo, rel_to_repo, abs_path
 
 
 def _normalize_project_root(raw_root: str, ws_root: Path) -> Path:
@@ -315,8 +332,12 @@ def _merge_scip_defs_into_tree_sitter(conn, scip_def_rows: list) -> int:
     Coexistence model: tree-sitter parses every file (rich metadata), then SCIP
     imports exact-resolution edges. To get one row per symbol carrying both,
     each SCIP definition is matched to a tree-sitter symbol by
-    ``(file_id, name, line_start)`` (falling back to name-only if the line
-    disagrees). On a match:
+    ``(file_id, name, line_start)``. When the line disagrees, the NEAREST
+    same-named tree-sitter symbol wins -- but only if it is strictly nearest:
+    with several same-named symbols (overloads) and no clear nearest, the merge
+    is skipped so SCIP's exact edges keep pointing at the standalone SCIP row
+    rather than being folded into an arbitrary (possibly wrong) overload. On a
+    match:
 
     1. UPDATE the tree-sitter symbol: adopt SCIP's richer ``qualified_name``,
        ``docstring`` (when SCIP has one), and mark ``source='merged'``.
@@ -351,11 +372,24 @@ def _merge_scip_defs_into_tree_sitter(conn, scip_def_rows: list) -> int:
             (file_id, match_name, sl, scip_sym_id),
         ).fetchone()
         if ts_row is None:
-            ts_row = cur.execute(
-                "SELECT id FROM symbols WHERE file_id = ? AND name = ? "
-                "AND id != ? AND source != 'scip' LIMIT 1",
-                (file_id, match_name, scip_sym_id),
-            ).fetchone()
+            # Line disagreed (tree-sitter and SCIP can anchor a definition
+            # differently). Prefer the NEAREST same-named symbol; skip the
+            # merge when overloads make the nearest ambiguous (a tie) --
+            # folding into an arbitrary same-named row would re-point this
+            # definition's exact edges at the wrong overload.
+            candidates = cur.execute(
+                "SELECT id, line_start FROM symbols WHERE file_id = ? AND name = ? "
+                "AND id != ? AND source != 'scip' "
+                "ORDER BY ABS(line_start - ?) ASC, id ASC LIMIT 2",
+                (file_id, match_name, scip_sym_id, sl),
+            ).fetchall()
+            if candidates and (
+                len(candidates) == 1
+                or abs(candidates[0][1] - sl) < abs(candidates[1][1] - sl)
+            ):
+                ts_row = candidates[0]
+            # else: no same-named tree-sitter row, or a nearest-line tie --
+            # leave the standalone SCIP row (its exact edges stay correct).
         if ts_row is None:
             continue  # no tree-sitter match -- leave the standalone SCIP row
 
@@ -454,13 +488,17 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     # same descriptor; a forward decl only fills in the map when no real def is
     # seen, so references still resolve without spurious symbol rows.
     doc_paths: Dict[int, Tuple[str, str]] = {}
+    doc_abs_paths: Dict[int, str] = {}
     doc_file_ids: Dict[int, str] = {}
     defs: Dict[str, Tuple[str, str, int, int]] = {}
     real_defs: set = set()
     for i, doc in enumerate(index.documents):
         rel = doc.relative_path
-        doc_repo, rel_to_repo = _resolve_doc_path(rel, ws_root, repo_id, project_root=project_root)
+        doc_repo, rel_to_repo, abs_path = _resolve_doc_path(
+            rel, ws_root, repo_id, project_root=project_root)
         doc_paths[i] = (doc_repo, rel_to_repo)
+        if abs_path is not None:
+            doc_abs_paths[i] = abs_path
         # Coexistence: link to the tree-sitter file row if it exists so both
         # sources share one file identity (JOINs work, incremental clears both).
         doc_file_ids[i] = _resolve_real_file_id(
@@ -484,7 +522,9 @@ def _import_protobuf(conn, index, repo_id: str, ws_root: Optional[Path] = None) 
     # Pass 2: emit symbols + edges.
     for i, doc in enumerate(index.documents):
         doc_repo, rel = doc_paths[i]
-        lang = _language_for(rel, getattr(doc, "language", "") or "")
+        lang = _language_for(
+            rel, getattr(doc, "language", "") or "", doc_abs_paths.get(i)
+        )
         file_id = doc_file_ids[i]
 
         # repos + files: INSERT OR IGNORE so we never overwrite tree-sitter

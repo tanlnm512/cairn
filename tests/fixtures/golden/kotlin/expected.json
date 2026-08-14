@@ -20,7 +20,7 @@
       "kind": "class",
       "qualified_name": "User",
       "line_start": 15,
-      "line_end": 25,
+      "line_end": 26,
       "column_start": 0,
       "column_end": 1,
       "docstring": null,
@@ -55,8 +55,8 @@
       "name": "helperCall",
       "kind": "method",
       "qualified_name": "User.helperCall",
-      "line_start": 22,
-      "line_end": 24,
+      "line_start": 23,
+      "line_end": 25,
       "column_start": 4,
       "column_end": 5,
       "docstring": null,
@@ -69,10 +69,22 @@
       "name": "process",
       "kind": "method",
       "qualified_name": "User.process",
-      "line_start": 18,
-      "line_end": 20,
+      "line_start": 19,
+      "line_end": 21,
       "column_start": 4,
       "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "id",
+      "kind": "property",
+      "qualified_name": "Identifiable.id",
+      "line_start": 6,
+      "line_end": 6,
+      "column_start": 4,
+      "column_end": 18,
       "docstring": null,
       "modifiers": [],
       "metadata": null
@@ -118,6 +130,32 @@
         "override"
       ],
       "metadata": null
+    },
+    {
+      "name": "status",
+      "kind": "property",
+      "qualified_name": "User.status",
+      "line_start": 16,
+      "line_end": 16,
+      "column_start": 4,
+      "column_end": 38,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null
+    },
+    {
+      "name": "tag",
+      "kind": "property",
+      "qualified_name": "User.tag",
+      "line_start": 17,
+      "line_end": 17,
+      "column_start": 4,
+      "column_end": 36,
+      "docstring": null,
+      "modifiers": [
+        "private"
+      ],
+      "metadata": null
     }
   ],
   "edges": [
@@ -141,7 +179,7 @@
       "source_name": "process",
       "kind": "calls",
       "target_name": "helperCall",
-      "line": 19,
+      "line": 20,
       "column": 0,
       "receiver_type": null
     }

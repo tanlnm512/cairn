@@ -291,14 +291,20 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return sym
 
     def _parse_property(self, node: Node, source: bytes) -> Optional[Symbol]:
+        # property_declaration: [modifiers] (val|var) variable_declaration ...
+        # The name lives inside variable_declaration. tree-sitter-kotlin 1.1.0
+        # emits `identifier` there (newer grammars emit `simple_identifier`);
+        # accept both -- the sibling extractors (_var_name_and_type,
+        # _parse_function, _parse_type_identifier) already do. Without the
+        # `identifier` spelling every class-body val/var produced no Symbol.
         name = None
         for child in node.children:
             if child.type == "variable_declaration":
                 for vc in child.children:
-                    if vc.type == "simple_identifier":
+                    if vc.type in ("simple_identifier", "identifier"):
                         name = self._node_text(vc, source).strip()
                         break
-            elif child.type == "simple_identifier" and name is None:
+            elif child.type in ("simple_identifier", "identifier") and name is None:
                 name = self._node_text(child, source).strip()
         if not name:
             return None
