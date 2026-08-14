@@ -57,6 +57,12 @@ they actually ran — not just that they were claimed:
 - [ ] `cairn update` ran — the graph reflects the new code. A stale graph gives
       the *next* change a wrong blast radius.
 - [ ] `record_memory` called for any new decision / pattern / mistake / workaround.
+- [ ] **Doctor on fallback/perf changes** — if the change altered a fallback or
+      performance path (ANN→brute-force, hash-embed, lock-contention swallow,
+      result truncation, semantic-backend switch), `cairn doctor` was run and
+      acted on, and the telemetry signal exposing any degradation is named
+      (spec §6.4 event catalog). A silent degrade is the bug class this codebase
+      is built to avoid.
 - [ ] Tests added or updated to cover the change (`pytest -m core` for the fast
       loop, then the full suite).
 

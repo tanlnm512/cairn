@@ -98,7 +98,9 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 
 ### After completing a task, ALWAYS:
 1. `cairn update` to refresh the graph
-2. `record_memory` for learnings (decision | pattern | mistake | workaround)
+2. If the task touched a perf/fallback path, run `cairn doctor`; on a FAIL
+   (non-zero exit), `record_memory(type="mistake")` and fix it before shipping
+3. `record_memory` for learnings (decision | pattern | mistake | workaround)
 
 ## When to Use Which Tool
 

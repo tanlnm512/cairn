@@ -110,7 +110,8 @@ work lands; each PR references the task IDs it completes.
 
 ## Phase 2 — workflow integration & optional export
 
-- [ ] **T17 — Workflow wiring** — AGENTS.md after-task doctor step + FAIL→`record_memory(mistake)`; review-checklist.md + PR template fallback-path checkbox; audit-checklist.md scope #9 "silent degradation" (Tier 1); mirror all guidance edits across the 4 surfaces (SKILL.md, `_common.py`, `cursor.mdc`, root AGENTS.md).
+- [x] **T17 — Workflow wiring** — AGENTS.md after-task doctor step + FAIL→`record_memory(mistake)`; review-checklist.md + PR template fallback-path checkbox; audit-checklist.md scope #9 "silent degradation" (Tier 1); mirror all guidance edits across the 4 surfaces (SKILL.md, `_common.py`, `cursor.mdc`, root AGENTS.md).
+  - Done 2026-08-14: doctor step is after-task step #2 (between `cairn update` and `record_memory`, since a FAIL feeds the mistake memory); scope #9 landed as Tier 1 (Tier-1 note + "Before a release" trigger updated); the doctor step is byte-identical across AGENTS.md / `_common.py` / `cairn.mdc` and condensed to SKILL.md's terse idiom.
 - [ ] **T18 — CI bench artifacts** — upload `cairn bench` results; advisory baseline comparison in PR comment.
 - [ ] **T19 — Optional OTLP export** — `CAIRN_OTEL_ENDPOINT`; lazy `opentelemetry-sdk` import; `warn_once` when unset SDK; optional extra in pyproject; dependency-review clean.
 - [ ] **T20 — `cairn report`** — redacted bundle (versions, doctor, recent errors, config echo via `strip_private_data`); never auto-uploads.

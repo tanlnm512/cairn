@@ -85,12 +85,16 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 
 ### After completing a task, ALWAYS:
 1. Run `cairn update` to refresh the graph with your changes
-2. Call `record_memory` for any learnings:
+2. If the task touched a performance or fallback path, run `cairn doctor`
+   (exit 0 = PASS/WARN, 1 = at least one FAIL). On a non-zero exit, a
+   degradation is active — record it as `record_memory(type="mistake")` and fix
+   it before shipping.
+3. Call `record_memory` for any learnings:
    - type="decision" for architectural choices made
    - type="pattern" for reusable code patterns discovered
    - type="mistake" for errors others should avoid
    - type="workaround" for non-obvious solutions used
-3. Set confidence (0.0-1.0) based on how sure you are
+4. Set confidence (0.0-1.0) based on how sure you are
 
 ## PR review (the audit gate)
 Before requesting or approving review on a PR (feature, improvement, or bugfix),
