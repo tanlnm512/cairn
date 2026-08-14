@@ -19,8 +19,11 @@ The five layers below are how the contract is delivered; resolution-labeled
 edges are the *evidence* for promise #1, not the headline.
 
 - **Local.** Everything runs on your machine. The store is a SQLite database
-  plus a markdown tree under `~/.cairn/`. No network calls, no telemetry
-  upstream, no remote API. You can read every byte of the output.
+  plus a markdown tree under `~/.cairn/`. No network calls, no remote API,
+  nothing phoned home — the only telemetry is local-only observability
+  (`events`/`build_runs` in your own store, `CAIRN_TELEMETRY=off` to disable;
+  OTLP export exists only as an explicit opt-in). You can read every byte of
+  the output.
 - **Structural.** It parses source with tree-sitter into a typed graph of
   symbols and call edges, then answers queries against that graph. "Who calls
   this?" is a graph traversal, not a guess. Parsers exist for fourteen languages:

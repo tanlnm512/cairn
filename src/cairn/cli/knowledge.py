@@ -237,6 +237,11 @@ def knowledge_remove(doc_id, db):
     try:
         ok = delete_document(bundle, doc_id, conn=conn)
         conn.commit()
+    except ValueError as e:
+        # Store-chokepoint namespace guard (audit F7): deleting a concept
+        # outside knowledge/ is a refusal, not a "not found".
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     finally:
         conn.close()
     if ok:
@@ -256,7 +261,13 @@ def knowledge_status(doc_id, new_status):
     from ..paths import resolve_store
 
     bundle = OKFBundle(str(resolve_store().knowledge))
-    ok = update_status(bundle, doc_id, new_status)
+    try:
+        ok = update_status(bundle, doc_id, new_status)
+    except ValueError as e:
+        # Store-chokepoint namespace guard (audit F7): updating a concept
+        # outside knowledge/ is a refusal, not a lifecycle rejection.
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     if ok:
         click.echo(f"Updated '{doc_id}' status -> {new_status}")
     else:
@@ -334,7 +345,7 @@ def knowledge_workflow_add(title, steps_raw, steps_file, tags, affects, affects_
     from ..paths import resolve_store
 
     if steps_file:
-        import yaml as _yaml
+        import yaml as _yaml  # type: ignore[import-untyped]
 
         with open(steps_file, "r", encoding="utf-8") as fh:
             steps = _yaml.safe_load(fh)

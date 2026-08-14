@@ -21,7 +21,7 @@ import collections
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,33 @@ _FLUSH_INTERVAL = 15.0  # seconds
 # success.
 _FAILURES = 0
 _WARN_AFTER = 4
+# Whether the embed_flush_stalled telemetry event already fired for the
+# CURRENT failure streak (F6): the durable signal is emitted once per streak,
+# not once per failing 15s tick, mirroring the once-per-degradation doctrine.
+# Reset together with _FAILURES on the first successful flush, so a later
+# separate outage emits again.
+_STALL_EVENT_SENT = False
 
-_conn_factory: Optional[Callable[[], "object"]] = None
-_bundle_factory: Optional[Callable[[], "object"]] = None
+
+def _failures_bucket(n: int) -> str:
+    """Collapse a consecutive-failure count into a bounded cardinality bucket.
+
+    Buckets are the telemetry cardinality mechanism for numeric attrs (spec
+    §6.4): an unbucketed count would grow a distinct value per tick. The lower
+    edge is the escalation threshold (_WARN_AFTER) -- the event only fires at
+    or above it.
+    """
+    for bound, label in ((10, "4-10"), (100, "11-100")):
+        if n <= bound:
+            return label
+    return ">100"
 
 
-def configure(conn_factory: Callable[[], "object"], bundle_factory: Callable[[], "object"]) -> None:
+_conn_factory: Optional[Callable[[], "Any"]] = None
+_bundle_factory: Optional[Callable[[], "Any"]] = None
+
+
+def configure(conn_factory: Callable[[], "Any"], bundle_factory: Callable[[], "Any"]) -> None:
     """Inject the writable-conn and bundle factories. Called once at server boot."""
     global _conn_factory, _bundle_factory
     _conn_factory = conn_factory
@@ -69,7 +90,7 @@ def _flush() -> None:
     from cairn.graph import embeddings as emb
 
     conn = None
-    global _FAILURES
+    global _FAILURES, _STALL_EVENT_SENT
     try:
         conn = _conn_factory()
         bundle = _bundle_factory()
@@ -80,7 +101,9 @@ def _flush() -> None:
         # the next flush attempt rather than dropping it (a poison concept_id
         # is already skipped per-cid inside embed_memory_concepts, so a failure
         # here is environmental, not a bad cid). Escalate to WARNING once the
-        # failure is chronic so a broken embed model doesn't fail silently.
+        # failure is chronic so a broken embed model doesn't fail silently,
+        # and record one durable embed_flush_stalled event per failure streak
+        # (F6) so `cairn metrics`/doctor can see what a WARNING log can't.
         _FAILURES += 1
         if _FAILURES >= _WARN_AFTER:
             logger.warning(
@@ -88,6 +111,14 @@ def _flush() -> None:
                 "%d concept(s) remain queued. Check the embed model / DB.",
                 _FAILURES, len(batch), exc_info=True,
             )
+            if not _STALL_EVENT_SENT:
+                _STALL_EVENT_SENT = True
+                try:
+                    from cairn.telemetry import EMBED_FLUSH_STALLED, emit as _emit
+
+                    _emit(EMBED_FLUSH_STALLED, failures=_failures_bucket(_FAILURES))
+                except Exception:
+                    pass
         else:
             logger.debug(
                 "memory embed flush failed (%d); %d concept(s) remain queued",
@@ -101,6 +132,7 @@ def _flush() -> None:
             except Exception:
                 pass
     _FAILURES = 0
+    _STALL_EVENT_SENT = False
     with _LOCK:
         for cid in batch:
             try:

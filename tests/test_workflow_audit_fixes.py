@@ -289,3 +289,54 @@ def test_clear_repo_deletes_embeddings(workspace, tmp_path):
         )
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# #6 — crash-window marker: set before clear, cleared after SCIP, detectable.
+# ---------------------------------------------------------------------------
+
+def test_single_repo_build_clears_marker_on_success(workspace, tmp_path):
+    """A completed single-repo rebuild leaves no 'building' marker behind."""
+    db = str(tmp_path / "marker.db")
+    build_graph(workspace=str(workspace), repo_filter="demo", db_path=db)
+
+    conn = get_db(db)
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM repo_build_state WHERE state = 'building'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert n == 0, "successful rebuild must clear its crash-window marker"
+
+
+def test_crashed_repo_build_leaves_marker_detectable(workspace, tmp_path, monkeypatch):
+    """A mid-rebuild crash leaves the marker so doctor can flag the partial repo.
+
+    The marker must also still be present if the crash happens during the
+    SCIP post-resolve hook (the clear runs AFTER that hook), and
+    repo_build_in_progress is the programmatic reader.
+    """
+    from cairn.graph import builder as builder_mod
+
+    db = str(tmp_path / "crash.db")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated crash mid-rebuild")
+
+    # Crash at the SCIP hook boundary: patch the importer module loader path
+    # used by _build_graph_impl right after resolve (before the marker clear).
+    monkeypatch.setattr(builder_mod, "_resolve_all", boom)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        build_graph(workspace=str(workspace), repo_filter="demo", db_path=db)
+
+    from cairn.graph.builder import repo_build_in_progress
+
+    conn = get_db(db)
+    try:
+        assert repo_build_in_progress(conn, "demo") is True, (
+            "crash mid-rebuild must leave the 'building' marker set"
+        )
+    finally:
+        conn.close()

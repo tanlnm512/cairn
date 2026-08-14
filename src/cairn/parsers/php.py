@@ -39,7 +39,10 @@ Node-type reference (tree-sitter-php, php_only grammar):
   file-wide and cairn doesn't model namespaces in FQNs beyond ``_scope``).
 
 PHP name nodes are plain ``name`` children (not ``identifier``). Leading
-backslashes on fully-qualified names (``\array_map``) are stripped.
+backslashes on fully-qualified names (``\array_map``) are stripped, and
+multi-segment qualified names in call targets/receivers
+(``App\\Utils\\sanitize``, ``App\\Models\\User::find``) are reduced to their
+last ``\``-segment so edges can resolve against bare symbol names.
 """
 from __future__ import annotations
 
@@ -362,24 +365,27 @@ class PhpParser(BaseParser, TreeSitterParserBase):
         )
 
     def _split_object_creation(self, node: Node, source: bytes):
-        # object_creation_expression: 'new' name arguments. The constructed
-        # class is the `name` child. (new Foo() -> Foo.)
+        # object_creation_expression: 'new' (name | qualified_name) arguments.
+        # The constructed class may be qualified (``new App\Models\User``);
+        # store the last ``\``-segment so the edge can match the class's bare
+        # symbol name. (new Foo() -> Foo; new A\B\Foo() -> Foo.)
         for child in node.children:
-            if child.type == "name":
-                return self._strip_leading_backslash(
+            if child.type in ("name", "qualified_name"):
+                return self._bare_ns_name(
                     self._node_text(child, source).strip()
                 ), None
         return None, None
 
     def _split_function_call(self, node: Node, source: bytes):
-        # function_call_expression: name | qualified_name, arguments
+        # function_call_expression: (name | qualified_name) arguments.
+        # A qualified call (``App\Utils\sanitize(...)``) stores the LAST
+        # `\`-segment as the target: the resolver keys on bare symbol names
+        # (symbols.name) and its import tier splits `/` and `.` but never `\`,
+        # so the full namespace path could never match the callee's stored
+        # name (cf. Java's ``com.example.Bar`` -> ``Bar`` for `new`).
         for child in node.children:
-            if child.type == "name":
-                return self._strip_leading_backslash(
-                    self._node_text(child, source).strip()
-                ), None
-            if child.type == "qualified_name":
-                return self._strip_leading_backslash(
+            if child.type in ("name", "qualified_name"):
+                return self._bare_ns_name(
                     self._node_text(child, source).strip()
                 ), None
         return None, None
@@ -409,13 +415,17 @@ class PhpParser(BaseParser, TreeSitterParserBase):
         if names:
             callee = self._node_text(names[-1], source).strip()
             # Receiver: whatever appears before '::'. May be a name,
-            # qualified_name, or variable_name.
+            # qualified_name, or variable_name. Reduce a qualified receiver
+            # (``App\Models\User::find``) to its last ``\``-segment so the
+            # inferred receiver_type can match the class's bare symbol name.
             receiver_text = None
             for child in node.children:
                 if child.type == "::":
                     break
                 if child.type in ("name", "qualified_name", "variable_name"):
                     receiver_text = self._node_text(child, source).strip()
+            if receiver_text is not None:
+                receiver_text = self._bare_ns_name(receiver_text)
             return callee, receiver_text
         return None, None
 
@@ -487,3 +497,17 @@ class PhpParser(BaseParser, TreeSitterParserBase):
         defined as ``array_map``.
         """
         return name.lstrip("\\")
+
+    @classmethod
+    def _bare_ns_name(cls, name: str) -> str:
+        """Reduce a PHP name to its last ``\\``-segment (the bare symbol name).
+
+        The graph resolver keys call edges on bare symbol names (``symbols.name``)
+        and its import-aware tier splits import paths on ``/`` and ``.`` but
+        never ``\\``, so a multi-segment qualified name (``App\\Utils\\sanitize``,
+        ``App\\Models\\User``) can never match a callee stored as ``sanitize`` /
+        ``User``. Call edges and inferred receiver types therefore use the last
+        segment; the qualified form stays available on the symbol's
+        qualified_name for navigation.
+        """
+        return cls._strip_leading_backslash(name).rsplit("\\", 1)[-1]

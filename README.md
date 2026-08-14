@@ -204,6 +204,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 | `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/scip.md) indexes for compiler-grade exact call edges (Kotlin/Java/Swift/TypeScript) alongside tree-sitter | declare indexes in `cairn.json` under `scip` |
 | `[watch]` | `watchdog` — live graph rebuilds on filesystem change | — |
+| `[otlp]` | `opentelemetry-sdk` — forward cairn's local telemetry events to an OTLP endpoint as OpenTelemetry LogRecords | `CAIRN_OTEL_ENDPOINT` (unset = off; export is best-effort and never blocks) |
 
 ## Architecture (5 layers)
 
@@ -238,6 +239,9 @@ The `cairn` command groups the main functionality. Run `cairn --help`
 | `cairn install-agents` | Drop integration files into supported AI agents |
 | `cairn upgrade` | Update cairn in place from PyPI (detects install method; `--check` to preview) |
 | `cairn bench` | Performance / scalability benchmarks (`--save`/`--compare` for regression checks) |
+| `cairn doctor` | 8 system health checks (PASS/WARN/FAIL each; exit code gates CI/agents) |
+| `cairn metrics` | Tool-call metrics, plus `--builds`/`--quality`/`--contention` telemetry trends |
+| `cairn report` | Redacted diagnostic bundle for bug reports (`--json`/`--out`; never uploads) |
 
 ## Development
 
@@ -274,8 +278,18 @@ following is for contributors only:
 pip install -e ".[dev]"   # editable install: pytest + watchdog + build + ruff
 pytest -m core            # fast <3s smoke subset (one test per core function)
 pytest                    # full suite (the CI path)
+make ci-local             # clean-room CI replication in a Linux container
 make dist                 # build wheel + sdist into dist/ (for releases)
 ```
+
+`make ci-local` re-runs the GitHub Actions CI jobs in a bare Linux container
+via Apple's [`container`](https://github.com/apple/container) CLI (no Docker
+required) — no host PATH, HOME, or agent CLIs leak in, so it catches
+non-hermetic tests before you push. It mirrors `.github/workflows/ci.yml`
+job-by-job (`test`, `security`, `typecheck`, `precommit`, `build`, `bench`;
+`make ci-local-all` covers the 3.10–3.14 matrix). Caches persist under
+`.cache/ci-local/`; see `scripts/ci-local.sh` for flags, including
+`CI_LOCAL_ARCH=linux/amd64` for GitHub-runner parity via Rosetta.
 
 Releases are cut by tagging `vX.Y.Z` — see the tag-triggered workflow in
 `.github/workflows/release.yml` and the pre-release checklist in
@@ -296,7 +310,7 @@ end user at install time.
 
 ## Status
 
-**Beta — pre-1.0 (v0.9.1).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.10.0).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 

@@ -23,6 +23,21 @@ logger = logging.getLogger(__name__)
 # NOT re-open+flock; the inner flock would hit the outer's lock and, because the
 # acquire path uses LOCK_NB, busy-wait to a spurious TimeoutError rather than
 # block forever. Tracked via a thread-local depth counter instead.
+#
+# KNOWN CONSTRAINT (deferred -- audit F6, fix spans memory/store.py +
+# memory/promotion.py, not this file): this flock is a cross-process mutex
+# over the .knowledge/ tree, but some callers currently hold it across SQLite
+# writes on caller-owned connections (e.g. promote_memory ->
+# rename_memory_embedding under `with bundle.lock():`). A blocking DB write
+# ("database is locked" busy-waits) inside the critical section serializes
+# every OTHER process's memory mutations behind it and can cascade into the
+# 5s TimeoutError above. The fix is to narrow each call site's critical
+# section to the bundle's own file I/O (read-modify-write of the .md +
+# log.md append) and move the DB writes outside the `with` block.
+# Also note the re-entrancy guard below is thread-local ONLY: a different
+# thread in the SAME process opens an independent fd whose LOCK_NB flock
+# conflicts with the first thread's -- cross-thread nesting fails after
+# `timeout` instead of re-entering.
 _LOCK_DEPTH = threading.local()
 
 

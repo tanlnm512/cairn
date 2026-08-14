@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cairn-intel"
-version = "0.9.1"
+version = "0.10.0"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
@@ -70,7 +70,7 @@ dev = [
     #                                   # so B608 is endemic-but-safe noise
     #   pip-audit
     # Pinned (not >=) so local and CI run the SAME mypy -- a floating mypy
-    # caused CI-only version drift. ~58 known errors (advisory: continue-on-error
+    # caused CI-only version drift. ~52 known errors (advisory: continue-on-error
     # in CI; drive the count down, then remove continue-on-error to promote it).
     "mypy==2.3.0",
     "bandit>=1.7",
@@ -117,6 +117,16 @@ ann = [
 scip = [
     "protobuf>=7.35.1",
 ]
+# Optional OTLP export (task T19, observability-telemetry spec §3 + §7):
+# setting CAIRN_OTEL_ENDPOINT exports cairn's LOCAL telemetry events as
+# OpenTelemetry LogRecords to that OTLP/http endpoint. Strictly lazy -- the
+# SDK is imported only inside the exporter's first flush, after the env gate,
+# so the default install stays OTel-free and cairn works fine without this
+# extra (one warn_once, then local-only). OTel is never a required install.
+otlp = [
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-http>=1.20",
+]
 
 [project.scripts]
 cairn = "cairn.cli:main"
@@ -138,6 +148,7 @@ where = ["src"]
 # a <3s feedback loop. The full suite (no marker) remains the CI path.
 markers = [
     "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
+    "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment),"
 ]
 
 [tool.ruff]
@@ -174,7 +185,7 @@ select = ["F"]
 # The custom template (.cz_templates/keepachangelog.j2) renders that draft in
 # the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
 # default `## X.Y.Z (YYYY-MM-DD)`.
-version = "0.9.1"
+version = "0.10.0"
 version_scheme = "pep440"
 tag_format = "v$version"
 update_changelog_on_bump = false

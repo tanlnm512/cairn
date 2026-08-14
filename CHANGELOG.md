@@ -13,16 +13,211 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- **`cairn doctor` surfaces interrupted repo rebuilds.** The single-repo
+  crash-recovery marker (`repo_build_state`, previously written and cleared
+  but read by nothing) now feeds doctor's `freshness` check: a stale
+  `building` row WARNs with a "re-run `cairn build --repo <repo>`" hint, so
+  a repo left partial by a crashed rebuild is finally observable. The marker
+  is also cleared only after the SCIP post-resolve import hook, so a crash
+  during SCIP import stays detectable too.
+- **`make ci-local` — clean-room CI replication via Apple's `container`.**
+  `scripts/ci-local.sh` mirrors `.github/workflows/ci.yml` job-by-job
+  (`test`, `test-all` for the 3.10–3.14 matrix, `security`, `typecheck`,
+  `precommit`, `build`, `bench`) inside a bare Linux container driven by the
+  Virtualization-framework `container` CLI — no Docker required. Host
+  PATH/HOME/agent CLIs never leak in, so non-hermetic tests fail locally
+  instead of on the runner. Venv/pip/pre-commit caches persist under
+  `.cache/ci-local/`; `CI_LOCAL_ARCH=linux/amd64` runs the x86-64 image via
+  Rosetta for GitHub-runner parity. (The old `make ci-local` target required
+  Docker and ran only the pytest suite.)
 
 ### Changed
-- _Nothing yet._
+- **`cairn doctor` / `cairn report` no longer create a missing store.** Both
+  are read-only diagnostics, but they opened the DB with `get_db`, which
+  materializes missing files — so a typo'd `--db` produced an empty
+  all-PASS "fresh install" (and a false-green exit code for gating agents)
+  instead of an error. Both now stat the path first and degrade to their
+  existing `schema` FAIL path with a "store not found" detail.
+- **`cairn report` redacts absolute filesystem paths.** The privacy gate now
+  collapses absolute local paths (POSIX, `~/…`, Windows) in every string
+  field to `[PATH]/<basename>`, after the existing secret scrub — error
+  text routinely embeds such paths via `str(exc)`, and the bundle is meant
+  to be pasted into public issues. Workspace-relative paths and URL path
+  portions survive.
 
 ### Fixed
-- _Nothing yet._
+- **Telemetry history survives full rebuilds and staged builds.** The
+  whole-file DB swap silently wiped `build_runs`/`events`/`tool_metrics` on
+  every `cairn build`, resetting build trends, contention history, and
+  doctor's freshness/tool-health windows. The analytics tables are now
+  carried across the swap (fresh ids, time order preserved; `pending_sync`
+  is deliberately dropped — a full rebuild recomputed that state).
+- **OTLP export no longer silently loses data during a collector outage.**
+  `BatchLogRecordProcessor` pops the batch before exporting and swallows
+  exporter failures, so a dead endpoint popped every row as "exported".
+  Export is now synchronous and failure-observing (a tracking wrapper
+  around the OTLP/http exporter behind `SimpleLogRecordProcessor`): failed
+  exports retain the rows for the next tick, an outage short-circuits the
+  batch after one timeout (5s cap), and the OTLP side buffer is drained on
+  normal MCP session end (previously up to 30s of export was lost per
+  session).
+- **Telemetry flush cycles are serialized.** The 30s daemon tick, the
+  parent-death watchdog drain, `flush()` callers, and `atexit` can overlap;
+  two concurrent flushes snapshotted the same rows, double-inserted them,
+  and dropped never-written rows on the second pop. Both sinks (events,
+  OTLP) now hold a flush mutex across snapshot → write → pop.
+- **Session transcripts can no longer bypass redaction via the subprocess
+  fallback.** With `CAIRN_LLM_BACKEND` set but the agent CLI unavailable,
+  `SubprocessBackend.extract` fell back to `FileQueueBackend` carrying the
+  raw transcript, persisting it unredacted into the task file — the exact
+  codepath-divergence class the redaction audit claimed closed. `create_task`
+  now applies the same `memory-*` privacy floor as `complete_task`.
+- **`lock_contention` only means lock contention.** `note_contention` fired
+  on any `OperationalError`, so FTS5-unavailable and missing-table failures
+  (the reasons those `except` clauses exist) emitted phantom contention
+  events that doctor's concurrency check and `metrics --contention` counted
+  as real. Every swallow site now passes its caught exception and only
+  genuinely lock-shaped errors ("database is locked/busy") emit the signal.
+- **Telemetry event attrs enforce their policy at the coercion chokepoint.**
+  Oversized strings nested in dicts/lists bypassed the truncation cap,
+  `default=str` persisted `str(exc)` verbatim (routinely embedding secrets
+  and absolute paths) into `events` — and, with OTLP on, onto the network —
+  and no whole-blob bound existed. Attrs are now truncated recursively,
+  stringified objects are scrubbed, and blobs over 4 KB drop to NULL (the
+  event itself always survives).
+- **CI flake: `test_to_file_writes_atomically`.** The test recomputed the
+  expected content after the write while `to_markdown()` stamped
+  `datetime.now()` at call time, racing the wall-clock second boundary
+  (~1-in-1000 on any Python). The concept's timestamp is now pinned.
+
+## [0.10.0] - 2026-08-14
+
+> **Focus:** observability & telemetry — the full spec (T01–T20): local-only
+> event pipeline, build history, `cairn doctor`, metrics trends, optional
+> OTLP export, and workflow wiring; plus a full 9-scope audit (4 P1 / 27 P2
+> findings, all fixed same day).
+
+### Added
+- **Observability (P0 quick wins, T01–T05).** Central logging config and
+  visibility for previously silent degradations. `cairn.utils.logging.configure_logging()`
+  is the single config point for the `cairn` namespace logger, wired into both
+  the CLI group callback and the MCP server `run()`. It reads
+  `CAIRN_LOG_LEVEL` (default `WARNING`; `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`,
+  case-insensitive; an invalid value falls back to `WARNING` with one stderr
+  notice) and forces `DEBUG` when the `-v`/`--verbose` flag is set. The handler
+  is **stderr-only** and never touches the root logger, so stdio stdout stays
+  pure JSON-RPC and `caplog` still works in tests. The ANN brute-force fallback
+  (when `sqlite-vec` is unavailable) now emits a one-time `WARNING` via
+  `warn_ann_fallback_once`; an explicit `CAIRN_ANN_BACKEND=off` stays silent as
+  an informed choice rather than a degradation. `cairn status` surfaces
+  `parse_errors` (total count plus the newest five, silent when the table is
+  empty) so a partially-failed build is no longer invisible. The previously-
+  untested metric instrument/flush path is now covered by `tests/test_metrics.py`
+  (decorator success/error paths, `_truncate_result` at `CAIRN_MAX_RESULT_CHARS`,
+  and `_flush_metrics` drain/retry/read-only-skip).
+- **Observability (P1 telemetry pipeline, T07–T11, T15).** A local-only event
+  sink (`src/cairn/telemetry/`) generalizes the proven `metric_buffering`
+  buffered-writer pattern: a deque + daemon flush (every 30s) + `atexit` +
+  backlog cap, with one shared flush thread per process. Every previously-silent
+  degradation path now emits at least one durable, low-cardinality signal into
+  two additive SQLite tables — `events` and `build_runs` (`CREATE TABLE IF NOT
+  EXISTS`; old DBs upgrade on connect, no migration entry needed). The event
+  catalog: `ann_fallback`/`hash_fallback` (closes the silent ANN/hash backend
+  gaps), `lock_contention` (emitted alongside the P0 one-time warning so the
+  v0.9.x lock-wait class is now aggregatable, not just logged), `truncate_result`,
+  `empty_result`, `semantic_backend` (backend/fusion/rerank/ms/n-results — so
+  retrieval provenance stops evaporating), `task_lifecycle`, and `stray_swept`.
+  `build_runs` persists one row per build/sync/embed/incremental pass (repos,
+  files, symbols, edges, the exact/ambiguous/unresolved resolution mix, parse
+  errors, skipped, phase timings), so resolver precision and build cost become a
+  queryable trend rather than a forgotten summary dict. Attributes are enums,
+  short fixed tags, or bucketed values only — never paths or free text — and a
+  parametrized cardinality-guard test asserts every emitter's attr values stay
+  in their declared enum sets (`tests/test_telemetry.py`). The new
+  `CAIRN_TELEMETRY` env var (default `on`) is the master kill switch: `off`
+  makes `emit`/`warn_once`/`note_contention` near-zero-cost no-ops. Turning it
+  off stops **recording** but does not silence the one-time operational WARNING
+  logs (lock-contention, ANN fallback, hash fallback) — those are operational
+  signals, not telemetry data.
+- **Observability (P1 health surfaces, T12–T14).** Three ways to consume the
+  new data, all read-only and preserving the 27-tool MCP contract (no new tool):
+  `cairn doctor` runs 8 health checks (schema integrity, embeddings backend,
+  ANN, freshness, parse errors, lock contention, per-tool error/latency health,
+  config echo), each PASS/WARN/FAIL, exiting 0 unless any check FAILs — so an
+  agent or CI step can gate on it, and the previously-invisible `parse_errors`
+  table is finally read by a command. `cairn metrics` gains `--builds` (build-run
+  trend with the resolution mix), `--quality` (empty-result/truncation rate +
+  backend mix), and `--contention` (lock events by site); the flagless output is
+  unchanged. The `cairn://status` MCP resource appends a `health` block (active
+  backend degradations, pending-sync count, last-build age, 24h tool error rate)
+  so a single resource read answers "is this store degraded?".
+- **Observability (P2 workflow integration + optional export, T17/T19/T20).**
+  The telemetry surfaces are now part of the agent's own procedure (not just a
+  passive dashboard): root `AGENTS.md` (+ the 4 synced guidance surfaces) add an
+  after-task `cairn doctor` step whose FAILs feed `record_memory(type="mistake")`,
+  and the PR/review/audit checklists gain a "does this change alter a
+  fallback/performance path?" gate plus a Tier-1 "silent degradation" audit
+  scope. `cairn report` prints a redacted diagnostic bundle (versions, the 8
+  doctor checks, recent error events, config echo) for bug reports — every
+  string field passes through `memory.privacy.strip_private_data`; never
+  auto-uploads (`--json`, `--out`). Optional OTLP export: setting
+  `CAIRN_OTEL_ENDPOINT` and installing the new `[otlp]` extra forwards cairn's
+  local telemetry events as OpenTelemetry LogRecords — strictly lazy (zero
+  module-level SDK imports; the default install stays OTel-free), best-effort
+  (never blocks the flush), and fully off by default.
+
+### Changed
+- **`mcp_server/metric_buffering` now writes through the shared telemetry sink.**
+  `tool_metrics` recording is refactored onto `src/cairn/telemetry/` (one flush
+  thread per process instead of two); the `tool_metrics` table shape and the
+  flagless `cairn metrics` output are byte-for-byte unchanged, and the P0
+  `tests/test_metrics.py` suite passes unmodified.
+
+### Fixed
+- **Full 9-scope audit remediation (2026-08-14).** All 4 P1 and 25 P2 findings
+  from the scope-audit pass, each ground-verified before fixing. Highlights:
+  the atomic-swap no longer leaves the old WAL sidecar (silent build loss —
+  found independently by two auditors); the build lock can no longer be
+  defeated by its own error path (loser-unlink double-acquire); the knowledge
+  layer redacts at the store chokepoint and session transcripts are stripped
+  before queueing (4th incarnation of the codepath-divergence class, now
+  closed at the store layer everywhere); `CAIRN_TELEMETRY=off` now provably
+  stops ALL recording (build_runs + tool_metrics included);
+  `semantic_backend` reports fusion/rerank execution truth with degraded
+  flags; ANN no-index/stale-index states surface in doctor + the status
+  health block; `cairn build --staging --repo` is rejected instead of
+  destroying other repos; the stdio watchdog drains telemetry/metric/embed
+  buffers before exit (was losing ≤30s of data per session end); the stray
+  sweeper matches real editor spawn shapes, kills only lsof-verified
+  db-holders, and re-verifies pids before SIGKILL; Ruby chained calls, PHP
+  namespaced calls, and Kotlin class-body properties are recovered (dropped
+  edges/symbols that golden fixtures had baked in); tool_metrics error
+  messages are redacted at write time; store-chokepoint namespace guards
+  protect CLI twins of guarded MCP ops; URI-embedded credentials are redacted.
+  7 new BUGS.md entries record the classes; ~150 new tests across 6 commits.
+- **Telemetry: fresh-DB init no longer emits a spurious lock-contention warning.**
+  `note_contention("schema.migration")` was firing on every first-run `cairn build`,
+  because the retained `transitive_edges.target_id` migration raises "duplicate
+  column name" on a fresh DB (its `CREATE TABLE` already declares the column) and
+  the contention call sat *before* the idempotent-duplicate check. That path is not
+  lock contention — it now stays silent; only a genuine error (e.g. "database is
+  locked") surfaces the warning. Regression guard:
+  `tests/test_contention_visibility.py::test_fresh_db_init_emits_no_contention_warning`.
 
 ### Removed
 - _Nothing yet._
+
+> **Note (audit, post-T16):** an observability spec-conformance pass closed four
+> gaps. `empty_result` now emits from the engine query layer named in the spec
+> (`explore` and the `search_symbols` MCP-tool wrapper, in addition to
+> `semantic_search`) and carries only `query_kind` (the non-spec `backend` attr
+> was dropped; the per-backend view comes from correlating with
+> `semantic_backend`); `cairn metrics --quality` scopes its empty-result rate to
+> the semantic kind and adds an `empty by kind` breakdown. The `lock_contention`
+> spec row was amended to match the implementation (`site: <module>.<function>`,
+> no `wait_ms`). A `mypy` error in `doctor`'s freshness check was fixed
+> (`bool(last_dt)` → `last_dt is not None`), and a stale cardinality-guard
+> comment was corrected.
 
 ## [0.9.1] - 2026-08-13
 

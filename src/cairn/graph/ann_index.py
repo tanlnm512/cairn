@@ -24,9 +24,14 @@ per-write vec0 sync cost. If either corpus ever grows large, the pattern here
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from typing import List, Optional, Tuple
+
+from .schema import note_contention, _is_lock_contention
+
+_logger = logging.getLogger(__name__)
 
 
 def ann_backend_enabled() -> bool:
@@ -42,6 +47,83 @@ def ann_backend_enabled() -> bool:
         return True
     except ImportError:
         return False
+
+
+# Process-global guard so the one-time warning fires at most once per process.
+_ANN_FALLBACK_WARNED: bool = False
+
+
+def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
+    """Emit one ANN-fallback warning per process.
+
+    Mirrors ``embeddings.warn_hash_fallback_once``: a process-global guard
+    ensures the degradation surfaces at most once, so repeated brute-force
+    scans don't spam the log.
+
+    No-op when the brute-force backend was explicitly chosen
+    (``CAIRN_ANN_BACKEND`` set to anything other than ``sqlite-vec``, e.g.
+    ``off``): that is an informed user decision, not a silent degradation, so
+    it must not warn. Only fires when sqlite-vec was *expected* (env unset or
+    ``=sqlite-vec``) but is unavailable or failed to load.
+
+    ``context`` is a short string identifying the calling path (e.g.
+    ``"semantic_search"``); ``reason`` classifies why ANN is unavailable -- if
+    omitted, it is inferred cheaply from whether ``sqlite_vec`` imports.
+    """
+    global _ANN_FALLBACK_WARNED
+    if _ANN_FALLBACK_WARNED:
+        return
+    import os
+
+    val = os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
+    if val != "sqlite-vec":
+        # Explicit opt-out (e.g. "off"): an intentional choice, not a
+        # degradation -- stay silent (mirrors the rationale in
+        # ann_backend_enabled()).
+        return
+    if not reason:
+        try:
+            import sqlite_vec  # noqa: F401
+
+            reason = "load failed or no index built"
+        except ImportError:
+            reason = "sqlite-vec not installed"
+    # Durable event (spec §6.4) with an enum reason for doctor/metrics
+    # aggregation; the WARNING below keeps the human-readable detail. Map the
+    # human reason to the spec's bounded enum so the attr value domain is fixed.
+    _REASON_ENUM = {
+        "sqlite-vec not installed": "not_installed",
+        "load failed": "load_failed",
+        "load failed or no index built": "load_failed",
+        "no index built": "no_index",
+        "query error": "query_error",
+    }
+    enum_reason = _REASON_ENUM.get(reason, "load_failed")
+    try:
+        from cairn.telemetry import ANN_FALLBACK, emit as _emit
+
+        _emit(ANN_FALLBACK, reason=enum_reason)
+    except Exception:
+        pass
+    # Tailor the remediation to the reason class: a missing/broken *index*
+    # needs a rebuild, not a package install.
+    if enum_reason in ("no_index", "query_error"):
+        hint = "run `cairn embed` to (re)build the vec0 index"
+    else:
+        hint = (
+            "install sqlite-vec with `cairn embed --install-deps` "
+            "(CAIRN_ANN_BACKEND=sqlite-vec is the default)"
+        )
+    suffix = f" [{context}]" if context else ""
+    logger.warning(
+        "Semantic search is using the brute-force cosine scan instead of the "
+        "native sqlite-vec ANN index (%s). Results stay correct but slower for "
+        "large corpora. %s.%s",
+        reason,
+        hint,
+        suffix,
+    )
+    _ANN_FALLBACK_WARNED = True
 
 
 def _table_name(model: str) -> str:
@@ -71,7 +153,21 @@ def try_load(conn: sqlite3.Connection) -> bool:
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
         return True
+    except ImportError:
+        # Package not installed -- the most common degradation. Gated by the
+        # explicit-opt-out check inside the helper, so CAIRN_ANN_BACKEND=off
+        # stays silent.
+        warn_ann_fallback_once(
+            _logger, context="ann_index.try_load", reason="sqlite-vec not installed"
+        )
+        return False
     except Exception:
+        # sqlite-vec is importable but the extension won't load into this
+        # connection (e.g. this Python wasn't built with extension-loading
+        # support, or a platform shared-library load failure).
+        warn_ann_fallback_once(
+            _logger, context="ann_index.try_load", reason="load failed"
+        )
         return False
 
 
@@ -134,6 +230,12 @@ def ann_query(
         return None
     table = _table_name(model)
     if not index_exists(conn, model):
+        # No vec0 index for this model (typically: embeddings were built but
+        # `cairn embed` hasn't run since, or the DB predates sqlite-vec). This
+        # is a recoverable setup state, not a crash -- but it silently costs
+        # the native path on EVERY query, so surface it once with the spec's
+        # `no_index` reason (spec §6.4) instead of returning None invisibly.
+        warn_ann_fallback_once(_logger, context="ann_index.ann_query", reason="no index built")
         return None
     try:
         rows = conn.execute(
@@ -143,6 +245,36 @@ def ann_query(
             "ORDER BY v.distance",
             (q_blob, k),
         ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        # Discriminate before calling this contention (mirrors schema.py's
+        # duplicate-column discrimination): only "locked"/"busy" errors are a
+        # real cross-process lock event. Anything else (FTS/vec0 syntax error,
+        # no-such-table racing a rebuild, index corruption) is a *query*
+        # failure -- misattributing it to contention would send doctor's
+        # concurrency check chasing a phantom lock. The spec's `query_error`
+        # reason (§6.4) carries it durably instead.
+        if _is_lock_contention(e):
+            note_contention("ann_index.ann_query", error=e)
+        else:
+            warn_ann_fallback_once(
+                _logger, context="ann_index.ann_query", reason="query error"
+            )
         return None
     return [(r["symbol_id"], 1.0 - float(r["distance"])) for r in rows]
+
+
+def index_row_count(conn: sqlite3.Connection, model: str) -> Optional[int]:
+    """Row count of the vec0 table for `model`; None when no index exists.
+
+    Companion to :func:`index_exists` for staleness probing (`cairn doctor`):
+    the index is rebuilt wholesale from ``embeddings``, so a row-count
+    mismatch between the two means embeddings changed since the last rebuild
+    (incremental syncs add embeddings without touching the vec0 table).
+    Defensive: any read failure returns None rather than raising.
+    """
+    if not index_exists(conn, model):
+        return None
+    try:
+        return int(conn.execute(f"SELECT COUNT(*) FROM {_table_name(model)}").fetchone()[0])
+    except sqlite3.Error:
+        return None

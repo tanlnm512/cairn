@@ -47,6 +47,11 @@ def install_agy(workspace: str, force: bool, dry_run: bool,
     return res
 
 
-def uninstall(ws: Path, res: InstallResult) -> None:
-    """Remove cairn entries for agy."""
+def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
+    """Remove cairn entries for agy.
+
+    agy is single-scope (one global config file), so ``scope`` is accepted
+    only for signature parity with the other uninstallers and ignored: the
+    global mcp_config.json is always stripped.
+    """
     _strip_mcp(agy_config_path(), res)

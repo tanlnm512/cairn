@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import logging
 import os
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -242,6 +244,52 @@ CREATE TABLE IF NOT EXISTS tool_metrics (
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_tool ON tool_metrics(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_session ON tool_metrics(session_id);
 
+-- One row per indexing pass (full build / incremental sync / embed) so build
+-- history, phase timings, and resolution quality survive the process that
+-- produced them (spec observability-telemetry 6.2). Additive-only: plain
+-- CREATE TABLE IF NOT EXISTS rides the idempotent executescript in
+-- _apply_schema with NO MIGRATIONS entry, so existing DBs gain the table on
+-- next connect -- the same pattern tool_metrics used.
+CREATE TABLE IF NOT EXISTS build_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    duration_s REAL,
+    phase_timings TEXT,
+    repos INTEGER, files INTEGER, symbols INTEGER, edges INTEGER,
+    resolution_exact INTEGER, resolution_ambiguous INTEGER, resolution_unresolved INTEGER,
+    parse_errors INTEGER, skipped INTEGER,
+    workers INTEGER,
+    session_id TEXT
+);
+
+-- Crash-recovery marker for the single-repo on-disk rebuild path. That path
+-- commits mid-rebuild (every 500 files, to bound WAL lock hold time), so a
+-- crash leaves the repo cleared-but-partial. builder sets one 'building' row
+-- before clearing the repo and deletes it after the final commit;
+-- builder.repo_build_in_progress() reads it so a later change can surface
+-- "re-run cairn build --repo X". Additive-only, rides the idempotent
+-- executescript like build_runs.
+CREATE TABLE IF NOT EXISTS repo_build_state (
+    repo_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,          -- 'building'
+    started_at TIMESTAMP NOT NULL
+);
+
+-- Generic low-cardinality event log (ann_fallback, lock_contention, ...).
+-- attrs is JSON of enums/short tags/bucketed values only -- no paths or free
+-- text -- so the distinct-value space stays bounded. Written by the telemetry
+-- sink, which also prunes retention opportunistically.
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TIMESTAMP NOT NULL,
+    name TEXT NOT NULL,
+    session_id TEXT,
+    attrs TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_name ON events(name);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+
 -- Transitive closure graph matrix for O(1) multi-hop call graph lookups
 CREATE TABLE IF NOT EXISTS transitive_edges (
     source_id TEXT NOT NULL,
@@ -321,6 +369,84 @@ from cairn.paths import resolve_store  # noqa: E402
 
 DEFAULT_DB_PATH = resolve_store().db
 
+_logger = logging.getLogger(__name__)
+
+# Process-global guard so each contention site warns at most once per process.
+# Keyed by ``site`` so distinct call points warn independently. Guarded by a
+# lock because swallow sites are reachable from flusher daemon threads
+# (metric_buffering / embed_buffering) concurrently with the main thread.
+_CONTENTION_WARNED: dict[str, bool] = {}
+_CONTENTION_LOCK = threading.Lock()
+
+
+def _is_lock_contention(error: Exception) -> bool:
+    """True when an ``OperationalError`` is genuinely lock contention/busy.
+
+    "database is locked"/"database is busy" mean another writer holds the DB;
+    "no such table", "no such module", "duplicate column", ... are schema- or
+    availability-shaped failures that must not pollute the ``lock_contention``
+    signal doctor and ``metrics --contention`` aggregate on.
+    """
+    msg = str(error).lower()
+    return "locked" in msg or "busy" in msg
+
+
+def note_contention(site: str, error: Exception | None = None) -> None:
+    """Emit one lock-contention warning per (process, site).
+
+    Called at ``except sqlite3.OperationalError`` swallow sites so a
+    silently-absorbed "database is locked" surfaces at least once instead of
+    vanishing. Another cairn process holds the DB; ``busy_timeout`` retried and
+    absorbed the contention (the operation completed or degraded gracefully).
+    Distinct ``site`` tags warn independently; the same site warns at most once
+    per process -- mirrors ``warn_hash_fallback_once`` (graph/embeddings.py) and
+    ``warn_ann_fallback_once`` (graph/ann_index.py).
+
+    ``error``: pass the caught exception whenever the ``except`` clause is
+    broader than pure lock contention. A non-lock-shaped OperationalError
+    ("no such table", "no such module: FTS5", "duplicate column") is a schema/
+    availability failure, not contention -- it is skipped (debug-logged) so
+    phantom contention events don't dilute the doctor/metrics signal.
+
+    ``site`` is a stable, low-cardinality ``module.function`` tag (NO line
+    numbers -- they drift). Also emits a durable ``lock_contention`` telemetry
+    event (spec §6.4) so ``cairn doctor`` / ``cairn metrics --contention`` can
+    aggregate contention trends, not just log a one-time line. The event is
+    gated by ``CAIRN_TELEMETRY`` internally; the WARNING stays unconditional
+    (an operational signal, not telemetry data) -- turning telemetry off stops
+    recording but does not silence the operational warning.
+
+    Thread-safe: the guard dict is mutated only under ``_CONTENTION_LOCK``; the
+    emit + log calls happen after the lock is released so they can't serialize
+    concurrent swallow sites.
+    """
+    if error is not None and not _is_lock_contention(error):
+        _logger.debug(
+            "note_contention(%s) skipped: %r is not lock-shaped", site, error
+        )
+        return
+    with _CONTENTION_LOCK:
+        if _CONTENTION_WARNED.get(site):
+            return
+        _CONTENTION_WARNED[site] = True
+    # Durable event for doctor/metrics aggregation (best-effort; gated by
+    # CAIRN_TELEMETRY). Lazy import: schema is imported very early, so this
+    # keeps the telemetry package out of the import graph until first contention.
+    try:
+        from cairn.telemetry import LOCK_CONTENTION, emit as _emit
+
+        _emit(LOCK_CONTENTION, site=site)
+    except Exception:
+        pass
+    _logger.warning(
+        "SQLite lock contention absorbed at %s -- another cairn process holds "
+        "the DB; busy_timeout retried/absorbed this so the operation completed "
+        "(or degraded gracefully). Repeated contention is diagnosable via "
+        "`cairn serve start` (single-daemon SSE mode serializes access and "
+        "avoids cross-process lock waits).",
+        site,
+    )
+
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     """Create tables/indexes/FTS (idempotent) and run additive migrations."""
@@ -346,13 +472,22 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError as e:
             error_msg = str(e).lower()
             if "duplicate column" in error_msg:
-                # Idempotent: column already exists, mark as applied
+                # Idempotent: column already exists. This is the expected path on
+                # a fresh DB whose CREATE TABLE already declares the column (e.g.
+                # transitive_edges.target_id) -- the migration is retained only to
+                # upgrade pre-existing DBs. It is NOT lock contention, so it must
+                # stay silent; warning here would fire on every first-run DB init
+                # and dilute the note_contention signal with a false positive.
                 conn.execute(
                     "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
                     (migration_name, "applied")
                 )
             else:
-                # Real error - raise it
+                # Genuine error. Surface lock contention once before
+                # propagating so the failure isn't silent; other shapes
+                # ("no such table" on a corrupt DB) are not contention and
+                # are skipped by note_contention's discrimination.
+                note_contention("schema.migration", error=e)
                 raise
 
     # Deferred until after MIGRATIONS: the target_id column may not exist on a
@@ -395,8 +530,11 @@ def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         if token_rows == 0 and sym_count > 0:
             conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
-    except sqlite3.OperationalError:
-        pass  # FTS5 unavailable, table missing, or no shadow table -- LIKE fallback
+    except sqlite3.OperationalError as e:
+        # FTS5 unavailable, table missing, or no shadow table -- LIKE fallback.
+        # None of those is contention; note_contention's discrimination skips
+        # them so only a genuine "database is locked" emits the signal.
+        note_contention("schema.backfill_fts", error=e)
 
 
 # Paths whose schema has already been applied+backfilled in this process.
@@ -427,7 +565,9 @@ def get_db(
     if read_only:
         # URI form: a read-only connection. must exist -- a read-only open of
         # a missing file is an error a writer must fix via `cairn init && cairn build`.
-        uri = f"file:{path.resolve()}?mode=ro"
+        # quote(): '?', '#' and spaces in the path would otherwise parse as
+        # URI query/fragment separators and silently truncate mode=ro.
+        uri = f"file:{quote(str(path.resolve()))}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
     else:
         conn = sqlite3.connect(str(path))
@@ -478,6 +618,110 @@ def get_build_db() -> sqlite3.Connection:
     return conn
 
 
+def _remove_db_sidecars(db_path: str) -> None:
+    """Unlink "<db_path>-wal" and "<db_path>-shm" if present (missing = ok)."""
+    for suffix in ("-wal", "-shm"):
+        try:
+            os.unlink(db_path + suffix)
+        except OSError:
+            pass
+
+
+def swap_db_file(tmp_path: str, db_path: str) -> None:
+    """Atomically replace ``db_path`` with ``tmp_path``, WAL-safe.
+
+    os.replace alone is NOT enough when the OLD db ran in WAL mode: its
+    "<db_path>-wal"/"-shm" survive the swap, and the next open replays the old
+    committed WAL frames over the NEW main file -- silently serving the
+    pre-build graph (or SQLITE_CORRUPT). The caller must hold ``build_lock``
+    on the real db path. Steps: checkpoint the old WAL into the old main file
+    (best-effort), unlink the old sidecars, THEN replace. Open old
+    connections keep their fds on the unlinked inodes, so they are unaffected.
+    """
+    if os.path.exists(db_path):
+        # Checkpoint so committed frames land in the old main file before the
+        # sidecars go -- any straggler that still reads the old inode finds a
+        # self-consistent DB. Best-effort: a busy TRUNCATE leaves frames in a
+        # wal that is unlinked below regardless.
+        try:
+            old = sqlite3.connect(db_path)
+            try:
+                old.execute("PRAGMA busy_timeout = 5000")
+                old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                old.close()
+        except sqlite3.Error:
+            pass
+    _remove_db_sidecars(db_path)
+    os.replace(tmp_path, db_path)
+    # The tmp DB was opened in WAL mode (serving mode for readers); a clean
+    # close removes its sidecars, but a crash path can leave "<tmp>-wal"
+    # litter behind -- it has the wrong name to be replayed, drop it anyway.
+    _remove_db_sidecars(tmp_path)
+
+
+# Analytics tables carried across a whole-file DB swap (full rebuild /
+# staged build). The swap replaces the entire file, so without this list the
+# build history, degradation events, and tool health reset to empty on every
+# rebuild -- defeating the retention contract that makes build trends,
+# contention history, and doctor's freshness/tool-health windows useful
+# (spec observability-telemetry §6.2). ``pending_sync`` is deliberately NOT
+# carried: it is operational state (files with unindexed edits) tied to the
+# pre-swap graph's rows, and a full rebuild has recomputed that graph.
+_TELEMETRY_TABLE_COLUMNS = {
+    "build_runs": (
+        "kind, started_at, duration_s, phase_timings, repos, files, symbols, "
+        "edges, resolution_exact, resolution_ambiguous, resolution_unresolved, "
+        "parse_errors, skipped, workers, session_id"
+    ),
+    "events": "ts, name, session_id, attrs",
+    "tool_metrics": "tool_name, session_id, invoked_at, duration_ms, status, error_message",
+}
+
+
+def copy_telemetry_tables(dest_conn: sqlite3.Connection, old_db_path: str) -> None:
+    """Carry the analytics tables from ``old_db_path`` into ``dest_conn``.
+
+    Called inside ``build_lock`` immediately before a whole-file swap
+    (:func:`backup_to` and the staged-build swap in ``cli.core``), with the
+    freshly built DB open on ``dest_conn`` and the DB being replaced still at
+    ``old_db_path``. Rows are appended with FRESH ids (the id space of the new
+    DB is not empty on the staged path, where this build's own ``build_runs``
+    row already landed), preserving source order so time-ordered consumers
+    stay correct. Best-effort throughout: a missing old DB (first build), a
+    pre-telemetry old DB (missing tables), or any copy error degrades to
+    starting the analytics history fresh -- analytics must never fail a build.
+    """
+    if not os.path.exists(old_db_path):
+        return
+    try:
+        dest_conn.execute("ATTACH DATABASE ? AS srcdb", (old_db_path,))
+    except sqlite3.Error:
+        return
+    try:
+        for table, columns in _TELEMETRY_TABLE_COLUMNS.items():
+            try:
+                exists = dest_conn.execute(
+                    "SELECT 1 FROM srcdb.sqlite_master "
+                    "WHERE type = 'table' AND name = ?",
+                    (table,),
+                ).fetchone()
+                if not exists:
+                    continue  # pre-telemetry source DB -- nothing to carry
+                dest_conn.execute(
+                    f"INSERT INTO {table} ({columns}) "
+                    f"SELECT {columns} FROM srcdb.{table} ORDER BY id"
+                )
+            except sqlite3.Error:
+                pass  # best-effort per table (analytics, not correctness)
+        dest_conn.commit()
+    finally:
+        try:
+            dest_conn.execute("DETACH DATABASE srcdb")
+        except sqlite3.Error:
+            pass
+
+
 def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
     """Persist an in-memory build DB to disk with atomic swap and build locking."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -487,17 +731,34 @@ def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
         tmp_path = db_path + ".tmp"
         dest = sqlite3.connect(tmp_path)
         try:
-            with dest:
-                mem_conn.backup(dest)          # C-level page copy, no row iteration
-            dest.execute("PRAGMA foreign_keys = ON")
-            dest.execute("PRAGMA journal_mode = WAL")  # serving mode for readers
-            dest.commit()
+            try:
+                with dest:
+                    mem_conn.backup(dest)          # C-level page copy, no row iteration
+                dest.execute("PRAGMA foreign_keys = ON")
+                dest.execute("PRAGMA journal_mode = WAL")  # serving mode for readers
+                # Carry analytics history from the DB about to be replaced --
+                # the swap below discards the whole old file, and without
+                # this every full rebuild reset build_runs/events/tool_metrics
+                # to empty (see copy_telemetry_tables).
+                copy_telemetry_tables(dest, db_path)
+                dest.commit()
+            except BaseException:
+                # A failed backup must not leave a half-written "<db>.tmp" on
+                # disk (the next successful build would swap it in). dest may
+                # have flipped to WAL mid-failure, so drop sidecars too.
+                _remove_db_sidecars(tmp_path)
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         finally:
             dest.close()
 
         # Atomic swap: readers with the old inode keep seeing the old DB,
-        # new connections see the fresh DB
-        os.replace(tmp_path, db_path)
+        # new connections see the fresh DB (old WAL sidecars removed -- see
+        # swap_db_file)
+        swap_db_file(tmp_path, db_path)
 
 
 # Imported here to avoid a circular import at module top (contextlib is stdlib).
@@ -506,40 +767,40 @@ import contextlib
 
 @contextlib.contextmanager
 def build_lock(db_path: str):
-    """Advisory exclusive lock preventing concurrent rebuilds of ``db_path``.
+    """Advisory exclusive lock serializing writers of ``db_path``.
 
-    The full-rebuild path (in-memory build -> backup_to) and the single-repo
-    path (init_db -> direct writes) both write the live DB. Without this lock
-    two ``cairn build --repo X`` runs (or a build racing an update) could
-    interleave writes with only SQLite's busy_timeout as a guard. The lock is
-    non-blocking: a second build raises RuntimeError immediately rather than
-    waiting, so the user knows to retry later.
+    The full-rebuild path (in-memory build -> backup_to), the single-repo
+    path (init_db -> direct writes), staged CLI builds, and incremental
+    updates all write the live DB. Without this lock two of them could
+    interleave writes with only SQLite's busy_timeout as a guard. The lock
+    is non-blocking: a second writer raises RuntimeError immediately rather
+    than waiting, so the user knows to retry later.
 
-    Raises ``RuntimeError`` if another build holds the lock.
+    The lock FILE is deliberately never unlinked, by winner or by loser:
+    flock is inode-based, and unlink-on-release races a third process into
+    creating a fresh inode while a waiter still blocks on the old one (two
+    concurrent holders). A stale zero-byte ``<db>.build.lock`` is harmless --
+    only flock state matters, and it dies with the holder's fd.
+
+    Raises ``RuntimeError`` if another build or update holds the lock.
     """
     lock_path = str(db_path) + ".build.lock"
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
-    acquired = False
     try:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
         except (IOError, OSError) as e:
             if e.errno == errno.EWOULDBLOCK:
                 raise RuntimeError(
-                    f"Cannot rebuild: another build is already in progress. "
-                    f"If you believe this is incorrect, remove {lock_path} and retry."
+                    f"Cannot acquire build lock: another build or update is "
+                    f"already in progress on {db_path}. Wait for it to finish "
+                    f"and retry."
                 )
             raise
-        yield
-    finally:
-        if acquired:
+        try:
+            yield
+        finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
         os.close(lock_fd)
-        # Clean up the lock file so it doesn't outlive the build.
-        if os.path.exists(lock_path):
-            try:
-                os.unlink(lock_path)
-            except OSError:
-                pass

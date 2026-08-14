@@ -24,7 +24,8 @@ Author — confirm before requesting review (procedure: `docs/review-checklist.m
 - [ ] **Layering respected** — `ask_compass` on changed files; no documented-boundary violations
 - [ ] **Graph updated** — `cairn update` ran so blast-radius is current
 - [ ] **Memory recorded** — `record_memory` for any decision / pattern / mistake
-- [ ] **Tests** — change is covered (`pytest -m core` fast loop + full suite)
+- [ ] **Fallback/perf paths** — if the change alters a fallback or performance path, `cairn doctor` was run and the telemetry signal exposing the degradation is named (spec §6.4)
+- [ ] **Tests** — change is covered (`pytest -m core` fast loop + full suite); new tests are hermetic (no PATH/HOME/env dependence; `result.stdout`, not `result.output`)
 - [ ] **CHANGELOG** — `[Unreleased]` entry added (feature/bugfix only)
 - [ ] **Gates green** — pre-commit, pip-audit, conventional PR title; reviewed any new mypy/bandit findings
 

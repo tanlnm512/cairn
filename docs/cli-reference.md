@@ -306,6 +306,7 @@ the hybrid (vector + BM25 + RRF) order rather than failing.
 |---------|-------------|
 | `cairn validate` | Check OKF conformance of the `.knowledge/` bundle. |
 | `cairn validate-paths` | Check all concepts for stale file/symbol references against the graph (`--mark`). |
+| `cairn verify CONCEPT` | Run the deterministic critic on a single compass/wiki/memory concept (concept id relative to `.knowledge/`, no `.md` suffix). Prints the verdict — passed/errors/warnings + quality score — read-only; the single-concept front to the critic gate behind the verification contract's promise #2. |
 | `cairn import-scip SCIP_FILE` | Import compiler-grade symbol bindings from a SCIP index file. |
 
 `import-scip` options: `SCIP_FILE` (argument), `--db`, `--repo default`,
@@ -317,17 +318,106 @@ and wiring them into `cairn.json` for build-time hybrid indexing.
 
 | Command | Description |
 |---------|-------------|
-| `cairn metrics` | Report MCP tool invocation metrics (calls, avg latency, error rate). |
+| `cairn metrics` | Report MCP tool invocation metrics (calls, avg latency, error rate), and — with a flag — telemetry trends from `build_runs`/`events`. |
+| `cairn doctor` | Run 8 system health checks (PASS/WARN/FAIL each); exit 0 or 1 so agents can gate on it. Read-only. |
+| `cairn report` | Print a redacted diagnostic bundle (versions, doctor, recent errors, config) for bug reports / GitHub issues. Never uploads. |
 | `cairn status` | System status and health across all layers. |
 | `cairn eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`). |
 | `cairn bench` | Run performance or scalability benchmarks. |
 
-`metrics` options: `--db`, `--tool NAME`, `--json`.
+`metrics` options: `--db`, `--tool NAME` (default aggregation only), `--json`,
+plus the telemetry-trend flags `--builds`, `--quality`, `--contention`, `--tasks`.
+`doctor` options: `--db`, `--json`.
+`report` options: `--db`, `--json`, `--out PATH`.
 `status` options: `--db`, `--knowledge`.
 `eval` options: `--db`, `--knowledge`, `--corpus L1|L5|all`, `--queries PATH`, `--json`.
 `bench` options: `--suite perf|scaling`, `--workspace`, `--sizes`, `--n-files`,
 `--complexity`, `--embed-backend`, `--json`, `--save`, `--compare`, `--threshold`,
 `--repeats`.
+
+#### `cairn doctor` — the 8 health checks
+
+`cairn doctor` runs eight read-only checks and prints one PASS/WARN/FAIL row
+per check (color-coded `✓`/`!`/`✗`, plus a remediation `hint` where useful).
+It **never writes** to the store — a missing `--db` path is reported as a
+`schema` FAIL ("store not found"), never silently created. The **exit code is
+0 when every check is PASS or WARN, and 1 the moment any check is FAIL**, so
+an agent or CI step can gate on it (`cairn doctor --json && …`). Absence of an
+optional backend (`sentence-transformers`, `sqlite-vec`) degrades to WARN
+(functional-but-slower), never FAIL — FAIL is reserved for "broken": a
+corrupt store, one that can't be opened, or no store at all.
+
+| # | Check | FAIL / WARN triggers |
+|---|-------|----------------------|
+| 1 | `schema` | FAIL on a `PRAGMA quick_check` integrity error (corrupt/not-a-database) or when the store path doesn't exist. |
+| 2 | `embeddings` | WARN when the dep-free hash backend is silently active (retrieval degraded). An explicit `CAIRN_EMBED_BACKEND=hash` stays PASS. |
+| 3 | `ann` | WARN when `sqlite-vec` is *expected* (env unset/`=sqlite-vec`) but unavailable or failed to load; surfaces the latest `ann_fallback` reason. An explicit `CAIRN_ANN_BACKEND=off` stays PASS. |
+| 4 | `freshness` | WARN on unindexed `pending_sync` edits, a stale repo-rebuild crash marker (an interrupted `cairn build --repo` left the repo partial — re-run it), or a `build_runs` row older than 7d (or symbols indexed with no recorded build). |
+| 5 | `parse_errors` | WARN when `parse_errors` has rows (a file was skipped during indexing); shows the newest 5. |
+| 6 | `concurrency` | WARN on any `lock_contention` event in the last 7d (genuinely lock-shaped errors only — schema/FTS failures don't count as contention). `stray_swept` totals are reported but never WARN (sweeping is the stdio-leak fix *working*). |
+| 7 | `tool_health` | WARN when any MCP tool's 7-day error rate exceeds 10% or its p95 latency exceeds 5s. |
+| 8 | `config` | Always PASS — a transparency echo of the effective `CAIRN_*` knobs (workers, read-only, fusion, ann/embed backend, telemetry, log level). |
+
+`--json` emits the checks as a list of `{name, status, detail, hint}` objects.
+
+#### `cairn metrics` telemetry-trend flags
+
+With **no flag**, `cairn metrics` is unchanged: it aggregates `tool_metrics`
+(calls / avg ms / errors / err%) for each MCP tool. The three extension flags
+render from the telemetry tables (`build_runs`, `events`) and all accept
+`--json` (a single flag prints the bare value; multiple flags print one object
+keyed by section name):
+
+- `--builds` — recent `build_runs` rows with the resolution mix
+  (`exact`/`ambiguous`/`unresolved`), so resolver precision becomes a trend,
+  not a forgotten panel. History accumulates across full rebuilds and staged
+  builds (the analytics tables are carried over the whole-file swap).
+- `--quality` — retrieval-quality aggregates: the empty-result rate (scoped to
+  `semantic_search` — the only query kind with a recorded at-risk denominator —
+  plus an `empty by kind` breakdown across semantic/explore/search_symbols),
+  truncation count, and the semantic-backend mix (`ann`/`brute`/`hash`, fusion,
+  rerank).
+- `--contention` — `lock_contention` events grouped by site, so repeated
+  cross-process lock waits are diagnosable.
+- `--tasks` — task-queue lifecycle history: `task_lifecycle` events counted
+  by transition (claimed/completed/dropped/revised) and by `task_kind`.
+
+`--tool NAME` filters the default aggregation only; it has no effect on the
+three trend flags.
+
+#### `cairn report` — redacted diagnostic bundle
+
+`cairn report` prints one self-describing bundle for pasting into a bug report
+or GitHub issue. It is read-only and **never uploads** anything — the output
+goes to stdout (and optionally a file). The bundle has four sections:
+
+- **Versions** — cairn `__version__`, Python version, platform/OS, the SQLite
+  library version, and a best-effort `PRAGMA user_version` probe (cairn applies
+  `CREATE TABLE IF NOT EXISTS` DDL and tracks no numeric schema version, so this
+  is typically `0`; `null` when the store is unreadable).
+- **Doctor** — the same 8 checks `cairn doctor` runs (reused verbatim), rendered
+  as PASS/WARN/FAIL rows.
+- **Recent errors** — a bounded set (last 20) of error-ish `events` rows
+  (`ann_fallback`, `hash_fallback`, `lock_contention`) plus the last 20
+  `tool_metrics` rows with `status='error'`, newest first.
+- **Config** — the effective `CAIRN_*` knobs (the same list `doctor` echoes).
+
+**Privacy gate (observability-telemetry spec §7):** every string field is
+passed through `memory.privacy.strip_private_data` (known secret shapes — API
+keys, bearer tokens, JWTs, … — and `<private>` tags become
+`[REDACTED_SECRET]` / `[REDACTED]`) and then through path redaction: absolute
+local filesystem paths (POSIX, `~/…`, Windows drive letters) collapse to
+`[PATH]/<basename>`, keeping the failing file's name for debuggability while
+hiding your directory structure. Workspace-relative paths (`src/main.py`) and
+URL path portions survive — they're the useful, non-identifying signals.
+Best-effort throughout: a missing, read-only, or corrupt store degrades to
+empty sections and a `schema` FAIL (mirroring `cairn doctor`) and never
+raises.
+
+`--json` emits the bundle as a JSON object; `--out PATH` additionally writes
+the bundle to a file (JSON with `--json`, otherwise the same human-readable
+text) and prints a short confirmation to stderr so it can't corrupt JSON on
+stdout.
 
 ### Agent integration and lifecycle
 

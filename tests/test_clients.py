@@ -2,7 +2,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from cairn.agent_install import install, uninstall, CLIENTS
+from cairn.agent_install import check_installed, install, uninstall, CLIENTS
 
 
 def test_clients_list_includes_opencode():
@@ -90,3 +90,35 @@ def test_uninstall_opencode_removes_legacy_mcp_json():
         uninstall(str(ws), clients=["opencode"])
 
         assert not legacy.exists(), "legacy .opencode/mcp.json must be removed on uninstall"
+
+
+def test_install_opencode_global_scope_writes_global_path(tmp_path, monkeypatch):
+    """--scope global must land in ~/.config/opencode/opencode.json (the path
+    check_installed probes), NOT the workspace root -- and be detected."""
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda *a, **k: fake_home)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    install(str(ws), clients=["opencode"], force=True, transport="stdio", scope="global")
+
+    global_cfg = fake_home / ".config" / "opencode" / "opencode.json"
+    assert global_cfg.exists(), "scope=global must write the global opencode.json"
+    assert not (ws / "opencode.json").exists(), "scope=global must not write the workspace root"
+    assert check_installed(str(ws))["opencode"], "global install must be detected"
+
+
+def test_uninstall_opencode_global_scope_strips_global_path(tmp_path, monkeypatch):
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda *a, **k: fake_home)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    install(str(ws), clients=["opencode"], force=True, transport="stdio", scope="global")
+    uninstall(str(ws), clients=["opencode"], scope="global")
+
+    global_cfg = fake_home / ".config" / "opencode" / "opencode.json"
+    after = json.loads(global_cfg.read_text(encoding="utf-8"))
+    assert "cairn" not in after.get("mcp", {}), "scope=global uninstall must strip the global file"

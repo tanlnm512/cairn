@@ -248,101 +248,139 @@ def build(repo, workspace, db, verbose, staging):
     """Build (or rebuild) the code graph."""
     from . import display
 
+    if staging and repo:
+        # The single-repo path builds into a FRESH temp DB (other repos are
+        # never copied over), so the staging swap would silently delete every
+        # other repo's graph. Reject the combination rather than risk it.
+        raise click.UsageError(
+            "--staging cannot be combined with --repo: a staged single-repo "
+            "build swaps in a temp DB containing only that repo, silently "
+            "deleting every other repo's graph. Use `cairn build --repo X` "
+            "(updates the live DB in place) or `cairn build --staging` (full "
+            "rebuild including every repo)."
+        )
+
     target_db = db + ".tmp" if staging else db
 
     import time
     t0 = time.time()
 
-    # One rail across the whole flow. animate=not verbose: the -v path turns
-    # on builder._log's raw print(), which would corrupt a live region.
-    with display.rail("Building graph", animate=not verbose) as r:
-        r.start("Scanning files")
-        phase_state = {"scan_done": False, "resolve_started": False}
+    # A staging build must serialize against non-staging writers of the REAL
+    # db (single-repo builds and incremental updates lock <db>.build.lock,
+    # not <db>.tmp.build.lock); otherwise a concurrent build's live-DB writes
+    # would be silently clobbered by the swap below. Held across build +
+    # derived indexes + swap.
+    import contextlib
 
-        def on_progress(phase, **kw):
-            if phase == "scan":
-                files = kw.get("files", 0)
-                r.tick(f"{files:,} found")
-                r.finish(f"{files:,} found")
-                r.start("Parsing code")
-                phase_state["scan_done"] = True
-            elif phase == "parse_progress":
-                total = kw.get("total", 0) or 1
-                pct = 50 * kw.get("done", 0) // total
-                r.tick(f"{pct}%")
-            elif phase == "insert_progress":
-                total = kw.get("total", 0) or 1
-                pct = 50 + 50 * kw.get("done", 0) // total
-                r.tick(f"{pct}%")
-            elif phase == "resolve_start":
-                if not phase_state["resolve_started"]:
+    from ..graph.schema import build_lock, swap_db_file
+
+    with (build_lock(db) if staging else contextlib.nullcontext()):
+        # One rail across the whole flow. animate=not verbose: the -v path turns
+        # on builder._log's raw print(), which would corrupt a live region.
+        with display.rail("Building graph", animate=not verbose) as r:
+            r.start("Scanning files")
+            phase_state = {"scan_done": False, "resolve_started": False}
+
+            def on_progress(phase, **kw):
+                if phase == "scan":
+                    files = kw.get("files", 0)
+                    r.tick(f"{files:,} found")
+                    r.finish(f"{files:,} found")
+                    r.start("Parsing code")
+                    phase_state["scan_done"] = True
+                elif phase == "parse_progress":
+                    total = kw.get("total", 0) or 1
+                    pct = 50 * kw.get("done", 0) // total
+                    r.tick(f"{pct}%")
+                elif phase == "insert_progress":
+                    total = kw.get("total", 0) or 1
+                    pct = 50 + 50 * kw.get("done", 0) // total
+                    r.tick(f"{pct}%")
+                elif phase == "resolve_start":
+                    if not phase_state["resolve_started"]:
+                        r.finish("done")
+                        r.start("Resolving refs")
+                        phase_state["resolve_started"] = True
+                    r.tick(kw.get("repo", ""))
+                elif phase == "persist":
                     r.finish("done")
-                    r.start("Resolving refs")
-                    phase_state["resolve_started"] = True
-                r.tick(kw.get("repo", ""))
-            elif phase == "persist":
-                r.finish("done")
-                r.start("Persisting graph")
+                    r.start("Persisting graph")
 
-        try:
-            summary = builder.build_graph(
-                workspace=workspace, repo_filter=repo, db_path=target_db,
-                verbose=verbose, progress=on_progress,
-            )
-        except Exception:
-            # --staging writes to a temp DB; remove the half-built temp DB on
-            # failure so a failed staging build doesn't leak. The rail's
-            # context manager closes as "└ Failed" on the re-raise.
-            if staging and os.path.exists(target_db):
-                try:
-                    os.remove(target_db)
-                except OSError:
-                    pass
-            raise
-        # build_graph's last event (persist) opens a sub-step it never closes;
-        # settle it before the derived-index phases.
-        r.finish("done")
-
-        # Derived indexes: dataflow + transitive closure. Dataflow calls
-        # impact_analysis per public symbol and can be slow on large workspaces,
-        # so it gets its own animated sub-step. Transitive closure is pure SQL.
-        df_count = tc_count = None
-        df_error = None
-        conn = None
-        try:
-            conn = get_db(target_db)
-            from ..graph.dataflow import build_dataflow_index, build_transitive_closure
-
-            # Count public symbols first so the sub-step ticks are meaningful.
-            from ..graph.dataflow import _public_symbols
-            pub_total = len(_public_symbols(conn))
-
-            if pub_total > 0:
-                r.start("Dataflow index")
-                df_count = build_dataflow_index(
-                    conn, progress=lambda done: r.tick(f"{done:,}/{pub_total:,}")
+            try:
+                summary = builder.build_graph(
+                    workspace=workspace, repo_filter=repo, db_path=target_db,
+                    verbose=verbose, progress=on_progress,
                 )
-                r.finish(f"{df_count:,} symbols")
-                r.start("Transitive closure")
-                tc_count = build_transitive_closure(conn)
-                r.finish(f"{tc_count:,} edges")
-            else:
-                df_count = 0
-                tc_count = build_transitive_closure(conn)
+            except Exception:
+                # --staging writes to a temp DB; remove the half-built temp DB on
+                # failure so a failed staging build doesn't leak. The rail's
+                # context manager closes as "└ Failed" on the re-raise.
+                if staging and os.path.exists(target_db):
+                    try:
+                        os.remove(target_db)
+                    except OSError:
+                        pass
+                raise
+            # build_graph's last event (persist) opens a sub-step it never closes;
+            # settle it before the derived-index phases.
+            r.finish("done")
 
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-        except Exception as e:
-            df_error = str(e)
-        finally:
-            # Always close: a leaked connection can hold SQLite's writer lock
-            # and lock out subsequent `cairn build`/`cairn embed`.
-            if conn is not None:
-                conn.close()
+            # Derived indexes: dataflow + transitive closure. Dataflow calls
+            # impact_analysis per public symbol and can be slow on large workspaces,
+            # so it gets its own animated sub-step. Transitive closure is pure SQL.
+            df_count = tc_count = None
+            df_error = None
+            conn = None
+            try:
+                conn = get_db(target_db)
+                from ..graph.dataflow import build_dataflow_index, build_transitive_closure
 
-    elapsed = time.time() - t0
+                # Count public symbols first so the sub-step ticks are meaningful.
+                from ..graph.dataflow import _public_symbols
+                pub_total = len(_public_symbols(conn))
 
-    if staging:
-        os.replace(target_db, db)
+                if pub_total > 0:
+                    r.start("Dataflow index")
+                    df_count = build_dataflow_index(
+                        conn, progress=lambda done: r.tick(f"{done:,}/{pub_total:,}")
+                    )
+                    r.finish(f"{df_count:,} symbols")
+                    r.start("Transitive closure")
+                    tc_count = build_transitive_closure(conn)
+                    r.finish(f"{tc_count:,} edges")
+                else:
+                    df_count = 0
+                    tc_count = build_transitive_closure(conn)
+
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception as e:
+                df_error = str(e)
+            finally:
+                # Always close: a leaked connection can hold SQLite's writer lock
+                # and lock out subsequent `cairn build`/`cairn embed`.
+                if conn is not None:
+                    conn.close()
+
+        elapsed = time.time() - t0
+
+        if staging:
+            # Carry analytics history from the DB about to be replaced before
+            # the swap (build_runs/events/tool_metrics -- same rationale as
+            # backup_to; the staged build only recorded its OWN build_runs row
+            # into the temp DB so far). Still inside build_lock.
+            from ..graph.schema import copy_telemetry_tables
+
+            stage_conn = get_db(target_db)
+            try:
+                copy_telemetry_tables(stage_conn, db)
+            finally:
+                try:
+                    stage_conn.close()
+                except Exception:
+                    pass
+            # WAL-safe atomic swap (schema.swap_db_file): the old <db>-wal must
+            # not replay over the swapped-in main DB.
+            swap_db_file(target_db, db)
 
     # Final summary panel (unchanged): repos/files/symbols/edges/imports +
     # resolution breakdown + staging note. The rail replaced the progress

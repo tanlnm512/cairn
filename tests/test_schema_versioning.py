@@ -152,5 +152,89 @@ def test_duplicate_column_error_idempotent(fresh_db):
             f"Duplicate column errors should be idempotent, got: {e}"
 
 
+def test_observability_tables_upgrade_old_db(tmp_path):
+    """T08: an old-shape DB (created before build_runs/events) upgrades in place.
+
+    The observability tables are additive-only: plain CREATE TABLE IF NOT
+    EXISTS inside SCHEMA_SQL (no MIGRATIONS entry), so _apply_schema -- which
+    every get_db() runs on connect -- must create them on a pre-existing DB
+    that lacks them, same as tool_metrics before them.
+    """
+    conn = sqlite3.connect(tmp_path / "old.db")
+    try:
+        # A pre-observability DB: core tables exist (as an older cairn made
+        # them), but build_runs/events do not.
+        conn.executescript(
+            """
+            CREATE TABLE repos (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                language TEXT,
+                git_remote TEXT,
+                indexed_at TIMESTAMP
+            );
+            CREATE TABLE tool_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT 'unknown',
+                invoked_at TIMESTAMP NOT NULL,
+                duration_ms REAL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                error_message TEXT
+            );
+            """
+        )
+        tables_before = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "build_runs" not in tables_before
+        assert "events" not in tables_before
+
+        # The next connect() by a newer cairn upgrades the old DB in place.
+        _apply_schema(conn)
+
+        tables_after = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "build_runs" in tables_after
+        assert "events" in tables_after
+        indexes_after = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        assert "idx_events_name" in indexes_after
+        assert "idx_events_ts" in indexes_after
+    finally:
+        conn.close()
+
+
+def test_observability_tables_apply_idempotent(fresh_db):
+    """T08: re-applying the schema leaves exactly one build_runs/events table.
+
+    Acceptance: fresh + migrated DBs both pass _apply_schema idempotently --
+    CREATE TABLE IF NOT EXISTS makes the re-run a no-op rather than an error.
+    """
+    # fresh_db already applied the schema once; this call is the re-run.
+    _apply_schema(fresh_db)
+
+    for table in ("build_runs", "events"):
+        count = fresh_db.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()[0]
+        assert count == 1, f"re-apply must not duplicate or drop {table}"
+    index_count = fresh_db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' "
+        "AND name IN ('idx_events_name', 'idx_events_ts')"
+    ).fetchone()[0]
+    assert index_count == 2, "both events indexes must survive re-application"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

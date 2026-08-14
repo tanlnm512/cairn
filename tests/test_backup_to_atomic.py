@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from cairn.graph.schema import get_build_db, backup_to
+from cairn.graph.schema import get_build_db, backup_to, build_lock
 
 
 def test_backup_to_writes_to_temp_then_atomic_swap(tmp_path):
@@ -89,7 +89,14 @@ def test_backup_to_old_inode_preserved_for_readers(tmp_path):
 
 
 def test_backup_to_no_tmp_residue(tmp_path):
-    """VAL-DB-001: No .tmp file remains after successful backup."""
+    """VAL-DB-001: No .tmp file remains after successful backup.
+
+    The .build.lock file deliberately SURVIVES (store-integrity fix F2):
+    build_lock never unlinks it -- flock is inode-based, and unlink-on-release
+    races a third process into creating a fresh inode while a waiter still
+    blocks on the old one (two concurrent holders). A stale zero-byte lock
+    file is harmless, so here we only assert it is not LOCKED.
+    """
     mem_conn = get_build_db()
     mem_conn.execute(
         "INSERT INTO repos (id, name, path, language, git_remote, indexed_at) "
@@ -105,9 +112,19 @@ def test_backup_to_no_tmp_residue(tmp_path):
     tmp_files = list(tmp_path.glob("*.tmp"))
     assert len(tmp_files) == 0, f"Expected no .tmp files, found: {tmp_files}"
 
-    # Check no .build.lock file exists
+    # Check no .build.lock file is still held
     lock_files = list(tmp_path.glob("*.build.lock"))
-    assert len(lock_files) == 0, f"Expected no .build.lock files, found: {lock_files}"
+    for lock_file in lock_files:
+        lock_fd = os.open(str(lock_file), os.O_WRONLY)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except (IOError, OSError) as e:
+            if e.errno == errno.EWOULDBLOCK:
+                pytest.fail(f"{lock_file} must not stay locked after backup_to")
+            raise
+        finally:
+            os.close(lock_fd)
 
 
 def test_backup_to_concurrent_rebuild_raises_with_message(tmp_path):
@@ -201,3 +218,44 @@ def test_backup_to_persists_wal_and_foreign_keys(tmp_path):
         # behavior.
     finally:
         conn.close()
+
+
+def test_failed_acquire_never_unlinks_winners_lock_file(tmp_path):
+    """REGRESSION (scope-3 P1): a failed flock acquire must not delete the lock.
+
+    The old loser path unlinked ``<db>.build.lock`` in its ``finally``, which
+    deleted the WINNER's lock file: a third process then ``os.open``\\'d a fresh
+    inode and acquired while the winner still built (deterministic
+    double-acquire; two builders could then write the same ``.tmp``). The fix
+    is to never unlink the file at all -- flock is inode-based and a stale
+    zero-byte lock file is harmless. This pins that contract.
+    """
+    import fcntl as _fcntl
+
+    db_path = str(tmp_path / "never_unlink.db")
+    lock_path = db_path + ".build.lock"
+
+    # Winner: hold the lock the way build_lock does.
+    winner_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
+    _fcntl.flock(winner_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+    try:
+        # Loser: a failed acquire raises AND must leave the file in place.
+        with pytest.raises(RuntimeError):
+            with build_lock(db_path):
+                pass  # pragma: no cover - unreachable under the winner
+        assert os.path.exists(lock_path), (
+            "failed acquire unlinked the winner's lock file -- the "
+            "double-acquire corruption vector is back"
+        )
+
+        # Third process: must NOT be able to acquire on a fresh inode while
+        # the winner still holds the original.
+        third_fd = os.open(lock_path, os.O_WRONLY)
+        try:
+            with pytest.raises(OSError):
+                _fcntl.flock(third_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        finally:
+            os.close(third_fd)
+    finally:
+        _fcntl.flock(winner_fd, _fcntl.LOCK_UN)
+        os.close(winner_fd)

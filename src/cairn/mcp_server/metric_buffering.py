@@ -7,13 +7,17 @@ holding the WAL. Buffering here + flushing on a background thread removes the
 write from every tool call's hot path: one writer every 30s instead of one
 per call.
 
-Fully self-contained except for a connection factory (``_conn``) which is
-injected via :func:`configure_conn` so this module doesn't need to know about
-the store / schema layer.
+This module owns the ``tool_metrics`` buffer and its flush logic, but no
+longer spawns its own daemon thread: it registers ``_flush_metrics`` with the
+shared telemetry sink (:mod:`cairn.telemetry.sink`, spec §6.1) so events and
+tool_metrics share one writer cadence + one atexit drain. Behavior and the
+``tool_metrics`` row shape are unchanged. Self-contained except for a
+connection factory (``_conn``) injected via :func:`configure_conn` (which also
+mirrors into the sink so a single boot call wires both tables).
 """
+
 from __future__ import annotations
 
-import atexit
 import collections
 import functools
 import os
@@ -24,7 +28,6 @@ from typing import Callable, Optional
 _METRIC_BUFFER: collections.deque = collections.deque(maxlen=2000)
 _METRIC_LOCK = threading.Lock()
 _METRIC_FLUSHER_STARTED = False
-_METRIC_FLUSH_INTERVAL = 30.0  # seconds
 
 # Hard cap on any tool's returned string, enforced centrally so a caller never
 # hits the MCP client's "exceeds maximum allowed tokens" hard failure -- a
@@ -34,9 +37,39 @@ _METRIC_FLUSH_INTERVAL = 30.0  # seconds
 MAX_RESULT_CHARS = int(os.environ.get("CAIRN_MAX_RESULT_CHARS", "60000"))
 
 
+def _chars_bucket(n: int) -> str:
+    """Bucket a result length into a fixed low-cardinality set (spec §6.4).
+
+    Truncation is observable analytics, not correctness: a coarse bucket is
+    enough to see ``explore`` blowing past 60k chars vs ``search_symbols``
+    clipping at ~2k -- the exact count carries no extra diagnostic value and
+    would balloon the ``events`` row cardinality.
+    """
+    if n <= 500:
+        return "<=500"
+    if n <= 2000:
+        return "500-2k"
+    if n <= 10000:
+        return "2k-10k"
+    return ">10k"
+
+
 def _truncate_result(name: str, result: str) -> str:
     if len(result) <= MAX_RESULT_CHARS:
         return result
+    # Over-cap: emit a durable truncate_result event so truncation rate is
+    # measurable per tool (spec §4.2 gap 8). Emitted ONLY on the actual
+    # truncation branch, not every call. The import is lazy (mirrors the lazy
+    # cairn.telemetry.sink imports in configure_conn / _start_metric_flusher,
+    # kept lazy to avoid any boot-order cycle) and the whole block is guarded
+    # so a telemetry bug can never fail a tool call -- ``_truncate_result``
+    # runs inside ``instrument``'s try block, but telemetry is best-effort.
+    try:
+        from cairn.telemetry import TRUNCATE_RESULT, emit as _emit
+
+        _emit(TRUNCATE_RESULT, tool=name, chars_bucket=_chars_bucket(len(result)))
+    except Exception:
+        pass
     head = result[:MAX_RESULT_CHARS]
     # Cut at the last newline so the truncation note doesn't land mid-line.
     cut = head.rfind("\n")
@@ -50,6 +83,7 @@ def _truncate_result(name: str, result: str) -> str:
         f"lower `depth` -- rather than relying on this truncated output.]"
     )
 
+
 # Connection factory injected by the server core (avoids a circular import
 # with src.graph.schema / src.paths). Defaults to None; configure_conn() must
 # be called once at server boot before any tool is invoked.
@@ -59,11 +93,19 @@ _conn_factory: Optional[Callable[[], "object"]] = None
 def configure_conn(conn_factory: Callable[[], "object"]) -> None:
     """Inject the connection factory used by _flush_metrics.
 
-    Called once from server.run() at boot. Must come from outside so this
-    module stays free of the schema/store dependency.
+    Called once from server.run() at boot. Also mirrors into the shared
+    telemetry sink (spec §6.1) so the single boot call wires both
+    ``tool_metrics`` (this module's table) and ``events`` (the sink's table).
+    Must come from outside so this module stays free of the schema/store
+    dependency.
     """
     global _conn_factory
     _conn_factory = conn_factory
+    # Mirror into the shared sink so events get the same writable factory.
+    # Lazy import avoids any boot-order cycle with the telemetry package.
+    from cairn.telemetry import sink as _telemetry_sink
+
+    _telemetry_sink.configure_conn(conn_factory)
 
 
 def _flush_metrics():
@@ -74,6 +116,7 @@ def _flush_metrics():
     flush attempt instead of silently dropping them.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     # Snapshot the buffer WITHOUT clearing it yet -- a failed flush leaves the
@@ -98,7 +141,9 @@ def _flush_metrics():
         # Couldn't flush this batch -- leave it buffered for the next attempt.
         # Metrics are best-effort and must never block tool execution or hold a
         # lock, but log at debug so silent drops/backlog are still observable.
-        logger.debug("metric flush failed; %d rows remain buffered", len(batch), exc_info=True)
+        logger.debug(
+            "metric flush failed; %d rows remain buffered", len(batch), exc_info=True
+        )
         return
     finally:
         if conn is not None:
@@ -117,7 +162,15 @@ def _flush_metrics():
 
 
 def _start_metric_flusher():
-    """Start the background flush thread once (idempotent, daemon)."""
+    """Ensure the shared telemetry flush thread is running and that this
+    module's ``_flush_metrics`` is registered with it.
+
+    Previously metric_buffering spawned its own daemon thread + atexit; now it
+    reuses the single shared sink thread (spec §6.1) so events and tool_metrics
+    share one writer cadence and one atexit drain. ``_METRIC_FLUSHER_STARTED``
+    stays as this module's idempotency flag (and is what the test fixture
+    resets between tests).
+    """
     global _METRIC_FLUSHER_STARTED
     if _METRIC_FLUSHER_STARTED:
         return
@@ -126,18 +179,16 @@ def _start_metric_flusher():
             return
         _METRIC_FLUSHER_STARTED = True
 
-    def _loop():
-        while True:
-            time.sleep(_METRIC_FLUSH_INTERVAL)
-            _flush_metrics()
+    # Lazy import avoids any boot-order cycle with the telemetry package.
+    from cairn.telemetry import sink as _telemetry_sink
 
-    t = threading.Thread(target=_loop, name="cairn-metric-flusher", daemon=True)
-    t.start()
-    atexit.register(_flush_metrics)
+    _telemetry_sink.register_flusher(_flush_metrics)
+    _telemetry_sink.start_flusher()
 
 
-def _log_metric(tool_name: str, duration_ms: float, status: str = "ok",
-                error_message: str = ""):
+def _log_metric(
+    tool_name: str, duration_ms: float, status: str = "ok", error_message: str = ""
+):
     """Record a tool invocation (buffered; flushes on a background thread)."""
     # Read-only daemons open the DB with mode=ro, so INSERT INTO tool_metrics
     # would fail every flush and buffer indefinitely (capped by deque maxlen).
@@ -146,6 +197,25 @@ def _log_metric(tool_name: str, duration_ms: float, status: str = "ok",
     # thread doesn't spin on a guaranteed failure.
     if os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes"):
         return
+    # CAIRN_TELEMETRY=off is the documented master kill switch: "off stops
+    # ALL recording". tool_metrics bypassed it (audit F5) because this gate
+    # only checked CAIRN_READ_ONLY. Lazy import mirrors the sink imports in
+    # configure_conn / _start_metric_flusher (avoids any boot-order cycle);
+    # is_telemetry_off() re-reads the env every call, like the check above.
+    from cairn.telemetry.sink import is_telemetry_off
+
+    if is_telemetry_off():
+        return
+    # Redact at the write chokepoint (audit F4): exceptions routinely echo
+    # request payloads (connection strings, auth headers), and error_message
+    # used to persist raw -- truncated, but only scrubbed at report read
+    # time (a redaction-after-persistence inversion: the raw secret sat in
+    # the DB for up to the flush interval + forever in backups). Scrub
+    # BEFORE the row is buffered, then truncate.
+    if error_message:
+        from cairn.memory.privacy import strip_private_data
+
+        error_message = strip_private_data(error_message)
     row = (
         tool_name,
         os.environ.get("CAIRN_SESSION", "unknown"),
@@ -172,7 +242,7 @@ def instrument(fn):
     import traceback
 
     logger = logging.getLogger(__name__)
-    
+
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         name = fn.__name__
@@ -187,7 +257,9 @@ def instrument(fn):
             duration_ms = (time.time() - t0) * 1000
 
             # Log full traceback server-side.
-            tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            tb_str = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
             logger.error(f"Error in {name}: {exc}\n{tb_str}")
 
             _log_metric(name, duration_ms, "error", str(exc))

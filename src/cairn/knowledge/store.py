@@ -13,11 +13,81 @@ from cairn.okf.concept import OKFConcept
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.provenance import Tier
 from cairn.okf.utils import slugify
+from ..memory.privacy import strip_private_data
 
 logger = logging.getLogger(__name__)
 
 # Maximum file size for import (10MB) to prevent excessive memory usage
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
+
+
+def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
+    """Redact the free-text ``description`` of each workflow step.
+
+    Returns a new list (caller-owned dicts are not mutated). Only
+    ``description`` is scrubbed: ``name``/``symbol``/``file`` are graph
+    identifiers the staleness checker resolves against the code graph, so
+    rewriting them would silently break workflow sync.
+    """
+    out = []
+    for step in steps:
+        desc = step.get("description")
+        if isinstance(desc, str) and desc:
+            step = {**step, "description": strip_private_data(desc)}
+        out.append(step)
+    return out
+
+
+def _normalized_concept_id(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize a (possibly absolute or ``.md``-suffixed) id to bundle-relative.
+
+    Best-effort: on any path that can't be normalized (escapes the bundle
+    root, OS error), the input minus a ``.md`` suffix is returned as-is so
+    the caller's namespace check still sees the raw shape.
+    """
+    cid = concept_id[:-3] if concept_id.endswith(".md") else concept_id
+    try:
+        return str(
+            (bundle.root / f"{cid}.md").resolve().relative_to(bundle.root.resolve())
+        )
+    except (ValueError, OSError):
+        return cid
+
+
+def _refuse_out_of_namespace(
+    bundle: OKFBundle, doc_id: str, concept: Optional[OKFConcept]
+) -> None:
+    """Namespace guard for the knowledge store's mutating chokepoints (audit F7).
+
+    ``get_document`` reads ANY concept path in the bundle, so without this
+    guard ``update_status``/``delete_document`` happily act on compass/wiki/
+    memory concepts. The MCP tools pre-guard, but the CLI twins call the
+    store directly -- enforcing it here fixes both and any future caller.
+
+    Raises ``ValueError`` only when there is something out-of-namespace to
+    act on (a resolvable concept, or -- for the delete path -- an existing
+    file that failed to parse). Unresolvable ids keep the historical
+    ``False``/not-found semantics, which is what the MCP tools' pre-guarded
+    "not found" branch relies on.
+    """
+    if concept is not None:
+        resolved = _normalized_concept_id(bundle, concept.concept_id)
+    else:
+        resolved = _normalized_concept_id(bundle, doc_id)
+        try:
+            file_path = bundle._validate_concept_path(resolved)
+        except ValueError:
+            return  # escapes root -> the delete path below refuses anyway
+        if not file_path.exists():
+            return  # nothing to act on; caller reports not-found as before
+    if resolved == "knowledge" or resolved.startswith("knowledge/"):
+        return
+    raise ValueError(
+        f"Refused: '{doc_id}' resolves to '{resolved}', outside the "
+        f"knowledge/ namespace. The knowledge store only manages knowledge/ "
+        f"concepts (compass/wiki/memory documents cannot be modified or "
+        f"deleted through it)."
+    )
 
 
 def add_document(
@@ -41,12 +111,28 @@ def add_document(
     ``steps`` is an optional ordered list of step dicts stored under the
     ``steps`` extension (intended for ``doc_type="workflow"``; see
     ``src/knowledge/workflow.py``).
+
+    Privacy floor (audit F1): title, body, and step descriptions are routed
+    through :func:`strip_private_data` at this store chokepoint BEFORE the
+    slug is derived and ``bundle.write_concept`` runs, so a secret pasted
+    into any free-text field never reaches the .md file (nor the
+    knowledge_embeddings rows, which embed the *stored* body). Redaction
+    runs before slugification so a secret-shaped title can't leak into the
+    concept_id/filename either. ``strip_private_data`` is pattern-based (it
+    only rewrites secret-shaped substrings), so agent-authored wiki/compass/
+    workflow content is untouched. Step ``name``/``symbol``/``file`` are
+    identifiers (graph anchors for staleness checks), not free text, and are
+    left verbatim.
     """
+    title = strip_private_data(title)
+    body = strip_private_data(body)
+    if steps:
+        steps = _redact_step_descriptions(steps)
     slug = slugify(title)
     safe_doc_type = slugify(doc_type) or "general"
     concept_id = f"knowledge/{safe_doc_type}/{slug}"
 
-    extensions = {
+    extensions: dict = {
         "tier": Tier.ASSERTED.value,
         "doc_status": "active",
         "doc_owner": owner or "",
@@ -117,11 +203,15 @@ def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
       - backward transitions (e.g. archived -> active); re-add as a fresh
         document instead.
     A missing/unknown current status is treated as "active".
+
+    Raises ValueError when ``doc_id`` resolves to a concept outside the
+    knowledge/ namespace (see ``_refuse_out_of_namespace``).
     """
     if new_status not in DOC_STATUSES:
         return False
     with bundle.lock():
         concept = get_document(bundle, doc_id)
+        _refuse_out_of_namespace(bundle, doc_id, concept)
         if not concept:
             return False
         current = concept.extensions.get("doc_status", "active")
@@ -139,9 +229,14 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
 
     Removes the .md file from the bundle and optionally cleans up
     knowledge_embeddings rows in the database.
+
+    Raises ValueError when ``doc_id`` resolves to a concept (or an existing
+    file) outside the knowledge/ namespace (see
+    ``_refuse_out_of_namespace``).
     """
     with bundle.lock():
         concept = get_document(bundle, doc_id)
+        _refuse_out_of_namespace(bundle, doc_id, concept)
         if concept is not None:
             doc_id = concept.concept_id
         # Route the file path through the write-path validator so a malformed /

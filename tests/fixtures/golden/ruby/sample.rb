@@ -18,6 +18,13 @@ module App
     def self.find(id)
       User.new(id)
     end
+
+    def sync
+      find(1).update(name: @name)
+      orders.map { |o| o.paid }.compact()
+      helpers.list.map() { |o| o.id }
+      self.notify
+    end
   end
 end
 

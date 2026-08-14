@@ -14,6 +14,7 @@ open class BaseEntity(open val name: String)
 
 class User(override val id: String, override val name: String) : BaseEntity(name), Identifiable {
     var status: Status = Status.ACTIVE
+    private val tag: String = "user"
 
     fun process(): String {
         return helperCall(name)

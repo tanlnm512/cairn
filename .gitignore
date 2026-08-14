@@ -22,7 +22,14 @@ env/
 .coverage.*
 htmlcov/
 coverage.xml
+test-results.xml
 .tox/
+
+# ---- Local CI replication (scripts/ci-local.sh, apple container) ----
+.cache/
+bench-current.json
+bench-baseline.json
+bench-comment.md
 
 # ---- cairn runtime artifacts (from running `cairn build` here) ----
 .kg

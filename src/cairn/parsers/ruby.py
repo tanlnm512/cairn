@@ -20,9 +20,11 @@ Node-type reference (tree-sitter-ruby):
 - ``call`` -> Edge(calls). Every ``call`` node is a real call in tree-sitter-
   ruby: zero-argument calls (``X.new``, ``user.name``), parenless calls, and
   safe-navigation calls (``obj&.name``) are all ``call`` nodes. Calls with a
-  block (``each do ... end``, ``map { ... }``) are also calls. The proc-call
-  shorthand ``p.(1)`` has no method ``identifier`` and is skipped. Local-
-  variable reads are plain ``identifier`` nodes, not ``call`` nodes.
+  block (``each do ... end``, ``map { ... }``) are also calls, as is every
+  link of a chained call (``repo.find(1).update(x)`` records both ``find``
+  and ``update``). The proc-call shorthand ``p.(1)`` has no method
+  ``identifier`` and is skipped. Local-variable reads are plain
+  ``identifier`` nodes, not ``call`` nodes.
 - top-level ``call`` to ``require``/``require_relative``/``load`` -> Import.
 
 Ruby has no canonical qualified-name scheme; we scope-qualify via ``_scope``
@@ -248,46 +250,60 @@ class RubyParser(BaseParser, TreeSitterParserBase):
           - method call:      ``obj.method(args)`` -> ("method", "obj")
           - safe navigation:  ``obj&.method`` -> ("method", "obj")
           - block call:       ``items.each do ... end`` -> ("each", "items")
+          - chained call:     ``repo.find(1).update(x)`` -> ("update", None)
+            (the receiver is itself a ``call``; its return type is unknowable
+            here, so the receiver abstains but the callee is still recorded)
+          - self receiver:    ``self.helper(x)`` -> ("helper", "self")
           - receiver types:   identifier, constant (``X.new``), self
-          - proc shorthand:   ``p.(1)`` -> (None, None) [no method identifier;
-            receiver is a bare identifier/constant with ``.`` immediately
-            followed by ``argument_list``]
+          - proc shorthand:   ``p.(1)`` -> (None, None) [the single identifier
+            sits BEFORE the ``.`` with the argument_list directly after it --
+            no method identifier exists to record]
+
+        The discriminator is identifier POSITION relative to the last ``.``:
+        an identifier after the last dot is the method name; a call with no
+        identifier after the dot is the proc shorthand. Counting identifiers
+        alone cannot tell ``p.(1)`` from ``repo.find(1).update(...)`` -- both
+        have exactly one direct identifier child and an argument_list, but the
+        latter's identifier (``update``) follows the dot.
         """
-        # Receiver candidates: identifiers (local vars), constants (types/modules),
-        # and the implicit self. The method name is always an identifier.
-        ids = [c for c in node.children if c.type == "identifier"]
-        constants = [c for c in node.children if c.type == "constant"]
-        has_dot = any(c.type in (".", "&.") for c in node.children)
-        # Proc shorthand: ``p.(1)`` -- identifier + '.' + argument_list, no
-        # second identifier to act as the method name. Detect by checking that
-        # an argument_list is a direct child immediately after the dot.
-        has_arg = any(c.type == "argument_list" for c in node.children)
-        if has_dot:
-            # ``X.new`` -> ids=["new"], constants=["X"]; receiver is the constant.
-            # ``obj.method`` -> ids=["obj","method"]; callee is last id.
-            # ``p.(1)`` -> ids=["p"], constants=[], has_arg True, no second id.
-            if len(ids) >= 2:
-                callee = self._node_text(ids[-1], source).strip()
-                receiver = self._node_text(ids[0], source).strip()
-                return callee, receiver
-            if len(ids) == 1 and constants:
-                # Constant receiver, identifier method: ``X.new``.
-                callee = self._node_text(ids[0], source).strip()
-                receiver = self._node_text(constants[0], source).strip()
-                return callee, receiver
-            if len(ids) == 1 and not constants and has_arg:
-                # ``p.(1)`` proc shorthand: single identifier receiver, no
-                # method name. Skip.
-                return None, None
-            # len(ids) == 1 and not constants and not has_arg: a zero-arg
-            # method call on an implicit receiver (rare). Treat the identifier
-            # as the callee.
-            if len(ids) == 1:
-                return self._node_text(ids[0], source).strip(), None
-        if ids:
+        children = node.children
+        dot_idx = None
+        for i, c in enumerate(children):
+            if c.type in (".", "&."):
+                dot_idx = i  # keep the LAST dot (deepest link of a chain)
+        if dot_idx is None:
             # Bare call: leading identifier is the callee.
-            return self._node_text(ids[0], source).strip(), None
+            for c in children:
+                if c.type == "identifier":
+                    return self._node_text(c, source).strip(), None
+            return None, None
+
+        # Method identifier: the first identifier child AFTER the last dot.
+        for c in children[dot_idx + 1:]:
+            if c.type == "identifier":
+                callee = self._node_text(c, source).strip()
+                return callee, self._receiver_text(children[:dot_idx], source)
+
+        # No identifier after the dot: ``p.(1)`` proc shorthand. The single
+        # identifier (the receiver) sits before the dot and the argument_list
+        # follows it directly; there is no method name to record.
         return None, None
+
+    def _receiver_text(self, before_dot, source: bytes) -> Optional[str]:
+        """Receiver name from the children preceding the ``.``/``&.``.
+
+        Returns the first identifier/constant/``self`` child; a nested ``call``
+        receiver (a chained call) yields None -- its return type is not
+        inferable from the AST shape here.
+        """
+        for c in before_dot:
+            if c.type == "constant":
+                return self._node_text(c, source).strip()
+            if c.type == "identifier":
+                return self._node_text(c, source).strip()
+            if c.type == "self":
+                return "self"
+        return None
 
     # ------------------------------------------------------------- import parse
 

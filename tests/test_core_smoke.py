@@ -428,41 +428,79 @@ def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
 
 def test_sweep_strays_kills_orphans_not_daemon(monkeypatch):
     """NEW: find_strays + sweep_strays must return orphan 'cairn serve' pids while
-    excluding the launchd-managed daemon pid, the daemon's spawned child, and the
-    current process. Guards the stray-sweeper that self-heals DB lock contention."""
+    excluding the launchd-managed daemon pid, the daemon's spawned child, the
+    current process, and non-server cmdlines a pattern scan false-positives on.
+    Guards the stray-sweeper that self-heals DB lock contention (audit F1/F2:
+    candidates are verified by anchored cmdline token match + lsof db-holding,
+    all mocked -- no real process is touched)."""
     from cairn.mcp_server import lifecycle as lc
 
-    fake_orphan = 99999  # nonexistent pid; terminate_pid must tolerate it
+    fake_orphan = 99999  # the orphaned stdio server (`cairn serve`, editor shape)
     daemon_child = 77777  # the server process spawned by the launchd daemon
     daemon_pid = 88888
     own_pid = os.getpid()
+    grep_pid = 66666  # `grep cairn serve`: pgrep -f matches it; token check must not
 
     # Mock running_pid (launchd daemon).
     monkeypatch.setattr(lc, "running_pid", lambda: daemon_pid)
 
-    # Discriminate the two pgrep call shapes: `pgrep -P <daemon>` (child
-    # discovery) returns the daemon's spawned server child, while the broad
-    # `pgrep -f cairn serve run` returns the full candidate set.
+    # Full cmdline table served to `ps -p <pid> -o command=`: self and the
+    # daemon BOTH look like real servers holding the db -- only the protected
+    # set can save them.
+    cmdlines = {
+        daemon_pid: "/usr/local/bin/cairn serve run --port 9876 --read-only",
+        daemon_child: "/bin/zsh -c cairn helper",
+        own_pid: "/usr/local/bin/cairn serve",
+        fake_orphan: "/usr/local/bin/cairn serve",
+        grep_pid: "grep cairn serve",
+    }
+
+    # Discriminate the subprocess shapes the sweeper issues: `pgrep -P
+    # <daemon>` (child discovery), `pgrep -f 'cairn serve'` (candidate
+    # superset), `ps -p <pid> -o command=` (per-pid cmdline), and `lsof -F p
+    # <db>` (db holders: daemon + orphan hold THIS db).
     def fake_run(args, *rest, **kw):
         res = MagicMock()
-        res.returncode = 0
-        if "-P" in args:
+        res.stderr = ""
+        if args[0] == "pgrep" and "-P" in args:
             # daemon's direct children
+            res.returncode = 0
             res.stdout = f"{daemon_child}\n"
+        elif args[0] == "pgrep":
+            # candidate superset from the broad pattern scan
+            res.returncode = 0
+            res.stdout = (
+                f"{daemon_pid}\n{daemon_child}\n{own_pid}\n"
+                f"{fake_orphan}\n{grep_pid}\n"
+            )
+        elif args[0] == "ps":
+            pid = int(args[args.index("-p") + 1])
+            cmd = cmdlines.get(pid)
+            res.returncode = 0 if cmd else 1
+            res.stdout = (cmd + "\n") if cmd else ""
+        elif args[0] == "lsof":
+            res.returncode = 0
+            res.stdout = f"p{daemon_pid}\nf3\np{fake_orphan}\np{own_pid}\n"
         else:
-            # main stray scan: daemon, its child, own pid, and an orphan
-            res.stdout = f"{daemon_pid}\n{daemon_child}\n{own_pid}\n{fake_orphan}\n"
+            res.returncode = 1
+            res.stdout = ""
         return res
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
     strays = lc.find_strays("/fake/.kg")
+    assert strays == [fake_orphan], "only the orphan qualifies as a stray"
     assert daemon_pid not in strays, "daemon pid must be excluded"
     assert daemon_child not in strays, "daemon's spawned child must be excluded"
     assert own_pid not in strays, "own pid must be excluded"
-    assert fake_orphan in strays, "orphan pid must be returned"
+    assert grep_pid not in strays, "non-server cmdline must be excluded"
 
-    # terminate_pid must not raise on a nonexistent pid
+    # terminate_pid must tolerate a nonexistent pid (fully mocked: no real
+    # signal is ever sent).
+    def fake_kill(pid, sig):
+        raise ProcessLookupError()
+
+    monkeypatch.setattr("os.kill", fake_kill)
     lc.terminate_pid(fake_orphan, timeout=0.1)
 
 

@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import List, Optional
 
+from ..paths import resolve_store as _resolve_store
 from ..utils.git import _run_git
 from . import builder
 from . import scanner as scanner_mod
-from .schema import get_db
+from .schema import get_db, note_contention, build_lock
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +152,8 @@ def reindex_paths(
                         "(SELECT id FROM symbols WHERE file_id = ?)",
                         (file_id,),
                     )
-                except sqlite3.OperationalError:
+                except sqlite3.OperationalError as e:
+                    note_contention("incremental.delete_embeddings", error=e)
                     logger.debug("embeddings table missing", exc_info=True)
                 cur.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
                 cur.execute("DELETE FROM parse_errors WHERE file_path = ?", (stored_path,))
@@ -169,7 +172,8 @@ def reindex_paths(
                         "DELETE FROM pending_sync WHERE path IN (?, ?)",
                         (abs_path, stored_path),
                     )
-                except sqlite3.OperationalError:
+                except sqlite3.OperationalError as e:
+                    note_contention("incremental.pending_sync_delete", error=e)
                     logger.debug("pending_sync table missing", exc_info=True)
                     pass  # table not present on this schema
                 conn.execute("COMMIT")
@@ -193,7 +197,7 @@ def reindex_paths(
                 continue
 
             pf = parser.parse(abs_path)
-            name_to_symbol_ids = {}
+            name_to_symbol_ids: dict = {}
             # Store files.path as repo-relative (portable); abs_path is only
             # used to stat the file for size/mtime inside insert_parsed_file.
             insert_parsed_file(
@@ -206,7 +210,8 @@ def reindex_paths(
             # rebuilt to portable paths) so either clears its rows.
             try:
                 conn.execute("DELETE FROM pending_sync WHERE path IN (?, ?)", (rel_to_repo, abs_path))
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as e:
+                note_contention("incremental.pending_sync_clear", error=e)
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
             conn.execute("COMMIT")
@@ -275,29 +280,54 @@ def incremental_update(
     resolver failures). Uses a longer busy_timeout than interactive MCP tool
     calls so it can wait out lock contention from concurrently-running
     `cairn serve` processes rather than fail after 5s.
+
+    The write phase runs under the schema build lock (LOCK_NB, non-blocking)
+    so a repo build's _clear_repo can never interleave with these writes --
+    the lock's own contract ("a build racing an update"). A concurrent build
+    raises RuntimeError; the caller surfaces it as "retry later". The diff
+    scan stays OUTSIDE the lock so a long scan doesn't hold it.
     """
+    started = time.time()
     conn = get_db(db_path, busy_timeout_ms=20000)
-    repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
-    all_paths: list[str] = []
-    for r in repos:
-        repo_path = scanner_mod.resolve_repo_path(workspace, r)
-        changed = _changed_source_files(repo_path, conn=conn)
-        if not changed:
-            continue
-        for f in changed:
-            all_paths.append(str(repo_path / f))
-    result = reindex_paths(conn, workspace, all_paths)
+    try:
+        repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
+        all_paths: list[str] = []
+        for r in repos:
+            repo_path = scanner_mod.resolve_repo_path(workspace, r)
+            changed = _changed_source_files(repo_path, conn=conn)
+            if not changed:
+                continue
+            for f in changed:
+                all_paths.append(str(repo_path / f))
 
-    # Refresh derived indexes when something actually changed. An incremental
-    # edit can change which symbols are public, who calls whom, and which edges
-    # are exact -- so the precomputed dataflow rows and transitive closure must
-    # be rebuilt, or cached lookups silently serve stale answers. Best-effort:
-    # a failure here is reported as an error but does not undo the reindex.
-    derived_errors: list[str] = []
-    if result["reindexed"] or result["deleted"]:
-        derived_errors = _rebuild_derived_indexes(conn)
+        with build_lock(db_path or str(_resolve_store().db)):
+            result = reindex_paths(conn, workspace, all_paths)
 
-    conn.close()
+            # Refresh derived indexes when something actually changed. An incremental
+            # edit can change which symbols are public, who calls whom, and which edges
+            # are exact -- so the precomputed dataflow rows and transitive closure must
+            # be rebuilt, or cached lookups silently serve stale answers. Best-effort:
+            # a failure here is reported as an error but does not undo the reindex.
+            derived_errors: list[str] = []
+            if result["reindexed"] or result["deleted"]:
+                derived_errors = _rebuild_derived_indexes(conn)
+    finally:
+        conn.close()
+
+    # Persist an 'incremental' build_runs row. Best-effort (record_build_run
+    # swallows all errors). reindex_paths returns reindexed/deleted counts but
+    # no resolution mix or parse-error breakdown, so those columns stay NULL --
+    # best-available per spec 6.2 rather than a refactor of the progress
+    # contract. Recorded here (not inside the shared reindex_paths) so the
+    # `cairn sync` CLI path records its own 'sync' row without double-counting.
+    builder.record_build_run(
+        db_path,
+        "incremental",
+        started_at=started,
+        duration_s=time.time() - started,
+        files=result["reindexed"],
+        skipped=result["deleted"],
+    )
     return {
         "repos_scanned": len(repos),
         "files_reindexed": result["reindexed"],

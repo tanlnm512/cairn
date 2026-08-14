@@ -5,6 +5,7 @@ decorates, plus helpers: ``_conn`` (graph DB connection), ``_store`` (workspace
 store resolution), ``_bundle`` (the OKFBundle for the current workspace), and
 ``_repo_of`` (symbol -> repo lookup).
 """
+
 from __future__ import annotations
 
 import os
@@ -43,6 +44,7 @@ from cairn.paths import resolve_store
 # If per-request config (e.g. testable read-only overrides without env vars)
 # is ever needed, wire ``ctx: Context`` through the tools and read from a
 # revived lifespan context — see docs/audit-remediation/spec.md (A1).
+
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
@@ -170,16 +172,151 @@ def _staleness_banner(conn, file_paths) -> str:
     )
 
 
+def _build_age_str(started_at) -> str | None:
+    """Human-readable age of a ``build_runs.started_at`` value, or None.
+
+    ``started_at`` is ISO-8601 (``builder._iso_ts``). Mirrors the doctor
+    command's ``_age_str`` (cli/system.py) but kept local so the server surface
+    doesn't pull in CLI deps. None when the value is missing or unparseable so
+    the status resource reports ``never`` rather than crashing.
+    """
+    from datetime import datetime, timezone
+
+    if not started_at:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+    if secs < 0:
+        return "just now"  # clock skew / a future-dated row
+    if secs >= 86400:
+        return f"{secs // 86400}d old"
+    if secs >= 3600:
+        return f"{secs // 3600}h old"
+    if secs >= 60:
+        return f"{secs // 60}m old"
+    return f"{secs}s old"
+
+
+def _health_block(conn) -> dict:
+    """Compute the ``health`` block for the status resource (spec §6.5 / T14).
+
+    Read-only + crash-proof: every probe is guarded so a missing table or
+    unresolvable backend degrades to a null/0 field rather than raising --
+    the status resource must never fail because a telemetry table is absent on
+    an unmigrated DB. Mirrors the query shape ``cairn doctor`` uses
+    (cli/system.py) but kept self-contained; the status resource is a separate
+    surface and must not import CLI code.
+
+    Fields:
+    - degradations: active backend degradations (embeddings hash fallback; ANN
+      unavailable when sqlite-vec was *expected*). Empty list when healthy.
+    - pending_sync: count of pending_sync rows (0 when the table is absent).
+    - last_build_age: age string of the newest build_runs row, or None
+      ("never") when none recorded.
+    - error_rate_24h: tool error rate over the last 24h (errors / total).
+    - tool_calls_24h / tool_errors_24h: the numerator/denominator behind the
+      rate, surfaced so the number is interpretable.
+    """
+    import time
+
+    degradations: list[str] = []
+
+    # Embeddings: silent hash fallback (configured 'local' but no
+    # sentence-transformers). An explicit CAIRN_EMBED_BACKEND=hash is an
+    # informed choice, not a degradation -- is_hash_fallback() already
+    # accounts for that.
+    try:
+        from cairn.graph.embeddings import is_hash_fallback
+
+        if is_hash_fallback():
+            degradations.append("embeddings=hash_fallback")
+    except Exception:
+        pass
+
+    # ANN: only a degradation when sqlite-vec was *expected* (env unset or
+    # '=sqlite-vec', the default) but unavailable. An explicit
+    # CAIRN_ANN_BACKEND=off is an informed choice -- mirrors the rationale in
+    # ann_index.ann_backend_enabled() and the doctor's _check_ann. Beyond the
+    # load probe, an embeddings-populated model with no vec0 table is also a
+    # degradation (semantic queries silently run the brute-force scan) --
+    # mirrors the doctor's index_exists probe.
+    try:
+        configured = (
+            os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
+            or "sqlite-vec"
+        )
+        if configured == "sqlite-vec":
+            from cairn.graph.ann_index import ann_backend_enabled, index_exists
+            from cairn.graph.embeddings import current_model, embed_count
+
+            if not ann_backend_enabled():
+                degradations.append("ann=unavailable")
+            elif embed_count(conn) > 0 and not index_exists(conn, current_model()):
+                degradations.append("ann=no_index")
+    except Exception:
+        pass
+
+    try:
+        row = conn.execute("SELECT COUNT(*) AS c FROM pending_sync").fetchone()
+        pending_sync = row["c"] if row else 0
+    except sqlite3.Error:
+        pending_sync = 0
+
+    last_build_age: str | None = None
+    try:
+        brow = conn.execute(
+            "SELECT started_at FROM build_runs ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if brow:
+            last_build_age = _build_age_str(brow["started_at"])
+    except sqlite3.Error:
+        pass
+
+    # tool_metrics.invoked_at is a raw time.time() epoch float (the buffered
+    # sinks enqueue time.time() directly), so a numeric cutoff is correct here
+    # -- mirroring the doctor's _check_tool_health.
+    cutoff = time.time() - 24 * 3600
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors "
+            "FROM tool_metrics WHERE invoked_at >= ?",
+            (cutoff,),
+        ).fetchone()
+        total = row["total"] if row else 0
+        # SUM over zero rows is SQL NULL -> None; coerce to 0 so the rate and
+        # its display stay numeric when no tool calls were recorded.
+        errors = (row["errors"] if row else 0) or 0
+    except sqlite3.Error:
+        total, errors = 0, 0
+    error_rate_24h = (errors / total) if total else 0.0
+
+    return {
+        "degradations": degradations,
+        "pending_sync": pending_sync,
+        "last_build_age": last_build_age,
+        "error_rate_24h": error_rate_24h,
+        "tool_calls_24h": total,
+        "tool_errors_24h": errors,
+    }
+
+
 # --- Index/build status as a Resource ----------------------------------
 # Index freshness is browsable data, exposed as a subscribable resource a
 # client lists under resources/ and polls cheaply.
+
 
 @mcp.resource("cairn://status")
 def status_resource() -> str:
     """Index freshness + build stats for the current workspace.
 
     Returns a compact status block: symbol/edge/file counts, edges-resolved
-    fraction, files pending reindex (staleness), and the DB path.
+    fraction, files pending reindex (staleness), the DB path, and a ``health``
+    block (backend degradations, pending-sync count, last-build age, 24h tool
+    error rate -- spec observability-telemetry §6.5 / T14).
     """
 
     try:
@@ -193,11 +330,17 @@ def status_resource() -> str:
     except Exception as e:
         return f"cairn status: unavailable ({e})"
 
-    # Staleness: total files pending reindex.
+    # Staleness + health: read-only probes against the same DB. ``_health_block``
+    # is computed first because it guards every table read internally (a missing
+    # pending_sync/build_runs/tool_metrics table degrades to 0/never, never
+    # raises); the bare staleness SELECT below can still raise on an unmigrated
+    # DB, but by then health is already populated, so the block stays complete.
     stale_count = 0
+    health: dict | None = None
     try:
         conn = _conn()
         try:
+            health = _health_block(conn)
             row = conn.execute("SELECT COUNT(*) AS c FROM pending_sync").fetchone()
             stale_count = row["c"] if row else 0
         finally:
@@ -223,4 +366,22 @@ def status_resource() -> str:
     ]
     if stats.get("skipped_total"):
         lines.append(f"  skipped files: {stats['skipped_total']}")
+
+    # Health block (spec §6.5 / T14): backend degradations, pending-sync count,
+    # last-build age, 24h tool error rate. ``health`` is None only when the
+    # staleness/health connection itself failed -- then report unavailable
+    # rather than omitting the block, so the surface shape stays stable.
+    lines.append("health:")
+    if health is None:
+        lines.append("  unavailable")
+    else:
+        degs = health["degradations"]
+        deg_str = "none" if not degs else ", ".join(degs)
+        lines.append(f"  degradations: {deg_str}")
+        lines.append(f"  pending_sync: {health['pending_sync']}")
+        lines.append(f"  last_build_age: {health['last_build_age'] or 'never'}")
+        lines.append(
+            f"  error_rate_24h: {health['error_rate_24h']:.1%} "
+            f"({health['tool_errors_24h']} errors / {health['tool_calls_24h']} calls)"
+        )
     return "\n".join(lines)

@@ -22,6 +22,7 @@ from .._common import (
 from ..merge import (
     _merge_json_file,
     _rm_if_exists,
+    _rm_if_ours,
     _rm_tree_if_cairn,
     _strip_mcp,
     _write_file,
@@ -67,12 +68,47 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
     return res
 
 
-def uninstall(ws: Path, res: InstallResult) -> None:
-    """Remove cairn files/entries for Droid/Factory."""
+def _mcp_remove_droid(res: InstallResult) -> None:
+    """Undo install's ``droid mcp add`` registration when the CLI is present.
+
+    The registration lives outside the workspace (droid's own user config), so
+    stripping ``.factory/`` alone leaves a stale server entry. Mirrors the
+    install subprocess pattern (list-args, capture_output, timeout,
+    check=False); a missing CLI means install never registered (it wrote the
+    file fallback instead), so there is nothing to remove.
+    """
+    if not shutil.which("droid"):
+        return
+    try:
+        subprocess.run(
+            ["droid", "mcp", "remove", "cairn"],
+            capture_output=True, timeout=10, check=False,
+        )
+        res.notes.append("Removed MCP registration via `droid mcp remove cairn`.")
+    except (subprocess.SubprocessError, OSError):
+        res.notes.append("`droid mcp remove cairn` failed; the registration may remain.")
+
+
+def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
+    """Remove cairn files/entries for Droid/Factory.
+
+    Droid's file wiring is workspace-scoped (install ignores ``scope`` for
+    files), so ``scope`` is accepted only for signature parity with the other
+    clients. The MCP registration is NOT file-scoped -- install runs
+    ``droid mcp add`` at any scope when the CLI is present -- so the matching
+    ``droid mcp remove`` runs at any scope too.
+
+    Commands/droids are only removed when byte-identical to what the
+    installer writes, so a user's own file at the same path survives.
+    """
     _rm_tree_if_cairn(ws / ".factory" / "skills" / "cairn", res)
     for n in _SLASH_COMMANDS:
-        _rm_if_exists(ws / ".factory" / "commands" / f"{n}.md", res)
-    _rm_if_exists(ws / ".factory" / "droids" / "cairn-explorer.md", res)
-    _rm_if_exists(ws / ".factory" / "droids" / "knowledge-steward.md", res)
+        _rm_if_ours(ws / ".factory" / "commands" / f"{n}.md",
+                    _read_template(f"commands/{n}.md"), res)
+    _rm_if_ours(ws / ".factory" / "droids" / "cairn-explorer.md",
+                _claude_agent_md(), res)
+    _rm_if_ours(ws / ".factory" / "droids" / "knowledge-steward.md",
+                _claude_agent_md("cursor/knowledge-steward.json"), res)
     _rm_if_exists(ws / ".factory" / "droids" / "cairn-agent.md", res)  # legacy filename cleanup
     _strip_mcp(ws / ".factory" / "mcp.json", res)
+    _mcp_remove_droid(res)

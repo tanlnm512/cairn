@@ -84,11 +84,32 @@ def _stale_artifacts() -> list[Path]:
 
 # ─── removal steps ─────────────────────────────────────────────────────────
 
-def _remove_agents(ws: str, clients: list[str] | None, dry_run: bool) -> None:
+def _remove_agents(ws: str, clients: list[str] | None, dry_run: bool,
+                   scope: str = "workspace") -> None:
     click.echo("➜ Agent integrations")
-    from ..agent_install import uninstall
+    from ..agent_install import CLIENTS, detect_clients, uninstall
 
-    report = uninstall(ws, clients=clients or None)
+    if dry_run:
+        # agent_install.uninstall has no dry-run mode of its own -- without
+        # this gate, a `--dry-run` run would DELETE the wiring it claims to
+        # preview. Report the would-be targets instead of executing them.
+        if clients:
+            names = sorted(set(CLIENTS)) if "all" in clients else sorted(set(clients))
+        else:
+            names = [d.client for d in detect_clients(ws) if d.detected]
+        # The effective scope is part of the preview contract: it must render
+        # even when no clients are detected (a clean machine running
+        # `uninstall --full --dry-run` still needs to see "(scope: all)").
+        click.echo(f"  would: strip cairn wiring (scope: {scope})")
+        if not names:
+            click.echo("  (no clients detected — nothing to remove)")
+            return
+        for c in names:
+            click.echo(f"    would: strip wiring for {c}")
+        click.echo("  would: remove cross-tool .agents/ copies (workspace scope)")
+        return
+
+    report = uninstall(ws, clients=clients or None, scope=scope)
     targeted = {r.client for r in report.results}
     if not targeted:
         click.echo("  (no clients detected — nothing to remove)")
@@ -192,9 +213,14 @@ def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
         if reg_path.exists():
             try:
                 import json
+                from ..agent_install.merge import _atomic_write_text
+
                 reg = json.loads(reg_path.read_text(encoding="utf-8"))
                 reg.pop(str(Path(ws).resolve()), None)
-                reg_path.write_text(json.dumps(reg, indent=2, sort_keys=True), encoding="utf-8")
+                # Atomic: a crash mid-rewrite must not leave a truncated
+                # registry behind (same discipline as the client configs).
+                # Same json.dumps format paths.py writes, just crash-safe.
+                _atomic_write_text(reg_path, json.dumps(reg, indent=2, sort_keys=True))
             except Exception:
                 pass
     click.echo("  ✓ done")
@@ -274,10 +300,15 @@ def _dir_size(path: Path) -> int:
 @click.option("--client", "clients", multiple=True,
               type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "all"]),
               help="Limit agent removal to these clients (repeatable).")
+@click.option("--scope", "scope", type=click.Choice(["workspace", "global", "all"]), default="workspace",
+              show_default=True,
+              help="Agent-wiring scope to remove: 'workspace' (./.claude/ etc.), "
+                   "'global' (~/.claude/ etc. + user-scope MCP registrations), or 'all'. "
+                   "--full implies 'all'.")
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: resolved).")
 @click.option("--dry-run", is_flag=True, help="Show what would be removed; change nothing.")
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmations (implied by --full).")
-def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, ws_arg, dry_run, yes):
+def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, scope, ws_arg, dry_run, yes):
     """Uninstall cairn: agent wiring, hooks, graph store, and the cairn binary.
 
     By default removes everything for the CURRENT workspace. Use --full to wipe
@@ -328,8 +359,11 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
 
     installed_via = _detect_install_method() if do_package else "unknown"
 
+    # Agent-wiring scope: --full tears down everything a `--scope global`
+    # install wrote too, so no cairn hooks/registrations outlive it.
+    agents_scope = "all" if full else scope
     if do_agents and (dry_run or confirm("agent integrations")):
-        _remove_agents(ws, list(clients) or None, dry_run)
+        _remove_agents(ws, list(clients) or None, dry_run, agents_scope)
         click.echo("")
 
     if do_hooks and (dry_run or confirm("git hooks")):

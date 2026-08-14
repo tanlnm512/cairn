@@ -1,4 +1,4 @@
-.PHONY: dist evals verify-no-code-change release help
+.PHONY: dist evals ci-local ci-local-all verify-no-code-change release help
 
 # Build the wheel + sdist into dist/. Produces:
 #   dist/cairn_intel-<version>-py3-none-any.whl
@@ -15,6 +15,25 @@ dist:
 
 evals:
 	uv run python scripts/run_skill_evals.py
+
+# Clean-room CI replication: run the CI jobs in a bare Linux container via
+# Apple's `container` CLI (Virtualization framework -- no Docker needed).
+# No host PATH/HOME/agent CLIs/state -- the same environment a GitHub runner
+# has. Catches non-hermetic tests (green locally only because of the dev
+# machine) BEFORE pushing. Mirrors .github/workflows/ci.yml job-by-job;
+# venv/pip/pre-commit caches persist under .cache/ci-local/ (gitignored).
+# Jobs: scripts/ci-local.sh [test|test-all|security|typecheck|precommit|build|bench]
+# CI_LOCAL_ARCH=linux/amd64 runs the x86-64 image via Rosetta for runner parity.
+PYTHON_VERSION ?= 3.12
+ci-local:
+	scripts/ci-local.sh test $(PYTHON_VERSION)
+	@echo ""
+	@echo "clean-room suite green"
+
+ci-local-all:
+	scripts/ci-local.sh test-all
+	@echo ""
+	@echo "clean-room matrix green (3.10-3.14)"
 
 # Verify a "comments/docstrings-only" change didn't alter executable code.
 # Compares AST (docstrings blanked) of changed .py files. Run before staging
@@ -58,10 +77,13 @@ release:
 		echo "(cz not available -- run 'uv sync --extra dev' first)"
 
 help:
-	@echo "Targets: dist evals verify-no-code-change release help"
+	@echo "Targets: dist evals ci-local ci-local-all verify-no-code-change release help"
 	@echo ""
 	@echo "  dist                   build wheel + sdist into dist/ (for distribution)"
 	@echo "  evals                  validate skill eval specs"
+	@echo "  ci-local               clean-room CI replication in a Linux container"
+	@echo "                         (PYTHON_VERSION=3.11 to pick; apple container, not docker)"
+	@echo "  ci-local-all           the full 3.10-3.14 test matrix, sequentially"
 	@echo "  verify-no-code-change  AST-check that changed .py files are comment-only"
 	@echo "                         (REF=HEAD~1 to verify a commit; default: uncommitted)"
 	@echo "  release                print the release walkthrough + preview the next bump"

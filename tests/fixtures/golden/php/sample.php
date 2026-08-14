@@ -41,6 +41,11 @@ class User implements Greeter {
         $logger?->info("greet called");
         return "Hello " . $this->getName();
     }
+
+    public function label(): string {
+        $fmt = new App\Utils\Formatter();
+        return App\Utils\Formatter::format($this->getName());
+    }
 }
 
 function greet_all(array $users): void {
@@ -49,4 +54,10 @@ function greet_all(array $users): void {
     }
 }
 
+function sanitize_all(array $rows): array {
+    return App\Utils\sanitize($rows);
+}
+
 greet_all([]);
+sanitize_all([]);
+App\Utils\sanitize([]);

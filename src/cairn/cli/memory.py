@@ -188,11 +188,19 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
         click.echo(f"Captured {recorded} memories from session {session_id}.")
     else:
         # Decoupled fallback: queue a memory-extract task for any agent.
+        # Privacy floor (audit F2): the task .md persists the facts dict
+        # (body + extensions) in the bundle, so the transcript must be
+        # redacted BEFORE queueing -- truncation alone keeps a secret intact.
+        from ..memory.privacy import strip_private_data
+
         task = create_task(
             bundle,
             "memory-extract",
             f"session-{session_id}",
-            facts={"transcript": transcript[:8000], "session_id": session_id},
+            facts={
+                "transcript": strip_private_data(transcript)[:8000],
+                "session_id": session_id,
+            },
         )
         click.echo(f"No agent available; queued memory-extract task {task.id}.")
     conn.close()
@@ -406,7 +414,12 @@ def memory_forget(memory_path, db, knowledge):
     if ok:
         click.echo(f"Deleted memory: '{memory_path}'.")
     else:
-        click.echo(f"Memory not found: '{memory_path}'.", err=True)
+        # False covers both "no such memory" and the store's namespace
+        # refusal (delete_memory won't touch concepts outside memory/).
+        click.echo(
+            f"Memory not found (or outside the memory/ namespace): '{memory_path}'.",
+            err=True,
+        )
         sys.exit(1)
 
 

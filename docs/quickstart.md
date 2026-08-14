@@ -30,6 +30,7 @@ Optional extras, for when you need them:
 pip install cairn-intel[semantic]   # sentence-transformers + numpy: embeddings + reranking
 pip install cairn-intel[ann]        # native ANN index (sqlite-vec) for large corpora
 pip install cairn-intel[watch]      # watchdog: file-watch hooks for live re-indexing
+pip install cairn-intel[otlp]       # optional OpenTelemetry export (CAIRN_OTEL_ENDPOINT; off by default)
 ```
 
 `[semantic]` is heavy (torch, hundreds of MB) — skip it unless you want

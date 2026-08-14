@@ -188,7 +188,7 @@ In addition to the 27 tools, the server exposes a browsable resource:
 
 | Resource | Purpose |
 |----------|---------|
-| `cairn://status` | Index freshness + build stats for the current workspace (symbol/edge/file counts, edges-resolved fraction, files pending reindex). Read via `read_resource("cairn://status")` to decide whether to trust a graph query or first prompt `cairn update`. |
+| `cairn://status` | Index freshness + build stats + health for the current workspace (symbol/edge/file counts, edges-resolved fraction, files pending reindex), plus a `health` block: active backend degradations (embeddings hash fallback, ANN unavailable), pending-sync count, last-build age, and the 24h tool error rate. Read via `read_resource("cairn://status")` to decide whether to trust a graph query or first prompt `cairn update` — and whether the store is degraded before blaming the query. |
 
 ---
 

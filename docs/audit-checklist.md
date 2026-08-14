@@ -30,9 +30,12 @@
 | 6 | Agent-install file-write safety | agent_install/ | `merge.py`, `_common.py`, `detect.py`, `clients/*` | 1 entry (comments-only code drift) | After client changes |
 | 7 | Supply chain & CI gates | tooling | `pyproject.toml`, `uv.lock`, `.github/workflows/`, `.pre-commit-config.yaml` | — | Quarterly |
 | 8 | Doc / test consistency | docs / tests | `README.md`, `CHANGELOG.md`, `docs/`, `tests/` | docs-version-drift memory | Per release |
+| 9 | Silent degradation / telemetry coverage | telemetry + fallback paths | `telemetry/events.py`, `telemetry/sink.py`, `ann_index.py`, `semantic.py`, `embeddings.py`, `schema.py`, `metric_buffering.py` | observability-telemetry spec §4.2 gaps | Quarterly |
 
-> **Tier 1 = scopes 1–3.** `BUGS.md` recurrence + the live locking branch put the
-> trust/integrity cluster at the highest blast radius. Run those together.
+> **Tier 1 = scopes 1–3 and 9.** `BUGS.md` recurrence + the live locking branch
+> put the trust/integrity cluster at the highest blast radius; scope 9 (silent
+> degradation) is the spec's headline goal (G1) and its failures are invisible
+> by definition. Run those together.
 
 ---
 
@@ -269,11 +272,65 @@ memory). Run per release.
 
 ---
 
+## Scope 9 — Silent degradation / telemetry coverage
+
+**What:** the fallback and degradation paths that fail silently — the exact
+failure mode this codebase is built to avoid (spec §1 problem statement, goal
+G1). A silent `return False` / `return None` on a degraded path is the recurring
+bug class; telemetry makes it loud and `cairn doctor` makes it gateable (G3).
+
+**Load context:** `explore("emit")`, `explore("note_contention")`,
+`explore("semantic_search")`, `recall_memory("observability-telemetry")`,
+`search_knowledge("event catalog", type_filter="Wiki")`.
+
+For the audited area, enumerate every fallback/degradation path and verify each
+emits a durable signal (spec §6.4 event catalog):
+
+- [ ] **ANN fallback** — `ann_index.try_load` / `ann_query` / the `semantic.py`
+      brute-force branch emit `ann_fallback` (`reason`: `load_failed` |
+      `not_installed` | `no_index` | `disabled` | `query_error`). No silent
+      `return False` / `return None` degrade path left.
+- [ ] **Hash-embed fallback** — `embeddings.warn_hash_fallback_once` callers
+      emit `hash_fallback`. The one-time-warning path is still wired.
+- [ ] **Lock contention** — each `except sqlite3.OperationalError` site routes
+      through `note_contention(site)`, emitting `lock_contention` with a `site`
+      tag. Swallow semantics are preserved (still non-fatal), just no longer
+      silent.
+- [ ] **Result truncation** — `metric_buffering._truncate_result` emits
+      `truncate_result` (`tool`, `chars` bucket). Every central truncation is
+      counted.
+- [ ] **Empty results** — the engine query layer (`semantic.semantic_search`,
+      `explore.explore`, the `search_symbols` MCP wrapper) emits `empty_result`
+      (`query_kind`). Per-tool identity folds into `query_kind`; correlate with
+      `semantic_backend` for the per-backend view.
+- [ ] **Semantic provenance** — the `semantic.semantic_search` return path emits
+      `semantic_backend` (`backend`: `ann` | `brute` | `hash`, `fusion`,
+      `rerank`, `ms` / `n_results` buckets). The backend mix is measurable per
+      session.
+- [ ] **Doctor surfaces them** — `cairn doctor` (spec §6.5) reports each of the
+      above as PASS/WARN/FAIL and exits non-zero on any FAIL. A degradation that
+      emits an event but isn't surfaced by doctor is an incomplete loop.
+- [ ] **Master switch works** — `CAIRN_TELEMETRY=off` provably silences every
+      emitter (no-op module). A new emitter that ignores the gate breaks the
+      invariant (spec §5.1).
+- [ ] **Cardinality bounded** — every event's attr values are enums, short fixed
+      tags, or bucketed values (spec §6.4). No paths and no free text from user
+      input in counters (enforced by the cardinality-guard test).
+- [ ] **Metadata, never payloads** — no code content, query text, tool args, or
+      results are recorded (spec §3). Any future payload must pass through
+      `memory/privacy.strip_private_data` first and be opt-in.
+
+> A path that degrades without emitting is the finding that matters most here —
+> it is the bug class the whole spec exists to close (success metric: "no silent
+> `return False` / `return None` degradation paths left").
+
+---
+
 ## Triggers (run an audit outside cadence)
 
 - **A bug fix in the scope** — audit the scope after the 3rd fix in the same area
   (recurrence signal).
 - **Heavy churn** — >20% of a scope's LOC changed in a window.
-- **Before a release** — run Tier 1 (scopes 1–3) before tagging.
+- **Before a release** — run Tier 1 (scopes 1–3, 9) before tagging.
 - **New dependency / parser / client** — run the matching scope (5, 6, or 7).
 - **Onboarding** — running a scope audit is the fastest way to learn an area.

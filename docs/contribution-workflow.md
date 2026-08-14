@@ -46,6 +46,32 @@ uv run pre-commit run --all-files     # ruff F-only, gitleaks, yaml/toml, debug-
 
 If a hook fails → fix the file → re-run. Do NOT `--no-verify` past a failure.
 
+### Optional: replicate CI exactly before pushing (apple container)
+
+`make ci-local` re-runs the CI **test job** in a bare Linux container via
+Apple's [`container`](https://github.com/apple/container) CLI (Virtualization
+framework — no Docker needed). No host PATH/HOME/agent CLIs leak in, so it
+catches non-hermetic tests (green locally only because of the dev machine)
+before you push. Other CI jobs are available too:
+
+```bash
+make ci-local                          # test job (Python 3.12): skill evals + core + full suite
+make ci-local PYTHON_VERSION=3.11      # same, on another version
+make ci-local-all                      # the full 3.10–3.14 matrix, sequentially
+scripts/ci-local.sh security           # pip-audit (hard gate) + bandit (advisory)
+scripts/ci-local.sh typecheck          # mypy (advisory)
+scripts/ci-local.sh precommit          # pre-commit run --all-files
+scripts/ci-local.sh build              # wheel + sdist + import check
+scripts/ci-local.sh bench              # bench + advisory baseline comparison
+CI_LOCAL_ARCH=linux/amd64 make ci-local   # GitHub-runner parity via Rosetta
+```
+
+Venv/pip/pre-commit caches persist under `.cache/ci-local/` (gitignored), so
+only the first run per Python version pays the install. The first-ever run
+also boots the container VM and pulls the `python:<ver>-bookworm` image.
+GitHub-only jobs (PR-title gate, dependency review, artifact/PR-comment
+uploads) have no local equivalent.
+
 ## 4. Commit (conventional — required by CI and by `cz bump`)
 
 ```bash

@@ -19,6 +19,7 @@ from ..graph.queries import (
     search_symbols,
 )
 from ..graph.tokenize import BASE_STOP_WORDS, simple_tokenize
+from ..graph.schema import note_contention
 from ..okf.bundle import OKFBundle
 
 # Keyword -> (intent, layer). Order matters: first match wins.
@@ -183,7 +184,8 @@ def _query_graph_hybrid(conn: sqlite3.Connection, tokens: List[str]) -> Dict:
     for term in search_terms:
         try:
             rows = search_symbols(conn, term, limit=per_token_limit)
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            note_contention("router.query_graph_hybrid", error=e)
             continue
         for r in rows:
             d = dict(r)

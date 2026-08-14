@@ -227,12 +227,20 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 
     NO symbols/files JOIN (unlike queries.semantic_search).
     Reads concept metadata from the bundle, not from DB.
+
+    Every degrade branch (backend unavailable, no knowledge embeddings, an
+    unexpected error) records one ``semantic_unavailable`` signal on the
+    'knowledge' surface (F4) -- previously this returned ``[]`` with no trace
+    at all, so a silently-empty semantic path was indistinguishable from "no
+    matches".
     """
     try:
         from cairn.graph import embeddings as emb
         if not emb.embeddings_available():
+            _note_semantic_off("unavailable")
             return []
         if emb.embed_knowledge_count(conn) == 0:
+            _note_semantic_off("no_embeddings")
             return []
 
         # Under the dep-free hash fallback the cosine signal is token-overlap
@@ -282,7 +290,22 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
             })
         return out
     except Exception:
+        _note_semantic_off("error")
         return []  # never crash — mirrors promotion.py:138 pattern
+
+
+def _note_semantic_off(reason: str) -> None:
+    """Best-effort semantic_unavailable signal for the knowledge surface.
+
+    Never raises (the degrade path must stay crash-proof); no-op when the
+    telemetry package itself is unavailable.
+    """
+    try:
+        from cairn.telemetry import note_semantic_unavailable
+
+        note_semantic_unavailable("knowledge", reason)
+    except Exception:
+        logger.debug("knowledge semantic_unavailable emit failed", exc_info=True)
 
 
 def _cosine_scan(rows, q_blob, q_dim, threshold):

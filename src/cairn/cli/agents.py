@@ -205,12 +205,19 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
 @click.option("--client", "clients", multiple=True,
               type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "all"]),
               help="Which clients to remove from (repeatable). Default: detected.")
+@click.option("--scope", "scope", type=click.Choice(["workspace", "global", "all"]), default="workspace",
+              show_default=True,
+              help="Which install scope to remove: 'workspace' (./.claude/ etc.), 'global' "
+                   "(~/.claude/ etc. + user-scope MCP registrations), or 'all'. "
+                   "Match this to the --scope you installed with.")
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: resolved).")
-def uninstall_agents(clients, ws_arg):
+def uninstall_agents(clients, scope, ws_arg):
     """Remove cairn entries from AI client configs. Idempotent.
 
     Strips the cairn MCP server and hooks from config files (preserving
-    other entries) and deletes cairn skill/command/subagent files.
+    other entries) and deletes cairn skill/command/subagent files. Use
+    --scope global (or all) to also remove what a `install-agents --scope
+    global` wrote under ~.
     """
     from ..agent_install import uninstall
 
@@ -222,7 +229,7 @@ def uninstall_agents(clients, ws_arg):
     else:
         ws = os.getcwd()
     cl = list(clients) or None
-    report = uninstall(ws, clients=cl)
+    report = uninstall(ws, clients=cl, scope=scope)
 
     targeted = {r.client for r in report.results}
     if not targeted:
@@ -231,10 +238,13 @@ def uninstall_agents(clients, ws_arg):
 
     for res in report.results:
         click.echo(f"=== {res.client} ===")
-        if res.written:
-            for p in res.written:
-                click.echo(f"  {p}")
-        else:
+        for p in res.written:
+            click.echo(f"  {p}")
+        for p in res.skipped:
+            click.echo(f"  skipped: {p}")
+        for note in res.notes:
+            click.echo(f"  note: {note}")
+        if not (res.written or res.skipped or res.notes):
             click.echo("  (nothing to remove)")
         click.echo("")
 
@@ -242,6 +252,8 @@ def uninstall_agents(clients, ws_arg):
         click.echo("=== cross-tool (.agents/) ===")
         for p in report.cross_tool.written:
             click.echo(f"  {p}")
+        for p in report.cross_tool.skipped:
+            click.echo(f"  skipped: {p}")
 
     click.echo("")
     click.echo("Done. Git hooks: run `cairn hooks uninstall` separately if needed.")

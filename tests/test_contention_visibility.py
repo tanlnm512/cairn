@@ -1,0 +1,349 @@
+"""Tests for lock-contention visibility (task T03).
+
+Every ``except sqlite3.OperationalError`` swallow site now calls
+``cairn.graph.schema.note_contention(site)`` so a silently-absorbed "database is
+locked" surfaces at least once per (process, site) instead of vanishing. This
+mirrors the process-global one-time-warning pattern of
+``warn_hash_fallback_once`` (graph/embeddings.py) and ``warn_ann_fallback_once``
+(graph/ann_index.py).
+
+Covers:
+  1. ``note_contention`` -- rate-limited: warns once per site, distinct sites
+     warn independently.
+  2. Warning message carries the site tag + remediation context (busy_timeout,
+     ``cairn serve start`` single-daemon mode).
+  3. Thread-safe: concurrent callers from flusher threads warn exactly once.
+  4. Integration: a simulated ``OperationalError`` at the ``ann_query`` swallow
+     site produces exactly one warning across two calls and leaves the swallow
+     semantics unchanged (still returns ``None``).
+  5. Regression: a fresh-DB init (single process, new file) stays silent -- the
+     idempotent "duplicate column" migration path is NOT contention and must not
+     trip a false-positive warning.
+  6. ``note_contention`` emits a durable ``lock_contention`` telemetry event
+     (for doctor/metrics aggregation) alongside its WARNING.
+"""
+from __future__ import annotations
+
+import logging
+import sqlite3
+import threading
+
+import pytest
+
+from cairn.graph import schema
+from cairn.graph.schema import note_contention
+
+
+@pytest.fixture(autouse=True)
+def _reset_contention_guard():
+    """Reset the process-global one-time-warning guard around each test.
+
+    ``_CONTENTION_WARNED`` is process-global and never reset in production
+    (a contention event is sticky for the process lifetime), so tests that
+    assert "fires once" must clear it to stay repeatable within the same
+    process. Mirrors the ``_ANN_FALLBACK_WARNED`` reset in
+    test_ann_fallback_warning.py and ``_HASH_FALLBACK_WARNED`` in
+    test_embedding_backend_quality.py.
+    """
+    schema._CONTENTION_WARNED.clear()
+    yield
+    schema._CONTENTION_WARNED.clear()
+
+
+def _warning_records(caplog):
+    return [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+# ---------------------------------------------------------------------------
+# 1. note_contention -- rate-limited, once per site, independent across sites
+# ---------------------------------------------------------------------------
+
+
+def test_warns_once_per_site_independent_sites(caplog):
+    """Same site warns once; a different site warns independently."""
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    note_contention("test.site_a")
+    note_contention("test.site_a")  # silent -- already warned this process
+    note_contention("test.site_a")  # silent
+    note_contention("test.site_b")  # warns -- distinct site
+    note_contention("test.site_b")  # silent
+
+    warnings = _warning_records(caplog)
+    assert len(warnings) == 2, "one warning per (process, site)"
+    # record.args[0] is the site tag (the %s in the format string).
+    assert [w.args[0] for w in warnings] == ["test.site_a", "test.site_b"]
+
+
+def test_guard_persists_until_reset(caplog):
+    """The guard is sticky: a second call after the first is a true no-op
+    (not just 'no log' -- the dict records the site as already warned)."""
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    note_contention("test.sticky")
+    assert schema._CONTENTION_WARNED.get("test.sticky") is True
+    assert len(_warning_records(caplog)) == 1
+
+    note_contention("test.sticky")  # no-op
+    assert schema._CONTENTION_WARNED.get("test.sticky") is True
+    assert len(_warning_records(caplog)) == 1, "second call produces no new warning"
+
+
+# ---------------------------------------------------------------------------
+# 2. Warning message content (site tag + remediation context)
+# ---------------------------------------------------------------------------
+
+
+def test_warning_message_includes_site_and_remediation(caplog):
+    """The warning names the site and carries the remediation context."""
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    note_contention("module.function")
+
+    warnings = _warning_records(caplog)
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "module.function" in msg, "site tag present"
+    assert "busy_timeout" in msg, "busy_timeout remediation context present"
+    assert "another cairn process holds the DB" in msg, "contention cause named"
+    assert "cairn serve start" in msg, "single-daemon-mode hint present"
+
+
+# ---------------------------------------------------------------------------
+# 3. Thread-safety -- concurrent callers warn exactly once
+# ---------------------------------------------------------------------------
+
+
+def test_thread_safe_concurrent_callers_warn_once(caplog):
+    """Swallow sites are reachable from flusher daemon threads; the lock-guarded
+    dict must serialize them so a burst of concurrent hits yields one warning."""
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    site = "test.concurrent"
+    n = 32
+    barrier = threading.Barrier(n)
+
+    def worker():
+        barrier.wait()
+        note_contention(site)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    warnings = _warning_records(caplog)
+    assert len(warnings) == 1, f"exactly one warning under {n} concurrent callers"
+    assert warnings[0].args[0] == site
+    assert schema._CONTENTION_WARNED.get(site) is True
+
+
+# ---------------------------------------------------------------------------
+# 4. Integration -- simulated OperationalError at the ann_query swallow site
+#    (the representative site named in the task). Verifies the real call path
+#    warns exactly once across two calls and leaves semantics unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_ann_query_contention_warns_once_semantics_unchanged(monkeypatch, caplog):
+    """A locked vec0 query is swallowed (ann_query returns None) and surfaces
+    exactly one contention warning across two calls -- the second is silent."""
+    from cairn.graph import ann_index as ann
+
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    # Reach the ``conn.execute(...)`` that the except wraps by making the two
+    # preflight checks pass without needing sqlite-vec or a built index.
+    monkeypatch.setattr(ann, "try_load", lambda conn: True)
+    monkeypatch.setattr(ann, "index_exists", lambda conn, model: True)
+
+    class _LockedConn:
+        """Stand-in connection whose query raises exactly as a locked vec0
+        MATCH would. ``enable_load_extension`` is never reached because
+        ``try_load`` is patched, so this only needs ``execute``."""
+
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    conn = _LockedConn()
+    first = ann.ann_query(conn, "all-MiniLM-L6-v2", b"\x00" * 16, 5)
+    second = ann.ann_query(conn, "all-MiniLM-L6-v2", b"\x00" * 16, 5)
+
+    # Swallow semantics unchanged: ANN unavailable -> callers fall back, not
+    # "zero results". Both calls must return None (not raise).
+    assert first is None, "ann_query swallows OperationalError -> None"
+    assert second is None, "second call still returns None (no raise)"
+
+    warnings = _warning_records(caplog)
+    assert len(warnings) == 1, "exactly one contention warning per site per process"
+    assert "ann_index.ann_query" in warnings[0].getMessage()
+
+
+def test_second_swallow_site_is_independent_of_ann(monkeypatch, caplog):
+    """A different swallow site warns independently of the ann_query site,
+    proving the guard is keyed per-site across modules (the note_contention
+    imported into ann_index shares schema._CONTENTION_WARNED)."""
+    from cairn.graph import ann_index as ann
+
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    monkeypatch.setattr(ann, "try_load", lambda conn: True)
+    monkeypatch.setattr(ann, "index_exists", lambda conn, model: True)
+
+    class _LockedConn:
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    # First: ann_query site warns.
+    assert ann.ann_query(_LockedConn(), "m", b"\x00" * 16, 5) is None
+    # A distinct site then warns independently.
+    note_contention("other.site")
+
+    warnings = _warning_records(caplog)
+    assert len(warnings) == 2
+    assert {w.args[0] for w in warnings} == {"ann_index.ann_query", "other.site"}
+
+
+# ---------------------------------------------------------------------------
+# 5. Regression -- a fresh-DB init must NOT trip a contention false positive
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_db_init_emits_no_contention_warning(tmp_path, caplog):
+    """A first-run DB init (single process, brand-new file) must stay silent.
+
+    Regression guard: ``transitive_edges`` declares ``target_id`` in its CREATE
+    TABLE, so the retained ``TRANSITIVE_EDGES_TARGET_ID_MIGRATION`` raises
+    "duplicate column name" on every fresh DB. That idempotent re-application
+    is NOT lock contention -- it must not trip ``note_contention("schema.
+    migration")``, or every first-run ``cairn build`` would cry wolf ("another
+    cairn process holds the DB") and train users to ignore the very signal T03
+    exists to surface.
+    """
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+
+    db_path = str(tmp_path / "fresh.db")
+    conn = schema.get_db(db_path)  # creates the file + applies all migrations
+    try:
+        # Sanity: the migration that previously caused the false positive ran
+        # and was recorded as applied via the idempotent duplicate-column path.
+        applied = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = ?",
+            ("transitive_edges.target_id",),
+        ).fetchone()
+        assert applied is not None and applied[0] == "applied"
+    finally:
+        conn.close()
+
+    # No contention warning fired, and the guard was never set for this site.
+    contention_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "contention" in r.getMessage()
+    ]
+    assert contention_warnings == [], (
+        "fresh-DB init must not warn about contention; got: "
+        f"{[r.getMessage() for r in contention_warnings]}"
+    )
+    assert "schema.migration" not in schema._CONTENTION_WARNED, (
+        "duplicate-column idempotent re-run must not set the contention guard"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. note_contention emits a durable lock_contention event (spec §6.4)
+# ---------------------------------------------------------------------------
+
+
+def test_note_contention_emits_lock_contention_event(monkeypatch):
+    """note_contention emits a ``lock_contention`` telemetry event alongside its
+    WARNING, so ``cairn doctor`` / ``cairn metrics --contention`` can aggregate
+    contention trends rather than rely on a one-time log line.
+
+    The event is gated by ``CAIRN_TELEMETRY`` internally; the WARNING is
+    unconditional (operational). This test asserts the event path; the log path
+    is covered by sections 1-4 above.
+    """
+    from cairn.telemetry import sink as _sink, LOCK_CONTENTION
+
+    monkeypatch.delenv("CAIRN_TELEMETRY", raising=False)  # default: on-but-local
+    _sink._BUFFER.clear()  # single-threaded test; ignore events from other tests
+    note_contention("test.event_site")
+
+    rows = list(_sink._BUFFER)
+    names = [r[1] for r in rows]
+    assert LOCK_CONTENTION in names, "note_contention must emit a lock_contention event"
+    # The site tag rides in the attrs_json slot (4th tuple element).
+    event_rows = [r for r in rows if r[1] == LOCK_CONTENTION]
+    assert any("test.event_site" in (r[3] or "") for r in event_rows), (
+        "site tag must be carried in the event attrs"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. note_contention discriminates: non-lock OperationalErrors are NOT contention
+# ---------------------------------------------------------------------------
+
+
+def test_non_lock_operational_error_is_not_contention(monkeypatch, caplog):
+    """A schema/availability-shaped OperationalError must not fire the signal.
+
+    The FTS backfill and migration swallow sites catch OperationalError for
+    reasons that are NOT contention ("no such module: FTS5", "no such table",
+    "duplicate column"). Before the discrimination, each emitted a WARNING
+    asserting another process held the DB plus a durable lock_contention
+    event -- phantom signals that doctor's concurrency check and
+    ``metrics --contention`` counted as real contention.
+    """
+    from cairn.telemetry import sink as _sink, LOCK_CONTENTION
+
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+    _sink._BUFFER.clear()  # single-threaded test; ignore events from other tests
+
+    for msg in (
+        "no such module: FTS5",
+        "no such table: symbols_fts_data",
+        "duplicate column name: target_id",
+        "unknown error",
+    ):
+        note_contention("test.discriminated", error=sqlite3.OperationalError(msg))
+
+    assert _warning_records(caplog) == [], "non-lock errors must not warn"
+    assert schema._CONTENTION_WARNED.get("test.discriminated") is None, (
+        "non-lock errors must not consume the once-per-site guard either"
+    )
+    names = [r[1] for r in _sink._BUFFER]
+    assert LOCK_CONTENTION not in names, "no phantom lock_contention event"
+
+    # The same site with a genuine lock error still fires exactly once.
+    note_contention(
+        "test.discriminated",
+        error=sqlite3.OperationalError("database is locked"),
+    )
+    assert len(_warning_records(caplog)) == 1
+    names = [r[1] for r in _sink._BUFFER]
+    assert LOCK_CONTENTION in names
+
+
+def test_backfill_fts_missing_module_emits_no_contention(tmp_path, caplog):
+    """End-to-end: an FTS5-unavailable DB degrades silently, no contention.
+
+    Drives _maybe_backfill_fts against a DB whose FTS shadow table is missing
+    (the availability failure the except clause exists for) and asserts no
+    lock_contention warning fires -- the exact false positive the audit
+    flagged on doctor's concurrency check.
+    """
+    caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
+    conn = sqlite3.connect(str(tmp_path / "nofts.db"))
+    try:
+        schema._apply_schema(conn)
+        conn.execute("DROP TABLE symbols_fts_data")
+        conn.commit()
+        schema._maybe_backfill_fts(conn)
+    finally:
+        conn.close()
+
+    assert _warning_records(caplog) == [], (
+        "FTS-unavailability must not be reported as lock contention"
+    )

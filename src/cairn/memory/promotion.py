@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
+from ..graph import note_contention
 from . import store as store_mod
 from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
 
@@ -37,15 +38,19 @@ def capture_memory(
     memory supersedes the old one (chains the version history and flips the
     old to ``memory_is_latest: false``). Returns ``superseded`` in the result.
 
-    The body is redacted via :func:`strip_private_data` before scoring and
-    storage, so secrets (API keys, bearer tokens, ``<private>`` tags) never
-    reach disk regardless of which caller reached this function. The hook
-    path already redacts before calling here; this is the floor for every
-    other caller (the MCP ``record_memory`` tool, the CLI).
+    The body AND title are redacted via :func:`strip_private_data` before
+    scoring and storage, so secrets (API keys, bearer tokens, connection
+    strings, ``<private>`` tags) never reach disk regardless of which caller
+    reached this function. The title matters as much as the body: it is
+    persisted verbatim, duplicated into the concept description, and
+    slugified into the concept_id/filename (audit F3). The hook path already
+    redacts before calling here; this is the floor for every other caller
+    (the MCP ``record_memory`` tool, the CLI).
     """
     from .privacy import strip_private_data
 
     body = strip_private_data(body)
+    title = strip_private_data(title)
     with bundle.lock():
         superseded_id = _find_supersession_candidate(
             conn, bundle, type_, title, body, supersedes_threshold
@@ -89,13 +94,33 @@ def capture_memory(
     }
 
 
+def _sanitize_ref_context(context: str) -> str:
+    """Redact + hard-truncate a ref context before it reaches memory_refs.
+
+    The ``context`` column stores the raw query that surfaced a memory
+    (search_memory passes its ``query`` verbatim, audit F10); queries can
+    quote secrets (a pasted connection string, an API key being searched
+    for). :func:`strip_private_data` handles the known secret shapes; the
+    200-char cap bounds anything the regex floor misses. Refs are analytics,
+    not correctness -- a truncated context loses nothing.
+    """
+    from .privacy import strip_private_data
+
+    return strip_private_data(context or "")[:_MAX_REF_CONTEXT_CHARS]
+
+
+# Hard cap on the memory_refs.context column (analytics; see _sanitize_ref_context).
+_MAX_REF_CONTEXT_CHARS = 200
+
+
 def record_reference(
     conn: sqlite3.Connection, memory_path: str, session_id: str, context: str = ""
 ):
     """Record that a session referenced a memory (increments cross_session_refs).
 
-    Best-effort: ref-counts are analytics, not correctness, so lock errors are
-    swallowed.
+    The context is redacted + truncated via ``_sanitize_ref_context`` before
+    it is persisted. Best-effort: ref-counts are analytics, not correctness,
+    so lock errors are swallowed.
     """
     import uuid
 
@@ -108,11 +133,12 @@ def record_reference(
                 memory_path,
                 session_id,
                 datetime.now(timezone.utc).isoformat(),
-                context,
+                _sanitize_ref_context(context),
             ),
         )
         conn.commit()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        note_contention("promotion.record_reference", error=e)
         # Lock contention or read-only connection -- ref counting is analytics.
         pass
 
@@ -122,8 +148,10 @@ def record_references_batch(
 ):
     """Insert N memory_refs in ONE transaction (best-effort).
 
-    ``refs`` is a list of (memory_path, context) tuples. Batching avoids
-    acquiring the SQLite write lock N times under concurrent servers.
+    ``refs`` is a list of (memory_path, context) tuples. Contexts are
+    redacted + truncated via ``_sanitize_ref_context`` before persisting
+    (audit F10). Batching avoids acquiring the SQLite write lock N times
+    under concurrent servers.
     """
     if not refs:
         return
@@ -131,7 +159,7 @@ def record_references_batch(
 
     now = datetime.now(timezone.utc).isoformat()
     rows = [
-        (uuid.uuid4().hex, memory_path, session_id, now, context)
+        (uuid.uuid4().hex, memory_path, session_id, now, _sanitize_ref_context(context))
         for memory_path, context in refs
     ]
     try:
@@ -141,7 +169,8 @@ def record_references_batch(
             rows,
         )
         conn.commit()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
+        note_contention("promotion.record_references_batch", error=e)
         # Lock contention or read-only connection -- ref counting is analytics.
         pass
 
@@ -345,10 +374,10 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
         # Decisions/patterns/mistakes -> compass; architecture-ish -> wiki.
         if mtype in ("decision", "pattern", "mistake", "workaround"):
             new_type = "Compass"
-            new_id = f"compass/promoted-{store_mod.slugify(concept.title)}-{unique_suffix}"
+            new_id = f"compass/promoted-{store_mod.slugify(concept.title or '')}-{unique_suffix}"
         else:
             new_type = "Wiki-Feature"
-            new_id = f"wiki/features/promoted-{store_mod.slugify(concept.title)}-{unique_suffix}"
+            new_id = f"wiki/features/promoted-{store_mod.slugify(concept.title or '')}-{unique_suffix}"
         concept.type = new_type
         concept.extensions["memory_status"] = "canonical"
         # Clear the tier label: search_memory()/router.py filter on truthy
@@ -597,17 +626,22 @@ def evolve_memory(
     stores the new version. At least one of new_title / new_body must differ
     from the old memory.
 
-    The new body is redacted via :func:`strip_private_data` before storage,
-    mirroring ``capture_memory``'s floor -- the MCP ``memory_evolve`` tool and
-    the CLI both reach this function, so without redaction here a secret in an
-    evolved body would persist verbatim (the same two-codepath divergence that
-    once left ``record_memory`` unredacted). ``new_body`` is None when only the
-    title changes; the old body was already redacted at capture time.
+    The new body AND title are redacted via :func:`strip_private_data`
+    before storage, mirroring ``capture_memory``'s floor -- the MCP
+    ``memory_evolve`` tool and the CLI both reach this function, so without
+    redaction here a secret in an evolved body or the new title would
+    persist verbatim (the same two-codepath divergence that once left
+    ``record_memory`` unredacted; titles additionally leak into the
+    description field and the slugified filename, audit F3). ``new_body``
+    is None when only the title changes; the old body was already redacted
+    at capture time.
     """
     from .privacy import strip_private_data
 
     if new_body is not None:
         new_body = strip_private_data(new_body)
+    if new_title is not None:
+        new_title = strip_private_data(new_title)
     with bundle.lock():
         old = store_mod.get_memory(bundle, memory_path)
         if old is None:

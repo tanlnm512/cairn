@@ -193,3 +193,49 @@ def test_cg_bench_help_registered():
     assert "--suite" in result.output
     assert "--save" in result.output
     assert "--compare" in result.output
+
+
+# --- CLI JSON output (CI path: timestamp + timings) ----------------------
+
+def _run_bench_cli(extra_args):
+    """Invoke `cairn bench` on a tiny corpus; return the CliRunner result."""
+    from click.testing import CliRunner
+    from cairn.cli import main
+    runner = CliRunner()
+    return runner.invoke(main, [
+        "bench", "--suite", "perf",
+        "--n-files", "5", "--complexity", "low",
+        "--embed-backend", "hash", "--repeats", "1",
+        *extra_args,
+    ])
+
+
+class TestBenchCliJson:
+    def test_json_payload_has_timestamp_and_timings(self, tmp_path, monkeypatch):
+        """--json emits a machine-readable payload: ISO timestamp + per-op timings.
+
+        This is the shape the CI bench job uploads as an artifact and compares
+        against the rolling baseline.
+        """
+        from datetime import datetime
+
+        # Pin CAIRN_DB: the perf suite restores it to whatever it saw on entry
+        # (a value the CLI sets to its own temp DB), so without a pin the
+        # leaked path would outlive this test inside the shared process.
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "bench_cli.db"))
+        result = _run_bench_cli(["--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert "timestamp" in payload
+        datetime.fromisoformat(payload["timestamp"])  # valid ISO 8601
+        assert payload["symbols"] > 0
+        op_names = [op["name"] for op in payload["ops"]]
+        assert any("build" in n for n in op_names)
+        assert all("median_ms" in op for op in payload["ops"])
+
+    def test_default_output_stays_human(self, tmp_path, monkeypatch):
+        """Without --json the command prints the rich table, not a JSON dump."""
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "bench_cli.db"))
+        result = _run_bench_cli([])
+        assert result.exit_code == 0, result.output
+        assert not result.stdout.lstrip().startswith("{")

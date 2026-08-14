@@ -26,6 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from cairn.graph.schema import get_db
 from cairn.paths import resolve_store
+from cairn.utils.logging import configure_logging
 
 # Wire the metric-buffering conn factory BEFORE importing any tools_*.py:
 # the first @instrument-wrapped tool call would otherwise hit a None factory.
@@ -53,14 +54,79 @@ from . import tools_memory   # noqa: F401
 _EXPECTED_TOOL_COUNT = 27
 
 
+def _drain_buffered_telemetry() -> None:
+    """Synchronously drain every buffered telemetry sink (best-effort).
+
+    The parent-death watchdog exits via ``os._exit(0)`` from a non-main
+    thread, which bypasses ``atexit`` entirely -- so the sinks' atexit drains
+    (telemetry sink ``_flush_all``, ``embed_buffering._flush``) never run and
+    up to 30s of buffered events/tool_metrics, the OTLP side buffer, and 15s
+    of queued memory embeddings would be silently lost on a NORMAL session
+    end (client disconnect). Direct flush calls are the robust route:
+    ``atexit`` only fires on main-thread interpreter shutdown, so there is
+    nothing to hook from the watchdog thread. Each flush is individually
+    isolated so one failing sink can't block the others, and a drain failure
+    must never prevent the exit that follows it.
+    """
+    try:
+        from cairn.telemetry import flush as _telemetry_flush
+
+        _telemetry_flush()  # events buffer
+    except Exception:
+        pass
+    try:
+        from cairn.telemetry import otel as _otel
+
+        _otel.flush()  # OTLP side buffer (no-op unless CAIRN_OTEL_ENDPOINT)
+    except Exception:
+        pass
+    try:
+        from .metric_buffering import _flush_metrics
+
+        _flush_metrics()  # tool_metrics buffer
+    except Exception:
+        pass
+    try:
+        from . import embed_buffering
+
+        embed_buffering._flush()  # queued memory embeddings
+    except Exception:
+        pass
+
+
+def _watch_parent_loop() -> None:
+    """Body of the parent-death watchdog thread (see _install_exit_watchdog).
+
+    Module-level (not nested) so the drain-then-exit contract is unit-testable
+    without spawning the thread.
+    """
+    try:
+        parent = os.getppid()
+    except OSError:
+        _drain_buffered_telemetry()
+        os._exit(0)
+    if parent <= 1:
+        return  # already orphaned/unsupported (e.g. some containers) — skip
+    while True:
+        time.sleep(5.0)
+        try:
+            current = os.getppid()
+        except OSError:
+            _drain_buffered_telemetry()
+            os._exit(0)
+        if current != parent:
+            _drain_buffered_telemetry()
+            os._exit(0)
+
+
 def _install_exit_watchdog():
     """Ensure the server dies when its parent (the MCP client) dies.
 
     Two mechanisms: SIGTERM/SIGINT -> SystemExit in the main thread, and a
     background daemon thread polling the parent pid (reparented to init on
-    POSIX) -> SystemExit. Deliberately does NOT read stdin: the MCP SDK's
-    anyio transport is the sole reader of the stdin fd, and reading it here
-    steals bytes from JSON-RPC messages.
+    POSIX) -> buffered-telemetry drain + os._exit(0). Deliberately does NOT
+    read stdin: the MCP SDK's anyio transport is the sole reader of the stdin
+    fd, and reading it here steals bytes from JSON-RPC messages.
     """
     def _signal_handler(_signum, _frame):
         raise SystemExit(0)
@@ -72,23 +138,7 @@ def _install_exit_watchdog():
             # Non-main thread or unsupported signal — best-effort.
             pass
 
-    def _watch_parent():
-        try:
-            parent = os.getppid()
-        except OSError:
-            return
-        if parent <= 1:
-            return  # already orphaned/unsupported (e.g. some containers) — skip
-        while True:
-            time.sleep(5.0)
-            try:
-                current = os.getppid()
-            except OSError:
-                os._exit(0)
-            if current != parent:
-                os._exit(0)
-
-    threading.Thread(target=_watch_parent, daemon=True).start()
+    threading.Thread(target=_watch_parent_loop, daemon=True).start()
 
 
 # Counts tools ACTUALLY registered on the FastMCP `mcp` instance rather than a
@@ -129,6 +179,15 @@ def run(transport: str = "stdio", port: int | None = None):
     down. Tool calls do not re-check freshness per-query, so edits made while
     this process is running require a restart to be picked up.
     """
+    # Central logging config for the server surface: reads CAIRN_LOG_LEVEL
+    # (default WARNING) and attaches a stderr handler to the `cairn` logger
+    # only — never root. stdout is the JSON-RPC channel under stdio, so every
+    # other diagnostic in this file is already hand-stamped to stderr; the
+    # logger handler follows the same rule. FastMCP pins its own level
+    # (_server_core.py:75) to avoid reconfiguring root, which this complements
+    # rather than fights (it configures the `cairn` namespace, not root).
+    configure_logging()
+
     # Fail fast if tool registration drifted.
     verify_tool_count()
 
@@ -263,21 +322,39 @@ def run(transport: str = "stdio", port: int | None = None):
         mcp.run()
 
 
+def _run_stray_sweep(db_path: str) -> int:
+    """One stray-sweep pass: kill orphan ``cairn serve`` PIDs + emit when any die.
+
+    Factored out of ``_install_stray_sweeper``'s loop so the
+    emit-on-genuine-kill behavior (spec §6.4 ``stray_swept``) is unit-testable
+    without spinning the daemon thread (which sleeps ``interval_s`` between
+    ticks). Returns the count killed. The emit fires ONLY when a pass actually
+    killed something -- an idle sweep (the common case) emits nothing, so a
+    healthy daemon doesn't generate a ``stray_swept`` row every 60s.
+    """
+    from ..mcp_server import lifecycle as lc
+    from cairn.telemetry import STRAY_SWEPT, emit as _emit
+
+    killed = lc.sweep_strays(db_path, log=True)
+    if killed:
+        # emit is best-effort (never raises); count is a small int (bounded).
+        _emit(STRAY_SWEPT, count=killed)
+    return killed
+
+
 def _install_stray_sweeper(db_path: str, interval_s: float = 60.0):
     """Background daemon thread that periodically evicts orphan `cairn serve` PIDs.
 
     Called only from the SSE daemon path (see run()). Best-effort: the sweep
     logs one line per kill to stderr. Idempotent start.
     """
-    from ..mcp_server import lifecycle as lc
-
     def _loop():
         # Delay the first sweep so a freshly-started daemon doesn't race a
         # still-initializing sibling it shouldn't touch.
         time.sleep(interval_s)
         while True:
             try:
-                lc.sweep_strays(db_path, log=True)
+                _run_stray_sweep(db_path)
             except Exception:
                 # The sweeper must never take the daemon down.
                 pass

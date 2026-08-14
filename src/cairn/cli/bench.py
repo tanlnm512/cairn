@@ -17,6 +17,7 @@ import os
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -107,10 +108,14 @@ def bench(
                 embed_backend=embed_backend,
             )
             payload = report.to_dict()
+            # Stamp the machine-readable payload so a saved baseline records
+            # when it was measured (consumed by the CI comparison + humans).
+            payload["timestamp"] = datetime.now(timezone.utc).isoformat()
             if not as_json:
                 report.to_table()
             else:
-                click.echo(report.to_json())
+                # Same content as report.to_json() plus the timestamp above.
+                click.echo(json.dumps(payload, indent=2))
         else:
             # Perf suite: use the given workspace, else generate a corpus.
             if workspace:
@@ -130,10 +135,14 @@ def bench(
                 repeats=repeats,
             )
             payload = report.to_dict()
+            # Stamp the machine-readable payload so a saved baseline records
+            # when it was measured (consumed by the CI comparison + humans).
+            payload["timestamp"] = datetime.now(timezone.utc).isoformat()
             if not as_json:
                 report.to_table()
             else:
-                click.echo(report.to_json())
+                # Same content as report.to_json() plus the timestamp above.
+                click.echo(json.dumps(payload, indent=2))
 
         # Save baseline if requested.
         if save:

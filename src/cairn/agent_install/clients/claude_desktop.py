@@ -55,6 +55,11 @@ def install_claude_desktop(workspace: str, force: bool, dry_run: bool,
     return res
 
 
-def uninstall(ws: Path, res: InstallResult) -> None:
-    """Remove cairn entries for Claude Desktop."""
+def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
+    """Remove cairn entries for Claude Desktop.
+
+    Claude Desktop is single-scope (one global config file), so ``scope`` is
+    accepted only for signature parity with the other uninstallers and
+    ignored: the global claude_desktop_config.json is always stripped.
+    """
     _strip_mcp(claude_desktop_config_path(), res)

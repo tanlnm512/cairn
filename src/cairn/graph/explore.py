@@ -189,10 +189,19 @@ def explore(
     # RRF Hybrid fusion or seed-only fallback.
     fusion_enabled = os.environ.get("CAIRN_FUSION", "1") != "0"
     if fusion_enabled or len(seeds) < 3:
+        # Degrade reason for the semantic_unavailable signal (F4): None while
+        # semantic expansion is usable; one of the bounded enum values when it
+        # isn't. Recorded once per process via note_semantic_unavailable --
+        # explore's FTS5-only degrade was previously completely invisible.
+        _sem_off_reason = None
         try:
             from cairn.graph import embeddings as emb
 
-            if emb.embeddings_available() and emb.embed_count(conn) > 0:
+            if not emb.embeddings_available():
+                _sem_off_reason = "unavailable"
+            elif emb.embed_count(conn) <= 0:
+                _sem_off_reason = "no_embeddings"
+            else:
                 # explore's quality story is "FTS5 seeds + optional semantic
                 # expansion." Under the dep-free hash fallback the semantic
                 # expansion carries only token-overlap signal -- flag it once so
@@ -200,30 +209,49 @@ def explore(
                 emb.warn_hash_fallback_once(logger, context="explore")
                 sem_rows = semantic_search(conn, query, limit=max_nodes)
                 seen = set(seed_ids)
-                for r in sem_rows:
-                    if r["id"] in seen:
+                for sr in sem_rows:
+                    if sr["id"] in seen:
                         continue
-                    seen.add(r["id"])
+                    seen.add(sr["id"])
                     seeds.append(
                         {
-                            "id": r["id"],
-                            "name": r["name"],
-                            "kind": r["kind"],
-                            "qualified_name": r["qualified_name"],
+                            "id": sr["id"],
+                            "name": sr["name"],
+                            "kind": sr["kind"],
+                            "qualified_name": sr["qualified_name"],
                             "line_start": None,  # semantic/fused hits don't carry line spans
-                            "file_path": r["file_path"],
-                            "repo": r["repo"],
+                            "file_path": sr["file_path"],
+                            "repo": sr["repo"],
                         }
                     )
-                    if r["id"]:
-                        seed_ids.add(r["id"])
-                    if r["name"]:
-                        seed_names.append(r["name"])
+                    if sr["id"]:
+                        seed_ids.add(sr["id"])
+                    if sr["name"]:
+                        seed_names.append(sr["name"])
         except Exception:
             logger.debug("semantic backend unavailable, FTS5-only", exc_info=True)
-            pass  # semantic backend not wired — degrade silently to FTS5-only
+            _sem_off_reason = "error"
+        if _sem_off_reason is not None:
+            try:
+                from cairn.telemetry import note_semantic_unavailable
+
+                note_semantic_unavailable("explore", _sem_off_reason)
+            except Exception:
+                logger.debug("explore semantic_unavailable emit failed", exc_info=True)
 
     if not seeds:
+        # No seed symbols anywhere -> the query matched nothing. Emit a durable
+        # empty_result (spec §6.4) so the empty-result rate is measurable per
+        # query kind, not just for semantic_search. Best-effort (never raises):
+        # telemetry is analytics. explore() has a single non-bench caller (the
+        # MCP explore tool), so this engine-layer seam is per-tool -- it cannot
+        # double-count against the shared search_symbols primitive.
+        try:
+            from cairn.telemetry import EMPTY_RESULT, emit as _emit
+
+            _emit(EMPTY_RESULT, query_kind="explore")
+        except Exception:
+            logger.debug("explore empty_result emit failed", exc_info=True)
         return {
             "seeds": [],
             "files": {},

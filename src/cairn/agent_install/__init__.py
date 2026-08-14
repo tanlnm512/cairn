@@ -300,10 +300,21 @@ def install(
     return InstallReport(detections, results, cross, git_installed, transport=transport)
 
 
-def uninstall(workspace: str, clients: Optional[list[str]] = None) -> InstallReport:
-    """Remove cairn entries from client configs. Idempotent."""
-    from ._common import _read_template  # noqa: F401  (kept for parity)
-    from .merge import _rm_if_cairn
+def uninstall(workspace: str, clients: Optional[list[str]] = None,
+              scope: str = "workspace") -> InstallReport:
+    """Remove cairn entries from client configs. Idempotent.
+
+    ``scope`` must mirror the install scope so global installs are actually
+    removed: ``"workspace"`` (default, the historical behavior) strips only
+    the workspace paths; ``"global"`` strips the home-dir trees a
+    ``--scope global`` install wrote (``~/.claude/``, ``~/.cursor/``,
+    ``~/.zcode/``, ``~/.config/opencode/``) and undoes the user-scope MCP
+    registrations (``claude mcp remove --scope user``, ``droid mcp remove``);
+    ``"all"`` does both. The cross-tool ``.agents/`` copies are always
+    workspace-scoped and removed from the workspace regardless.
+    """
+    from ._common import _claude_agent_md, _read_template
+    from .merge import _rm_if_ours, _rm_tree_if_cairn
 
     detections = detect_clients(workspace)
     if clients:
@@ -315,15 +326,21 @@ def uninstall(workspace: str, clients: Optional[list[str]] = None) -> InstallRep
     results: list[InstallResult] = []
     for client in [c for c in CLIENTS if c in target]:
         res = InstallResult(client)
-        _UNINSTALLERS[client](ws, res)
+        _UNINSTALLERS[client](ws, res, scope=scope)
         results.append(res)
 
-    # Cross-tool .agents/ copies.
+    # Cross-tool .agents/ copies (workspace-only). The skill package goes as
+    # a whole tree -- SKILL.md plus references/scripts/evals -- and the
+    # commands/agents only when byte-identical to what install writes, so a
+    # user's own file at the same path survives.
     cross = InstallResult("cross-tool")
-    _rm_if_cairn(ws / ".agents" / "skills" / "cairn" / "SKILL.md", cross)
+    _rm_tree_if_cairn(ws / ".agents" / "skills" / "cairn", cross)
     for name in _SLASH_COMMANDS:
-        _rm_if_cairn(ws / ".agents" / "commands" / f"{name}.md", cross)
-    _rm_if_cairn(ws / ".agents" / "agents" / "cairn-explorer.md", cross)
-    _rm_if_cairn(ws / ".agents" / "agents" / "knowledge-steward.md", cross)
+        _rm_if_ours(ws / ".agents" / "commands" / f"{name}.md",
+                    _read_template(f"commands/{name}.md"), cross)
+    _rm_if_ours(ws / ".agents" / "agents" / "cairn-explorer.md",
+                _claude_agent_md(), cross)
+    _rm_if_ours(ws / ".agents" / "agents" / "knowledge-steward.md",
+                _claude_agent_md("cursor/knowledge-steward.json"), cross)
 
     return InstallReport(detections, results, cross if target else None)

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
+from ..telemetry import TASK_LIFECYCLE, emit as _emit
 
 TASK_DIR = "_tasks"
 MAX_REVISE_CYCLES = 3
@@ -68,6 +69,22 @@ def create_task(
     parent_attempt: int = 0,
 ) -> Task:
     """Queue a new task. Returns the Task (already written to the bundle)."""
+    # Privacy floor (audit F9, mirrored from complete_task's result gate):
+    # memory-* task facts derive from user session content (memory-extract
+    # carries the raw conversation transcript), so scrub secret-shaped
+    # substrings BEFORE the concept is persisted -- facts land both in the
+    # rendered body and structurally in extensions. This is the single
+    # chokepoint every queueing backend passes through: the CLI's no-backend
+    # capture fallback, FileQueueBackend directly, and SubprocessBackend's
+    # fallback to it all create tasks here, so none can bypass the strip.
+    # Non-string facts (ints/lists used by non-memory kinds) pass through.
+    if task_kind.startswith("memory-") and facts:
+        from ..memory.privacy import strip_private_data
+
+        facts = {
+            k: strip_private_data(v) if isinstance(v, str) else v
+            for k, v in facts.items()
+        }
     task = Task(
         id=uuid.uuid4().hex[:12],
         task_kind=task_kind,
@@ -151,6 +168,14 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
         task.assigned_to = assigned_to
         task.claimed_at = _now()
         bundle.write_concept(_task_to_concept(task))
+        # task_lifecycle: claimed -- emit is best-effort (never raises), so a
+        # telemetry outage can't block a claim (spec §5.6).
+        _emit(
+            TASK_LIFECYCLE,
+            task_kind=task.task_kind,
+            event="claimed",
+            attempt=task.attempt,
+        )
         return task
     except Exception:
         # Something went wrong - clean up marker and re-raise
@@ -224,7 +249,20 @@ def complete_task(
 
     task.status = "done"
     task.completed_at = _now()
-    
+
+    # Privacy floor (audit F9): memory-* task results are derived from user
+    # session content (memory-extract embeds the transcript, memory-critic
+    # quotes draft bodies), so scrub secret-shaped substrings before the
+    # result body is persisted as a concept. Deliberately gated on a
+    # ``memory-`` kind prefix: compass/wiki/flow synthesis bodies are
+    # graph-derived and skip the pass (the strip is pattern-based and safe,
+    # but the narrow gate keeps the write path's redaction contract
+    # explicit).
+    if task.task_kind.startswith("memory-"):
+        from ..memory.privacy import strip_private_data
+
+        result = strip_private_data(result)
+
     # Write the result as a sibling concept.
     result_concept = OKFConcept(
         type="Task-Result",
@@ -313,6 +351,12 @@ def complete_task(
                     bundle.write_concept(flow_concept)
                     promoted = True
 
+                _emit(
+                    TASK_LIFECYCLE,
+                    task_kind=task.task_kind,
+                    event="completed",
+                    attempt=task.attempt,
+                )
                 return {
                     "task_id": task_id,
                     "promoted": promoted,
@@ -342,7 +386,13 @@ def complete_task(
                         },
                         parent_attempt=task.attempt,
                     )
-                    
+
+                    _emit(
+                        TASK_LIFECYCLE,
+                        task_kind=task.task_kind,
+                        event="revised",
+                        attempt=task.attempt,
+                    )
                     return {
                         "task_id": task_id,
                         "promoted": False,
@@ -353,6 +403,12 @@ def complete_task(
                     }
                 else:
                     # Max cycles reached - drop the task
+                    _emit(
+                        TASK_LIFECYCLE,
+                        task_kind=task.task_kind,
+                        event="dropped",
+                        attempt=task.attempt,
+                    )
                     return {
                         "task_id": task_id,
                         "promoted": False,

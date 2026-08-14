@@ -10,12 +10,13 @@ from pathlib import Path
 from .._common import (
     InstallResult,
     _claude_hook_command,
-    mcp_config_json,
     _read_template,
+    _uninstall_bases,
+    mcp_config_json,
 )
 from ..merge import (
     _merge_json_file,
-    _rm_if_exists,
+    _rm_if_ours,
     _strip_cursor_hooks,
     _strip_mcp,
     _write_file,
@@ -61,10 +62,23 @@ def install_cursor(workspace: str, force: bool, dry_run: bool,
     return res
 
 
-def uninstall(ws: Path, res: InstallResult) -> None:
-    """Remove cairn files/entries for Cursor."""
-    _strip_mcp(ws / ".cursor" / "mcp.json", res)
-    _rm_if_exists(ws / ".cursor" / "rules" / "cairn.mdc", res)
-    _rm_if_exists(ws / ".cursor" / "subagents" / "cairn-explorer.json", res)
-    _rm_if_exists(ws / ".cursor" / "subagents" / "knowledge-steward.json", res)
-    _strip_cursor_hooks(ws / ".cursor" / "hooks.json", res)
+def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
+    """Remove cairn files/entries for Cursor.
+
+    ``scope="workspace"`` (the default, historical behavior) strips
+    ``<ws>/.cursor/``. ``scope="global"`` strips ``~/.cursor/`` -- where a
+    ``--scope global`` install wrote mcp.json, rules, subagents, and hooks.
+    ``scope="all"`` does both.
+
+    Rules/subagents are only removed when byte-identical to what the
+    installer writes, so a user's own file at the same path survives.
+    """
+    for base in _uninstall_bases(ws, scope):
+        _strip_mcp(base / ".cursor" / "mcp.json", res)
+        _rm_if_ours(base / ".cursor" / "rules" / "cairn.mdc",
+                    _read_template("cursor/cairn.mdc"), res)
+        _rm_if_ours(base / ".cursor" / "subagents" / "cairn-explorer.json",
+                    _read_template("cursor/cairn-explorer.json"), res)
+        _rm_if_ours(base / ".cursor" / "subagents" / "knowledge-steward.json",
+                    _read_template("cursor/knowledge-steward.json"), res)
+        _strip_cursor_hooks(base / ".cursor" / "hooks.json", res)
