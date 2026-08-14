@@ -11,6 +11,12 @@ An edge is resolved only when exactly one candidate exists in a tier
 ``ambiguous`` and left unresolved. Precise-by-default queries trust only
 ``resolution='exact'`` rows; ``--fuzzy`` re-enables matching by the preserved
 ``target_name``.
+
+Crash-recovery contract (single-repo on-disk rebuilds): the on-disk path
+commits mid-rebuild (every 500 files, to bound WAL lock hold time), so a crash
+or killed build can leave the repo cleared-but-partial with no error on the
+next open. ``repo_build_in_progress`` reports that state; the recovery is to
+re-run ``cairn build --repo <repo>``.
 """
 from __future__ import annotations
 
@@ -435,7 +441,7 @@ def _build_graph_impl(
         # Warn when a 'scip' key doesn't correspond to any known scanner
         # language -- the importer won't find matching tree-sitter rows to
         # merge into, so the index contributes standalone rows only.
-        known_langs = set()
+        known_langs: set = set()
         try:
             known_langs.update(scanner_mod.EXTENSION_MAP.values())
         except Exception:
@@ -497,6 +503,11 @@ def _build_graph_impl(
     # A fresh in-memory DB starts empty, so the full-rebuild path can skip
     # clearing entirely -- there is nothing to clear.
     if repo_filter:
+        # Crash-window marker: durable BEFORE _clear_repo commits, so a crash
+        # at any later commit boundary (clear, periodic 500-file commits,
+        # resolve) leaves a detectable 'building' row instead of a silently
+        # partial repo. Cleared after the final resolve commit below.
+        _set_repo_build_state(conn, repo_filter)
         _clear_repo(conn, repo_filter)  # on-disk, single repo: still needed
     elif not in_memory:
         for repo_name in repos_seen:
@@ -527,6 +538,12 @@ def _build_graph_impl(
     # Third pass: resolve all edge targets
     resolution_stats = _resolve_all(conn, repo_edges_by_file, in_memory, verbose, progress)
 
+    if repo_filter:
+        # Single-repo rebuild complete and committed (insert final commit +
+        # per-repo resolve commits): out of the crash window, clear the marker.
+        # An exception above leaves it in place -- the repo really is partial.
+        _clear_repo_build_state(conn, repo_filter)
+
     # SCIP post-resolve hook: import pre-built indexes for languages whose
     # files were skipped above. SCIP's exact edges aren't re-resolved, so this
     # runs AFTER _resolve_all (tree-sitter's resolver would otherwise try to
@@ -544,7 +561,7 @@ def _build_graph_impl(
                     # Determine the repo id to attribute SCIP symbols to. Use
                     # the first repo seen (typical single-repo case); for
                     # multi-repo the index is still imported under one id.
-                    repo_for_scip = next(iter(repos_seen), "default") if repos_seen else "default"
+                    repo_for_scip = next((str(_r) for _r in repos_seen), "default")
                     try:
                         # ws_root lets the importer normalize each document's
                         # path to (repo_id, repo-relative) so SCIP rows share
@@ -894,6 +911,18 @@ def record_build_run(
     ``workers`` and ``session_id`` default from the environment
     (``CAIRN_WORKERS`` / ``CAIRN_SESSION``) so callers don't repeat that logic.
     """
+    # CAIRN_TELEMETRY=off stops build-run recording too ("Set off to stop all
+    # event and build-run recording", docs/configuration.md / spec 5.1). Lazy
+    # import mirrors schema.note_contention's gating so the telemetry package
+    # stays out of builder's import graph; a gating failure must not fail the
+    # write (analytics, not correctness).
+    try:
+        from ..telemetry import sink as _sink
+
+        if _sink.is_telemetry_off():
+            return
+    except Exception:
+        pass
     try:
         conn = get_db(db_path)
         try:
@@ -1098,6 +1127,44 @@ def insert_parse_error(cur, repo: str, path: str, error_message: str, stack_trac
            VALUES (?, ?, ?, ?, ?, ?)""",
         (_new_id(), path, repo, error_message, stack_trace, _now()),
     )
+
+
+def _set_repo_build_state(conn, repo_name: str) -> None:
+    """Mark a repo as mid-rebuild (crash window). Committed immediately so the
+    marker is durable before _clear_repo's commit makes old rows disappear."""
+    conn.execute(
+        """INSERT INTO repo_build_state (repo_id, state, started_at)
+           VALUES (?, 'building', ?)
+           ON CONFLICT(repo_id) DO UPDATE SET
+             state='building', started_at=excluded.started_at""",
+        (repo_name, _now()),
+    )
+    conn.commit()
+
+
+def _clear_repo_build_state(conn, repo_name: str) -> None:
+    """Clear the mid-rebuild marker once the rebuild's final commit landed."""
+    conn.execute("DELETE FROM repo_build_state WHERE repo_id = ?", (repo_name,))
+    conn.commit()
+
+
+def repo_build_in_progress(conn, repo: str) -> bool:
+    """True when ``repo`` carries a marker from an interrupted on-disk rebuild.
+
+    Such a repo is cleared-but-partial: the on-disk path commits every 500
+    files (a deliberate WAL-lock trade-off), so a crash mid-rebuild leaves
+    committed partial state with no error on later opens. Recovery contract:
+    re-run ``cairn build --repo <repo>``. False on DBs predating the
+    ``repo_build_state`` table -- no marker can exist there.
+    """
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM repo_build_state WHERE repo_id = ? AND state = 'building'",
+            (repo,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return False  # table missing on a pre-marker DB
+    return row is not None
 
 
 def _clear_repo(conn, repo_name: str):

@@ -12,10 +12,11 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
+from ..paths import resolve_store as _resolve_store
 from ..utils.git import _run_git
 from . import builder
 from . import scanner as scanner_mod
-from .schema import get_db, note_contention
+from .schema import get_db, note_contention, build_lock
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ def reindex_paths(
                 continue
 
             pf = parser.parse(abs_path)
-            name_to_symbol_ids = {}
+            name_to_symbol_ids: dict = {}
             # Store files.path as repo-relative (portable); abs_path is only
             # used to stat the file for size/mtime inside insert_parsed_file.
             insert_parsed_file(
@@ -279,30 +280,39 @@ def incremental_update(
     resolver failures). Uses a longer busy_timeout than interactive MCP tool
     calls so it can wait out lock contention from concurrently-running
     `cairn serve` processes rather than fail after 5s.
+
+    The write phase runs under the schema build lock (LOCK_NB, non-blocking)
+    so a repo build's _clear_repo can never interleave with these writes --
+    the lock's own contract ("a build racing an update"). A concurrent build
+    raises RuntimeError; the caller surfaces it as "retry later". The diff
+    scan stays OUTSIDE the lock so a long scan doesn't hold it.
     """
     started = time.time()
     conn = get_db(db_path, busy_timeout_ms=20000)
-    repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
-    all_paths: list[str] = []
-    for r in repos:
-        repo_path = scanner_mod.resolve_repo_path(workspace, r)
-        changed = _changed_source_files(repo_path, conn=conn)
-        if not changed:
-            continue
-        for f in changed:
-            all_paths.append(str(repo_path / f))
-    result = reindex_paths(conn, workspace, all_paths)
+    try:
+        repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
+        all_paths: list[str] = []
+        for r in repos:
+            repo_path = scanner_mod.resolve_repo_path(workspace, r)
+            changed = _changed_source_files(repo_path, conn=conn)
+            if not changed:
+                continue
+            for f in changed:
+                all_paths.append(str(repo_path / f))
 
-    # Refresh derived indexes when something actually changed. An incremental
-    # edit can change which symbols are public, who calls whom, and which edges
-    # are exact -- so the precomputed dataflow rows and transitive closure must
-    # be rebuilt, or cached lookups silently serve stale answers. Best-effort:
-    # a failure here is reported as an error but does not undo the reindex.
-    derived_errors: list[str] = []
-    if result["reindexed"] or result["deleted"]:
-        derived_errors = _rebuild_derived_indexes(conn)
+        with build_lock(db_path or str(_resolve_store().db)):
+            result = reindex_paths(conn, workspace, all_paths)
 
-    conn.close()
+            # Refresh derived indexes when something actually changed. An incremental
+            # edit can change which symbols are public, who calls whom, and which edges
+            # are exact -- so the precomputed dataflow rows and transitive closure must
+            # be rebuilt, or cached lookups silently serve stale answers. Best-effort:
+            # a failure here is reported as an error but does not undo the reindex.
+            derived_errors: list[str] = []
+            if result["reindexed"] or result["deleted"]:
+                derived_errors = _rebuild_derived_indexes(conn)
+    finally:
+        conn.close()
 
     # Persist an 'incremental' build_runs row. Best-effort (record_build_run
     # swallows all errors). reindex_paths returns reindexed/deleted counts but

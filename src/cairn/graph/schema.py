@@ -9,6 +9,7 @@ import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -260,6 +261,19 @@ CREATE TABLE IF NOT EXISTS build_runs (
     parse_errors INTEGER, skipped INTEGER,
     workers INTEGER,
     session_id TEXT
+);
+
+-- Crash-recovery marker for the single-repo on-disk rebuild path. That path
+-- commits mid-rebuild (every 500 files, to bound WAL lock hold time), so a
+-- crash leaves the repo cleared-but-partial. builder sets one 'building' row
+-- before clearing the repo and deletes it after the final commit;
+-- builder.repo_build_in_progress() reads it so a later change can surface
+-- "re-run cairn build --repo X". Additive-only, rides the idempotent
+-- executescript like build_runs.
+CREATE TABLE IF NOT EXISTS repo_build_state (
+    repo_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,          -- 'building'
+    started_at TIMESTAMP NOT NULL
 );
 
 -- Generic low-cardinality event log (ann_fallback, lock_contention, ...).
@@ -524,7 +538,9 @@ def get_db(
     if read_only:
         # URI form: a read-only connection. must exist -- a read-only open of
         # a missing file is an error a writer must fix via `cairn init && cairn build`.
-        uri = f"file:{path.resolve()}?mode=ro"
+        # quote(): '?', '#' and spaces in the path would otherwise parse as
+        # URI query/fragment separators and silently truncate mode=ro.
+        uri = f"file:{quote(str(path.resolve()))}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
     else:
         conn = sqlite3.connect(str(path))
@@ -575,6 +591,48 @@ def get_build_db() -> sqlite3.Connection:
     return conn
 
 
+def _remove_db_sidecars(db_path: str) -> None:
+    """Unlink "<db_path>-wal" and "<db_path>-shm" if present (missing = ok)."""
+    for suffix in ("-wal", "-shm"):
+        try:
+            os.unlink(db_path + suffix)
+        except OSError:
+            pass
+
+
+def swap_db_file(tmp_path: str, db_path: str) -> None:
+    """Atomically replace ``db_path`` with ``tmp_path``, WAL-safe.
+
+    os.replace alone is NOT enough when the OLD db ran in WAL mode: its
+    "<db_path>-wal"/"-shm" survive the swap, and the next open replays the old
+    committed WAL frames over the NEW main file -- silently serving the
+    pre-build graph (or SQLITE_CORRUPT). The caller must hold ``build_lock``
+    on the real db path. Steps: checkpoint the old WAL into the old main file
+    (best-effort), unlink the old sidecars, THEN replace. Open old
+    connections keep their fds on the unlinked inodes, so they are unaffected.
+    """
+    if os.path.exists(db_path):
+        # Checkpoint so committed frames land in the old main file before the
+        # sidecars go -- any straggler that still reads the old inode finds a
+        # self-consistent DB. Best-effort: a busy TRUNCATE leaves frames in a
+        # wal that is unlinked below regardless.
+        try:
+            old = sqlite3.connect(db_path)
+            try:
+                old.execute("PRAGMA busy_timeout = 5000")
+                old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                old.close()
+        except sqlite3.Error:
+            pass
+    _remove_db_sidecars(db_path)
+    os.replace(tmp_path, db_path)
+    # The tmp DB was opened in WAL mode (serving mode for readers); a clean
+    # close removes its sidecars, but a crash path can leave "<tmp>-wal"
+    # litter behind -- it has the wrong name to be replayed, drop it anyway.
+    _remove_db_sidecars(tmp_path)
+
+
 def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
     """Persist an in-memory build DB to disk with atomic swap and build locking."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -584,17 +642,29 @@ def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
         tmp_path = db_path + ".tmp"
         dest = sqlite3.connect(tmp_path)
         try:
-            with dest:
-                mem_conn.backup(dest)          # C-level page copy, no row iteration
-            dest.execute("PRAGMA foreign_keys = ON")
-            dest.execute("PRAGMA journal_mode = WAL")  # serving mode for readers
-            dest.commit()
+            try:
+                with dest:
+                    mem_conn.backup(dest)          # C-level page copy, no row iteration
+                dest.execute("PRAGMA foreign_keys = ON")
+                dest.execute("PRAGMA journal_mode = WAL")  # serving mode for readers
+                dest.commit()
+            except BaseException:
+                # A failed backup must not leave a half-written "<db>.tmp" on
+                # disk (the next successful build would swap it in). dest may
+                # have flipped to WAL mid-failure, so drop sidecars too.
+                _remove_db_sidecars(tmp_path)
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         finally:
             dest.close()
 
         # Atomic swap: readers with the old inode keep seeing the old DB,
-        # new connections see the fresh DB
-        os.replace(tmp_path, db_path)
+        # new connections see the fresh DB (old WAL sidecars removed -- see
+        # swap_db_file)
+        swap_db_file(tmp_path, db_path)
 
 
 # Imported here to avoid a circular import at module top (contextlib is stdlib).
@@ -603,40 +673,40 @@ import contextlib
 
 @contextlib.contextmanager
 def build_lock(db_path: str):
-    """Advisory exclusive lock preventing concurrent rebuilds of ``db_path``.
+    """Advisory exclusive lock serializing writers of ``db_path``.
 
-    The full-rebuild path (in-memory build -> backup_to) and the single-repo
-    path (init_db -> direct writes) both write the live DB. Without this lock
-    two ``cairn build --repo X`` runs (or a build racing an update) could
-    interleave writes with only SQLite's busy_timeout as a guard. The lock is
-    non-blocking: a second build raises RuntimeError immediately rather than
-    waiting, so the user knows to retry later.
+    The full-rebuild path (in-memory build -> backup_to), the single-repo
+    path (init_db -> direct writes), staged CLI builds, and incremental
+    updates all write the live DB. Without this lock two of them could
+    interleave writes with only SQLite's busy_timeout as a guard. The lock
+    is non-blocking: a second writer raises RuntimeError immediately rather
+    than waiting, so the user knows to retry later.
 
-    Raises ``RuntimeError`` if another build holds the lock.
+    The lock FILE is deliberately never unlinked, by winner or by loser:
+    flock is inode-based, and unlink-on-release races a third process into
+    creating a fresh inode while a waiter still blocks on the old one (two
+    concurrent holders). A stale zero-byte ``<db>.build.lock`` is harmless --
+    only flock state matters, and it dies with the holder's fd.
+
+    Raises ``RuntimeError`` if another build or update holds the lock.
     """
     lock_path = str(db_path) + ".build.lock"
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
-    acquired = False
     try:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
         except (IOError, OSError) as e:
             if e.errno == errno.EWOULDBLOCK:
                 raise RuntimeError(
-                    f"Cannot rebuild: another build is already in progress. "
-                    f"If you believe this is incorrect, remove {lock_path} and retry."
+                    f"Cannot acquire build lock: another build or update is "
+                    f"already in progress on {db_path}. Wait for it to finish "
+                    f"and retry."
                 )
             raise
-        yield
-    finally:
-        if acquired:
+        try:
+            yield
+        finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
         os.close(lock_fd)
-        # Clean up the lock file so it doesn't outlive the build.
-        if os.path.exists(lock_path):
-            try:
-                os.unlink(lock_path)
-            except OSError:
-                pass
