@@ -47,7 +47,7 @@ jobs:
         run: bandit -r src -ii -ll -s B608
 
   # --- Type checking: ADVISORY at adoption --------------------------------
-  # mypy reports ~60 errors at default settings today (--ignore-missing-imports
+  # mypy reports ~52 errors at default settings today (--ignore-missing-imports
   # because tree-sitter & friends ship no stubs). Same philosophy as the ruff
   # gate: ship advisory so NEW type regressions are visible without blocking
   # CI, then drive the count down and remove `continue-on-error` to make it a
@@ -67,7 +67,7 @@ jobs:
           pip install -e ".[dev]"
       # continue-on-error at the STEP level (not job) -- the standard advisory
       # pattern, same as bandit above: the job reports SUCCESS (green) so it
-      # doesn't block branch protection, while still printing the ~57 known
+      # doesn't block branch protection, while still printing the ~52 known
       # errors in the log for visibility. (Job-level continue-on-error leaves
       # the check red in branch protection.) Remove this line to promote mypy
       # to a hard gate once the error count is driven down.

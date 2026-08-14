@@ -13,6 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- _Nothing yet._
+
+### Changed
+- _Nothing yet._
+
+### Fixed
+- _Nothing yet._
+
+### Removed
+- _Nothing yet._
+
+## [0.10.0] - 2026-08-14
+
+> **Focus:** observability & telemetry — the full spec (T01–T20): local-only
+> event pipeline, build history, `cairn doctor`, metrics trends, optional
+> OTLP export, and workflow wiring; plus a full 9-scope audit (4 P1 / 27 P2
+> findings, all fixed same day).
+
+### Added
 - **Observability (P0 quick wins, T01–T05).** Central logging config and
   visibility for previously silent degradations. `cairn.utils.logging.configure_logging()`
   is the single config point for the `cairn` namespace logger, wired into both

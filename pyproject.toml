@@ -70,7 +70,7 @@ dev = [
     #                                   # so B608 is endemic-but-safe noise
     #   pip-audit
     # Pinned (not >=) so local and CI run the SAME mypy -- a floating mypy
-    # caused CI-only version drift. ~58 known errors (advisory: continue-on-error
+    # caused CI-only version drift. ~52 known errors (advisory: continue-on-error
     # in CI; drive the count down, then remove continue-on-error to promote it).
     "mypy==2.3.0",
     "bandit>=1.7",
