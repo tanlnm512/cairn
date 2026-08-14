@@ -4,10 +4,17 @@ Tests for:
 - M9: Store existence check at boot
 - L1: Tool count assertion
 - L3: @instrument error sanitization
+- Watchdog buffer drain (audit F3): the parent-death watchdog's os._exit(0)
+  bypasses atexit, so buffered telemetry must be drained explicitly.
+- Model cache race (audit F5): _MODEL_CACHE lazy load must be thread-safe.
 """
 from __future__ import annotations
 
 import sqlite3
+import sys
+import threading
+import time
+import types
 from unittest.mock import patch
 from pathlib import Path
 import pytest
@@ -139,3 +146,157 @@ class TestInstrumentErrorSanitization:
             # metric format: (tool_name, session_id, invoked_at, duration_ms, status, error_message)
             assert metric[4] == "error", f"Status should be 'error', got {metric[4]}"
             assert metric[5] is not None, "Error message should be recorded"
+
+
+class TestWatchdogBufferDrain:
+    """Audit F3: os._exit(0) from the watchdog thread bypasses atexit, so the
+    sinks' atexit drains (telemetry.sink._flush_all, embed_buffering._flush)
+    never fire on a NORMAL client disconnect -- up to 30s of events/metrics
+    and 15s of queued embeddings were silently lost. The watchdog must call
+    the public flush entry points directly before exiting."""
+
+    def test_drain_calls_all_three_flush_entry_points(self, monkeypatch):
+        """Each subsystem's flush entry point is invoked exactly once:
+        cairn.telemetry.flush (events), metric_buffering._flush_metrics
+        (tool_metrics), embed_buffering._flush (memory embeddings)."""
+        calls = []
+        monkeypatch.setattr("cairn.telemetry.flush", lambda: calls.append("events"))
+        monkeypatch.setattr(
+            "cairn.mcp_server.metric_buffering._flush_metrics",
+            lambda: calls.append("metrics"),
+        )
+        monkeypatch.setattr(
+            "cairn.mcp_server.embed_buffering._flush", lambda: calls.append("embeds")
+        )
+        server._drain_buffered_telemetry()
+        assert calls == ["events", "metrics", "embeds"]
+
+    def test_drain_isolates_flush_failures(self, monkeypatch):
+        """A raising flush entry point must not abort the other drains (and
+        must not propagate -- the exit that follows must still happen)."""
+        calls = []
+
+        def boom():
+            raise RuntimeError("sink down")
+
+        monkeypatch.setattr("cairn.telemetry.flush", boom)
+        monkeypatch.setattr(
+            "cairn.mcp_server.metric_buffering._flush_metrics",
+            lambda: calls.append("metrics"),
+        )
+        monkeypatch.setattr(
+            "cairn.mcp_server.embed_buffering._flush", lambda: calls.append("embeds")
+        )
+        server._drain_buffered_telemetry()
+        assert calls == ["metrics", "embeds"]
+
+    def test_watchdog_drains_before_os_exit(self, monkeypatch):
+        """The parent-change exit path drains the buffers BEFORE os._exit(0).
+        Simulates the watchdog inline: the first poll-interval sleep 'kills'
+        the parent, os._exit is captured, everything mocked."""
+        events = []
+        monkeypatch.setattr("cairn.telemetry.flush", lambda: events.append("flush"))
+        monkeypatch.setattr(
+            "cairn.mcp_server.metric_buffering._flush_metrics", lambda: None
+        )
+        monkeypatch.setattr("cairn.mcp_server.embed_buffering._flush", lambda: None)
+
+        class _Stop(Exception):
+            """Sentinel to break the watchdog loop under test."""
+
+        def fake_exit(code):
+            events.append(("exit", code))
+            raise _Stop
+
+        monkeypatch.setattr(server.os, "_exit", fake_exit)
+        ppid = {"v": 100}
+        monkeypatch.setattr(server.os, "getppid", lambda: ppid["v"])
+
+        def fake_sleep(_s):
+            ppid["v"] = 999  # parent dies while the watchdog sleeps
+
+        monkeypatch.setattr(server.time, "sleep", fake_sleep)
+
+        with pytest.raises(_Stop):
+            server._watch_parent_loop()
+        assert events == ["flush", ("exit", 0)], "drain must precede os._exit"
+
+
+class TestModelCacheRace:
+    """Audit F5: _MODEL_CACHE's lazy SentenceTransformer load is reachable
+    from both the embed flusher thread and tool threads. Unsynchronized it
+    double-loads the weights and -- with two model keys racing the
+    single-entry eviction -- KeyErrors the loser. Double-checked locking must
+    give exactly one load per key and no exceptions."""
+
+    @staticmethod
+    def _fake_st_module(monkeypatch, delay: float = 0.02) -> list:
+        """Install a fake sentence_transformers module recording loads.
+
+        The artificial delay widens the race window so the test would reliably
+        fail against an unsynchronized implementation.
+        """
+        loads: list = []
+
+        class FakeSentenceTransformer:
+            def __init__(self, name, **kw):
+                time.sleep(delay)
+                loads.append(name)
+                self.max_seq_length = None
+
+        mod = types.ModuleType("sentence_transformers")
+        mod.SentenceTransformer = FakeSentenceTransformer
+        monkeypatch.setitem(sys.modules, "sentence_transformers", mod)
+        return loads
+
+    def test_concurrent_same_key_loads_once(self, monkeypatch):
+        from cairn.graph import embeddings as emb
+
+        loads = self._fake_st_module(monkeypatch)
+        monkeypatch.setattr(emb, "_MODEL_CACHE", {})
+
+        n_threads = 8
+        barrier = threading.Barrier(n_threads)
+        results: list = []
+
+        def worker():
+            barrier.wait()
+            results.append(emb._get_local_model("fake-m"))
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(loads) == 1, f"model must load exactly once, loaded {len(loads)}x"
+        assert all(m is results[0] for m in results), "all threads share one model"
+
+    def test_concurrent_different_keys_no_keyerror(self, monkeypatch):
+        """Two model keys racing the single-entry eviction: the loser must
+        still get a usable model, never a KeyError from the final lookup."""
+        from cairn.graph import embeddings as emb
+
+        loads = self._fake_st_module(monkeypatch, delay=0.05)
+        monkeypatch.setattr(emb, "_MODEL_CACHE", {})
+
+        errors: list = []
+
+        def worker(name):
+            try:
+                model = emb._get_local_model(name)
+                assert model is not None
+            except Exception as exc:  # noqa: BLE001 -- recording for assertion
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=worker, args=(name,))
+            for name in ("fake-a", "fake-b", "fake-a", "fake-b")
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"racing loads raised: {errors}"
+        assert set(loads) <= {"fake-a", "fake-b"}

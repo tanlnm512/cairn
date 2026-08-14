@@ -54,14 +54,73 @@ from . import tools_memory   # noqa: F401
 _EXPECTED_TOOL_COUNT = 27
 
 
+def _drain_buffered_telemetry() -> None:
+    """Synchronously drain every buffered telemetry sink (best-effort).
+
+    The parent-death watchdog exits via ``os._exit(0)`` from a non-main
+    thread, which bypasses ``atexit`` entirely -- so the sinks' atexit drains
+    (telemetry sink ``_flush_all``, ``embed_buffering._flush``) never run and
+    up to 30s of buffered events/tool_metrics plus 15s of queued memory
+    embeddings would be silently lost on a NORMAL session end (client
+    disconnect). Direct flush calls are the robust route: ``atexit`` only
+    fires on main-thread interpreter shutdown, so there is nothing to hook
+    from the watchdog thread. Each flush is individually isolated so one
+    failing sink can't block the others, and a drain failure must never
+    prevent the exit that follows it.
+    """
+    try:
+        from cairn.telemetry import flush as _telemetry_flush
+
+        _telemetry_flush()  # events buffer
+    except Exception:
+        pass
+    try:
+        from .metric_buffering import _flush_metrics
+
+        _flush_metrics()  # tool_metrics buffer
+    except Exception:
+        pass
+    try:
+        from . import embed_buffering
+
+        embed_buffering._flush()  # queued memory embeddings
+    except Exception:
+        pass
+
+
+def _watch_parent_loop() -> None:
+    """Body of the parent-death watchdog thread (see _install_exit_watchdog).
+
+    Module-level (not nested) so the drain-then-exit contract is unit-testable
+    without spawning the thread.
+    """
+    try:
+        parent = os.getppid()
+    except OSError:
+        _drain_buffered_telemetry()
+        os._exit(0)
+    if parent <= 1:
+        return  # already orphaned/unsupported (e.g. some containers) — skip
+    while True:
+        time.sleep(5.0)
+        try:
+            current = os.getppid()
+        except OSError:
+            _drain_buffered_telemetry()
+            os._exit(0)
+        if current != parent:
+            _drain_buffered_telemetry()
+            os._exit(0)
+
+
 def _install_exit_watchdog():
     """Ensure the server dies when its parent (the MCP client) dies.
 
     Two mechanisms: SIGTERM/SIGINT -> SystemExit in the main thread, and a
     background daemon thread polling the parent pid (reparented to init on
-    POSIX) -> SystemExit. Deliberately does NOT read stdin: the MCP SDK's
-    anyio transport is the sole reader of the stdin fd, and reading it here
-    steals bytes from JSON-RPC messages.
+    POSIX) -> buffered-telemetry drain + os._exit(0). Deliberately does NOT
+    read stdin: the MCP SDK's anyio transport is the sole reader of the stdin
+    fd, and reading it here steals bytes from JSON-RPC messages.
     """
     def _signal_handler(_signum, _frame):
         raise SystemExit(0)
@@ -73,23 +132,7 @@ def _install_exit_watchdog():
             # Non-main thread or unsupported signal — best-effort.
             pass
 
-    def _watch_parent():
-        try:
-            parent = os.getppid()
-        except OSError:
-            return
-        if parent <= 1:
-            return  # already orphaned/unsupported (e.g. some containers) — skip
-        while True:
-            time.sleep(5.0)
-            try:
-                current = os.getppid()
-            except OSError:
-                os._exit(0)
-            if current != parent:
-                os._exit(0)
-
-    threading.Thread(target=_watch_parent, daemon=True).start()
+    threading.Thread(target=_watch_parent_loop, daemon=True).start()
 
 
 # Counts tools ACTUALLY registered on the FastMCP `mcp` instance rather than a

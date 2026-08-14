@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import struct
+import threading
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
 
@@ -210,7 +211,12 @@ def _backend_name() -> str:
 
 
 # Cache the loaded model so repeated calls don't reload weights.
+# Guarded by _MODEL_CACHE_LOCK: the lazy load is reachable from both the embed
+# flusher thread and tool threads (audit F5), and an unsynchronized load could
+# double-load the weights or -- with two different model keys racing the
+# single-entry eviction -- KeyError the loser on the final lookup.
 _MODEL_CACHE: dict = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 # Cache for the effective backend after fallback resolution. Set once per
 # process by embeddings_available().
@@ -441,25 +447,36 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
 
 
 def _get_local_model(model_name: Optional[str] = None):
-    """Lazily load the sentence-transformers model (cached per process)."""
+    """Lazily load the sentence-transformers model (cached per process).
+
+    Double-checked locking over _MODEL_CACHE (audit F5): the load is expensive
+    (seconds) and reachable from concurrent threads, so exactly one thread
+    loads per key. The loaded model is returned via a local reference rather
+    than a final dict lookup -- a concurrent load of a DIFFERENT key evicting
+    this entry must not turn a successful load into a KeyError.
+    """
     m_name = model_name or current_model()
     key = ("local", m_name)
-    if key not in _MODEL_CACHE:
-        from sentence_transformers import SentenceTransformer
+    model = _MODEL_CACHE.get(key)
+    if model is None:
+        with _MODEL_CACHE_LOCK:
+            model = _MODEL_CACHE.get(key)
+            if model is None:
+                from sentence_transformers import SentenceTransformer
 
-        trust = os.environ.get("CAIRN_EMBED_TRUST_REMOTE_CODE") == "1"
-        kwargs = {"trust_remote_code": trust}
-        if os.environ.get("CAIRN_EMBED_FP16") == "1":
-            kwargs["model_kwargs"] = {"torch_dtype": "float16"}
-        model = SentenceTransformer(m_name, **kwargs)
-        max_len = os.environ.get("CAIRN_EMBED_MAX_SEQ_LEN", "512")
-        if max_len:
-            model.max_seq_length = int(max_len)
-        # Single-model cache: evict any other entry on a key change.
-        if _MODEL_CACHE and next(iter(_MODEL_CACHE)) != key:
-            _MODEL_CACHE.clear()
-        _MODEL_CACHE[key] = model
-    return _MODEL_CACHE[key]
+                trust = os.environ.get("CAIRN_EMBED_TRUST_REMOTE_CODE") == "1"
+                kwargs = {"trust_remote_code": trust}
+                if os.environ.get("CAIRN_EMBED_FP16") == "1":
+                    kwargs["model_kwargs"] = {"torch_dtype": "float16"}
+                model = SentenceTransformer(m_name, **kwargs)
+                max_len = os.environ.get("CAIRN_EMBED_MAX_SEQ_LEN", "512")
+                if max_len:
+                    model.max_seq_length = int(max_len)
+                # Single-model cache: evict any other entry on a key change.
+                if _MODEL_CACHE and next(iter(_MODEL_CACHE)) != key:
+                    _MODEL_CACHE.clear()
+                _MODEL_CACHE[key] = model
+    return model
 
 
 def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = None) -> int:
