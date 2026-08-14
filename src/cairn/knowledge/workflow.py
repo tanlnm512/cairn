@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, List, Optional
 if TYPE_CHECKING:
     import sqlite3
 
-from .store import add_document, get_document, list_documents, slugify
+from .store import (
+    _redact_step_descriptions,
+    add_document,
+    get_document,
+    list_documents,
+    slugify,
+)
+from ..memory.privacy import strip_private_data
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 
@@ -316,8 +323,16 @@ def sync_workflow(
 
     # Preserve extensions except steps; re-render body from new steps.
     ext = dict(concept.extensions)
+    new_steps = _redact_step_descriptions(new_steps)
     ext["steps"] = new_steps
-    new_body = render_steps_body(concept.title or resource, new_steps)
+    # Privacy floor (audit F1): sync writes via bundle.write_concept rather
+    # than add_document, so apply the same redaction the add chokepoint
+    # enforces. Steps are graph-derived here, but the title/resource and the
+    # rendered body are free text -- the strip is pattern-based, so this is
+    # a no-op for clean content.
+    new_body = strip_private_data(
+        render_steps_body(concept.title or resource, new_steps)
+    )
 
     # Write via add_document to reuse the store's atomic write + lifecycle.
     # We pass the existing concept_id so it overwrites in place.

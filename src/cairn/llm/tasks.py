@@ -233,7 +233,20 @@ def complete_task(
 
     task.status = "done"
     task.completed_at = _now()
-    
+
+    # Privacy floor (audit F9): memory-* task results are derived from user
+    # session content (memory-extract embeds the transcript, memory-critic
+    # quotes draft bodies), so scrub secret-shaped substrings before the
+    # result body is persisted as a concept. Deliberately gated on a
+    # ``memory-`` kind prefix: compass/wiki/flow synthesis bodies are
+    # graph-derived and skip the pass (the strip is pattern-based and safe,
+    # but the narrow gate keeps the write path's redaction contract
+    # explicit).
+    if task.task_kind.startswith("memory-"):
+        from ..memory.privacy import strip_private_data
+
+        result = strip_private_data(result)
+
     # Write the result as a sibling concept.
     result_concept = OKFConcept(
         type="Task-Result",

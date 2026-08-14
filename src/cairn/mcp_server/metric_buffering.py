@@ -197,6 +197,25 @@ def _log_metric(
     # thread doesn't spin on a guaranteed failure.
     if os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes"):
         return
+    # CAIRN_TELEMETRY=off is the documented master kill switch: "off stops
+    # ALL recording". tool_metrics bypassed it (audit F5) because this gate
+    # only checked CAIRN_READ_ONLY. Lazy import mirrors the sink imports in
+    # configure_conn / _start_metric_flusher (avoids any boot-order cycle);
+    # is_telemetry_off() re-reads the env every call, like the check above.
+    from cairn.telemetry.sink import is_telemetry_off
+
+    if is_telemetry_off():
+        return
+    # Redact at the write chokepoint (audit F4): exceptions routinely echo
+    # request payloads (connection strings, auth headers), and error_message
+    # used to persist raw -- truncated, but only scrubbed at report read
+    # time (a redaction-after-persistence inversion: the raw secret sat in
+    # the DB for up to the flush interval + forever in backups). Scrub
+    # BEFORE the row is buffered, then truncate.
+    if error_message:
+        from cairn.memory.privacy import strip_private_data
+
+        error_message = strip_private_data(error_message)
     row = (
         tool_name,
         os.environ.get("CAIRN_SESSION", "unknown"),

@@ -1,9 +1,10 @@
 """Privacy filter: strip secrets from text before storing in memory.
 
 A regex-only floor (not a ceiling). Catches well-known secret shapes (API
-keys, bearer tokens, JWTs) and ``<private>...</private>`` tags. It does NOT do
-entropy analysis or load actual secret values from env; for stronger
-guarantees, callers should add their own env-based redaction on top.
+keys, bearer tokens, JWTs, connection strings with embedded credentials) and
+``<private>...</private>`` tags. It does NOT do entropy analysis or load
+actual secret values from env; for stronger guarantees, callers should add
+their own env-based redaction on top.
 
 Used by the auto-capture hook (``post_tool_failure``) so tool error output
 containing secrets is scrubbed before being stored as a raw ``mistake`` memory.
@@ -14,6 +15,20 @@ import re
 
 # ``<private>...</private>`` tags → [REDACTED].
 _PRIVATE_TAG_RE = re.compile(r"<private>[\s\S]*?</private>", re.IGNORECASE)
+
+# URI connection strings with embedded credentials (audit F6):
+# ``postgres://admin:pass@db``, ``redis://:pass@cache``, basic-auth URLs,
+# AMQP/MongoDB DSNs, ... The scheme and host are non-secret debugging
+# context, so only the ``user:password@`` segment is replaced. Applied
+# BEFORE the generic secret shapes so a password that is itself
+# secret-shaped (e.g. an ``sk-...`` key) doesn't get half-substituted
+# first. The username is included in the redaction: it is frequently
+# service-account material and splitting it adds no diagnostic value.
+_URI_CREDENTIAL_RE = re.compile(
+    r"\b(postgres(?:ql)?|mysql|mariadb|rediss?|mongodb(?:\+srv)?|amqps?|"
+    r"https?|ftps?)://[^/@\s:]*:[^/@\s]+@",
+    re.IGNORECASE,
+)
 
 # Each pattern is cloned per-call to avoid the stateful ``lastIndex`` bug that
 # would arise from reusing a compiled ``/g`` regex across multiple calls.
@@ -45,8 +60,11 @@ def strip_private_data(input_text: str) -> str:
     ``<private>...</private>`` blocks become ``[REDACTED]``.
     Secret-shaped tokens (API keys, bearer tokens, JWTs, etc.) become
     ``[REDACTED_SECRET]``.
+    URI credentials (``postgres://user:pass@host``) keep their scheme and
+    host; only the ``user:pass@`` segment becomes ``[REDACTED_SECRET]``.
     """
     result = _PRIVATE_TAG_RE.sub("[REDACTED]", input_text)
+    result = _URI_CREDENTIAL_RE.sub(r"\1://[REDACTED_SECRET]@", result)
     for pattern in _COMPILED_SECRETS:
         result = pattern.sub("[REDACTED_SECRET]", result)
     return result

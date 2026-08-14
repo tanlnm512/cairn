@@ -166,7 +166,16 @@ def get_memory(bundle: OKFBundle, path: str) -> Optional[OKFConcept]:
 
 
 def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
-    """Permanently delete a memory and clean up its cross-session refs."""
+    """Permanently delete a memory and clean up its cross-session refs.
+
+    Refuses (returns False) when ``memory_path`` resolves to a concept
+    outside the memory/ namespace: ``get_memory``'s FileNotFoundError
+    fallback retries the raw path, which can resolve compass/wiki/knowledge
+    concepts (audit F8) -- without this guard ``cairn memory forget
+    compass/foo`` would unlink a compass doc. Mirrors the scope check the
+    MCP ``memory_delete`` tool enforces, at the store chokepoint so the CLI
+    and every other caller inherit it.
+    """
     cid = memory_path
     if cid.endswith(".md"):
         cid = cid[:-3]
@@ -182,6 +191,19 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
         except ValueError:
             return False
         if concept is not None:
+            # Namespace guard: only the memory/ fallback resolution can land
+            # here outside memory/ (the memory/-prefixed cid above is always
+            # in-namespace). Resolve both sides so symlinked roots don't
+            # false-positive the relative_to check.
+            resolved = concept.concept_id
+            try:
+                resolved = str(
+                    Path(resolved).resolve().relative_to(Path(bundle.root).resolve())
+                )
+            except ValueError:
+                pass
+            if not (resolved == "memory/" or resolved.startswith("memory/")):
+                return False
             cid = concept.concept_id
             # Normalize to relative for DB lookup.
             try:

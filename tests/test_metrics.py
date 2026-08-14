@@ -19,7 +19,9 @@ Covers:
      (conn factory raises) retains the rows for retry; an empty buffer or a
      missing conn factory are no-ops.
   4. ``CAIRN_READ_ONLY=1`` makes ``_log_metric`` a no-op; ``CAIRN_SESSION``
-     stamps ``session_id`` ('unknown' default).
+     stamps ``session_id`` ('unknown' default). (The ``CAIRN_TELEMETRY=off``
+     master-switch gate and error-message redaction added on top of
+     ``_log_metric`` are covered in ``test_redaction_chokepoints.py``.)
 
 Module-global state (``_METRIC_BUFFER``, ``_conn_factory``,
 ``_METRIC_FLUSHER_STARTED``) is reset by the autouse ``_reset_metric_state``
@@ -49,9 +51,9 @@ def _reset_metric_state(monkeypatch):
     ``_METRIC_FLUSHER_STARTED`` are module-level and never cleared in
     production (the flusher only drains after a successful commit). Without
     this reset, rows/connections from one test would bleed into the next.
-    ``CAIRN_READ_ONLY`` and ``CAIRN_SESSION`` are also cleared so read-only
-    and session tests start from a known baseline; ``monkeypatch`` restores
-    the originals on teardown.
+    ``CAIRN_READ_ONLY``, ``CAIRN_SESSION``, and ``CAIRN_TELEMETRY`` are also
+    cleared so read-only, session, and telemetry-gate tests start from a
+    known baseline; ``monkeypatch`` restores the originals on teardown.
     """
     with mb._METRIC_LOCK:
         mb._METRIC_BUFFER.clear()
@@ -59,6 +61,7 @@ def _reset_metric_state(monkeypatch):
     mb._METRIC_FLUSHER_STARTED = False
     monkeypatch.delenv("CAIRN_READ_ONLY", raising=False)
     monkeypatch.delenv("CAIRN_SESSION", raising=False)
+    monkeypatch.delenv("CAIRN_TELEMETRY", raising=False)
     yield
     # Tear down: clear again so a stray daemon-flusher tick (from a test that
     # called _log_metric, which starts the flusher) can't write leftover rows
