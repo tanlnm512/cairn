@@ -1,6 +1,7 @@
 """Tests for OKFConcept atomic file writes (H3 fix)."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -10,13 +11,17 @@ from cairn.okf.concept import OKFConcept
 
 def test_to_file_writes_atomically(tmp_path):
     """Verify atomic write: final content equals to_markdown(), no temp residue."""
-    # Create a concept
+    # Create a concept. The timestamp is pinned: to_markdown() stamps
+    # datetime.now() at call time when it's unset, so recomputing the expected
+    # content after the write races the wall-clock second boundary (a ~1-in-
+    # 1000 CI flake observed on the 3.11 job).
     concept = OKFConcept(
         type="test",
         title="Test Concept",
         description="A test concept",
         tags=["test"],
         body="# Test Body\n\nThis is test content.",
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
     target_file = tmp_path / "test_concept.md"
