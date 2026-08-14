@@ -97,11 +97,15 @@ def _remove_agents(ws: str, clients: list[str] | None, dry_run: bool,
             names = sorted(set(CLIENTS)) if "all" in clients else sorted(set(clients))
         else:
             names = [d.client for d in detect_clients(ws) if d.detected]
+        # The effective scope is part of the preview contract: it must render
+        # even when no clients are detected (a clean machine running
+        # `uninstall --full --dry-run` still needs to see "(scope: all)").
+        click.echo(f"  would: strip cairn wiring (scope: {scope})")
         if not names:
             click.echo("  (no clients detected — nothing to remove)")
             return
         for c in names:
-            click.echo(f"  would: strip cairn wiring for {c} (scope: {scope})")
+            click.echo(f"    would: strip wiring for {c}")
         click.echo("  would: remove cross-tool .agents/ copies (workspace scope)")
         return
 
