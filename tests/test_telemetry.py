@@ -245,6 +245,55 @@ def test_emit_never_raises_on_non_serializable_attr():
     assert decoded["event"] == "claimed"
 
 
+def test_emit_truncates_nested_oversized_strings():
+    """Strings nested in dicts/lists are capped too (top-level check bypassed
+    them before -- a nested blob could store megabytes into the WAL)."""
+    huge = "x" * (ev._MAX_ATTR_CHARS + 500)
+    emit("truncate_result", blob={"code": huge}, rows=[huge, huge])
+
+    _ts, _name, _sid, attrs_json = sink._BUFFER[0]
+    decoded = json.loads(attrs_json)
+    assert len(decoded["blob"]["code"]) == ev._MAX_ATTR_CHARS
+    assert all(len(s) == ev._MAX_ATTR_CHARS for s in decoded["rows"])
+
+
+def test_emit_stringified_object_is_scrubbed_and_capped():
+    """A non-JSON object stringifies via str() -- the text is scrubbed.
+
+    str(exc) routinely embeds secret shapes and absolute paths; the coercion
+    path routes stringified values through strip_private_data and the char
+    cap before they reach the events table (and, with OTLP on, the network).
+    """
+    secret = "Bearer abcdefghijklmnopqrstuvwxyz1234567890abcd"
+    huge = "y" * (ev._MAX_ATTR_CHARS * 3)
+    exc = ValueError(f"failed reading /Users/alice/secret: {secret} {huge}")
+    emit("task_lifecycle", err=exc)  # exception object, not a string
+
+    _ts, _name, _sid, attrs_json = sink._BUFFER[0]
+    decoded = json.loads(attrs_json)
+    text = decoded["err"]
+    assert "abcdefghijklmnopqrstuvwxyz1234" not in text, "secret leaked via str(exc)"
+    assert "REDACTED_SECRET" in text
+    assert "/Users/alice" in text  # path policy is strip's scope, not attrs'
+    assert len(text) <= ev._MAX_ATTR_CHARS
+
+
+def test_emit_attrs_over_serialized_cap_drop_to_null():
+    """Many capped values can still sum past the WAL guardrail -- attrs drop,
+    the event survives with NULL attrs."""
+    attrs = {f"key_{i:03d}": "v" * ev._MAX_ATTR_CHARS for i in range(40)}
+    emit("truncate_result", **attrs)
+    assert len(sink._BUFFER) == 1
+    assert sink._BUFFER[0][3] is None, "over-cap blob must drop attrs, not the event"
+
+
+def test_emit_string_attr_survives_unchanged_when_clean():
+    """Plain clean strings are untouched by the scrub path (no false positive)."""
+    emit("semantic_backend", backend="ann", ms_bucket="10-100ms")
+    _ts, _name, _sid, attrs_json = sink._BUFFER[0]
+    assert json.loads(attrs_json) == {"backend": "ann", "ms_bucket": "10-100ms"}
+
+
 def test_session_env_stamps_session_id(monkeypatch):
     """CAIRN_SESSION stamps the session_id column for cross-call correlation."""
     monkeypatch.setenv("CAIRN_SESSION", "trace-7")

@@ -55,6 +55,11 @@ EMBED_FLUSH_STALLED = "embed_flush_stalled"
 # cap metric_buffering applies to ``tool_metrics.error_message``.
 _MAX_ATTR_CHARS = 500
 
+# Cap on the final serialized attrs JSON as a whole: individually-capped
+# values can still sum past the WAL-bloat guardrail via many keys or nested
+# lists. An attrs blob over this drops to NULL (the event itself survives).
+_MAX_SERIALIZED_ATTRS = 4000
+
 
 def _session_id() -> str:
     """The correlation id stamped on every event (mirrors tool_metrics).
@@ -65,28 +70,65 @@ def _session_id() -> str:
     return os.environ.get("CAIRN_SESSION", "unknown")
 
 
+def _coerce_value(v: Any) -> Any:
+    """Defensively cap one attr value at any nesting depth.
+
+    Strings are truncated to ``_MAX_ATTR_CHARS``; dicts/lists are walked so a
+    nested blob can't smuggle an unbounded string past the top-level check.
+    Anything else (int/float/bool/None/enums) passes through as-is.
+    """
+    if isinstance(v, str):
+        return v[:_MAX_ATTR_CHARS]
+    if isinstance(v, dict):
+        return {str(k)[:64]: _coerce_value(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_coerce_value(x) for x in v[:32]]
+    return v
+
+
 def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
-    """JSON-serialize attrs, truncating oversized string values defensively.
+    """JSON-serialize attrs, truncating oversized values defensively.
 
     Returns ``None`` for an empty dict (NULL ``attrs`` column). Non-serializable
     values are stringified via ``default=str`` so :func:`emit` never raises --
     a caller passing an odd object is a bug, but telemetry must not propagate
-    it (spec §5.6). A hard serialization failure (e.g. a cycle even ``str``
-    can't handle) drops the attrs rather than the event.
+    it (spec §5.6). Stringified values and over-long strings are routed through
+    ``strip_private_data``: ``str(exc)`` routinely embeds secret shapes and
+    absolute paths, and this module is the policy point for what reaches the
+    ``events`` table (and, with OTLP on, the network) -- attrs must stay
+    enums/short tags, enforced here rather than trusted from callers. A hard
+    serialization failure (e.g. a cycle even ``str`` can't handle) or a
+    serialized blob still over the cap after truncation drops the attrs rather
+    than the event.
     """
     if not attrs:
         return None
     coerced: dict[str, Any] = {}
     for k, v in attrs.items():
-        if isinstance(v, str) and len(v) > _MAX_ATTR_CHARS:
+        if isinstance(v, str):
             v = v[:_MAX_ATTR_CHARS]
-        coerced[k] = v
+        elif not isinstance(v, (int, float, bool, type(None))):
+            # Non-scalar: nested containers are capped structurally; anything
+            # else goes through str() (json's default) -- scrub that now, while
+            # we still hold the raw text.
+            if isinstance(v, (dict, list, tuple)):
+                v = _coerce_value(v)
+            else:
+                from ..memory.privacy import strip_private_data
+
+                v = strip_private_data(str(v))[:_MAX_ATTR_CHARS]
+        coerced[str(k)[:64]] = v
     try:
-        return json.dumps(coerced, separators=(",", ":"), default=str)
+        out = json.dumps(coerced, separators=(",", ":"), default=str)
     except (TypeError, ValueError):
         # Last resort: keep the event with NULL attrs rather than raise or drop
         # the whole signal. The event name + ts are still useful on their own.
         return None
+    if len(out) > _MAX_SERIALIZED_ATTRS:
+        # Even capped values can sum past the guardrail (many keys / nested
+        # lists); the WAL-bloat bound wins over completeness.
+        return None
+    return out
 
 
 def emit(name: str, **attrs: Any) -> None:
