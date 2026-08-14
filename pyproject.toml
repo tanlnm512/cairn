@@ -148,6 +148,7 @@ where = ["src"]
 # a <3s feedback loop. The full suite (no marker) remains the CI path.
 markers = [
     "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
+    "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment),"
 ]
 
 [tool.ruff]

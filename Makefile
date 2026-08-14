@@ -1,4 +1,4 @@
-.PHONY: dist evals verify-no-code-change release help
+.PHONY: dist evals ci-local verify-no-code-change release help
 
 # Build the wheel + sdist into dist/. Produces:
 #   dist/cairn_intel-<version>-py3-none-any.whl
@@ -15,6 +15,17 @@ dist:
 
 evals:
 	uv run python scripts/run_skill_evals.py
+
+# Clean-room CI replication: run the full suite in a bare container.
+# No host PATH/HOME/agent CLIs/state -- the same environment a CI runner has.
+# Catches non-hermetic tests (green locally only because of the dev machine)
+# BEFORE pushing. Requires docker.
+PYTHON_VERSION ?= 3.12
+ci-local:
+	docker run --rm -v $$(PWD):/repo -w /repo python:$(PYTHON_VERSION)-slim \
+		bash -lc "pip install -q --upgrade pip && pip install -q -e '.[dev,otlp]' && python -m pytest -q"
+	@echo ""
+	@echo "clean-room suite green"
 
 # Verify a "comments/docstrings-only" change didn't alter executable code.
 # Compares AST (docstrings blanked) of changed .py files. Run before staging

@@ -63,6 +63,10 @@ they actually ran — not just that they were claimed:
       acted on, and the telemetry signal exposing any degradation is named
       (spec §6.4 event catalog). A silent degrade is the bug class this codebase
       is built to avoid.
+- [ ] Tests are hermetic — no dependence on the dev machine's PATH/HOME/env
+      (the suite-wide `_hermetic_env` fixture is the default; use
+      `@pytest.mark.real_env` only with justification); parse CLI output via
+      `result.stdout`, never `result.output` (interleaves stderr)
 - [ ] Tests added or updated to cover the change (`pytest -m core` for the fast
       loop, then the full suite).
 
