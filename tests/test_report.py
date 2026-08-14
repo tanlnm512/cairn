@@ -297,3 +297,66 @@ def test_graceful_on_corrupt_store(tmp_path):
     data = json.loads(result.stdout)
     schema = next(r for r in data["doctor"] if r["name"] == "schema")
     assert schema["status"] == "FAIL"
+
+
+# ---------------------------------------------------------------------------
+# (c2) PATH REDACTION -- absolute local paths collapse to [PATH]/<basename>
+#
+# str(exc) from file I/O routinely embeds absolute paths; strip_private_data
+# does not touch them. The privacy gate must collapse them so the bundle
+# never ships the user's directory structure.
+# ---------------------------------------------------------------------------
+
+_USER_DIR = "/Users/secret-project"
+
+
+def test_redaction_collapses_absolute_paths(tmp_path):
+    """Absolute paths in tool errors / events / doctor detail become [PATH]/x.
+
+    The user's directory component must NOT appear in either output form;
+    the basename survives so the report stays debuggable.
+    """
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        now = time.time()
+        conn.execute(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status, error_message) "
+            "VALUES ('get_memory', 's1', ?, 3.0, 'error', ?)",
+            (now, f"[Errno 2] No such file or directory: {_USER_DIR}/memory/tribal/foo.md"),
+        )
+        conn.execute(
+            "INSERT INTO events (ts, name, session_id, attrs) "
+            "VALUES (?, 'ann_fallback', 's1', ?)",
+            (now, json.dumps({"reason": "load_failed"})),
+        )
+
+    _make_db(db, setup)
+
+    for extra in (("--json",), ()):
+        result = _run(db, *extra)
+        assert result.exit_code == 0, result.output
+        assert _USER_DIR not in result.output, f"absolute path leaked ({extra})"
+        assert "[PATH]/foo.md" in result.output, f"basename marker missing ({extra})"
+
+
+def test_redaction_keeps_relative_and_url_paths(tmp_path):
+    """Workspace-relative paths and URL path portions survive redaction.
+
+    Only ABSOLUTE local paths leak directory structure; ``src/main.py`` and
+    ``https://collector/x`` are useful, non-identifying signals.
+    """
+    from cairn.cli.system import _redact_paths
+
+    assert _redact_paths("src/main.py: SyntaxError at line 3") == "src/main.py: SyntaxError at line 3"
+    assert _redact_paths("POST https://collector.internal:4318/v1/logs failed") == \
+        "POST https://collector.internal:4318/v1/logs failed"
+    assert _redact_paths("postgres://user:pass@host/db") == "postgres://user:pass@host/db"
+    # Absolute forms collapse, basename kept; ~ shorthand and Windows too.
+    assert _redact_paths(f"open failed: {_USER_DIR}/src/main.py:10") == \
+        "open failed: [PATH]/main.py:10"
+    assert _redact_paths("config at ~/.config/cairn/config.toml") == \
+        "config at [PATH]/config.toml"
+    assert _redact_paths(r"missing C:\Users\bob\work\app\db.sqlite") == \
+        "missing [PATH]/db.sqlite"

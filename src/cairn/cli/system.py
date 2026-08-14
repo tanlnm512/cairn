@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import re
 import sqlite3
 import time
 import click
@@ -1171,11 +1172,12 @@ def doctor(db, as_json):
 #
 # PRIVACY GATE (spec §7, Tier-1 redaction invariant): every string field that
 # could carry a path, secret, query text, or code content is passed through
-# ``memory.privacy.strip_private_data`` before inclusion, so known secret
-# shapes (API keys, bearer tokens, JWTs, ...) and ``<private>`` tags become
-# ``[REDACTED_SECRET]`` / ``[REDACTED]``. The bundle is intended to be safe to
-# paste into a public GitHub issue. Nothing is ever uploaded -- the command
-# only prints to stdout and, optionally, writes to ``--out``.
+# ``memory.privacy.strip_private_data`` (secret shapes, ``<private>`` tags, URI
+# credentials) and then through ``_redact_paths`` below (absolute filesystem
+# paths -- ``str(exc)`` from file I/O routinely embeds them, and they identify
+# the user's directories). The bundle is intended to be safe to paste into a
+# public GitHub issue. Nothing is ever uploaded -- the command only prints to
+# stdout and, optionally, writes to ``--out``.
 
 # The error-ish event names mirrored from the spec §6.4 degradation catalog:
 # lock contention and the two silent backend fallbacks. (``stray_swept`` and
@@ -1183,16 +1185,38 @@ def doctor(db, as_json):
 _ERROR_EVENTS: tuple[str, ...] = ("ann_fallback", "hash_fallback", "lock_contention")
 _REPORT_LIMIT = 20  # bounded set of recent rows per source (events / tool errors)
 
+# Absolute-path redaction. POSIX: a leading "/" followed by one or more
+# directory segments ("~" shorthand included); Windows: a drive-letter root.
+# The lookbehind keeps URL path portions ("https://host/x") and relative
+# workspace paths ("src/main.py") intact -- only absolute local paths leak the
+# user's directory structure. The basename survives so a report stays
+# debuggable ("[PATH]/main.py:10" still names the failing file).
+_POSIX_PATH_RE = re.compile(r"(?<![\w:/.-])/(?:[^\s\"']+/)+[^\s\"']*|(?<![\w])~/[^\s\"']+")
+_WIN_PATH_RE = re.compile(r"(?<![\w])(?:[A-Za-z]:)?\\(?:[^\\\s\"']+\\)+[^\\\s\"']*")
+
+
+def _redact_path_match(m: re.Match) -> str:
+    """Replace one absolute-path hit with ``[PATH]/<basename>``."""
+    leaf = re.split(r"[\\/]", m.group(0))[-1]
+    return f"[PATH]/{leaf}" if leaf else "[PATH]"
+
+
+def _redact_paths(text: str) -> str:
+    """Collapse absolute filesystem paths to ``[PATH]/<basename>``."""
+    text = _POSIX_PATH_RE.sub(_redact_path_match, text)
+    return _WIN_PATH_RE.sub(_redact_path_match, text)
+
 
 def _scrub(value):
     """Privacy gate for one bundle field.
 
-    Strings pass through ``strip_private_data`` (spec §7); anything else
-    (ints/floats/None/timestamps) is returned unchanged. Applied to every
-    field below so the redaction invariant holds regardless of source.
+    Strings pass through ``strip_private_data`` (secret shapes / tags / URI
+    credentials, spec §7) and then ``_redact_paths`` (absolute local paths);
+    anything else (ints/floats/None/timestamps) is returned unchanged. Applied
+    to every field below so the redaction invariant holds regardless of source.
     """
     if isinstance(value, str):
-        return strip_private_data(value)
+        return _redact_paths(strip_private_data(value))
     return value
 
 
@@ -1359,8 +1383,8 @@ def _render_report(bundle: dict) -> str:
     """
     lines: list[str] = [
         "cairn report — redacted diagnostic bundle",
-        "# Secrets scrubbed via memory.privacy.strip_private_data. "
-        "Safe to paste into a GitHub issue.",
+        "# Secrets scrubbed via memory.privacy.strip_private_data; absolute "
+        "paths collapsed to [PATH]/<basename>. Safe to paste into a GitHub issue.",
         f"generated: {bundle['generated_at']}",
         "",
     ]
@@ -1418,9 +1442,11 @@ def report(db, as_json, out_path):
     ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
 
     PRIVACY GATE (spec observability-telemetry §7): every string field is
-    passed through ``memory.privacy.strip_private_data`` before inclusion, so
-    known secret shapes (API keys, bearer tokens, JWTs, ...) and
-    ``<private>`` tags are redacted to ``[REDACTED_SECRET]`` / ``[REDACTED]``.
+    passed through ``memory.privacy.strip_private_data`` (known secret shapes
+    -- API keys, bearer tokens, JWTs, ... -- and ``<private>`` tags are
+    redacted to ``[REDACTED_SECRET]`` / ``[REDACTED]``) and then through path
+    redaction (absolute local filesystem paths collapse to
+    ``[PATH]/<basename>``, since ``str(exc)`` from file I/O embeds them).
 
     The bundle is printed to stdout and NEVER auto-uploaded. ``--out PATH``
     additionally writes it to a file (JSON with ``--json``, otherwise the same
