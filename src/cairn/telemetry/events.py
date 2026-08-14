@@ -25,6 +25,7 @@ import threading
 import time
 from typing import Any, Optional
 
+from . import otel
 from . import sink
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,15 @@ def emit(name: str, **attrs: Any) -> None:
     if sink.is_telemetry_off() or sink.is_read_only():
         return
     try:
-        sink.enqueue(time.time(), name, _session_id(), _coerce_attrs(attrs))
+        ts = time.time()
+        attrs_json = _coerce_attrs(attrs)
+        session_id = _session_id()
+        sink.enqueue(ts, name, session_id, attrs_json)
+        # Optional OTLP tap (T19): no-op (one env read) unless
+        # CAIRN_OTEL_ENDPOINT is set. Appends to otel's own side buffer --
+        # the SQLite row queued above stays authoritative and is never
+        # stolen by the export path.
+        otel.record(ts, name, session_id, attrs_json)
     except Exception:
         # enqueue does buffered, non-DB work; a failure here is a logic bug,
         # not a DB outage. Still must not raise into a caller.

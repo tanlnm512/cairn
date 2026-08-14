@@ -117,6 +117,16 @@ ann = [
 scip = [
     "protobuf>=7.35.1",
 ]
+# Optional OTLP export (task T19, observability-telemetry spec §3 + §7):
+# setting CAIRN_OTEL_ENDPOINT exports cairn's LOCAL telemetry events as
+# OpenTelemetry LogRecords to that OTLP/http endpoint. Strictly lazy -- the
+# SDK is imported only inside the exporter's first flush, after the env gate,
+# so the default install stays OTel-free and cairn works fine without this
+# extra (one warn_once, then local-only). OTel is never a required install.
+otlp = [
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-http>=1.20",
+]
 
 [project.scripts]
 cairn = "cairn.cli:main"
