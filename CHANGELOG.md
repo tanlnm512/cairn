@@ -66,6 +66,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. The `cairn://status` MCP resource appends a `health` block (active
   backend degradations, pending-sync count, last-build age, 24h tool error rate)
   so a single resource read answers "is this store degraded?".
+- **Observability (P2 workflow integration + optional export, T17/T19/T20).**
+  The telemetry surfaces are now part of the agent's own procedure (not just a
+  passive dashboard): root `AGENTS.md` (+ the 4 synced guidance surfaces) add an
+  after-task `cairn doctor` step whose FAILs feed `record_memory(type="mistake")`,
+  and the PR/review/audit checklists gain a "does this change alter a
+  fallback/performance path?" gate plus a Tier-1 "silent degradation" audit
+  scope. `cairn report` prints a redacted diagnostic bundle (versions, the 8
+  doctor checks, recent error events, config echo) for bug reports — every
+  string field passes through `memory.privacy.strip_private_data`; never
+  auto-uploads (`--json`, `--out`). Optional OTLP export: setting
+  `CAIRN_OTEL_ENDPOINT` and installing the new `[otlp]` extra forwards cairn's
+  local telemetry events as OpenTelemetry LogRecords — strictly lazy (zero
+  module-level SDK imports; the default install stays OTel-free), best-effort
+  (never blocks the flush), and fully off by default.
 
 ### Changed
 - **`mcp_server/metric_buffering` now writes through the shared telemetry sink.**
@@ -86,6 +100,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - _Nothing yet._
+
+> **Note (audit, post-T16):** an observability spec-conformance pass closed four
+> gaps. `empty_result` now emits from the engine query layer named in the spec
+> (`explore` and the `search_symbols` MCP-tool wrapper, in addition to
+> `semantic_search`) and carries only `query_kind` (the non-spec `backend` attr
+> was dropped; the per-backend view comes from correlating with
+> `semantic_backend`); `cairn metrics --quality` scopes its empty-result rate to
+> the semantic kind and adds an `empty by kind` breakdown. The `lock_contention`
+> spec row was amended to match the implementation (`site: <module>.<function>`,
+> no `wait_ms`). A `mypy` error in `doctor`'s freshness check was fixed
+> (`bool(last_dt)` → `last_dt is not None`), and a stale cardinality-guard
+> comment was corrected.
 
 ## [0.9.1] - 2026-08-13
 
