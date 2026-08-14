@@ -891,7 +891,7 @@ def _check_freshness(conn) -> dict:
     # that process died mid-rebuild (builder.repo_build_in_progress is the
     # programmatic reader).
     try:
-        stale = [
+        interrupted = [
             r[0]
             for r in conn.execute(
                 "SELECT repo_id FROM repo_build_state WHERE state = 'building' "
@@ -899,14 +899,17 @@ def _check_freshness(conn) -> dict:
             ).fetchall()
         ]
     except Exception:
-        stale = []
-    if stale:
+        interrupted = []
+    if interrupted:
         status = _WARN
         parts.append(
-            f"interrupted rebuild of {', '.join(stale)} "
+            f"interrupted rebuild of {', '.join(interrupted)} "
             f"(marker from a crashed `cairn build --repo`)"
         )
-        hint = f"re-run `cairn build --repo {stale[0]}` to rebuild the partial repo"
+        hint = (
+            f"re-run `cairn build --repo {interrupted[0]}` "
+            f"to rebuild the partial repo"
+        )
 
     try:
         brow = conn.execute(
