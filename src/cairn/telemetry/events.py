@@ -46,6 +46,8 @@ EMPTY_RESULT = "empty_result"
 SEMANTIC_BACKEND = "semantic_backend"
 TASK_LIFECYCLE = "task_lifecycle"
 STRAY_SWEPT = "stray_swept"
+SEMANTIC_UNAVAILABLE = "semantic_unavailable"
+EMBED_FLUSH_STALLED = "embed_flush_stalled"
 
 # Defensive cap on any single serialized attr value so a runaway caller can't
 # bloat the events row / the WAL with a huge string. Attrs are supposed to be
@@ -154,3 +156,53 @@ def warn_once(key: str, warn_logger: logging.Logger, msg: str) -> None:
 # schema's is wired at the 13 swallow sites, with the behavior we want -- the
 # warning stays operational even under CAIRN_TELEMETRY=off).
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# semantic_unavailable -- durable signal for a semantic-off degrade (F4)
+#
+# explore() and search_knowledge() both degrade to lexical-only results when
+# the semantic backend can't contribute (not installed / no embeddings built /
+# an unexpected error). Those degrades were completely silent, so this helper
+# emits ONE ``semantic_unavailable`` event per (process, surface) plus the
+# matching once-guarded WARNING. ``surface`` is a bounded enum (explore |
+# knowledge), ``reason`` a bounded enum (unavailable | no_embeddings | error) --
+# both declared in the cardinality guard (tests/test_cardinality_guard.py).
+# ---------------------------------------------------------------------------
+
+_SEMANTIC_SURFACES = frozenset({"explore", "knowledge"})
+_SEMANTIC_REASONS = frozenset({"unavailable", "no_embeddings", "error"})
+
+
+def note_semantic_unavailable(surface: str, reason: str) -> None:
+    """Record + warn that a query surface degraded to lexical-only results.
+
+    Fires at most once per (process, surface): the first degrade wins and its
+    reason is the one recorded, mirroring ``warn_ann_fallback_once``'s single
+    process-global guard. No-op under ``CAIRN_TELEMETRY=off`` (both the event
+    and the WARNING -- unlike lock contention, this is a quality signal, not an
+    operational outage). Never raises.
+    """
+    try:
+        if sink.is_telemetry_off():
+            return
+        surface = surface if surface in _SEMANTIC_SURFACES else "explore"
+        reason = reason if reason in _SEMANTIC_REASONS else "error"
+        key = f"semantic_unavailable:{surface}"
+        with _WARN_LOCK:
+            if key in _WARNED:
+                return
+            _WARNED.add(key)
+        emit(
+            SEMANTIC_UNAVAILABLE,
+            surface=surface,
+            reason=reason,
+        )
+        logger.warning(
+            "semantic search unavailable on the '%s' surface (%s) -- results "
+            "degrade to lexical-only. Run `cairn embed` to build embeddings.",
+            surface,
+            reason,
+        )
+    except Exception:
+        logger.debug("note_semantic_unavailable(%s) failed", surface, exc_info=True)

@@ -215,3 +215,80 @@ def test_semantic_search_never_warns_when_ann_explicitly_off(
         if r.levelno == logging.WARNING and "brute-force" in r.getMessage().lower()
     ]
     assert ann_warnings == [], "explicit opt-out must not warn"
+
+
+# ---------------------------------------------------------------------------
+# 3. ann_query's no-index branch -- durable `no_index` signal (F1)
+# ---------------------------------------------------------------------------
+
+
+def _buffered_ann_events():
+    """[(name, attrs)] from the telemetry sink buffer (only ann_fallback rows
+    matter here, but the filter keeps assertions tight)."""
+    import json
+
+    from cairn.telemetry import sink
+
+    return [
+        (n, json.loads(a) if a else {})
+        for _ts, n, _sid, a in list(sink._BUFFER)
+        if n == "ann_fallback"
+    ]
+
+
+def _clear_sink():
+    from cairn.telemetry import sink
+
+    with sink._LOCK:
+        sink._BUFFER.clear()
+
+
+def test_ann_query_no_index_emits_once_and_warns(monkeypatch, caplog):
+    """ann_query on a model with no vec0 table returns None AND surfaces the
+    state once: a warning whose remediation hint is `cairn embed` (a rebuild,
+    not a package install), plus a durable ann_fallback event with the spec's
+    `no_index` reason. Second call stays silent (process-global guard)."""
+    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
+    # try_load monkeypatched True so the no-index branch is reachable without
+    # depending on the host's extension build (index_exists only reads
+    # sqlite_master, which never needs the extension).
+    monkeypatch.setattr(ann, "try_load", lambda conn: True)
+    _clear_sink()
+    caplog.set_level(logging.WARNING, logger="cairn.graph.ann_index")
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        assert ann.ann_query(conn, "some-model", b"\x00" * 8, 5) is None
+        assert ann.ann_query(conn, "some-model", b"\x00" * 8, 5) is None
+    finally:
+        conn.close()
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, "once per process, even across repeated queries"
+    msg = warnings[0].getMessage()
+    assert "no index built" in msg
+    assert "cairn embed" in msg, "rebuild hint, not an install hint"
+    assert "install-deps" not in msg, "the index exists as a feature; deps are fine"
+
+    events = _buffered_ann_events()
+    assert len(events) == 1
+    assert events[0][1] == {"reason": "no_index"}
+
+
+def test_ann_query_no_index_silent_when_telemetry_off(monkeypatch, caplog):
+    """CAIRN_TELEMETRY=off silences the event; the warning still fires once
+    (the warn_ann_fallback_once WARNING is operational, mirroring note_contention
+    -- the master switch stops recording, not the degradation notice itself)."""
+    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
+    monkeypatch.setenv("CAIRN_TELEMETRY", "off")
+    monkeypatch.setattr(ann, "try_load", lambda conn: True)
+    _clear_sink()
+    caplog.set_level(logging.WARNING, logger="cairn.graph.ann_index")
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        assert ann.ann_query(conn, "some-model", b"\x00" * 8, 5) is None
+    finally:
+        conn.close()
+
+    assert _buffered_ann_events() == [], "telemetry off -> no event recorded"

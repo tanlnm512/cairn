@@ -127,8 +127,12 @@ def test_semantic_backend_fires_on_real_brute_path(hash_backend, fresh_db):
 
     attrs = _semantic_attrs()
     assert attrs["backend"] == "brute", "explicit hash backend => is_hash_fallback False"
-    assert attrs["fusion"] == 1, "CAIRN_FUSION defaults on"
+    assert attrs["fusion"] == 1, "CAIRN_FUSION defaults on and ran to completion"
     assert attrs["rerank"] == 0, "rerank stubbed off for hermeticism"
+    # F3: execution-truth markers are always present (0/1) so the attr key
+    # set is stable per event (the cardinality guard checks exact key sets).
+    assert attrs["fusion_degraded"] == 0
+    assert attrs["rerank_degraded"] == 0
     assert attrs["ms"] in _VALID_MS
     assert attrs["n_results"] in _VALID_N and attrs["n_results"] != "0"
 
@@ -218,12 +222,40 @@ def test_fusion_off_reports_fusion_zero(fresh_db, monkeypatch):
 
     semantic_search(fresh_db, "safeApiCall", limit=5, threshold=-1.0)
 
-    assert _semantic_attrs()["fusion"] == 0
+    attrs = _semantic_attrs()
+    assert attrs["fusion"] == 0
+    # Config-off is an informed choice, not a stage failure.
+    assert attrs["fusion_degraded"] == 0
 
 
-def test_rerank_on_reports_rerank_one(fresh_db, monkeypatch):
-    """rerank_enabled True -> rerank attr is 1, even though the cross-encoder
-    itself degrades (no model loaded). The attr reflects the query's config."""
+def test_fusion_degrade_reports_zero_and_degraded_flag(fresh_db, monkeypatch):
+    """F3: RRF fusion configured ON but the rrf_fuse call raises -> the event
+    must report execution (fusion=0) plus the durable degraded marker, not the
+    config value it previously reported."""
+    _seed_symbols(fresh_db)
+    from cairn.graph import embeddings as emb
+    from cairn.graph import fusion as fusion_mod
+    from cairn.graph.semantic import semantic_search
+
+    emb.embed_all(fresh_db)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("simulated RRF failure")
+
+    monkeypatch.setattr(fusion_mod, "rrf_fuse", _boom)
+
+    results = semantic_search(fresh_db, "safeApiCall", limit=5, threshold=-1.0)
+    assert results, "search still succeeds on the vector-only degrade"
+
+    attrs = _semantic_attrs()
+    assert attrs["fusion"] == 0, "a degraded stage must not report 1"
+    assert attrs["fusion_degraded"] == 1, "the degradation is durable in the event"
+
+
+def test_rerank_degrade_reports_zero_and_degraded_flag(fresh_db, monkeypatch):
+    """F3: rerank configured ON but the cross-encoder degrades (its documented
+    fallback returns reranked=False) -> rerank=0 + rerank_degraded=1. The attr
+    set previously reported the config value 1, hiding the degrade."""
     _seed_symbols(fresh_db)
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
@@ -236,9 +268,33 @@ def test_rerank_on_reports_rerank_one(fresh_db, monkeypatch):
         rrk, "rerank", lambda query, candidates, limit: (candidates[:limit], False)
     )
 
+    results = semantic_search(fresh_db, "safeApiCall", limit=5, threshold=-1.0)
+    assert results, "search still succeeds on the hybrid-order fallback"
+
+    attrs = _semantic_attrs()
+    assert attrs["rerank"] == 0, "a degraded stage must not report 1"
+    assert attrs["rerank_degraded"] == 1
+
+
+def test_rerank_success_reports_one_and_no_degradation(fresh_db, monkeypatch):
+    """The execution-truth flip cuts both ways: a rerank stage that genuinely
+    applied re-scoring reports rerank=1 / rerank_degraded=0."""
+    _seed_symbols(fresh_db)
+    from cairn.graph import embeddings as emb
+    from cairn.graph import reranker as rrk
+    from cairn.graph.semantic import semantic_search
+
+    emb.embed_all(fresh_db)
+    monkeypatch.setattr(rrk, "rerank_enabled", lambda: True)
+    monkeypatch.setattr(
+        rrk, "rerank", lambda query, candidates, limit: (candidates[:limit], True)
+    )
+
     semantic_search(fresh_db, "safeApiCall", limit=5, threshold=-1.0)
 
-    assert _semantic_attrs()["rerank"] == 1
+    attrs = _semantic_attrs()
+    assert attrs["rerank"] == 1
+    assert attrs["rerank_degraded"] == 0
 
 
 # ---------------------------------------------------------------------------

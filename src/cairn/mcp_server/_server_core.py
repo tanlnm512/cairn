@@ -239,17 +239,23 @@ def _health_block(conn) -> dict:
     # ANN: only a degradation when sqlite-vec was *expected* (env unset or
     # '=sqlite-vec', the default) but unavailable. An explicit
     # CAIRN_ANN_BACKEND=off is an informed choice -- mirrors the rationale in
-    # ann_index.ann_backend_enabled() and the doctor's _check_ann.
+    # ann_index.ann_backend_enabled() and the doctor's _check_ann. Beyond the
+    # load probe, an embeddings-populated model with no vec0 table is also a
+    # degradation (semantic queries silently run the brute-force scan) --
+    # mirrors the doctor's index_exists probe.
     try:
         configured = (
             os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
             or "sqlite-vec"
         )
         if configured == "sqlite-vec":
-            from cairn.graph.ann_index import ann_backend_enabled
+            from cairn.graph.ann_index import ann_backend_enabled, index_exists
+            from cairn.graph.embeddings import current_model, embed_count
 
             if not ann_backend_enabled():
                 degradations.append("ann=unavailable")
+            elif embed_count(conn) > 0 and not index_exists(conn, current_model()):
+                degradations.append("ann=no_index")
     except Exception:
         pass
 

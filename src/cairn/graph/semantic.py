@@ -179,6 +179,17 @@ def semantic_search(
     # this call's candidates (not merely when it was enabled).
     _t0 = time.perf_counter()
     _ann_used = False
+    # Execution-truth flags for the fusion/rerank stages: the attrs must report
+    # what the call ACTUALLY did, not what it was configured to do. A
+    # configured-but-degraded stage (RRF exception, reranker model not cached)
+    # reports 0 for the stage and 1 for its *_degraded marker, so the
+    # degradation is durable in the events table instead of invisible.
+    # Assigned in the enclosing scope and read by the _finish closure (same
+    # pattern as _ann_used).
+    _fusion_used = False
+    _fusion_degraded = False
+    _rerank_used = False
+    _rerank_degraded = False
 
     def _finish(results: List[dict]) -> List[dict]:
         """Emit `semantic_backend` (+ `empty_result` when empty); return results.
@@ -188,9 +199,12 @@ def semantic_search(
         is hash > ann > brute: the hash-embed fallback is the worst degradation
         (token-overlap vectors carry no real semantic signal), so a query that
         ran on hash vectors is tagged ``hash`` whether or not the cosine scan
-        used the native ANN index. Cardinality is bounded to enums + fixed
-        buckets (spec §6.4). emit() never raises; the wrap is belt-and-
-        suspenders so a bucketing bug can't fail the search (spec §5.6).
+        used the native ANN index. `fusion`/`rerank` report execution (the
+        stage ran to completion / applied re-scoring), with paired
+        `*_degraded` markers for a configured stage that failed mid-call.
+        Cardinality is bounded to enums + fixed buckets (spec §6.4). emit()
+        never raises; the wrap is belt-and-suspenders so a bucketing bug can't
+        fail the search (spec §5.6).
         """
         try:
             elapsed_ms = (time.perf_counter() - _t0) * 1000.0
@@ -198,8 +212,10 @@ def semantic_search(
             emit(
                 SEMANTIC_BACKEND,
                 backend=backend,
-                fusion=1 if fusion_enabled else 0,
-                rerank=1 if rerank_on else 0,
+                fusion=1 if _fusion_used else 0,
+                fusion_degraded=1 if _fusion_degraded else 0,
+                rerank=1 if _rerank_used else 0,
+                rerank_degraded=1 if _rerank_degraded else 0,
                 ms=_ms_bucket(elapsed_ms),
                 n_results=_n_results_bucket(len(results)),
             )
@@ -235,10 +251,10 @@ def semantic_search(
         # Surface the degradation once when sqlite-vec was *expected* but is
         # unavailable. When ann_enabled is False it's either that or an
         # explicit CAIRN_ANN_BACKEND=off (the helper stays silent on the
-        # opt-out). When ann_enabled is True we only land here pre-rebuild (no
-        # index built yet -- a normal setup state, not a degradation) or after
-        # a load failure that already warned inside try_load, so we don't warn
-        # in that branch.
+        # opt-out). When ann_enabled is True, ann_query has already surfaced
+        # its own once-guarded reason on every None path (load failure inside
+        # try_load; the no-index state and query errors in ann_query), so
+        # there is nothing left to warn about here.
         if not ann_enabled:
             ann.warn_ann_fallback_once(logger, context="semantic_search")
         brute_force_limit = 50000
@@ -334,15 +350,23 @@ def semantic_search(
                 fused_candidates.append(base)
 
             candidates = fused_candidates
+            _fusion_used = True
         except Exception:
             # Degrade to vector-only rather than failing the search, but log
             # at WARNING (not debug): this path was once silently broken by a
             # .get()-on-Row AttributeError swallowed here, so a future regression
             # must be visible. The debug-level exc_info still gives the traceback.
+            _fusion_degraded = True
             logger.warning("RRF fusion degraded to vector-only", exc_info=True)
 
     if rerank_on:
         final, reranked = rrk.rerank(query, candidates, limit)
+        # `reranked` is the cross-encoder's own outcome flag: False means it
+        # degraded to returning the hybrid order unchanged (disabled, model
+        # not cached, or a predict() failure -- see reranker.rerank). Report
+        # the execution truth, not the rerank_on config.
+        _rerank_used = reranked
+        _rerank_degraded = not reranked
         for item in final:
             item["reranked"] = reranked
             if "rerank_score" in item:

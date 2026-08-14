@@ -28,7 +28,9 @@ _log = logging.getLogger(__name__)
               help="Retrieval quality: empty-result rate, truncations, backend mix.")
 @click.option("--contention", "contention_flag", is_flag=True,
               help="Lock-contention events grouped by site.")
-def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag):
+@click.option("--tasks", "tasks_flag", is_flag=True,
+              help="LLM task-queue lifecycle: events by kind and task type.")
+def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag, tasks_flag):
     """Report MCP tool metrics and telemetry trends.
 
     With no flag, aggregates ``tool_metrics`` (calls / avg ms / errors) -- the
@@ -38,8 +40,10 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag):
       --builds      recent ``build_runs`` rows with the resolution mix
       --quality     empty-result rate, truncations, semantic backend mix
       --contention  ``lock_contention`` events grouped by site
+      --tasks       ``task_lifecycle`` events: counts by event (claimed /
+                    completed / revised / dropped) and by task_kind
 
-    All three accept ``--json``. Multiple flags render each section in turn
+    All four accept ``--json``. Multiple flags render each section in turn
     (and, under ``--json``, a single object keyed by section name).
     """
     from . import display
@@ -47,7 +51,7 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag):
     # The default (no flag) path is the original tool_metrics aggregation. It
     # is kept verbatim in _metrics_default so its output is byte-for-byte
     # unchanged -- the new flags branch off here and never touch it.
-    if not (builds_flag or quality_flag or contention_flag):
+    if not (builds_flag or quality_flag or contention_flag or tasks_flag):
         _metrics_default(db, tool_name, as_json, display)
         return
 
@@ -61,13 +65,16 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag):
             sections.append(("quality", _gather_quality(conn)))
         if contention_flag:
             sections.append(("contention", _gather_contention(conn)))
+        if tasks_flag:
+            sections.append(("tasks", _gather_tasks(conn)))
     finally:
         conn.close()
 
     if as_json:
         # Single flag -> the bare value (a list for builds/contention, a dict
-        # for quality), matching the per-flag spec wording. Multiple flags ->
-        # one object keyed by section so a combined snapshot is self-describing.
+        # for quality/tasks), matching the per-flag spec wording. Multiple
+        # flags -> one object keyed by section so a combined snapshot is
+        # self-describing.
         if len(sections) == 1:
             click.echo(json.dumps(sections[0][1], indent=2, default=str))
         else:
@@ -81,6 +88,8 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag):
             _render_builds(value, display)
         elif kind == "quality":
             _render_quality(value, display)
+        elif kind == "tasks":
+            _render_tasks(value, display)
         else:
             _render_contention(value, display)
 
@@ -284,6 +293,37 @@ def _render_contention(rows: list[dict], display) -> None:
         columns=["site", "count", "last seen"],
         rows=table_rows,
     )
+
+
+def _gather_tasks(conn) -> dict:
+    """Aggregate ``task_lifecycle`` events: totals by event and by task_kind.
+
+    Makes the LLM task queue's history consumable (F5): claim/complete/revise/
+    drop transitions were recorded as events but no surface read them back.
+    ``by_event`` is the lifecycle funnel (claimed -> completed, with revised
+    re-work and dropped losses visible); ``by_kind`` shows which queue kinds
+    actually run. Reuses the defensive ``_attr_counts`` reader.
+    """
+    return {
+        "total": _count_events(conn, "task_lifecycle"),
+        "by_event": _attr_counts(conn, "task_lifecycle", "event"),
+        "by_kind": _attr_counts(conn, "task_lifecycle", "task_kind"),
+    }
+
+
+def _render_tasks(data: dict, display) -> None:
+    if data["total"] == 0:
+        display.info("No task-lifecycle events recorded yet.")
+        return
+    display.console.print("[bold]Task queue lifecycle[/bold]")
+    display.kv("events (total)", f"{data['total']:,}")
+    for label, key in (("by event", "by_event"), ("by kind", "by_kind")):
+        counts = data[key]
+        if counts:
+            ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            display.kv(label, ", ".join(f"{k}: {v}" for k, v in ordered))
+        else:
+            display.kv(label, "none recorded")
 
 
 # --- small formatting / defensive-read helpers ----------------------------
@@ -737,17 +777,29 @@ def _check_embeddings(conn) -> dict:
 
 
 def _check_ann(conn) -> dict:
-    """3. ANN: sqlite-vec loaded / degraded.
+    """3. ANN: sqlite-vec loaded / indexed / fresh.
 
     PASS when sqlite-vec is explicitly disabled (``CAIRN_ANN_BACKEND=off`` --
-    an informed choice, not a degradation) or loads cleanly. WARN when
-    sqlite-vec is *expected* (env unset or ``=sqlite-vec``, the default) but
-    unavailable (not installed / load failed): semantic_search then falls back
-    to the slower brute-force cosine scan. Uses ``ann_backend_enabled()`` plus
-    a live ``try_load`` probe, and surfaces the latest ``ann_fallback`` event
-    reason when one was recorded.
+    an informed choice, not a degradation) or loads cleanly with a fresh
+    index. WARN when sqlite-vec is *expected* (env unset or ``=sqlite-vec``,
+    the default) but unavailable (not installed / load failed): semantic_search
+    then falls back to the slower brute-force cosine scan. Also WARNs on two
+    index-level states the load probe can't see: embeddings exist for the
+    current model but no vec0 table was ever built (the index-less state
+    emitted as ``ann_fallback reason=no_index``), and a vec0 table whose row
+    count no longer matches the embeddings table (the index went stale between
+    ``cairn embed`` runs -- incremental syncs add embeddings without
+    rebuilding the index). Uses ``ann_backend_enabled()`` plus live
+    ``try_load`` / ``index_exists`` / ``index_row_count`` probes, and surfaces
+    the latest ``ann_fallback`` event reason when one was recorded.
     """
-    from ..graph.ann_index import ann_backend_enabled, try_load
+    from ..graph.ann_index import (
+        ann_backend_enabled,
+        index_exists,
+        index_row_count,
+        try_load,
+    )
+    from ..graph.embeddings import current_model, embed_count
 
     configured = (
         os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower() or "sqlite-vec"
@@ -775,7 +827,35 @@ def _check_ann(conn) -> dict:
             f"sqlite-vec importable but load failed ({reason}) -- brute-force scan in use",
             hint="install once: `cairn embed --install-deps`",
         )
-    return _result("ann", _PASS, "sqlite-vec available")
+    # Extension loads fine -- probe the index itself. Both probes are moot
+    # when there are no embeddings for the current model (a fresh/unembedded
+    # store legitimately has no vec0 table; that's the embeddings check's
+    # territory, not a missing index).
+    try:
+        emb_n = embed_count(conn) if conn is not None else 0
+    except Exception:
+        emb_n = 0
+    if emb_n <= 0:
+        return _result("ann", _PASS, "sqlite-vec available (no embeddings to index yet)")
+    model = current_model()
+    if conn is not None and not index_exists(conn, model):
+        return _result(
+            "ann",
+            _WARN,
+            f"no vec0 index for model '{model}' ({emb_n} embedding(s) unindexed) -- "
+            "brute-force scan in use",
+            hint="run `cairn embed` to build the ANN index",
+        )
+    idx_n = index_row_count(conn, model) if conn is not None else None
+    if idx_n is not None and idx_n != emb_n:
+        return _result(
+            "ann",
+            _WARN,
+            f"ANN index stale: {emb_n} embedding(s) vs {idx_n} indexed -- results "
+            "silently miss recent symbols",
+            hint="run `cairn embed` to rebuild the ANN index",
+        )
+    return _result("ann", _PASS, f"sqlite-vec available ({emb_n} vector(s) indexed)")
 
 
 def _check_freshness(conn) -> dict:

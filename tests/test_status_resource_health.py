@@ -198,6 +198,40 @@ def test_ann_off_by_config_is_not_a_degradation(status_db, monkeypatch):
     assert "ann=unavailable" not in out
 
 
+def test_health_block_flags_missing_vec0_index(status_db, monkeypatch):
+    """F1b: sqlite-vec expected and enabled, embeddings present for the current
+    model, but no vec0 index -> ``ann=no_index`` degradation (semantic queries
+    silently run the brute-force scan; the load probe alone can't see this)."""
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: False)
+    monkeypatch.setattr("cairn.graph.ann_index.ann_backend_enabled", lambda: True)
+
+    def setup(conn):
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk) "
+                "VALUES (?, ?, 8, ?, ?)",
+                (f"s{i}", emb.current_model(), b"\x00" * 32, "chunk"),
+            )
+
+    _make_db(status_db, setup=setup)
+    out = _status()
+    assert "ann=no_index" in out
+
+
+def test_health_block_no_index_degradation_absent_without_embeddings(
+    status_db, monkeypatch
+):
+    """No embeddings stored -> no vec0 table is legitimate (nothing to index):
+    the index probe must not flag it (mirrors the doctor's PASS-when-empty)."""
+    monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: False)
+    monkeypatch.setattr("cairn.graph.ann_index.ann_backend_enabled", lambda: True)
+    out = _status()
+    assert "  degradations: none" in out
+    assert "ann=no_index" not in out
+
+
 def test_health_block_survives_unmigrated_db(tmp_path, monkeypatch):
     """A DB without the telemetry tables does not crash the resource.
 

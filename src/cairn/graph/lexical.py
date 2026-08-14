@@ -6,10 +6,13 @@ or the MATCH query errors.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import List, Optional
 
 from .schema import note_contention
+
+_logger = logging.getLogger(__name__)
 
 
 def _is_fts_prefix_pattern(pattern: str) -> bool:
@@ -160,8 +163,29 @@ def search_symbols(
     params.append(limit)
     try:
         rows = list(conn.execute(sql, params).fetchall())
-    except sqlite3.OperationalError:
-        note_contention("lexical.fts_search")
+    except sqlite3.OperationalError as e:
+        # Discriminate before calling this contention (mirrors schema.py's
+        # duplicate-column discrimination): only "locked"/"busy" errors are a
+        # real cross-process lock event. Anything else (FTS5 syntax error, a
+        # missing symbols_fts table, corruption) is a query failure whose
+        # LIKE degrade is BY DESIGN -- a quiet once-per-process warning is
+        # enough, and misattributing it to contention would pollute the
+        # lock_contention signal doctor aggregates on.
+        msg = str(e).lower()
+        if "locked" in msg or "busy" in msg:
+            note_contention("lexical.fts_search")
+        else:
+            try:
+                from cairn.telemetry import warn_once
+
+                warn_once(
+                    "lexical.fts_non_contention",
+                    _logger,
+                    "FTS5 query failed (%s) -- degrading to the LIKE scan; "
+                    "results stay correct but unranked." % msg,
+                )
+            except Exception:
+                pass
         # FTS5 missing, table absent, or malformed query: degrade to LIKE.
         return _search_like(conn, pattern, kind, limit)
 

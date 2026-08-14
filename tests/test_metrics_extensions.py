@@ -414,6 +414,97 @@ def test_contention_empty_is_calm(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# --tasks
+# ---------------------------------------------------------------------------
+
+
+def _seed_tasks(conn):
+    """task_lifecycle events: claimed x5 (compass-synthesize x3, wiki x2),
+    completed x3 (all wiki), revised x1, dropped x1 (compass-synthesize). Kind totals: compass-synthesize 5, wiki 5."""
+    t = 1_700_000_000.0
+    for _ in range(3):
+        _evt(conn, t, "task_lifecycle", {"task_kind": "compass-synthesize", "event": "claimed", "attempt": 1})
+    for _ in range(2):
+        _evt(conn, t, "task_lifecycle", {"task_kind": "wiki", "event": "claimed", "attempt": 1})
+    for _ in range(3):
+        _evt(conn, t, "task_lifecycle", {"task_kind": "wiki", "event": "completed", "attempt": 1})
+    _evt(conn, t, "task_lifecycle", {"task_kind": "compass-synthesize", "event": "revised", "attempt": 2})
+    _evt(conn, t, "task_lifecycle", {"task_kind": "compass-synthesize", "event": "dropped", "attempt": 3})
+
+
+def test_tasks_human_summary(tmp_path):
+    """--tasks renders the lifecycle funnel (by event) and the kind breakdown."""
+    db = tmp_path / "graph.db"
+    _make_db(db, _seed_tasks)
+
+    result = _run(db, "--tasks")
+    assert result.exit_code == 0, result.output
+    assert "Task queue lifecycle" in result.output
+    assert "events (total)" in result.output
+    assert "10" in result.output
+    assert "by event" in result.output
+    assert "claimed: 5" in result.output
+    assert "completed: 3" in result.output
+    assert "by kind" in result.output
+    assert "compass-synthesize: 5" in result.output
+    assert "wiki: 5" in result.output
+
+
+def test_tasks_json_aggregates(tmp_path):
+    """--tasks --json emits {total, by_event, by_kind}."""
+    db = tmp_path / "graph.db"
+    _make_db(db, _seed_tasks)
+
+    result = _run(db, "--tasks", "--json")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["total"] == 10
+    assert data["by_event"] == {"claimed": 5, "completed": 3, "revised": 1, "dropped": 1}
+    assert data["by_kind"] == {"compass-synthesize": 5, "wiki": 5}
+
+
+def test_tasks_empty_is_calm(tmp_path):
+    """No task events -> 'No task-lifecycle events recorded yet.'."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db, "--tasks")
+    assert result.exit_code == 0, result.output
+    assert "No task-lifecycle events recorded yet." in result.output
+
+
+def test_tasks_missing_table_degrades(tmp_path):
+    """A store without the events table degrades to the no-data line."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    conn = sqlite3.connect(str(db))
+    conn.execute("DROP TABLE events")
+    conn.commit()
+    conn.close()
+
+    result = _run(db, "--tasks")
+    assert result.exit_code == 0, result.output
+    assert "No task-lifecycle events recorded yet." in result.output
+
+
+def test_tasks_flag_composes_with_others(tmp_path):
+    """--tasks rides the multi-flag dispatch (renders after --quality)."""
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        _seed_quality(conn)
+        _seed_tasks(conn)
+
+    _make_db(db, setup)
+
+    result = _run(db, "--quality", "--tasks", "--json")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert set(data.keys()) == {"quality", "tasks"}
+    assert data["tasks"]["total"] == 10
+
+
+# ---------------------------------------------------------------------------
 # Multiple flags + --json shape
 # ---------------------------------------------------------------------------
 

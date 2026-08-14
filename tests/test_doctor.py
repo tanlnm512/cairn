@@ -223,6 +223,122 @@ def test_ann_pass_when_explicitly_disabled(tmp_path, monkeypatch):
     assert "disabled by config" in row["detail"]
 
 
+# --- ANN index-level probes (F1b no-index, F7 staleness) ---------------------
+
+
+def _seed_embeddings(conn, n, model):
+    """n embeddings rows for `model` (the doctor's embed_count/current_model
+    probes read exactly these)."""
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk) "
+            "VALUES (?, ?, 8, ?, ?)",
+            (f"s{i}", model, b"\x00" * 32, "chunk"),
+        )
+
+
+def _force_ann_loadable(monkeypatch):
+    """Make the extension checks deterministic regardless of the host build."""
+    import cairn.graph.ann_index as ann
+
+    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
+    monkeypatch.setattr(ann, "ann_backend_enabled", lambda: True)
+    monkeypatch.setattr(ann, "try_load", lambda conn: True)
+    return ann
+
+
+def test_ann_warn_when_embeddings_present_but_no_index(tmp_path, monkeypatch):
+    """F1b: sqlite-vec loads, embeddings exist for the current model, but no
+    vec0 table was ever built -> WARN with the `cairn embed` rebuild hint
+    (previously this state was invisible: the load probe alone said PASS)."""
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")  # deterministic current_model()
+    _force_ann_loadable(monkeypatch)
+    model = emb.current_model()
+    db = tmp_path / "graph.db"
+    _make_db(db, setup=lambda conn: _seed_embeddings(conn, 3, model))
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "ann")
+    assert row["status"] == "WARN"
+    assert "no vec0 index" in row["detail"]
+    assert "3" in row["detail"], "the unindexed embedding count is surfaced"
+    assert "run `cairn embed`" in (row.get("hint") or "")
+
+
+def test_ann_warn_when_index_row_count_drifted(tmp_path, monkeypatch):
+    """F7: embeddings changed since the last vec0 rebuild (incremental syncs
+    add embeddings without rebuilding the index) -> WARN 'ANN index stale' with
+    both counts and the rebuild hint. The stand-in table is a plain table with
+    the sanitized vec0 name -- index_exists/index_row_count only read
+    sqlite_master / COUNT(*)."""
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+    ann = _force_ann_loadable(monkeypatch)
+    model = emb.current_model()
+    vec_table = ann._table_name(model)
+
+    def setup(conn):
+        _seed_embeddings(conn, 5, model)
+        conn.execute(f"CREATE TABLE {vec_table} (rowid INTEGER PRIMARY KEY)")
+        conn.execute(f"INSERT INTO {vec_table} (rowid) VALUES (1), (2)")
+
+    db = tmp_path / "graph.db"
+    _make_db(db, setup=setup)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "ann")
+    assert row["status"] == "WARN"
+    assert "stale" in row["detail"].lower()
+    assert "5" in row["detail"] and "2" in row["detail"]
+    assert "run `cairn embed`" in (row.get("hint") or "")
+
+
+def test_ann_pass_when_index_matches_embeddings(tmp_path, monkeypatch):
+    """A fresh index (row counts equal) -> PASS with the indexed count; the
+    index-level probes do not false-positive on a healthy store."""
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+    ann = _force_ann_loadable(monkeypatch)
+    model = emb.current_model()
+    vec_table = ann._table_name(model)
+
+    def setup(conn):
+        _seed_embeddings(conn, 4, model)
+        conn.execute(f"CREATE TABLE {vec_table} (rowid INTEGER PRIMARY KEY)")
+        conn.executemany(
+            f"INSERT INTO {vec_table} (rowid) VALUES (?)", [(i,) for i in range(4)]
+        )
+
+    db = tmp_path / "graph.db"
+    _make_db(db, setup=setup)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "ann")
+    assert row["status"] == "PASS"
+    assert "4" in row["detail"]
+
+
+def test_ann_pass_when_no_embeddings_to_index(tmp_path, monkeypatch):
+    """A store with no embeddings legitimately has no vec0 table: the index
+    probes stay out of the embeddings check's territory (PASS, qualified)."""
+    _force_ann_loadable(monkeypatch)
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "ann")
+    assert row["status"] == "PASS"
+    assert "no embeddings" in row["detail"]
+
+
 # ---------------------------------------------------------------------------
 # Freshness -- WARN on pending_sync and stale last build
 # ---------------------------------------------------------------------------

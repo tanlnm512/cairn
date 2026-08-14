@@ -44,12 +44,10 @@ expected values. This file asserts the *cardinality property* (every value is
 bounded) and is intentionally the one place that fails loudly if an emitter
 escapes its declared domain.
 
-Two catalog events -- ``ann_fallback`` and ``hash_fallback`` -- are declared
-here per spec §6.4 but have **no live emitter today** (only the
-``warn_*_fallback_once`` *logging* helpers exist; they log, they do not emit an
-``events`` row). That is a reported source gap, not a test gap: there is nothing
-to drive, so the dynamic sweep covers the other six. See
-``test_ann_and_hash_fallback_have_no_live_emitter_documented``.
+All catalog events have live emitters today (``ann_fallback`` /
+``hash_fallback`` were wired into ``warn_*_fallback_once``; the residual-gap
+fixes added ``semantic_unavailable`` and ``embed_flush_stalled``), so the
+dynamic sweep drives every name in the catalog.
 """
 
 from __future__ import annotations
@@ -64,10 +62,12 @@ from cairn.telemetry import events
 from cairn.telemetry import sink
 from cairn.telemetry import (
     ANN_FALLBACK,
+    EMBED_FLUSH_STALLED,
     EMPTY_RESULT,
     HASH_FALLBACK,
     LOCK_CONTENTION,
     SEMANTIC_BACKEND,
+    SEMANTIC_UNAVAILABLE,
     STRAY_SWEPT,
     TASK_LIFECYCLE,
     TRUNCATE_RESULT,
@@ -100,6 +100,9 @@ _TASK_EVENTS = frozenset({"claimed", "completed", "revised", "dropped"})
 _ANN_REASONS = frozenset(
     {"load_failed", "not_installed", "no_index", "disabled", "query_error"}
 )
+_SEMANTIC_SURFACES = frozenset({"explore", "knowledge"})
+_SEMANTIC_OFF_REASONS = frozenset({"unavailable", "no_embeddings", "error"})
+_FLUSH_FAILURE_BUCKETS = frozenset({"4-10", "11-100", ">100"})
 
 
 def _bounded_tag(value) -> bool:
@@ -142,8 +145,13 @@ def _int_pos(value) -> bool:
 ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
     SEMANTIC_BACKEND: {
         "backend": _BACKEND,
+        # fusion/rerank report EXECUTION (the stage ran to completion),
+        # not configuration; the paired *_degraded markers flag a stage that
+        # was configured but failed mid-call (F3).
         "fusion": frozenset({0, 1}),
+        "fusion_degraded": frozenset({0, 1}),
         "rerank": frozenset({0, 1}),
+        "rerank_degraded": frozenset({0, 1}),
         "ms": _MS_BUCKETS,
         "n_results": _N_BUCKETS,
     },
@@ -175,6 +183,17 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
         "reason": _ANN_REASONS,
     },
     HASH_FALLBACK: {},  # catalog: "(existing warning path)" -- no attrs
+    # F4: a query surface degraded to lexical-only results because the
+    # semantic backend couldn't contribute. surface/reason are strict enums.
+    SEMANTIC_UNAVAILABLE: {
+        "surface": _SEMANTIC_SURFACES,
+        "reason": _SEMANTIC_OFF_REASONS,
+    },
+    # F6: the memory-embed background flusher escalated to WARNING after
+    # chronic consecutive failures; bucketed failure count.
+    EMBED_FLUSH_STALLED: {
+        "failures": _FLUSH_FAILURE_BUCKETS,
+    },
 }
 
 # Events that actually emit at a live site today (the dynamic sweep drives each).
@@ -188,10 +207,13 @@ LIVE_EVENTS = frozenset(
         STRAY_SWEPT,
         ANN_FALLBACK,
         HASH_FALLBACK,
+        SEMANTIC_UNAVAILABLE,
+        EMBED_FLUSH_STALLED,
     }
 )
-# All 8 catalog events now have a live emitter (ann_fallback / hash_fallback
-# were wired into warn_*_fallback_once).
+# All catalog events have a live emitter (ann_fallback / hash_fallback were
+# wired into warn_*_fallback_once; semantic_unavailable / embed_flush_stalled
+# added by the residual-gap fixes).
 NO_EMITTER_EVENTS = frozenset()
 
 
@@ -201,7 +223,7 @@ def _catalog_event_names() -> set[str]:
     Introspected from the module so adding ``NEW_THING = "new_thing"`` there is
     auto-detected: ``test_every_catalog_event_has_cardinality_declaration`` will
     fail until ``NEW_THING`` is added to ``ALLOWED_ATTR_VALUES``. The filter
-    (UPPER_SNAKE ``str`` constant, no leading underscore) matches exactly the 8
+    (UPPER_SNAKE ``str`` constant, no leading underscore) matches exactly the
     catalog names and excludes ``_MAX_ATTR_CHARS`` (an int) and imports.
     """
     return {
@@ -359,6 +381,30 @@ def test_chars_bucket_only_returns_declared_values(n):
     assert _chars_bucket(n) in _CHARS_BUCKETS
 
 
+# embed_flush_stalled failure counts: representative + edge inputs, including
+# below-threshold values the emitter never passes (the helper must still be
+# total -- an unbucketed value can never leak into the events table).
+_FLUSH_INPUTS = [-1, 0, 1, 4, 5, 10, 11, 99, 100, 101, 100_000]
+
+
+@pytest.mark.parametrize("n", _FLUSH_INPUTS)
+def test_failures_bucket_only_returns_declared_values(n):
+    from cairn.mcp_server.embed_buffering import _failures_bucket
+
+    assert _failures_bucket(n) in _FLUSH_FAILURE_BUCKETS
+
+
+def test_failures_bucket_boundary_labels_are_exact():
+    """The escalation threshold lands in '4-10'; 100 -> '11-100'; 101 -> '>100'."""
+    from cairn.mcp_server.embed_buffering import _failures_bucket
+
+    assert _failures_bucket(4) == "4-10"
+    assert _failures_bucket(10) == "4-10"
+    assert _failures_bucket(11) == "11-100"
+    assert _failures_bucket(100) == "11-100"
+    assert _failures_bucket(101) == ">100"
+
+
 def test_ms_bucket_boundary_labels_are_exact():
     """The bucket boundaries map to the documented labels (not just any member)."""
     from cairn.graph.semantic import _ms_bucket
@@ -487,6 +533,35 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
     _emb._HASH_FALLBACK_WARNED = False
     monkeypatch.setattr(_emb, "is_hash_fallback", lambda: True)
     _emb.warn_hash_fallback_once(_logging.getLogger("test"))
+
+    # 8. semantic_unavailable (F4): one call on a bounded surface/reason --
+    # the helper's once-guard keys on surface, so a single drive is exactly
+    # what production emits per (process, surface).
+    from cairn.telemetry import note_semantic_unavailable
+
+    note_semantic_unavailable("explore", "no_embeddings")
+
+    # 9. embed_flush_stalled (F6): drive the flusher's escalation branch
+    # directly with a failing factory. Queue + state are reset around the
+    # drive; the flusher thread is never started (no enqueue() call).
+    from cairn.mcp_server import embed_buffering as _eb
+
+    def _boom():
+        raise RuntimeError("simulated chronic flush failure")
+
+    with _eb._LOCK:
+        _eb._QUEUE.clear()
+        _eb._QUEUE.append("knowledge/test/concept")
+    _eb._FAILURES = 0
+    _eb._STALL_EVENT_SENT = False
+    monkeypatch.setattr(_eb, "_conn_factory", _boom)
+    monkeypatch.setattr(_eb, "_bundle_factory", lambda: object())
+    for _ in range(_eb._WARN_AFTER + 1):
+        _eb._flush()
+    _eb._FAILURES = 0
+    _eb._STALL_EVENT_SENT = False
+    with _eb._LOCK:
+        _eb._QUEUE.clear()
 
     for name, attrs in _buffered_events():
         captured[name].append(attrs)
