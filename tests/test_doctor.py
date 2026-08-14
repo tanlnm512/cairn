@@ -92,7 +92,7 @@ def test_eight_checks_always_emitted(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     expected = [
         "schema",
         "embeddings",
@@ -124,7 +124,7 @@ def test_schema_fail_unopenable_db(tmp_path):
     bad = tmp_path / "nodir" / "missing.db"
     result = _run(bad, "--json")
     assert result.exit_code == 1, result.output
-    schema = _by_name(json.loads(result.output), "schema")
+    schema = _by_name(json.loads(result.stdout), "schema")
     assert schema["status"] == "FAIL"
     assert "cannot open database" in schema["detail"]
 
@@ -140,7 +140,7 @@ def test_schema_fail_corrupt_db(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 1, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert _by_name(data, "schema")["status"] == "FAIL"
     # The DB-dependent checks degrade to WARN, not a crash/empty output.
     assert _by_name(data, "freshness")["status"] == "WARN"
@@ -163,7 +163,7 @@ def test_embeddings_warn_hash_fallback(tmp_path, monkeypatch):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output  # WARN, not FAIL
-    row = _by_name(json.loads(result.output), "embeddings")
+    row = _by_name(json.loads(result.stdout), "embeddings")
     assert row["status"] == "WARN"
     assert "install-deps" in (row.get("hint") or "")
 
@@ -179,7 +179,7 @@ def test_embeddings_pass_real_backend(tmp_path, monkeypatch):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    assert _by_name(json.loads(result.output), "embeddings")["status"] == "PASS"
+    assert _by_name(json.loads(result.stdout), "embeddings")["status"] == "PASS"
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ def test_ann_warn_when_expected_but_unavailable(tmp_path, monkeypatch):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "ann")
+    row = _by_name(json.loads(result.stdout), "ann")
     assert row["status"] == "WARN"
     assert "brute-force" in row["detail"]
     assert "install-deps" in (row.get("hint") or "")
@@ -218,7 +218,7 @@ def test_ann_pass_when_explicitly_disabled(tmp_path, monkeypatch):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "ann")
+    row = _by_name(json.loads(result.stdout), "ann")
     assert row["status"] == "PASS"
     assert "disabled by config" in row["detail"]
 
@@ -243,7 +243,7 @@ def test_freshness_warn_pending_sync(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "freshness")
+    row = _by_name(json.loads(result.stdout), "freshness")
     assert row["status"] == "WARN"
     assert "pending-sync" in row["detail"]
 
@@ -263,7 +263,7 @@ def test_freshness_warn_stale_build(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "freshness")
+    row = _by_name(json.loads(result.stdout), "freshness")
     assert row["status"] == "WARN"
     assert "last build" in row["detail"]
 
@@ -283,7 +283,7 @@ def test_freshness_pass_recent_build(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    assert _by_name(json.loads(result.output), "freshness")["status"] == "PASS"
+    assert _by_name(json.loads(result.stdout), "freshness")["status"] == "PASS"
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +313,7 @@ def test_parse_errors_warn_and_lists_newest(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "parse_errors")
+    row = _by_name(json.loads(result.stdout), "parse_errors")
     assert row["status"] == "WARN"
     assert "3 parse error(s)" in row["detail"]
     # Newest-first (timestamp DESC) -> file2 before file0.
@@ -326,7 +326,7 @@ def test_parse_errors_pass_when_empty(tmp_path):
     _make_db(db)
 
     result = _run(db, "--json")
-    assert _by_name(json.loads(result.output), "parse_errors")["status"] == "PASS"
+    assert _by_name(json.loads(result.stdout), "parse_errors")["status"] == "PASS"
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ def test_concurrency_warn_on_lock_contention(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "concurrency")
+    row = _by_name(json.loads(result.stdout), "concurrency")
     assert row["status"] == "WARN"
     assert "1 lock-contention event" in row["detail"]
 
@@ -367,7 +367,7 @@ def test_concurrency_pass_with_only_stray_sweeps(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "concurrency")
+    row = _by_name(json.loads(result.stdout), "concurrency")
     assert row["status"] == "PASS"
     assert "3 stray" in row["detail"]  # reported in detail, just not a WARN trigger
 
@@ -401,7 +401,7 @@ def test_tool_health_warn_high_error_rate(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "tool_health")
+    row = _by_name(json.loads(result.stdout), "tool_health")
     assert row["status"] == "WARN"
     assert "search_symbols" in row["detail"]
     assert "50% err" in row["detail"]
@@ -422,7 +422,7 @@ def test_tool_health_warn_high_latency(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "tool_health")
+    row = _by_name(json.loads(result.stdout), "tool_health")
     assert row["status"] == "WARN"
     assert "p95" in row["detail"]
 
@@ -438,7 +438,7 @@ def test_tool_health_pass_when_healthy(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    assert _by_name(json.loads(result.output), "tool_health")["status"] == "PASS"
+    assert _by_name(json.loads(result.stdout), "tool_health")["status"] == "PASS"
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +456,7 @@ def test_config_echo_always_pass(tmp_path, monkeypatch):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    row = _by_name(json.loads(result.output), "config")
+    row = _by_name(json.loads(result.stdout), "config")
     assert row["status"] == "PASS"
     assert "workers=4" in row["detail"]
     assert "telemetry=off" in row["detail"]

@@ -105,7 +105,7 @@ def test_default_json_unchanged(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data == [
         {"tool_name": "explore", "calls": 5, "avg_ms": 12.0, "errors": 1},
         {"tool_name": "search_symbols", "calls": 2, "avg_ms": 8.0, "errors": 0},
@@ -187,7 +187,7 @@ def test_builds_json_is_row_list_newest_first(tmp_path):
 
     result = _run(db, "--builds", "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert isinstance(data, list)
     assert [r["kind"] for r in data] == ["build", "embed"]
     build = data[0]
@@ -281,7 +281,7 @@ def test_quality_json_aggregates(tmp_path):
 
     result = _run(db, "--quality", "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert isinstance(data, dict)
     assert data["semantic_total"] == 6
     assert data["empty_results"] == 4
@@ -375,7 +375,7 @@ def test_contention_json_is_site_list(tmp_path):
 
     result = _run(db, "--contention", "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert isinstance(data, list)
     assert [d["site"] for d in data] == ["schema.migration", "ann_index.try_load"]
     assert data[0]["count"] == 3
@@ -399,7 +399,7 @@ def test_contention_unknown_site_bucket(tmp_path):
 
     result = _run(db, "--contention", "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data == [{"site": "<unknown>", "count": 1, "last_ts": 1_700_000_000.0}]
 
 
@@ -446,7 +446,7 @@ def test_multiple_flags_json_is_keyed_object(tmp_path):
 
     result = _run(db, "--builds", "--quality", "--json")
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert set(data.keys()) == {"builds", "quality"}
     assert isinstance(data["builds"], list)
     assert isinstance(data["quality"], dict)

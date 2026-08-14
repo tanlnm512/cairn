@@ -114,7 +114,8 @@ work lands; each PR references the task IDs it completes.
   - Done 2026-08-14: doctor step is after-task step #2 (between `cairn update` and `record_memory`, since a FAIL feeds the mistake memory); scope #9 landed as Tier 1 (Tier-1 note + "Before a release" trigger updated); the doctor step is byte-identical across AGENTS.md / `_common.py` / `cairn.mdc` and condensed to SKILL.md's terse idiom.
 - [ ] **T18 — CI bench artifacts** — upload `cairn bench` results; advisory baseline comparison in PR comment.
 - [ ] **T19 — Optional OTLP export** — `CAIRN_OTEL_ENDPOINT`; lazy `opentelemetry-sdk` import; `warn_once` when unset SDK; optional extra in pyproject; dependency-review clean.
-- [ ] **T20 — `cairn report`** — redacted bundle (versions, doctor, recent errors, config echo via `strip_private_data`); never auto-uploads.
+- [x] **T20 — `cairn report`** — redacted bundle (versions, doctor, recent errors, config echo via `strip_private_data`); never auto-uploads.
+  - Done 2026-08-14: `report --json/--out` reuses `_run_doctor` + `_check_config`'s knob list; purely additive to `cli/system.py` (+286, 0 deletions). Known limitation (documented in the command docstring + cli-reference): `strip_private_data` redacts secret shapes and `<private>` tags but does NOT scrub file paths (e.g. shortened paths inside doctor's parse-errors detail) — users should still review before pasting publicly. Integration hardening: `json.loads(result.output)` → `result.stdout` across test_doctor/test_metrics_extensions/test_report (click's `Result.output` interleaves stderr; a leaked DEBUG log line broke JSON parsing in full-suite order while real-world stdout stays pure).
 
 ---
 

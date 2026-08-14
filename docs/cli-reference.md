@@ -319,6 +319,7 @@ and wiring them into `cairn.json` for build-time hybrid indexing.
 |---------|-------------|
 | `cairn metrics` | Report MCP tool invocation metrics (calls, avg latency, error rate), and — with a flag — telemetry trends from `build_runs`/`events`. |
 | `cairn doctor` | Run 8 system health checks (PASS/WARN/FAIL each); exit 0 or 1 so agents can gate on it. Read-only. |
+| `cairn report` | Print a redacted diagnostic bundle (versions, doctor, recent errors, config) for bug reports / GitHub issues. Never uploads. |
 | `cairn status` | System status and health across all layers. |
 | `cairn eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`). |
 | `cairn bench` | Run performance or scalability benchmarks. |
@@ -326,6 +327,7 @@ and wiring them into `cairn.json` for build-time hybrid indexing.
 `metrics` options: `--db`, `--tool NAME` (default aggregation only), `--json`,
 plus the telemetry-trend flags `--builds`, `--quality`, `--contention`.
 `doctor` options: `--db`, `--json`.
+`report` options: `--db`, `--json`, `--out PATH`.
 `status` options: `--db`, `--knowledge`.
 `eval` options: `--db`, `--knowledge`, `--corpus L1|L5|all`, `--queries PATH`, `--json`.
 `bench` options: `--suite perf|scaling`, `--workspace`, `--sizes`, `--n-files`,
@@ -374,6 +376,37 @@ keyed by section name):
 
 `--tool NAME` filters the default aggregation only; it has no effect on the
 three trend flags.
+
+#### `cairn report` — redacted diagnostic bundle
+
+`cairn report` prints one self-describing bundle for pasting into a bug report
+or GitHub issue. It is read-only and **never uploads** anything — the output
+goes to stdout (and optionally a file). The bundle has four sections:
+
+- **Versions** — cairn `__version__`, Python version, platform/OS, the SQLite
+  library version, and a best-effort `PRAGMA user_version` probe (cairn applies
+  `CREATE TABLE IF NOT EXISTS` DDL and tracks no numeric schema version, so this
+  is typically `0`; `null` when the store is unreadable).
+- **Doctor** — the same 8 checks `cairn doctor` runs (reused verbatim), rendered
+  as PASS/WARN/FAIL rows.
+- **Recent errors** — a bounded set (last 20) of error-ish `events` rows
+  (`ann_fallback`, `hash_fallback`, `lock_contention`) plus the last 20
+  `tool_metrics` rows with `status='error'`, newest first.
+- **Config** — the effective `CAIRN_*` knobs (the same list `doctor` echoes).
+
+**Privacy gate (observability-telemetry spec §7):** every string field is
+passed through `memory.privacy.strip_private_data` before inclusion, so known
+secret shapes (API keys, bearer tokens, JWTs, …) and `<private>` tags are
+redacted to `[REDACTED_SECRET]` / `[REDACTED]`. Note `strip_private_data` is
+secret-shaped only — review the bundle before pasting if your error messages
+embed sensitive paths. Best-effort throughout: a missing, read-only, or corrupt
+store degrades to empty sections and a `schema` FAIL (mirroring `cairn doctor`)
+and never raises.
+
+`--json` emits the bundle as a JSON object; `--out PATH` additionally writes
+the bundle to a file (JSON with `--json`, otherwise the same human-readable
+text) and prints a short confirmation to stderr so it can't corrupt JSON on
+stdout.
 
 ### Agent integration and lifecycle
 
