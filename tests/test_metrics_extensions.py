@@ -237,16 +237,20 @@ def _seed_quality(conn):
     """semantic_backend / empty_result / truncate_result events.
 
     semantic_backend: ann x3, brute x2, hash x1 (6 total).
-    empty_result: 2.
+    empty_result: 4 total -- semantic_search x2, explore x1, search_symbols x1.
+      Only the semantic_search empties share a denominator with semantic_backend,
+      so the rate is scoped to that kind (2/6 = 0.333...); the explore /
+      search_symbols empties prove non-semantic kinds don't pollute the rate.
     truncate_result: explore x2, search_symbols x1 (3 total).
-    -> empty-result rate 2/6 = 0.333...
     """
     t = 1_700_000_000.0
     for backend, n in (("ann", 3), ("brute", 2), ("hash", 1)):
         for _ in range(n):
             _evt(conn, t, "semantic_backend", {"backend": backend, "fusion": 1, "rerank": 0})
     for _ in range(2):
-        _evt(conn, t, "empty_result", {"query_kind": "semantic_search", "backend": "ann"})
+        _evt(conn, t, "empty_result", {"query_kind": "semantic_search"})
+    _evt(conn, t, "empty_result", {"query_kind": "explore"})
+    _evt(conn, t, "empty_result", {"query_kind": "search_symbols"})
     for _ in range(2):
         _evt(conn, t, "truncate_result", {"tool": "explore", "chars_bucket": "10-100k"})
     _evt(conn, t, "truncate_result", {"tool": "search_symbols", "chars_bucket": "10-100k"})
@@ -261,6 +265,9 @@ def test_quality_human_summary(tmp_path):
     assert result.exit_code == 0, result.output
     assert "Quality signals" in result.output
     assert "2 / 6 (33.3%)" in result.output
+    # Per-kind breakdown surfaces the non-semantic empties without polluting rate.
+    assert "empty by kind" in result.output
+    assert "explore: 1" in result.output
     assert "backend mix" in result.output
     # Backend mix is count-desc then key; ann(3) leads.
     assert result.output.index("ann") < result.output.index("brute")
@@ -277,7 +284,12 @@ def test_quality_json_aggregates(tmp_path):
     data = json.loads(result.output)
     assert isinstance(data, dict)
     assert data["semantic_total"] == 6
-    assert data["empty_results"] == 2
+    assert data["empty_results"] == 4
+    assert data["empty_by_kind"] == {
+        "semantic_search": 2,
+        "explore": 1,
+        "search_symbols": 1,
+    }
     assert data["empty_result_rate"] == 2 / 6
     assert data["truncations"] == 3
     assert data["backend_mix"] == {"ann": 3, "brute": 2, "hash": 1}

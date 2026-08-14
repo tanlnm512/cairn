@@ -705,6 +705,19 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
     finally:
         conn.close()
 
+    if not rows:
+        # Zero matches -> emit a durable empty_result (spec §6.4) so the
+        # empty-result rate is measurable for the lexical search tool too.
+        # Emitted here at the MCP tool boundary, NOT in the search_symbols
+        # primitive (lexical.py): that primitive is shared by explore/semantic
+        # and would double-count; this wrapper has a single caller. Best-effort.
+        try:
+            from cairn.telemetry import EMPTY_RESULT, emit as _emit
+
+            _emit(EMPTY_RESULT, query_kind="search_symbols")
+        except Exception:
+            logger.debug("search_symbols empty_result emit failed", exc_info=True)
+
     SHOWN = 50
     returned = rows[:SHOWN]
     # Distinguish the FULL DB match count (total_count, could be thousands)

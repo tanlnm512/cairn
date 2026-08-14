@@ -21,6 +21,7 @@ import pytest
 
 from cairn.telemetry import sink
 from cairn.telemetry import (
+    EMPTY_RESULT,
     STRAY_SWEPT,
     TASK_LIFECYCLE,
     TRUNCATE_RESULT,
@@ -155,3 +156,58 @@ def test_stray_sweeper_emits_count_only_when_strays_killed(monkeypatch):
     name, attrs = events[0]
     assert name == STRAY_SWEPT
     assert attrs == {"count": 2}
+
+
+# ---------------------------------------------------------------------------
+# 4. empty_result -- explore() and the search_symbols MCP tool (F1 expansion)
+#    Spec §6.4 names the engine query layer (explore, search_symbols,
+#    semantic_search). semantic_search's emit is covered in
+#    test_semantic_events.py; these two pin the other query kinds.
+# ---------------------------------------------------------------------------
+
+
+def test_explore_emits_empty_result_when_no_seeds(fresh_db):
+    """explore() with no matching symbols -> empty_result(query_kind='explore').
+
+    explore() has a single non-bench caller (the MCP tool) and the semantic
+    branch is skipped on an embedding-less DB (embed_count == 0), so exactly
+    one empty_result fires -- no double-count against the search_symbols
+    primitive, which is not instrumented.
+    """
+    from cairn.graph.explore import explore
+
+    result = explore(fresh_db, "does-not-exist-anywhere", max_nodes=5)
+    assert result["seeds"] == []
+    empties = [a for n, a in _buffered_events() if n == EMPTY_RESULT]
+    assert len(empties) == 1
+    assert empties[0] == {"query_kind": "explore"}
+
+
+def test_search_symbols_tool_emits_empty_result_when_no_match(tmp_path, monkeypatch):
+    """search_symbols_data (the MCP tool wrapper) with zero matches ->
+    empty_result(query_kind='search_symbols').
+
+    Emitted at the tool boundary, not the shared ``search_symbols`` primitive in
+    lexical.py (which explore/semantic call transitively and would double-count).
+    """
+    import sqlite3
+
+    from cairn.graph.schema import _apply_schema
+    from cairn.mcp_server import tools_graph
+
+    db = tmp_path / "graph.db"
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    conn.commit()
+    conn.close()
+
+    # _conn() must return a fresh open connection each call: the wrapper closes
+    # the one it receives in its `finally` block.
+    monkeypatch.setattr(tools_graph, "_conn", lambda: sqlite3.connect(str(db)))
+
+    data = tools_graph.search_symbols_data("does-not-exist")
+    assert data["total_count"] == 0
+    empties = [a for n, a in _buffered_events() if n == EMPTY_RESULT]
+    assert len(empties) == 1
+    assert empties[0] == {"query_kind": "search_symbols"}

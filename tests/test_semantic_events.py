@@ -157,7 +157,6 @@ def test_empty_result_event_when_no_embeddings(fresh_db):
     empty = [a for n, a in _buffered_events() if n == "empty_result"]
     assert len(empty) == 1
     assert empty[0]["query_kind"] == "semantic_search"
-    assert empty[0]["backend"] == attrs["backend"]
 
 
 # ---------------------------------------------------------------------------

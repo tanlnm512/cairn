@@ -203,9 +203,9 @@ set, keyed so each degradation class warns at most once per process:
 |---|---|---|
 | `ann_fallback` | `reason: load_failed\|not_installed\|no_index\|disabled\|query_error` | `ann_index.try_load` / `ann_query` / `semantic.py` fallback branch |
 | `hash_fallback` | (existing warning path) | `embeddings.warn_hash_fallback_once` callers |
-| `lock_contention` | `site: <module>:<line>` tag, `wait_ms` bucket | the 13 `except sqlite3.OperationalError` sites, via a shared `note_contention(site)` helper |
+| `lock_contention` | `site: <module>.<function>` tag | the 13 `except sqlite3.OperationalError` sites, via a shared `note_contention(site)` helper |
 | `truncate_result` | `tool`, `chars` bucket | `metric_buffering._truncate_result` |
-| `empty_result` | `tool` / `query_kind` | engine query layer (explore, search_symbols, semantic_search) |
+| `empty_result` | `query_kind: semantic_search\|explore\|search_symbols` | engine query layer: `semantic.semantic_search` (engine), `explore.explore` (engine; single MCP-tool caller), and the `search_symbols` MCP tool wrapper (`tools_graph.search_symbols_data` — not the shared primitive, to avoid double-counting). The per-tool identity folds into `query_kind`; the per-backend view comes from correlating with `semantic_backend`. |
 | `semantic_backend` | `backend: ann\|brute\|hash`, `fusion: 0/1`, `rerank: 0/1`, `ms` bucket, `n_results` bucket | `semantic.semantic_search` return path |
 | `task_lifecycle` | `task_kind`, `event: claimed\|completed\|dropped\|revised`, `attempt` | `llm/tasks.py` |
 | `stray_swept` | `count` | `server._install_stray_sweeper` |

@@ -148,8 +148,10 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
         "n_results": _N_BUCKETS,
     },
     EMPTY_RESULT: {
-        "query_kind": _bounded_tag,  # "semantic_search" today; engine-layer tag
-        "backend": _BACKEND,
+        # Emitted from semantic_search, explore, and the search_symbols MCP
+        # tool -- the three query kinds in spec §6.4. Bounded tag (no path
+        # separators); adding a new kind needs no declaration change.
+        "query_kind": _bounded_tag,
     },
     LOCK_CONTENTION: {
         "site": _site_tag,
@@ -166,8 +168,9 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
     STRAY_SWEPT: {
         "count": _int_pos,  # emitted only when killed > 0
     },
-    # Declared per spec §6.4; NO live emitter today (warn_*_fallback_once only
-    # logs). When an emitter lands, add it to LIVE_EVENTS so the sweep drives it.
+    # Live emitters wired into warn_*_fallback_once (the T15 follow-up commit
+    # closed the original "logs only" gap); both are in LIVE_EVENTS so the
+    # dynamic sweep drives them.
     ANN_FALLBACK: {
         "reason": _ANN_REASONS,
     },
@@ -426,6 +429,14 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
     from cairn.graph.semantic import semantic_search
 
     semantic_search(fresh_db, "anything-at-all", limit=5)
+
+    # 1b. explore on an empty DB -> no seeds -> empty_result(query_kind="explore").
+    # Cheap; reuses the same empty fresh_db. (The search_symbols MCP-tool emitter
+    # needs server _conn wiring, so it is covered by a focused unit test instead
+    # of this sweep.)
+    from cairn.graph.explore import explore as _explore
+
+    _explore(fresh_db, "anything-at-all", max_nodes=5)
 
     # 2. lock_contention (schema.note_contention is the canonical helper; reset
     # its process-global once-guard so the drive is deterministic regardless of

@@ -204,7 +204,10 @@ def semantic_search(
                 n_results=_n_results_bucket(len(results)),
             )
             if not results:
-                emit(EMPTY_RESULT, query_kind="semantic_search", backend=backend)
+                # empty_result carries only query_kind (spec §6.4 lists query_kind,
+                # not backend); the per-backend view comes from correlating with
+                # the semantic_backend event emitted on the same call.
+                emit(EMPTY_RESULT, query_kind="semantic_search")
         except Exception:
             logger.debug("semantic_search telemetry emit failed", exc_info=True)
         return results

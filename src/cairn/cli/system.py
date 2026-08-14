@@ -185,20 +185,29 @@ def _render_builds(rows: list[dict], display) -> None:
 def _gather_quality(conn) -> dict:
     """Aggregate retrieval-quality signals from ``events``.
 
-    empty-result rate = ``empty_result`` events / ``semantic_backend`` events
-    (the denominator is the population at risk of an empty result -- semantic
-    queries). backend mix counts the ``backend`` attr across
-    ``semantic_backend`` events. truncations is the ``truncate_result`` total
-    plus a per-tool breakdown (``tool`` is the actionable axis).
+    ``empty_result`` is emitted from three query kinds (semantic_search,
+    explore, search_symbols -- spec §6.4). Only the ``semantic_search``
+    empties share a denominator with ``semantic_backend`` (the population at
+    risk of an empty result), so the rate is scoped to that kind: semantic
+    empties / semantic_backend total. ``empty_by_kind`` exposes the full
+    per-kind breakdown so explore/search_symbols empties stay visible without
+    polluting the rate. backend mix counts ``backend`` across
+    ``semantic_backend`` events; truncations is the ``truncate_result`` total
+    plus a per-tool breakdown.
     """
     semantic_total = _count_events(conn, "semantic_backend")
     empty_total = _count_events(conn, "empty_result")
+    empty_by_kind = _attr_counts(conn, "empty_result", "query_kind")
+    empty_semantic = empty_by_kind.get("semantic_search", 0)
     truncate_total = _count_events(conn, "truncate_result")
     return {
         "empty_results": empty_total,
+        "empty_by_kind": empty_by_kind,
         "semantic_total": semantic_total,
+        # Scoped to the semantic kind: only semantic_search empties share a
+        # denominator (semantic_backend) with a meaningful at-risk population.
         # None (rendered 'n/a') when no semantic calls have been recorded yet.
-        "empty_result_rate": (empty_total / semantic_total) if semantic_total else None,
+        "empty_result_rate": (empty_semantic / semantic_total) if semantic_total else None,
         "truncations": truncate_total,
         "truncations_by_tool": _attr_counts(conn, "truncate_result", "tool"),
         "backend_mix": _attr_counts(conn, "semantic_backend", "backend"),
@@ -212,7 +221,21 @@ def _render_quality(data: dict, display) -> None:
     rate = data["empty_result_rate"]
     rate_str = f"{rate * 100:.1f}%" if rate is not None else "n/a"
     display.console.print("[bold]Quality signals[/bold]")
-    display.kv("empty results", f"{data['empty_results']} / {data['semantic_total']} ({rate_str})")
+    # Rate is scoped to the semantic kind (the only one with a denominator);
+    # render that numerator explicitly so "X / Y" can't be mistaken for the
+    # all-kinds empty total.
+    empty_semantic = data["empty_by_kind"].get("semantic_search", 0)
+    display.kv(
+        "empty results (semantic)",
+        f"{empty_semantic} / {data['semantic_total']} ({rate_str})",
+    )
+    by_kind = data["empty_by_kind"]
+    if by_kind:
+        ordered = sorted(by_kind.items(), key=lambda kv: (-kv[1], kv[0]))
+        display.kv(
+            "empty by kind",
+            ", ".join(f"{k}: {v}" for k, v in ordered),
+        )
     display.kv("truncations", f"{data['truncations']}")
     mix = data["backend_mix"]
     if mix:
@@ -784,7 +807,7 @@ def _check_freshness(conn) -> dict:
         last_build = None
     if last_build:
         last_dt = _parse_ts(last_build)
-        stale = bool(last_dt) and (now - last_dt).days > STALE_BUILD_DAYS
+        stale = last_dt is not None and (now - last_dt).days > STALE_BUILD_DAYS
         tag = f" (>{STALE_BUILD_DAYS}d)" if stale else ""
         parts.append(f"last build {_age_str(now, last_build)}{tag}")
         if stale:
