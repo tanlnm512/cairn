@@ -69,6 +69,22 @@ def create_task(
     parent_attempt: int = 0,
 ) -> Task:
     """Queue a new task. Returns the Task (already written to the bundle)."""
+    # Privacy floor (audit F9, mirrored from complete_task's result gate):
+    # memory-* task facts derive from user session content (memory-extract
+    # carries the raw conversation transcript), so scrub secret-shaped
+    # substrings BEFORE the concept is persisted -- facts land both in the
+    # rendered body and structurally in extensions. This is the single
+    # chokepoint every queueing backend passes through: the CLI's no-backend
+    # capture fallback, FileQueueBackend directly, and SubprocessBackend's
+    # fallback to it all create tasks here, so none can bypass the strip.
+    # Non-string facts (ints/lists used by non-memory kinds) pass through.
+    if task_kind.startswith("memory-") and facts:
+        from ..memory.privacy import strip_private_data
+
+        facts = {
+            k: strip_private_data(v) if isinstance(v, str) else v
+            for k, v in facts.items()
+        }
     task = Task(
         id=uuid.uuid4().hex[:12],
         task_kind=task_kind,

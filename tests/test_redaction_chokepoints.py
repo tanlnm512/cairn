@@ -188,6 +188,49 @@ class TestMemoryCaptureFallbackRedaction:
         raw = (knowledge / "_tasks" / f"{task.id}.md").read_text(encoding="utf-8")
         assert "abcdefghijklmnopqrstuvwxyz1234" not in raw
 
+    def test_subprocess_fallback_queues_redacted_transcript(
+        self, tmp_path, monkeypatch
+    ):
+        """CAIRN_LLM_BACKEND=droid with no droid CLI -> SubprocessBackend
+        falls back to FileQueueBackend carrying the RAW transcript.
+
+        The CLI's own strip only runs on the no-backend branch; this path
+        reaches create_task unredacted, so the task-creation chokepoint must
+        scrub it (the codepath-divergence bug class audit F2 targeted).
+        Drives SubprocessBackend directly (the CLI wrapper would block on
+        FileQueueBackend's 600s completion poll) with the poll disabled.
+        """
+        from cairn.llm.client import SubprocessBackend
+
+        knowledge = tmp_path / "knowledge"
+        monkeypatch.setenv("CAIRN_KNOWLEDGE", str(knowledge))
+        # A real agent CLI may exist on this machine (droid/claude are common
+        # dev tools); point PATH at an empty dir so the subprocess spawn
+        # deterministically raises FileNotFoundError -> clean fallback.
+        empty_bin = tmp_path / "emptybin"
+        empty_bin.mkdir()
+        monkeypatch.setenv("PATH", str(empty_bin))
+
+        bundle = OKFBundle(str(knowledge))
+        backend = SubprocessBackend(bundle, cli="droid")
+        backend._fallback.max_wait = 0.0  # create the task, skip the poll
+
+        transcript = f'[{{"role": "user", "text": "auth failed for {_BEARER}"}}]'
+        out = backend.extract(transcript)
+        assert out == [], "fixture: no agent ran, so extraction yields nothing"
+
+        from cairn.llm.tasks import list_tasks
+
+        tasks = list_tasks(bundle, kind="memory-extract")
+        assert tasks, "fixture: the subprocess fallback must queue a task"
+        task = tasks[-1]
+        assert "abcdefghijklmnopqrstuvwxyz1234" not in task.facts.get(
+            "transcript", ""
+        ), "raw secret reached the persisted task facts via the fallback path"
+        assert "REDACTED_SECRET" in task.facts["transcript"]
+        raw = (knowledge / "_tasks" / f"{task.id}.md").read_text(encoding="utf-8")
+        assert "abcdefghijklmnopqrstuvwxyz1234" not in raw
+
 
 # ---------------------------------------------------------------------------
 # F3: memory titles redacted at capture/evolve
