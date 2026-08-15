@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-call `rerank` override on the tool), with a `rerank_skipped`
   telemetry event; the brute-force cosine fallback is a single batched
   matrix product instead of a per-row loop (2.8–6.4× on the scan).
+- **Performance (write path)**: `cairn update` now maintains the derived
+  indexes incrementally (affected-source closure re-derivation + per-name
+  dataflow refresh) instead of rebuilding them from scratch — a single-file
+  update on a 1000-file corpus drops from ~377 s (95% of a full build) to
+  ~9.5 s (2.5%), verified row-for-row against full rebuilds by a 50-sequence
+  property test. Embedding upserts keep the sqlite-vec ANN index in sync
+  transactionally (delete+re-insert — vec0 has no replace idiom), deletion
+  paths sync too, and `cairn doctor` reports direction-aware ANN drift
+  (unindexed vs stale entries) with the recovery command.
 
 ### Fixed
 - _Nothing yet._

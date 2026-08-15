@@ -7,15 +7,20 @@ state on v0.10.0 @ `7e90628` (surveyed 2026-08-15), not intent.
 
 | Status | Count |
 |--------|-------|
-| done | 10 |
+| done | 16 |
 | partial | 0 |
-| todo | 16 |
+| todo | 10 |
 | **total** | **26** |
 
 Milestone 1 (query-path wins) landed on `feat/perf-query-path-wins`
 (2026-08-15): P1.1-P1.4, P2.1-P2.2, P5.1. Measured: impact_analysis
 20.9 -> 0.1 ms p50 (-99.5%); MCP read-conn path 0.826 -> 0.071 ms
 (-91.5%).
+
+Milestone 2 (write-path wins, 2026-08-16): PERF-3 + PERF-4 landed.
+Measured: single-file `cairn update` at 1000 files 377s -> ~9.5s
+(2.5% of full build; was 95.1%). Vec0 stays in sync per upsert/delete;
+doctor detects + directs drift recovery.
 
 Milestone 1.5 (semantic hot path, 2026-08-16, from the post-M1 query
 profile -- rerank ~95% of steady-state semantic cost; 9.4s cold model
@@ -88,17 +93,17 @@ Done when: `incremental.py` touches only rows whose transitive reach changed
 (delete-by-affected-source + re-extend), and `bench/scaling_suite.py` shows
 single-file update cost ≤ 10% of full-build cost at the 1000-file size point.
 
-- [ ] **P3.1 — Affected-set computation.** Given changed file ids → symbol
+- [ ] **P3.1 — Affected-set computation [DONE: pre/post ids + repair sources + name-repair sources + closure ancestors; mutation-tested (dropping pre-ancestors fails 45/50 seeds)].** Given changed file ids → symbol
       ids → reverse-reachable source set (one closure query), delete only
       those rows from `dataflow` + `transitive_edges`, then re-extend from
       the changed symbols using `build_transitive_closure`'s per-depth
       self-join restricted to the affected set.
       verify: unit test — update touching file X leaves untouched sources'
       `dataflow` rows row-identical (compare before/after snapshots).
-- [ ] **P3.2 — Scaling gate.**
+- [ ] **P3.2 — Scaling gate [DONE: 1000-file single-file update 377s -> ~9.5s = 2.5% of build (gate <=10%); two scale bugs found+fixed en route (query plan pinned via temp-table staging; precise repair-edge-id capture)].**
       verify: `uv run cairn bench --suite scaling --sizes 1000` with a
       scripted single-file edit shows update ≤ 10% of full build time.
-- [ ] **P3.3 — Correctness sweep.** After N random single-file updates,
+- [ ] **P3.3 — Correctness sweep [DONE: 50 seeded random sequences + 6 deterministic scenarios vs full-rebuild diff; 3 affected-set holes found+fixed (new-file post-state, deleted-file name registration, ambiguity-flip repair)].** After N random single-file updates,
       rebuild-from-scratch in a scratch DB and diff `dataflow` +
       `transitive_edges` — must be identical.
       verify: property test (seeded, like `bench/corpus.py`).
@@ -110,19 +115,19 @@ Done when: upserting one embedding updates the ANN index without a full
 `graph/embeddings.py` (ON CONFLICT … DO UPDATE preserves rowid) still holds,
 and `ann_fallback` telemetry does not regress.
 
-- [ ] **P4.1 — Spike: vec0 replace semantics.** Determine whether
+- [ ] **P4.1 — Spike: vec0 replace semantics [DONE: NO replace idiom -- vec0 enforces PK inside the vtab module, INSERT OR REPLACE/IGNORE also fail; DELETE+re-INSERT in-txn is the only path, ~27us/cycle].** Determine whether
       `vec0` upsert-by-rowid works on the pinned `sqlite-vec>=0.1.0`
       (its docstring claims "no replace semantics"); if not, evaluate
       delete+insert per rowid.
       verify: spike test script + decision note in
       `graph/ann_index.py` docstring; `record_memory(type="decision")`.
-- [ ] **P4.2 — Sync-on-write.** Hook the ANN maintenance into the embedding
+- [ ] **P4.2 — Sync-on-write [DONE: embed_symbols seam syncs per-upsert same-txn; reap_orphaned_embeddings + reindex/repo-rebuild delete sites sync deletions; bulk embed_all stays wholesale (~9x/row cheaper)].** Hook the ANN maintenance into the embedding
       upsert path (`graph/embeddings.py`) behind the existing
       `ann_backend_enabled()` gate; wholesale `rebuild_index` remains the
       fallback/recovery path.
       verify: embed one new symbol → `ann_query` returns it without any
       full rebuild; `tests/test_contention_visibility.py` still green.
-- [ ] **P4.3 — Recovery.** `cairn doctor` detects drift between
+- [ ] **P4.3 — Recovery [DONE: doctor drift check is direction-aware (unindexed = recall loss; stale = reused-rowid mis-pairing = wrong results), WARN + instructed heal; _health_block divergence noted].** `cairn doctor` detects drift between
       `embeddings` and vec0 row counts and schedules `rebuild_index`.
       verify: doctor unit test with a deliberately-drifted fixture.
 
