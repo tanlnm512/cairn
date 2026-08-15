@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kill switch (connection+query path 0.826 → 0.071 ms, 11.7×). The perf
   suite now builds the transitive closure (matching real deployments) and
   adds an `impact_analysis_wide` fan-in benchmark.
+- **Performance (semantic hot path)**: the server pre-warms the embedding
+  and reranker models in a boot-time background thread when their weights
+  are already cached (`CAIRN_WARM_MODELS=0` disables) — first
+  `semantic_search` drops from ~9.4 s to ~0.3 s; the optional rerank stage
+  is skipped when the fused ranking is already decisive
+  (`CAIRN_RERANK_MIN_MARGIN`, default 0.45, plus exact-name corroboration;
+  per-call `rerank` override on the tool), with a `rerank_skipped`
+  telemetry event; the brute-force cosine fallback is a single batched
+  matrix product instead of a per-row loop (2.8–6.4× on the scan).
 
 ### Fixed
 - _Nothing yet._
