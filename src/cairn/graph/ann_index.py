@@ -5,10 +5,15 @@ table in the *same* `.db` file as `embeddings`, loaded as a SQLite extension.
 Keeping vectors in the same file avoids the crash-consistency hazard of a
 sidecar index whose writes can fall out of the SQLite transaction.
 
-This module does a wholesale rebuild from the `embeddings` table rather than
-keeping the vec0 table incrementally in sync with individual `INSERT OR
-REPLACE`s (vec0 has no "replace" semantics; embeddings' hidden rowid can be
-reused by delete+reinsert).
+Two maintenance paths keep the vec0 table aligned with `embeddings`: a
+wholesale rebuild (:func:`rebuild_index` -- the end of every ``cairn embed``
+bulk pass) and a per-upsert sync (:func:`sync_index_row` /
+:func:`delete_index_rows` -- embeddings' single-symbol paths). vec0 has no
+"replace" semantics: a plain INSERT on an existing rowid raises ``UNIQUE
+constraint failed`` even under ``INSERT OR REPLACE`` (see sync_index_row's
+spike notes), so updates are always DELETE by rowid + re-INSERT inside the
+caller's transaction. Bulk paths stay on the wholesale rebuild -- per-row
+sync costs ~9x more per row than the rebuild's INSERT ... SELECT.
 
 On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. Set it to
 `off` to force the brute-force cosine scan. Any load failure degrades to the
@@ -213,6 +218,115 @@ def rebuild_index(conn: sqlite3.Connection, model: str) -> dict:
     conn.commit()
     count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
     return {"model": model, "indexed": count, "dim": dim}
+
+
+def sync_index_row(
+    conn: sqlite3.Connection, model: str, rowid: int, blob: bytes
+) -> bool:
+    """Incrementally sync one vec0 row to an embeddings upsert (no commit).
+
+    Spike findings (sqlite-vec 0.1.9, SQLite 3.53.1, PERF-4 P4.1) that shape
+    this helper:
+
+    * ``INSERT INTO <vec_tbl>(rowid, embedding)`` with an already-present
+      rowid raises ``OperationalError: UNIQUE constraint failed on <tbl>
+      primary key`` -- and so do ``INSERT OR REPLACE`` and ``INSERT OR
+      IGNORE`` (vec0 enforces its PK inside the virtual-table module, where
+      SQLite's conflict-resolution clauses can't reach). There is no
+      replace/upsert idiom; DELETE + re-INSERT is the only update path.
+    * ``DELETE FROM <vec_tbl> WHERE rowid = ?`` behaves like an ordinary
+      table delete (rowcount 1), and deleting a rowid that isn't there is a
+      silent no-op -- so the DELETE below needs no existence probe.
+    * vec0 writes fully participate in SQLite transactions: the delete +
+      insert can share the caller's transaction with the embeddings-row
+      upsert (crash-atomic together), and a ROLLBACK undoes them cleanly.
+      This helper therefore does NOT commit; the caller owns the boundary.
+    * Cost at a 20k-row index: ~27 us per delete+insert+commit cycle vs
+      ~3 us/row for the wholesale rebuild -- why single upserts pay this
+      (microseconds, and the alternative is drift until the next ``cairn
+      embed``) while bulk passes stay on ``rebuild_index``.
+
+    The ``blob`` is the embeddings row's float32-LE ``vec`` verbatim --
+    exactly what ``rebuild_index`` copies via ``INSERT ... SELECT``.
+
+    Pure no-op (returns False, writes nothing) when the ANN backend is
+    disabled (``CAIRN_ANN_BACKEND=off``), no vec0 table exists yet for
+    ``model`` (only ``cairn embed``'s wholesale rebuild creates one), or the
+    extension won't load -- an embeddings upsert must never fail because
+    derived index state is absent. Best-effort on vec0 errors too (e.g. a
+    dim change under a pinned model name): logs and returns False, leaving
+    the drift for ``cairn doctor``'s staleness probe to flag and ``cairn
+    embed`` to heal.
+    """
+    if not ann_backend_enabled() or not index_exists(conn, model):
+        return False
+    if not try_load(conn):
+        return False
+    table = _table_name(model)
+    try:
+        # Delete-first is required (no replace semantics) and safe: a missing
+        # rowid deletes nothing, and a failed INSERT after a successful DELETE
+        # leaves the vec row *gone* -- a recall miss the join drops cleanly,
+        # never a stale vector paired with a reused rowid.
+        conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (rowid,))
+        conn.execute(
+            f"INSERT INTO {table}(rowid, embedding) VALUES (?, ?)", (rowid, blob)
+        )
+    except sqlite3.Error as e:
+        _logger.warning(
+            "vec0 sync failed for model '%s' rowid %s (%s); index left stale "
+            "for `cairn doctor` to flag",
+            model,
+            rowid,
+            e,
+        )
+        return False
+    return True
+
+
+def delete_index_rows(conn: sqlite3.Connection, model: str, rowids) -> int:
+    """Delete the vec0 rows for embeddings rowids being removed (no commit).
+
+    Deletion-side companion to :func:`sync_index_row`: whenever an
+    ``embeddings`` row is deleted (the orphan reap today), its vec0 entry
+    must go too, or the stale entry survives keyed on a rowid SQLite may
+    later REUSE for a different embedding -- the ``ann_query`` join would
+    then pair a fresh embeddings row with an unrelated vector (wrong
+    results, strictly worse than the missing row it replaces). Deleting a
+    rowid that isn't in the table is a silent no-op (spiked), so passing
+    rowids that never had a vec entry is harmless.
+
+    Pure no-op (returns 0) when the backend is off, no table exists for
+    ``model``, or the extension won't load; best-effort on vec0 errors (logs,
+    returns rows removed so far). Does NOT commit -- the caller owns the
+    transaction so the embeddings DELETE and this land atomically together.
+    """
+    ids = list(rowids)
+    if not ids or not ann_backend_enabled() or not index_exists(conn, model):
+        return 0
+    if not try_load(conn):
+        return 0
+    table = _table_name(model)
+    removed = 0
+    try:
+        # Chunked IN-lists: stay well under any SQLite variable bound even
+        # for a mass reap.
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE rowid IN ({placeholders})", chunk
+            )
+            if cur.rowcount and cur.rowcount > 0:
+                removed += cur.rowcount
+    except sqlite3.Error as e:
+        _logger.warning(
+            "vec0 delete failed for model '%s' (%s); index left stale for "
+            "`cairn doctor` to flag",
+            model,
+            e,
+        )
+    return removed
 
 
 def ann_query(
