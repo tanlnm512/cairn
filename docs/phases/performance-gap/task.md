@@ -7,15 +7,34 @@ state on v0.10.0 @ `7e90628` (surveyed 2026-08-15), not intent.
 
 | Status | Count |
 |--------|-------|
-| done | 7 |
+| done | 10 |
 | partial | 0 |
 | todo | 16 |
-| **total** | **23** |
+| **total** | **26** |
 
 Milestone 1 (query-path wins) landed on `feat/perf-query-path-wins`
 (2026-08-15): P1.1-P1.4, P2.1-P2.2, P5.1. Measured: impact_analysis
 20.9 -> 0.1 ms p50 (-99.5%); MCP read-conn path 0.826 -> 0.071 ms
 (-91.5%).
+
+Milestone 1.5 (semantic hot path, 2026-08-16, from the post-M1 query
+profile -- rerank ~95% of steady-state semantic cost; 9.4s cold model
+load; per-row brute-force scan):
+
+- [DONE 22231df] **P0-1 model warm-up at boot** — first semantic query
+  9,428 -> 322 ms (29x); boot-thread, cache-verified only, HF-offline
+  window, CAIRN_WARM_MODELS=0 kill switch. 23 tests.
+- [DONE 13b0b50] **P0-2 rerank confidence gating** — margin >= 0.45 +
+  exact-name corroboration (calibrated: top-1 agreement 0.94-1.00 on
+  skip populations; ~70% of exact-name queries skip; gate off under
+  hash vectors / fusion-off); per-call rerank override;
+  rerank_skipped event. 25 tests.
+- [DONE 8c6bf4e] **P0-3 batched matmul cosine scan** — 2.8x (768-dim)
+  to 6.4x (64-dim) on the fallback everyone without vec0 runs;
+  differential-equivalence pinned; numpy-absent tests skip.
+  Follow-up flagged: numpy is [semantic]-extra only, so lean installs
+  keep the pure-Python fallback (~40 us/row) -- consider batching it
+  too or promoting numpy to a core dep.
 
 ---
 
