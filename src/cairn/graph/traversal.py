@@ -160,6 +160,7 @@ def impact_analysis(
     fuzzy: bool = False,
     limit: int = 500,
     include_service_edges: bool = False,
+    use_index: Optional[bool] = None,
 ) -> dict:
     """Recursive caller traversal with cycle detection.
 
@@ -171,9 +172,55 @@ def impact_analysis(
 
     ``limit`` caps total impacted rows; ``truncated`` in the return flags this.
 
+    **Index mode.** When the precomputed ``transitive_edges`` closure can serve
+    the query -- precise, structural-only, ``max_depth <= 3``, the name has
+    exact-name symbol matches, the closure is materialised, and no seed reaches
+    another seed (cycle gate) -- the answer comes from
+    :func:`dataflow.impact_from_closure` in one indexed statement instead of a
+    per-visited-symbol DFS. Index mode returns shortest-path depths,
+    (depth, symbol, file)-ordered rows, empty ``cycles``, and may be a superset
+    of DFS coverage (unique-name hops; no per-node 200-caller cap) -- see that
+    function's docstring. ``use_index=False`` forces the classic DFS (used by
+    the golden parity tests); ``use_index=True`` genuinely forces the index
+    when technically servable -- including past the cycle gate, accepting
+    ``cycles=[]`` -- and silently takes the DFS path otherwise (fuzzy/service/
+    deep queries can never be served from the closure).
+
     Returns {impacted: [...], cycles: [...], total: int, truncated: bool}.
     Each impacted entry: {symbol, file, repo, depth}.
     """
+    if fuzzy or use_index is not False:
+        from .dataflow import (
+            CLOSURE_MAX_DEPTH,
+            closure_available,
+            closure_has_seed_cycle,
+            impact_from_closure,
+        )
+
+        # DFS records callers at depth 0..max_depth, i.e. ancestors up to
+        # closure distance max_depth+1 -- the eligibility bound is one below
+        # the materialised depth (see dataflow.CLOSURE_MAX_DEPTH).
+        if (
+            not fuzzy
+            and not include_service_edges
+            and max_depth + 1 <= CLOSURE_MAX_DEPTH
+        ):
+            seeds = find_definition(conn, name, limit=limit)
+            # find_definition falls back to qualified-name/substring matches;
+            # get_callers-based DFS only ever matches exact names, so require
+            # an exact-name symbol before serving from the closure.
+            exact = conn.execute(
+                "SELECT id FROM symbols WHERE name = ? LIMIT 1", (name,)
+            ).fetchone()
+            if exact is not None and closure_available(conn):
+                seed_ids = [s["id"] for s in seeds]
+                # use_index=True genuinely forces: the cycle gate keeps auto
+                # mode on the DFS path (cycle reporting), but a forced query
+                # accepts cycles=[] (documented) -- the escape hatch for
+                # benchmarks and debugging.
+                if use_index is True or not closure_has_seed_cycle(conn, seed_ids):
+                    return impact_from_closure(conn, seed_ids, max_depth, limit)
+
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
     visited: set[str] = set()   # globally visited symbol ids — prevents re-traversal
     on_path: set[str] = set()   # current DFS path symbol ids — cycle detection

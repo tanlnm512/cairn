@@ -3,13 +3,27 @@
 Materialises within-repo impact chains and cross-repo consumer repos for each
 public symbol into the `dataflow` table. Built by build_dataflow_index();
 queried via get_dataflow(). Fully deterministic from the code graph.
+
+Also owns the `transitive_edges` closure table: build_transitive_closure()
+materialises multi-hop caller→callee reachability to a fixed depth, and
+impact_from_closure() answers ancestor ("who reaches this symbol") queries
+from it in one indexed statement -- the fast path impact_analysis() routes to
+when its preconditions hold.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
+
+from .traversal import STRUCTURAL_EDGE_KINDS
+
+# The closure is materialised to this *closure distance*. impact_analysis()
+# index mode is eligible for DFS ``max_depth`` values one below it: DFS
+# records a direct caller at depth 0 (= closure distance 1), so a query at
+# ``max_depth=D`` needs ancestors up to closure distance D+1.
+CLOSURE_MAX_DEPTH = 4
 
 
 def _public_symbols(conn: sqlite3.Connection) -> List[Dict[str, str]]:
@@ -112,11 +126,18 @@ def build_dataflow_index(
     return count
 
 
-def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> int:
+def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = CLOSURE_MAX_DEPTH) -> int:
     """Precompute multi-hop call graph edges into transitive_edges matrix table.
 
     Joins on resolved target_id (resolution='exact') to avoid name collisions
     producing spurious edges; falls back to target_name for unresolved edges.
+
+    Only **structural** edge kinds (``calls``/``call``/``extends``/
+    ``implements``, per :data:`traversal.STRUCTURAL_EDGE_KINDS`) are seeded and
+    extended, matching ``impact_analysis``'s default edge filter -- the table's
+    read path (:func:`impact_from_closure`) serves exactly those queries.
+    Service/topology edges never enter the closure; queries that opt into them
+    (``include_service_edges=True``) take the DFS path instead.
     """
     cur = conn.cursor()
     # The per-depth extension filters on transitive_edges.distance; create the
@@ -124,20 +145,23 @@ def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> in
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_transitive_distance ON transitive_edges(distance)"
     )
+    kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
+    kind_params = tuple(STRUCTURAL_EDGE_KINDS)
     cur.execute("DELETE FROM transitive_edges")
 
-    # Seed with direct edges (distance=1)
-    cur.execute("""
+    # Seed with direct structural edges (distance=1)
+    cur.execute(f"""
         INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-        SELECT 
-            e.source_id, 
+        SELECT
+            e.source_id,
             COALESCE(s.name, e.target_name) AS target_name,
             e.target_id,
             1
         FROM edges e
         LEFT JOIN symbols s ON s.id = e.target_id
-        WHERE e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != '')
-    """)
+        WHERE (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
+          AND e.kind IN ({kind_ph})
+    """, kind_params)
     total_inserted = cur.rowcount
 
     for d in range(1, max_depth):
@@ -145,11 +169,11 @@ def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> in
         # only edges.source_id = target_id (exact ID match) to avoid name collisions.
         # For unresolved edges, fall back to name-based matching.
         batch_inserted = 0
-        
+
         # Case 1: follow resolved edges (target_id IS NOT NULL)
-        cur.execute("""
+        cur.execute(f"""
             INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-            SELECT 
+            SELECT
                 t.source_id,
                 COALESCE(s_target.name, e.target_name) AS target_name,
                 e.target_id,
@@ -158,16 +182,17 @@ def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> in
             JOIN edges e ON e.source_id = t.target_id
             LEFT JOIN symbols s_target ON s_target.id = e.target_id
             WHERE t.distance = ? AND t.target_id IS NOT NULL
-        """, (d,))
+              AND e.kind IN ({kind_ph})
+        """, (d, *kind_params))
         batch_inserted += cur.rowcount
-        
+
         # Case 2: fallback for unresolved edges (target_id IS NULL). Only
         # follow when the target_name maps to EXACTLY ONE symbol -- a name with
         # multiple definitions is a collision, and following any one of them
         # would re-introduce the name-collision inflation the precise-by-default
         # design exists to prevent. Ambiguous names are skipped (left
         # unextended) rather than guessed.
-        cur.execute("""
+        cur.execute(f"""
             INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
             SELECT
                 t.source_id,
@@ -185,15 +210,118 @@ def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = 3) -> in
             WHERE t.distance = ?
                 AND t.target_id IS NULL
                 AND (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
-        """, (d,))
+                AND e.kind IN ({kind_ph})
+        """, (d, *kind_params))
         batch_inserted += cur.rowcount
-        
+
         if batch_inserted == 0:
             break
         total_inserted += batch_inserted
 
     conn.commit()
     return total_inserted
+
+
+def closure_available(conn: sqlite3.Connection) -> bool:
+    """True when the transitive closure table is populated and safe to read.
+
+    Cheap indexed probe. False on never-built databases (the reader then falls
+    back to DFS until the next ``cairn build``/``update`` materialises it).
+    """
+    try:
+        return (
+            conn.execute("SELECT 1 FROM transitive_edges LIMIT 1").fetchone()
+            is not None
+        )
+    except sqlite3.Error:
+        return False
+
+
+def impact_from_closure(
+    conn: sqlite3.Connection,
+    seed_ids: Sequence[str],
+    max_depth: int,
+    limit: int,
+) -> Optional[dict]:
+    """Answer an impact query from the precomputed closure in one statement.
+
+    Returns the same shape as :func:`traversal.impact_analysis` --
+    ``{impacted, cycles, total, truncated}`` -- with these documented index-mode
+    semantics (the DFS path remains available for exact parity):
+
+    - ``depth`` is the **shortest** caller distance (MIN over closure rows,
+      minus the final hop into the seed so a direct caller is depth 0, matching
+      DFS's numbering), not the DFS first-visit path length: shortest ≤ DFS
+      depth for the same node, and is the more meaningful "minimum hops to a
+      caller" number.
+    - ``cycles`` is always empty -- the closure cannot attribute back-edges.
+      Callers gate on :func:`closure_has_seed_cycle` and take the DFS path
+      when a cycle exists so cycle reporting is preserved.
+    - Coverage is a **superset** of precise DFS at the same depth cap: it also
+      includes unique-name-mediated hops (closure Case 2) that precise DFS
+      prunes, and is not subject to DFS's per-node 200-caller fetch cap.
+    - Rows are ordered by (depth, symbol, file) -- deterministic.
+
+    ``seed_ids`` are the symbol ids the entry name resolves to (as
+    ``find_definition`` would return them); seeds themselves are excluded from
+    the results, matching DFS's pre-visited seed handling.
+    """
+    if not seed_ids:
+        return {"impacted": [], "cycles": [], "total": 0, "truncated": False}
+    seed_ph = ",".join("?" for _ in seed_ids)
+    # Fetch limit+1 so truncation is exact (DFS approximates it the same way
+    # it approximates everything: by noticing more work mid-walk).
+    rows = conn.execute(
+        f"""
+        SELECT s.name AS symbol, f.path AS file, f.repo_id AS repo,
+               MIN(t.distance) - 1 AS depth
+        FROM transitive_edges t
+        JOIN symbols s ON s.id = t.source_id
+        JOIN files f ON s.file_id = f.id
+        WHERE t.target_id IN ({seed_ph})
+          AND t.source_id NOT IN ({seed_ph})
+          AND t.distance <= ?
+        GROUP BY t.source_id
+        ORDER BY depth, symbol, file
+        LIMIT ?
+        """,
+        (*seed_ids, *seed_ids, max_depth + 1, limit + 1),
+    ).fetchall()
+    truncated = len(rows) > limit
+    impacted = [
+        {"symbol": r["symbol"], "file": r["file"], "repo": r["repo"], "depth": r["depth"]}
+        for r in rows[:limit]
+    ]
+    return {
+        "impacted": impacted,
+        "cycles": [],
+        "total": len(impacted),
+        "truncated": truncated,
+    }
+
+
+def closure_has_seed_cycle(
+    conn: sqlite3.Connection, seed_ids: Sequence[str]
+) -> bool:
+    """True when any seed reaches another seed through the closure.
+
+    Used as the gate that keeps cycle-reporting queries on the DFS path: the
+    closure can detect that A→…→B exists among seeds but cannot report the
+    back-edge symbol/depth pairs impact consumers get from DFS.
+    """
+    if not seed_ids:
+        return False
+    seed_ph = ",".join("?" for _ in seed_ids)
+    return (
+        conn.execute(
+            f"""
+            SELECT 1 FROM transitive_edges
+            WHERE source_id IN ({seed_ph}) AND target_id IN ({seed_ph}) LIMIT 1
+            """,
+            tuple(seed_ids) * 2,
+        ).fetchone()
+        is not None
+    )
 
 
 def get_dataflow(conn: sqlite3.Connection, symbol: str) -> Optional[Dict]:

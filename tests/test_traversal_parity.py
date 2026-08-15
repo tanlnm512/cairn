@@ -213,6 +213,7 @@ def _capture(conn: sqlite3.Connection) -> dict:
     for name, depth, fuzzy, limit in IMPACT_QUERIES:
         res = impact_analysis(
             conn, name, max_depth=depth, fuzzy=fuzzy, limit=limit,
+            use_index=False,
         )
         out["impact"][f"{name}|d{depth}|{'fuzzy' if fuzzy else 'precise'}|l{limit}"] = _canon_impact(res)
 
@@ -250,3 +251,88 @@ def test_traversal_goldens(corpus_db):
     )
     expected = json.loads(GOLDEN_PATH.read_text())
     assert json.loads(json.dumps(captured)) == expected
+
+
+# --- Index mode (perf phase P1.2/P1.3) --------------------------------------
+
+
+def _as_tuples(res: dict) -> set:
+    return {(r["symbol"], r["file"], r["repo"]) for r in res["impacted"]}
+
+
+def test_index_mode_covers_dfs_results(corpus_db):
+    """Index mode must never lose a DFS-impacted symbol (coverage superset).
+
+    Depths may differ (shortest-path) and extra rows are allowed (unique-name
+    hops DFS prunes) -- see dataflow.impact_from_closure's docstring.
+    """
+    conn = get_db(corpus_db)
+    try:
+        for name, depth in [("leaf_util", 3), ("chain_h1", 3), ("leaf_util", 2)]:
+            dfs = impact_analysis(conn, name, max_depth=depth, use_index=False)
+            idx = impact_analysis(conn, name, max_depth=depth, use_index=True)
+            assert _as_tuples(dfs) <= _as_tuples(idx), (name, depth)
+            assert idx["cycles"] == []
+            for r in idx["impacted"]:
+                assert 0 <= r["depth"] <= depth
+            assert idx["total"] == len(idx["impacted"])
+    finally:
+        conn.close()
+
+
+def test_index_mode_depths_are_shortest_paths(corpus_db):
+    """chain_h2 -> chain_h1 is the direct caller: depth 0, like DFS."""
+    conn = get_db(corpus_db)
+    try:
+        idx = impact_analysis(conn, "chain_h1", max_depth=3, use_index=True)
+        depths = {(r["symbol"], r["file"]): r["depth"] for r in idx["impacted"]}
+        assert depths[("chain_h2", "f02.py")] == 0
+        assert depths[("chain_h3", "f03.py")] == 1
+    finally:
+        conn.close()
+
+
+def test_index_mode_falls_back_on_seed_cycles(corpus_db):
+    """A cycle through the seed keeps DFS so ``cycles`` reporting survives."""
+    conn = get_db(corpus_db)
+    try:
+        auto = impact_analysis(conn, "cyc_b", max_depth=5)
+        dfs = impact_analysis(conn, "cyc_b", max_depth=5, use_index=False)
+        assert _canon_impact(auto) == _canon_impact(dfs)
+        assert auto["cycles"]  # cycle actually reported
+    finally:
+        conn.close()
+
+
+def test_index_mode_forced_reports_no_cycles(corpus_db):
+    """use_index=True forces past the cycle gate: cycles=[] even when DFS
+    finds one (the benchmarking/debug escape hatch)."""
+    conn = get_db(corpus_db)
+    try:
+        idx = impact_analysis(conn, "cyc_b", max_depth=3, use_index=True)
+        assert idx["cycles"] == []
+        assert idx["total"] > 0
+    finally:
+        conn.close()
+
+
+def test_index_mode_truncation_is_exact(corpus_db):
+    conn = get_db(corpus_db)
+    try:
+        idx = impact_analysis(conn, "leaf_util", max_depth=3, limit=4, use_index=True)
+        assert idx["total"] == 4
+        assert idx["truncated"] is True
+    finally:
+        conn.close()
+
+
+def test_index_mode_skipped_for_fuzzy_and_deep(corpus_db):
+    """Fuzzy and max_depth beyond the closure always take the DFS path."""
+    conn = get_db(corpus_db)
+    try:
+        fuzzy = impact_analysis(conn, "leaf_util", max_depth=3, fuzzy=True)
+        assert fuzzy["cycles"] or fuzzy["total"] > 0  # served, but by DFS
+        deep = impact_analysis(conn, "leaf_util", max_depth=10)
+        assert deep["total"] > 0
+    finally:
+        conn.close()
