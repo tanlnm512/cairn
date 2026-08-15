@@ -67,7 +67,9 @@ flowchart TD
 
 A query flows: **CLI/MCP → router → graph/knowledge/memory layers →
 tree-sitter parsers + SQLite store + .knowledge markdown → response.** The
-router aggregates; the layer tools drill down.
+router aggregates; the layer tools drill down. For the full tool-call path —
+connection pooling, the impact index-mode/DFS routing fork, and the storage
+map — see [query-flow.md](query-flow.md).
 
 ### Layer 1 — Graph (9 tools)
 
