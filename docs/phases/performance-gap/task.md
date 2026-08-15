@@ -7,10 +7,15 @@ state on v0.10.0 @ `7e90628` (surveyed 2026-08-15), not intent.
 
 | Status | Count |
 |--------|-------|
-| done | 0 |
+| done | 7 |
 | partial | 0 |
-| todo | 23 |
+| todo | 16 |
 | **total** | **23** |
+
+Milestone 1 (query-path wins) landed on `feat/perf-query-path-wins`
+(2026-08-15): P1.1-P1.4, P2.1-P2.2, P5.1. Measured: impact_analysis
+20.9 -> 0.1 ms p50 (-99.5%); MCP read-conn path 0.826 -> 0.071 ms
+(-91.5%).
 
 ---
 
@@ -21,22 +26,22 @@ Done when: `impact_analysis` answers depth ≤ 3 queries from
 `bench/perf_suite.py` shows ≥ 3× lower p95 for `impact_analysis` on the
 default corpus with identical result sets (golden-file parity check).
 
-- [ ] **P1.1 — Baseline golden files.** Capture current `impact_analysis` +
+- [ ] **P1.1 — Baseline golden files [DONE 2b8de38: handcrafted resolved-edge corpus; synthetic generator's attribute-chain calls never resolve so precise impact pinned empty].** Capture current `impact_analysis` +
       `get_dataflow` outputs for a fixed corpus (reuse `bench/corpus.py`
       seeded generator) into golden files.
       verify: `uv run pytest tests/test_traversal_parity.py -q` (new test
       comparing live output to goldens) passes on unmodified main.
-- [ ] **P1.2 — Read-path routing.** In `graph/traversal.py`, route
+- [ ] **P1.2 — Read-path routing [DONE e2aeafa: impact_from_closure + auto routing; closure depth 4; kind-filtered seeds; idx_transitive_target_id].** In `graph/traversal.py`, route
       depth ≤ 3, resolution=exact queries to a new `transitive_edges` reader
       (sibling of `build_transitive_closure` in `graph/dataflow.py`); keep
       DFS fallback for fuzzy or depth > 3.
       verify: golden-file parity test green; `impact_analysis` docstring
       documents the routing rule.
-- [ ] **P1.3 — Depth-truncation honesty.** Ensure `truncated` flag semantics
+- [ ] **P1.3 — Depth-truncation honesty [DONE e2aeafa: index depths = shortest distance - 1 (direct caller = 0); truncation exact via limit+1 fetch; tested].** Ensure `truncated` flag semantics
       hold when served from the table (depth-3 cap vs `max_depth=10` DFS).
       verify: unit test asserting `truncated=True` for a depth-5 chain
       queried at the table's limit, `False` from DFS fallback.
-- [ ] **P1.4 — Perf gate.** Extend `bench/perf_suite.py` query battery with
+- [ ] **P1.4 — Perf gate [DONE 2a9a194: -99.5% p50 vs main baseline, ~200x > 3x gate; no op regressed >15%].** Extend `bench/perf_suite.py` query battery with
       an impact-heavy scenario; record before/after.
       verify: `uv run cairn bench --save baseline.json` on main, then on the
       branch `uv run cairn bench --compare baseline.json` shows ≥3× p95
@@ -48,12 +53,12 @@ Done when: `traversal.py` `impact_analysis`/`trace_flow` issue at most
 `max_depth` queries per call (not one per visited symbol), verified by a
 query-counting test double, with golden-file result parity.
 
-- [ ] **P2.1 — Frontier batching.** Rewrite `traverse` to collect each depth
+- [ ] **P2.1 — Frontier batching [DONE b133a10 WITH DEVIATION: per-distinct-name memoization instead of level-batched IN-lists -- frontier batching changes DFS visit order/depths (no exact parity possible); memo is order-preserving. Query-count test pins 3 queries vs 21+].** Rewrite `traverse` to collect each depth
       level's frontier and resolve it with one `IN`-list query (extend
       `get_callers` with a names-list variant).
       verify: query-counting connection double asserts ≤ `max_depth` queries
       for a 50-caller chain.
-- [ ] **P2.2 — Parity + limits.** Ordering/dedup identical to golden files;
+- [ ] **P2.2 — Parity + limits [DONE b133a10: goldens green through memoization; limit/truncated semantics unchanged].** Ordering/dedup identical to golden files;
       `limit=500` truncation preserved.
       verify: golden-file parity test green; `uv run pytest tests/ -q -k
       traversal`.
@@ -109,7 +114,7 @@ invalidation on `CAIRN_DB` re-point, and the perf suite shows ≥ 20% lower p50
 for `find_definition`/`search_symbols` in server-mode benchmarks, with
 `lock_contention` event count unchanged (no new writer contention).
 
-- [ ] **P5.1 — Read-connection cache.** Thread-local (or lock-guarded single)
+- [ ] **P5.1 — Read-connection cache [DONE 66bb969: thread-local per-(thread,path) pool, inode-swap reopen, env kill-switch; 11.7x on conn+query path, beats the 20% gate].** Thread-local (or lock-guarded single)
       connection cache in `mcp_server/_server_core.py` `_conn()`, keyed by
       resolved db path; invalidate on path change; honor read-only mode.
       verify: server-mode bench (new harness mode in `bench/perf_suite.py`)
