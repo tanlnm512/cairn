@@ -170,6 +170,23 @@ def run_perf_suite(
     # DB size after build + embed.
     report.db_size_mb = Path(db_path).stat().st_size / (1024 * 1024)
 
+    # --- Derived-index phase ----------------------------------------------
+    # Materialise the transitive closure so the query battery measures the
+    # deployment users actually have (every cairn build/update builds it) and
+    # impact_analysis index mode is exercised. Timed separately from the
+    # build phases so build.* baselines stay comparable.
+    from cairn.graph.dataflow import build_transitive_closure
+
+    conn = get_db(db_path)
+    try:
+        closure_timing, _ = time_call(
+            lambda: build_transitive_closure(conn), name="transitive_closure",
+            warmup=0, repeats=1,
+        )
+        report.ops.append(OpTiming(name="build.derived.closure", timing=closure_timing))
+    finally:
+        conn.close()
+
     # --- Query battery ----------------------------------------------------
     # Each query runs warmup + query_repeats against the freshly built graph.
     # The query set mirrors the operations users actually feel latency on.
@@ -191,6 +208,22 @@ def run_perf_suite(
             ("get_callees", lambda: q.get_callees(conn, query_target, limit=50)),
             ("impact_analysis", lambda: q.impact_analysis(conn, query_target, max_depth=3, limit=100)),
         ]
+        # Impact-heavy target: the most-called common name exercises the
+        # closure index path at its worst-case fan-in, not just the first
+        # symbol in the table.
+        wide_row = conn.execute(
+            """
+            SELECT e.target_name AS name, COUNT(*) AS fanin
+            FROM edges e
+            WHERE e.target_name IS NOT NULL AND e.target_name != ''
+            GROUP BY e.target_name ORDER BY fanin DESC LIMIT 1
+            """
+        ).fetchone()
+        if wide_row and wide_row["name"]:
+            wide_target = wide_row["name"]
+            query_ops.append(
+                ("impact_analysis_wide", lambda: q.impact_analysis(conn, wide_target, max_depth=3, limit=100))
+            )
         # semantic_search + explore may need embeddings; guard with try.
         try:
             query_ops.append(("semantic_search", lambda: q.semantic_search(conn, query_target, limit=10)))
