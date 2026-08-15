@@ -147,11 +147,29 @@ def reindex_paths(
                 # FK (embeddings.symbol_id -> symbols.id) blocks the symbol delete.
                 # Re-embedding after reindex repopulates them.
                 try:
+                    # Collect (model, rowid) pairs BEFORE the delete: the vec0
+                    # index keys on embeddings.rowid, and a stale vec entry can
+                    # later pair a REUSED rowid with an unrelated vector (wrong
+                    # results, not just missing ones). No-op when ANN is off.
+                    doomed = cur.execute(
+                        "SELECT model, rowid FROM embeddings WHERE symbol_id IN "
+                        "(SELECT id FROM symbols WHERE file_id = ?)",
+                        (file_id,),
+                    ).fetchall()
                     cur.execute(
                         "DELETE FROM embeddings WHERE symbol_id IN "
                         "(SELECT id FROM symbols WHERE file_id = ?)",
                         (file_id,),
                     )
+                    if doomed:
+                        from .ann_index import delete_index_rows
+
+                        for model in {r["model"] for r in doomed}:
+                            delete_index_rows(
+                                conn,
+                                model,
+                                [r["rowid"] for r in doomed if r["model"] == model],
+                            )
                 except sqlite3.OperationalError as e:
                     note_contention("incremental.delete_embeddings", error=e)
                     logger.debug("embeddings table missing", exc_info=True)
@@ -162,10 +180,21 @@ def reindex_paths(
             # Check if file still exists on disk.
             if not Path(abs_path).exists():
                 # Only count as deleted if we actually removed DB state (the file
-                # was indexed before this call). A ghost path that was never in
-                # the DB is a no-op, not a deletion.
+                # was indexed before this call). A ghost path that was never in the
+                # DB is a no-op, not a deletion.
                 if file_id is not None:
                     deleted += 1
+                    # Register the deleted file's symbol names for the repair
+                    # pass even though nothing was re-created. The DELETE above
+                    # nulled+backfilled every incoming edge to those symbols;
+                    # without registering the names here those edges stay
+                    # 'unresolved' until their OWN files are edited or a full
+                    # rebuild runs -- while a fresh build would re-resolve them
+                    # (e.g. to a same-named symbol elsewhere, or to 'ambiguous'
+                    # if the deletion removed one of two duplicates). This makes
+                    # a deleted file behave exactly like a modified one.
+                    if deleted_names:
+                        repo_changed_target_names.setdefault(stored_repo, set()).update(deleted_names)
                 # Also remove from pending_sync if tracking.
                 try:
                     conn.execute(
@@ -215,9 +244,18 @@ def reindex_paths(
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
             conn.execute("COMMIT")
-            # Record the names that were deleted+recreated for the repair pass.
-            if deleted_names:
-                repo_changed_target_names.setdefault(stored_repo, set()).update(deleted_names)
+            # Record BOTH the removed and the freshly-introduced names for the
+            # repair pass. The removed names cover edges whose targets were
+            # deleted+re-created (classic repair); the freshly-introduced names
+            # cover the resolution flip the other way -- an edge elsewhere that
+            # was ambiguous because the name did not exist (or existed once and
+            # a second definition just appeared) must be re-resolved to match
+            # what a fresh build would decide. Only names whose candidate count
+            # actually changed are registered, so the repair stays proportional
+            # to the edit.
+            changed_names = set(deleted_names) | set(name_to_symbol_ids.keys())
+            if changed_names:
+                repo_changed_target_names.setdefault(stored_repo, set()).update(changed_names)
         except Exception as e:
             # Roll back the whole delete+reinsert so a failed re-parse leaves
             # the old rows intact rather than a half-deleted gap.
@@ -301,16 +339,29 @@ def incremental_update(
                 all_paths.append(str(repo_path / f))
 
         with build_lock(db_path or str(_resolve_store().db)):
+            # Snapshot the derived-index pre-state BEFORE reindex_paths deletes
+            # the changed files' rows -- closure ancestors and the old ids/names
+            # of the changed files' symbols are only computable while the old
+            # rows still exist (see _capture_derived_prestate).
+            pre = _capture_derived_prestate(conn, workspace, all_paths)
+
             result = reindex_paths(conn, workspace, all_paths)
 
             # Refresh derived indexes when something actually changed. An incremental
             # edit can change which symbols are public, who calls whom, and which edges
             # are exact -- so the precomputed dataflow rows and transitive closure must
-            # be rebuilt, or cached lookups silently serve stale answers. Best-effort:
+            # be brought back in sync, or cached lookups silently serve stale answers.
+            # PERF-3: this is now an *incremental* maintenance restricted to the
+            # affected symbol set, not the full wipe+rebuild it used to be (which
+            # cost minutes per single-file edit on a 1000-file repo). Only a
+            # never-built derived index still takes the full path. Best-effort:
             # a failure here is reported as an error but does not undo the reindex.
             derived_errors: list[str] = []
             if result["reindexed"] or result["deleted"]:
-                derived_errors = _rebuild_derived_indexes(conn)
+                if pre["closure_built"] and pre["dataflow_built"]:
+                    derived_errors = _maintain_derived_indexes(conn, workspace, all_paths, pre)
+                else:
+                    derived_errors = _rebuild_derived_indexes(conn)
     finally:
         conn.close()
 
@@ -337,11 +388,16 @@ def incremental_update(
 
 
 def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
-    """Rebuild dataflow + transitive closure. Returns a list of error strings.
+    """Full rebuild of dataflow + transitive closure. Returns error strings.
 
     Best-effort: mirrors the post-build steps in cli/core.py so an incremental
     update keeps the derived indexes consistent with the freshly reindexed
     graph. Each phase is independent; a failure in one doesn't skip the other.
+
+    PERF-3: this is now the FALLBACK path, used only when a derived table was
+    never built (empty) -- there is no assumed-correct pre-state to compute an
+    affected set from. The normal update flow runs the incremental maintenance
+    in :func:`_maintain_derived_indexes` instead.
     """
     errors: list[str] = []
     try:
@@ -356,6 +412,342 @@ def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
     except Exception as e:
         logger.debug("transitive closure rebuild failed", exc_info=True)
         errors.append(f"transitive_closure: {e}")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# PERF-3: incremental derived-index maintenance.
+#
+# The closure table maps source -> everything it reaches; dataflow maps a name
+# to everyone who reaches it. An edit perturbs both only through (1) the
+# changed files' symbols and (2) edges of *unchanged* symbols that the
+# null+repair dance retargeted. Everything below exists to enumerate exactly
+# those sources/names before and after reindex_paths runs.
+# ---------------------------------------------------------------------------
+
+
+def _find_tracked_file_row(cur, workspace: str, abs_path: str):
+    """Resolve an absolute path to its tracked ``files`` row (or None).
+
+    Mirrors reindex_paths' normalization (repo-relative primary, absolute
+    fallback) so the pre/post snapshots agree with what reindex_paths actually
+    deleted and re-inserted.
+    """
+    repo = scanner_mod.infer_repo_for_path(abs_path, workspace)
+    if not repo:
+        return None
+    repo_path = str(scanner_mod.resolve_repo_path(workspace, repo))
+    try:
+        Path(abs_path).relative_to(repo_path)
+    except ValueError:
+        return None
+    from pathlib import Path as _P
+
+    rel_to_repo = str(_P(abs_path).relative_to(repo_path)) if abs_path.startswith(repo_path) else _P(abs_path).name
+    row = cur.execute(
+        "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
+    ).fetchone()
+    if row is None:
+        row = cur.execute(
+            "SELECT id, repo_id, path FROM files WHERE path = ?", (abs_path,)
+        ).fetchone()
+    return row
+
+
+def _capture_derived_prestate(
+    conn: sqlite3.Connection, workspace: str, paths: list[str]
+) -> dict:
+    """Snapshot everything the affected-set computation needs from the OLD graph.
+
+    Must run BEFORE reindex_paths: after it, the changed files' old symbol ids
+    are gone, their incoming edges have been nulled (losing the target_id the
+    ancestor query needs), and the closure is due for maintenance.
+
+    Captures:
+    - ``old_ids``/``old_names``: symbol ids and bare names of the changed
+      files' tracked rows;
+    - ``repair_sources``: sources (ANY file) of edges that the null+repair
+      dance can retarget -- edges resolving into ``old_ids``, plus unresolved
+      edges whose ``target_name`` matches ``old_names`` (those are exactly the
+      rows ``resolver.repair_incoming_edges`` selects, and they can end up
+      pointing at a different symbol -- or none -- than before);
+    - ``ancestor_ids``: closure ancestors of (old ids + repair sources). A
+      source's forward reachability changes when a changed edge sits on one of
+      its paths, i.e. when it reaches the changed edge's source; the closure
+      answers "who reaches X" in one indexed query;
+    - ``repair_edge_ids``: the ids of the repairable rows themselves, so their
+      POST-repair targets can be read precisely (after repair, resolved edges
+      have ``target_name`` cleared and nulled edges have no ``target_id`` --
+      only the row id survives to identify them);
+    - ``old_targets``: resolved targets of the changed files' OWN edges (the
+      deleted edges' callees -- their dataflow rows lose the deleted callers).
+      Deliberately NOT the targets of every repair-source edge: an untouched
+      edge of a repair-source did not change, and seeding from all of them
+      explodes the dataflow-affected set on name-heavy corpora;
+    - ``closure_built``/``dataflow_built``: never-built detection for the
+      full-rebuild fallback.
+    """
+    from .dataflow import _chunked
+
+    cur = conn.cursor()
+    tracked_paths: set[str] = set()
+    old_ids: set[str] = set()
+    old_names: set[str] = set()
+    for abs_path in paths:
+        row = _find_tracked_file_row(cur, workspace, str(abs_path))
+        if row is None:
+            continue
+        tracked_paths.add(row["path"])
+    for rel_path in tracked_paths:
+        frow = cur.execute("SELECT id FROM files WHERE path = ?", (rel_path,)).fetchone()
+        if frow is None:
+            continue
+        for r in cur.execute(
+            "SELECT id, name FROM symbols WHERE file_id = ?", (frow["id"],)
+        ):
+            if r["id"]:
+                old_ids.add(r["id"])
+            if r["name"]:
+                old_names.add(r["name"])
+
+    repair_sources: set[str] = set()
+    repair_edge_ids: set[str] = set()
+    for chunk in _chunked(old_ids):
+        ph = ",".join("?" for _ in chunk)
+        for r in cur.execute(
+            f"SELECT id, source_id FROM edges WHERE target_id IN ({ph})", chunk
+        ):
+            repair_edge_ids.add(r[0])
+            repair_sources.add(r[1])
+    for chunk in _chunked(old_names):
+        ph = ",".join("?" for _ in chunk)
+        for r in cur.execute(
+            f"SELECT id, source_id FROM edges WHERE target_name IN ({ph})", chunk
+        ):
+            repair_edge_ids.add(r[0])
+            repair_sources.add(r[1])
+
+    ancestor_targets = old_ids | repair_sources
+    ancestor_ids: set[str] = set()
+    for chunk in _chunked(ancestor_targets):
+        ph = ",".join("?" for _ in chunk)
+        ancestor_ids.update(
+            r[0]
+            for r in cur.execute(
+                f"SELECT DISTINCT source_id FROM transitive_edges WHERE target_id IN ({ph})",
+                chunk,
+            )
+        )
+
+    old_targets: set[str] = set()
+    for chunk in _chunked(old_ids):
+        ph = ",".join("?" for _ in chunk)
+        old_targets.update(
+            r[0]
+            for r in cur.execute(
+                f"SELECT DISTINCT target_id FROM edges "
+                f"WHERE source_id IN ({ph}) AND target_id IS NOT NULL",
+                chunk,
+            )
+        )
+
+    def _has_rows(table: str) -> bool:
+        try:
+            return cur.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+        except sqlite3.Error:
+            return False
+
+    return {
+        "old_ids": old_ids,
+        "old_names": old_names,
+        "repair_sources": repair_sources,
+        "repair_edge_ids": repair_edge_ids,
+        "ancestor_ids": ancestor_ids,
+        "old_targets": old_targets,
+        "closure_built": _has_rows("transitive_edges"),
+        "dataflow_built": _has_rows("dataflow"),
+    }
+
+
+def _reachable_symbol_names(
+    conn: sqlite3.Connection, seed_ids: set[str], max_hops: int = 5
+) -> set[str]:
+    """Names of symbols reachable from ``seed_ids`` within ``max_hops``.
+
+    Follows resolved structural edges only -- the same edge population
+    ``impact_analysis``'s precise structural walk uses -- because dataflow's
+    within_repo payload is computed by ``impact_analysis(name, max_depth=5)``:
+    a changed edge (U->V) perturbs dataflow(X) exactly when X is V or lies up
+    to 5 resolved-structural hops downstream of V. Batched IN-list BFS keeps
+    it to one query per (hop x chunk).
+    """
+    from .dataflow import _chunked
+    from .traversal import STRUCTURAL_EDGE_KINDS
+
+    cur = conn.cursor()
+    kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
+    kinds = tuple(STRUCTURAL_EDGE_KINDS)
+    names: set[str] = set()
+    seen: set[str] = set()
+    frontier = {i for i in seed_ids if i}
+    for _hop in range(max_hops + 1):
+        if not frontier:
+            break
+        for chunk in _chunked(frontier):
+            ph = ",".join("?" for _ in chunk)
+            names.update(
+                r[0]
+                for r in cur.execute(
+                    f"SELECT name FROM symbols WHERE id IN ({ph}) AND name IS NOT NULL",
+                    chunk,
+                )
+            )
+        nxt: set[str] = set()
+        for chunk in _chunked(frontier):
+            ph = ",".join("?" for _ in chunk)
+            nxt.update(
+                r[0]
+                for r in cur.execute(
+                    f"SELECT DISTINCT target_id FROM edges "
+                    f"WHERE source_id IN ({ph}) AND target_id IS NOT NULL "
+                    f"AND kind IN ({kind_ph})",
+                    (*chunk, *kinds),
+                )
+            )
+        nxt -= seen
+        seen |= frontier
+        frontier = nxt
+    return names
+
+
+def _maintain_derived_indexes(
+    conn: sqlite3.Connection,
+    workspace: str,
+    paths: list[str],
+    pre: dict,
+) -> list[str]:
+    """Incrementally maintain both derived indexes for a completed reindex.
+
+    Runs AFTER reindex_paths (resolver + incoming-edge repair included). Two
+    affected sets are computed, then handed to the dataflow module's
+    maintainers:
+
+    **Closure sources** = old ids | new ids | repair sources | name-repair
+    sources | closure ancestors of all of those. The "name-repair sources"
+    post-capture is the sneaky one: edges of *unchanged* files whose
+    ``target_name`` matches a name the edit INTRODUCED. Those edges were never
+    nulled, but the resolver's repair pass re-resolves them (a new same-named
+    symbol changes their candidate set), and independently the closure's
+    Case-2 unique-name extension changes behavior when a name's global
+    definition count crosses 1 -- both flip the source's forward reachability.
+    Their ancestors are read from the still-unmaintained closure, which at
+    this point still reflects the pre-edit graph.
+
+    **Dataflow names** = old names | new names | names of the changed edges'
+    resolved targets (old side pre-captured; new side = the re-indexed files'
+    edge targets plus the post-repair targets of the captured repairable edge
+    ids) | names reachable from those targets within impact_analysis's
+    max_depth (see _reachable_symbol_names).
+
+    Each phase is best-effort and independent, mirroring
+    _rebuild_derived_indexes' error contract.
+    """
+    from .dataflow import (
+        _chunked,
+        maintain_dataflow_index,
+        maintain_transitive_closure,
+    )
+
+    cur = conn.cursor()
+    new_ids: set[str] = set()
+    new_names: set[str] = set()
+    # Re-resolve every changed path against the POST-update files table: a
+    # brand-new file had no pre-update row to track, so keying off the
+    # pre-captured paths alone would silently skip its symbols.
+    for abs_path in paths:
+        row = _find_tracked_file_row(cur, workspace, str(abs_path))
+        if row is None:
+            continue  # file deleted (or failed re-parse): nothing new to index
+        for r in cur.execute(
+            "SELECT id, name FROM symbols WHERE file_id = ?", (row["id"],)
+        ):
+            if r["id"]:
+                new_ids.add(r["id"])
+            if r["name"]:
+                new_names.add(r["name"])
+
+    # Sources of edges pointing (by bare name) at names this edit introduced:
+    # candidates for resolution flips and Case-2 uniqueness flips.
+    name_repair_sources: set[str] = set()
+    for chunk in _chunked(new_names - pre["old_names"]):
+        ph = ",".join("?" for _ in chunk)
+        name_repair_sources.update(
+            r[0]
+            for r in cur.execute(
+                f"SELECT DISTINCT source_id FROM edges WHERE target_name IN ({ph})",
+                chunk,
+            )
+        )
+
+    changed_sources = pre["old_ids"] | pre["repair_sources"] | name_repair_sources
+    # Ancestors of the post-captured sources, read from the pre-edit closure
+    # (maintenance hasn't touched it yet, so it is still the trusted pre-state).
+    post_ancestors: set[str] = set()
+    for chunk in _chunked(name_repair_sources | new_ids):
+        ph = ",".join("?" for _ in chunk)
+        post_ancestors.update(
+            r[0]
+            for r in cur.execute(
+                f"SELECT DISTINCT source_id FROM transitive_edges WHERE target_id IN ({ph})",
+                chunk,
+            )
+        )
+
+    affected_sources = changed_sources | new_ids | pre["ancestor_ids"] | post_ancestors
+
+    errors: list[str] = []
+    try:
+        maintain_transitive_closure(conn, affected_sources)
+    except Exception as e:
+        logger.debug("transitive closure maintenance failed", exc_info=True)
+        errors.append(f"transitive_closure: {e}")
+
+    try:
+        # Changed-edge target seeds for the dataflow-affected computation:
+        # the changed files' own edge targets (new state), plus the POST-repair
+        # targets of the captured repairable edge ids (precise because after
+        # repair those rows are unidentifiable by name/id -- only the row id
+        # survives). Pre-captured old_targets completes the old side.
+        new_targets: set[str] = set()
+        for chunk in _chunked(new_ids):
+            ph = ",".join("?" for _ in chunk)
+            new_targets.update(
+                r[0]
+                for r in cur.execute(
+                    f"SELECT DISTINCT target_id FROM edges "
+                    f"WHERE source_id IN ({ph}) AND target_id IS NOT NULL",
+                    chunk,
+                )
+            )
+        for chunk in _chunked(pre["repair_edge_ids"]):
+            ph = ",".join("?" for _ in chunk)
+            new_targets.update(
+                r[0]
+                for r in cur.execute(
+                    f"SELECT DISTINCT target_id FROM edges "
+                    f"WHERE id IN ({ph}) AND target_id IS NOT NULL",
+                    chunk,
+                )
+            )
+        affected_names = (
+            pre["old_names"]
+            | new_names
+            | _reachable_symbol_names(conn, pre["old_targets"] | new_targets)
+        )
+        maintain_dataflow_index(conn, affected_names)
+    except Exception as e:
+        logger.debug("dataflow maintenance failed", exc_info=True)
+        errors.append(f"dataflow: {e}")
     return errors
 
 
