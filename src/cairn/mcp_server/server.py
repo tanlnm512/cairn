@@ -224,6 +224,24 @@ def run(transport: str = "stdio", port: int | None = None):
               f"Run 'cairn init && cairn build' first.", file=sys.stderr, flush=True)
         sys.exit(1)
 
+    # Warm the semantic models (embedder + reranker) in a background daemon
+    # thread (P0-1): the first semantic_search otherwise pays the full lazy
+    # model load (~9.4s measured, ~5s of it HF Hub metadata round-trips even
+    # on cached weights). Runs on the shared path so BOTH stdio and SSE get
+    # it, before serving starts, without blocking boot (thread started, not
+    # joined). Only ever warms weights already in the local HF cache -- it
+    # never downloads -- and is inert for hash/openai embed backends and a
+    # disabled reranker. Placed after the DB guard so an unbootable server
+    # doesn't load weights it will never use, and before the catch-up pass
+    # so weights load in parallel with reindexing. The kill switch
+    # (CAIRN_WARM_MODELS=0/false/no) is checked inside the function so the
+    # gate is unit-testable; the warm thread never writes to stdout (stdout
+    # is the JSON-RPC channel under stdio) -- it logs via the
+    # stderr-configured `cairn` logger only.
+    from cairn.graph.model_warmup import warm_models_in_background
+
+    warm_models_in_background()
+
     # Read-only mode: the shared SSE daemon opens the DB with mode=ro so it
     # can never hold the writer lock and therefore never contends with
     # `cairn build`/`cairn embed`/`cairn memory`. The two boot write paths

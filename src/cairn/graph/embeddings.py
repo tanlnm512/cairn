@@ -629,11 +629,33 @@ def _chunk_hash(chunk: str) -> str:
 def reap_orphaned_embeddings(conn: sqlite3.Connection) -> int:
     """Delete embedding rows whose symbol no longer exists.
 
-    Returns the number of rows removed. Safe to call any time.
+    Returns the number of rows removed. Safe to call any time. When the ANN
+    backend is on, the vec0 rows for the reaped embeddings are deleted in the
+    SAME transaction: a stale vec0 entry survives keyed on a rowid SQLite may
+    later reuse for a different embedding, which would pair the ann_query
+    join with an unrelated vector (wrong results, not just missing ones).
+    The vec sync itself is a no-op when no vec0 table exists for a model.
     """
+    from .ann_index import ann_backend_enabled, delete_index_rows
+
+    # Collect the (model, rowid) pairs about to be deleted first -- the bulk
+    # DELETE below can't report them, and each rowid must be removed from
+    # exactly its own model's vec0 table. Skipped entirely when the ANN
+    # backend is off so the reap stays a pure no-op (same single DELETE as
+    # before, no extra scan).
+    doomed: dict = {}
+    if ann_backend_enabled():
+        for r in conn.execute(
+            "SELECT model, rowid FROM embeddings "
+            "WHERE symbol_id NOT IN (SELECT id FROM symbols)"
+        ).fetchall():
+            doomed.setdefault(r[0], []).append(r[1])
+
     cur = conn.execute(
         "DELETE FROM embeddings WHERE symbol_id NOT IN (SELECT id FROM symbols)"
     )
+    for model, rowids in doomed.items():
+        delete_index_rows(conn, model, rowids)
     conn.commit()
     return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
 
@@ -705,10 +727,13 @@ def embed_all(
             # even if current_model() didn't change.
             dim = len(blob) // 4
             # Rowid-stable upsert: ON CONFLICT ... DO UPDATE preserves the
-            # existing rowid. The vec0 ANN index keys on embeddings.rowid, so
-            # INSERT OR REPLACE (which assigns a NEW rowid) would misalign the
-            # index until rebuild_index runs. New symbols still require a
-            # rebuild; existing symbols stay correctly keyed.
+            # existing rowid. STILL LOAD-BEARING for the vec0 sync: the index
+            # keys on embeddings.rowid, and INSERT OR REPLACE (which assigns
+            # a NEW rowid) would orphan the old vec0 entry and leave the new
+            # row pointing at a vec key that doesn't exist. Bulk rows made
+            # here stay unsynced on purpose -- the wholesale rebuild at the
+            # end of `cairn embed` realigns the whole table at ~9x lower
+            # per-row cost than delete+insert (see ann_index.sync_index_row).
             conn.execute(
                 "INSERT INTO embeddings "
                 "(symbol_id, model, dim, vec, chunk, content_hash, embedded_at) "
@@ -739,6 +764,124 @@ def embed_all(
         "skipped": len(all_rows) - total,
         "total": len(all_rows),
         "reaped": reaped,
+    }
+
+
+def embed_symbols(
+    conn: sqlite3.Connection,
+    symbol_ids: Sequence[str],
+    sync_ann: bool = True,
+) -> dict:
+    """(Re-)embed specific symbols now -- the per-upsert ANN sync seam.
+
+    The targeted counterpart to :func:`embed_all`: one ``_embed`` call for
+    every requested symbol, then each upsert keeps the vec0 ANN index in sync
+    via ``ann_index.sync_index_row`` INSIDE the same transaction (delete +
+    insert by the embeddings rowid; vec0 has no replace semantics). This is
+    the seam single-symbol write paths should use so a new/changed symbol is
+    visible to ``ann_query`` immediately, without waiting for the next
+    wholesale ``cairn embed`` rebuild.
+
+    Bulk passes deliberately do NOT come through here: per-row vec sync runs
+    ~27 us/row (delete+insert+commit) vs ~3 us/row for the rebuild's INSERT
+    ... SELECT, so ``embed_all`` over thousands of rows keeps its wholesale
+    ``rebuild_index`` at the end (spike notes in ``ann_index.sync_index_row``).
+    A handful of symbols pays microseconds and avoids the drift outright.
+
+    Idempotent like ``embed_all``: symbols whose stored ``content_hash``
+    still matches are skipped, as are empty-chunk symbols; unknown ids are
+    dropped silently (nothing to embed). Returns ``{model, embedded,
+    skipped, ann_synced}`` where
+    ``ann_synced`` is the number of rows whose vec0 entry was actually
+    written (0 when the backend is off, no index exists yet, or sync
+    failed -- each a documented no-op/best-effort, never an error).
+    """
+    model = current_model()
+    ids = [sid for sid in symbol_ids if sid]
+    if not ids:
+        return {"model": model, "embedded": 0, "skipped": 0, "ann_synced": 0}
+
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""SELECT s.id, s.name, s.qualified_name, s.kind, s.docstring,
+                   s.line_start, s.parameters, s.return_type,
+                   s.parent_scope, s.imports_summary, s.body,
+                   f.path AS file_path, f.repo_id AS repo,
+                   e.content_hash AS existing_hash
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            LEFT JOIN embeddings e ON e.symbol_id = s.id AND e.model = ?
+            WHERE s.kind IS NOT NULL AND s.id IN ({placeholders})
+            ORDER BY s.id""",
+        (model, *ids),
+    ).fetchall()
+
+    signatures = _signature_lines_for_rows(rows)
+
+    stale_rows = []
+    for r in rows:
+        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]))
+        if not chunk.strip():
+            continue
+        new_hash = _chunk_hash(chunk)
+        if r["existing_hash"] is None or r["existing_hash"] != new_hash:
+            stale_rows.append((r["id"], chunk, new_hash))
+
+    if not stale_rows:
+        return {
+            "model": model,
+            "embedded": 0,
+            "skipped": len(rows),
+            "ann_synced": 0,
+        }
+
+    # One embedder call for the whole batch (the model forward pass, not the
+    # SQL, is the expensive part).
+    texts = [c for _, c, _ in stale_rows]
+    blobs, _dim = _embed(texts)
+    now = datetime.now(timezone.utc).isoformat()
+
+    from .ann_index import sync_index_row
+
+    embedded = 0
+    ann_synced = 0
+    for (sid, chunk, chash), blob in zip(stale_rows, blobs):
+        dim = len(blob) // 4
+        # Same rowid-preserving upsert contract as embed_all (see the comment
+        # there): the vec0 sync below keys on this row's rowid, which ON
+        # CONFLICT DO UPDATE keeps stable across re-embeds.
+        conn.execute(
+            "INSERT INTO embeddings "
+            "(symbol_id, model, dim, vec, chunk, content_hash, embedded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(symbol_id, model) DO UPDATE SET "
+            "dim=excluded.dim, vec=excluded.vec, chunk=excluded.chunk, "
+            "content_hash=excluded.content_hash, embedded_at=excluded.embedded_at",
+            (sid, model, dim, blob, chunk, chash, now),
+        )
+        if sync_ann:
+            # lastrowid is unreliable under ON CONFLICT DO UPDATE, so read the
+            # rowid back inside the same transaction (own uncommitted writes
+            # are visible; the lookup hits the (symbol_id, model) PK).
+            row = conn.execute(
+                "SELECT rowid FROM embeddings WHERE symbol_id = ? AND model = ?",
+                (sid, model),
+            ).fetchone()
+            if row is not None and sync_index_row(conn, model, row[0], blob):
+                ann_synced += 1
+    try:
+        conn.commit()
+        embedded = len(stale_rows)
+    except sqlite3.OperationalError as e:
+        # Mirrors embed_all's batch flush: lock contention leaves the batch
+        # buffered on the connection; a later commit or retry flushes it.
+        note_contention("embeddings.embed_symbols", error=e)
+
+    return {
+        "model": model,
+        "embedded": embedded,
+        "skipped": len(rows) - len(stale_rows),
+        "ann_synced": ann_synced,
     }
 
 

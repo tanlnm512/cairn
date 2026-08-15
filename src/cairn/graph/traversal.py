@@ -160,6 +160,7 @@ def impact_analysis(
     fuzzy: bool = False,
     limit: int = 500,
     include_service_edges: bool = False,
+    use_index: Optional[bool] = None,
 ) -> dict:
     """Recursive caller traversal with cycle detection.
 
@@ -171,9 +172,55 @@ def impact_analysis(
 
     ``limit`` caps total impacted rows; ``truncated`` in the return flags this.
 
+    **Index mode.** When the precomputed ``transitive_edges`` closure can serve
+    the query -- precise, structural-only, ``max_depth <= 3``, the name has
+    exact-name symbol matches, the closure is materialised, and no seed reaches
+    another seed (cycle gate) -- the answer comes from
+    :func:`dataflow.impact_from_closure` in one indexed statement instead of a
+    per-visited-symbol DFS. Index mode returns shortest-path depths,
+    (depth, symbol, file)-ordered rows, empty ``cycles``, and may be a superset
+    of DFS coverage (unique-name hops; no per-node 200-caller cap) -- see that
+    function's docstring. ``use_index=False`` forces the classic DFS (used by
+    the golden parity tests); ``use_index=True`` genuinely forces the index
+    when technically servable -- including past the cycle gate, accepting
+    ``cycles=[]`` -- and silently takes the DFS path otherwise (fuzzy/service/
+    deep queries can never be served from the closure).
+
     Returns {impacted: [...], cycles: [...], total: int, truncated: bool}.
     Each impacted entry: {symbol, file, repo, depth}.
     """
+    if fuzzy or use_index is not False:
+        from .dataflow import (
+            CLOSURE_MAX_DEPTH,
+            closure_available,
+            closure_has_seed_cycle,
+            impact_from_closure,
+        )
+
+        # DFS records callers at depth 0..max_depth, i.e. ancestors up to
+        # closure distance max_depth+1 -- the eligibility bound is one below
+        # the materialised depth (see dataflow.CLOSURE_MAX_DEPTH).
+        if (
+            not fuzzy
+            and not include_service_edges
+            and max_depth + 1 <= CLOSURE_MAX_DEPTH
+        ):
+            seeds = find_definition(conn, name, limit=limit)
+            # find_definition falls back to qualified-name/substring matches;
+            # get_callers-based DFS only ever matches exact names, so require
+            # an exact-name symbol before serving from the closure.
+            exact = conn.execute(
+                "SELECT id FROM symbols WHERE name = ? LIMIT 1", (name,)
+            ).fetchone()
+            if exact is not None and closure_available(conn):
+                seed_ids = [s["id"] for s in seeds]
+                # use_index=True genuinely forces: the cycle gate keeps auto
+                # mode on the DFS path (cycle reporting), but a forced query
+                # accepts cycles=[] (documented) -- the escape hatch for
+                # benchmarks and debugging.
+                if use_index is True or not closure_has_seed_cycle(conn, seed_ids):
+                    return impact_from_closure(conn, seed_ids, max_depth, limit)
+
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
     visited: set[str] = set()   # globally visited symbol ids — prevents re-traversal
     on_path: set[str] = set()   # current DFS path symbol ids — cycle detection
@@ -181,6 +228,16 @@ def impact_analysis(
     cycles_seen: set[str] = set()
     cycles = []
     truncated = False
+    # Per-call memo: caller lookup is keyed by NAME, so distinct symbols that
+    # share a name (same-named methods across classes) re-query identical SQL.
+    # Pure caching -- visit order and results are unchanged (pinned by the
+    # golden parity tests).
+    callers_memo: dict[str, list] = {}
+
+    def _callers(n: str) -> list:
+        if n not in callers_memo:
+            callers_memo[n] = get_callers(conn, n, fuzzy=fuzzy)
+        return callers_memo[n]
 
     def traverse(sym_id: str, sym_name: str, depth: int):
         nonlocal truncated
@@ -198,7 +255,7 @@ def impact_analysis(
             return  # already fully explored via another path
         visited.add(sym_id)
         on_path.add(sym_id)
-        callers = get_callers(conn, sym_name, fuzzy=fuzzy)
+        callers = _callers(sym_name)
         for c in callers:
             # Filter to structural kinds unless the caller opted in to service
             # edges.
@@ -223,7 +280,7 @@ def impact_analysis(
     for seed in find_definition(conn, name, limit=limit):
         visited.add(seed["id"])
         on_path.add(seed["id"])
-    for c in get_callers(conn, name, fuzzy=fuzzy):
+    for c in _callers(name):
         if allowed is not None and c["edge_kind"] not in allowed:
             continue
         if len(results) >= limit:
@@ -299,6 +356,22 @@ def trace_flow(
     cycles: list[dict] = []
     cycles_seen: set[str] = set()
     truncated = False
+    # Per-call memos: callee lookup and definition resolution are both keyed
+    # by NAME, so same-named nodes (and repeated callees) re-query identical
+    # SQL. Pure caching -- walk order and results are unchanged (pinned by
+    # the golden parity tests).
+    callees_memo: dict[str, list] = {}
+    defn_memo: dict[str, list] = {}
+
+    def _callees(n: str) -> list:
+        if n not in callees_memo:
+            callees_memo[n] = get_callees(conn, n, limit=50, fuzzy=fuzzy)
+        return callees_memo[n]
+
+    def _defn(n: str) -> list:
+        if n not in defn_memo:
+            defn_memo[n] = find_definition(conn, n, limit=1)
+        return defn_memo[n]
 
     # Seed the chain with the entry symbol itself.
     if entry_id:
@@ -325,7 +398,7 @@ def trace_flow(
             return
 
         on_path.add(sym_id)
-        callees = get_callees(conn, sym_name, limit=50, fuzzy=fuzzy)
+        callees = _callees(sym_name)
 
         if not callees:
             if sym_id != entry_row_id:
@@ -356,7 +429,7 @@ def trace_flow(
             if cid not in visited:
                 # Resolve the callee's DEFINITION location (not the call site):
                 # where the symbol is actually declared.
-                defn = find_definition(conn, cname, limit=1)
+                defn = _defn(cname)
                 if defn:
                     d = defn[0]
                     cfile = d["file_path"]

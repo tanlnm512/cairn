@@ -3,7 +3,9 @@
 Two-stage retrieval:
   1. Cosine scan (or sqlite-vec ANN) over the embeddings table, optionally
      blended with BM25 via Reciprocal Rank Fusion.
-  2. Optional cross-encoder rerank stage.
+  2. Optional cross-encoder rerank stage, skipped when the fused (RRF) ranking
+     is already decisive (``_fused_confident`` -- see the gating note on
+     ``semantic_search``).
 
 Imports vector math from ``vector_math``, BM25 search from ``lexical``, and
 1-hop traversal from ``traversal`` for the ``include_callers=True`` enrichment.
@@ -14,7 +16,7 @@ import logging
 import os
 import sqlite3
 import time
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from .lexical import search_symbols
 from .traversal import get_callers, get_callees
@@ -63,6 +65,127 @@ def _n_results_bucket(n: int) -> str:
         if n <= bound:
             return label
     return _N_BUCKET_MAX
+
+
+# ---------------------------------------------------------------------------
+# Rerank confidence gating (P0-2).
+#
+# Steady-state profiling showed ~95% of a `semantic_search` call's wall time
+# is the optional cross-encoder rerank (predict on max(limit*5, 50) pairs).
+# When the FUSED ranking is already decisive the rerank re-sorts a list whose
+# answer it cannot improve, so the stage is skipped. The gate is deliberately
+# simple and deterministic: a normalized margin over the RRF scores, plus an
+# exact-name corroboration (the fused #1 must be an exact reference of the
+# query).
+#
+# Calibration (bge-m3 embeddings + BAAI/bge-reranker-base over a copy of this
+# repo's src/ tree, 63 agent-style queries; see the PR description for the
+# full tables): at threshold 0.45 the gated population keeps top-1 agreement
+# 1.00 (limit=10) / 0.94 (limit=20) with the reranked result on the
+# production-code corpus (0.91 on a corpus that also includes test-name
+# twins), skipping ~17-25% of calls (~70% of exact-name traffic -- the
+# dominant agent query shape). BM25-#1 corroboration was measured and
+# REJECTED: populations it admits only reach 0.73-0.76 top-1 agreement
+# (fragment queries like "schema"/"bm25" where BM25's #1 is not the answer).
+# The gate is disabled under hash (token-overlap) vectors: there the vector
+# signal is token overlap only, and the measured top-1 agreement of skip
+# populations drops to ~0.0 -- rerank is the only semantic component left,
+# so it must run.
+# ---------------------------------------------------------------------------
+
+# Default for CAIRN_RERANK_MIN_MARGIN. See the calibration note above.
+_DEFAULT_RERANK_MIN_MARGIN = 0.45
+
+
+def _rerank_min_margin() -> float:
+    """The confidence threshold above which rerank is skipped (0.0-1.0).
+
+    ``CAIRN_RERANK_MIN_MARGIN`` overrides the calibrated default; values are
+    clamped to [0, 1] because the signal is a ratio (1.0 effectively disables
+    skipping -- a fused ranking never has a perfect margin -- and 0.0 skips
+    on every fused call that passes the corroboration check).
+    Unparseable values fall back to the default rather than raising: this is
+    a latency knob, not correctness.
+    """
+    raw = os.environ.get("CAIRN_RERANK_MIN_MARGIN", "")
+    if not raw:
+        return _DEFAULT_RERANK_MIN_MARGIN
+    try:
+        val = float(raw)
+    except ValueError:
+        logger.debug("unparseable CAIRN_RERANK_MIN_MARGIN=%r, using default", raw)
+        return _DEFAULT_RERANK_MIN_MARGIN
+    return min(max(val, 0.0), 1.0)
+
+
+def _fused_margin(candidates: List[dict], limit: int) -> float:
+    """Normalized top-to-edge margin of a fused (RRF) ranking, in [0, 1].
+
+    ``margin = (score[0] - score[min(limit-1, len-1)]) / score[0]`` over the
+    RRF scores the call actually produced. A single candidate is trivially
+    decisive (1.0): rerank's only power is reordering the pool, and a one-item
+    pool is already final. A non-positive top score (defensive; RRF scores
+    are always positive) returns 0.0 so the gate never divides by zero or
+    skips on a degenerate ranking.
+    """
+    if len(candidates) <= 1:
+        return 1.0
+    top = candidates[0].get("score") or 0.0
+    if top <= 0.0:
+        return 0.0
+    edge = candidates[min(limit - 1, len(candidates) - 1)].get("score") or 0.0
+    return (top - edge) / top
+
+
+def _exact_name_hit(query: str, top: dict) -> bool:
+    """Whether the query is an exact (case-insensitive) reference to `top`.
+
+    The corroboration half of the confidence gate. Covers the agent idiom of
+    querying a known symbol name verbatim (``"ApiFactory"`` or its qualified
+    form) -- the one lexical shape that is conclusive on its own. Calibration
+    showed BM25-#1 agreement is NOT a safe substitute (fragment queries where
+    BM25's #1 is a module or same-token neighbor reach only ~0.75 top-1
+    agreement after the skip), so the gate requires this stronger check.
+    """
+    q = query.strip().lower()
+    if not q:
+        return False
+    name = (top.get("name") or "").strip().lower()
+    qual = (top.get("qualified_name") or "").strip().lower()
+    return q == name or q == qual or qual.endswith("." + q)
+
+
+def _vectors_carry_token_overlap_only(hash_fallback_flag: bool) -> bool:
+    """True when this call's embeddings are hash (token-overlap) vectors.
+
+    Covers BOTH hash modes: the silent local-backend fallback (the caller's
+    ``is_hash_fallback()`` flag) and an explicit ``CAIRN_EMBED_BACKEND=hash``
+    (the documented dep-free smoke-test mode, which ``is_hash_fallback``
+    deliberately does not flag because the user chose it). For the rerank
+    gate the distinction doesn't matter -- the vectors carry no semantic
+    signal either way, and calibration measured ~0.0 top-1 agreement between
+    skip populations and the cross-encoder under hash vectors.
+    """
+    if hash_fallback_flag:
+        return True
+    return os.environ.get("CAIRN_EMBED_BACKEND", "").strip().lower() == "hash"
+
+
+def _fused_confident(query: str, candidates: List[dict], limit: int) -> bool:
+    """Whether the fused ranking is decisive enough to skip the rerank stage.
+
+    Two conditions, both required:
+
+    * margin -- the fused #1 leads the last-returned slot by at least
+      ``CAIRN_RERANK_MIN_MARGIN`` (normalized RRF-score ratio), AND
+    * corroboration -- the fused #1 is an exact-name hit for the query.
+      A wide margin alone says the rank fusion found a stable #1, not that
+      the #1 is the right answer; the exact-name check supplies the lexical
+      evidence that the query was *about* that symbol.
+    """
+    if _fused_margin(candidates, limit) < _rerank_min_margin():
+        return False
+    return _exact_name_hit(query, candidates[0])
 
 
 def _candidates_from_ann_hits(
@@ -117,6 +240,7 @@ def semantic_search(
     limit: int = 20,
     threshold: float = 0.3,
     include_callers: bool = False,
+    rerank: Optional[bool] = None,
 ) -> List[dict]:
     """Return top-k symbols by cosine similarity to a natural-language query.
 
@@ -140,6 +264,21 @@ def semantic_search(
     re-scored and truncated to ``limit`` by the rerank score. Degrades to plain
     ordering on any failure (check the ``reranked`` field).
 
+    ``rerank`` is a per-call override of the rerank stage: ``None`` (default)
+    is auto -- the stage runs when enabled AND the fused ranking is not
+    already decisive (see below); ``True`` forces the stage past the
+    confidence gate when it is enabled (``CAIRN_RERANK=0`` still wins); ``False``
+    never reranks regardless of enablement. Confidence gating (auto mode
+    only): when the fused RRF ranking's #1 leads the last-returned slot by a
+    normalized margin >= ``CAIRN_RERANK_MIN_MARGIN`` (default 0.45, calibrated)
+    AND the #1 is an exact-name hit for the query, the expensive cross-encoder
+    pass is skipped because it cannot change the answer -- the fused order,
+    scores, and provenance are returned as-is (``reranked=False``) and a
+    ``rerank_skipped`` telemetry event records the skip. The gate only applies
+    to fused rankings from a real embed backend (``CAIRN_FUSION=0`` or the
+    hash backend -- fallback or explicit -- keep today's
+    always-rerank-when-enabled behavior).
+
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
     model, the candidate pool comes from a native ANN query instead of the
     brute-force scan (transparent fallback).
@@ -161,7 +300,10 @@ def semantic_search(
     # Lazy import mirrors metric_buffering.py's discipline to avoid any
     # boot-order cycle with the telemetry package. emit() is best-effort and
     # never raises (spec §5.6); the import is cached after the first call.
+    # RERANK_SKIPPED comes from the events module directly -- it is not
+    # re-exported at the cairn.telemetry package level.
     from cairn.telemetry import emit, SEMANTIC_BACKEND, EMPTY_RESULT
+    from cairn.telemetry.events import RERANK_SKIPPED
 
     # Under the dep-free hash fallback the embedding carries only token-overlap
     # signal, so annotate provenance strings to surface the degradation.
@@ -169,7 +311,13 @@ def semantic_search(
     _sem_prov = "semantic (hash backend)" if _hash else "semantic"
     _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
 
-    rerank_on = rrk.rerank_enabled()
+    # Per-call override on top of the env/marker enablement: False is a hard
+    # off; True forces past the confidence gate but still respects CAIRN_RERANK=0
+    # (the kill switch must win); None (default) leaves the gate in charge.
+    # Computed BEFORE pool_size: the wider rerank pool must be fetched whenever
+    # the stage might still run (the gate can only be evaluated after fusion).
+    _rerank_enabled = rrk.rerank_enabled()
+    rerank_on = _rerank_enabled if rerank is not False else False
     # Hoisted above the early-return path so the semantic_backend telemetry can
     # report it. Same expression explore.py / tools_graph.py use: fusion defaults
     # ON (anything other than the literal "0" leaves it on).
@@ -358,6 +506,39 @@ def semantic_search(
             # must be visible. The debug-level exc_info still gives the traceback.
             _fusion_degraded = True
             logger.warning("RRF fusion degraded to vector-only", exc_info=True)
+
+    # Confidence gate (auto mode only -- `rerank=True` explicitly wants the
+    # cross-encoder, `rerank=False` already turned the stage off above).
+    # Scoped to successful RRF fusion: the margin is calibrated on RRF score
+    # geometry (rank-sums in the ~0.016-0.033 band), which cosine scores from
+    # the CAIRN_FUSION=0 path don't share; with fusion off or degraded the
+    # stage keeps today's behavior. Also disabled under hash embed vectors
+    # (either the silent fallback or explicit CAIRN_EMBED_BACKEND=hash):
+    # token-overlap vectors make the fused ranking untrustworthy exactly
+    # when the cross-encoder is the only semantic signal left (measured
+    # top-1 agreement of skip populations drops to ~0.0 there). On skip,
+    # `rerank_on=False` routes the call through the plain
+    # `candidates[:limit]` return below, so scores and provenance stay
+    # exactly the fused ones the call actually produced.
+    if (
+        rerank_on
+        and rerank is None
+        and not _vectors_carry_token_overlap_only(_hash)
+        and _fusion_used
+        and candidates
+        and _fused_confident(query, candidates, limit)
+    ):
+        rerank_on = False
+        try:
+            # Durable signal for doctor/metrics aggregation; reason is a
+            # fixed enum so the events table's cardinality stays bounded
+            # (spec §6.4). emit() is best-effort and never raises; the
+            # wrap mirrors ann_index.warn_ann_fallback_once's belt-and-
+            # suspenders discipline.
+            emit(RERANK_SKIPPED, reason="confident_margin")
+        except Exception:
+            pass
+        logger.debug("rerank skipped: fused ranking decisive (margin gate)")
 
     if rerank_on:
         final, reranked = rrk.rerank(query, candidates, limit)

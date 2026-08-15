@@ -1,0 +1,69 @@
+flowchart TD
+    CLI(["MCP client<br/>(stdio subprocess or SSE daemon)"])
+
+    subgraph SRV["cairn serve process"]
+        DISP["FastMCP dispatch<br/>mcp_server/_server_core.py: mcp"]
+        INSTR["@instrument wrapper<br/>timing + error capture"]
+        TOOL["tool body (tools_graph.py)<br/>params clamped: depth 1-10, limit 1-1000"]
+        CACHE{"cached=True?"}
+        DF["get_dataflow (O(1))<br/>precomputed dataflow table"]
+        CONN{"_conn()"}
+        FRESH["fresh get_db()<br/>(CAIRN_CONN_POOL=0 kill switch)"]
+        TLS["thread-local pool<br/>path -&gt; (st_dev, st_ino, conn)"]
+        INO{"stat(path)<br/>inode matches?"}
+        REUSE["_PooledConnection<br/>close() = no-op release"]
+        REOPEN["close old conn, reopen<br/>(build swapped the file, or<br/>CAIRN_DB repointed)"]
+    end
+
+    subgraph QL["query layer: graph/traversal.py impact_analysis"]
+        FORK{"routing fork"}
+        IDX["INDEX MODE<br/>dataflow.py: impact_from_closure<br/>one indexed statement over<br/>transitive_edges (idx_transitive_target_id)<br/>shortest-path depths, deterministic order,<br/>exact truncation, cycles=[]"]
+        DFS["DFS FALLBACK<br/>find_definition seeds -&gt; visited/on-path"]
+        MEMO["_callers(name) memo<br/>one query per distinct name<br/>per call (not per symbol)"]
+        GCS["get_callers SQL<br/>edges JOIN symbols JOIN files"]
+        KINF["filter kind in<br/>calls, call, extends, implements"]
+        TRAV["traverse(): cycle detection<br/>(on_path), limit -&gt; truncated"]
+    end
+
+    subgraph STORE["one SQLite file per workspace (~/.cairn/&lt;key&gt;/.kg, WAL)"]
+        SYM[("symbols / edges / imports")]
+        TE[("transitive_edges<br/>depth-4 closure,<br/>structural kinds only")]
+        DFT[("dataflow")]
+        FTS[("symbols_fts (FTS5)")]
+        VEC[("vec0 + embeddings")]
+        MET[("tool_metrics / events")]
+    end
+
+    RENDER["render: prose or structured<br/>staleness banner + 60k-char cap<br/>MAX_RESULT_CHARS"]
+    FLUSH["30s metric flusher thread<br/>(off the tool-call hot path)"]
+
+    CLI -->|"JSON-RPC tool call<br/>e.g. impact_analysis(name, depth=3)"| DISP
+    DISP --> INSTR --> TOOL
+    TOOL --> CACHE
+    CACHE -->|"yes"| DF
+    CACHE -->|"no - live analysis (default)"| CONN
+    CONN -->|"pooling disabled"| FRESH
+    CONN -->|"pooling (default)"| TLS --> INO
+    INO -->|"yes"| REUSE
+    INO -->|"no"| REOPEN --> REUSE
+    FRESH --> FORK
+    REUSE --> FORK
+
+    FORK -->|"precise + structural + depth&lt;=3 +<br/>exact-name match + closure built +<br/>no seed-reaches-seed cycle"| IDX
+    FORK -->|"fuzzy, service edges, depth&gt;3,<br/>qualified-name lookup, closure never built,<br/>or seed cycle (cycle reporting preserved)"| DFS
+    DFS --> MEMO --> GCS --> KINF --> TRAV
+
+    DF --> DFT
+    IDX --> TE
+    GCS --> SYM
+    TRAV -->|"loop back per frontier node"| MEMO
+
+    IDX --> RENDER
+    DF --> RENDER
+    TRAV --> RENDER
+    RENDER -->|"JSON-RPC response"| CLI
+
+    INSTR -.->|"buffer (deque 2000)"| FLUSH -.-> MET
+
+    FTS -.->|"search_symbols<br/>(sibling path)"| RENDER
+    VEC -.->|"semantic_search: ANN or brute cosine<br/>+ RRF fusion + optional rerank<br/>(sibling path)"| RENDER

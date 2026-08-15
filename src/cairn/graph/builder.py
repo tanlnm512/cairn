@@ -1215,12 +1215,30 @@ def _clear_repo(conn, repo_name: str):
     # incremental path deletes embeddings explicitly; a full repo rebuild must
     # too or it leaves dangling embedding rows pointing at deleted symbols.
     try:
+        # Sync the vec0 index for the doomed rowids (same rationale as the
+        # incremental path): a stale vec entry can pair a REUSED rowid with an
+        # unrelated vector. No-op when the ANN backend is off.
+        doomed = cur.execute(
+            "SELECT model, rowid FROM embeddings WHERE symbol_id IN "
+            "(SELECT id FROM symbols WHERE file_id IN "
+            "(SELECT id FROM files WHERE repo_id = ?))",
+            (repo_name,),
+        ).fetchall()
         cur.execute(
             "DELETE FROM embeddings WHERE symbol_id IN "
             "(SELECT id FROM symbols WHERE file_id IN "
             "(SELECT id FROM files WHERE repo_id = ?))",
             (repo_name,),
         )
+        if doomed:
+            from .ann_index import delete_index_rows
+
+            for model in {r["model"] for r in doomed}:
+                delete_index_rows(
+                    conn,
+                    model,
+                    [r["rowid"] for r in doomed if r["model"] == model],
+                )
     except sqlite3.OperationalError as e:
         note_contention("builder.delete_repo_embeddings", error=e)
         pass  # embeddings table missing on a DB that never had the semantic extra

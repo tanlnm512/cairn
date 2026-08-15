@@ -48,6 +48,10 @@ TASK_LIFECYCLE = "task_lifecycle"
 STRAY_SWEPT = "stray_swept"
 SEMANTIC_UNAVAILABLE = "semantic_unavailable"
 EMBED_FLUSH_STALLED = "embed_flush_stalled"
+# P0-2 rerank confidence gating: semantic_search skipped the cross-encoder
+# stage because the fused (RRF) ranking was already decisive. Emitted at the
+# skip site in graph/semantic.py with a fixed-enum `reason` attr.
+RERANK_SKIPPED = "rerank_skipped"
 
 # Defensive cap on any single serialized attr value so a runaway caller can't
 # bloat the events row / the WAL with a huge string. Attrs are supposed to be

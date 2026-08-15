@@ -300,6 +300,9 @@ CREATE TABLE IF NOT EXISTS transitive_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_transitive_source ON transitive_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_transitive_target ON transitive_edges(target_name);
+-- Ancestor lookups (impact_analysis index mode) filter on target_id; the
+-- target_name index above does not cover them.
+CREATE INDEX IF NOT EXISTS idx_transitive_target_id ON transitive_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_transitive_distance ON transitive_edges(distance);
 
 -- Migration tracking: records which schema migrations have been applied.

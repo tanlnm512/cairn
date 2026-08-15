@@ -13,10 +13,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- `impact_analysis` index mode: precise, structural, depth ≤ 3 queries are
+  answered from the `transitive_edges` closure in one indexed statement
+  (~200× faster p50 on the bench corpus; shortest-path depths, DFS fallback
+  for fuzzy/service/deep queries, non-exact names, unmaterialised closures,
+  and seed cycles so cycle reporting is preserved). `use_index=False` pins
+  the classic DFS; the closure is now seeded only with structural edge kinds
+  and gains a `target_id` index.
+- Golden parity harness (`tests/test_traversal_parity.py`) pinning
+  `impact_analysis`/`trace_flow`/`get_dataflow` outputs on a resolved-edge
+  corpus, plus index-mode invariant and DFS query-count tests.
 
 ### Changed
-- _Nothing yet._
+- **Performance**: `impact_analysis`/`trace_flow` memoise per-name
+  caller/callee/definition lookups (one query per distinct name per call
+  instead of one per visited symbol); the MCP server pools read connections
+  per (thread, db path) with atomic-swap detection and a `CAIRN_CONN_POOL=0`
+  kill switch (connection+query path 0.826 → 0.071 ms, 11.7×). The perf
+  suite now builds the transitive closure (matching real deployments) and
+  adds an `impact_analysis_wide` fan-in benchmark.
+- **Performance (semantic hot path)**: the server pre-warms the embedding
+  and reranker models in a boot-time background thread when their weights
+  are already cached (`CAIRN_WARM_MODELS=0` disables) — first
+  `semantic_search` drops from ~9.4 s to ~0.3 s; the optional rerank stage
+  is skipped when the fused ranking is already decisive
+  (`CAIRN_RERANK_MIN_MARGIN`, default 0.45, plus exact-name corroboration;
+  per-call `rerank` override on the tool), with a `rerank_skipped`
+  telemetry event; the brute-force cosine fallback is a single batched
+  matrix product instead of a per-row loop (2.8–6.4× on the scan).
+- **Performance (write path)**: `cairn update` now maintains the derived
+  indexes incrementally (affected-source closure re-derivation + per-name
+  dataflow refresh) instead of rebuilding them from scratch — a single-file
+  update on a 1000-file corpus drops from ~377 s (95% of a full build) to
+  ~9.5 s (2.5%), verified row-for-row against full rebuilds by a 50-sequence
+  property test. Embedding upserts keep the sqlite-vec ANN index in sync
+  transactionally (delete+re-insert — vec0 has no replace idiom), deletion
+  paths sync too, and `cairn doctor` reports direction-aware ANN drift
+  (unindexed vs stale entries) with the recovery command.
 
 ### Fixed
 - _Nothing yet._

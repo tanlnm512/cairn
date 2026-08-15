@@ -788,11 +788,15 @@ def _check_ann(conn) -> dict:
     index-level states the load probe can't see: embeddings exist for the
     current model but no vec0 table was ever built (the index-less state
     emitted as ``ann_fallback reason=no_index``), and a vec0 table whose row
-    count no longer matches the embeddings table (the index went stale between
-    ``cairn embed`` runs -- incremental syncs add embeddings without
-    rebuilding the index). Uses ``ann_backend_enabled()`` plus live
-    ``try_load`` / ``index_exists`` / ``index_row_count`` probes, and surfaces
-    the latest ``ann_fallback`` event reason when one was recorded.
+    count no longer matches the embeddings table (index drift). Drift now
+    has two reported directions: too FEW vec rows means recent embeddings
+    were never indexed (recall loss), too MANY means stale entries survived
+    a deletion (which can mis-pair a reused rowid with an unrelated vector).
+    Recovery is instructed, not performed -- doctor is read-only by
+    contract, so the heal is ``cairn embed``'s final ``rebuild_index``.
+    Uses ``ann_backend_enabled()`` plus live ``try_load`` / ``index_exists``
+    / ``index_row_count`` probes, and surfaces the latest ``ann_fallback``
+    event reason when one was recorded.
     """
     from ..graph.ann_index import (
         ann_backend_enabled,
@@ -849,11 +853,33 @@ def _check_ann(conn) -> dict:
         )
     idx_n = index_row_count(conn, model) if conn is not None else None
     if idx_n is not None and idx_n != emb_n:
+        # Direction matters. Fewer vec rows than embeddings is a recall loss
+        # (recent symbols invisible to ANN). More is worse: the stale entries
+        # were left by a delete path that didn't sync (or a crash between an
+        # embeddings write and its vec sync), and because SQLite can REUSE a
+        # freed embeddings rowid, a stale entry can pair a fresh embedding
+        # with an unrelated vector -- wrong results, not just missing ones.
+        if idx_n < emb_n:
+            detail = (
+                f"ANN index stale: {emb_n} embedding(s) vs {idx_n} indexed "
+                f"({emb_n - idx_n} unindexed) -- recent symbols invisible to "
+                "semantic queries"
+            )
+        else:
+            detail = (
+                f"ANN index stale: {idx_n} indexed vs {emb_n} embedding(s) "
+                f"({idx_n - emb_n} stale vector(s)) -- deleted symbols can "
+                "shadow new ones via reused rowids"
+            )
+        # The heal is instructed, not performed: doctor is read-only by
+        # contract (see the command docstring), so recovery stays with
+        # `cairn embed`, whose final rebuild_index realigns the whole table.
+        # Unchanged chunks are skipped by embed_all, so the "re-embed" is in
+        # practice just the rebuild.
         return _result(
             "ann",
             _WARN,
-            f"ANN index stale: {emb_n} embedding(s) vs {idx_n} indexed -- results "
-            "silently miss recent symbols",
+            detail,
             hint="run `cairn embed` to rebuild the ANN index",
         )
     return _result("ann", _PASS, f"sqlite-vec available ({emb_n} vector(s) indexed)")
