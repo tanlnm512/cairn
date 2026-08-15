@@ -72,6 +72,9 @@ from cairn.telemetry import (
     TASK_LIFECYCLE,
     TRUNCATE_RESULT,
 )
+# Not re-exported at the cairn.telemetry package root; the catalog constant
+# lives in the events module (imported as `events` above for introspection).
+from cairn.telemetry.events import RERANK_SKIPPED
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +106,8 @@ _ANN_REASONS = frozenset(
 _SEMANTIC_SURFACES = frozenset({"explore", "knowledge"})
 _SEMANTIC_OFF_REASONS = frozenset({"unavailable", "no_embeddings", "error"})
 _FLUSH_FAILURE_BUCKETS = frozenset({"4-10", "11-100", ">100"})
+# P0-2 rerank confidence gating: the only skip class semantic_search emits.
+_RERANK_SKIP_REASONS = frozenset({"confident_margin"})
 
 
 def _bounded_tag(value) -> bool:
@@ -194,6 +199,11 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
     EMBED_FLUSH_STALLED: {
         "failures": _FLUSH_FAILURE_BUCKETS,
     },
+    # P0-2: semantic_search skipped the cross-encoder stage because the fused
+    # (RRF) ranking was already decisive. `reason` is a strict one-value enum.
+    RERANK_SKIPPED: {
+        "reason": _RERANK_SKIP_REASONS,
+    },
 }
 
 # Events that actually emit at a live site today (the dynamic sweep drives each).
@@ -209,6 +219,7 @@ LIVE_EVENTS = frozenset(
         HASH_FALLBACK,
         SEMANTIC_UNAVAILABLE,
         EMBED_FLUSH_STALLED,
+        RERANK_SKIPPED,
     }
 )
 # All catalog events have a live emitter (ann_fallback / hash_fallback were
@@ -478,11 +489,52 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
 
     # 1b. explore on an empty DB -> no seeds -> empty_result(query_kind="explore").
     # Cheap; reuses the same empty fresh_db. (The search_symbols MCP-tool emitter
-    # needs server _conn wiring, so it is covered by a focused unit test instead
+    # needs server _conn wiring, so it's covered by a focused unit test instead
     # of this sweep.)
     from cairn.graph.explore import explore as _explore
 
     _explore(fresh_db, "anything-at-all", max_nodes=5)
+
+    # 1c. rerank_skipped: seed one clearly-matching symbol plus an unrelated
+    # one, hash-embed them, enable the (stubbed) rerank stage, and query the
+    # exact symbol name. The fused ranking is decisive (top hit leads by a
+    # wide RRF margin and is an exact-name match), so the confidence gate
+    # skips the rerank stage and emits the event. The rrk.rerank stub above
+    # is never reached on this path -- that's the point of the gate -- so it
+    # doubles as the canary: if the drive ever *calls* it, the gate
+    # regressed. The gate's hash-vector detector is pinned off for the drive
+    # because it refuses to fire under token-overlap vectors and the module's
+    # hash_backend fixture sets CAIRN_EMBED_BACKEND=hash; the vectors
+    # themselves are still hash-generated, which is fine -- only the trust
+    # decision reads the detector. Runs before step 6 clears CAIRN_ANN_BACKEND
+    # so the cosine scan stays on the deterministic brute path.
+    from cairn.graph import embeddings as _embed
+    from cairn.graph import semantic as _semantic
+
+    fresh_db.execute(
+        "INSERT INTO repos (id, name, path) VALUES ('t', 't', '/t')"
+    )
+    fresh_db.execute(
+        "INSERT INTO files (id, repo_id, path, language) "
+        "VALUES (1, 't', '/t/Api.kt', 'kotlin')"
+    )
+    fresh_db.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, line_start, line_end) "
+        "VALUES (1, 1, 'safeApiCall', 'function', 'xyz.safeApiCall', "
+        "'Retries a network call with backoff.', 1, 10)"
+    )
+    fresh_db.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, line_start, line_end) "
+        "VALUES (2, 1, 'formatDate', 'function', 'xyz.formatDate', "
+        "'Formats a date for display.', 12, 20)"
+    )
+    fresh_db.commit()
+    _embed.embed_all(fresh_db)
+    monkeypatch.setattr(rrk, "rerank_enabled", lambda: True)
+    monkeypatch.setattr(
+        _semantic, "_vectors_carry_token_overlap_only", lambda flag: False
+    )
+    semantic_search(fresh_db, "safeApiCall", limit=5)
 
     # 2. lock_contention (schema.note_contention is the canonical helper; reset
     # its process-global once-guard so the drive is deterministic regardless of

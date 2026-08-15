@@ -521,7 +521,7 @@ def explore(query: str) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
 @instrument
-def semantic_search(query: str, limit: int = 20, include_callers: bool = False, structured: bool = False) -> str | SemanticSearchResult:
+def semantic_search(query: str, limit: int = 20, include_callers: bool = False, structured: bool = False, rerank: bool | None = None) -> str | SemanticSearchResult:
     """Semantic (concept) search over symbols. Finds code by meaning, not just
     exact words — 'where do we handle retries' finds backoff/recovery code even
     when no symbol literally says 'retry'. Results are fuzzy; combine with
@@ -544,7 +544,13 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
     instead of the cosine/fusion label when the rerank stage actually ran for
     that call -- if it's disabled or the model failed to load, results
     silently fall back to plain ordering, so don't assume rerank ran just
-    because the env var is set.
+    because the env var is set. In auto mode (default) the rerank stage is
+    skipped when the fused ranking is already decisive (margin over the RRF
+    scores >= CAIRN_RERANK_MIN_MARGIN and the top hit is an exact name match),
+    since the cross-encoder cannot change such an answer and costs most of
+    the latency. The `rerank` parameter overrides that per call: None = auto
+    (gate decides), True = force the rerank stage when enabled (bypasses the
+    confidence gate; CAIRN_RERANK=0 still wins), False = never rerank.
 
     include_callers=True attaches each hit's immediate (1-hop, precise-only)
     callers/callees, so you get a small subgraph instead of a flat list --
@@ -588,7 +594,7 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
                 "avoid write-lock contention with the running server."
             )
         from cairn.graph import queries
-        rows = queries.semantic_search(conn, query, limit=limit, include_callers=include_callers)
+        rows = queries.semantic_search(conn, query, limit=limit, include_callers=include_callers, rerank=rerank)
     finally:
         conn.close()
 
