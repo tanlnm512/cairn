@@ -336,3 +336,72 @@ def test_index_mode_skipped_for_fuzzy_and_deep(corpus_db):
         assert deep["total"] > 0
     finally:
         conn.close()
+
+
+# --- DFS query-count memoization (perf phase P2) -----------------------------
+
+
+class _QueryCountingCursor:
+    """Delegating cursor that counts execute() calls (tests only)."""
+
+    def __init__(self, cur, parent):
+        self._cur = cur
+        self._parent = parent
+
+    def execute(self, sql, params=()):
+        self._parent.queries += 1
+        return self._cur.execute(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+class _QueryCountingConn:
+    """Delegating connection that counts execute() calls (tests only)."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.queries = 0
+
+    def cursor(self):
+        return _QueryCountingCursor(self._conn.cursor(), self)
+
+    def execute(self, sql, params=()):
+        self.queries += 1
+        return self._conn.execute(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_dfs_memoizes_same_name_caller_queries(fresh_db):
+    """Per-name memoization: N same-named callers cost one get_callers query.
+
+    Without the memo, the DFS issues one get_callers query per visited symbol
+    (20 here); with it, distinct names only -- 3 queries total (seed
+    find_definition + get_callers("hub") + get_callers("node")).
+    """
+    fresh_db.execute(
+        "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '/tmp/r1', 'python')"
+    )
+    fresh_db.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
+    )
+    sym_rows = []
+    for i in range(20):
+        sym_rows.append((f"n{i}", "f1", "node", f"node_{i}", "function"))
+        sym_rows.append((f"h{i}", "f1", "hub", f"hub_{i}", "function"))
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) VALUES (?,?,?,?,?)",
+        sym_rows,
+    )
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind) VALUES (?,?,?,?,?)",
+        [(f"e{i}", f"n{i}", f"h{i}", "hub", "calls") for i in range(20)],
+    )
+    fresh_db.commit()
+
+    counting = _QueryCountingConn(fresh_db)
+    res = impact_analysis(counting, "hub", max_depth=5, use_index=False)
+    assert res["total"] == 20
+    assert counting.queries == 3

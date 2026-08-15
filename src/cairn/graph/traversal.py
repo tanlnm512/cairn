@@ -228,6 +228,16 @@ def impact_analysis(
     cycles_seen: set[str] = set()
     cycles = []
     truncated = False
+    # Per-call memo: caller lookup is keyed by NAME, so distinct symbols that
+    # share a name (same-named methods across classes) re-query identical SQL.
+    # Pure caching -- visit order and results are unchanged (pinned by the
+    # golden parity tests).
+    callers_memo: dict[str, list] = {}
+
+    def _callers(n: str) -> list:
+        if n not in callers_memo:
+            callers_memo[n] = get_callers(conn, n, fuzzy=fuzzy)
+        return callers_memo[n]
 
     def traverse(sym_id: str, sym_name: str, depth: int):
         nonlocal truncated
@@ -245,7 +255,7 @@ def impact_analysis(
             return  # already fully explored via another path
         visited.add(sym_id)
         on_path.add(sym_id)
-        callers = get_callers(conn, sym_name, fuzzy=fuzzy)
+        callers = _callers(sym_name)
         for c in callers:
             # Filter to structural kinds unless the caller opted in to service
             # edges.
@@ -270,7 +280,7 @@ def impact_analysis(
     for seed in find_definition(conn, name, limit=limit):
         visited.add(seed["id"])
         on_path.add(seed["id"])
-    for c in get_callers(conn, name, fuzzy=fuzzy):
+    for c in _callers(name):
         if allowed is not None and c["edge_kind"] not in allowed:
             continue
         if len(results) >= limit:
@@ -346,6 +356,22 @@ def trace_flow(
     cycles: list[dict] = []
     cycles_seen: set[str] = set()
     truncated = False
+    # Per-call memos: callee lookup and definition resolution are both keyed
+    # by NAME, so same-named nodes (and repeated callees) re-query identical
+    # SQL. Pure caching -- walk order and results are unchanged (pinned by
+    # the golden parity tests).
+    callees_memo: dict[str, list] = {}
+    defn_memo: dict[str, list] = {}
+
+    def _callees(n: str) -> list:
+        if n not in callees_memo:
+            callees_memo[n] = get_callees(conn, n, limit=50, fuzzy=fuzzy)
+        return callees_memo[n]
+
+    def _defn(n: str) -> list:
+        if n not in defn_memo:
+            defn_memo[n] = find_definition(conn, n, limit=1)
+        return defn_memo[n]
 
     # Seed the chain with the entry symbol itself.
     if entry_id:
@@ -372,7 +398,7 @@ def trace_flow(
             return
 
         on_path.add(sym_id)
-        callees = get_callees(conn, sym_name, limit=50, fuzzy=fuzzy)
+        callees = _callees(sym_name)
 
         if not callees:
             if sym_id != entry_row_id:
@@ -403,7 +429,7 @@ def trace_flow(
             if cid not in visited:
                 # Resolve the callee's DEFINITION location (not the call site):
                 # where the symbol is actually declared.
-                defn = find_definition(conn, cname, limit=1)
+                defn = _defn(cname)
                 if defn:
                     d = defn[0]
                     cfile = d["file_path"]
