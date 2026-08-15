@@ -30,297 +30,248 @@
  },
  "impact": {
   "chain_h1|d3|precise|l500": {
-   "cycles": [],
+   "cycles": 0,
    "impacted": [
-    {
-     "depth": 0,
-     "file": "f02.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h2"
-    },
-    {
-     "depth": 1,
-     "file": "f03.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h3"
-    }
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h3",
+     "f03.py"
+    ]
    ],
    "total": 2,
    "truncated": false
   },
   "cyc_b|d5|precise|l100": {
-   "cycles": [
-    {
-     "depth": 2,
-     "symbol": "cyc_b"
-    }
-   ],
+   "cycles": 1,
    "impacted": [
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    },
-    {
-     "depth": 1,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_b"
-    }
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_b",
+     "f07.py"
+    ]
    ],
    "total": 2,
    "truncated": false
   },
   "duplicated|d5|precise|l100": {
-   "cycles": [],
+   "cycles": 0,
    "impacted": [],
    "total": 0,
    "truncated": false
   },
-  "leaf_util|d2|precise|l4": {
-   "cycles": [],
+  "leaf_util|d2|precise|l500": {
+   "cycles": 0,
    "impacted": [
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    },
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "duplicated"
-    },
-    {
-     "depth": 1,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_b"
-    },
-    {
-     "depth": 2,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    }
+    [
+     "chain_h1",
+     "f01.py"
+    ],
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h3",
+     "f03.py"
+    ],
+    [
+     "crunch",
+     "f05.py"
+    ],
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_b",
+     "f07.py"
+    ],
+    [
+     "duplicated",
+     "f07.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_south",
+     "f06.py"
+    ],
+    [
+     "mid_a",
+     "f04.py"
+    ],
+    [
+     "mid_b",
+     "f04.py"
+    ],
+    [
+     "mid_c",
+     "f05.py"
+    ]
    ],
-   "total": 4,
-   "truncated": true
+   "total": 15,
+   "truncated": false
   },
   "leaf_util|d3|fuzzy|l100": {
-   "cycles": [
-    {
-     "depth": 3,
-     "symbol": "cyc_a"
-    }
-   ],
+   "cycles": 1,
    "impacted": [
-    {
-     "depth": 0,
-     "file": "f01.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h1"
-    },
-    {
-     "depth": 0,
-     "file": "f02.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h2"
-    },
-    {
-     "depth": 0,
-     "file": "f05.py",
-     "repo": "parityrepo",
-     "symbol": "crunch"
-    },
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    },
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "duplicated"
-    },
-    {
-     "depth": 0,
-     "file": "f04.py",
-     "repo": "parityrepo",
-     "symbol": "mid_a"
-    },
-    {
-     "depth": 0,
-     "file": "f04.py",
-     "repo": "parityrepo",
-     "symbol": "mid_b"
-    },
-    {
-     "depth": 0,
-     "file": "f05.py",
-     "repo": "parityrepo",
-     "symbol": "mid_c"
-    },
-    {
-     "depth": 1,
-     "file": "f02.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h2"
-    },
-    {
-     "depth": 1,
-     "file": "f03.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h3"
-    },
-    {
-     "depth": 1,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_b"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_north"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_north"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_north"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_south"
-    },
-    {
-     "depth": 2,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    }
+    [
+     "chain_h1",
+     "f01.py"
+    ],
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h3",
+     "f03.py"
+    ],
+    [
+     "crunch",
+     "f05.py"
+    ],
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_b",
+     "f07.py"
+    ],
+    [
+     "duplicated",
+     "f07.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_south",
+     "f06.py"
+    ],
+    [
+     "mid_a",
+     "f04.py"
+    ],
+    [
+     "mid_b",
+     "f04.py"
+    ],
+    [
+     "mid_c",
+     "f05.py"
+    ]
    ],
    "total": 16,
    "truncated": false
   },
   "leaf_util|d3|precise|l500": {
-   "cycles": [
-    {
-     "depth": 3,
-     "symbol": "cyc_a"
-    }
-   ],
+   "cycles": 1,
    "impacted": [
-    {
-     "depth": 0,
-     "file": "f01.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h1"
-    },
-    {
-     "depth": 0,
-     "file": "f02.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h2"
-    },
-    {
-     "depth": 0,
-     "file": "f05.py",
-     "repo": "parityrepo",
-     "symbol": "crunch"
-    },
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    },
-    {
-     "depth": 0,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "duplicated"
-    },
-    {
-     "depth": 0,
-     "file": "f04.py",
-     "repo": "parityrepo",
-     "symbol": "mid_a"
-    },
-    {
-     "depth": 0,
-     "file": "f04.py",
-     "repo": "parityrepo",
-     "symbol": "mid_b"
-    },
-    {
-     "depth": 0,
-     "file": "f05.py",
-     "repo": "parityrepo",
-     "symbol": "mid_c"
-    },
-    {
-     "depth": 1,
-     "file": "f02.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h2"
-    },
-    {
-     "depth": 1,
-     "file": "f03.py",
-     "repo": "parityrepo",
-     "symbol": "chain_h3"
-    },
-    {
-     "depth": 1,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_b"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_north"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_north"
-    },
-    {
-     "depth": 1,
-     "file": "f06.py",
-     "repo": "parityrepo",
-     "symbol": "entry_south"
-    },
-    {
-     "depth": 2,
-     "file": "f07.py",
-     "repo": "parityrepo",
-     "symbol": "cyc_a"
-    }
+    [
+     "chain_h1",
+     "f01.py"
+    ],
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h2",
+     "f02.py"
+    ],
+    [
+     "chain_h3",
+     "f03.py"
+    ],
+    [
+     "crunch",
+     "f05.py"
+    ],
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_a",
+     "f07.py"
+    ],
+    [
+     "cyc_b",
+     "f07.py"
+    ],
+    [
+     "duplicated",
+     "f07.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_north",
+     "f06.py"
+    ],
+    [
+     "entry_south",
+     "f06.py"
+    ],
+    [
+     "mid_a",
+     "f04.py"
+    ],
+    [
+     "mid_b",
+     "f04.py"
+    ],
+    [
+     "mid_c",
+     "f05.py"
+    ]
    ],
    "total": 15,
    "truncated": false
   },
   "no_such_symbol_xyz|d5|precise|l100": {
-   "cycles": [],
+   "cycles": 0,
    "impacted": [],
    "total": 0,
    "truncated": false
@@ -329,49 +280,30 @@
  "trace": {
   "chain_h3|d4|l100": {
    "branches": [
-    {
-     "callees": [
-      "chain_h1",
-      "leaf_util"
-     ],
-     "symbol": "chain_h2"
-    }
+    "chain_h2"
    ],
    "chain": [
-    {
-     "depth": 0,
-     "file": "f03.py",
-     "kind": "function",
-     "parent": null,
-     "repo": "parityrepo",
-     "symbol": "chain_h3"
-    },
-    {
-     "depth": 1,
-     "file": "f02.py",
-     "kind": "function",
-     "parent": "chain_h3",
-     "repo": "parityrepo",
-     "symbol": "chain_h2"
-    },
-    {
-     "depth": 2,
-     "file": "f01.py",
-     "kind": "function",
-     "parent": "chain_h2",
-     "repo": "parityrepo",
-     "symbol": "chain_h1"
-    },
-    {
-     "depth": 2,
-     "file": "f01.py",
-     "kind": "function",
-     "parent": "chain_h2",
-     "repo": "parityrepo",
-     "symbol": "leaf_util"
-    }
+    [
+     "chain_h1",
+     "f01.py",
+     "function"
+    ],
+    [
+     "chain_h2",
+     "f02.py",
+     "function"
+    ],
+    [
+     "chain_h3",
+     "f03.py",
+     "function"
+    ],
+    [
+     "leaf_util",
+     "f01.py",
+     "function"
+    ]
    ],
-   "cycles": [],
    "entry": "chain_h3",
    "leaves": [
     "leaf_util"
@@ -386,49 +318,30 @@
   },
   "entry_north|d6|l500": {
    "branches": [
-    {
-     "callees": [
-      "mid_a",
-      "mid_b"
-     ],
-     "symbol": "entry_north"
-    }
+    "entry_north"
    ],
    "chain": [
-    {
-     "depth": 0,
-     "file": "f06.py",
-     "kind": "function",
-     "parent": null,
-     "repo": "parityrepo",
-     "symbol": "entry_north"
-    },
-    {
-     "depth": 1,
-     "file": "f04.py",
-     "kind": "function",
-     "parent": "entry_north",
-     "repo": "parityrepo",
-     "symbol": "mid_a"
-    },
-    {
-     "depth": 1,
-     "file": "f04.py",
-     "kind": "function",
-     "parent": "entry_north",
-     "repo": "parityrepo",
-     "symbol": "mid_b"
-    },
-    {
-     "depth": 2,
-     "file": "f01.py",
-     "kind": "function",
-     "parent": "mid_a",
-     "repo": "parityrepo",
-     "symbol": "leaf_util"
-    }
+    [
+     "entry_north",
+     "f06.py",
+     "function"
+    ],
+    [
+     "leaf_util",
+     "f01.py",
+     "function"
+    ],
+    [
+     "mid_a",
+     "f04.py",
+     "function"
+    ],
+    [
+     "mid_b",
+     "f04.py",
+     "function"
+    ]
    ],
-   "cycles": [],
    "entry": "entry_north",
    "leaves": [
     "leaf_util"

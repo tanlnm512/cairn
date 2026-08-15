@@ -1,20 +1,27 @@
 """Golden parity tests for graph traversal queries (perf phase P1.1).
 
-Pins the exact user-visible outputs of ``impact_analysis``, ``trace_flow`` and
-``get_dataflow`` on a seeded synthetic corpus, so query-path optimizations
-(closure-index impact, memoized per-name lookups) can prove they did not
-change results. The DFS walk's output order depends on SQL row order, so any
-change that reorders rows or visit sequences shows up here as a golden diff.
+Pins the user-visible outputs of ``impact_analysis``, ``trace_flow`` and
+``get_dataflow`` on a handcrafted resolved-edge corpus, so query-path
+optimizations (closure-index impact, memoized per-name lookups) can prove
+they did not change results.
 
-Determinism: the corpus uses <= 10 files on purpose. Above 10 files
-``builder._parse_all`` collects worker futures with ``as_completed``, making
-insert order -- hence row order and DFS visit order -- nondeterministic
-across processes. At or below 10 files parsing is inline and sequential.
+What is and is NOT pinned, and why (found the hard way: goldens generated on
+macOS failed on the Linux CI — DFS output is enumeration-order-dependent):
+
+* SQL row order follows build-time file enumeration, which the filesystem
+  does not keep stable across platforms (APFS vs ext4) or tmp dirs.
+* DFS **depths** are first-visit path lengths — a diamond caller (calls the
+  target directly AND via another caller) gets depth 0 or 1 depending on
+  visit order. **Which rows survive a ``limit``** and **which cycle member
+  is reported** are order-dependent the same way.
+* Therefore the goldens pin only order-invariant facts: impacted row sets,
+  totals, truncated flags, cycle counts, chain membership. Depth fidelity is
+  pinned where it is deterministic: index mode (shortest-path, one assert
+  per known pair) and tree-shaped reachability (unique paths).
 
 ``get_dataflow``'s ``within_repo``/``cross_repo`` lists are built from Python
-sets in ``build_dataflow_index``, whose iteration order is hash-randomized
-per process; they are sorted at capture time, so the golden pins contents,
-not set order. The ``updated`` timestamp is stripped for the same reason.
+sets (hash-randomized order); sorted at capture. The ``updated`` timestamp
+is stripped.
 
 Regenerate goldens with::
 
@@ -39,11 +46,13 @@ from cairn.graph.schema import get_db
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "traversal_parity.json"
 
-# (name, max_depth, fuzzy, limit) — wide fan-in, a linear chain, a tight limit
-# (truncation), an ambiguous name collision, a cycle, fuzzy mode, and a miss.
+# (name, max_depth, fuzzy, limit) — wide fan-in, a linear chain, an ambiguous
+# name collision, a cycle, fuzzy mode, and a miss. Truncation-subset queries
+# are deliberately absent: which rows survive a limit is visit-order-dependent
+# (see module docstring) and is covered by a dedicated shape test below.
 IMPACT_QUERIES = [
     ("leaf_util", 3, False, 500),
-    ("leaf_util", 2, False, 4),
+    ("leaf_util", 2, False, 500),
     ("chain_h1", 3, False, 500),
     ("duplicated", 5, False, 100),
     ("cyc_b", 5, False, 100),
@@ -180,30 +189,44 @@ def corpus_db(tmp_path_factory):
 def _canon_impact(res: dict) -> dict:
     """Order-insensitive canonical form of an impact_analysis result.
 
-    DFS visit order follows SQL row order, which follows file-enumeration
-    order during the build; directory iteration on APFS is not stable across
-    tmp dirs, so order is not golden-pinned. Contents, depths, totals and
-    truncation are.
+    Only enumeration-order-INVARIANT facts are pinned: the set of impacted
+    (symbol, file) rows, the total, the truncated flag, and the cycle COUNT.
+    Per-row depths, which rows a limit keeps, and which cycle member gets
+    reported all depend on SQL row order (= build-time file enumeration,
+    which differs between filesystems); pinning them made the goldens
+    macOS-only. Depth fidelity is pinned where it is deterministic: index
+    mode (shortest-path, tested below) and tree-shaped reachability
+    (test_dfs_depths_tree_shaped).
     """
-    out = dict(res)
-    out["impacted"] = sorted(
-        res["impacted"], key=lambda r: (r["depth"], r["symbol"], r["file"], r["repo"])
-    )
-    out["cycles"] = sorted(res["cycles"], key=lambda c: (c["symbol"], c["depth"]))
-    return out
+    return {
+        "impacted": sorted(
+            (r["symbol"], r["file"]) for r in res["impacted"]
+        ),
+        "cycles": len(res["cycles"]),
+        "total": res["total"],
+        "truncated": res["truncated"],
+    }
 
 
 def _canon_trace(res: dict) -> dict:
     """Order-insensitive canonical form of a trace_flow result.
 
-    ``chain``/``leaves``/``modules`` are already sorted by the product code;
-    ``branches`` follows walk order, so sort it here.
+    Chain rows pin (symbol, file, kind) membership only; ``parent`` and
+    per-node ``depth`` follow the DFS first-visit order (see _canon_impact).
+    leaves/modules are already sorted by the product code; branches are
+    reduced to their symbol set.
     """
-    out = dict(res)
-    out["branches"] = sorted(res["branches"], key=lambda b: b["symbol"])
-    for b in out["branches"]:
-        b["callees"] = sorted(b["callees"])
-    return out
+    return {
+        "entry": res["entry"],
+        "chain": sorted(
+            (r["symbol"], r["file"], r["kind"]) for r in res["chain"]
+        ),
+        "branches": sorted(b["symbol"] for b in res["branches"]),
+        "leaves": res["leaves"],
+        "modules": res["modules"],
+        "total": res["total"],
+        "truncated": res["truncated"],
+    }
 
 
 def _capture(conn: sqlite3.Connection) -> dict:
@@ -334,6 +357,33 @@ def test_index_mode_skipped_for_fuzzy_and_deep(corpus_db):
         assert fuzzy["cycles"] or fuzzy["total"] > 0  # served, but by DFS
         deep = impact_analysis(conn, "leaf_util", max_depth=10)
         assert deep["total"] > 0
+    finally:
+        conn.close()
+
+
+def test_dfs_depths_tree_shaped(corpus_db):
+    """Where reachability is a unique-path chain, DFS depths ARE deterministic
+    and pinned: chain_h1's callers are exactly chain_h2 (depth 0) and
+    chain_h3 (depth 1)."""
+    conn = get_db(corpus_db)
+    try:
+        res = impact_analysis(conn, "chain_h1", max_depth=3, use_index=False)
+        depths = {(r["symbol"], r["file"]): r["depth"] for r in res["impacted"]}
+        assert depths[("chain_h2", "f02.py")] == 0
+        assert depths[("chain_h3", "f03.py")] == 1
+    finally:
+        conn.close()
+
+
+def test_dfs_truncation_shape(corpus_db):
+    """A limit below the result count truncates to exactly ``limit`` rows.
+    WHICH rows survive is visit-order-dependent (module docstring) and is
+    therefore not golden-pinned."""
+    conn = get_db(corpus_db)
+    try:
+        res = impact_analysis(conn, "leaf_util", max_depth=2, limit=4, use_index=False)
+        assert res["total"] == 4
+        assert res["truncated"] is True
     finally:
         conn.close()
 
