@@ -13,10 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- `impact_analysis` index mode: precise, structural, depth ≤ 3 queries are
+  answered from the `transitive_edges` closure in one indexed statement
+  (~200× faster p50 on the bench corpus; shortest-path depths, DFS fallback
+  for fuzzy/service/deep queries, non-exact names, unmaterialised closures,
+  and seed cycles so cycle reporting is preserved). `use_index=False` pins
+  the classic DFS; the closure is now seeded only with structural edge kinds
+  and gains a `target_id` index.
+- Golden parity harness (`tests/test_traversal_parity.py`) pinning
+  `impact_analysis`/`trace_flow`/`get_dataflow` outputs on a resolved-edge
+  corpus, plus index-mode invariant and DFS query-count tests.
 
 ### Changed
-- _Nothing yet._
+- **Performance**: `impact_analysis`/`trace_flow` memoise per-name
+  caller/callee/definition lookups (one query per distinct name per call
+  instead of one per visited symbol); the MCP server pools read connections
+  per (thread, db path) with atomic-swap detection and a `CAIRN_CONN_POOL=0`
+  kill switch (connection+query path 0.826 → 0.071 ms, 11.7×). The perf
+  suite now builds the transitive closure (matching real deployments) and
+  adds an `impact_analysis_wide` fan-in benchmark.
 
 ### Fixed
 - _Nothing yet._
