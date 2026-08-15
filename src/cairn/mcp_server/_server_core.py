@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 import warnings
 from contextlib import asynccontextmanager
 
@@ -95,17 +96,117 @@ def _read_only_mode() -> bool:
     return os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes")
 
 
+# --- Read-connection reuse (perf phase P5) -----------------------------------
+#
+# Every tool call used to open a fresh SQLite connection (open + WAL/
+# busy_timeout PRAGMAs + close). Thread-local pooling keeps one connection
+# per (thread, db path) alive for the server's lifetime instead. Guards:
+#
+# * Thread-local: sqlite3 connections are thread-affine by default and each
+#   tool call runs on one thread; no cross-thread sharing, so no
+#   ``check_same_thread=False`` is ever needed.
+# * Identity check: a full ``cairn build`` swaps the DB file atomically
+#   (``os.replace``), and a pooled connection would keep reading the
+#   unlinked old inode forever. Each ``_conn()`` call stats the path and
+#   reopens when (st_dev, st_ino) changes.
+# * ``close()`` on the wrapper is a no-op release, so tool bodies' existing
+#   ``finally: conn.close()`` keeps working unchanged.
+# * ``CAIRN_CONN_POOL=0`` disables pooling entirely (escape hatch).
+
+
+class _PooledConnection:
+    """Delegating wrapper whose ``close()`` releases to the thread cache.
+
+    All attribute access (execute, cursor, row_factory, ...) delegates to the
+    underlying ``sqlite3.Connection``; only ``close()`` is intercepted.
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def close(self) -> None:  # noqa: D102 - see class docstring
+        return None
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+_conn_tls = threading.local()
+
+
+def _reset_conn_pool() -> None:
+    """Close and drop this thread's pooled connections (tests only)."""
+    cache = getattr(_conn_tls, "by_path", None)
+    if cache:
+        for _dev, _ino, conn in cache.values():
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        _conn_tls.by_path = {}
+
+
+def _pooling_enabled() -> bool:
+    return os.environ.get("CAIRN_CONN_POOL", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
 def _conn():
     """Open a SQLite connection to the graph DB for this workspace.
 
     Read-only when CAIRN_READ_ONLY is set; read-write otherwise. Callers that
     MUST write real data should call _rw_conn() instead so the requirement is
     explicit at the call site.
+
+    Pooled per (thread, db path): the returned object's ``close()`` is a
+    no-op release (see _PooledConnection). Set CAIRN_CONN_POOL=0 for the
+    unpooled per-call behaviour.
     """
-    return get_db(
-        os.environ.get("CAIRN_DB") or str(_store().db),
-        read_only=_read_only_mode(),
-    )
+    db_path = os.environ.get("CAIRN_DB") or str(_store().db)
+    if not _pooling_enabled():
+        return get_db(db_path, read_only=_read_only_mode())
+
+    cache = getattr(_conn_tls, "by_path", None)
+    if cache is None:
+        cache = _conn_tls.by_path = {}
+
+    entry = cache.get(db_path)
+    if entry is not None:
+        dev, ino, conn = entry
+        try:
+            st = os.stat(db_path)
+            if (st.st_dev, st.st_ino) == (dev, ino):
+                return _PooledConnection(conn)
+        except OSError:
+            pass
+        # The file was swapped (full build's os.replace) or deleted -- the
+        # pooled connection reads a dead inode. Drop it and reopen.
+        cache.pop(db_path, None)
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+
+    conn = get_db(db_path, read_only=_read_only_mode())
+    try:
+        st = os.stat(db_path)
+        # One entry per thread: a server re-pointed at another workspace
+        # should not keep the old store's connection open.
+        for other in [p for p in cache if p != db_path]:
+            _d, _i, old = cache.pop(other)
+            try:
+                old.close()
+            except sqlite3.Error:
+                pass
+        cache[db_path] = (st.st_dev, st.st_ino, conn)
+    except OSError:
+        pass  # unstatable path -- pool nothing, behaviour degrades to unpooled
+    return _PooledConnection(conn)
 
 
 def _rw_conn():
