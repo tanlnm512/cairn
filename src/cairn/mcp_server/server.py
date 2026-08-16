@@ -176,8 +176,11 @@ def run(transport: str = "stdio", port: int | None = None):
     """Run the MCP server.
 
     Runs a one-time catch-up at boot to absorb edits made while the server was
-    down. Tool calls do not re-check freshness per-query, so edits made while
-    this process is running require a restart to be picked up.
+    down, then (FRESH-1) starts a live file watcher so source edits made while
+    this process runs are reindexed within the debounce window (~2s). The
+    watcher needs the ``[watch]`` extra; without it freshness falls back to
+    boot catch-up + explicit ``cairn update``. It never starts in read-only
+    mode or when CAIRN_WATCH=0.
     """
     # Central logging config for the server surface: reads CAIRN_LOG_LEVEL
     # (default WARNING) and attaches a stderr handler to the `cairn` logger
@@ -316,28 +319,53 @@ def run(transport: str = "stdio", port: int | None = None):
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] cairn: memory decay failed (non-critical): {e}", file=sys.stderr, flush=True)
 
-    if transport == "sse":
-        # The shared SSE daemon is the canonical writer-free reader. Stray
-        # per-editor stdio `cairn serve` processes can still hold the WAL lock
-        # and reintroduce "database is locked" because the stray opened the DB
-        # read-write. A background sweeper evicts them periodically so a daemon
-        # crash+restart self-heals. Runs only under SSE: a stdio server is
-        # itself a potential stray and must not kill its siblings.
-        _install_stray_sweeper(db_path, interval_s=60.0)
+    # Live file watching (FRESH-1): keep the graph fresh for edits made while
+    # this server runs. Started on the shared path so BOTH stdio and SSE get
+    # it, after the DB guard and boot catch-up, with the SAME workspace/db the
+    # server resolved (passed explicitly -- the graph layer must not import
+    # mcp_server). start() is a logged no-op when the [watch] extra is absent
+    # or CAIRN_WATCH=0, and never runs in read-only mode (the watcher writes
+    # pending_sync rows + reindexes, so the read-only SSE daemon stays
+    # writer-free by construction). The PYTEST_CURRENT_TEST guard mirrors the
+    # model-warmup pattern: in-process test boots of run() must not leave a
+    # real filesystem observer thread watching the developer's machine across
+    # test boundaries.
+    live_watcher = None
+    if not read_only and not os.environ.get("PYTEST_CURRENT_TEST"):
+        from cairn.graph.watcher import FileWatcherService
 
-        # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not kwargs.
-        if port:
-            mcp.settings.port = port
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(
-            f"[{ts}] cairn: MCP server listening on "
-            f"http://{mcp.settings.host}:{mcp.settings.port}/sse",
-            flush=True,
-        )
-        mcp.run(transport="sse")
-    else:
-        mcp.run()
+        live_watcher = FileWatcherService(workspace=str(workspace), db_path=db_path)
+        live_watcher.start()
+
+    try:
+        if transport == "sse":
+            # The shared SSE daemon is the canonical writer-free reader. Stray
+            # per-editor stdio `cairn serve` processes can still hold the WAL lock
+            # and reintroduce "database is locked" because the stray opened the DB
+            # read-write. A background sweeper evicts them periodically so a daemon
+            # crash+restart self-heals. Runs only under SSE: a stdio server is
+            # itself a potential stray and must not kill its siblings.
+            _install_stray_sweeper(db_path, interval_s=60.0)
+
+            # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not kwargs.
+            if port:
+                mcp.settings.port = port
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"[{ts}] cairn: MCP server listening on "
+                f"http://{mcp.settings.host}:{mcp.settings.port}/sse",
+                flush=True,
+            )
+            mcp.run(transport="sse")
+        else:
+            mcp.run()
+    finally:
+        # Clean shutdown of the watcher (joins the observer). The stdio
+        # parent-death watchdog's os._exit bypasses this finally -- acceptable:
+        # the observer thread is daemonized exactly for that exit path.
+        if live_watcher is not None:
+            live_watcher.stop()
 
 
 def _run_stray_sweep(db_path: str) -> int:

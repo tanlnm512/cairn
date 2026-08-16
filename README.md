@@ -101,6 +101,13 @@ The graph lives under `~/.cairn` by default (override with `CAIRN_HOME`).
 > HEAD` plus the existing graph) — so on a fresh clone with a clean working tree,
 > use `cairn build` first, since `cairn update` would see no changes.
 
+> **Freshness while `cairn serve` runs.** With the optional `[watch]` extra
+> installed, a running MCP server watches the workspace and reindexes source
+> edits within a ~2s debounce window — no restart or manual `cairn update`
+> needed. Files pending reindex are flagged with a staleness banner on affected
+> tool results until the update lands. Set `CAIRN_WATCH=0` to disable; without
+> the extra, freshness falls back to boot-time catch-up + `cairn update`.
+
 ### Try it on cairn itself (the verification contract, demonstrated)
 
 cairn indexes its own source as a dogfood. Clone this repo and run the exact
@@ -203,7 +210,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 | `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | reranking auto-enables after `cairn download-reranker` (default model `BAAI/bge-reranker-base`); `CAIRN_RERANK=1`/`=0` to override; fusion governed by `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — native approximate-nearest-neighbour index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/scip.md) indexes for compiler-grade exact call edges (Kotlin/Java/Swift/TypeScript) alongside tree-sitter | declare indexes in `cairn.json` under `scip` |
-| `[watch]` | `watchdog` — live graph rebuilds on filesystem change | — |
+| `[watch]` | `watchdog` — live graph rebuilds on filesystem change while `cairn serve` runs | `CAIRN_WATCH=0` to disable |
 | `[otlp]` | `opentelemetry-sdk` — forward cairn's local telemetry events to an OTLP endpoint as OpenTelemetry LogRecords | `CAIRN_OTEL_ENDPOINT` (unset = off; export is best-effort and never blocks) |
 
 ## Architecture (5 layers)

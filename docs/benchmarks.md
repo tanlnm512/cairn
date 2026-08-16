@@ -1,7 +1,8 @@
 # Benchmarks
 
-cairn ships two harnesses for measuring retrieval quality and
-build/query performance against ground truth. This document explains **what**
+cairn ships three harnesses for measuring retrieval quality,
+build/query performance, and agent effort (tool calls + context tokens)
+against ground truth or a control arm. This document explains **what**
 each one measures, **how** to run it, and the methodology for the
 resolution-label comparison that distinguishes cairn from name-only
 ("fuzzy") code graphs.
@@ -18,6 +19,7 @@ resolution-label comparison that distinguishes cairn from name-only
 | `cairn eval` | Retrieval quality — Recall@10 and MRR vs ground-truth queries | per-corpus table or JSON |
 | `cairn bench --suite perf` | Build phase timings, embed cost, query latency | per-op table (median / p95 / ops/sec) |
 | `cairn bench --suite scaling` | How build/embed cost scales with corpus size | per-size table (build / embed / DB MB / **resolve_rate**) |
+| `cairn bench --suite agent` | Agent effort — tool calls + context tokens, cairn vs a grep/read control | per-task table (calls / est tokens / wall ms) |
 
 ---
 
@@ -209,22 +211,90 @@ see at all (they require symbol resolution, not text matching). Count them:
 cairn ask "how does <X> dispatch"        # explore reports ambiguous hops inline
 ```
 
-### Token / tool-call reduction vs a grep-only baseline
+### Agent-effort reduction vs a grep-only baseline — `cairn bench --suite agent`
 
-To measure how much cairn reduces agent context cost versus a naive
-"grep-and-read" agent workflow:
+Measures what an agent *spends* answering task-shaped questions — tool calls
+and context tokens — with cairn's query tools versus a plain grep-and-read
+loop. No LLM is in the loop: both arms are deterministic scripts over the
+same synthetic corpus, so the comparison is reproducible in CI (no network,
+no model, hash embed backend, reranker pinned off).
 
-1. Pick *N* representative questions ("how does auth work", "who calls X",
-   "what breaks if I change Y").
-2. For each, run an agent **without** cairn (grep + file reads) and **with**
-   cairn (`explore` + drill-down). Capture token usage and tool-call count.
-3. Report the deltas:
+Six tasks, each genuinely answerable by both arms:
+
+| task | question shape | cairn arm | grep/read control arm |
+|------|----------------|-----------|----------------------|
+| `definition-lookup` | where is `Cls0011_1` defined? | `find_definition` | grep `class Cls0011_1:` → read hits |
+| `caller-enumeration` | which code calls it? | `find_definition` → `get_callers` | grep the name → read every hit |
+| `blast-radius-depth3` | what breaks if it changes (depth 3)? | `find_definition` → `impact_analysis` | grep name → read → grep the names those files *define* → read (3 rounds) |
+| `entry-to-leaf-flow` | what does `method_2` execute end-to-end? | `trace_flow` | grep name → read → grep the names those files *call* → read (4 rounds) |
+| `concept-search` | what relates to the `Cls0039` cluster? | `semantic_search` | grep the keyword → read hits |
+| `common-name-impact` | what breaks if `method_0` changes? (name shared by every class) | `impact_analysis` precise → `fuzzy=True` escalation | grep `method_0(` → read hits (matches ~every file) |
+
+**Run:**
+
+```bash
+cairn bench --suite agent                      # 300-file synthetic corpus, 3 runs
+cairn bench --suite agent --n-files 100 --runs 5
+cairn bench --suite agent --workspace /path/to/repo --json
+cairn bench --suite agent --json --save base.json && cairn bench --suite agent --compare base.json
+```
+
+**Measured** (`cairn bench --suite agent`, default synthetic corpus: 300
+files / 63,900 lines / 1.7 MB, medium complexity, corpus + task seed
+`0xC0DE`, 3 runs, medians; hash embed backend; tokens = chars / 4):
+
+| task | cairn calls | grep calls | cairn tokens | grep tokens | token reduction |
+|------|------------:|-----------:|-------------:|------------:|----------------:|
+| definition-lookup | 1 | 2 | 427 | 1,432 | 70% |
+| caller-enumeration | 2 | 5 | 1,429 | 5,728 | 75% |
+| blast-radius-depth3 | 2 | 303 | 712 | 429,600 | 99.8% |
+| entry-to-leaf-flow | 1 | 302 | 1,595 | 429,600 | 99.6% |
+| concept-search | 1 | 6 | 601 | 7,160 | 92% |
+| common-name-impact | 2 | 301 | 2,114 | 429,600 | 99.5% |
+| **total (6 tasks)** | **9** | **919** | **6,878** | **1,303,120** | **99.5%** |
+
+Aggregate, per query (6 queries):
 
 | metric          | grep-only baseline | with cairn | reduction |
-|-----------------|--------------------|----------------|-----------|
-| tokens / query  | _fill_             | _fill_         | _fill_%   |
-| tool calls / query | _fill_          | _fill_         | _fill_%   |
-| wall-clock / query | _fill_          | _fill_         | _fill_×   |
+|-----------------|--------------------|------------|-----------|
+| tokens / query  | 217,187            | 1,146      | 99.5%     |
+| tool calls / query | 153.2           | 1.5        | 99.0%     |
+| wall-clock / query (in-process) | 24.9 ms | 7.6 ms | 3.3× |
+
+**Methodology.** The **cairn arm** runs the queries-layer call sequence an
+agent would make per task; each call counts once, and its context cost is the
+JSON-serialized result an MCP client receives, capped at
+`MAX_RESULT_CHARS` (60,000) exactly as `cairn serve` caps it. The **control
+arm** is a fixed grep/read recipe (stdlib `re` over the corpus in sorted
+order — no ripgrep tuning, no ctags): grep the symbol name, read only the
+matched files, follow hops by grepping the names those files define
+(impact-shaped tasks) or call (flow-shaped tasks), one alternation grep per
+hop (bounded at 40 names), each file read once per task. Its cost is
+greps + file reads, and the chars of the matched file content it reads.
+Tokens everywhere are the documented proxy **chars / 4** — the same
+~4-chars-per-token approximation the embeddings chunker and the MCP result
+cap use, not a real tokenizer. Targets are picked from the built graph by a
+seeded RNG (seed `0xC0DE`, overridable), the corpus is the `generate_corpus`
+default seed, and per-task numbers are medians over `--runs` (default 3).
+Two consecutive full runs of the table above produced identical call and
+token counts in both arms.
+
+**Honest limitations.** This is a scripted harness, not a live LLM agent:
+real agents interleave reasoning with tool calls, and a stronger grep agent
+(better patterns, file-span reads instead of whole files, an attention cap)
+would over-read less — the grep arm is a fixed recipe, not an optimized
+search. The corpus is deterministic synthetic Python, so collision-heavy
+tasks (`common-name-impact`, where grep reads essentially the whole corpus)
+may overstate what happens on codebases with more unique names; conversely
+cairn's answer is bounded (`limit`) while grep enumerates every match.
+Wall-clock is in-process tool execution, not end-to-end agent latency — a
+real agent pays an LLM round-trip per tool call, which multiplies the
+call-count advantage; and on `concept-search` the grep arm is genuinely
+*faster* (8.3 ms vs 35.6 ms for the hash backend's brute-force cosine scan),
+shown unrounded in the JSON rather than hidden. Symbol ids are random per
+build, so a tie-bounded result set (`semantic_search`'s limit cutoff) can
+swap one near-tied row between rebuilds — observed drift is well under 1%,
+far below the 15% `--compare` gate.
 
 ---
 

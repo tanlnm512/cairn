@@ -155,11 +155,11 @@ CREATE INDEX IF NOT EXISTS idx_skipped_path ON skipped_files(path);
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_path ON imports(imported_path);
 
--- pending_sync tracks files with unindexed edits (the debounce window). A live
--- filesystem watcher (the optional [watch] extra) inserts on event;
--- reindex_paths deletes on completion. MCP tools check this table to prepend
--- staleness banners. The default install has no live watcher (watcher.py is
--- boot-time catch-up only), so this table stays empty unless [watch] is wired.
+-- pending_sync tracks files with unindexed edits (the debounce window). The
+-- live watcher (watcher.FileWatcherService, active when the [watch] extra's
+-- watchdog is importable) inserts on debounced file events; reindex_paths
+-- deletes on completion (and the watcher cleans up leftovers after identical-
+-- content saves). MCP tools check this table to prepend staleness banners.
 CREATE TABLE IF NOT EXISTS pending_sync (
     path TEXT PRIMARY KEY,
     repo_id TEXT NOT NULL,

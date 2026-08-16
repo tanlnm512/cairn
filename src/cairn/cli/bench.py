@@ -1,11 +1,12 @@
-"""cairn bench: performance + scalability benchmarks.
+"""cairn bench: performance, scalability, and agent-effort benchmarks.
 
-Two suites, mirroring how ``cairn eval`` and ``cairn metrics`` already work:
+Three suites, mirroring how ``cairn eval`` and ``cairn metrics`` already work:
 
   cairn bench                              # perf suite on a generated corpus
   cairn bench --suite perf                 # explicit (default)
   cairn bench --suite scaling --sizes 100,500,1000,5000
-  cairn bench --workspace PATH             # perf against an existing repo
+  cairn bench --suite agent                # tool calls + context cost vs grep
+  cairn bench --workspace PATH             # perf/agent against an existing repo
   cairn bench --json                       # JSON for CI
   cairn bench --save baseline.json         # save a baseline
   cairn bench --compare baseline.json      # flag regressions > --threshold (15%)
@@ -28,7 +29,7 @@ from .main import main
 @main.command()
 @click.option(
     "--suite",
-    type=click.Choice(["perf", "scaling"]),
+    type=click.Choice(["perf", "scaling", "agent"]),
     default="perf",
     help="Which benchmark suite to run.",
 )
@@ -73,6 +74,12 @@ from .main import main
     help="Regression threshold for --compare (fraction; default 0.15 = 15%).",
 )
 @click.option("--repeats", default=3, type=int, help="Timed repeats per operation (perf).")
+@click.option(
+    "--runs",
+    default=3,
+    type=int,
+    help="Measured runs per task (agent suite; medians reported).",
+)
 def bench(
     suite,
     workspace,
@@ -85,8 +92,9 @@ def bench(
     compare,
     threshold,
     repeats,
+    runs,
 ):
-    """Run performance or scalability benchmarks."""
+    """Run performance, scalability, or agent-effort benchmarks."""
     from . import display
     from cairn.bench import (
         generate_corpus,
@@ -94,9 +102,10 @@ def bench(
         run_scaling_suite,
         compare_reports,
     )
+    from cairn.bench.agent_suite import compare_agent_reports, run_agent_suite
 
     tmp_root = None
-    tmp_db = None  # cg_bench_db_* dir created only by the perf suite
+    tmp_db = None  # cg_bench_db_* dir created only by the perf/agent suites
     try:
         if suite == "scaling":
             size_list = [int(s.strip()) for s in sizes.split(",") if s.strip()]
@@ -117,7 +126,7 @@ def bench(
                 # Same content as report.to_json() plus the timestamp above.
                 click.echo(json.dumps(payload, indent=2))
         else:
-            # Perf suite: use the given workspace, else generate a corpus.
+            # Perf or agent suite: use the given workspace, else generate a corpus.
             if workspace:
                 ws = workspace
             else:
@@ -128,12 +137,20 @@ def bench(
             tmp_db = db_path_dir
             db_path = str(db_path_dir / "bench.db")
             os.environ["CAIRN_DB"] = db_path
-            report = run_perf_suite(
-                ws,
-                db_path,
-                embed_backend=embed_backend,
-                repeats=repeats,
-            )
+            if suite == "agent":
+                report = run_agent_suite(
+                    ws,
+                    db_path,
+                    runs=runs,
+                    embed_backend=embed_backend,
+                )
+            else:
+                report = run_perf_suite(
+                    ws,
+                    db_path,
+                    embed_backend=embed_backend,
+                    repeats=repeats,
+                )
             payload = report.to_dict()
             # Stamp the machine-readable payload so a saved baseline records
             # when it was measured (consumed by the CI comparison + humans).
@@ -156,7 +173,16 @@ def bench(
                 display.error(f"Baseline file not found: {compare}")
                 sys.exit(1)
             baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-            deltas = compare_reports(baseline, payload, threshold=threshold)
+            if suite == "agent":
+                deltas = compare_agent_reports(baseline, payload, threshold=threshold)
+                base_key, cur_key, base_col, cur_col = (
+                    "baseline_tokens", "current_tokens", "baseline tok", "current tok",
+                )
+            else:
+                deltas = compare_reports(baseline, payload, threshold=threshold)
+                base_key, cur_key, base_col, cur_col = (
+                    "baseline_ms", "current_ms", "baseline ms", "current ms",
+                )
             if deltas:
                 rows = []
                 any_regressed = False
@@ -166,13 +192,13 @@ def bench(
                         any_regressed = True
                     rows.append([
                         name + marker,
-                        f"{d['baseline_ms']:.1f}",
-                        f"{d['current_ms']:.1f}",
+                        f"{d[base_key]:.1f}",
+                        f"{d[cur_key]:.1f}",
                         f"{d['delta_pct']:+.1f}%",
                     ])
                 display.print_table(
                     f"vs baseline {compare} (threshold {threshold:.0%})",
-                    columns=["operation", "baseline ms", "current ms", "delta"],
+                    columns=["operation", base_col, cur_col, "delta"],
                     rows=rows,
                 )
                 if any_regressed:
