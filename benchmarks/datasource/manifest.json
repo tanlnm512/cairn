@@ -1,0 +1,58 @@
+{
+  "schema": "cairn-bench-datasource-manifest",
+  "t1": {
+    "complexity": "medium",
+    "entries": {
+      "100": {
+        "counts": {
+          "bytes": 572800,
+          "files": 101,
+          "lines": 21300
+        },
+        "tree_hash": "32874e7d9c94e84678548703a0dff222f583552a2c9f6cddddb193077ca0a083"
+      },
+      "1000": {
+        "counts": {
+          "bytes": 5728000,
+          "files": 1001,
+          "lines": 213000
+        },
+        "tree_hash": "36eca96056b7a719ce556010bf066022435fa977af7f0abd1a4f9654ed721f2b"
+      },
+      "300": {
+        "counts": {
+          "bytes": 1718400,
+          "files": 301,
+          "lines": 63900
+        },
+        "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb"
+      },
+      "500": {
+        "counts": {
+          "bytes": 2864000,
+          "files": 501,
+          "lines": 106500
+        },
+        "tree_hash": "d44600d56c80786370658e7f0e67cc78646e61bad7285cc8d5fcc91cfeffaf25"
+      },
+      "5000": {
+        "counts": {
+          "bytes": 28640000,
+          "files": 5001,
+          "lines": 1065000
+        },
+        "tree_hash": "fe1dcae385a7e921f97e2f9f81ee7e6b7b6f8bccb389d78518e240d591b3b0c3"
+      }
+    },
+    "generator_git_sha": "ad866b24d75547addedc783d95cc44677804c19b",
+    "seed": 49374,
+    "sizes": [
+      100,
+      300,
+      500,
+      1000,
+      5000
+    ]
+  },
+  "version": 1
+}

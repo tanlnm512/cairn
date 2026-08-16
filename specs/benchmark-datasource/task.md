@@ -55,13 +55,15 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: tests/test_bench_datasource.py 38 passed — path-order
       independence pinned; git-style normalized mode bits (umask-immune)
       documented as the D-003 realization]
-- [ ] T002 (after T001) (in-progress) Mint `benchmarks/datasource/manifest.json` via the
+- [x] T002 (after T001) Mint `benchmarks/datasource/manifest.json` via the
       helper: T1 section recording generator git-sha, seed (`DEFAULT_SEED = 0xC0DE`,
       `src/cairn/bench/corpus.py:19`), every size, complexity, expected counts
       (`corpus_stats` → files/lines/bytes, `corpus.py:99`), and the tree-hash
       computed at every declared size; generator sha comes from the manifest,
       never from the tree (tech-spec pitfall) (FR-001, TC-001).
-- [ ] T003 (after T002) Add `scripts/verify_datasource.py` (assert mode): read
+      [DONE 2026-08-16: manifest validates clean; re-hash spot check (size 100)
+      matches — manifest-is-true; single complexity "medium" per frozen validator]
+- [ ] T003 (after T002) (in-progress) Add `scripts/verify_datasource.py` (assert mode): read
       the manifest, regenerate the corpus per its recipe (`generate_corpus`,
       `corpus.py:22`) at every declared size into a temp root, assert tree-hash
       AND expected counts; exit 0 on match, non-zero naming the mismatched
