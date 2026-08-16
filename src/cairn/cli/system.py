@@ -520,7 +520,11 @@ def eval_cmd(db, knowledge, corpus, queries_path, sweep_spec, out_path, as_json)
             raw = Path(sweep_spec).read_text() if Path(sweep_spec).exists() else sweep_spec
             combos_raw = _json.loads(raw)
             combos = [
-                {"name": c["name"], "params": RetrievalParams(**c.get("params", {}))}
+                {
+                    "name": c["name"],
+                    "params": RetrievalParams(**c.get("params", {})),
+                    **({"variant": c["variant"]} if "variant" in c else {}),
+                }
                 for c in combos_raw
             ]
             queries_dir = qpath if qpath and qpath.is_dir() else None

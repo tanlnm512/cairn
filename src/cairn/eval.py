@@ -17,14 +17,22 @@ The sweep harness (FR-005, D-007, T004) sits on top of that seam:
 ``RetrievalParams``), evaluates every combo on the tune split only —
 held-out enforcement is inherited from the seam, not re-implemented — and
 emits the machine-readable multi-row results table in its own schema
-(``cairn-quality-sweep/1``). ``evaluate_full_set`` is the post-selection
-reporting path (the full set, no split) behind the integrity row and final
-numbers. Neither opens a write path anywhere (TC-025): the ground-truth
-files are only ever read, and serializing the table is the caller's job
-(``format_sweep_json`` gives the canonical bytes).
+(``cairn-quality-sweep/2``). Combos may also name a corpus recipe
+(``variant`` — T014, FR-002): the runner re-embeds the measurement DB
+under that variant through the content-hash staleness flow before
+evaluating the combo, and every row carries db_mb + chunk size bounds
+(the per-recipe size accounting the survey flagged missing). The
+ground-truth files stay read-only (TC-025 — byte-identical after every
+sweep, recipe or not); the only write path is the measurement DB's
+embeddings table, via ``embed_all``, for variant combos.
+``evaluate_full_set`` is the post-selection reporting path (the full set,
+no split) behind the integrity row and final numbers. Serializing the
+table is the caller's job (``format_sweep_json`` gives the canonical
+bytes).
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
@@ -748,20 +756,43 @@ def _betacf(a: float, b: float, x: float, max_iter: int = 300, eps: float = 3e-1
 
 
 # --------------------------------------------------------------------------
-# Sweep harness core (FR-005, D-007, T004)
+# Sweep harness core (FR-005, D-007, T004; recipe extension T014, FR-002)
 #
 # Enumerates lever combinations and evaluates each on the TUNE split only,
 # through the guarded evaluate_on seam — held-out discipline is inherited
 # from the seam (purpose="selection" + held_out_ids=validate), never
 # re-implemented here. The results table is a separate artifact shape from
-# quality.json (D-007): ``cairn-quality-sweep/1``, destined for
+# quality.json (D-007): ``cairn-quality-sweep/2``, destined for
 # benchmarks/quality/ablation.json (AC1) — committing it is T024's job;
-# this module only RETURNS the table (no write path anywhere, TC-025).
+# this module only RETURNS the table.
+#
+# Recipe combos (T014): a combo carrying ``variant`` re-embeds the
+# measurement DB through ``embeddings.embed_all(conn, variant=...)``
+# BEFORE it is evaluated. The content-hash staleness flow in embeddings.py
+# recomputes every symbol's chunk under the requested recipe, so any
+# recipe change flips every ``_chunk_hash`` and forces a full re-embed
+# (rowid-stable upsert keeps the vec0 keys aligned); re-running the same
+# variant is idempotent — the hashes already match. Per-variant
+# measurement runs are serial machine time, not agent time.
+#
+# Read-only scope (TC-025): the ground-truth files behind ``queries`` are
+# only ever read and no file other than the caller's chosen output is
+# written; the measurement DB's embeddings table IS written, but only for
+# variant combos and only through ``embed_all``. The DB ends the sweep in
+# the LAST re-embedded variant's state — run recipe sweeps on a disposable
+# copy when the starting state must survive.
 # --------------------------------------------------------------------------
 
 #: Schema tag of the sweep results table (D-007: own artifact shape, never
-#: inside quality.json's exact-key contract).
-SWEEP_SCHEMA = "cairn-quality-sweep/1"
+#: inside quality.json's exact-key contract). v2 (T014) extends the row
+# shape ADDITIVELY: every row gains the size-accounting fields
+#: ``db_mb``/``chunk_chars_max``/``chunk_chars_mean`` (measured on the
+#: embedding state the row evaluated under — FR-002's per-recipe size
+#: bounds), and recipe combos additionally carry the optional ``variant``
+#: field marking the corpus recipe they re-embedded to. A v1 consumer that
+#: ignores unknown row fields keeps working; one that validates row keys
+#: exactly must move to the v2 shape.
+SWEEP_SCHEMA = "cairn-quality-sweep/2"
 
 #: Row name of the implicit all-levers-off combo — ``params=None``, today's
 #: retrieval exactly. This is the integrity row T006 re-measures against
@@ -771,19 +802,25 @@ ALL_LEVERS_OFF = "all-levers-off"
 
 def _normalize_combos(
     combos: Iterable[Any],
-) -> List[Tuple[str, Optional["RetrievalParams"]]]:
-    """Validate and freeze the sweep grid into ``(name, params)`` pairs.
+) -> List[Tuple[str, Optional["RetrievalParams"], Optional[str]]]:
+    """Validate and freeze the sweep grid into ``(name, params, variant)``.
 
-    Each combo is a mapping ``{"name": str, "params": RetrievalParams | None}``
-    (``params`` may be omitted — omitted means ``None`` means today's
-    defaults). Raises ``ValueError`` on a non-mapping combo, a missing or
-    blank name, a ``params`` that is neither ``None`` nor a
-    ``RetrievalParams`` instance, or a duplicate name (rows are keyed by
-    name; a duplicate would silently overwrite results downstream).
+    Each combo is a mapping ``{"name": str, "params": RetrievalParams |
+    None, "variant": str (optional)}`` (``params`` may be omitted — omitted
+    means ``None`` means today's defaults; ``variant`` omitted means no
+    re-embed, the combo evaluates under the current embedding state).
+    Variant names are NOT restricted to a known set — the recipe registry
+    is additive beyond A/B/C (T013's field-dropout variants), and an
+    unknown name is ``embed_all``'s loud business, not the grid parser's.
+    Raises ``ValueError`` on a non-mapping combo, a missing or blank name,
+    a ``params`` that is neither ``None`` nor a ``RetrievalParams``
+    instance, a ``variant`` that is neither ``None`` nor a non-empty
+    string, or a duplicate name (rows are keyed by name; a duplicate would
+    silently overwrite results downstream).
     """
     from cairn.graph.semantic import RetrievalParams  # lazy: keeps import light
 
-    normalized: List[Tuple[str, Optional["RetrievalParams"]]] = []
+    normalized: List[Tuple[str, Optional["RetrievalParams"], Optional[str]]] = []
     seen: Set[str] = set()
     for index, combo in enumerate(combos):
         if not isinstance(combo, Mapping):
@@ -794,6 +831,7 @@ def _normalize_combos(
             )
         name = combo.get("name")
         params = combo.get("params", None)
+        variant = combo.get("variant", None)
         if not isinstance(name, str) or not name.strip():
             raise ValueError(
                 f"combo #{index} needs a non-empty string 'name', got {name!r}"
@@ -803,13 +841,107 @@ def _normalize_combos(
                 f"combo {name!r}: 'params' must be a RetrievalParams instance "
                 f"or None, got {type(params).__name__}"
             )
+        if variant is not None and (
+            not isinstance(variant, str) or not variant.strip()
+        ):
+            raise ValueError(
+                f"combo {name!r}: 'variant' must be a non-empty string "
+                f"(a corpus recipe name) or None, got {variant!r}"
+            )
         if name in seen:
             raise ValueError(
                 f"duplicate combo name {name!r}: sweep rows are keyed by name"
             )
         seen.add(name)
-        normalized.append((name, params))
+        normalized.append((name, params, variant))
     return normalized
+
+
+def _accepts_variant_kwarg(func: Callable[..., Any]) -> bool:
+    """True when ``func`` can be called with ``variant=``.
+
+    Accepts either a named ``variant`` parameter or a ``**kwargs`` catch-all
+    (the shape a test double or wrapper naturally takes). A function that
+    cannot be introspected is given the benefit of the doubt — the call
+    itself will fail loudly if the keyword really is unsupported.
+    """
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):  # non-introspectable callable
+        return True
+    return any(
+        p.name == "variant" or p.kind is inspect.Parameter.VAR_KEYWORD
+        for p in sig.parameters.values()
+    )
+
+
+def _reembed_for_variant(conn: sqlite3.Connection, variant: str) -> Dict[str, Any]:
+    """Re-embed the measurement corpus under ``variant`` (T014, FR-002).
+
+    Delegates to ``embeddings.embed_all(conn, variant=variant)`` — T013's
+    contract: the variant threads down to ``chunk_for_symbol``, the
+    content-hash staleness flow inside recomputes every chunk under the
+    requested recipe (any recipe change flips every ``_chunk_hash`` and
+    forces a full re-embed), and the rowid-stable upsert keeps the vec0
+    index keys aligned. Re-running the same variant is idempotent (the
+    stored hashes already match).
+
+    The ``variant`` keyword is verified against the *resolved* ``embed_all``
+    at runtime, not at import: T013 lands in parallel with this module, so
+    a recipe sweep in an install without the contract fails with ONE loud
+    ``RuntimeError`` naming the seam instead of a bare ``TypeError`` deep
+    in a call chain.
+    """
+    from cairn.graph import embeddings as emb
+
+    if not _accepts_variant_kwarg(emb.embed_all):
+        raise RuntimeError(
+            "recipe sweep requires embed_all to accept a 'variant' keyword "
+            "(T013 contract: variant: str | None = None threaded to "
+            "chunk_for_symbol); this install's embed_all does not — re-embed "
+            "orchestration is unavailable (FR-002)"
+        )
+    return emb.embed_all(conn, variant=variant)
+
+
+def _size_accounting(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Measure the CURRENT embedding state's size figures (FR-002 gap).
+
+    Returns the three size-accounting columns every sweep row carries:
+
+    * ``db_mb`` — the main database's size in MiB, measured from the DB
+      FILE when it is file-backed (the honest on-disk artifact); an
+      in-memory/temp database has no file and falls back to
+      ``page_count * page_size`` (the same committed size SQLite reports).
+      For recipe rows this is measured AFTER that combo's re-embed; for
+      the integrity row it is the session baseline (D-009/T011 doctrine).
+    * ``chunk_chars_max`` / ``chunk_chars_mean`` — character lengths of
+      the ``embeddings.chunk`` column (SQLite ``LENGTH`` on TEXT counts
+      characters, matching the ``max_tokens * 4`` truncate bound in
+      ``chunk_for_symbol`` — 2048 chars at the default). Both are 0 / 0.0
+      when the embeddings table is empty.
+    """
+    size_bytes: Optional[int] = None
+    for _seq, db_name, db_file in conn.execute("PRAGMA database_list").fetchall():
+        if db_name != "main":
+            continue
+        if db_file:  # file-backed: '' for :memory: and temp DBs
+            try:
+                size_bytes = Path(db_file).stat().st_size
+            except OSError:
+                size_bytes = None
+        break
+    if size_bytes is None:
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+        size_bytes = int(page_size) * int(page_count)
+
+    lengths = [row[0] or 0 for row in conn.execute("SELECT LENGTH(chunk) FROM embeddings")]
+    return {
+        "db_mb": round(size_bytes / (1024.0 * 1024.0), 4),
+        "chunk_chars_max": max(lengths, default=0),
+        "chunk_chars_mean": round(sum(lengths) / len(lengths), 4) if lengths else 0.0,
+    }
 
 
 def run_sweep(
@@ -830,11 +962,22 @@ def run_sweep(
     """Run every lever combination on the tune split; return the D-007 table.
 
     This is the library core (T005's CLI is a thin consumer). For each combo
-    ``{"name": ..., "params": RetrievalParams | None}`` the harness calls the
-    guarded seam — ``evaluate_on(ids=..., purpose="selection",
-    held_out_ids=validate)`` — so held-out enforcement is the seam's, not a
-    copy of it: any requested id that intersects the validate half raises
-    :class:`HeldOutError` *before any retrieval runs* (FR-006, TC-019).
+    ``{"name": ..., "params": RetrievalParams | None, "variant": str (opt)}``
+    the harness calls the guarded seam — ``evaluate_on(ids=...,
+    purpose="selection", held_out_ids=validate)`` — so held-out enforcement
+    is the seam's, not a copy of it: any requested id that intersects the
+    validate half raises :class:`HeldOutError` *before any retrieval runs*
+    (FR-006, TC-019).
+
+    **Recipe combos (T014, FR-002)** — a combo carrying ``variant`` is a
+    corpus-recipe measurement: the runner calls
+    ``embeddings.embed_all(conn, variant=...)`` BEFORE evaluating that
+    combo. The content-hash staleness flow inside ``embed_all`` handles the
+    re-embedding (any recipe change flips every ``_chunk_hash`` → full
+    re-embed; rowid-stable upsert); a repeated variant re-embeds nothing.
+    The variant keyword is verified against the resolved ``embed_all`` at
+    runtime — a loud ``RuntimeError`` when the T013 contract is missing.
+    Variant combos run serially; each is machine time, not agent time.
 
     Query-subset selection (the FR-005 gap: ``corpus_filter`` selects level
     only, ``load_ground_truth`` full-loads) lives in the seam's ``ids=``
@@ -844,18 +987,28 @@ def run_sweep(
     raises). ``queries`` is the loaded ground truth (``load_ground_truth``
     output); a generator is fine, it is materialized once.
 
-    Rows carry ``{combo, recall_at_10, mrr, p95_ms, n_queries}`` where
-    ``p95_ms`` is the 95th-percentile per-query retrieval wall time measured
-    by the seam (``timer`` injectable for deterministic tests). The implicit
-    **all-levers-off** row (``params=None``, named :data:`ALL_LEVERS_OFF`) is
-    prepended FIRST whenever the caller's grid carries no ``params=None``
-    combo of its own — the integrity row T006 depends on; an explicit
-    ``params=None`` combo suppresses the implicit one (never evaluated
-    twice).
+    Rows carry ``{combo, recall_at_10, mrr, p95_ms, n_queries, db_mb,
+    chunk_chars_max, chunk_chars_mean}`` where ``p95_ms`` is the
+    95th-percentile per-query retrieval wall time measured by the seam
+    (``timer`` injectable for deterministic tests) and the three size
+    figures come from :func:`_size_accounting` measured on the embedding
+    state the row evaluated under — for the integrity row that is the
+    CURRENT state (no re-embed: its figures are the session baseline,
+    D-009/T011 doctrine); for a recipe row, the state right after that
+    combo's re-embed. Recipe rows are additionally marked with a
+    ``variant`` field (absent on non-recipe rows).
+
+    The implicit **all-levers-off** row (``params=None`` AND no variant,
+    named :data:`ALL_LEVERS_OFF`) is prepended FIRST whenever the caller's
+    grid carries no such combo of its own — the integrity row T006 depends
+    on; it never re-embeds, so a recipe sweep still opens with the session
+    baseline. An explicit params-None variant-less combo suppresses the
+    implicit one (never evaluated twice). A variant combo with
+    ``params=None`` does NOT suppress it — it re-embeds by definition.
 
     Returns the D-007 document::
 
-        {"schema": "cairn-quality-sweep/1",
+        {"schema": "cairn-quality-sweep/2",
          "dataset": {"name", "version", "split_seed", "split", "metric",
                      "n_queries"},
          "rows": [...],
@@ -868,14 +1021,20 @@ def run_sweep(
     against (T011/T012 flow). All metrics are rounded to 4 decimals
     deterministically.
 
-    Read-only by construction (TC-025): the harness opens no write path —
-    the ground-truth files behind ``queries`` are only ever read, no file is
-    created, and the only database statements issued are retrieval reads.
-    Serializing (and committing to ``benchmarks/quality/ablation.json``) is
-    the caller's job — :func:`format_sweep_json` gives the canonical bytes.
+    Read-only scope (TC-025): the ground-truth files behind ``queries``
+    are only ever read and no file is created — recipe sweeps included.
+    The one write path is the measurement DB's ``embeddings`` table, only
+    for variant combos and only through ``embed_all``; the DB ends the
+    sweep in the LAST re-embedded variant's state, so run recipe sweeps
+    on a disposable copy when the starting state must survive.
+    Serializing (and committing to ``benchmarks/quality/ablation.json``)
+    is the caller's job — :func:`format_sweep_json` gives the canonical
+    bytes.
 
     ``ValueError`` is raised for an unknown metric, malformed or
-    duplicate-named combos, or a ``baseline`` naming no combo in the sweep.
+    duplicate-named combos, or a ``baseline`` naming no combo in the
+    sweep; ``RuntimeError`` when a variant combo runs against an
+    ``embed_all`` without the T013 ``variant`` contract.
     """
     if metric not in _METRICS:
         raise ValueError(
@@ -886,12 +1045,16 @@ def run_sweep(
     query_list = list(queries)
     normalized = _normalize_combos(combos)
 
-    # The integrity row: today's retrieval (params=None), first, whenever
-    # the grid doesn't already carry a params-None combo.
-    if not any(params is None for _name, params in normalized):
-        normalized.insert(0, (ALL_LEVERS_OFF, None))
+    # The integrity row: today's retrieval (params=None, no variant), first,
+    # whenever the grid doesn't already carry such a combo. A variant combo
+    # with params=None does NOT suppress it — it re-embeds by definition and
+    # so cannot serve as the session-baseline row.
+    if not any(
+        params is None and variant is None for _name, params, variant in normalized
+    ):
+        normalized.insert(0, (ALL_LEVERS_OFF, None, None))
 
-    names = {name for name, _params in normalized}
+    names = {name for name, _params, _variant in normalized}
     if baseline is not None and baseline not in names:
         raise ValueError(
             f"baseline {baseline!r} names no combo in the sweep "
@@ -905,7 +1068,13 @@ def run_sweep(
 
     reports: Dict[str, Dict[str, Any]] = {}
     rows: List[Dict[str, Any]] = []
-    for name, params in normalized:
+    for name, params, variant in normalized:
+        # Recipe combos re-embed FIRST (embeddings.py's content-hash flow);
+        # the integrity row (variant=None) never does — its size figures are
+        # the session baseline measured on the current embedding state.
+        if variant is not None:
+            _reembed_for_variant(conn, variant)
+        size = _size_accounting(conn)
         report = evaluate_on(
             conn,
             query_list,
@@ -920,18 +1089,24 @@ def run_sweep(
         )
         reports[name] = report
         durations = sorted(report["durations_ms"].values())
-        rows.append(
-            {
-                "combo": name,
-                "recall_at_10": report["recall_at_10"],
-                "mrr": report["mrr"],
-                "p95_ms": round(_percentile(durations, 95.0), 4),
-                "n_queries": report["n_queries"],
-            }
-        )
+        row: Dict[str, Any] = {
+            "combo": name,
+            "recall_at_10": report["recall_at_10"],
+            "mrr": report["mrr"],
+            "p95_ms": round(_percentile(durations, 95.0), 4),
+            "n_queries": report["n_queries"],
+            "db_mb": size["db_mb"],
+            "chunk_chars_max": size["chunk_chars_max"],
+            "chunk_chars_mean": size["chunk_chars_mean"],
+        }
+        if variant is not None:
+            row["variant"] = variant
+        rows.append(row)
 
     baseline_name = baseline if baseline is not None else next(
-        name for name, params in normalized if params is None
+        name
+        for name, params, variant in normalized
+        if params is None and variant is None
     )
     base_report = reports[baseline_name]
     return {

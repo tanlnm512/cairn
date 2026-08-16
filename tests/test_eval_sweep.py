@@ -1,15 +1,25 @@
-"""Sweep harness core tests (T004, FR-005, D-007).
+"""Sweep harness core tests (T004, FR-005, D-007; recipes T014, FR-002).
 
 ``run_sweep`` is the lever-ablation engine: it evaluates every
 ``{"name", "params"}`` combo on the TUNE split through the guarded
 ``evaluate_on`` seam (held-out enforcement is inherited, not re-implemented)
-and emits the ``cairn-quality-sweep/1`` table that lands in
+and emits the ``cairn-quality-sweep/2`` table that lands in
 benchmarks/quality/ablation.json (AC1; committing is T024's job).
+
+Recipe combos (T014) additionally carry ``variant``: the runner calls
+``embed_all(conn, variant=...)`` before evaluating them — the content-hash
+staleness flow forces a full re-embed on any recipe change — and every row
+carries db_mb + chunk size bounds measured on the embedding state it
+evaluated under. The integrity row never re-embeds; its figures are the
+session baseline.
 
 Hermetic like tests/test_retrieval_params.py: the hash embedder gives
 deterministic vectors and the retrieval knobs are pinned (rerank hard-off,
 brute cosine, fusion off) so the dense-threshold lever's effect is the
-probed, machine-independent one.
+probed, machine-independent one. Recipe tests monkeypatch ``embed_all``
+with a faithful T013-contract fake (variant threaded to the real
+``chunk_for_symbol``, real content-hash staleness, rowid-stable upsert) —
+no real model ever runs.
 
 Probed fixture (query ``function alpha``; cosines from the hash backend):
   alpha          0.4901  -> survives every threshold used here, rank 1
@@ -31,7 +41,10 @@ Contracts pinned:
 * ground-truth files byte-identical after a sweep (TC-025 read-only);
 * determinism -- same inputs, identical canonical table bytes;
 * p95 present and finite; ``evaluate_full_set`` (full set, no split);
-* the seam threads ``params`` and reports per-query ``durations_ms``.
+* the seam threads ``params`` and reports per-query ``durations_ms``;
+* recipe sweeps re-embed per variant combo (right arg, never for the
+  integrity row), report db_mb + chunk bounds per row, and fail loudly
+  when ``embed_all`` lacks the T013 variant contract.
 """
 from __future__ import annotations
 
@@ -226,7 +239,7 @@ class TestRunSweep:
         doc = run_sweep(sweep_db, gt_queries, combos=_combos())
 
         assert set(doc) == {"schema", "dataset", "rows", "baseline"}
-        assert doc["schema"] == SWEEP_SCHEMA == "cairn-quality-sweep/1"
+        assert doc["schema"] == SWEEP_SCHEMA == "cairn-quality-sweep/2"
 
         tune, validate = split_queries(gt_queries)
         assert doc["dataset"] == {
@@ -244,9 +257,26 @@ class TestRunSweep:
             "wide",
             "tight",
         ]
+        # v2 row shape: the size-accounting columns ride on every row;
+        # `variant` marks recipe rows only (absent here -- no recipes).
         for row in doc["rows"]:
-            assert set(row) == {"combo", "recall_at_10", "mrr", "p95_ms", "n_queries"}
+            assert set(row) == {
+                "combo",
+                "recall_at_10",
+                "mrr",
+                "p95_ms",
+                "n_queries",
+                "db_mb",
+                "chunk_chars_max",
+                "chunk_chars_mean",
+            }
             assert row["n_queries"] == len(tune)
+            assert isinstance(row["db_mb"], float) and row["db_mb"] >= 0.0
+            assert isinstance(row["chunk_chars_max"], int) and row["chunk_chars_max"] >= 0
+            assert isinstance(row["chunk_chars_mean"], float)
+            assert 0.0 <= row["chunk_chars_mean"] <= row["chunk_chars_max"] or (
+                row["chunk_chars_max"] == 0
+            )
 
         # Metrics are the probed per-config means over the tune membership.
         by_combo = {row["combo"]: row for row in doc["rows"]}
@@ -423,6 +453,283 @@ class TestRunSweep:
 
 
 # ---------------------------------------------------------------------------
+# Recipe sweeps (T014, FR-002): per-variant re-embed + size accounting
+# ---------------------------------------------------------------------------
+
+
+class TestRecipeSweeps:
+    """Variant combos re-embed through the content-hash flow before they
+    are evaluated; rows carry db_mb + chunk bounds; the integrity row never
+    re-embeds (session baseline); held-out discipline is unchanged."""
+
+    @staticmethod
+    def _install_contract_embed_all(monkeypatch):
+        """Monkeypatch ``embed_all`` with the T013-contract shape.
+
+        Faithful to the seam the runner codes against: ``variant`` threads
+        to the REAL ``chunk_for_symbol``, staleness is the REAL content-hash
+        comparison (a recipe change flips every hash -> full re-embed; a
+        repeated variant embeds nothing), and the upsert is the real
+        rowid-stable ON CONFLICT statement. Every call appends
+        ``(variant, n_embedded)`` to the returned log -- the orchestration
+        evidence. No real model runs (hash backend is pinned module-wide).
+        """
+        from datetime import datetime, timezone
+
+        from cairn.graph import embeddings as emb
+
+        calls: list = []
+
+        def contract_embed_all(
+            conn, batch_size=64, limit=None, progress=None, reap_orphans=True, variant=None
+        ):
+            model = emb.current_model()
+            rows = conn.execute(
+                """SELECT s.id, s.name, s.qualified_name, s.kind, s.docstring,
+                          s.line_start, s.parameters, s.return_type,
+                          s.parent_scope, s.imports_summary, s.body,
+                          f.path AS file_path, f.repo_id AS repo,
+                          e.content_hash AS existing_hash
+                   FROM symbols s
+                   JOIN files f ON s.file_id = f.id
+                   LEFT JOIN embeddings e ON e.symbol_id = s.id AND e.model = ?
+                   WHERE s.kind IS NOT NULL
+                   ORDER BY s.id""",
+                (model,),
+            ).fetchall()
+            now = datetime.now(timezone.utc).isoformat()
+            embedded = 0
+            for r in rows:
+                chunk = emb.chunk_for_symbol(r, signature=None, variant=variant)
+                if not chunk.strip():
+                    continue
+                new_hash = emb._chunk_hash(chunk)
+                if r["existing_hash"] == new_hash:
+                    continue  # content-hash staleness: unchanged chunk skips
+                blob = emb._embed([chunk])[0][0]
+                conn.execute(
+                    "INSERT INTO embeddings "
+                    "(symbol_id, model, dim, vec, chunk, content_hash, embedded_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(symbol_id, model) DO UPDATE SET "
+                    "dim=excluded.dim, vec=excluded.vec, chunk=excluded.chunk, "
+                    "content_hash=excluded.content_hash, "
+                    "embedded_at=excluded.embedded_at",
+                    (r["id"], model, len(blob) // 4, blob, chunk, new_hash, now),
+                )
+                embedded += 1
+            conn.commit()
+            calls.append((variant, embedded))
+            return {"model": model, "embedded": embedded, "skipped": len(rows) - embedded}
+
+        monkeypatch.setattr(emb, "embed_all", contract_embed_all)
+        return calls
+
+    @pytest.fixture()
+    def recipe_calls(self, monkeypatch):
+        return self._install_contract_embed_all(monkeypatch)
+
+    def test_two_variants_reembed_per_combo_with_the_right_arg(
+        self, sweep_db, gt_queries, recipe_calls
+    ):
+        doc = run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[
+                {"name": "recipe-a", "params": None, "variant": "A"},
+                {"name": "recipe-b", "params": None, "variant": "B"},
+            ],
+        )
+        # One embed_all per variant combo, with the variant threaded through
+        # as a keyword -- and NOT ONE call before them: the integrity row
+        # (evaluated first) never re-embeds. B->A flips exactly the one
+        # content hash that differs between the recipes here (alphaBulk, the
+        # only docstring-carrying symbol); A->B flips it back.
+        assert recipe_calls == [("A", 1), ("B", 1)]
+
+        # Integrity row first; recipe rows carry the variant marker.
+        assert [row["combo"] for row in doc["rows"]] == [
+            ALL_LEVERS_OFF,
+            "recipe-a",
+            "recipe-b",
+        ]
+        assert "variant" not in doc["rows"][0]
+        assert [row.get("variant") for row in doc["rows"][1:]] == ["A", "B"]
+
+    def test_integrity_row_reports_the_session_baseline_state(
+        self, sweep_db, gt_queries, recipe_calls
+    ):
+        # The fixture embedded the corpus under the default recipe (B), so
+        # the integrity row's size figures must equal the variant-B row's
+        # (same embedding state, never re-embedded) and differ from A's.
+        doc = run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[
+                {"name": "recipe-a", "params": None, "variant": "A"},
+                {"name": "recipe-b", "params": None, "variant": "B"},
+            ],
+        )
+        integrity, row_a, row_b = doc["rows"]
+        assert integrity["chunk_chars_max"] == row_b["chunk_chars_max"]
+        assert integrity["chunk_chars_mean"] == row_b["chunk_chars_mean"]
+        # Variant A drops the "Docstring: " label B adds -- the only
+        # docstring-carrying symbol (alphaBulk, the longest chunk) shrinks.
+        assert row_a["chunk_chars_max"] < row_b["chunk_chars_max"]
+        assert row_a["chunk_chars_mean"] < row_b["chunk_chars_mean"]
+        assert row_a["chunk_chars_max"] > 0
+
+    def test_repeated_variant_reembeds_nothing(self, sweep_db, gt_queries, recipe_calls):
+        # Content-hash idempotence: the second consecutive "A" combo finds
+        # every stored hash already matching -> zero rows re-embedded.
+        run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[
+                {"name": "a1", "params": None, "variant": "A"},
+                {"name": "a2", "params": None, "variant": "A"},
+            ],
+        )
+        assert recipe_calls == [("A", 1), ("A", 0)]
+
+    def test_variant_combines_with_params(self, sweep_db, gt_queries, recipe_calls):
+        # A recipe combo is a full combo: retrieval levers still apply, and
+        # the probed wide-threshold figures must come out unchanged.
+        tune, _validate = split_queries(gt_queries)
+        doc = run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[
+                {
+                    "name": "wide-a",
+                    "params": RetrievalParams(dense_threshold=0.0),
+                    "variant": "A",
+                },
+            ],
+        )
+        row = doc["rows"][1]
+        recall, mrr = _expected_metrics("wide", tune)
+        assert row["recall_at_10"] == recall
+        assert row["mrr"] == mrr
+        assert row["variant"] == "A"
+
+    def test_recipe_sweep_leaves_ground_truth_byte_identical(
+        self, sweep_db, gt_dir, gt_queries, recipe_calls
+    ):
+        def _digest(path):
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        before = {
+            p.name: _digest(p) for p in sorted(gt_dir.iterdir()) if p.is_file()
+        }
+        run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+        )
+        after = {
+            p.name: _digest(p) for p in sorted(gt_dir.iterdir()) if p.is_file()
+        }
+        assert after == before  # TC-025: writes touch only the DB, never files
+
+    def test_held_out_guard_still_fires_and_precedes_any_reembed(
+        self, sweep_db, gt_queries, recipe_calls
+    ):
+        tune, validate = split_queries(gt_queries)
+        with pytest.raises(HeldOutError):
+            run_sweep(
+                sweep_db,
+                gt_queries,
+                combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+                ids=tune + validate,
+            )
+        # The integrity row leads, so the seam's guard fires before the
+        # first recipe combo's re-embed ever runs.
+        assert recipe_calls == []
+
+    def test_variant_combo_does_not_suppress_the_integrity_row(
+        self, sweep_db, gt_queries, recipe_calls
+    ):
+        # params=None + variant is NOT an integrity row (it re-embeds by
+        # definition) -- the implicit row is still prepended, first.
+        doc = run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+        )
+        assert [row["combo"] for row in doc["rows"]] == [ALL_LEVERS_OFF, "recipe-a"]
+        assert doc["baseline"]["combo"] == ALL_LEVERS_OFF
+
+    def test_explicit_variantless_none_combo_suppresses_implicit_row(
+        self, sweep_db, gt_queries, recipe_calls
+    ):
+        doc = run_sweep(
+            sweep_db,
+            gt_queries,
+            combos=[
+                {"name": "incumbent", "params": None},
+                {"name": "recipe-a", "params": None, "variant": "A"},
+            ],
+        )
+        assert [row["combo"] for row in doc["rows"]] == ["incumbent", "recipe-a"]
+        assert doc["baseline"]["combo"] == "incumbent"
+
+    def test_missing_variant_contract_fails_loudly(self, sweep_db, gt_queries, monkeypatch):
+        # A pre-T013 embed_all (no variant kwarg, no **kwargs): the runner
+        # must refuse the recipe sweep with ONE named error, not a TypeError.
+        from cairn.graph import embeddings as emb
+
+        def legacy_embed_all(conn, batch_size=64, limit=None, progress=None, reap_orphans=True):
+            raise AssertionError("must not be called without the variant contract")
+
+        monkeypatch.setattr(emb, "embed_all", legacy_embed_all)
+        with pytest.raises(RuntimeError, match="'variant' keyword"):
+            run_sweep(
+                sweep_db,
+                gt_queries,
+                combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+            )
+
+    def test_malformed_variant_values_raise(self, sweep_db, gt_queries, recipe_calls):
+        with pytest.raises(ValueError, match="non-empty string"):
+            run_sweep(
+                sweep_db, gt_queries, combos=[{"name": "blank", "variant": "  "}]
+            )
+        with pytest.raises(ValueError, match="non-empty string"):
+            run_sweep(sweep_db, gt_queries, combos=[{"name": "num", "variant": 3}])
+
+    def test_db_mb_measures_the_db_file_when_file_backed(
+        self, tmp_path, gt_queries, recipe_calls
+    ):
+        # The honest FR-002 artifact is the on-disk size: a file-backed
+        # connection must report the main DB file's size, not the in-memory
+        # page fallback.
+        import sqlite3
+
+        from cairn.graph.schema import _apply_schema
+
+        db_path = tmp_path / "measurement.db"
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        _apply_schema(conn)
+        try:
+            _seed_corpus(conn)
+            from cairn.graph import embeddings as emb
+
+            emb.embed_all(conn)  # real (hash-backend) initial embed
+            doc = run_sweep(
+                conn,
+                gt_queries,
+                combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+            )
+        finally:
+            conn.close()
+        expected = round(db_path.stat().st_size / (1024.0 * 1024.0), 4)
+        for row in doc["rows"]:
+            assert row["db_mb"] == expected
+
+
+# ---------------------------------------------------------------------------
 # evaluate_full_set (the post-selection reporting path)
 # ---------------------------------------------------------------------------
 
@@ -554,7 +861,7 @@ class TestSweepCli:
         )
         assert result.exit_code == 0, result.output
         doc = _json.loads(result.stdout)
-        assert doc["schema"] == "cairn-quality-sweep/1"
+        assert doc["schema"] == "cairn-quality-sweep/2"
         names = [r["combo"] for r in doc["rows"]]
         assert names[0] == "all-levers-off" and "loose" in names
 
