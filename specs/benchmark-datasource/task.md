@@ -41,7 +41,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      regenerating T1 on a clean checkout reproduces the manifest's content hash
      and the CI datasource step is green; flip a seed constant → check exits
      non-zero. -->
-- [ ] T001 [P] Implement the datasource tree-hash + manifest helper in a new
+- [x] T001 [P] Implement the datasource tree-hash + manifest helper in a new
       `src/cairn/bench/` module (e.g. `src/cairn/bench/datasource.py`):
       stdlib-only sorted-manifest digest `sha256("<mode> <relpath>\0<sha256(content)>")`
       over sorted paths (D-003 — path-order independent, byte-identical
@@ -52,7 +52,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       concept exists in src/cairn ... no path-order-independent content-hash".
       Verify-before: `grep -rn "manifest" src/cairn --include="*.py" | grep -v __pycache__`
       → no output today (survey FR-001).
-- [ ] T002 (after T001) Mint `benchmarks/datasource/manifest.json` via the
+      [DONE 2026-08-16: tests/test_bench_datasource.py 38 passed — path-order
+      independence pinned; git-style normalized mode bits (umask-immune)
+      documented as the D-003 realization]
+- [ ] T002 (after T001) (in-progress) Mint `benchmarks/datasource/manifest.json` via the
       helper: T1 section recording generator git-sha, seed (`DEFAULT_SEED = 0xC0DE`,
       `src/cairn/bench/corpus.py:19`), every size, complexity, expected counts
       (`corpus_stats` → files/lines/bytes, `corpus.py:99`), and the tree-hash
