@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `docs/benchmarks.md`; phase record in `docs/phases/performance-gap/`.
 
 ### Added
+- **Benchmark datasource (DS-v1)**: a pinned, versioned comparison substrate —
+  T1 synthetic corpus content-pinned by manifest hash in CI; T2 vendored yarl
+  snapshot (437 KB, Apache-2.0, full provenance) with a hand-verified ground
+  truth (82 queries / 234 expectations, 100% verified against a real build);
+  committed `benchmarks/baselines/DS-v1/` artifacts stamped with dataset
+  version, cairn version, and machine profile; `cairn bench --baseline DS-v1`
+  with an advisory profile-mismatch warning; docs/benchmarks.md reference
+  tables generated from the baselines between sentinels (hand-edit-guarded in
+  CI); T3 scale pins (home-assistant/core, torvalds/linux) with a local
+  fetch-by-pin command that verifies HEAD == pin exactly. First real quality
+  baseline: L1 recall@10 = 0.4174, MRR = 0.2862.
 - **Live file watching**: with the `[watch]` extra installed, `cairn serve`
   now sees source edits made while it runs — debounced (≤2 s) file events
   insert `pending_sync` rows (so concurrent readers get staleness banners)
