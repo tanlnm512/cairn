@@ -99,12 +99,14 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       (82 lines, deps-only today): upstream project + license, distinct from
       the dependency families; keep the existing scope intact incl. the
       bge-m3 note (NOTICE:79-82) (FR-002, TC-016).
-- [ ] T007 [P] (after T005) (in-progress) Add the size-budget mode to
+- [x] T007 [P] (after T005) Add the size-budget mode to
       `scripts/verify_datasource.py`: `benchmarks/datasource/t2/` ≤ 3 MB and
       `benchmarks/datasource/` ≤ 5 MB, non-zero on breach; pre-commit
       `check-added-large-files --maxkb=500` is per-file, not a tree budget
       (survey FR-002), so this check is load-bearing not ceremony (FR-002,
       AC4, TC-017/TC-018).
+      [DONE 2026-08-16: 12 new tests; budgets on every invocation; exit 3; __pycache__
+      excluded so dev litter cannot false-breach the committed-tree budget]
 - [x] T008 [P] (after T005) Add the build+query smoke test over `t2/` (new
       `tests/test_datasource_t2.py`, selected by `-k t2`): create the scanner
       marker at runtime exactly as `generate_corpus` does (git does not track
@@ -114,7 +116,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: TC-013 identity asserts + TC-014 pinned cross-file pair
       (encode_url@_url.py -> split_url@_parse.py, resolution=exact); root-collection
       collision with vendored upstream tests found+fixed via testpaths config]
-- [ ] T009 (after T007, T008) Wire T2 checks into the CI bench job: steps
+- [ ] T009 (after T007, T008) (in-progress) Wire T2 checks into the CI bench job: steps
       running the size-budget check and the t2 smoke test (plan checkpoint
       command: `uv run pytest -q -k "t2 or smoke"` green locally and in CI)
       (FR-002, AC3/AC4).
