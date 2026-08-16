@@ -93,9 +93,33 @@ def _n_results_bucket(n: int) -> str:
 # signal is token overlap only, and the measured top-1 agreement of skip
 # populations drops to ~0.0 -- rerank is the only semantic component left,
 # so it must run.
+#
+# Re-calibration (T018, FR-004/TC-013, 2026-08-16; DS-v1 ground truth, yarl
+# corpus, the 29-query tune split, bge-m3 + bge-reranker-base, chunk variant
+# B, rerank on, torch pinned): NO CHANGE -- 0.45 stands, with the numbers on
+# record. At margins {0.30, 0.45, 0.60, 0.75} the gate skips 0/29 tune
+# queries both at the shipped config and with query enrichment forced on:
+# every DS-v1 query is a natural-language question and none is an exact-name
+# reference of its fused #1 (0/29 exact-name hits either way -- the gate
+# deliberately still sees the RAW query, so flipping enrichment cannot
+# shift the corroboration), which makes the skip-rate curve flat at zero
+# across the entire margin axis. A margin cannot be re-calibrated on a
+# population with no skip traffic; the agent-style calibration above remains
+# the operative basis. Under the shipped config the margin axis is degenerate
+# anyway: the BM25 leg is empty for sentence queries, RRF fuses a single
+# list, and all 29 margins collapse to the same 0.128 constant. The
+# margin-only hypothetical (corroboration dropped) re-confirmed the original
+# rejection on this dataset too: it would skip 14/29 at 0.30 with only 0.50
+# top-1 rerank agreement (9/29 at 0.45, agreement 0.44) -- the exact-name
+# corroboration, not the margin, is what makes skips safe. The gate is
+# pair-format-safe by construction (verified again for T016's restructured
+# pairs): it reads the fused RRF ranking BEFORE the rerank call, so pair
+# construction cannot shift its inputs. tests/test_rerank_gating.py pins
+# this decision (TestCalibrationPin).
 # ---------------------------------------------------------------------------
 
-# Default for CAIRN_RERANK_MIN_MARGIN. See the calibration note above.
+# Default for CAIRN_RERANK_MIN_MARGIN. See the calibration note above
+# (re-validated T018 on the DS-v1 tune split: no change).
 _DEFAULT_RERANK_MIN_MARGIN = 0.45
 
 
@@ -412,7 +436,9 @@ def semantic_search(
     this boundary and feeds both legs from it: the single ``embed_query``
     call embeds the enriched ``dense_query`` (original + identifiers), and
     the sparse (BM25) fetch goes through enrichment's term mode. The
-    confidence gate and the rerank stage keep seeing the raw query. Flags
+    confidence gate keeps seeing the raw query (T018's measurement domain);
+    the rerank pair's query side is the enriched ``dense_query`` (T016,
+    D-005) — which equals the raw query whenever enrichment is off. Flags
     the function still does not know are ignored, never errors.
 
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
@@ -544,11 +570,11 @@ def semantic_search(
     # identifier appended once, per EnrichedQuery's contract), and the
     # sparse leg's term fetch reads the SAME object's sparse_query.
     # embeddings.embed_query itself stays untouched: the memory layer shares
-    # it (promotion.py) and must keep receiving raw queries. Everything
-    # downstream of the embedding keeps the RAW `query` -- the confidence
-    # gate's _exact_name_hit corroboration and the rerank pair -- so gate
+    # it (promotion.py) and must keep receiving raw queries. The confidence
+    # gate's _exact_name_hit corroboration keeps the RAW `query` -- so gate
     # inputs shift only through the fused ranking itself (T018's
-    # measurement). enrich() is a pure regex function, so evaluating it even
+    # measurement); the rerank pair (T016, D-005) receives `_dense_query`
+    # below. enrich() is a pure regex function, so evaluating it even
     # on paths that never reach a leg (e.g. the no-rows early return) is
     # harmless; with enrich off/None _enriched stays None and both legs see
     # the raw query exactly as today.
@@ -769,7 +795,12 @@ def semantic_search(
         logger.debug("rerank skipped: fused ranking decisive (margin gate)")
 
     if rerank_on:
-        final, reranked = rrk.rerank(query, candidates, limit)
+        # T016 (FR-004, D-005): the rerank pair's query side is
+        # `_dense_query` — the enriched query when FR-001 is on, the raw
+        # query otherwise. The confidence gate above still reads the RAW
+        # query (its _exact_name_hit corroboration is T018's domain); only
+        # the rerank stage sees the enriched form.
+        final, reranked = rrk.rerank(_dense_query, candidates, limit)
         # `reranked` is the cross-encoder's own outcome flag: False means it
         # degraded to returning the hybrid order unchanged (disabled, model
         # not cached, or a predict() failure -- see reranker.rerank). Report
@@ -780,6 +811,12 @@ def semantic_search(
             item["reranked"] = reranked
             if "rerank_score" in item:
                 item["rerank_score"] = round(item["rerank_score"], 4)
+                # Sigmoid-mapped companion of rerank_score (T016): additive,
+                # so guard with .get — a rerank stub may set only the raw
+                # field (test_rerank_gating's recorder does).
+                norm = item.get("rerank_score_norm")
+                if norm is not None:
+                    item["rerank_score_norm"] = round(norm, 4)
     else:
         final = candidates[:limit]
 

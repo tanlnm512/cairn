@@ -905,8 +905,11 @@ class TestEnrichDenseLeg:
             params=RetrievalParams(dense_threshold=0.0, enrich=True),
         )
         assert gate_queries == ["safeApiCall"]
-        # The rerank pair keeps the raw query too (changing it is T016's task).
-        assert rec.calls[0]["query"] == "safeApiCall"
+        # T016 (D-005) landed: the rerank pair's query side is now the
+        # enriched dense query -- "safeApiCall" is identifier-shaped, so
+        # enrich() appends its camelCase sub-tokens. The gate above keeps
+        # the raw query; only the rerank stage sees the enriched form.
+        assert rec.calls[0]["query"] == "safeApiCall safe Api Call"
 
 
 def _seed_url_fixture(conn) -> None:
