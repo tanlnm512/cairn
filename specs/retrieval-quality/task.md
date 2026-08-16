@@ -102,7 +102,15 @@ Nothing is DONE — every task opens unchecked.
       integrity row never re-embeds; schema bumped to cairn-quality-sweep/2 additively;
       11 tests, 1689 full green. Orchestrator amendment: CLI combo parser now passes
       variant through (was silently dropped — T015's shell entry needs it)]
-- [ ] T015 (after T013, T014) (in-progress) Run the variant ablation and ship the recipe: sweep A/B/C + field-dropout variants under P2's shipped defaults on the tune split (measurement validity: variant choice under raw queries could flip once queries are enriched — plan dependency 2); ship the winner as the `CAIRN_CHUNK_VARIANT` default; prove the re-embed round-trip as an index operation (full embedded count, zero skipped-symbol errors, fixed probe query answers — TC-007); absorb fixture churn (`chunk_for_symbol` impact = 85 items incl. semantic/rerank-gating fixtures — plan risk budget). (FR-002, D-004)
+- [x] T015 (after T013, T014) (in-progress) Run the variant ablation and ship the recipe: sweep A/B/C + field-dropout variants under P2's shipped defaults on the tune split (measurement validity: variant choice under raw queries could flip once queries are enriched — plan dependency 2); ship the winner as the `CAIRN_CHUNK_VARIANT` default; prove the re-embed round-trip as an index operation (full embedded count, zero skipped-symbol errors, fixed probe query answers — TC-007); absorb fixture churn (`chunk_for_symbol` impact = 85 items incl. semantic/rerank-gating fixtures — plan risk budget). (FR-002, D-004)
+      [DONE 2026-08-16: HONEST NO-SHIP with the strongest signal yet — C_TRIM won tune
+      decisively (recall 0.5828->0.6759, +9.3pp) and validate pointed +4.2pp but
+      p=0.579 (n=29 too small to confirm at 95%); default stays B. Full-set at winner
+      (evidence only): 0.4851 recall (+6.8pp) / 0.2529 MRR (-3.3pp) — the MRR dip is
+      T016's target. Dropout axis INERT on this corpus (parameters/return_type empty
+      for all 1066). Round-trip proven: 1059 re-embedded + 7 content-identical no-ops
+      explained, 0 failures, probe top-1 stable. Corrections: db_mb is sweep-order
+      file growth (VACUUM: B 6.75 / C_TRIM 6.88 MiB); content-identical chunks skip]
 
 ## Phase 4: Rerank stage + gate re-calibration (FR-004)
 <!-- Checkpoint (plan.md, After Phase 4): pair-format ablation + rerank marginal-value rows at the shipped config; gate margin re-calibrated (or explicit no-change justification) with the calibration note updated; confirmation sweep of leading combinations shows the shipped defaults are the joint winner on the tune split, held-out agrees; full-set re-run recorded. -->
