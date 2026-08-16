@@ -116,10 +116,12 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: TC-013 identity asserts + TC-014 pinned cross-file pair
       (encode_url@_url.py -> split_url@_parse.py, resolution=exact); root-collection
       collision with vendored upstream tests found+fixed via testpaths config]
-- [ ] T009 (after T007, T008) (in-progress) Wire T2 checks into the CI bench job: steps
+- [x] T009 (after T007, T008) Wire T2 checks into the CI bench job: steps
       running the size-budget check and the t2 smoke test (plan checkpoint
       command: `uv run pytest -q -k "t2 or smoke"` green locally and in CI)
       (FR-002, AC3/AC4).
+      [DONE 2026-08-16: one added smoke step (+[test] extra install); budget half
+      already live via T004 step per T007 every-invocation design — no duplicate]
 
 ## Phase 3: Hand-verified ground truth + validator (FR-003)
 <!-- Checkpoint: the survey's probe now reports ≥ 50 L1 / ≥ 20 L5 with

@@ -286,6 +286,22 @@ jobs:
       - name: Verify benchmark datasource (T1 content pin)
         run: python scripts/verify_datasource.py --size 300
 
+      # T2 checks (FR-002/AC3+AC4). The size-budget half needs NO extra step:
+      # since T007, verify_datasource.py measures both budget scopes (t2/ <=
+      # 3 MB, the whole datasource/ tree <= 5 MB, exit 3 on breach) on EVERY
+      # invocation, so the step above already carries it. The smoke half
+      # below builds a graph over the vendored snapshot and answers pinned
+      # queries (TC-013/TC-014) -- like the T1 pin, a deterministic content
+      # check (the deliberate exception to the continue-on-error rule above),
+      # not a timing, so it is a real gate. The bench job otherwise installs
+      # bare `pip install -e .`, so pytest rides the [test] extra; tests/ is
+      # path-scoped and pyproject's testpaths additionally protects bare runs
+      # from collecting the vendored upstream's own test files.
+      - name: T2 smoke test (vendored snapshot build+query)
+        run: |
+          pip install -e ".[test]"
+          pytest tests/ -q -k t2
+
       # Rolling baseline. The run-id-unique key always misses, so the post-job
       # save always stores THIS run's result; restore-keys prefix restores the
       # most recent entry -- on PRs cache scoping falls back to the latest
