@@ -128,7 +128,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      rationale (was "total 40 L1 30 L5 10"); validator re-verifies every
      expectation on a fresh build → exit 0; deliberately aging one entry
      names that entry. -->
-- [ ] T010 [P] (after T009) Add the graded ground-truth loader + matcher to
+- [ ] T010 [P] (after T009) (in-progress) Add the graded ground-truth loader + matcher to
       `src/cairn/eval.py`: second loader for `queries.jsonl` +
       `expectations.tsv` alongside `load_eval_queries` (D-008 — the yaml
       fixture and its 30/10 set stay untouched as test fixture); matching
@@ -142,7 +142,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       rationale" on the consumption side. Verify-before:
       `.venv/bin/python -c "from cairn.eval import load_eval_queries; ..."`
       → total 40 L1 30 L5 10 (survey before-picture) (FR-003).
-- [ ] T011 [P] (after T009) Author the ground-truth pair under
+- [x] T011 [P] (after T009) Author the ground-truth pair under
       `benchmarks/datasource/t2/ground_truth/` per D-004: `queries.jsonl`
       (query_id, level L1|L5, kind definition|callers|impact|flow|knowledge,
       text, rationale citing the snapshot) + `expectations.tsv` (query_id,
@@ -152,6 +152,9 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       one data commit, reviewable as a unit. Closes survey gap "Ground-truth
       set is not maintained data (generic shapes, 30/10 counts ...)" and
       moves the counts from 30/10 to ≥ 50/≥ 20 (FR-003, AC5, TC-019).
+      [DONE 2026-08-16: 82 queries (58 L1: 18 def/20 callers/10 impact/10 flow; 24 L5),
+      234 expectations (82 grade-2), 234/234 empirically verified vs a real
+      graph build of the yarl snapshot — zero aspirational entries]
 - [ ] T012 (after T010, T011) Add `scripts/verify_ground_truth.py`: build a
       fresh graph (+ OKF knowledge bundle for L5) from
       `benchmarks/datasource/t2/`, re-verify every expectation through the
