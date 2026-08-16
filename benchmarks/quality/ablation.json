@@ -1,0 +1,835 @@
+{
+  "dataset": {
+    "ground_truth": {
+      "expectations": 234,
+      "l1_expectations": 160,
+      "l1_queries": 58,
+      "path": "benchmarks/datasource/t2/ground_truth",
+      "queries": 82
+    },
+    "name": "benchmark-datasource",
+    "split": {
+      "method": "seeded random.Random 50/50 over the 58 L1 queries (D-006); selection reads tune only",
+      "seed": 24301,
+      "tune": 29,
+      "validate": 29
+    },
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "version": "DS-v1"
+  },
+  "measurement": {
+    "band": {
+      "mrr": 0.006,
+      "note": "D-009: DS-v1's artifact figures carry mint-time measurement noise (rerank-active pipeline flips near-tie rankings under environment state); the band flips sides across sessions (T011 finding). Rows of record cite the session that measured them; the T024 gap-fill session's same-config readings are disclosed in the all-levers-off row notes.",
+      "recall_at_10": 0.002
+    },
+    "protocol": {
+      "ann_backend": "off (no vec0, brute-force cosine scan)",
+      "chunk_variant": "B unless the row names another (re-embed via content-hash staleness flow)",
+      "embed_backend": "local (BAAI/bge-m3)",
+      "fusion": "on (incumbent k=60 / weights (1,1) / sparse_top_n none / dense_threshold 0.3)",
+      "machine": "reference-local (macOS-26.5.2-arm64-arm-64bit, 10 cores)",
+      "rerank": "CAIRN_RERANK=1 marker, default BAAI/bge-reranker-base, flat pairs (T016 structured reverted per T017), confidence gate margin 0.45",
+      "torch_threads": 1
+    },
+    "provenance": {
+      "lost_artifacts": {
+        "/tmp/cairn-t011/": "not retained; T011 numbers carried from specs/retrieval-quality/task.md DONE notes (authoritative fallback) with the missing MRR/p95 re-derived by the T024 gap-fill run",
+        "/tmp/cairn-t018/": "not retained; T018's always-fused vs always-rerank figures carried from task.md DONE notes (cited in structural_findings, not row-sourced)"
+      },
+      "surviving_artifacts": [
+        "/tmp/cairn-t012/{baseline,sweep_ofat,sweep_norerank,sweep_multifactor,calibration}.json",
+        "/tmp/cairn-t015/results_stage{1,2}.json",
+        "/tmp/cairn-t017/results.json",
+        "/tmp/cairn-t019/results_stage{1,2,3_marginal}.json",
+        "/tmp/cairn-t024/results_gapfill.json"
+      ]
+    }
+  },
+  "rows": [
+    {
+      "combo": "all-levers-off (shipped defaults)",
+      "full_set": {
+        "mrr": 0.2862,
+        "recall_at_10": 0.4174
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "TC-017 integrity row: full-set 0.4174/0.2862 equals DS-v1's artifact to 4 decimals (T019 session-measured; also T015 integrity_full_set_variant_B and T012 baseline.json concur). validate MRR re-derived by the T024 gap-fill session (evaluate_full_set per-query MRR over the 29 validate ids; validate recall is the recorded ladder baseline_mean). D-009 band cross-check, same gap-fill session: full-set 0.4174/0.2862, tune 0.5828/0.4444 (within the disclosed \u00b10.002/\u00b10.006 band).",
+      "shipped_defaults": true,
+      "source": "T019 (results_stage1.json incumbent_B_rr_on; results_stage3_marginal.json full_set; ladder baseline_mean)",
+      "tune": {
+        "mrr": 0.4444,
+        "p95_ms": 1142.0,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1279,
+        "recall_at_10": 0.2521
+      }
+    },
+    {
+      "combo": "enrich-on (query enrichment, all else incumbent)",
+      "full_set": {
+        "mrr": 0.2603,
+        "recall_at_10": 0.4042
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "DEFAULT OFF (bootstrap p=0.7198; negative point estimates on all three surfaces; TC-002 identifier-subset regression L1-D03 1.0->0.0). T011's +30% p95 observation reproduced by the gap-fill session (982.0 -> 1267.1 ms, +29%). Gap-fill same-session cross-check (one DB state, on/off pair): tune recall 0.5828/MRR 0.4115 vs incumbent 0.5828/0.4444 -- enrich cost -0.0329 MRR at equal recall in this session (T011's session read the near-tie recalls differently: tune 0.5713, full 0.4042, validate 0.2371 vs this session's 0.5828/0.4123/0.2417 -- D-009 near-tie flips; the no-ship verdict was bootstrap-based within T011's own session and stands).",
+      "shipped_defaults": false,
+      "source": "T011 (task.md DONE notes: tune 0.5828->0.5713, validate 0.2521->0.2371, full 0.4174->0.4042, bootstrap p=0.7198, +30% p95; /tmp/cairn-t011 not retained) + T024 gap-fill (results_gapfill.json: MRR figures + absolute p95, D-009 protocol, B_enrich_rr_on tune row)",
+      "tune": {
+        "mrr": 0.4115,
+        "p95_ms": 1267.1,
+        "recall_at_10": 0.5713
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "recall_at_10": 0.2371
+      }
+    },
+    {
+      "combo": "fusion: rrf_k=1",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 1,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "T012 honest no-ship: every fusion lever INERT under the shipped pipeline -- cross-encoder rerank flattens fused order (byte-identical top-10s 29/29 across k/weights/topN) and the sparse leg is empty 29/29 with enrich off. 18 combos across 3 passes; only the two dense-threshold rows above 0.45 moved, both negative.",
+      "shipped_defaults": false,
+      "source": "T012 (sweep_ofat.json)",
+      "tune": {
+        "mrr": 0.4444,
+        "p95_ms": 979.7135,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "fusion: rrf_weights=[2,1]",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          2.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "T012 honest no-ship: every fusion lever INERT under the shipped pipeline -- cross-encoder rerank flattens fused order (byte-identical top-10s 29/29 across k/weights/topN) and the sparse leg is empty 29/29 with enrich off. 18 combos across 3 passes; only the two dense-threshold rows above 0.45 moved, both negative.",
+      "shipped_defaults": false,
+      "source": "T012 (sweep_ofat.json)",
+      "tune": {
+        "mrr": 0.4444,
+        "p95_ms": 978.9653,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "fusion: sparse_top_n=10",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": 10
+      },
+      "notes": "T012 honest no-ship: every fusion lever INERT under the shipped pipeline -- cross-encoder rerank flattens fused order (byte-identical top-10s 29/29 across k/weights/topN) and the sparse leg is empty 29/29 with enrich off. 18 combos across 3 passes; only the two dense-threshold rows above 0.45 moved, both negative.",
+      "shipped_defaults": false,
+      "source": "T012 (sweep_ofat.json)",
+      "tune": {
+        "mrr": 0.4444,
+        "p95_ms": 979.7063,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "fusion: dense_threshold=0.45",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.45,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "T012 honest no-ship: every fusion lever INERT under the shipped pipeline -- cross-encoder rerank flattens fused order (byte-identical top-10s 29/29 across k/weights/topN) and the sparse leg is empty 29/29 with enrich off. 18 combos across 3 passes; only the two dense-threshold rows above 0.45 moved, both negative.",
+      "shipped_defaults": false,
+      "source": "T012 (sweep_ofat.json)",
+      "tune": {
+        "mrr": 0.4272,
+        "p95_ms": 979.6174,
+        "recall_at_10": 0.5656
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "fusion: dense_threshold=0.60",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.6,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "T012 honest no-ship: every fusion lever INERT under the shipped pipeline -- cross-encoder rerank flattens fused order (byte-identical top-10s 29/29 across k/weights/topN) and the sparse leg is empty 29/29 with enrich off. 18 combos across 3 passes; only the two dense-threshold rows above 0.45 moved, both negative. Threshold calibration: no cutoff separates true/false (unmatched top-1s ABOVE the matched median; 0.3 folklore-right, vacuously -- flat plateau to ~0.45).",
+      "shipped_defaults": false,
+      "source": "T012 (sweep_ofat.json)",
+      "tune": {
+        "mrr": 0.2636,
+        "p95_ms": 411.5834,
+        "recall_at_10": 0.2644
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "rerank-off (shipped config, all else incumbent)",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": false,
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Quality figures byte-identical across three sessions (0.5811/0.4351) -- the rerank-off pipeline is cross-encoder-free and deterministic. T019 stage-3 marginal value at the shipped config: rerank buys recall_delta +0.0017 / mrr_delta +0.0093 at p95 1083.6/38.3 ms (28x cost).",
+      "shipped_defaults": false,
+      "source": "T012 (sweep_norerank.json incumbent-norerank) + T017 (baseline_B__rerank_off) + T019 stage 3 (results_stage3_marginal.json rerank_off)",
+      "tune": {
+        "mrr": 0.4351,
+        "p95_ms": 28.8862,
+        "recall_at_10": 0.5811
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "recipe-A",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "A",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Dropout axis INERT on this corpus: parameters/return_type empty for all 1066 symbols (field_population_audit), so B_NO_SCOPE==B_IDENTITIES and C==C_TRIM produce identical chunks; B_NO_SIG differs from all-levers-off only in MRR noise.",
+      "shipped_defaults": false,
+      "source": "T015 (results_stage1.json sweep_doc rows)",
+      "tune": {
+        "mrr": 0.4201,
+        "p95_ms": 1151.1513,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "recipe-C",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "C",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Dropout axis INERT on this corpus: parameters/return_type empty for all 1066 symbols (field_population_audit), so B_NO_SCOPE==B_IDENTITIES and C==C_TRIM produce identical chunks; B_NO_SIG differs from all-levers-off only in MRR noise.",
+      "shipped_defaults": false,
+      "source": "T015 (results_stage1.json sweep_doc rows)",
+      "tune": {
+        "mrr": 0.3973,
+        "p95_ms": 1130.3336,
+        "recall_at_10": 0.6759
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "recipe-B_NO_SCOPE",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B_NO_SCOPE",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Dropout axis INERT on this corpus: parameters/return_type empty for all 1066 symbols (field_population_audit), so B_NO_SCOPE==B_IDENTITIES and C==C_TRIM produce identical chunks; B_NO_SIG differs from all-levers-off only in MRR noise.",
+      "shipped_defaults": false,
+      "source": "T015 (results_stage1.json sweep_doc rows)",
+      "tune": {
+        "mrr": 0.4722,
+        "p95_ms": 549.7761,
+        "recall_at_10": 0.653
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "recipe-B_NO_SIG",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B_NO_SIG",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Dropout axis INERT on this corpus: parameters/return_type empty for all 1066 symbols (field_population_audit), so B_NO_SCOPE==B_IDENTITIES and C==C_TRIM produce identical chunks; B_NO_SIG differs from all-levers-off only in MRR noise.",
+      "shipped_defaults": false,
+      "source": "T015 (results_stage1.json sweep_doc rows)",
+      "tune": {
+        "mrr": 0.4444,
+        "p95_ms": 1100.7138,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "recipe-B_IDENTITIES",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B_IDENTITIES",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Dropout axis INERT on this corpus: parameters/return_type empty for all 1066 symbols (field_population_audit), so B_NO_SCOPE==B_IDENTITIES and C==C_TRIM produce identical chunks; B_NO_SIG differs from all-levers-off only in MRR noise.",
+      "shipped_defaults": false,
+      "source": "T015 (results_stage1.json sweep_doc rows)",
+      "tune": {
+        "mrr": 0.4722,
+        "p95_ms": 514.6613,
+        "recall_at_10": 0.653
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "recipe-C_TRIM",
+      "full_set": {
+        "mrr": 0.2529,
+        "recall_at_10": 0.4851
+      },
+      "levers": {
+        "chunk_variant": "C_TRIM",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "C_TRIM won tune decisively (+0.0931 recall) but validate delta +0.0422 at p=0.579 -- n=29 too small to confirm at 95%; DEFAULT STAYS B. Full-set at winner recorded as evidence only (recall +0.0677 / MRR -0.0333 vs shipped -- the MRR dip was T016/T017's target). T019 ladder re-measured the same validate row byte-identically (cross-session determinism proven).",
+      "shipped_defaults": false,
+      "source": "T015 (results_stage1.json sweep_doc rows; results_stage2.json validate_report + full_set_winner)",
+      "tune": {
+        "mrr": 0.3973,
+        "p95_ms": 1052.8746,
+        "recall_at_10": 0.6759
+      },
+      "validate": {
+        "bootstrap": {
+          "ci_high": 0.1916,
+          "ci_low": -0.1118,
+          "delta": 0.0422,
+          "p_value": 0.5787,
+          "significant": false
+        },
+        "mrr": 0.1084,
+        "recall_at_10": 0.2943
+      }
+    },
+    {
+      "combo": "pair=structured, rerank-on (shipped config)",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "structured (T016, later reverted)",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Structured pair cost -0.1045 MRR vs flat on identical pools (pair_format_ab: 0.3399 vs 0.4444); the structured default was REVERTED to flat in T017 (reranker.py). T019's flat re-measurements supersede these rows for every shared combo.",
+      "shipped_defaults": false,
+      "source": "T017 (results.json rows; measured under T016's structured-pair default BEFORE the T017 revert)",
+      "tune": {
+        "mrr": 0.3399,
+        "p95_ms": 1302.5,
+        "recall_at_10": 0.5897
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "pair=structured, enrich-on, rerank-on",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "pair_format": "structured (T016, later reverted)",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Structured pair cost -0.1045 MRR vs flat on identical pools (pair_format_ab: 0.3399 vs 0.4444); the structured default was REVERTED to flat in T017 (reranker.py). T019's flat re-measurements supersede these rows for every shared combo.",
+      "shipped_defaults": false,
+      "source": "T017 (results.json rows; measured under T016's structured-pair default BEFORE the T017 revert)",
+      "tune": {
+        "mrr": 0.4106,
+        "p95_ms": 1634.8,
+        "recall_at_10": 0.5952
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "pair=structured, C_TRIM, rerank-on",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "C_TRIM",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "structured (T016, later reverted)",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Structured pair cost -0.1045 MRR vs flat on identical pools (pair_format_ab: 0.3399 vs 0.4444); the structured default was REVERTED to flat in T017 (reranker.py). T019's flat re-measurements supersede these rows for every shared combo.",
+      "shipped_defaults": false,
+      "source": "T017 (results.json rows; measured under T016's structured-pair default BEFORE the T017 revert)",
+      "tune": {
+        "mrr": 0.4156,
+        "p95_ms": 1300.3,
+        "recall_at_10": 0.6472
+      },
+      "validate": {
+        "reason": "not measured: selection-stage sweep rows ran on the tune split only; validate passes were reserved for bootstrap candidates (D-006)"
+      }
+    },
+    {
+      "combo": "enrich-on + rerank-off (B)",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "pair_format": "flat",
+        "rerank": false,
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Confirmation-ladder candidate; bootstrap verdict NO-SHIP (p=0.1179, delta +0.1123, 95% CI [-0.0240, 0.2514]). CLOSEST NEAR-MISS: every direction signal points enrich+rerank-off but none clears 95%.",
+      "shipped_defaults": false,
+      "source": "T019 (results_stage1.json rows + results_stage2.json ladder_rows)",
+      "tune": {
+        "mrr": 0.4866,
+        "p95_ms": 56.9,
+        "recall_at_10": 0.6337
+      },
+      "validate": {
+        "bootstrap": {
+          "ci_high": 0.2514,
+          "ci_low": -0.024,
+          "delta": 0.1123,
+          "p_value": 0.1179,
+          "significant": false
+        },
+        "mrr": 0.124,
+        "recall_at_10": 0.3644
+      }
+    },
+    {
+      "combo": "C_TRIM + rerank-on",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "C_TRIM",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Confirmation-ladder candidate; bootstrap verdict NO-SHIP (p=0.5787, delta +0.0422, 95% CI [-0.1118, 0.1916]).",
+      "shipped_defaults": false,
+      "source": "T019 (results_stage1.json rows + results_stage2.json ladder_rows)",
+      "tune": {
+        "mrr": 0.3973,
+        "p95_ms": 1148.9,
+        "recall_at_10": 0.6759
+      },
+      "validate": {
+        "bootstrap": {
+          "ci_high": 0.1916,
+          "ci_low": -0.1118,
+          "delta": 0.0422,
+          "p_value": 0.5787,
+          "significant": false
+        },
+        "mrr": 0.1084,
+        "recall_at_10": 0.2943
+      }
+    },
+    {
+      "combo": "C_TRIM + rerank-off",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "C_TRIM",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "pair_format": "flat",
+        "rerank": false,
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Confirmation-ladder candidate; bootstrap verdict NO-SHIP (p=0.3761, delta -0.0563, 95% CI [-0.1839, 0.0575]).",
+      "shipped_defaults": false,
+      "source": "T019 (results_stage1.json rows + results_stage2.json ladder_rows)",
+      "tune": {
+        "mrr": 0.4806,
+        "p95_ms": 39.5,
+        "recall_at_10": 0.6095
+      },
+      "validate": {
+        "bootstrap": {
+          "ci_high": 0.0575,
+          "ci_low": -0.1839,
+          "delta": -0.0563,
+          "p_value": 0.3761,
+          "significant": false
+        },
+        "mrr": 0.1069,
+        "recall_at_10": 0.1957
+      }
+    },
+    {
+      "combo": "C_TRIM + enrich-on + rerank-on",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "C_TRIM",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Confirmation-ladder candidate; bootstrap verdict NO-SHIP (p=0.6242, delta +0.0376, 95% CI [-0.1149, 0.1893]). Tune leader (+0.1161 recall over shipped tune) that collapsed to +0.0376 on validate -- 29-query overfit caught by the guard.",
+      "shipped_defaults": false,
+      "source": "T019 (results_stage1.json rows + results_stage2.json ladder_rows)",
+      "tune": {
+        "mrr": 0.4455,
+        "p95_ms": 1338.2,
+        "recall_at_10": 0.6989
+      },
+      "validate": {
+        "bootstrap": {
+          "ci_high": 0.1893,
+          "ci_low": -0.1149,
+          "delta": 0.0376,
+          "p_value": 0.6242,
+          "significant": false
+        },
+        "mrr": 0.1089,
+        "recall_at_10": 0.2897
+      }
+    },
+    {
+      "combo": "C_TRIM + enrich-on + rerank-off",
+      "full_set": {
+        "reason": "not measured: full-set passes were reserved for the shipped config and evidence-only near-miss rows (D-007 economy)"
+      },
+      "levers": {
+        "chunk_variant": "C_TRIM",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "pair_format": "flat",
+        "rerank": false,
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "notes": "Confirmation-ladder candidate; bootstrap verdict NO-SHIP (p=0.2104, delta +0.0911, 95% CI [-0.0480, 0.2356]).",
+      "shipped_defaults": false,
+      "source": "T019 (results_stage1.json rows + results_stage2.json ladder_rows)",
+      "tune": {
+        "mrr": 0.4926,
+        "p95_ms": 41.1,
+        "recall_at_10": 0.6469
+      },
+      "validate": {
+        "bootstrap": {
+          "ci_high": 0.2356,
+          "ci_low": -0.048,
+          "delta": 0.0911,
+          "p_value": 0.2104,
+          "significant": false
+        },
+        "mrr": 0.1563,
+        "recall_at_10": 0.3431
+      }
+    }
+  ],
+  "schema": "cairn-quality-ablation/1",
+  "shipped_defaults": {
+    "config": {
+      "chunk_variant": "B",
+      "dense_threshold": 0.3,
+      "enrich": false,
+      "pair_format": "flat",
+      "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+      "rrf_k": 60,
+      "rrf_weights": [
+        1.0,
+        1.0
+      ],
+      "sparse_top_n": null
+    },
+    "row": "all-levers-off (shipped defaults)",
+    "statement": "B / enrich OFF / rerank auto+gate ON under marker / flat pairs / gate 0.45 / k60 / w(1,1) / topN none / thr 0.3 -- unchanged from pre-sweep defaults; 5/5 T019 ladder candidates failed the held-out bootstrap guard, so the incumbent ships (T019)."
+  },
+  "structural_findings": [
+    {
+      "finding": "FTS5 quoted-phrase defect: sentence queries reached search_symbols as ONE quoted MATCH phrase, so the BM25 leg was empty 29/29 with enrich off -- RRF fused [empty, dense] and every fusion knob measured noise (the task's own T012 order warning realized).",
+      "task": "T007/T008/T012"
+    },
+    {
+      "finding": "Cross-encoder flattening: with rerank on, fused order is byte-identical 29/29 across k{1,10,60} x weights{(2,1),(1,2),(3,1),(1,3)} x topN{10,20}; under enrich ON always-fused (0.6231/0.5172) beats always-rerank (0.5713/0.4101) -- the reranker MASKS upstream lever gains.",
+      "task": "T012/T018"
+    },
+    {
+      "finding": "Rerank masking of enrichment: at ~40x p95 the stage is strictly worse on BOTH metrics with enrich on (T017 rows: enrich rr-on 0.5952/0.4106 vs rr-off 0.6337/0.4808); marginal value at the shipped flat config is only +0.0017 recall / +0.0093 MRR (T019 stage 3).",
+      "task": "T017/T019"
+    },
+    {
+      "finding": "Structured-pair MRR cost: T016's importance-ordered structured pair cost -0.1045 MRR vs flat on identical pools (0.3399 vs 0.4444) -- structured default REVERTED to flat; construction tests pin the choice.",
+      "task": "T016/T017"
+    },
+    {
+      "finding": "Corpus-recipe signal: C_TRIM won tune (+0.0931) and the dropout axis was inert (parameters/return_type empty 1066/1066), but validate could not confirm (p=0.579) -- default stays B.",
+      "task": "T013/T014/T015"
+    }
+  ],
+  "suite": "quality-ablation",
+  "task": "T024 (FR-005, FR-006, FR-007); rows compiled from the T011-T019 sweep artifacts",
+  "verdict": {
+    "evidence_pointers": [
+      "rows: 'enrich-on + rerank-off (B)' -- tune 0.6337/0.4866, validate delta +0.1123, p=0.118 (closest near-miss)",
+      "rows: 'C_TRIM + enrich-on + rerank-on' -- tune 0.6989 (+0.1161 recall), validate delta +0.0376, p=0.624 (tune leader, overfit caught)",
+      "rows: 'recipe-C_TRIM' -- tune +0.0931, validate delta +0.0422, p=0.579; full-set evidence 0.4851/0.2529 (MRR dip)",
+      "T019 ladder: 5/5 bootstrap no-ships, CIs all straddling zero at n=29",
+      "T012: fusion levers structurally inert (cross-encoder flattening + empty sparse leg) -- no reachable gain there without the enrich re-test"
+    ],
+    "honesty_clause": "if the sweep cannot reach the margin without violating the protected baselines or the precision doctrine, the best evidenced configuration ships and the shortfall is documented in the ablation table -- never gamed (spec.md SC-1)",
+    "margins": {
+      "mrr": -0.0438,
+      "recall_at_10": -0.0826
+    },
+    "outcome": "shortfall-documented",
+    "sc1_actual": {
+      "mrr": 0.2862,
+      "recall_at_10": 0.4174
+    },
+    "sc1_targets": {
+      "mrr": 0.33,
+      "recall_at_10": 0.5
+    },
+    "statement": "SC-1 (recall@10 >= 0.50, MRR >= 0.33) was NOT reached: the shipped configuration is unchanged at full-set 0.4174/0.2862 (margins -0.0826 recall / -0.0438 MRR). Five confirmation-ladder candidates beat the incumbent on tune -- up to C_TRIM x enrich x rerank-on at 0.6989 tune recall (+0.1161) -- but ALL FIVE failed the held-out paired-bootstrap guard on the 29-query validate split (best: B x enrich x rerank-off, delta +0.1123, p=0.118). The binding constraint is the ground truth, not the levers: at n=29 every bootstrap CI straddles zero (widths ~+/-0.13-0.15), so no true improvement of this size can clear 95% on DS-v1. The honest conclusion: a DS-v2 with substantially more L1 queries is the unlock, and the enrich+rerank-off direction -- the only direction every near-miss points to -- is its first candidate. Match rules were never loosened; nothing shipped unverified.",
+    "what_would_clear_the_bar": [
+      "DS-v2 with more L1 queries: at n=29 the bootstrap CIs are +/-0.13-0.15 -- a +0.11 true delta needs roughly 2-3x the validate queries to clear 95%",
+      "first candidate for DS-v2: enrich + rerank-off (B or C_TRIM) -- the only direction with consistent tune AND validate point estimates across T011/T015/T017/T019",
+      "re-test enrichment after any corpus-recipe change (T012's order dependency): the sparse leg only contributes under enrich-on, which is where fusion knobs stop being inert"
+    ]
+  }
+}
