@@ -210,7 +210,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       (FR-004, AC1, TC-007..TC-012).
       [DONE 2026-08-16: 12 tests; exit contract 0 clean / 1 usage+baseline / 2 regression;
       field-by-field advisory mismatch warning; unknown version names available ones]
-- [ ] T015 (after T014, T012) (in-progress) Generate + commit `benchmarks/baselines/DS-v1/`
+- [x] T015 (after T014, T012) Generate + commit `benchmarks/baselines/DS-v1/`
       on the maintainer's machine (`runner_class reference-local`):
       `perf.json`, `scaling.json`, `quality.json` as self-describing JSONs
       (schema tag + T013 stamp + existing payload keys — D-001); quality from
@@ -218,7 +218,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       scaling runs at sizes 100..5000; landed as its own data commit inside
       the P4 PR (plan Delivery); DS-v1 is immutable after commit (D-010).
       Closes survey gap "No committed baselines/DS-v1" (FR-004).
-- [ ] T016 (after T015) Rewire the CI bench job to committed baselines
+      [DONE 2026-08-16: 4 artifacts + README + mint script (752s wall); first real
+      quality numbers L1 recall@10=0.4174 MRR=0.2862 (bge-m3); L5=0.0 documented
+      as surface-absent (no bundle); compares exit 0 (perf max +8.7%)]
+- [ ] T016 (after T015) (in-progress) Rewire the CI bench job to committed baselines
       (D-007): step 5 gains `--baseline DS-v1`; drop cache steps 4+7
       (actions/cache `bench-baseline-v1-*`, `cp bench-current.json
       bench-baseline.json`); keep steps 6/8/9 byte-compatible — advisory

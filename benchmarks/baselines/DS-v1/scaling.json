@@ -1,0 +1,56 @@
+{
+  "schema": "cairn-bench-baseline/1",
+  "points": [
+    {
+      "n_files": 100,
+      "symbols": 3000,
+      "build_s": 1.807,
+      "embed_s": 1.033,
+      "db_mb": 12.56,
+      "resolve_rate": 1.0,
+      "peak_mem_mb": 12.43
+    },
+    {
+      "n_files": 500,
+      "symbols": 15000,
+      "build_s": 7.703,
+      "embed_s": 5.149,
+      "db_mb": 61.88,
+      "resolve_rate": 1.0,
+      "peak_mem_mb": 59.33
+    },
+    {
+      "n_files": 1000,
+      "symbols": 30000,
+      "build_s": 17.808,
+      "embed_s": 10.327,
+      "db_mb": 123.63,
+      "resolve_rate": 1.0,
+      "peak_mem_mb": 118.38
+    },
+    {
+      "n_files": 5000,
+      "symbols": 150000,
+      "build_s": 475.929,
+      "embed_s": 51.555,
+      "db_mb": 618.92,
+      "resolve_rate": 1.0,
+      "peak_mem_mb": 591.2
+    }
+  ],
+  "timestamp": "2026-08-16T07:08:29.284337+00:00",
+  "dataset": {
+    "name": "benchmark-datasource",
+    "version": "DS-v1",
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "identity_size": 300
+  },
+  "cairn_version": "0.11.0",
+  "machine_profile": {
+    "arch": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "runner_class": "reference-local"
+  }
+}
