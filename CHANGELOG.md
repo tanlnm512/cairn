@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- _Nothing yet._
+
+### Changed
+- _Nothing yet._
+
+## [0.11.0] - 2026-08-16
+
+> **Focus:** performance across the whole arc an agent feels — query path,
+> write path, freshness, and evidence. Impact queries answer from the
+> precomputed closure (20.9 ms → 0.1 ms p50); the server pools connections
+> (11.7×) and pre-warms its models (first semantic query 9.4 s → 0.3 s);
+> rerank is confidence-gated behind a calibrated threshold; `cairn update`
+> maintains derived indexes incrementally (single-file update at 1,000 files:
+> 377 s → 9.7 s, 2.5% of a build); the ANN index stays in sync per
+> upsert/delete with drift surfaced in doctor and status; with the `[watch]`
+> extra, `cairn serve` sees edits live (save → queryable in ~2 s); and a new
+> agent-effort benchmark publishes the harness cost story (99% fewer tool
+> calls, 99.5% fewer tokens vs a grep/read control). numpy became a core
+> dependency to keep the fallback scan fast. Full methodology and tables in
+> `docs/benchmarks.md`; phase record in `docs/phases/performance-gap/`.
+
+### Added
 - **Live file watching**: with the `[watch]` extra installed, `cairn serve`
   now sees source edits made while it runs — debounced (≤2 s) file events
   insert `pending_sync` rows (so concurrent readers get staleness banners)
