@@ -279,3 +279,73 @@ def test_tool_count_unchanged_at_27():
     """
     verify_tool_count()  # raises AssertionError on drift
     assert _EXPECTED_TOOL_COUNT == 27
+
+
+def test_health_block_flags_drift_unindexed(status_db, monkeypatch):
+    """Vec0 table exists but indexes FEWER rows than embeddings: recall loss
+    (recent symbols invisible to ANN) -> direction-aware ``ann=stale``
+    degradation, parity with the doctor's drift branch."""
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: False)
+    monkeypatch.setattr("cairn.graph.ann_index.ann_backend_enabled", lambda: True)
+    monkeypatch.setattr("cairn.graph.ann_index.index_exists", lambda c, m: True)
+    monkeypatch.setattr("cairn.graph.ann_index.index_row_count", lambda c, m: 2)
+
+    def setup(conn):
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk) "
+                "VALUES (?, ?, 8, ?, ?)",
+                (f"s{i}", emb.current_model(), b"\x00" * 32, "chunk"),
+            )
+
+    _make_db(status_db, setup=setup)
+    out = _status()
+    assert "ann=stale(1 unindexed)" in out
+
+
+def test_health_block_flags_drift_stale_vectors(status_db, monkeypatch):
+    """More vec rows than embeddings: stale entries survived a deletion and
+    can pair a REUSED rowid with an unrelated vector -- wrong results, not
+    just missing ones (the doctor's worse direction)."""
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: False)
+    monkeypatch.setattr("cairn.graph.ann_index.ann_backend_enabled", lambda: True)
+    monkeypatch.setattr("cairn.graph.ann_index.index_exists", lambda c, m: True)
+    monkeypatch.setattr("cairn.graph.ann_index.index_row_count", lambda c, m: 3)
+
+    def setup(conn):
+        for i in range(2):
+            conn.execute(
+                "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk) "
+                "VALUES (?, ?, 8, ?, ?)",
+                (f"s{i}", emb.current_model(), b"\x00" * 32, "chunk"),
+            )
+
+    _make_db(status_db, setup=setup)
+    out = _status()
+    assert "ann=stale(1 stale vectors)" in out
+
+
+def test_health_block_no_drift_degradation_when_in_sync(status_db, monkeypatch):
+    import cairn.graph.embeddings as emb
+
+    monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: False)
+    monkeypatch.setattr("cairn.graph.ann_index.ann_backend_enabled", lambda: True)
+    monkeypatch.setattr("cairn.graph.ann_index.index_exists", lambda c, m: True)
+    monkeypatch.setattr("cairn.graph.ann_index.index_row_count", lambda c, m: 2)
+
+    def setup(conn):
+        for i in range(2):
+            conn.execute(
+                "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk) "
+                "VALUES (?, ?, 8, ?, ?)",
+                (f"s{i}", emb.current_model(), b"\x00" * 32, "chunk"),
+            )
+
+    _make_db(status_db, setup=setup)
+    out = _status()
+    assert "ann=" not in out
+    assert "  degradations: none" in out

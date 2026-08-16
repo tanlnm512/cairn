@@ -344,20 +344,41 @@ def _health_block(conn) -> dict:
     # ann_index.ann_backend_enabled() and the doctor's _check_ann. Beyond the
     # load probe, an embeddings-populated model with no vec0 table is also a
     # degradation (semantic queries silently run the brute-force scan) --
-    # mirrors the doctor's index_exists probe.
+    # mirrors the doctor's index_exists probe. Row-count drift is the third
+    # state, direction-aware like the doctor: unindexed rows are a recall
+    # loss; stale extra rows can pair a REUSED rowid with an unrelated vector
+    # (wrong results, not just missing ones).
     try:
         configured = (
             os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
             or "sqlite-vec"
         )
         if configured == "sqlite-vec":
-            from cairn.graph.ann_index import ann_backend_enabled, index_exists
+            from cairn.graph.ann_index import (
+                ann_backend_enabled,
+                index_exists,
+                index_row_count,
+            )
             from cairn.graph.embeddings import current_model, embed_count
 
             if not ann_backend_enabled():
                 degradations.append("ann=unavailable")
-            elif embed_count(conn) > 0 and not index_exists(conn, current_model()):
-                degradations.append("ann=no_index")
+            else:
+                model = current_model()
+                emb_n = embed_count(conn)
+                if emb_n > 0 and not index_exists(conn, model):
+                    degradations.append("ann=no_index")
+                elif emb_n > 0:
+                    idx_n = index_row_count(conn, model)
+                    if idx_n is not None and idx_n != emb_n:
+                        if idx_n < emb_n:
+                            degradations.append(
+                                f"ann=stale({emb_n - idx_n} unindexed)"
+                            )
+                        else:
+                            degradations.append(
+                                f"ann=stale({idx_n - emb_n} stale vectors)"
+                            )
     except Exception:
         pass
 

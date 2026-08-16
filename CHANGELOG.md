@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corpus, plus index-mode invariant and DFS query-count tests.
 
 ### Changed
+- **Dependencies**: `numpy>=1.24` is now a core dependency (was
+  `[semantic]`-only) — it drives the batched cosine scan at ~0.7 µs/row vs
+  ~28–39 µs/row for the (also improved) pure-Python fallback, and that scan is
+  what `semantic_search` runs whenever no vec0 index exists. pip-audit clean at
+  the locked versions.
 - **Performance**: `impact_analysis`/`trace_flow` memoise per-name
   caller/callee/definition lookups (one query per distinct name per call
   instead of one per visited symbol); the MCP server pools read connections
