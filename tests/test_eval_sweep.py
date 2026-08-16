@@ -516,3 +516,60 @@ class TestEvaluateOnSeamAdditions:
         assert report["recall_at_10"] == 1.0
         assert report["mrr"] == 0.5
         assert isinstance(report["durations_ms"]["l1-alpha"], float)
+
+
+class TestSweepCli:
+    """T005: `cairn eval --sweep` is a thin consumer of run_sweep."""
+
+    def test_sweep_requires_ground_truth_dir(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        runner = CliRunner()
+        result = runner.invoke(
+            eval_cmd,
+            ["--sweep", "[]", "--queries", str(tmp_path / "nope.yaml")],
+            catch_exceptions=True,
+        )
+        assert result.exit_code != 0
+        assert "ground-truth directory" in result.output
+
+    def test_sweep_inline_combos_emit_canonical_doc(
+        self, tmp_path, monkeypatch, sweep_db, gt_dir
+    ):
+        import json as _json
+
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        monkeypatch.setenv("CAIRN_DB", str(sweep_db))
+        runner = CliRunner()
+        spec = _json.dumps([{"name": "loose", "params": {"dense_threshold": 0.0}}])
+        result = runner.invoke(
+            eval_cmd,
+            ["--sweep", spec, "--queries", str(gt_dir)],
+            catch_exceptions=True,
+        )
+        assert result.exit_code == 0, result.output
+        doc = _json.loads(result.output)
+        assert doc["schema"] == "cairn-quality-sweep/1"
+        names = [r["combo"] for r in doc["rows"]]
+        assert names[0] == "all-levers-off" and "loose" in names
+
+    def test_sweep_out_writes_file(self, tmp_path, monkeypatch, sweep_db, gt_dir):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        monkeypatch.setenv("CAIRN_DB", str(sweep_db))
+        out = tmp_path / "sweep.json"
+        runner = CliRunner()
+        result = runner.invoke(
+            eval_cmd,
+            ["--sweep", "[]", "--queries", str(gt_dir), "--out", str(out)],
+            catch_exceptions=True,
+        )
+        assert result.exit_code == 0, result.output
+        assert out.exists() and "row(s)" in result.output
