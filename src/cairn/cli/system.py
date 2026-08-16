@@ -493,7 +493,8 @@ def status(db, knowledge):
 @click.option("--knowledge", default=DEFAULT_KNOWLEDGE_PATH, help="Knowledge directory path.")
 @click.option("--corpus", type=click.Choice(["L1", "L5", "all"]), default="all", help="Corpus filter.")
 @click.option("--queries", "queries_path", default=None,
-              help="Path to eval queries.yaml (default: bundled tests/eval/queries.yaml).")
+              help="Path to eval queries.yaml OR a ground-truth directory "
+                   "(queries.jsonl + expectations.tsv); default: bundled tests/eval/queries.yaml.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def eval_cmd(db, knowledge, corpus, queries_path, as_json):
     """Run retrieval evaluation harness across L1/L5 corpora."""
@@ -505,6 +506,8 @@ def eval_cmd(db, knowledge, corpus, queries_path, as_json):
     conn = get_db(db)
     try:
         report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
+    except ValueError as exc:
+        raise click.ClickException(f"invalid eval dataset: {exc}") from exc
     finally:
         conn.close()
 
