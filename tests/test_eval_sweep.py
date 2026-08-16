@@ -833,10 +833,15 @@ class TestSweepCli:
 
         from cairn.cli.system import eval_cmd
 
+        # eval_cmd's --db default is DEFAULT_DB_PATH bound at import (the
+        # known CAIRN_HOME-at-import quirk) — on fresh CI runners that store
+        # parent does not exist (sqlite "unable to open database file").
+        # Pass --db explicitly; env overrides don't reach import-time defaults.
         runner = CliRunner()
         result = runner.invoke(
             eval_cmd,
-            ["--sweep", "[]", "--queries", str(tmp_path / "nope.yaml")],
+            ["--db", str(tmp_path / "cli.kg"),
+             "--sweep", "[]", "--queries", str(tmp_path / "nope.yaml")],
             catch_exceptions=True,
         )
         assert result.exit_code != 0
@@ -856,7 +861,7 @@ class TestSweepCli:
         spec = _json.dumps([{"name": "loose", "params": {"dense_threshold": 0.0}}])
         result = runner.invoke(
             eval_cmd,
-            ["--sweep", spec, "--queries", str(gt_dir)],
+            ["--db", str(sweep_db), "--sweep", spec, "--queries", str(gt_dir)],
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
@@ -875,7 +880,8 @@ class TestSweepCli:
         runner = CliRunner()
         result = runner.invoke(
             eval_cmd,
-            ["--sweep", "[]", "--queries", str(gt_dir), "--out", str(out)],
+            ["--db", str(sweep_db), "--sweep", "[]",
+             "--queries", str(gt_dir), "--out", str(out)],
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
