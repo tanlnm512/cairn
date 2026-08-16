@@ -23,6 +23,7 @@ from cairn.bench.datasource import (
     REQUIRED_ENTRY_KEYS,
     REQUIRED_MANIFEST_KEYS,
     REQUIRED_T1_KEYS,
+    REQUIRED_T3_ENTRY_KEYS,
     load_manifest,
     save_manifest,
     tree_hash,
@@ -301,8 +302,96 @@ class TestValidateManifest:
         assert validate_manifest(["not", "a", "manifest"]) != []
 
     def test_unknown_sections_are_ignored(self):
-        """Forward compatibility: the t3 pin list (T019) extends the schema
-        without invalidating manifests this validator accepted."""
+        """Forward compatibility: a section the validator does not know (say a
+        future ``t4``) extends the schema without invalidating manifests this
+        validator accepted. (``t3`` itself became a known, validated section
+        in T019 -- see TestValidateManifestT3.)"""
         manifest = _valid_manifest()
-        manifest["t3"] = [{"name": "big", "url": "https://x", "commit": "0" * 40}]
+        manifest["t4"] = [{"name": "big", "url": "https://x", "commit": "0" * 40}]
         assert validate_manifest(manifest) == []
+
+
+# --- manifest validation: optional t3 pin section (T019, FR-006/TC-029) ----
+
+
+def _valid_t3() -> dict:
+    """A t3 section satisfying the documented pin contract."""
+    return {
+        "entries": [
+            {
+                "name": "home-assistant/core",
+                "url": "https://github.com/home-assistant/core",
+                "commit": "0" * 40,
+                "scale_hint": "~27k files, Python",
+            }
+        ]
+    }
+
+
+class TestValidateManifestT3:
+    def test_valid_t3_section_has_no_errors(self):
+        manifest = _valid_manifest()
+        manifest["t3"] = _valid_t3()
+        assert validate_manifest(manifest) == []
+
+    def test_absent_t3_still_valid(self):
+        """The section is optional by design: DS-v1 manifests predate it and
+        a T3 addition must not invalidate DS-v1 (D-010)."""
+        assert "t3" not in _valid_manifest()
+        assert validate_manifest(_valid_manifest()) == []
+
+    @pytest.mark.parametrize("key", REQUIRED_T3_ENTRY_KEYS)
+    def test_missing_t3_entry_key_rejected(self, key):
+        manifest = _valid_manifest()
+        t3 = _valid_t3()
+        del t3["entries"][0][key]
+        manifest["t3"] = t3
+        errors = validate_manifest(manifest)
+        assert any(f"t3.entries[0]: missing required key '{key}'" in e for e in errors)
+
+    def test_t3_must_be_an_object(self):
+        manifest = _valid_manifest()
+        manifest["t3"] = [{"name": "big"}]  # a bare list, not {"entries": [...]}
+        assert any("t3: expected a JSON object" in e for e in validate_manifest(manifest))
+
+    def test_t3_entries_must_be_a_non_empty_list(self):
+        manifest = _valid_manifest()
+        manifest["t3"] = {"entries": []}
+        assert any("t3.entries: expected a non-empty list" in e for e in validate_manifest(manifest))
+
+    def test_t3_missing_entries_key_rejected(self):
+        manifest = _valid_manifest()
+        manifest["t3"] = {"pins": []}
+        assert any("t3: missing required key 'entries'" in e for e in validate_manifest(manifest))
+
+    def test_bad_t3_commit_rejected(self):
+        manifest = _valid_manifest()
+        manifest["t3"] = _valid_t3()
+        manifest["t3"]["entries"][0]["commit"] = "not-hex"
+        assert any("t3.entries[0].commit" in e for e in validate_manifest(manifest))
+
+    def test_non_string_t3_field_rejected(self):
+        manifest = _valid_manifest()
+        manifest["t3"] = _valid_t3()
+        manifest["t3"]["entries"][0]["scale_hint"] = 27000
+        errors = validate_manifest(manifest)
+        assert any("t3.entries[0].scale_hint: expected a string" in e for e in errors)
+
+    def test_second_entry_validated_too(self):
+        """Every entry is checked, not just the first -- the manifest's real
+        t3 section pins two scale points (TC-029)."""
+        manifest = _valid_manifest()
+        t3 = _valid_t3()
+        t3["entries"].append(
+            {
+                "name": "torvalds/linux",
+                "url": "https://github.com/torvalds/linux",
+                "commit": "1" * 40,
+                "scale_hint": "~70k files, C",
+            }
+        )
+        manifest["t3"] = t3
+        assert validate_manifest(manifest) == []
+        del t3["entries"][1]["url"]
+        assert any("t3.entries[1]: missing required key 'url'" in e
+                   for e in validate_manifest(manifest))

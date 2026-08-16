@@ -55,5 +55,21 @@
       5000
     ]
   },
+  "t3": {
+    "entries": [
+      {
+        "commit": "0308f01b295a8ecfef9938b67514aa1b7b95e5bc",
+        "name": "home-assistant/core",
+        "scale_hint": "~27k files (18.2k Python) -- mid scale point",
+        "url": "https://github.com/home-assistant/core"
+      },
+      {
+        "commit": "3eb40771c00a8488fa6ed2cc1fe203477908bf38",
+        "name": "torvalds/linux",
+        "scale_hint": "~70k files (26.7k .c, 16.6k .h) -- extreme scale point",
+        "url": "https://github.com/torvalds/linux"
+      }
+    ]
+  },
   "version": 1
 }

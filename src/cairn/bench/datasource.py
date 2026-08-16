@@ -66,8 +66,9 @@ Manifest JSON schema (minted by T002, validated here):
       }
     }
 
-``counts`` is the ``corpus_stats`` shape (corpus.py:99). Unknown
-top-level sections (the ``t3`` pin list lands in T019) are ignored by
+``counts`` is the ``corpus_stats`` shape (corpus.py:99). The optional
+``t3`` pin section (T019) carries ``{"entries": [{name, url, commit,
+scale_hint}, ...]}``; unknown top-level sections are still ignored by
 ``validate_manifest`` so later sections can extend the schema without
 this validator rejecting them.
 """
@@ -96,6 +97,11 @@ REQUIRED_MANIFEST_KEYS = ("schema", "version", "t1")
 REQUIRED_T1_KEYS = ("generator_git_sha", "seed", "sizes", "complexity", "entries")
 REQUIRED_ENTRY_KEYS = ("tree_hash", "counts")
 REQUIRED_COUNT_KEYS = ("files", "lines", "bytes")
+# The optional T3 pin section (T019, FR-006): when "t3" is present each of its
+# entries must carry all four keys -- name/url identify the repo, commit is the
+# exact pin the local fetch-by-pin command (T020) checks out, scale_hint is the
+# human-readable scale point (e.g. "~27k files, Python") TC-029 reads.
+REQUIRED_T3_ENTRY_KEYS = ("name", "url", "commit", "scale_hint")
 # The three complexity profiles generate_corpus understands (corpus.py:43-48).
 VALID_COMPLEXITIES = ("low", "medium", "high")
 
@@ -216,8 +222,12 @@ def validate_manifest(manifest: object) -> list[str]:
     the sizes/entries cross-check guard the "tree-hash at every declared
     size" invariant the CI assert depends on.
 
-    Unknown top-level sections (e.g. the ``t3`` pins from T019) are ignored
-    -- extending the schema must not invalidate existing manifests.
+    The optional ``t3`` pin section (T019) is validated only when present:
+    absent stays valid (D-010 -- a T3 addition must not invalidate DS-v1
+    manifests), present requires an ``entries`` list whose every entry
+    carries the four pin keys. Genuinely unknown top-level sections are
+    still ignored -- extending the schema must not invalidate existing
+    manifests.
     """
     errors: list[str] = []
     if not isinstance(manifest, dict):
@@ -305,6 +315,43 @@ def validate_manifest(manifest: object) -> list[str]:
                                 f"{prefix}.counts.{req}: expected a non-negative "
                                 f"integer, got {value!r}"
                             )
+
+    # Optional T3 pin section (T019): absent stays valid (DS-v1 manifests
+    # predate it -- D-010: a T3 addition must not invalidate DS-v1); when
+    # present, each entry must carry the four pin keys.
+    t3 = manifest.get("t3")
+    if isinstance(t3, dict):
+        if "entries" not in t3:
+            errors.append("t3: missing required key 'entries'")
+            t3_entries = None
+        else:
+            t3_entries = t3["entries"]
+            if not isinstance(t3_entries, list) or not t3_entries:
+                errors.append("t3.entries: expected a non-empty list of pin entries")
+        if isinstance(t3_entries, list):
+            for index, entry in enumerate(t3_entries):
+                prefix = f"t3.entries[{index}]"
+                if not isinstance(entry, dict):
+                    errors.append(f"{prefix}: expected a JSON object")
+                    continue
+                for req in REQUIRED_T3_ENTRY_KEYS:
+                    if req not in entry:
+                        errors.append(f"{prefix}: missing required key '{req}'")
+                pin = entry.get("commit")
+                if "commit" in entry and (
+                    not isinstance(pin, str) or not _HEX_SHA.fullmatch(pin)
+                ):
+                    errors.append(
+                        f"{prefix}.commit: expected a 40-char hex git sha "
+                        "(64-char sha-256 repos accepted), "
+                        f"got {pin!r}"
+                    )
+                for req in ("name", "url", "scale_hint"):
+                    value = entry.get(req)
+                    if req in entry and not isinstance(value, str):
+                        errors.append(f"{prefix}.{req}: expected a string, got {value!r}")
+    elif "t3" in manifest:
+        errors.append("t3: expected a JSON object with an 'entries' list")
     return errors
 
 
