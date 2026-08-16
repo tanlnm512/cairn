@@ -6,16 +6,20 @@ retrieval pipelines against ground truth query datasets.
 Two query sources (D-008): the legacy yaml fixture via ``load_eval_queries``
 (bundled test data, kept as-is) and the maintained graded pair via
 ``load_ground_truth`` (``queries.jsonl`` + ``expectations.tsv``, D-004 schema)
-with identity-first matching and grade-aware scoring.
+with identity-first matching and grade-aware scoring. ``split_queries``
+(FR-006) turns that ground truth into the seeded tune/validate split used
+for held-out lever selection.
 """
 from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 
@@ -238,6 +242,71 @@ def load_ground_truth(ground_truth_dir: Path) -> List[GradedQuery]:
         )
         for qid, exps in expectations_by_query.items()
     ]
+
+
+# --------------------------------------------------------------------------
+# Seeded tune/validate split (FR-006, D-006)
+#
+# Lever selection must run on a tune half and report a held-out validate
+# half (adaptive-overfitting control for a fixed 58-query dataset). The
+# split uses the repo's seeded ``random.Random(seed)`` pattern (see
+# bench/corpus.py and bench/agent_suite.py) and is fixed by DEFAULT_SPLIT_SEED
+# so every run, machine, and process sees the identical partition.
+# --------------------------------------------------------------------------
+
+#: Fixed split seed: the tune/validate partition of a given id set is
+#: byte-identical across runs, machines, and processes. Deliberately distinct
+#: from bench's ``DEFAULT_SEED`` (0xC0DE) so the split never moves when the
+#: corpus generator's seed is tweaked.
+DEFAULT_SPLIT_SEED = 0x5EED
+
+
+def split_queries(
+    queries: Iterable[Any],
+    *,
+    seed: int = DEFAULT_SPLIT_SEED,
+    ratio: float = 0.5,
+) -> Tuple[List[str], List[str]]:
+    """Split query ids into the seeded ``(tune_ids, validate_ids)`` pair.
+
+    ``queries`` is any iterable of ``GradedQuery`` objects — only the
+    ``query_id`` field is read, so the function is level-agnostic: filtering
+    to L1 (the 58-query measurement set) is the caller's choice — or of bare
+    id strings. The input is never mutated.
+
+    Contract (TC-018):
+
+    * **Reproducible** — ids are deduplicated and *sorted before* the seeded
+      ``random.Random(seed).shuffle``, so the split is a pure function of
+      (id set, seed, ratio): never of input order, set/dict iteration order,
+      or ``PYTHONHASHSEED``. Two calls with the same seed give identical
+      halves, in-process or not; a different seed gives a different
+      partition.
+    * **Disjoint and complete** — the halves partition the input:
+      ``set(tune) | set(validate)`` equals the input id set and the halves
+      share no id.
+    * **Odd counts** — ``ceil(n * ratio)`` ids go to tune; at the default
+      ``ratio=0.5`` the tune half gets the extra query (3/2 for five ids).
+      The real 58-L1 set splits 29/29.
+
+    ``ratio`` outside ``[0, 1]`` raises ``ValueError`` (fail loudly rather
+    than silently degenerating a half to empty). Returned halves keep
+    shuffle order (tune first) so re-run diffs are empty (T006 checkpoint).
+    """
+    if not 0.0 <= ratio <= 1.0:
+        raise ValueError(f"split ratio must be within [0.0, 1.0], got {ratio!r}")
+
+    # Dedupe + sort BEFORE shuffling: the sort kills any dependence on input
+    # order or hash randomization, making the shuffle deterministic given
+    # (id set, seed).
+    ids = sorted({item if isinstance(item, str) else item.query_id for item in queries})
+    rng = random.Random(seed)
+    rng.shuffle(ids)
+
+    # round(..., 10) sheds float noise (0.3 * 10 == 3.0000000000000004);
+    # ceil hands the odd element to tune.
+    n_tune = math.ceil(round(len(ids) * ratio, 10))
+    return ids[:n_tune], ids[n_tune:]
 
 
 def evaluate_l1_query(conn: sqlite3.Connection, query: str, expect: List[str], k: int = 10) -> Tuple[float, float]:

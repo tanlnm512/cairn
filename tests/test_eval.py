@@ -8,12 +8,18 @@ The survey found zero dedicated eval tests; this is the first suite. Covers:
   then the legacy substring rule);
 * grade-aware recall@10 / MRR arithmetic on hand-built result sets;
 * ``run_evaluation`` / ``eval_cmd --queries`` directory dispatch;
-* the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape).
+* the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape);
+* the seeded 50/50 tune/validate split (FR-006, TC-018).
 
-All ground-truth fixtures live in tmp_path -- nothing here reads
-benchmarks/datasource/t2/ground_truth/ (authored separately by T011).
+Loader/matcher fixtures live in tmp_path. The split tests
+(TestSplitQueries) additionally read the committed real pair under
+benchmarks/datasource/t2/ground_truth/ to pin the 58-L1 29/29 contract
+against the actual dataset.
 """
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +28,7 @@ from click.testing import CliRunner
 import cairn.eval as eval_mod
 from cairn.cli import main
 from cairn.eval import (
+    DEFAULT_SPLIT_SEED,
     Expectation,
     load_eval_queries,
     load_ground_truth,
@@ -29,8 +36,13 @@ from cairn.eval import (
     parse_symbol_id,
     run_evaluation,
     score_graded_query,
+    split_queries,
 )
 from cairn.graph.schema import get_db
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+REAL_GROUND_TRUTH = REPO_ROOT / "benchmarks" / "datasource" / "t2" / "ground_truth"
+N_REAL_L1 = 58
 
 GOOD_QUERIES = [
     {
@@ -485,3 +497,116 @@ class TestEvalCli:
         payload = json.loads(result.stdout)
         assert payload["L1"]["count"] == 30
         assert payload["L5"]["count"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Seeded tune/validate split (FR-006, D-006, TC-018)
+# ---------------------------------------------------------------------------
+
+#: Same shape as the real measurement set: 58 synthetic ids. split_queries
+#: never mutates its input (it shuffles its own sorted copy), so sharing one
+#: list across tests is safe.
+SYNTH_IDS_58 = [f"q-{i:02d}" for i in range(N_REAL_L1)]
+
+
+class TestSplitQueries:
+    def test_same_seed_reproduces_identical_halves(self):
+        first = split_queries(SYNTH_IDS_58)
+        second = split_queries(SYNTH_IDS_58)
+        assert first == second
+
+    def test_input_order_duplicates_and_set_input_do_not_matter(self):
+        ids = sorted(f"sym-{i}" for i in range(10))
+        baseline = split_queries(ids)
+        assert split_queries(list(reversed(ids))) == baseline
+        assert split_queries(set(ids)) == baseline
+        assert split_queries(ids + ids) == baseline  # duplicates deduped
+
+    def test_different_seed_yields_a_different_partition(self):
+        tune_a, validate_a = split_queries(SYNTH_IDS_58, seed=1)
+        tune_b, validate_b = split_queries(SYNTH_IDS_58, seed=2)
+        assert set(tune_a) != set(tune_b)
+        assert set(validate_a) != set(validate_b)
+
+    def test_default_seed_is_a_fixed_constant(self):
+        # The harness contract is "same dataset, same split, forever" -- the
+        # default must not depend on time, env, or call site.
+        assert split_queries(SYNTH_IDS_58) == split_queries(SYNTH_IDS_58, seed=DEFAULT_SPLIT_SEED)
+        assert isinstance(DEFAULT_SPLIT_SEED, int)
+
+    def test_real_l1_set_splits_29_29_disjoint_complete(self):
+        l1 = [q for q in load_ground_truth(REAL_GROUND_TRUTH) if q.level == "L1"]
+        assert len(l1) == N_REAL_L1  # the dataset this contract is written for
+
+        tune, validate = split_queries(l1)
+        assert len(tune) == 29
+        assert len(validate) == 29
+        assert not set(tune) & set(validate)
+        assert set(tune) | set(validate) == {q.query_id for q in l1}
+
+    def test_level_agnostic_partitions_exactly_what_it_is_given(self):
+        # No level filtering inside the split -- handing it the full mixed
+        # dataset yields an 82-id partition, not an L1-only or L5-only one.
+        everything = load_ground_truth(REAL_GROUND_TRUTH)
+        assert {q.level for q in everything} == {"L1", "L5"}
+
+        tune, validate = split_queries(everything)
+        assert len(tune) + len(validate) == len(everything)
+        assert not set(tune) & set(validate)
+        assert set(tune) | set(validate) == {q.query_id for q in everything}
+
+    def test_odd_count_gives_tune_the_extra(self):
+        ids = ["a", "b", "c", "d", "e"]
+        tune, validate = split_queries(ids)
+        assert len(tune) == 3
+        assert len(validate) == 2
+        assert not set(tune) & set(validate)
+        assert set(tune) | set(validate) == set(ids)
+
+        single_tune, single_validate = split_queries(["only"])
+        assert single_tune == ["only"]
+        assert single_validate == []
+
+    def test_partition_properties_hold_across_seeds_on_an_odd_set(self):
+        ids = [f"q-{i:02d}" for i in range(17)]  # odd size stresses the ceil rule
+        for seed in range(8):
+            tune, validate = split_queries(ids, seed=seed)
+            assert not set(tune) & set(validate)
+            assert set(tune) | set(validate) == set(ids)
+            assert (len(tune), len(validate)) == (9, 8)
+
+    def test_ratio_controls_the_cut(self):
+        ids = [f"n{i}" for i in range(8)]
+        tune, validate = split_queries(ids, ratio=0.25)
+        assert (len(tune), len(validate)) == (2, 6)
+
+    def test_ratio_out_of_bounds_fails_loudly(self):
+        with pytest.raises(ValueError, match="ratio"):
+            split_queries(["a"], ratio=1.5)
+        with pytest.raises(ValueError, match="ratio"):
+            split_queries(["a"], ratio=-0.1)
+
+    def test_stable_under_pythonhashseed_variation(self):
+        # The sort-before-shuffle rule buys process-level determinism: two
+        # fresh interpreters with different hash seeds must agree, and both
+        # must agree with this process.
+        code = (
+            "from cairn.eval import split_queries\n"
+            "ids = [f'q-{i:02d}' for i in range(58)]\n"
+            "tune, validate = split_queries(ids)\n"
+            "print(','.join(tune), '|', ','.join(validate))\n"
+        )
+        outputs = set()
+        for hash_seed in ("0", "31337"):
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "PYTHONHASHSEED": hash_seed},
+            )
+            outputs.add(proc.stdout.strip())
+        assert len(outputs) == 1
+
+        tune, validate = split_queries(SYNTH_IDS_58)
+        assert outputs.pop() == ",".join(tune) + " | " + ",".join(validate)
