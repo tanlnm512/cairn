@@ -19,7 +19,8 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from .lexical import search_symbols
+from .lexical import search_symbols, search_symbols_terms
+from .query_enrich import enrich as enrich_query
 from .traversal import get_callers, get_callees
 
 logger = logging.getLogger(__name__)
@@ -326,10 +327,13 @@ class RetrievalParams:
       per-call ``rerank`` arg: ``None`` = auto (env-gated plus the
       confidence gate), ``True`` = force past the gate (``CAIRN_RERANK=0``
       still wins), ``False`` = never.
-    * ``enrich`` — FORWARD-COMPAT (query enrichment, FR-001/T008):
-      ``semantic_search`` does not read this flag today. It is carried so
-      the sweep can express on/off combinations the moment enrichment
-      lands; unknown-to-the-function flags are ignored, never errors.
+    * ``enrich`` — query enrichment (FR-001): as of T008 the SPARSE leg
+      reads this flag — ``True`` routes the BM25 fetch through
+      ``query_enrich.enrich(query).sparse_query`` as an OR-of-prefix term
+      query (``lexical.search_symbols_terms``) instead of the raw query,
+      fixing the empty-BM25 defect for sentence queries. The dense leg
+      and the confidence-gate interplay land with T009. ``None``/``False``
+      keeps today's exact behavior (the flag is carried, not defaulted on).
     * ``gate_min_margin`` — rerank confidence-gate margin override
       (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
       ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
@@ -400,8 +404,9 @@ def semantic_search(
     cutoff, rerank/gate overrides). ``params=None`` -- and every ``None`` field of a passed
     object -- preserves today's exact behavior; the eval/sweep path injects
     combinations through this object rather than mutating the environment.
-    Flags the function does not know yet (e.g. ``enrich`` until FR-001
-    lands) are ignored, never errors.
+    ``params.enrich=True`` (T008) additionally routes the sparse (BM25)
+    fetch through query enrichment's term mode; the dense leg follows with
+    T009. Flags the function still does not know are ignored, never errors.
 
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
     model, the candidate pool comes from a native ANN query instead of the
@@ -603,7 +608,31 @@ def semantic_search(
             sparse_limit = 30
             if params is not None and params.sparse_limit is not None:
                 sparse_limit = params.sparse_limit
-            bm25_raw = [dict(r) for r in search_symbols(conn, query, limit=sparse_limit)]
+            # T008 (FR-001) term-mode sparse fetch: with params.enrich on,
+            # the enrichment's stopword-trimmed term list feeds
+            # search_symbols_terms, whose OR-of-quoted-prefix MATCH lets
+            # BM25 rank symbols whose indexed tokens begin with ANY term.
+            # The raw sentence through search_symbols would fold into ONE
+            # quoted FTS phrase (_pattern_to_fts) that matches no symbol
+            # name -- the empty-BM25 defect. Empty sparse_query ("every
+            # token was a stopword") keeps the raw-query call per the
+            # EnrichedQuery contract. The dense leg and the gate interplay
+            # are T009's; with enrich off/None the fetch below is
+            # byte-identical to today's.
+            sparse_terms: List[str] = []
+            if params is not None and params.enrich:
+                sparse_terms = enrich_query(query).sparse_query.split()
+            if sparse_terms:
+                bm25_raw = [
+                    dict(r)
+                    for r in search_symbols_terms(
+                        conn, sparse_terms, limit=sparse_limit
+                    )
+                ]
+            else:
+                bm25_raw = [
+                    dict(r) for r in search_symbols(conn, query, limit=sparse_limit)
+                ]
             bm25_map = {}
             bm25_ids = []
             for r in bm25_raw:

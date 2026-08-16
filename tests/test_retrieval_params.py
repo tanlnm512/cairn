@@ -533,6 +533,176 @@ class TestSparseTopNKnob:
 
 
 # ---------------------------------------------------------------------------
+# The T008 lever: enrich -- sparse-leg term mode (FR-001)
+#
+# With params.enrich=True the BM25 fetch consumes query_enrich's term list
+# through lexical.search_symbols_terms (OR of quoted prefixes) instead of
+# the raw sentence through search_symbols (ONE quoted phrase -- the
+# empty-BM25 defect). Dense leg + gate interplay are T009's; here only the
+# fetch input changes.
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichSparseLeg:
+    """Query ``function alpha`` (the sentence shape): today's sparse leg is
+    EMPTY (the phrase '"function alpha"*' matches no indexed token and the
+    whole-sentence LIKE union neither), while enrichment yields the term
+    list ``["alpha"]`` whose MATCH expression is exactly '"alpha"*' -- the
+    same fetch the bare ``alpha`` query makes today."""
+
+    @staticmethod
+    def _run(seeded_db, **fields):
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        params = RetrievalParams(dense_threshold=0.0, rrf_weights=(0.0, 1.0), **fields)
+        return [
+            (r["name"], r["score"]) for r in semantic_search(seeded_db, "function alpha", limit=10, params=params)
+        ]
+
+    def test_off_is_today_behavior_and_flag_none_matches_no_params(self, seeded_db):
+        """enrich=None (inside an otherwise-set object) and enrich=False are
+        byte-identical to no params: the empty-BM25 defect status quo -- a
+        pure-sparse weighting scores every candidate 0.0 because the leg is
+        empty for a sentence query."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        plain = [
+            (r["name"], r["score"])
+            for r in semantic_search(
+                seeded_db, "function alpha", limit=10,
+                params=RetrievalParams(dense_threshold=0.0, rrf_weights=(0.0, 1.0)),
+            )
+        ]
+        assert plain == self._run(seeded_db)  # enrich=None inside the object
+        assert plain == self._run(seeded_db, enrich=False)
+        assert all(score == 0.0 for _, score in plain), "fixture drift: BM25 leg unexpectedly non-empty"
+
+    def test_on_bm25_leg_contributes_for_sentence_queries(self, seeded_db):
+        """The defect FIXED under the flag: with enrich=True the same
+        sentence's BM25 leg carries [alpha, alphaBulk] (the '"alpha"*'
+        prefix matches both names), so pure-sparse weighting produces
+        genuine leg scores -- alpha 1/61, alphaBulk 1/62 -- while
+        vectorOnlyNode stays 0.0 (BM25-invisible)."""
+        order = self._run(seeded_db, enrich=True)
+        assert [n for n, _ in order] == ["alpha", "alphaBulk", "vectorOnlyNode"]
+        by_name = dict(order)
+        assert by_name["alpha"] == 0.0164
+        assert by_name["alphaBulk"] == 0.0161
+        assert by_name["vectorOnlyNode"] == 0.0
+        assert by_name["alphaBulk"] > by_name["vectorOnlyNode"]  # leg contributes
+
+    def test_on_equals_the_bare_term_query_today(self, seeded_db):
+        """Equivalence anchor: enrich=True on the sentence reproduces exactly
+        what today's code does for the single-token query ``alpha`` -- the
+        enrichment's term fetch builds the identical MATCH expression
+        ('"alpha"*'), so every downstream score matches."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        params = RetrievalParams(dense_threshold=0.0, rrf_weights=(0.0, 1.0))
+        bare = [
+            (r["name"], r["score"])
+            for r in semantic_search(seeded_db, "alpha", limit=10, params=params)
+        ]
+        assert self._run(seeded_db, enrich=True) == bare
+
+    def test_terms_flow_through_search_symbols_terms_not_search_symbols(
+        self, monkeypatch, seeded_db
+    ):
+        """Wiring proof: under the flag the sparse fetch goes to
+        search_symbols_terms with the enrichment's term list; the string
+        path (search_symbols) is not called at all."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        term_calls = []
+        str_calls = []
+        real_terms = semantic_mod.search_symbols_terms
+        real_str = semantic_mod.search_symbols
+
+        def spy_terms(conn, terms, kind=None, limit=100):
+            term_calls.append({"terms": list(terms), "limit": limit})
+            return real_terms(conn, terms, kind=kind, limit=limit)
+
+        def spy_str(conn, pattern, kind=None, limit=100):
+            str_calls.append(pattern)
+            return real_str(conn, pattern, kind=kind, limit=limit)
+
+        monkeypatch.setattr(semantic_mod, "search_symbols_terms", spy_terms)
+        monkeypatch.setattr(semantic_mod, "search_symbols", spy_str)
+        semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0, enrich=True),
+        )
+        assert term_calls == [{"terms": ["alpha"], "limit": 30}]
+        assert str_calls == []
+
+    def test_sparse_limit_reaches_the_term_mode_fetch(self, monkeypatch, seeded_db):
+        """T010's limit threading covers the term path too: the fetch-limit
+        spy sees the hard-coded 30 without params and the injected 7 with
+        them (the fetch limit, not the display limit)."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        seen = []
+        real = semantic_mod.search_symbols_terms
+
+        def spy(conn, terms, kind=None, limit=100):
+            seen.append(limit)
+            return real(conn, terms, kind=kind, limit=limit)
+
+        monkeypatch.setattr(semantic_mod, "search_symbols_terms", spy)
+        semantic_search(
+            seeded_db, "function alpha", limit=10, params=RetrievalParams(enrich=True)
+        )
+        semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(enrich=True, sparse_limit=7),
+        )
+        assert seen == [30, 7]
+
+    def test_all_stopword_query_keeps_the_raw_query_fetch(
+        self, monkeypatch, seeded_db
+    ):
+        """EnrichedQuery's documented boundary: when every token is a
+        stopword (``where is the function``) the sparse leg must NOT search
+        for the empty string -- it falls back to today's raw-query fetch
+        through search_symbols."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        term_calls = []
+        str_calls = []
+        real_terms = semantic_mod.search_symbols_terms
+        real_str = semantic_mod.search_symbols
+
+        monkeypatch.setattr(
+            semantic_mod,
+            "search_symbols_terms",
+            lambda conn, terms, kind=None, limit=100: (
+                term_calls.append(list(terms)) or real_terms(conn, terms, kind=kind, limit=limit)
+            ),
+        )
+
+        def spy_str(conn, pattern, kind=None, limit=100):
+            str_calls.append(pattern)
+            return real_str(conn, pattern, kind=kind, limit=limit)
+
+        monkeypatch.setattr(semantic_mod, "search_symbols", spy_str)
+        semantic_search(
+            seeded_db,
+            "where is the function",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0, enrich=True),
+        )
+        assert term_calls == []
+        assert str_calls == ["where is the function"]
+
+
+# ---------------------------------------------------------------------------
 # Rerank / gate knobs (recorder proves the stage ran or was skipped)
 # ---------------------------------------------------------------------------
 

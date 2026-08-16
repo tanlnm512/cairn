@@ -2,13 +2,16 @@
 
 Handles pattern-to-FTS conversion and the bm25-ranked symbol search that
 ``search_symbols`` exposes; degrades to a LIKE scan when FTS5 is unavailable
-or the MATCH query errors.
+or the MATCH query errors. ``search_symbols_terms`` (T008/FR-001) is the
+term-mode entry point for enriched queries: OR-combined per-term prefix
+queries instead of one folded phrase.
 """
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from .schema import note_contention, _is_lock_contention
 
@@ -80,6 +83,51 @@ def _pattern_to_fts(pattern: str) -> Optional[str]:
     return '"' + " ".join(tokens) + '"*'
 
 
+def _terms_to_fts(terms: Iterable[str]) -> Optional[str]:
+    """Build an OR-combined per-term-prefix FTS5 MATCH query (FR-001/T008).
+
+    The term-mode counterpart to ``_pattern_to_fts`` for enriched queries:
+    instead of folding a whole pattern into ONE quoted phrase (which a
+    sentence-shaped query makes match no symbol name -- the empty-BM25
+    defect), each term becomes an independent quoted prefix query and the
+    terms are OR-combined, so BM25 can rank any symbol whose indexed
+    name/qualified_name/docstring tokens *begin with* any query term:
+
+      ``["parses", "unencoded", "URL", "string"]``
+          -> ``'"parses"* OR "unencoded"* OR "URL"* OR "string"*'``
+
+    Injection defense (user terms can carry ANY character via backticked
+    spans in query_enrich, including FTS metacharacters): every term is
+    reduced to its alphanumeric tokens -- ``re.split(r"[^A-Za-z0-9]+")``,
+    the same tokenization ``_pattern_to_fts`` uses -- BEFORE it reaches the
+    expression, so each emitted token is strictly ``[A-Za-z0-9]+``. Tokens
+    are additionally double-quoted (which also neutralizes FTS keywords: a
+    literal ``"OR"`` token is a string, not the OR operator), and the
+    prefix ``*`` sits OUTSIDE the closing quote per the rule documented on
+    ``_pattern_to_fts`` (``'"foo*"'`` is a no-op phrase; only ``'"foo"*'``
+    matches tokens beginning with foo).
+
+    Tokens dedupe case-insensitively (FTS5 unicode61 MATCH case-folds
+    ASCII), first casing kept, query order preserved. Returns None when no
+    usable token survives any term (caller falls back -- the same None
+    contract ``_pattern_to_fts`` offers).
+    """
+    tokens: List[str] = []
+    seen: set = set()
+    for term in terms:
+        for token in re.split(r"[^A-Za-z0-9]+", term):
+            if not token:
+                continue
+            key = token.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            tokens.append(token)
+    if not tokens:
+        return None
+    return " OR ".join(f'"{t}"*' for t in tokens)
+
+
 def _search_like(
     conn: sqlite3.Connection, pattern: str, kind: Optional[str], limit: int
 ) -> List[sqlite3.Row]:
@@ -118,6 +166,74 @@ def _search_like(
     return list(rows)
 
 
+def _fts_symbol_rows(
+    conn: sqlite3.Connection, fts_query: str, kind: Optional[str], limit: int
+) -> List[sqlite3.Row]:
+    """Run the bm25-ranked FTS join for one MATCH expression (shared SQL).
+
+    Raises ``sqlite3.OperationalError`` through to the caller
+    (``_fts_search_or_like`` owns the degrade decision).
+    """
+    sql = (
+        "SELECT s.*, f.path AS file_path, f.repo_id AS repo, "
+        "bm25(symbols_fts) AS rank "
+        "FROM symbols_fts "
+        "JOIN symbols s ON s.rowid = symbols_fts.rowid "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE symbols_fts MATCH ?"
+    )
+    params: list = [fts_query]
+    if kind:
+        sql += " AND s.kind = ?"
+        params.append(kind)
+    sql += " ORDER BY rank LIMIT ?"
+    params.append(limit)
+    return list(conn.execute(sql, params).fetchall())
+
+
+def _fts_search_or_like(
+    conn: sqlite3.Connection,
+    fts_query: str,
+    like_pattern: str,
+    kind: Optional[str],
+    limit: int,
+    contention_site: str,
+    warn_key: str,
+) -> List[sqlite3.Row]:
+    """FTS query with the graceful LIKE degrade (shared by both search modes).
+
+    On ``sqlite3.OperationalError`` the caller's ``like_pattern`` is scanned
+    instead. Discriminates before calling this contention (mirrors
+    schema.py's duplicate-column discrimination): only "locked"/"busy"
+    errors are a real cross-process lock event. Anything else (FTS5 syntax
+    error, a missing symbols_fts table, corruption) is a query failure
+    whose LIKE degrade is BY DESIGN -- a quiet once-per-process warning is
+    enough, and misattributing it to contention would pollute the
+    lock_contention signal doctor aggregates on. ``contention_site`` /
+    ``warn_key`` keep the two search modes independently visible in the
+    once-per-process telemetry.
+    """
+    try:
+        return _fts_symbol_rows(conn, fts_query, kind, limit)
+    except sqlite3.OperationalError as e:
+        if _is_lock_contention(e):
+            note_contention(contention_site, error=e)
+        else:
+            try:
+                from cairn.telemetry import warn_once
+
+                warn_once(
+                    warn_key,
+                    _logger,
+                    "FTS5 query failed (%s) -- degrading to the LIKE scan; "
+                    "results stay correct but unranked." % e,
+                )
+            except Exception:
+                pass
+        # FTS5 missing, table absent, or malformed query: degrade to LIKE.
+        return _search_like(conn, like_pattern, kind, limit)
+
+
 def search_symbols(
     conn: sqlite3.Connection, pattern: str, kind: Optional[str] = None, limit: int = 100
 ) -> List[sqlite3.Row]:
@@ -147,46 +263,15 @@ def search_symbols(
     if fts_query is None:
         return _search_like(conn, pattern, kind, limit)
 
-    sql = (
-        "SELECT s.*, f.path AS file_path, f.repo_id AS repo, "
-        "bm25(symbols_fts) AS rank "
-        "FROM symbols_fts "
-        "JOIN symbols s ON s.rowid = symbols_fts.rowid "
-        "JOIN files f ON s.file_id = f.id "
-        "WHERE symbols_fts MATCH ?"
+    rows = _fts_search_or_like(
+        conn,
+        fts_query,
+        pattern,
+        kind,
+        limit,
+        contention_site="lexical.fts_search",
+        warn_key="lexical.fts_non_contention",
     )
-    params = [fts_query]  # type: list
-    if kind:
-        sql += " AND s.kind = ?"
-        params.append(kind)
-    sql += " ORDER BY rank LIMIT ?"
-    params.append(limit)
-    try:
-        rows = list(conn.execute(sql, params).fetchall())
-    except sqlite3.OperationalError as e:
-        # Discriminate before calling this contention (mirrors schema.py's
-        # duplicate-column discrimination): only "locked"/"busy" errors are a
-        # real cross-process lock event. Anything else (FTS5 syntax error, a
-        # missing symbols_fts table, corruption) is a query failure whose
-        # LIKE degrade is BY DESIGN -- a quiet once-per-process warning is
-        # enough, and misattributing it to contention would pollute the
-        # lock_contention signal doctor aggregates on.
-        if _is_lock_contention(e):
-            note_contention("lexical.fts_search", error=e)
-        else:
-            try:
-                from cairn.telemetry import warn_once
-
-                warn_once(
-                    "lexical.fts_non_contention",
-                    _logger,
-                    "FTS5 query failed (%s) -- degrading to the LIKE scan; "
-                    "results stay correct but unranked." % e,
-                )
-            except Exception:
-                pass
-        # FTS5 missing, table absent, or malformed query: degrade to LIKE.
-        return _search_like(conn, pattern, kind, limit)
 
     if not _is_fts_prefix_pattern(pattern) and len(rows) < limit:
         seen_ids = {r["id"] for r in rows}
@@ -197,3 +282,54 @@ def search_symbols(
                 if len(rows) >= limit:
                     break
     return rows
+
+
+def search_symbols_terms(
+    conn: sqlite3.Connection,
+    terms: Iterable[str],
+    kind: Optional[str] = None,
+    limit: int = 100,
+) -> List[sqlite3.Row]:
+    """Search symbols by an OR-combined term list, ranked by bm25 (T008/FR-001).
+
+    The term-mode counterpart to ``search_symbols`` for enriched queries
+    (``query_enrich``'s ``sparse_query`` term list): ``_terms_to_fts`` turns
+    each term into a quoted FTS5 prefix query and OR-combines them, so a
+    sentence-shaped query contributes its individual tokens to BM25 instead
+    of being folded into ONE quoted phrase that matches no symbol name (the
+    empty-BM25 defect -- see ``query_enrich``'s module docstring). Same
+    bm25-ranked join, same row shape (including the ``rank`` column) as
+    ``search_symbols``.
+
+    Differences from ``search_symbols``, by construction:
+
+    * No LIKE substring union: terms are per-token by construction, so the
+      whole-pattern substring semantics of that union have no meaning for
+      a term list (each term's substring reach is already covered by its
+      FTS prefix query against the indexed tokens).
+    * Injection defense lives in ``_terms_to_fts`` (sanitize to
+      alphanumeric tokens, then quote).
+
+    Degrades to ``_search_like`` on the space-joined terms when FTS5 is
+    unavailable or the MATCH errors (the same graceful-degradation contract
+    as ``search_symbols``; the LIKE shape is one substring of the joined
+    terms -- conservative, and never worse than the quoted-phrase behavior
+    the term mode replaces). With no usable token at all (every term
+    metacharacters/whitespace), the LIKE fallback runs on the joined terms
+    as well -- typically empty, mirroring ``_pattern_to_fts``'s None
+    contract.
+    """
+    term_list = [t.strip() for t in terms if t and t.strip()]
+    joined = " ".join(term_list)
+    fts_query = _terms_to_fts(term_list)
+    if fts_query is None:
+        return _search_like(conn, joined, kind, limit)
+    return _fts_search_or_like(
+        conn,
+        fts_query,
+        joined,
+        kind,
+        limit,
+        contention_site="lexical.fts_term_search",
+        warn_key="lexical.fts_term_non_contention",
+    )
