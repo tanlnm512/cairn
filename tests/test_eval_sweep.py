@@ -553,7 +553,7 @@ class TestSweepCli:
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
-        doc = _json.loads(result.output)
+        doc = _json.loads(result.stdout)
         assert doc["schema"] == "cairn-quality-sweep/1"
         names = [r["combo"] for r in doc["rows"]]
         assert names[0] == "all-levers-off" and "loose" in names
@@ -572,4 +572,4 @@ class TestSweepCli:
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
-        assert out.exists() and "row(s)" in result.output
+        assert out.exists() and "row(s)" in result.stdout

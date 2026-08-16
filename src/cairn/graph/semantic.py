@@ -302,6 +302,19 @@ class RetrievalParams:
       ``(dense, sparse)`` while the call site fuses ``[bm25, vec]`` — the
       reorder happens at the call site, never in the caller.
     * ``sparse_limit`` — BM25 fetch size (hard-coded ``30`` today).
+    * ``sparse_top_n`` — BM25-leg rank-position cutoff applied before
+      fusion (T010's NEW lever): keep only the first N ids of the fetched
+      BM25 list in ``search_symbols``' best-first order. ``None`` keeps
+      today's behavior (the list as fetched, already capped by
+      ``sparse_limit``); ``0`` empties the sparse leg (the sweep's
+      sparse-off point); negative values clamp to ``0`` (see the wiring
+      comment). A position cutoff, NOT a score threshold
+      (``sparse_min_score``), by deliberate choice: SQLite FTS5's
+      ``bm25()`` rank is NEGATIVE with better = more negative (inverted
+      "min score" semantics), and ``search_symbols``' LIKE-fallback /
+      substring-union rows (lexical.py) carry no ``rank`` column at all —
+      a score filter would behave path-dependently. A position cutoff is
+      scale-free and composes with RRF, which consumes ranks, not scores.
     * ``dense_pool`` — brute-force cosine scan fetch cap (hard-coded
       ``50000`` today; ignored on the native ANN path, which sizes itself
       by the rerank pool).
@@ -327,6 +340,7 @@ class RetrievalParams:
     rrf_k: Optional[int] = None
     rrf_weights: Optional[Tuple[float, float]] = None
     sparse_limit: Optional[int] = None
+    sparse_top_n: Optional[int] = None
     dense_pool: Optional[int] = None
     rerank_pool: Optional[int] = None
     rerank: Optional[bool] = None
@@ -382,8 +396,8 @@ def semantic_search(
 
     ``params`` (D-008, FR-005) is an optional frozen
     :class:`RetrievalParams` carrying explicit retrieval tunables (dense
-    threshold, RRF k/weights, pool sizes, sparse fetch limit, rerank/gate
-    overrides). ``params=None`` -- and every ``None`` field of a passed
+    threshold, RRF k/weights, pool sizes, sparse fetch limit and top-N
+    cutoff, rerank/gate overrides). ``params=None`` -- and every ``None`` field of a passed
     object -- preserves today's exact behavior; the eval/sweep path injects
     combinations through this object rather than mutating the environment.
     Flags the function does not know yet (e.g. ``enrich`` until FR-001
@@ -616,6 +630,18 @@ def semantic_search(
                     # weights[i] with rankings[i], and the rankings here are
                     # [bm25(sparse), vec(dense)] -- reorder at the boundary.
                     rrf_weights = [params.rrf_weights[1], params.rrf_weights[0]]
+                if params.sparse_top_n is not None:
+                    # Rank-position cutoff on the BM25 leg (T010's NEW
+                    # lever): keep the first N ids in search_symbols'
+                    # best-first order, dropping the tail before fusion.
+                    # Negative N clamps to 0 rather than erroring (the
+                    # gate_min_margin clamp doctrine: a harness bug must
+                    # not fail a sweep run) -- plain slicing with a
+                    # negative N would silently keep the WORST |N| matches
+                    # instead, which is the opposite of a cutoff.
+                    top_n = max(params.sparse_top_n, 0)
+                    if len(bm25_ids) > top_n:
+                        bm25_ids = bm25_ids[:top_n]
             fused_rank = rrf_fuse([bm25_ids, vec_ids], k=rrf_k, weights=rrf_weights)
             fused_candidates = []
             for doc_id, fused_score in fused_rank:

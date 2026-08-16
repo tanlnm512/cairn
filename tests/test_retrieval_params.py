@@ -11,8 +11,11 @@ leak across lever combinations). Two contracts are pinned here:
 * **knob turns** -- an injected field demonstrably changes behavior:
   ``dense_threshold=0.0`` admits a candidate the 0.3 default filters,
   ``rrf_weights`` reorders the fused ranking by flipping leg weights,
-  ``rrf_k`` rescales the fused scores, and the rerank/gate fields reach
-  their stages.
+  ``rrf_k`` rescales the fused scores, the pool knobs cap the cosine
+  scan and the brute-force fetch, and the rerank/gate fields reach
+  their stages. T010 adds the NEW BM25-leg lever ``sparse_top_n``
+  (rank-position cutoff before fusion) with its own filter and
+  defaults-off-equivalence proofs.
 
 Hermetic like tests/test_rerank_gating.py: the hash embedder gives
 deterministic vectors (cosines quoted in the fixtures below were probed,
@@ -325,6 +328,211 @@ class TestRRFKKnob:
 
 
 # ---------------------------------------------------------------------------
+# Scan-side pool knobs (T010): rerank_pool reaches BOTH computed-pool
+# branches; dense_pool reaches the brute-force SQL fetch cap.
+# ---------------------------------------------------------------------------
+
+
+class TestPoolKnobs:
+    """Fusion off isolates the dense scan -- BM25-only candidates bypass
+    the pool entirely, so result counts pin exactly what the cosine scan
+    sliced to."""
+
+    def test_rerank_pool_caps_the_scan_rerank_off(self, monkeypatch, seeded_db):
+        """The rerank-off branch computes pool_size = limit (10 >= corpus),
+        so the default returns all three above-threshold candidates;
+        rerank_pool=2 replaces that computed size and the scan keeps only
+        the top-2 cosines (alpha 0.4901, vectorOnlyNode 0.4197)."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        default = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0),
+        )
+        capped = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0, rerank_pool=2),
+        )
+        assert len(default) == 3
+        assert [r["name"] for r in capped] == ["alpha", "vectorOnlyNode"]
+
+    def test_rerank_pool_overrides_the_wide_rerank_branch(
+        self, armed_gate, monkeypatch
+    ):
+        """The rerank-ON branch computes pool_size = max(limit*5, 50) -- a
+        deliberately wider pool the override must ALSO replace (both
+        branches, per the field contract). The recorder sees the candidate
+        list the stage was handed. Expected default: 5 of the 6 symbols --
+        formatDate's signed-dim hash-vector collision with the query puts
+        its cosine below 0.0 (the hash embedder hashes tokens to signed
+        dims, so token-disjoint texts are not guaranteed non-negative),
+        while the four exactly-0.0 rows pass a 0.0 threshold."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        conn, rec = armed_gate
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0),
+        )
+        assert rec.calls[0]["n_candidates"] == 5
+        rec.calls.clear()
+        semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0, rerank_pool=2),
+        )
+        assert rec.calls[0]["n_candidates"] == 2
+
+    def test_dense_pool_caps_the_brute_force_fetch(self, monkeypatch, seeded_db):
+        """dense_pool is the SQL LIMIT on the brute-force embedding fetch
+        (hard-coded 50000 today): LIMIT 1 means exactly one embedding row
+        is ever scanned, so exactly one candidate survives -- regardless of
+        which row the planner picks (count is planner-independent)."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        default = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0),
+        )
+        capped = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0, dense_pool=1),
+        )
+        assert len(default) == 3
+        assert len(capped) == 1
+        assert capped[0]["name"] in {"alpha", "alphaBulk", "vectorOnlyNode"}
+
+
+class TestSparseLimitKnob:
+    def test_sparse_limit_reaches_search_symbols(self, monkeypatch, seeded_db):
+        """A spy on the module-level ``search_symbols`` reference (what
+        semantic.py's fusion block calls) sees the BM25 fetch limit: the
+        hard-coded 30 without params, the injected value with them."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        seen = []
+        real = semantic_mod.search_symbols
+
+        def spy(conn, pattern, kind=None, limit=100):
+            seen.append(limit)
+            return real(conn, pattern, kind=kind, limit=limit)
+
+        monkeypatch.setattr(semantic_mod, "search_symbols", spy)
+        semantic_search(seeded_db, "function alpha", limit=10)
+        semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(sparse_limit=7),
+        )
+        assert seen == [30, 7]
+
+
+# ---------------------------------------------------------------------------
+# The T010 NEW lever: sparse_top_n -- BM25-leg rank-position cutoff
+# ---------------------------------------------------------------------------
+
+
+class TestSparseTopNKnob:
+    """A rank-position cutoff on the BM25 candidate list before fusion
+    (NOT a score threshold: SQLite FTS5's bm25() rank is negative with
+    better = more negative, and the LIKE-fallback rows carry no rank at
+    all -- see the RetrievalParams field doc).
+
+    Query ``alpha`` (both legs non-empty): BM25 = [alpha, alphaBulk];
+    vector pool at threshold 0.0 = [alpha, vectorOnlyNode, alphaBulk].
+    Equal weights, k=60. Default fused scores: alpha 2/61 = 0.0328,
+    alphaBulk 1/62 + 1/63 = 0.032, vectorOnlyNode 1/62 = 0.0161 --
+    alphaBulk's bm25 rank-2 term pushes it ABOVE vectorOnlyNode. Cutting
+    the bm25 tail at N=1 removes alphaBulk's only sparse contribution;
+    its bare vec rank-3 term (1/63 = 0.0159) falls below
+    vectorOnlyNode's 1/62, so the two trade places.
+    """
+
+    @staticmethod
+    def _run(seeded_db, **fields):
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        params = RetrievalParams(dense_threshold=0.0, **fields)
+        res = semantic_search(seeded_db, "alpha", limit=10, params=params)
+        return [(r["name"], r["score"]) for r in res]
+
+    def test_default_keeps_the_full_bm25_leg(self, seeded_db):
+        """Baseline (lever off): today's behavior -- the whole fetched
+        BM25 list reaches rrf_fuse and alphaBulk outranks vectorOnlyNode
+        on its rank-2 sparse term."""
+        order = self._run(seeded_db)
+        assert [n for n, _ in order] == ["alpha", "alphaBulk", "vectorOnlyNode"]
+        by_name = dict(order)
+        assert by_name["alpha"] == 0.0328
+        assert by_name["alphaBulk"] == 0.032
+        assert by_name["vectorOnlyNode"] == 0.0161
+        assert by_name["alphaBulk"] > by_name["vectorOnlyNode"]
+
+    def test_top_n_one_drops_the_bm25_tail(self, seeded_db):
+        """The filter proof: same fixture, same query, ONLY sparse_top_n
+        differs -- alphaBulk loses its bm25 rank-2 term (score collapses
+        to the bare vec rank-3 term 1/63 = 0.0159) and drops below
+        vectorOnlyNode."""
+        default_scores = dict(self._run(seeded_db))
+        cut = self._run(seeded_db, sparse_top_n=1)
+        assert [n for n, _ in cut] == ["alpha", "vectorOnlyNode", "alphaBulk"]
+        by_name = dict(cut)
+        assert by_name["alphaBulk"] == 0.0159
+        assert by_name["alphaBulk"] < default_scores["alphaBulk"]
+
+    def test_top_n_zero_empties_the_sparse_leg(self, seeded_db):
+        """N=0 is the sweep's sparse-off point: alpha keeps only its vec
+        rank-1 term (1/61 = 0.0164) and the order is pure-vector."""
+        cut = self._run(seeded_db, sparse_top_n=0)
+        assert [n for n, _ in cut] == ["alpha", "vectorOnlyNode", "alphaBulk"]
+        assert dict(cut)["alpha"] == 0.0164
+
+    def test_negative_clamps_to_zero(self, seeded_db):
+        """Documented clamp: a negative N is a harness bug, not an error
+        worth failing a sweep run over -- and plain slicing with -3 would
+        silently keep the WORST 3-by-tail instead of a cutoff."""
+        assert self._run(seeded_db, sparse_top_n=-3) == self._run(
+            seeded_db, sparse_top_n=0
+        )
+
+    def test_cuts_do_not_touch_the_dense_leg(self, seeded_db):
+        """The lever is scoped to the sparse leg: the vector-only
+        candidate vectorOnlyNode survives every cut with its score
+        unchanged (always the vec rank-2 term 1/62)."""
+        for n in (None, 1, 0):
+            assert dict(self._run(seeded_db, sparse_top_n=n))[
+                "vectorOnlyNode"
+            ] == 0.0161
+
+    def test_defaults_off_equivalence_on_the_fixture(self, seeded_db):
+        """The FR-005 defaults-preserving contract on THIS lever's fixture:
+        an all-None params object is byte-identical to no params."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        plain = semantic_search(seeded_db, "alpha", limit=10)
+        injected = semantic_search(
+            seeded_db, "alpha", limit=10, params=RetrievalParams()
+        )
+        assert injected == plain
+
+
+# ---------------------------------------------------------------------------
 # Rerank / gate knobs (recorder proves the stage ran or was skipped)
 # ---------------------------------------------------------------------------
 
@@ -336,7 +544,9 @@ class _RerankRecorder:
         self.calls = []
 
     def __call__(self, query, candidates, limit):
-        self.calls.append({"query": query, "limit": limit})
+        self.calls.append(
+            {"query": query, "limit": limit, "n_candidates": len(candidates)}
+        )
         out = [dict(c) for c in candidates[:limit]]
         for item in out:
             item["rerank_score"] = 0.5
