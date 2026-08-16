@@ -9,7 +9,9 @@ The survey found zero dedicated eval tests; this is the first suite. Covers:
 * grade-aware recall@10 / MRR arithmetic on hand-built result sets;
 * ``run_evaluation`` / ``eval_cmd --queries`` directory dispatch;
 * the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape);
-* the seeded 50/50 tune/validate split (FR-006, TC-018).
+* the seeded 50/50 tune/validate split (FR-006, TC-018);
+* the held-out guard on ``evaluate_on`` selection runs (FR-006, TC-019);
+* the paired-bootstrap accept guard (D-006: bootstrap/t, not Wilcoxon).
 
 Loader/matcher fixtures live in tmp_path. The split tests
 (TestSplitQueries) additionally read the committed real pair under
@@ -30,9 +32,12 @@ from cairn.cli import main
 from cairn.eval import (
     DEFAULT_SPLIT_SEED,
     Expectation,
+    HeldOutError,
+    evaluate_on,
     load_eval_queries,
     load_ground_truth,
     match_rank,
+    paired_bootstrap,
     parse_symbol_id,
     run_evaluation,
     score_graded_query,
@@ -610,3 +615,327 @@ class TestSplitQueries:
 
         tune, validate = split_queries(SYNTH_IDS_58)
         assert outputs.pop() == ",".join(tune) + " | " + ",".join(validate)
+
+
+# ---------------------------------------------------------------------------
+# Held-out guard on evaluate_on (FR-006, TC-019, D-006)
+# ---------------------------------------------------------------------------
+
+#: Hand-built split over the good_gt_dir fixture: l1-url is "tune",
+#: l5-quote is the held-out validate half.
+TUNE_IDS = ["l1-url"]
+HELD_OUT_IDS = ["l5-quote"]
+
+
+@pytest.fixture()
+def gt_conn(tmp_path):
+    """An open scratch connection (retrieval itself is monkeypatched)."""
+    conn = get_db(str(tmp_path / "guard.db"))
+    yield conn
+    conn.close()
+
+
+class TestEvaluateOnHeldOutGuard:
+    def test_selection_touching_validate_ids_raises_naming_ids_and_mode(
+        self, good_gt_dir, gt_conn
+    ):
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(HeldOutError) as excinfo:
+            evaluate_on(
+                gt_conn,
+                queries,
+                ids=TUNE_IDS + HELD_OUT_IDS,  # the tampered sweep: tune + validate
+                purpose="selection",
+                held_out_ids=HELD_OUT_IDS,
+            )
+        message = str(excinfo.value)
+        # The error names the held-out violation: which ids, which mode.
+        assert "purpose='selection'" in message
+        assert "'l5-quote'" in message
+        assert "l1-url" not in message  # only the violating ids are named
+        assert "FR-006" in message  # traceable to the requirement
+
+    def test_guard_fires_before_any_query_is_scored(self, good_gt_dir, gt_conn, monkeypatch):
+        # "No results table is emitted" is structural: the raise precedes
+        # every retrieval/evaluation call, so nothing can be scored first.
+        def _must_not_run(*args, **kwargs):
+            raise AssertionError("evaluation ran before the held-out guard")
+
+        monkeypatch.setattr(eval_mod, "evaluate_graded_query", _must_not_run)
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(HeldOutError):
+            evaluate_on(
+                gt_conn,
+                queries,
+                ids=HELD_OUT_IDS,
+                purpose="selection",
+                held_out_ids=HELD_OUT_IDS,
+            )
+
+    def test_held_out_error_cannot_be_swallowed_as_a_dataset_error(self):
+        # eval_cmd catches ValueError as "invalid eval dataset"; the guard
+        # must survive that handler and reach the top as a loud failure.
+        assert issubclass(HeldOutError, RuntimeError)
+        assert not issubclass(HeldOutError, ValueError)
+
+    def test_selection_on_tune_ids_evaluates_normally(
+        self, good_gt_dir, gt_conn, monkeypatch
+    ):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 0.5)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        report = evaluate_on(
+            gt_conn,
+            queries,
+            ids=TUNE_IDS,
+            purpose="selection",
+            held_out_ids=HELD_OUT_IDS,
+        )
+        assert report["purpose"] == "selection"
+        assert report["n_queries"] == 1
+        assert report["recall_at_10"] == 1.0
+        assert report["mrr"] == 0.5
+        assert report["per_query"]["l1-url"] == {"recall_at_10": 1.0, "mrr": 0.5}
+        assert "bootstrap" not in report  # selection never sees the guard output
+
+    def test_selection_requires_a_declared_held_out_set(self, good_gt_dir, gt_conn):
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(ValueError, match="held_out_ids"):
+            evaluate_on(gt_conn, queries, ids=TUNE_IDS, purpose="selection")
+
+    def test_validate_purpose_attaches_the_bootstrap_verdict(
+        self, good_gt_dir, gt_conn, monkeypatch
+    ):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 0.5)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        # Incumbent: perfect on l1-url, failed on l5-quote. Candidate scores
+        # 1.0 recall everywhere -> paired delta on recall@10 = 0.5.
+        report = evaluate_on(
+            gt_conn,
+            queries,
+            ids=TUNE_IDS + HELD_OUT_IDS,
+            purpose="validate",
+            baseline_metrics={"l1-url": 1.0, "l5-quote": 0.0},
+        )
+        assert report["purpose"] == "validate"
+        assert report["metric"] == "recall_at_10"
+        assert report["n_queries"] == 2
+        assert report["baseline_mean"] == 0.5
+        boot = report["bootstrap"]
+        assert boot["delta"] == pytest.approx(0.5)
+        for key in ("delta", "ci_low", "ci_high", "p_value", "significant"):
+            assert key in boot
+
+    def test_validate_can_target_mrr(self, good_gt_dir, gt_conn, monkeypatch):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 0.5)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        report = evaluate_on(
+            gt_conn,
+            queries,
+            ids=TUNE_IDS + HELD_OUT_IDS,
+            purpose="validate",
+            baseline_metrics={"l1-url": 0.5, "l5-quote": 0.5},
+            metric="mrr",
+        )
+        assert report["metric"] == "mrr"
+        assert report["bootstrap"]["delta"] == pytest.approx(0.0)
+
+    def test_validate_requires_baseline_metrics(self, good_gt_dir, gt_conn, monkeypatch):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 1.0)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(ValueError, match="baseline_metrics"):
+            evaluate_on(
+                gt_conn, queries, ids=HELD_OUT_IDS, purpose="validate"
+            )
+
+    def test_validate_requires_query_for_query_pairing(
+        self, good_gt_dir, gt_conn, monkeypatch
+    ):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 1.0)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(ValueError, match="'l5-quote'"):
+            evaluate_on(
+                gt_conn,
+                queries,
+                ids=TUNE_IDS + HELD_OUT_IDS,
+                purpose="validate",
+                baseline_metrics={"l1-url": 1.0},  # l5-quote missing
+            )
+
+    def test_validate_rejects_non_numeric_baseline(
+        self, good_gt_dir, gt_conn, monkeypatch
+    ):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 1.0)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(ValueError, match="non-numeric"):
+            evaluate_on(
+                gt_conn,
+                queries,
+                ids=TUNE_IDS + HELD_OUT_IDS,
+                purpose="validate",
+                baseline_metrics={"l1-url": 1.0, "l5-quote": "good"},
+            )
+
+    def test_malformed_calls_fail_loudly(self, good_gt_dir, gt_conn, monkeypatch):
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (0.0, 0.0)
+        )
+        queries = load_ground_truth(good_gt_dir)
+        with pytest.raises(ValueError, match="purpose"):
+            evaluate_on(gt_conn, queries, ids=TUNE_IDS, purpose="yolo")
+        with pytest.raises(ValueError, match="metric"):
+            evaluate_on(
+                gt_conn, queries, ids=TUNE_IDS, metric="ndcg", held_out_ids=[]
+            )
+        with pytest.raises(ValueError, match="unknown query id"):
+            evaluate_on(
+                gt_conn, queries, ids=["ghost"], purpose="selection", held_out_ids=[]
+            )
+        with pytest.raises(ValueError, match="empty id set"):
+            evaluate_on(gt_conn, queries, ids=[], purpose="selection", held_out_ids=[])
+        with pytest.raises(ValueError, match="GradedQuery"):
+            evaluate_on(gt_conn, TUNE_IDS, ids=TUNE_IDS, purpose="selection", held_out_ids=[])
+
+    def test_end_to_end_against_the_real_58_l1_split(self, gt_conn, monkeypatch):
+        # The T004 consumption shape against the committed dataset: split,
+        # tamper, observe the named violation; a legal tune-only run passes.
+        queries = [
+            q for q in load_ground_truth(REAL_GROUND_TRUTH) if q.level == "L1"
+        ]
+        assert len(queries) == N_REAL_L1
+        tune, validate = split_queries(queries)
+
+        monkeypatch.setattr(
+            eval_mod, "evaluate_graded_query", lambda *a, **kw: (1.0, 1.0)
+        )
+        with pytest.raises(HeldOutError) as excinfo:
+            evaluate_on(
+                gt_conn, queries, ids=tune + validate[:3], purpose="selection",
+                held_out_ids=validate,
+            )
+        for qid in validate[:3]:
+            assert repr(qid) in str(excinfo.value) or f"'{qid}'" in str(excinfo.value)
+
+        report = evaluate_on(
+            gt_conn, queries, ids=tune, purpose="selection", held_out_ids=validate
+        )
+        assert report["n_queries"] == 29
+
+
+# ---------------------------------------------------------------------------
+# Paired bootstrap accept guard (D-006: bootstrap/t, not Wilcoxon)
+# ---------------------------------------------------------------------------
+
+#: A clearly-better candidate: recall@10 per query, candidate vs baseline.
+A_CLEAR = [1.0, 0.9, 1.0, 0.8, 1.0]
+B_CLEAR = [0.2, 0.1, 0.3, 0.0, 0.2]
+
+
+class TestPairedBootstrap:
+    def test_result_carries_the_full_verdict(self):
+        result = paired_bootstrap(A_CLEAR, B_CLEAR)
+        assert set(result) == {
+            "delta",
+            "ci_low",
+            "ci_high",
+            "p_value",
+            "significant",
+            "t_statistic",
+            "p_value_t",
+            "n_queries",
+            "n_resamples",
+            "confidence",
+        }
+
+    def test_known_delta_with_ci_bracketing_it(self):
+        result = paired_bootstrap(A_CLEAR, B_CLEAR)
+        assert result["delta"] == pytest.approx(0.78)
+        # The CI brackets the observed delta and excludes zero (clear case)...
+        assert result["ci_low"] <= 0.78 <= result["ci_high"]
+        assert result["ci_low"] > 0.0
+        # ...and the delta passes the accept gate.
+        assert result["p_value"] < 0.05
+        assert result["significant"] is True
+
+    def test_zero_delta_is_never_significant(self):
+        values = [0.5, 0.2, 1.0, 0.0, 0.7]
+        result = paired_bootstrap(values, values)
+        assert result["delta"] == 0.0
+        assert (result["ci_low"], result["ci_high"]) == (0.0, 0.0)
+        assert result["p_value"] == 1.0
+        assert result["significant"] is False
+        # Degenerate zero-variance t is defined, not a crash.
+        assert result["t_statistic"] == 0.0
+        assert result["p_value_t"] == 1.0
+
+    def test_small_5_query_delta_stays_within_noise(self):
+        # The honest-small case (the acceptance example): delta 0.4 on five
+        # queries does NOT clear the bar — the guard refuses weak evidence.
+        a = [1.0, 1.0, 1.0, 0.0, 1.0]
+        b = [0.0, 1.0, 0.0, 0.0, 1.0]
+        result = paired_bootstrap(a, b)
+        assert result["delta"] == pytest.approx(0.4)
+        assert result["significant"] is False
+        assert result["p_value"] > 0.05
+
+    def test_same_seed_reproduces_the_verdict_exactly(self):
+        first = paired_bootstrap(A_CLEAR, B_CLEAR, n_resamples=2000, seed=7)
+        second = paired_bootstrap(A_CLEAR, B_CLEAR, n_resamples=2000, seed=7)
+        assert first == second
+
+    def test_different_seed_gives_an_independent_resample(self):
+        # On a noisy sample the extreme-count (hence p) moves with the seed;
+        # the clear-case arrays are deliberately excluded — their null
+        # distribution can never reach |delta|, so p sits at the add-one
+        # floor for every seed.
+        a = [1.0, 1.0, 1.0, 0.0, 1.0]
+        b = [0.0, 1.0, 0.0, 0.0, 1.0]
+        first = paired_bootstrap(a, b, n_resamples=2000, seed=1)
+        second = paired_bootstrap(a, b, n_resamples=2000, seed=2)
+        assert first["p_value"] != second["p_value"]
+
+    def test_paired_t_agrees_on_a_clear_case(self):
+        # Smucker: bootstrap and t are interchangeable at this n — on a
+        # clear case both reject, with p-values of the same magnitude.
+        result = paired_bootstrap(A_CLEAR, B_CLEAR)
+        assert result["p_value"] < 0.05
+        assert result["p_value_t"] < 0.05
+        assert result["significant"] is True
+
+    def test_p_value_t_matches_the_t_distribution(self):
+        # diffs [1..5] against zeros: mean 3, sample sd sqrt(2.5),
+        # t = 3 / (sqrt(2.5)/sqrt(5)) = 4.242640687119285 with df = 4.
+        # The two-sided t tail there is 0.013235599563682107 (reference
+        # value from the t-distribution, implementation cross-validated
+        # against t-table critical values to < 5e-5).
+        result = paired_bootstrap([1.0, 2.0, 3.0, 4.0, 5.0], [0.0] * 5)
+        assert result["t_statistic"] == pytest.approx(4.242640687119285)
+        assert result["p_value_t"] == pytest.approx(0.013235599563682107, abs=1e-9)
+
+    @pytest.mark.parametrize(
+        "a, b, pattern",
+        [
+            ([1.0, 2.0], [1.0], "equal-length"),
+            ([], [], "at least one"),
+        ],
+    )
+    def test_malformed_inputs_raise(self, a, b, pattern):
+        with pytest.raises(ValueError, match=pattern):
+            paired_bootstrap(a, b)
+
+    def test_bad_n_resamples_and_confidence_raise(self):
+        with pytest.raises(ValueError, match="n_resamples"):
+            paired_bootstrap(A_CLEAR, B_CLEAR, n_resamples=0)
+        with pytest.raises(ValueError, match="confidence"):
+            paired_bootstrap(A_CLEAR, B_CLEAR, confidence=1.5)

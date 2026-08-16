@@ -8,7 +8,9 @@ Two query sources (D-008): the legacy yaml fixture via ``load_eval_queries``
 ``load_ground_truth`` (``queries.jsonl`` + ``expectations.tsv``, D-004 schema)
 with identity-first matching and grade-aware scoring. ``split_queries``
 (FR-006) turns that ground truth into the seeded tune/validate split used
-for held-out lever selection.
+for held-out lever selection; ``evaluate_on`` (FR-006, TC-019) is the guarded
+evaluation seam that enforces it, and ``paired_bootstrap`` (D-006) is the
+accept gate any lever must pass on the validate split.
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ import random
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -307,6 +309,398 @@ def split_queries(
     # ceil hands the odd element to tune.
     n_tune = math.ceil(round(len(ids) * ratio, 10))
     return ids[:n_tune], ids[n_tune:]
+
+
+# --------------------------------------------------------------------------
+# Held-out enforcement + paired-bootstrap accept guard (FR-006, TC-019, D-006)
+#
+# The sweep harness (T004) evaluates every lever combination through ONE
+# entrypoint — ``evaluate_on`` — which is where held-out discipline lives.
+# Selection runs take purpose="selection" and may only touch the tune half;
+# the one legitimate way to read the validate half is purpose="validate",
+# which structurally cannot return numbers without the paired-bootstrap
+# verdict attached. ``paired_bootstrap`` (D-006: bootstrap/t, not Wilcoxon —
+# 58 queries is the TREC 50-topic regime, Smucker et al. 2007) is that
+# verdict.
+# --------------------------------------------------------------------------
+
+#: Fixed seed for ``paired_bootstrap``: accept/reject verdicts are
+#: reproducible across runs, machines, and processes. Deliberately distinct
+#: from ``DEFAULT_SPLIT_SEED`` so tweaking one never perturbs the other.
+DEFAULT_BOOTSTRAP_SEED = 0xB0057
+
+_PURPOSES = ("selection", "validate")
+_METRICS = ("recall_at_10", "mrr")
+
+
+class HeldOutError(RuntimeError):
+    """A selection-stage evaluation tried to read held-out (validate) ids.
+
+    Subclasses ``RuntimeError`` — deliberately NOT ``ValueError`` — so
+    generic dataset-error handlers cannot downgrade the violation into a
+    "clean" error path: ``eval_cmd``, for instance, catches ``ValueError``
+    as "invalid eval dataset" and would mislabel a held-out breach. An
+    uncaught ``HeldOutError`` propagates to a non-zero exit, which is
+    exactly the TC-019 contract: fail loudly, no results table emitted.
+    """
+
+
+def evaluate_on(
+    conn: sqlite3.Connection,
+    queries: Iterable[Any],
+    *,
+    ids: Iterable[str],
+    purpose: str = "selection",
+    held_out_ids: Optional[Iterable[str]] = None,
+    baseline_metrics: Optional[Mapping[str, float]] = None,
+    metric: str = "recall_at_10",
+    bundle_root: Optional[str] = None,
+    k: int = 10,
+    n_resamples: int = 10000,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> Dict[str, Any]:
+    """Evaluate the queries named in ``ids`` under held-out discipline.
+
+    This is the seam the sweep harness (T004) is contractually built on;
+    ``run_evaluation`` (the reporting path) stays untouched. ``queries`` is
+    the loaded ground truth (``load_ground_truth`` output — only
+    ``query_id``/``level``/``text``/``expectations`` are read).
+
+    WHY this seam cannot be bypassed silently:
+
+    * The lower-level primitives (``evaluate_graded_query`` and the
+      ``_*_retrieve`` helpers) carry no id knowledge — split discipline can
+      only be enforced at an entrypoint that sees the requested ids, and
+      this is the only evaluation entrypoint that does.
+    * **purpose="selection"** structurally requires ``held_out_ids`` (the
+      validate half from ``split_queries``) and intersects the requested
+      ids against them *before any retrieval runs*: a violating call raises
+      :class:`HeldOutError` naming the offending ids and the mode, so no
+      query is scored and no results table can be emitted for that run.
+      Omitting ``held_out_ids`` raises ``ValueError`` — selection without a
+      declared held-out set is a harness bug, not a silent pass.
+    * **purpose="validate"** is the one legitimate held-out read, and it
+      cannot return numbers without the paired-bootstrap verdict attached:
+      ``baseline_metrics`` (the incumbent's per-query values for the same
+      ids) is mandatory, the candidate/baseline arrays are paired by query
+      id, and ``paired_bootstrap`` runs before the report is returned.
+      "Read the validate split and decide by eyeball" is not a
+      constructible call.
+
+    Returns a report with ``purpose``, ``n_queries``, ``recall_at_10``,
+    ``mrr``, and ``per_query`` (``{qid: {"recall_at_10", "mrr"}}`` — the
+    candidate per-query arrays future validate runs pair against). In
+    validate mode the report additionally carries ``metric``,
+    ``baseline_mean``, and ``bootstrap`` (the full
+    :func:`paired_bootstrap` verdict).
+
+    ``ValueError`` is raised for malformed calls (unknown purpose/metric,
+    empty or unknown ids, selection without ``held_out_ids``, validate
+    without complete ``baseline_metrics``); :class:`HeldOutError` for the
+    held-out violation itself.
+    """
+    if purpose not in _PURPOSES:
+        raise ValueError(
+            f"unknown purpose {purpose!r}; expected one of {list(_PURPOSES)}"
+        )
+    if metric not in _METRICS:
+        raise ValueError(
+            f"unknown metric {metric!r}; expected one of {list(_METRICS)}"
+        )
+
+    by_id: Dict[str, Any] = {}
+    for q in queries:
+        if isinstance(q, str):
+            raise ValueError(
+                "evaluate_on requires GradedQuery objects (load_ground_truth "
+                "output); bare id strings carry no expectations to score"
+            )
+        by_id[q.query_id] = q
+    id_list = sorted(set(ids))
+    if not id_list:
+        raise ValueError("evaluate_on received an empty id set")
+    unknown = [qid for qid in id_list if qid not in by_id]
+    if unknown:
+        raise ValueError(
+            f"evaluate_on received {len(unknown)} unknown query id(s) "
+            f"{unknown} not present in the loaded ground truth"
+        )
+
+    # --- The guard: enforced before any retrieval or scoring happens. ----
+    if purpose == "selection":
+        if held_out_ids is None:
+            raise ValueError(
+                "selection-stage evaluation requires held_out_ids (the "
+                "validate half from split_queries); without it, held-out "
+                "discipline cannot be enforced (FR-006)"
+            )
+        violation = sorted(set(id_list) & set(held_out_ids))
+        if violation:
+            raise HeldOutError(
+                f"held-out violation: selection-stage evaluation "
+                f"(purpose='selection') attempted to read {len(violation)} "
+                f"validation-split query id(s) {violation}; validate ids are "
+                f"reserved for the paired-bootstrap accept guard — use "
+                f"purpose='validate' with baseline_metrics for a held-out "
+                f"measurement, or restrict ids to the tune split (FR-006, TC-019)"
+            )
+
+    # --- Evaluate (only reachable with a legal id set for the mode). -----
+    per_query: Dict[str, Dict[str, float]] = {}
+    for qid in id_list:
+        graded = by_id[qid]
+        rec, rr = evaluate_graded_query(conn, bundle_root, graded, k=k)
+        per_query[qid] = {"recall_at_10": rec, "mrr": rr}
+
+    report: Dict[str, Any] = {
+        "purpose": purpose,
+        "n_queries": len(id_list),
+        "recall_at_10": round(sum(p["recall_at_10"] for p in per_query.values()) / len(id_list), 4),
+        "mrr": round(sum(p["mrr"] for p in per_query.values()) / len(id_list), 4),
+        "per_query": per_query,
+    }
+    if purpose == "selection":
+        return report
+
+    # --- Validate mode: the bootstrap guard runs before results return. --
+    if baseline_metrics is None:
+        raise ValueError(
+            "purpose='validate' requires baseline_metrics (the incumbent's "
+            "per-query values keyed by query id): the paired-bootstrap "
+            "accept guard must run before held-out results are returned "
+            "(FR-006, D-006)"
+        )
+    missing = [qid for qid in id_list if qid not in baseline_metrics]
+    if missing:
+        raise ValueError(
+            f"baseline_metrics is missing {len(missing)} evaluated query "
+            f"id(s) {missing}: the paired bootstrap needs candidate and "
+            f"baseline arrays paired query-for-query"
+        )
+    bad = sorted(
+        qid
+        for qid in id_list
+        if not isinstance(baseline_metrics[qid], (int, float))
+        or isinstance(baseline_metrics[qid], bool)
+    )
+    if bad:
+        raise ValueError(
+            f"baseline_metrics values must be numbers; got non-numeric "
+            f"values for {bad}"
+        )
+
+    candidate = [per_query[qid][metric] for qid in id_list]
+    baseline = [float(baseline_metrics[qid]) for qid in id_list]
+    report["metric"] = metric
+    report["baseline_mean"] = round(sum(baseline) / len(baseline), 4)
+    report["bootstrap"] = paired_bootstrap(
+        candidate, baseline, n_resamples=n_resamples, seed=seed
+    )
+    return report
+
+
+# --------------------------------------------------------------------------
+# Paired bootstrap + paired-t cross-check (D-006; Smucker et al., CIKM 2007)
+# --------------------------------------------------------------------------
+
+
+def paired_bootstrap(
+    metric_per_query_a: Sequence[float],
+    metric_per_query_b: Sequence[float],
+    n_resamples: int = 10000,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+    confidence: float = 0.95,
+) -> Dict[str, Any]:
+    """Bootstrap the paired per-query metric difference ``A - B``.
+
+    The IR-significance regime for this dataset is ~29 queries per split —
+    the TREC 50-topic territory Smucker et al. (CIKM 2007) studied, where
+    the bootstrap and the paired t-test are interchangeable and Wilcoxon is
+    anti-conservative; Urbano et al. confirm the choice. Per D-006 this
+    function is the accept gate: a lever ships only if its validate-split
+    delta passes here.
+
+    Method (all resampling from one seeded ``random.Random`` — same inputs,
+    seed, and ``n_resamples`` give byte-identical output):
+
+    * ``delta`` = mean of the paired differences ``a_i - b_i`` (positive =
+      candidate A better than baseline B on average).
+    * ``ci_low``/``ci_high`` = percentile bootstrap confidence interval of
+      the mean difference at ``confidence`` (default 95%): resample the
+      difference vector with replacement, percentile the resampled means.
+    * ``p_value`` = two-sided bootstrap hypothesis test of H0: mean
+      difference = 0 — the differences are recentered on the null (each
+      ``d_i - delta``), resampled, and p is the fraction of resampled null
+      means at least as extreme as ``|delta|`` (Davison & Hinkley's shifted
+      null, with the add-one correction so p is never 0). The accept rule
+      is ``p_value < alpha`` where ``alpha = 1 - confidence``.
+    * ``t_statistic``/``p_value_t`` = the paired t-test on the same
+      difference vector as a cross-check (Smucker: interchangeable with the
+      bootstrap at this n; large disagreement flags a pathological sample,
+      not a second opinion to shop between).
+
+    Returns ``{delta, ci_low, ci_high, p_value, significant, t_statistic,
+    p_value_t, n_queries, n_resamples, confidence}``.
+
+    ``ValueError`` on empty or length-mismatched inputs (the bootstrap is
+    strictly paired — silently truncating would drop queries), or on a
+    non-positive ``n_resamples``/``confidence`` outside (0, 1).
+    """
+    if len(metric_per_query_a) != len(metric_per_query_b):
+        raise ValueError(
+            f"paired bootstrap requires equal-length per-query arrays, got "
+            f"{len(metric_per_query_a)} and {len(metric_per_query_b)}"
+        )
+    if not metric_per_query_a:
+        raise ValueError("paired bootstrap requires at least one query pair")
+    if n_resamples <= 0:
+        raise ValueError(f"n_resamples must be positive, got {n_resamples}")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be within (0.0, 1.0), got {confidence}")
+
+    n = len(metric_per_query_a)
+    diffs = [float(a) - float(b) for a, b in zip(metric_per_query_a, metric_per_query_b)]
+    delta = sum(diffs) / n
+
+    rng = random.Random(seed)
+
+    # Percentile CI: resample the observed difference vector.
+    boot_means: List[float] = []
+    for _ in range(n_resamples):
+        total = 0.0
+        for _ in range(n):
+            total += diffs[rng.randrange(n)]
+        boot_means.append(total / n)
+    boot_means.sort()
+    alpha = 1.0 - confidence
+    ci_low = _percentile(boot_means, 100.0 * (alpha / 2.0))
+    ci_high = _percentile(boot_means, 100.0 * (1.0 - alpha / 2.0))
+
+    # Two-sided p: recenter the differences on the null (mean 0) and count
+    # resamples at least as extreme as the observed |delta| (add-one).
+    null_diffs = [d - delta for d in diffs]
+    extreme = 0
+    for _ in range(n_resamples):
+        total = 0.0
+        for _ in range(n):
+            total += null_diffs[rng.randrange(n)]
+        if abs(total / n) >= abs(delta):
+            extreme += 1
+    p_value = (1.0 + extreme) / (1.0 + n_resamples)
+
+    t_statistic, p_value_t = _paired_t(diffs, delta)
+
+    return {
+        "delta": delta,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "p_value": p_value,
+        "significant": p_value < alpha,
+        "t_statistic": t_statistic,
+        "p_value_t": p_value_t,
+        "n_queries": n,
+        "n_resamples": n_resamples,
+        "confidence": confidence,
+    }
+
+
+def _percentile(sorted_values: Sequence[float], pct: float) -> float:
+    """Linear-interpolation percentile of a pre-sorted sequence.
+
+    Matches numpy's default ``percentile`` method without the dependency:
+    rank ``pct/100 * (n - 1)`` interpolated between neighbors.
+    """
+    n = len(sorted_values)
+    if n == 1:
+        return float(sorted_values[0])
+    rank = (pct / 100.0) * (n - 1)
+    lo = math.floor(rank)
+    hi = math.ceil(rank)
+    if lo == hi:
+        return float(sorted_values[int(rank)])
+    frac = rank - lo
+    return sorted_values[lo] * (1.0 - frac) + sorted_values[hi] * frac
+
+
+def _paired_t(diffs: Sequence[float], delta: float) -> Tuple[float, float]:
+    """Paired t-statistic and two-sided p on a difference vector.
+
+    The p-value comes from the regularized incomplete beta function
+    (pure stdlib — scipy is not a dependency of this project):
+    ``p = I_x(df/2, 1/2)`` with ``x = df / (df + t^2)``, evaluated via the
+    continued-fraction expansion (Numerical Recipes; verified against
+    t-table critical values to < 5e-5). Degenerate zero-variance samples
+    get ``|t| = inf`` (p = 0) for a nonzero mean and ``t = 0`` (p = 1) for
+    an exactly-zero mean.
+    """
+    n = len(diffs)
+    df = n - 1
+    if n < 2 or df < 1:
+        return 0.0, 1.0
+    variance = sum((d - delta) ** 2 for d in diffs) / df
+    if variance == 0.0:
+        if delta == 0.0:
+            return 0.0, 1.0
+        return math.copysign(math.inf, delta), 0.0
+    sem = math.sqrt(variance) / math.sqrt(n)
+    t_statistic = delta / sem
+    x = df / (df + t_statistic * t_statistic)
+    return t_statistic, _betainc_reg(df / 2.0, 0.5, x)
+
+
+def _betainc_reg(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta function ``I_x(a, b)`` (NR 6.4)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    ln_bt = (
+        math.lgamma(a + b)
+        - math.lgamma(a)
+        - math.lgamma(b)
+        + a * math.log(x)
+        + b * math.log1p(-x)
+    )
+    bt = math.exp(ln_bt)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(a, b, x) / a
+    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
+
+
+def _betacf(a: float, b: float, x: float, max_iter: int = 300, eps: float = 3e-12) -> float:
+    """Continued fraction for the incomplete beta (NR ``betacf``)."""
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for m in range(1, max_iter + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
 
 
 def evaluate_l1_query(conn: sqlite3.Connection, query: str, expect: List[str], k: int = 10) -> Tuple[float, float]:
