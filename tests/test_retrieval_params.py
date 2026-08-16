@@ -1,0 +1,573 @@
+"""RetrievalParams explicit injection (T003, D-008, FR-005).
+
+``RetrievalParams`` is the frozen, explicit tunable object threaded
+``run_evaluation -> semantic_search`` -- the injection channel the quality
+sweep uses instead of mutating the environment (in-process env writes would
+leak across lever combinations). Two contracts are pinned here:
+
+* **defaults-off equivalence** -- ``params=None`` and ``RetrievalParams()``
+  (every field ``None``) produce byte-identical result lists, because a
+  ``None`` field resolves to today's exact value at every knob site;
+* **knob turns** -- an injected field demonstrably changes behavior:
+  ``dense_threshold=0.0`` admits a candidate the 0.3 default filters,
+  ``rrf_weights`` reorders the fused ranking by flipping leg weights,
+  ``rrf_k`` rescales the fused scores, and the rerank/gate fields reach
+  their stages.
+
+Hermetic like tests/test_rerank_gating.py: the hash embedder gives
+deterministic vectors (cosines quoted in the fixtures below were probed,
+not guessed), and the brute cosine path is forced so sqlite-vec presence
+is irrelevant.
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+from pathlib import Path
+
+import pytest
+
+# Dep-free deterministic vectors for the whole module.
+pytestmark = pytest.mark.usefixtures("hash_backend")
+
+
+@pytest.fixture(autouse=True)
+def _params_env(monkeypatch):
+    """Deterministic knobs around every test.
+
+    * brute scan forced (ANN presence must not change results);
+    * no rerank enablement or margin env -- the gate tests that need them
+      set CAIRN_RERANK explicitly (mirroring test_rerank_gating.py);
+    * the persistent rerank auto-enable marker neutralized: on a dev
+      machine with a real ``~/.cairn/rerank_enabled`` (i.e. a downloaded
+      reranker), a process where cairn.paths resolved CAIRN_HOME before
+      conftest's sandbox applied would otherwise run the REAL cross-encoder
+      under these exact-order assertions (the test_rerank_gating.py
+      discipline);
+    * no CAIRN_FUSION override -- fusion defaults ON, the production path
+      the equivalence contract must hold on. Tests isolating the cosine
+      filter set it to "0" themselves.
+    """
+    from cairn.graph import reranker as rrk
+
+    monkeypatch.setattr(
+        rrk, "_rerank_marker_path", lambda: Path("/nonexistent/cairn-test-marker")
+    )
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
+    monkeypatch.delenv("CAIRN_RERANK", raising=False)
+    monkeypatch.delenv("CAIRN_RERANK_MIN_MARGIN", raising=False)
+    monkeypatch.delenv("CAIRN_FUSION", raising=False)
+    yield
+
+
+# ---------------------------------------------------------------------------
+# Fixture corpus
+#
+# Three symbols probed under the hash backend (query "function alpha"):
+#   alpha          -- chunk tokens {file, tmp, test, k, kt, function, alpha},
+#                     cosine 0.4901 (>= 0.3); BM25 name/qual match.
+#   alphaBulk      -- 80 unique docstring tokens flood the chunk: cosine
+#                     0.0801 (< 0.3); BM25 name match ("alphaBulk" starts
+#                     with the FTS prefix "alpha*").
+#   vectorOnlyNode -- "alpha" lives only in the FILE PATH (chunk contains
+#                     it; the FTS columns name/qualified_name/docstring do
+#                     not): cosine 0.4197, BM25-invisible.
+# ---------------------------------------------------------------------------
+
+
+def _seed_corpus(conn) -> None:
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/test/K.kt', 'kotlin')"
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (2, 't', '/tmp/alpha/V.kt', 'kotlin')"
+    )
+    long_doc = " ".join(f"w{i}" for i in range(80))
+    rows = [
+        (1, 1, "alpha", "alpha", None),
+        (2, 1, "alphaBulk", "x.alphaBulk", long_doc),
+        (3, 2, "vectorOnlyNode", "x.vectorOnlyNode", None),
+    ]
+    for sid, fid, name, qual, doc in rows:
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, line_start, line_end) "
+            "VALUES (?, ?, ?, 'function', ?, ?, 1, 10)",
+            (sid, fid, name, qual, doc),
+        )
+    conn.commit()
+
+
+@pytest.fixture()
+def seeded_db(fresh_db):
+    """The three-symbol corpus, embedded with the deterministic hash backend."""
+    from cairn.graph import embeddings as emb
+
+    _seed_corpus(fresh_db)
+    emb.embed_all(fresh_db)
+    return fresh_db
+
+
+def _seed_decisive(conn) -> None:
+    """The gating fixture from test_rerank_gating.py: querying
+    ``safeApiCall`` yields a wide fused margin (~0.53) plus an exact-name
+    #1 -- the confidence gate's skip shape."""
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('test', 'test', '/tmp/test')")
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (1, 'test', '/tmp/test/Api.kt', 'kotlin')"
+    )
+    rows = [
+        (1, "safeApiCall", "xyz.safeApiCall", "Retries a network call with backoff."),
+        (2, "formatDate", "xyz.formatDate", "Formats a date for display."),
+        (3, "drawBorder", "xyz.drawBorder", "Draws a border around a view."),
+        (4, "parseJsonConfig", "xyz.parseJsonConfig", "Parses the JSON config file."),
+        (5, "sortItems", "xyz.sortItems", "Sorts items by their priority."),
+        (6, "validateInput", "xyz.validateInput", "Validates user input fields."),
+    ]
+    for sid, name, qual, doc in rows:
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, line_start, line_end) "
+            "VALUES (?, 1, ?, 'function', ?, ?, 1, 10)",
+            (sid, name, qual, doc),
+        )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Dataclass contract
+# ---------------------------------------------------------------------------
+
+
+class TestRetrievalParamsContract:
+    def test_all_fields_default_none(self):
+        """The None-means-default contract: an all-None object carries no
+        opinion about any knob, which is what makes it behaviorally inert."""
+        from cairn.graph.semantic import RetrievalParams
+
+        p = RetrievalParams()
+        for field in dataclasses.fields(p):
+            assert getattr(p, field.name) is None, field.name
+
+    def test_frozen_immutable(self):
+        from cairn.graph.semantic import RetrievalParams
+
+        p = RetrievalParams(dense_threshold=0.1)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            p.dense_threshold = 0.9
+        assert p.dense_threshold == 0.1
+
+    def test_hashable(self):
+        """Frozen + eq gives hashability: a params object can key result
+        caches / dedupe sweep combinations."""
+        from cairn.graph.semantic import RetrievalParams
+
+        assert hash(RetrievalParams(rrf_weights=(1.0, 0.0))) == hash(
+            RetrievalParams(rrf_weights=(1.0, 0.0))
+        )
+        assert RetrievalParams() != RetrievalParams(rrf_k=10)
+
+
+# ---------------------------------------------------------------------------
+# Defaults-off equivalence (the FR-005 defaults-preserving contract)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultsOffEquivalence:
+    @pytest.mark.parametrize("fusion", ["0", "1"])
+    @pytest.mark.parametrize("query", ["function alpha", "alpha"])
+    def test_empty_params_object_is_byte_identical(
+        self, monkeypatch, seeded_db, fusion, query
+    ):
+        """params=None and RetrievalParams() (all-None fields) must return
+        identical result lists -- same ids, scores, provenance -- on both
+        the fusion path (RRF scores, the production default) and the pure
+        cosine path, for an identifier-shaped and a sentence query."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        monkeypatch.setenv("CAIRN_FUSION", fusion)
+        plain = semantic_search(seeded_db, query, limit=10)
+        injected = semantic_search(seeded_db, query, limit=10, params=RetrievalParams())
+        assert injected == plain
+
+    def test_partially_set_object_leaves_unset_knobs_at_defaults(
+        self, monkeypatch, seeded_db
+    ):
+        """Setting ONE field must not perturb the others: threshold=0.0
+        with everything else None behaves exactly like the scalar
+        threshold=0.0 call (the arg it overrides)."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        via_arg = semantic_search(seeded_db, "function alpha", limit=10, threshold=0.0)
+        via_params = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0),
+        )
+        assert via_params == via_arg
+
+
+# ---------------------------------------------------------------------------
+# Knob turns (an injected field demonstrably changes behavior)
+# ---------------------------------------------------------------------------
+
+
+class TestDenseThresholdKnob:
+    def test_threshold_zero_admits_a_candidate_the_default_filters(
+        self, monkeypatch, seeded_db
+    ):
+        """alphaBulk's cosine is 0.0801: the 0.3 default filters it out;
+        dense_threshold=0.0 admits it. Fusion off isolates the cosine
+        filter (BM25-only candidates bypass it)."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        default = semantic_search(seeded_db, "function alpha", limit=10)
+        widened = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.0),
+        )
+
+        default_names = [r["name"] for r in default]
+        widened_names = [r["name"] for r in widened]
+        assert default_names == ["alpha", "vectorOnlyNode"]
+        assert "alphaBulk" not in default_names, "fixture drift: 0.3 no longer filters"
+        assert widened_names == ["alpha", "vectorOnlyNode", "alphaBulk"]
+
+    def test_higher_threshold_filters_a_candidate_the_default_admits(
+        self, monkeypatch, seeded_db
+    ):
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        tightened = semantic_search(
+            seeded_db,
+            "function alpha",
+            limit=10,
+            params=RetrievalParams(dense_threshold=0.45),
+        )
+        # vectorOnlyNode (0.4197) drops below the injected 0.45.
+        assert [r["name"] for r in tightened] == ["alpha"]
+
+
+class TestRRFWeightsKnob:
+    """Fusion ON, query ``alpha`` (single token, so BOTH legs are
+    non-empty -- a sentence query degenerates to an empty BM25 leg via
+    today's quoted-phrase FTS defect, the T007 survey finding).
+
+    Leg memberships: BM25 = [alpha, alphaBulk] (FTS prefix ``alpha*`` +
+    LIKE substring both hit the names); vector pool (threshold 0.0) =
+    [alpha, vectorOnlyNode, alphaBulk] by cosine. Swapping the (dense,
+    sparse) weights flips which leg orders the tail -- vectorOnlyNode and
+    alphaBulk trade places, and the leg-excluded candidate scores 0.0.
+    """
+
+    @staticmethod
+    def _order(seeded_db, dense_w, sparse_w):
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        res = semantic_search(
+            seeded_db,
+            "alpha",
+            limit=10,
+            params=RetrievalParams(
+                dense_threshold=0.0, rrf_weights=(dense_w, sparse_w)
+            ),
+        )
+        return [(r["name"], r["score"]) for r in res]
+
+    def test_pure_dense_orders_by_vector_leg(self, seeded_db):
+        order = self._order(seeded_db, 1.0, 0.0)
+        assert [name for name, _ in order] == [
+            "alpha",
+            "vectorOnlyNode",
+            "alphaBulk",
+        ]
+
+    def test_pure_sparse_orders_by_bm25_leg(self, seeded_db):
+        order = self._order(seeded_db, 0.0, 1.0)
+        assert [name for name, _ in order] == ["alpha", "alphaBulk", "vectorOnlyNode"]
+        # vectorOnlyNode is BM25-invisible: a zero dense weight zeroes its
+        # only contributing leg.
+        by_name = dict(order)
+        assert by_name["vectorOnlyNode"] == 0.0
+        assert by_name["alphaBulk"] > 0.0  # genuine BM25-leg contribution
+
+    def test_weights_flip_the_tail_order(self, seeded_db):
+        """The knob-turn proof: same fixture, same scores formula, only the
+        weight tuple differs -- vectorOnlyNode and alphaBulk swap ranks."""
+        dense_order = [n for n, _ in self._order(seeded_db, 1.0, 0.0)]
+        sparse_order = [n for n, _ in self._order(seeded_db, 0.0, 1.0)]
+        assert dense_order != sparse_order
+        assert dense_order.index("vectorOnlyNode") < dense_order.index("alphaBulk")
+        assert sparse_order.index("alphaBulk") < sparse_order.index("vectorOnlyNode")
+
+
+class TestRRFKKnob:
+    def test_k_rescales_fused_scores(self, seeded_db):
+        """k=1 instead of the hard-coded 60: the pure-dense top score
+        becomes 1/(1+1) = 0.5 instead of 1/(60+1) ~ 0.0164 -- the constant
+        demonstrably reaches rrf_fuse."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        params = RetrievalParams(
+            dense_threshold=0.0, rrf_weights=(1.0, 0.0), rrf_k=1
+        )
+        res = semantic_search(seeded_db, "function alpha", limit=10, params=params)
+        by_name = {r["name"]: r["score"] for r in res}
+        # vec ranks 1/2/3 -> 1/2, 1/3, 1/4.
+        assert by_name["alpha"] == 0.5
+        assert by_name["vectorOnlyNode"] == 0.3333
+        assert by_name["alphaBulk"] == 0.25
+
+
+# ---------------------------------------------------------------------------
+# Rerank / gate knobs (recorder proves the stage ran or was skipped)
+# ---------------------------------------------------------------------------
+
+
+class _RerankRecorder:
+    """Stand-in for rrk.rerank (the test_rerank_gating.py pattern)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, query, candidates, limit):
+        self.calls.append({"query": query, "limit": limit})
+        out = [dict(c) for c in candidates[:limit]]
+        for item in out:
+            item["rerank_score"] = 0.5
+        return out, True
+
+
+@pytest.fixture()
+def armed_gate(monkeypatch, fresh_db):
+    """The decisive fixture with the rerank stage enabled and the recorder
+    installed; returns (conn, recorder)."""
+    from cairn.graph import embeddings as emb
+    from cairn.graph import reranker as rrk
+    from cairn.graph import semantic as semantic_mod
+
+    _seed_decisive(fresh_db)
+    emb.embed_all(fresh_db)
+    monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: Path("/nonexistent/marker"))
+    monkeypatch.setattr(emb, "is_hash_fallback", lambda: False)
+    # Arm the gate despite the hash env (mirrors test_rerank_gating.py).
+    monkeypatch.setattr(
+        semantic_mod, "_vectors_carry_token_overlap_only", lambda flag: False
+    )
+    monkeypatch.setenv("CAIRN_RERANK", "1")
+    rec = _RerankRecorder()
+    monkeypatch.setattr(rrk, "rerank", rec)
+    return fresh_db, rec
+
+
+class TestRerankAndGateKnobs:
+    def test_default_gate_skips_on_decisive_margin(self, armed_gate):
+        """Baseline for the knob tests: the fused margin (~0.53) clears the
+        0.45 default, so the stage is skipped even with a params object
+        present (its gate field is None)."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        conn, rec = armed_gate
+        semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0),
+        )
+        assert rec.calls == []
+
+    def test_gate_min_margin_unattainable_keeps_the_stage(self, armed_gate):
+        """gate_min_margin=1.0 (a fused ranking never has a perfect margin)
+        blocks the skip that the 0.45 default makes -- the gate knob turns."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        conn, rec = armed_gate
+        semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0, gate_min_margin=1.0),
+        )
+        assert len(rec.calls) == 1, "margin override must reach the gate"
+
+    def test_gate_min_margin_zero_forces_the_skip(self, armed_gate, monkeypatch):
+        """A tight-margin query the default (0.45) reranks skips under
+        margin=0 -- the knob works in both directions. The tight fixture
+        ties everywhere, so the gate is the only variable."""
+        from cairn.graph import embeddings as emb
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        conn, rec = armed_gate
+        # Re-seed the tight shape on the second file slot: identical names
+        # and docstrings make every signal tie (margin ~0).
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES (2, 'test', '/tmp/test/W.kt', 'kotlin')"
+        )
+        for i in range(8):
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, line_start, line_end) "
+                "VALUES (?, 2, 'worker', 'function', 'xyz.worker', "
+                "'Process items from the queue.', 1, 10)",
+                (10 + i,),
+            )
+        conn.commit()
+        emb.embed_all(conn)
+
+        query = "worker"
+        # Default margin: no skip (margin ~0 < 0.45).
+        semantic_search(conn, query, limit=5, params=RetrievalParams(dense_threshold=0.0))
+        assert len(rec.calls) == 1
+        rec.calls.clear()
+        # Margin 0 + exact-name corroboration ("worker") -> skip.
+        semantic_search(
+            conn,
+            query,
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0, gate_min_margin=0.0),
+        )
+        assert rec.calls == []
+
+    def test_rerank_true_forces_past_the_gate(self, armed_gate):
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        conn, rec = armed_gate
+        res = semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0, rerank=True),
+        )
+        assert len(rec.calls) == 1
+        assert all(r["reranked"] is True for r in res)
+
+    def test_rerank_false_never_runs(self, armed_gate):
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        conn, rec = armed_gate
+        res = semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0, rerank=False),
+        )
+        assert rec.calls == []
+        assert all(r["reranked"] is False for r in res)
+
+
+# ---------------------------------------------------------------------------
+# Eval-layer threading (run_evaluation -> ... -> semantic_search)
+# ---------------------------------------------------------------------------
+
+
+def _write_graded_dir(tmp_path):
+    """One graded L1 query whose primary target is alphaBulk -- the symbol
+    only retrieval finds once the dense threshold widens."""
+    d = tmp_path / "ground_truth"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "queries.jsonl").write_text(
+        json.dumps(
+            {
+                "query_id": "l1-bulk",
+                "level": "L1",
+                "kind": "definition",
+                "text": "function alpha",
+                "rationale": "threshold knob fixture",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (d / "expectations.tsv").write_text(
+        "query_id\tsymbol_id\tgrade\nl1-bulk\tK.kt#alphaBulk\t2\n", encoding="utf-8"
+    )
+    return d
+
+
+class TestEvalThreading:
+    def test_graded_path_threads_params_to_semantic_search(
+        self, monkeypatch, fresh_db, tmp_path
+    ):
+        """A spy on cairn.graph.semantic.semantic_search (the object
+        cairn.graph.queries lazily re-resolves) sees the exact params
+        object on every call run_evaluation makes."""
+        import cairn.eval as eval_mod
+        from cairn.graph.semantic import RetrievalParams
+
+        seen = []
+
+        def spy(conn, query, **kw):
+            seen.append({"query": query, "params": kw.get("params")})
+            return []
+
+        monkeypatch.setattr("cairn.graph.semantic.semantic_search", spy)
+        params = RetrievalParams(dense_threshold=0.0)
+        eval_mod.run_evaluation(
+            fresh_db, queries_path=_write_graded_dir(tmp_path), params=params
+        )
+        assert seen == [{"query": "function alpha", "params": params}]
+
+    def test_yaml_path_threads_params_to_semantic_search(
+        self, monkeypatch, fresh_db, tmp_path
+    ):
+        import cairn.eval as eval_mod
+        from cairn.graph.semantic import RetrievalParams
+
+        seen = []
+
+        def spy(conn, query, **kw):
+            seen.append({"query": query, "params": kw.get("params")})
+            return []
+
+        monkeypatch.setattr("cairn.graph.semantic.semantic_search", spy)
+        qyaml = tmp_path / "queries.yaml"
+        qyaml.write_text(
+            "- query: function alpha\n  corpus: L1\n  expect: [alpha]\n",
+            encoding="utf-8",
+        )
+        params = RetrievalParams(rrf_k=7)
+        eval_mod.run_evaluation(fresh_db, queries_path=qyaml, params=params)
+        assert seen == [{"query": "function alpha", "params": params}]
+
+    def test_run_evaluation_reports_identical_with_empty_params(
+        self, monkeypatch, seeded_db, tmp_path
+    ):
+        """End-to-end defaults-off equivalence at the harness boundary."""
+        from cairn.graph.semantic import RetrievalParams
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        gt = _write_graded_dir(tmp_path)
+        plain = eval_run(seeded_db, gt, None)
+        injected = eval_run(seeded_db, gt, RetrievalParams())
+        assert injected == plain
+
+    def test_injected_threshold_changes_the_report(
+        self, monkeypatch, seeded_db, tmp_path
+    ):
+        """The knob-turn proof at the harness boundary: alphaBulk (cosine
+        0.0801) is invisible at the 0.3 default (recall 0.0) and found at
+        rank 3 under dense_threshold=0.0 (recall 1.0, MRR 1/3). Fusion off
+        keeps the BM25 leg from masking the threshold."""
+        from cairn.graph.semantic import RetrievalParams
+
+        monkeypatch.setenv("CAIRN_FUSION", "0")
+        gt = _write_graded_dir(tmp_path)
+        default = eval_run(seeded_db, gt, None)
+        widened = eval_run(seeded_db, gt, RetrievalParams(dense_threshold=0.0))
+
+        assert default["L1"]["recall_at_10"] == 0.0
+        assert default["L1"]["mrr"] == 0.0
+        assert widened["L1"]["recall_at_10"] == 1.0
+        assert widened["L1"]["mrr"] == 0.3333
+
+
+def eval_run(conn, gt_dir, params):
+    import cairn.eval as eval_mod
+
+    return eval_mod.run_evaluation(
+        conn, queries_path=gt_dir, corpus_filter="L1", params=params
+    )

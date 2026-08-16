@@ -16,6 +16,7 @@ import logging
 import os
 import sqlite3
 import time
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .lexical import search_symbols
@@ -171,7 +172,12 @@ def _vectors_carry_token_overlap_only(hash_fallback_flag: bool) -> bool:
     return os.environ.get("CAIRN_EMBED_BACKEND", "").strip().lower() == "hash"
 
 
-def _fused_confident(query: str, candidates: List[dict], limit: int) -> bool:
+def _fused_confident(
+    query: str,
+    candidates: List[dict],
+    limit: int,
+    min_margin: Optional[float] = None,
+) -> bool:
     """Whether the fused ranking is decisive enough to skip the rerank stage.
 
     Two conditions, both required:
@@ -182,8 +188,13 @@ def _fused_confident(query: str, candidates: List[dict], limit: int) -> bool:
       A wide margin alone says the rank fusion found a stable #1, not that
       the #1 is the right answer; the exact-name check supplies the lexical
       evidence that the query was *about* that symbol.
+
+    ``min_margin`` (D-008) is the explicit per-call override of the margin
+    (``RetrievalParams.gate_min_margin``, pre-clamped by the caller); ``None``
+    keeps the env/default resolution.
     """
-    if _fused_margin(candidates, limit) < _rerank_min_margin():
+    margin = _rerank_min_margin() if min_margin is None else min_margin
+    if _fused_margin(candidates, limit) < margin:
         return False
     return _exact_name_hit(query, candidates[0])
 
@@ -255,6 +266,74 @@ def _candidates_from_ann_hits(
     return candidates
 
 
+# ---------------------------------------------------------------------------
+# Explicit retrieval tunables (D-008, FR-005)
+#
+# The sweep/eval path is in-process, so per-combo environment mutation would
+# leak state across lever combinations and make results order-dependent.
+# This frozen object is the explicit injection channel instead: every knob
+# the quality sweep needs to turn rides through here, never through env.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RetrievalParams:
+    """Immutable per-call retrieval tunables for ``semantic_search`` (D-008).
+
+    ``None``-means-default is the whole contract (FR-005's
+    defaults-preserving rule): a ``None`` field resolves to exactly the value
+    today's code uses — the function-arg default, the hard-coded constant, or
+    the env-gated setting — so ``RetrievalParams()`` and ``params=None`` are
+    behaviorally identical, and the sweep's all-levers-off row is today's
+    retrieval, not an approximation of it.
+
+    Precedence: a non-``None`` field overrides the corresponding scalar arg
+    (``dense_threshold`` over ``threshold``, ``rerank`` over ``rerank``).
+    Legitimate callers pass either the scalar or the object, never both;
+    when both are set the field wins.
+
+    Fields (each ``None`` resolves to today's value):
+
+    * ``dense_threshold`` — cosine cutoff for vector candidates
+      (``threshold`` arg default ``0.3``).
+    * ``rrf_k`` — RRF constant (hard-coded ``60`` today).
+    * ``rrf_weights`` — ``(dense, sparse)`` relative RRF weights. ``None``
+      keeps ``rrf_fuse``'s equal weights. The FIELD order is
+      ``(dense, sparse)`` while the call site fuses ``[bm25, vec]`` — the
+      reorder happens at the call site, never in the caller.
+    * ``sparse_limit`` — BM25 fetch size (hard-coded ``30`` today).
+    * ``dense_pool`` — brute-force cosine scan fetch cap (hard-coded
+      ``50000`` today; ignored on the native ANN path, which sizes itself
+      by the rerank pool).
+    * ``rerank_pool`` — candidate pool carried into the rerank stage
+      (computed ``max(limit * 5, 50)`` when the stage is armed, else
+      ``limit``). A non-``None`` value replaces the computed size in both
+      branches.
+    * ``rerank`` — the rerank-stage override, same semantics as the
+      per-call ``rerank`` arg: ``None`` = auto (env-gated plus the
+      confidence gate), ``True`` = force past the gate (``CAIRN_RERANK=0``
+      still wins), ``False`` = never.
+    * ``enrich`` — FORWARD-COMPAT (query enrichment, FR-001/T008):
+      ``semantic_search`` does not read this flag today. It is carried so
+      the sweep can express on/off combinations the moment enrichment
+      lands; unknown-to-the-function flags are ignored, never errors.
+    * ``gate_min_margin`` — rerank confidence-gate margin override
+      (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
+      ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
+      the env path).
+    """
+
+    dense_threshold: Optional[float] = None
+    rrf_k: Optional[int] = None
+    rrf_weights: Optional[Tuple[float, float]] = None
+    sparse_limit: Optional[int] = None
+    dense_pool: Optional[int] = None
+    rerank_pool: Optional[int] = None
+    rerank: Optional[bool] = None
+    enrich: Optional[bool] = None
+    gate_min_margin: Optional[float] = None
+
+
 def semantic_search(
     conn: sqlite3.Connection,
     query: str,
@@ -262,6 +341,7 @@ def semantic_search(
     threshold: float = 0.3,
     include_callers: bool = False,
     rerank: Optional[bool] = None,
+    params: Optional[RetrievalParams] = None,
 ) -> List[dict]:
     """Return top-k symbols by cosine similarity to a natural-language query.
 
@@ -300,6 +380,15 @@ def semantic_search(
     hash backend -- fallback or explicit -- keep today's
     always-rerank-when-enabled behavior).
 
+    ``params`` (D-008, FR-005) is an optional frozen
+    :class:`RetrievalParams` carrying explicit retrieval tunables (dense
+    threshold, RRF k/weights, pool sizes, sparse fetch limit, rerank/gate
+    overrides). ``params=None`` -- and every ``None`` field of a passed
+    object -- preserves today's exact behavior; the eval/sweep path injects
+    combinations through this object rather than mutating the environment.
+    Flags the function does not know yet (e.g. ``enrich`` until FR-001
+    lands) are ignored, never errors.
+
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
     model, the candidate pool comes from a native ANN query instead of the
     brute-force scan (transparent fallback).
@@ -325,6 +414,24 @@ def semantic_search(
     # re-exported at the cairn.telemetry package level.
     from cairn.telemetry import emit, SEMANTIC_BACKEND, EMPTY_RESULT
     from cairn.telemetry.events import RERANK_SKIPPED
+
+    # --- Explicit tunable injection (D-008, FR-005) -------------------------
+    # None-means-default: with params=None (or a None field) every knob keeps
+    # today's exact value, so this block is a behavioral no-op for every
+    # existing caller -- params=None and RetrievalParams() must be identical,
+    # which is what the equivalence tests pin. A non-None field wins over the
+    # scalar arg (see RetrievalParams' precedence note).
+    _gate_margin_override: Optional[float] = None
+    if params is not None:
+        if params.dense_threshold is not None:
+            threshold = params.dense_threshold
+        if params.rerank is not None:
+            rerank = params.rerank
+        if params.gate_min_margin is not None:
+            # Clamp like the env path (_rerank_min_margin): the signal is a
+            # ratio, so out-of-range values are a harness bug, not an error
+            # worth failing a sweep run over.
+            _gate_margin_override = min(max(params.gate_min_margin, 0.0), 1.0)
 
     # Under the dep-free hash fallback the embedding carries only token-overlap
     # signal, so annotate provenance strings to surface the degradation.
@@ -400,6 +507,9 @@ def semantic_search(
     # When reranking, retrieve a wider shortlist for the cross-encoder to
     # re-sort; plain cosine ordering slices to exactly `limit`.
     pool_size = max(limit * 5, 50) if rerank_on else limit
+    if params is not None and params.rerank_pool is not None:
+        # Explicit override of the computed pool size (both branches).
+        pool_size = params.rerank_pool
 
     model = emb.current_model()
     q_blob, q_dim = emb.embed_query(query)
@@ -427,6 +537,8 @@ def semantic_search(
         if not ann_enabled:
             ann.warn_ann_fallback_once(logger, context="semantic_search")
         brute_force_limit = 50000
+        if params is not None and params.dense_pool is not None:
+            brute_force_limit = params.dense_pool
         rows = _mapping_rows(
             conn.execute(
                 "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
@@ -474,7 +586,10 @@ def semantic_search(
             # which has no .get() — convert to dict at this boundary so the
             # shared .get("id") access below works on both BM25 rows and the
             # candidate dicts (which are already plain dicts).
-            bm25_raw = [dict(r) for r in search_symbols(conn, query, limit=30)]
+            sparse_limit = 30
+            if params is not None and params.sparse_limit is not None:
+                sparse_limit = params.sparse_limit
+            bm25_raw = [dict(r) for r in search_symbols(conn, query, limit=sparse_limit)]
             bm25_map = {}
             bm25_ids = []
             for r in bm25_raw:
@@ -491,7 +606,17 @@ def semantic_search(
                     vec_map[sid] = r
                     vec_ids.append(sid)
 
-            fused_rank = rrf_fuse([bm25_ids, vec_ids], k=60)
+            rrf_k = 60
+            rrf_weights: Optional[List[float]] = None
+            if params is not None:
+                if params.rrf_k is not None:
+                    rrf_k = params.rrf_k
+                if params.rrf_weights is not None:
+                    # Field order is (dense, sparse); rrf_fuse pairs
+                    # weights[i] with rankings[i], and the rankings here are
+                    # [bm25(sparse), vec(dense)] -- reorder at the boundary.
+                    rrf_weights = [params.rrf_weights[1], params.rrf_weights[0]]
+            fused_rank = rrf_fuse([bm25_ids, vec_ids], k=rrf_k, weights=rrf_weights)
             fused_candidates = []
             for doc_id, fused_score in fused_rank:
                 in_bm25 = doc_id in bm25_map
@@ -549,7 +674,7 @@ def semantic_search(
         and not _vectors_carry_token_overlap_only(_hash)
         and _fusion_used
         and candidates
-        and _fused_confident(query, candidates, limit)
+        and _fused_confident(query, candidates, limit, min_margin=_gate_margin_override)
     ):
         rerank_on = False
         try:

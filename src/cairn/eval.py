@@ -21,9 +21,24 @@ import random
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import yaml
+
+if TYPE_CHECKING:
+    # Runtime import stays lazy (the cairn.graph.queries __getattr__ pattern
+    # keeps the heavy graph stack out of module import); annotations only.
+    from cairn.graph.semantic import RetrievalParams
 
 logger = logging.getLogger(__name__)
 
@@ -703,16 +718,23 @@ def _betacf(a: float, b: float, x: float, max_iter: int = 300, eps: float = 3e-1
     return h
 
 
-def evaluate_l1_query(conn: sqlite3.Connection, query: str, expect: List[str], k: int = 10) -> Tuple[float, float]:
+def evaluate_l1_query(
+    conn: sqlite3.Connection,
+    query: str,
+    expect: List[str],
+    k: int = 10,
+    params: Optional["RetrievalParams"] = None,
+) -> Tuple[float, float]:
     """Evaluate L1 query using semantic_search / search_symbols.
 
-    Returns (recall_at_k, reciprocal_rank).
+    Returns (recall_at_k, reciprocal_rank). ``params`` (D-008) is threaded
+    through to ``semantic_search`` verbatim; ``None`` keeps today's defaults.
     """
     from cairn.graph import queries as qmod
 
     # Try hybrid/semantic retrieval first; fall back to lexical if embeddings are empty
     try:
-        results = qmod.semantic_search(conn, query, limit=k)
+        results = qmod.semantic_search(conn, query, limit=k, params=params)
         retrieved_names = [r.get("name", "") for r in results]
     except Exception:
         results = qmod.search_symbols(conn, query, limit=k)
@@ -850,12 +872,21 @@ def score_graded_query(
     return recall, rr
 
 
-def _retrieve_l1(conn: sqlite3.Connection, query: str, k: int) -> List[Any]:
-    """L1 retrieval pipeline (semantic first, lexical fallback), full rows."""
+def _retrieve_l1(
+    conn: sqlite3.Connection,
+    query: str,
+    k: int,
+    params: Optional["RetrievalParams"] = None,
+) -> List[Any]:
+    """L1 retrieval pipeline (semantic first, lexical fallback), full rows.
+
+    ``params`` (D-008) reaches the ``semantic_search`` call; the lexical
+    fallback leg takes no retrieval tunables today.
+    """
     from cairn.graph import queries as qmod
 
     try:
-        results = list(qmod.semantic_search(conn, query, limit=k))
+        results = list(qmod.semantic_search(conn, query, limit=k, params=params))
         if results:
             return results
     except Exception:  # noqa: BLE001 - mirrors evaluate_l1_query's degrade
@@ -882,10 +913,15 @@ def evaluate_graded_query(
     bundle_root: Optional[str],
     graded: GradedQuery,
     k: int = 10,
+    params: Optional["RetrievalParams"] = None,
 ) -> Tuple[float, float]:
-    """Evaluate one graded query through its level's retrieval pipeline."""
+    """Evaluate one graded query through its level's retrieval pipeline.
+
+    ``params`` (D-008) applies to the L1 (semantic) leg only -- L5 retrieval
+    is bundle search with no retrieval tunables.
+    """
     if graded.level == "L1":
-        results = _retrieve_l1(conn, graded.text, k)
+        results = _retrieve_l1(conn, graded.text, k, params=params)
     else:
         results = _retrieve_l5(bundle_root, graded.text, k)
     return score_graded_query(results, graded.expectations, k)
@@ -897,12 +933,14 @@ def _run_graded_evaluation(
     graded_dir: Path,
     corpus_filter: str = "all",
     k: int = 10,
+    params: Optional["RetrievalParams"] = None,
 ) -> Dict[str, Any]:
     """Graded counterpart of the yaml loop in ``run_evaluation``.
 
     Report shape mirrors the yaml one — ``{"L1": {...}, "L5": {...}}`` with
     ``count``/``recall_at_10``/``mrr`` — plus additive ``n_queries`` and
-    ``n_expectations`` keys for dataset-size visibility.
+    ``n_expectations`` keys for dataset-size visibility. ``params`` (D-008)
+    threads through to every retrieval call.
     """
     queries = load_ground_truth(graded_dir)
 
@@ -914,7 +952,7 @@ def _run_graded_evaluation(
     for graded in queries:
         if corpus_filter != "all" and graded.level != corpus_filter:
             continue
-        rec, rr = evaluate_graded_query(conn, bundle_root, graded, k=k)
+        rec, rr = evaluate_graded_query(conn, bundle_root, graded, k=k, params=params)
         bucket = stats[graded.level]
         bucket["count"] += 1
         bucket["recall"] += rec
@@ -949,6 +987,7 @@ def run_evaluation(
     queries_path: Optional[Path] = None,
     corpus_filter: str = "all",
     k: int = 10,
+    params: Optional["RetrievalParams"] = None,
 ) -> Dict[str, Any]:
     """Run full evaluation harness across specified corpus ("L1", "L5", or "all").
 
@@ -957,9 +996,18 @@ def run_evaluation(
     (``queries.jsonl`` + ``expectations.tsv``) takes the graded loader and
     the identity-first matcher; anything else (a yaml file, or None for the
     bundled fixture) takes the legacy yaml path unchanged.
+
+    ``params`` (D-008, FR-005) is an explicit frozen ``RetrievalParams``
+    threaded through to every L1 ``semantic_search`` call in both paths —
+    the injection channel the sweep harness uses instead of mutating the
+    environment (in-process env writes would leak across combinations).
+    ``None`` (the default, and every ``None`` field) preserves today's
+    retrieval behavior exactly.
     """
     if queries_path is not None and Path(queries_path).is_dir():
-        return _run_graded_evaluation(conn, bundle_root, Path(queries_path), corpus_filter, k)
+        return _run_graded_evaluation(
+            conn, bundle_root, Path(queries_path), corpus_filter, k, params=params
+        )
 
     queries = load_eval_queries(queries_path)
 
@@ -985,7 +1033,7 @@ def run_evaluation(
         expect = item.get("expect", [])
 
         if c_type == "L1":
-            rec, rr = evaluate_l1_query(conn, q_text, expect, k=k)
+            rec, rr = evaluate_l1_query(conn, q_text, expect, k=k, params=params)
         else:
             rec, rr = evaluate_l5_query(conn, bundle_root, q_text, expect, k=k)
 

@@ -305,8 +305,10 @@ class TestRunEvaluationDispatch:
     def test_directory_takes_the_graded_path(self, good_gt_dir, tmp_path, monkeypatch):
         conn = get_db(str(tmp_path / "eval.db"))
 
-        def fake_l1(conn_, query, k):
+        def fake_l1(conn_, query, k, params=None):
             # Rank 2 for the primary target, rank 1 for context: RR = 1/2.
+            # (params: the D-008 RetrievalParams run_evaluation threads
+            # through since T003 -- the double accepts and ignores it.)
             return [
                 {"name": "_new", "file_path": "/repo/src/yarl/_url.py"},
                 {"name": "URL", "file_path": "/repo/src/yarl/_url.py"},
@@ -340,8 +342,8 @@ class TestRunEvaluationDispatch:
 
     def test_graded_corpus_filter_skips_other_level(self, good_gt_dir, tmp_path, monkeypatch):
         conn = get_db(str(tmp_path / "eval.db"))
-        monkeypatch.setattr(eval_mod, "_retrieve_l1", lambda *a: [])
-        monkeypatch.setattr(eval_mod, "_retrieve_l5", lambda *a: [])
+        monkeypatch.setattr(eval_mod, "_retrieve_l1", lambda *a, **kw: [])
+        monkeypatch.setattr(eval_mod, "_retrieve_l5", lambda *a, **kw: [])
         try:
             report = run_evaluation(
                 conn, bundle_root=None, queries_path=good_gt_dir, corpus_filter="L5"
