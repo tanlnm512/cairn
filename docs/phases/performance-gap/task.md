@@ -7,10 +7,14 @@ state on v0.10.0 @ `7e90628` (surveyed 2026-08-15), not intent.
 
 | Status | Count |
 |--------|-------|
-| done | 23 |
+| done | 24 |
 | deferred | 2 |
-| todo | 1 |
+| todo | 0 |
 | **total** | **26** |
+
+**Phase COMPLETE (2026-08-16).** All planned work shipped or
+gate-deferred; the roadmap's cloud-simulation and postgres-backend
+phases were de-scoped the same day (PR #29).
 
 Milestone 1 (query-path wins) landed on `feat/perf-query-path-wins`
 (2026-08-15): P1.1-P1.4, P2.1-P2.2, P5.1. Measured: impact_analysis
@@ -150,7 +154,7 @@ for `find_definition`/`search_symbols` in server-mode benchmarks, with
       verify: server-mode bench (new harness mode in `bench/perf_suite.py`)
       p50 ≥20% better; monkeypatch test re-points `CAIRN_DB` and asserts
       fresh connection.
-- [ ] **P5.2 — Contention guard.** Read connections stay read-only
+- [x] **P5.2 — Contention guard. [DONE: pooled RO connections reject writes; concurrent real incremental_update beside pooled reads: zero lock_contention events, zero read anomalies]** Read connections stay read-only
       (`mode=ro` where applicable); writer paths keep using `_rw_conn()` +
       `build_lock`.
       verify: concurrent `cairn update` + 100 tool calls → zero new
