@@ -1,2 +1,0 @@
-16:36:31 surveyor DONE: survey.md on disk (7 FR items: 0 DONE / 4 PARTIAL / 3 TODO; 2 unknowns; counts re-verified 58 L1/160 exps; surprises: _pattern_to_fts makes sentences quoted PHRASES stricter than AND, chunk variant B already embeds qname+path+sig+docstring)
-16:38:05 orchestrator NOTE: research.md persisted verbatim on the researcher's behalf (its harness was read-only this wave); digest: questions 5 answered / 0 open, 2 first-principles gaps (symbol-field ablation, rerank pair context)

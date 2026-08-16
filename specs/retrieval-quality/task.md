@@ -9,11 +9,11 @@ Nothing is DONE — every task opens unchecked.
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 6     | 0    |
-| 2     | 6     | 0    |
-| 3     | 3     | 0    |
-| 4     | 4     | 0    |
-| 5     | 5     | 0    |
+| 1     | 6     | 6    |
+| 2     | 6     | 6    |
+| 3     | 3     | 3    |
+| 4     | 4     | 4    |
+| 5     | 5     | 5    |
 | **Σ** | 24    | 0    |
 
 ## Phase 1: Measurement substrate (FR-005, FR-006)
@@ -163,7 +163,13 @@ Nothing is DONE — every task opens unchecked.
       state block per D-009: rerank-via-marker, model, torch threads); DS-v1 sha-verified
       byte-identical; generator 'already current', render(DS-v1)==render(DS-v1.1), docs
       guard green by construction; margins honestly 'unchanged within band'
-- [ ] T024 (after T023) (in-progress) Commit the final ablation table and verdict: the harness's closing invocation commits `benchmarks/quality/ablation.json` plus rendered `benchmarks/quality/ablation.md` (AC1) — every lever combination → recall@10 / MRR / p95 on both splits, exactly one row marked shipped-defaults, all-levers-off row reproducing 0.4174 / 0.2862 (TC-015, TC-017); three labeled figures (tune / validate / full set — TC-020); state the margins vs SC-1 (recall@10 ≥ 0.50, MRR ≥ 0.33) or document the shortfall per the honesty clause — the best evidenced configuration ships, the match rules are never loosened. (FR-005, FR-006, FR-007)
+- [x] T024 (after T023) Commit the final ablation table and verdict: the harness's closing invocation commits `benchmarks/quality/ablation.json` plus rendered `benchmarks/quality/ablation.md` (AC1) — every lever combination → recall@10 / MRR / p95 on both splits, exactly one row marked shipped-defaults, all-levers-off row reproducing 0.4174 / 0.2862 (TC-015, TC-017); three labeled figures (tune / validate / full set — TC-020); state the margins vs SC-1 (recall@10 ≥ 0.50, MRR ≥ 0.33) or document the shortfall per the honesty clause — the best evidenced configuration ships, the match rules are never loosened. (FR-005, FR-006, FR-007)
+      [DONE 2026-08-16 (7ae1825): 22 rows across 4 lever families; integrity 0.4174/0.2862
+      (4dp, three sessions + gap-fill concur); exactly one shipped-defaults row; SC-1
+      shortfall documented — margins -0.0826/-0.0438, 5/5 bootstrap no-ships (best
+      Delta+0.1123 p=0.118), ground-truth n=29 is the binding constraint, DS-v2 +
+      enrich/rerank-off the named unlock; match rules never loosened; 6 guard tests;
+      1714 full green]
 
 ## Conventions
 - `- [ ]` todo · `(in-progress)` claimed · `- [x]` done + proof note on the

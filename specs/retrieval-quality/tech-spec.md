@@ -367,7 +367,7 @@ From research.md (why each matters here):
 - **Consequences**: `run_evaluation` and both its callers' signatures grow an optional param (additive); the sweep harness never mutates process environment, keeping runs hermetic and order-independent.
 
 
-## D-009 — DS-v1 quality figures carry mint-time measurement noise (orchestrator, 2026-08-16)
+### D-009: DS-v1 quality figures carry mint-time measurement noise (orchestrator, 2026-08-16)
 
 **Context**: T006's integrity checkpoint demanded exact 4-decimal reproduction of
 DS-v1's L1 recall@10 0.4174 / MRR 0.2862. A fresh deterministic measurement on

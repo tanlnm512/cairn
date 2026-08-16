@@ -1,6 +1,6 @@
 # Spec: retrieval-quality
 
-**Status**: draft
+**Status**: done (24/24 tasks landed 2026-08-16; check.py PASS; SC-1 shortfall documented per the honesty clause — see benchmarks/quality/ablation.md)
 **Created**: 2026-08-16
 **Branch**: `feat/retrieval-quality`
 **Origin**: the DS-v1 quality baseline (PR #35) measured **L1 recall@10 = 0.4174, MRR = 0.2862** over the 58-query hand-verified ground truth — roughly 3 in 5 agent-shaped queries do not surface their primary target in the top 10. This spec exists to raise those numbers measurably, with ablation evidence, without giving back the latency wins (model warm-up, rerank confidence gate, pooled connections) or the verification doctrine (resolution labels, no name-collision inflation).
