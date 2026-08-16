@@ -35,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `docs/benchmarks.md`; phase record in `docs/phases/performance-gap/`.
 
 ### Added
+- **Retrieval-quality tuning infrastructure**: an ablation harness with held-out
+  discipline (seeded 50/50 split; selection-stage evaluation of validation ids fails
+  loudly; paired-bootstrap accept guard with t cross-check) — `cairn eval --sweep`;
+  explicit `RetrievalParams` injection (threshold, RRF k/weights, pool sizes, rerank,
+  sparse top-N, enrichment flag) threaded through `semantic_search` with
+  None-means-today's-default equivalence; deterministic query enrichment (identifier
+  extraction + an OR-terms FTS path fixing the empty-BM25 defect for sentence queries —
+  wired, default off on measurement); field-dropout chunk variants with a recipe param;
+  structured rerank pairs with pinned 512-token query-priority truncation (default
+  reverted to flat on measurement: -10.4pp MRR); warm-time measurement harness +
+  artifact (cold 15.5s → warm 232.6ms, 66.6×); DS-v1.1 quality mint with retrieval-state
+  stamping; and the committed ablation record (`benchmarks/quality/ablation.{json,md}`,
+  22 rows). The SC-1 improvement targets were NOT reached (shipped config unchanged at
+  L1 recall@10 0.4174 / MRR 0.2862): five bootstrap-guarded candidates all failed
+  significance on the 58-query ground truth (best Δ+0.112 at p=0.118) — the shortfall is
+  documented with full evidence, and the ground-truth size is identified as the binding
+  constraint (DS-v2 is the unlock).
 - **Benchmark datasource (DS-v1)**: a pinned, versioned comparison substrate —
   T1 synthetic corpus content-pinned by manifest hash in CI; T2 vendored yarl
   snapshot (437 KB, Apache-2.0, full provenance) with a hand-verified ground

@@ -198,3 +198,147 @@ def test_no_duplicate_ids_after_merge(fresh_db):
     rows = search_symbols(conn, "*Avatar*")
     ids = [r["id"] for r in rows]
     assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# Term mode (T008, FR-001): search_symbols_terms / _terms_to_fts.
+#
+# The OR-of-quoted-prefix path for enriched sentence queries. The contract
+# split is deliberate: everything above this line pins search_symbols /
+# _pattern_to_fts UNCHANGED (the 8 production callers' regression proof);
+# everything below pins the NEW term-mode entry point only.
+# ---------------------------------------------------------------------------
+
+_SPEC_SENTENCE = "where is the function that parses an unencoded URL string"
+_SPEC_TERMS = "parses unencoded URL string".split()  # enrich(sentence).sparse_query
+
+
+def test_terms_to_fts_is_or_of_quoted_prefixes():
+    """The TC-001 mechanism: per-term quoted prefix queries, OR-combined --
+    never one folded phrase."""
+    from cairn.graph.lexical import _terms_to_fts
+
+    assert _terms_to_fts(["parse", "url"]) == '"parse"* OR "url"*'
+    assert _terms_to_fts(_SPEC_TERMS) == (
+        '"parses"* OR "unencoded"* OR "URL"* OR "string"*'
+    )
+
+
+def test_terms_to_fts_contrasted_with_the_phrase_defect():
+    """Before/after on the spec's sentence query: _pattern_to_fts folds the
+    whole sentence into ONE quoted phrase (matches no symbol name), while
+    the term expression is an OR-style per-token query. Both shapes are
+    pinned verbatim -- the acceptance proof for FR-001/TC-001."""
+    from cairn.graph.lexical import _pattern_to_fts, _terms_to_fts
+
+    assert _pattern_to_fts(_SPEC_SENTENCE) == (
+        '"where is the function that parses an unencoded URL string"*'
+    )
+    expr = _terms_to_fts(_SPEC_TERMS)
+    assert " OR " in expr
+    assert expr != _pattern_to_fts(_SPEC_SENTENCE)
+    assert "where is the function" not in expr  # no phrase folding
+
+
+def test_terms_to_fts_splits_and_dedupes_within_terms():
+    """A multi-token term (compound with separators) splits into its
+    alphanumeric tokens; tokens dedupe case-insensitively, first casing
+    kept, query order preserved (FTS5 unicode61 MATCH case-folds ASCII)."""
+    from cairn.graph.lexical import _terms_to_fts
+
+    assert _terms_to_fts(["parse_url", "parseUrl"]) == '"parse"* OR "url"* OR "parseUrl"*'
+    assert _terms_to_fts(["URL", "url"]) == '"URL"*'
+
+
+def test_terms_to_fts_injection_safe():
+    """No FTS metacharacter from a user term can reach the MATCH string:
+    every emitted token is strictly [A-Za-z0-9]+ and double-quoted (which
+    also neutralizes FTS keywords -- a quoted "OR" is a string, not the
+    OR operator). A raw injection like ``ea" OR 1=1 --`` would otherwise be
+    an fts5 syntax error or a semantic escape from the term list."""
+    from cairn.graph.lexical import _terms_to_fts
+
+    expr = _terms_to_fts(['ea" OR 1=1 --', "x*y(z)", "parse"])
+    assert expr == '"ea"* OR "OR"* OR "1"* OR "x"* OR "y"* OR "z"* OR "parse"*'
+    # Every quoted token is bare alphanumeric: no meta survived.
+    import re as _re
+
+    for tok in _re.findall(r'"([^"]*)"\*', expr):
+        assert _re.fullmatch(r"[A-Za-z0-9]+", tok), tok
+
+
+def test_terms_to_fts_none_when_no_usable_token():
+    """The _pattern_to_fts None contract: no usable token means the caller
+    falls back (never a MATCH on an empty/garbage expression)."""
+    from cairn.graph.lexical import _terms_to_fts
+
+    assert _terms_to_fts([]) is None
+    assert _terms_to_fts(["", "   "]) is None
+    assert _terms_to_fts(['"', "*(", "%%%"]) is None
+
+
+def test_term_mode_returns_rows_where_the_phrase_defect_returns_none(fresh_db):
+    """The empty-BM25 defect fixed at the lexical layer: on a fixture whose
+    symbol names/docstrings ARE the sentence's terms, today's string mode
+    folds the sentence into one quoted phrase (plus a LIKE substring union
+    over the whole sentence) and finds NOTHING, while term mode finds the
+    name matches."""
+    from cairn.graph.lexical import search_symbols, search_symbols_terms
+
+    conn = _seeded_fts_conn(fresh_db)
+    # "core ui v4" terms exist as symbols (core_ui_v4*); the full sentence
+    # exists as no name/docstring substring.
+    sentence = "the screen that renders the core ui v4 settings"
+    assert [r["name"] for r in search_symbols(conn, sentence)] == []
+    names = {r["name"] for r in search_symbols_terms(conn, ["screen", "core", "ui", "v4", "settings"])}
+    assert {"core_ui_v4", "core_ui_v4_theme"} <= names
+
+
+def test_term_mode_rows_carry_the_bm25_rank_column(fresh_db):
+    """Term mode uses the same bm25-ranked join as search_symbols: rows are
+    best-first by bm25() and carry the rank column the sparse leg relies on."""
+    from cairn.graph.lexical import search_symbols_terms
+
+    conn = _seeded_fts_conn(fresh_db)
+    rows = search_symbols_terms(conn, ["core", "ui", "v4"])
+    assert rows
+    assert "rank" in rows[0].keys()
+    ranks = [r["rank"] for r in rows]
+    assert ranks == sorted(ranks)  # bm25(): better = more negative, best-first
+
+
+def test_term_mode_respects_kind_and_limit(fresh_db):
+    from cairn.graph.lexical import search_symbols_terms
+
+    conn = _seeded_fts_conn(fresh_db)
+    rows = search_symbols_terms(conn, ["core", "ui", "v4"], kind="object")
+    assert {r["name"] for r in rows} == {"core_ui_v4_theme"}
+    assert len(search_symbols_terms(conn, ["usecase"], limit=2)) <= 2
+
+
+def test_term_mode_matches_qualified_name_tokens(fresh_db):
+    """The FTS columns serve the whole corpus, not just bare names: terms
+    hit qualified_name sub-tokens (unicode61 splits on dots and case-folds
+    ASCII) exactly as the phrase path's indexed columns do."""
+    from cairn.graph.lexical import search_symbols_terms
+
+    conn = _seeded_fts_conn(fresh_db)
+    # "invoke" is reachable only via its qualified_name (...UseCase.invoke).
+    names = {r["name"] for r in search_symbols_terms(conn, ["invoke", "avatar"])}
+    assert "invoke" in names
+    assert "Avatar" in names
+
+
+def test_term_mode_never_raises_on_hostile_terms(fresh_db):
+    """End-to-end injection safety: hostile term strings flow through to a
+    valid MATCH, never an fts5 syntax error -- the sanitize-then-quote
+    defense, exercised through the public entry point. The hostile terms
+    deliberately carry no legit token, so the row set proves only the real
+    term matched (a hostile term WITH a legit token -- ``core" OR 1=1 --``
+    -- matches the core symbols, which is correct OR-term semantics, not an
+    injection)."""
+    from cairn.graph.lexical import search_symbols_terms
+
+    conn = _seeded_fts_conn(fresh_db)
+    rows = search_symbols_terms(conn, ['ea" OR 1=1 --', "NEAR(", "Avatar"])
+    assert {r["name"] for r in rows} == {"Avatar"}

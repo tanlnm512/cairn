@@ -495,21 +495,69 @@ def status(db, knowledge):
 @click.option("--queries", "queries_path", default=None,
               help="Path to eval queries.yaml OR a ground-truth directory "
                    "(queries.jsonl + expectations.tsv); default: bundled tests/eval/queries.yaml.")
+@click.option("--sweep", "sweep_spec", default=None,
+              help="Run the lever sweep instead of a single evaluation: a JSON file "
+                   "or inline JSON list of {name, params} combos (RetrievalParams "
+                   "fields; null/omitted = today's default). Evaluates the TUNE "
+                   "split only -- held-out ids are guarded (FR-006).")
+@click.option("--out", "out_path", default=None,
+              help="With --sweep: write the canonical sweep document to this path "
+                   "(the harness itself never writes; this flag is the only writer).")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def eval_cmd(db, knowledge, corpus, queries_path, as_json):
+def eval_cmd(db, knowledge, corpus, queries_path, sweep_spec, out_path, as_json):
     """Run retrieval evaluation harness across L1/L5 corpora."""
+    import json as _json
     from pathlib import Path
 
-    from ..eval import run_evaluation
+    from ..eval import format_sweep_json, run_evaluation, run_sweep
 
     qpath = Path(queries_path) if queries_path else None
     conn = get_db(db)
     try:
-        report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
+        if sweep_spec is not None:
+            from ..graph.semantic import RetrievalParams
+
+            raw = Path(sweep_spec).read_text() if Path(sweep_spec).exists() else sweep_spec
+            combos_raw = _json.loads(raw)
+            combos = [
+                {
+                    "name": c["name"],
+                    "params": RetrievalParams(**c.get("params", {})),
+                    **({"variant": c["variant"]} if "variant" in c else {}),
+                }
+                for c in combos_raw
+            ]
+            queries_dir = qpath if qpath and qpath.is_dir() else None
+            if queries_dir is None:
+                raise click.ClickException(
+                    "--sweep requires --queries pointing at a ground-truth directory"
+                )
+            from ..eval import load_ground_truth
+
+            gq = load_ground_truth(queries_dir)
+            doc = run_sweep(
+                conn,
+                gq,
+                combos=combos,
+                bundle_root=knowledge,
+                dataset_name="ground-truth",
+                dataset_version="dir",
+            )
+        else:
+            report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
     except ValueError as exc:
         raise click.ClickException(f"invalid eval dataset: {exc}") from exc
     finally:
         conn.close()
+
+    if sweep_spec is not None:
+        payload = format_sweep_json(doc)
+        if out_path:
+            Path(out_path).write_text(payload, encoding="utf-8")
+            click.echo(f"wrote {out_path} ({len(doc['rows'])} row(s))")
+            return
+        click.echo(payload)
+        return
 
     if as_json:
         click.echo(json.dumps(report, indent=2))

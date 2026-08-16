@@ -22,6 +22,7 @@ resolution-label comparison that distinguishes cairn from name-only
 | `cairn bench --suite perf` | Build phase timings, embed cost, query latency | per-op table (median / p95 / ops/sec) |
 | `cairn bench --suite scaling` | How build/embed cost scales with corpus size | per-size table (build / embed / DB MB / **resolve_rate**) |
 | `cairn bench --suite agent` | Agent effort — tool calls + context tokens, cairn vs a grep/read control | per-task table (calls / est tokens / wall ms) |
+| `scripts/measure_warm_time.py` | Warm-time — first semantic-query wall-time in a fresh process, warm-up active vs cold | `benchmarks/quality/warm_time.json` |
 
 ---
 
@@ -75,6 +76,21 @@ works on a default (no-torch) install — it just exercises the lexical pipeline
 > [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) for the
 > measurement that *does* characterize cairn's differentiator (the 82%
 > precise-vs-fuzzy false-positive rate on common names).
+
+---
+
+## Warm-time — first-query latency after boot warm-up
+
+`scripts/measure_warm_time.py` measures what the boot-time model warm-up
+(`cairn.graph.model_warmup`, wired into `cairn serve`) buys the first
+`semantic_search`: two fresh subprocesses over one pre-built tiny embedded
+DB, cold (the lazy embedder + cross-encoder loads land inside the query)
+versus warm (`warm_models_in_background()` started and joined first). The
+committed artifact is `benchmarks/quality/warm_time.json`; its `notes`
+field records that the 322 ms figure in
+`docs/phases/performance-gap/task.md` is **advisory context, not a gate** —
+no committed baseline ever carried a warm-time number, so the artifact is
+the first committed measurement and has no BEFORE to regress against.
 
 ---
 

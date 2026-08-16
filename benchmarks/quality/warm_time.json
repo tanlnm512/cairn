@@ -1,0 +1,118 @@
+{
+  "schema": "cairn-warm-time/1",
+  "suite": "warm-time",
+  "timestamp": "2026-08-16T16:19:22.948117+00:00",
+  "dataset": {
+    "name": "benchmark-datasource",
+    "version": "DS-v1",
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "identity_size": 300
+  },
+  "cairn_version": "0.11.0",
+  "machine_profile": {
+    "arch": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "runner_class": "reference-local"
+  },
+  "harness": "scripts/measure_warm_time.py",
+  "reproduce": "uv run python scripts/measure_warm_time.py --force",
+  "embed": {
+    "backend": "local",
+    "model": "BAAI/bge-m3"
+  },
+  "reranker": {
+    "enabled": true,
+    "available": true,
+    "cached": true,
+    "model": "BAAI/bge-reranker-base"
+  },
+  "fixture": {
+    "name": "warm-time-tinyurl (synthetic)",
+    "files": 2,
+    "symbols": 9,
+    "edges": 24,
+    "embedded": 9,
+    "query": "split a url string into its components and parse its query parameters",
+    "note": "tiny by design: the metric is model LOAD time, not retrieval quality or scan scale"
+  },
+  "env": {
+    "CAIRN_WARM_MODELS": null,
+    "CAIRN_EMBED_BACKEND": null,
+    "CAIRN_EMBED_LOCAL_MODEL": null,
+    "CAIRN_RERANK": null,
+    "CAIRN_RERANK_MODEL": null,
+    "CAIRN_FUSION": null
+  },
+  "measurement": {
+    "cold": {
+      "mode": "cold",
+      "first_query_ms": 15497.2,
+      "results": 9,
+      "top_result": "split_query",
+      "reranked": true,
+      "warmup": {
+        "called": false,
+        "started": null,
+        "join_ms": null
+      },
+      "warm_caches": {
+        "embedder": true,
+        "reranker": true
+      },
+      "gates": {
+        "embed_backend_effective": "local",
+        "embed_model": "BAAI/bge-m3",
+        "embed_model_cached": true,
+        "rerank_enabled": true,
+        "reranker_available": true,
+        "reranker_model": "BAAI/bge-reranker-base",
+        "reranker_model_cached": true,
+        "env": {
+          "CAIRN_EMBED_BACKEND": null,
+          "CAIRN_EMBED_LOCAL_MODEL": null,
+          "CAIRN_RERANK": null,
+          "CAIRN_RERANK_MODEL": null,
+          "CAIRN_FUSION": null,
+          "CAIRN_WARM_MODELS": null
+        }
+      }
+    },
+    "warm": {
+      "mode": "warm",
+      "first_query_ms": 232.6,
+      "results": 9,
+      "top_result": "split_query",
+      "reranked": true,
+      "warmup": {
+        "called": true,
+        "started": true,
+        "join_ms": 15070.3
+      },
+      "warm_caches": {
+        "embedder": true,
+        "reranker": true
+      },
+      "gates": {
+        "embed_backend_effective": "local",
+        "embed_model": "BAAI/bge-m3",
+        "embed_model_cached": true,
+        "rerank_enabled": true,
+        "reranker_available": true,
+        "reranker_model": "BAAI/bge-reranker-base",
+        "reranker_model_cached": true,
+        "env": {
+          "CAIRN_EMBED_BACKEND": null,
+          "CAIRN_EMBED_LOCAL_MODEL": null,
+          "CAIRN_RERANK": null,
+          "CAIRN_RERANK_MODEL": null,
+          "CAIRN_FUSION": null,
+          "CAIRN_WARM_MODELS": null
+        }
+      }
+    },
+    "speedup_cold_over_warm": 66.6
+  },
+  "notes": "ADVISORY HISTORY: the phase-doc figure 'first semantic query 9,428 -> 322 ms (29x)' (docs/phases/performance-gap/task.md:40, P0-1) is context, NOT a gate -- no committed baseline ever carried a warm-time number, so this artifact is the first committed measurement and has no BEFORE to regress against; T022 minted it to give warm-time a committed re-measurement path. METHODOLOGY: two fresh subprocesses over one pre-built tiny embedded DB; the cold arm's first semantic_search pays the lazy embedder + cross-encoder loads inside the timed region, the warm arm calls warm_models_in_background() and JOINS the boot thread (the deterministic post-warm point; a real server overlaps warm-up with serving, so warm.first_query_ms is the floor a user sees once boot finishes). The cold arm runs fully ONLINE -- warm-up's HF-offline window exists only in the warm arm -- so cold.first_query_ms includes the HuggingFace Hub metadata round-trips that fire even on cached weights (the ~5s tax the phase doc attributes to the pre-warm-up path). env records the child-runtime values: the mint pins CAIRN_EMBED_BACKEND unset to measure the default boot configuration. CAIRN_WARM_MODELS is honored by warm_models_in_background itself -- the harness never bypasses the kill switch (value recorded in env; preflight refuses to mint under an explicit off). Single-shot wall-times: machine-bound (see machine_profile), treat cross-machine deltas as noise."
+}
