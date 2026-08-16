@@ -1,6 +1,6 @@
 # Spec: benchmark-datasource
 
-**Status**: draft
+**Status**: done (all 20 tasks landed 2026-08-16; check.py PASS)
 **Created**: 2026-08-16
 **Branch**: `feat/benchmark-datasource`
 **Origin**: `docs/phases/benchmark-datasource/` (spec/plan/task merged at `66882c2`) — this file is the execution-grade restatement; the phase doc remains the narrative rationale.
