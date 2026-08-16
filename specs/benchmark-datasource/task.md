@@ -95,7 +95,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: pin dddcb82 (yarl master HEAD — default branch is master,
       not main); 33 files / 437 KB vendored; provenance.json complete; smoke
       test builds 1066 symbols / 2432 edges, URL findable]
-- [ ] T006 (after T005) (in-progress) Add the vendored-content attribution section to `NOTICE`
+- [x] T006 (after T005) Add the vendored-content attribution section to `NOTICE`
       (82 lines, deps-only today): upstream project + license, distinct from
       the dependency families; keep the existing scope intact incl. the
       bge-m3 note (NOTICE:79-82) (FR-002, TC-016).
@@ -153,6 +153,8 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       stale entry (`eval.py:97-98` returns 0.0/0.0 there); the validator
       never auto-rewrites expectations (D-010 — stale sets ship as DS-v2)
       (FR-003, AC5, TC-021/TC-022).
+      [DONE 2026-08-16: 18-line section, 7/7 provenance facts scripted-verified in
+      NOTICE; citation typo FR-003→FR-002 corrected by orchestrator below]
 
 ## Phase 4: Stamped baselines + `--baseline` compare (FR-004)
 <!-- Checkpoint: perf payload carries dataset-version, cairn-version,

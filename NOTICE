@@ -80,3 +80,21 @@ The embedding model `BAAI/bge-m3` (referenced by name, downloaded on demand
 to ~/.cairn/lib/ when a user runs `cg embed --install-deps`) is released
 under the MIT License on Hugging Face. cairn does not redistribute the
 model weights.
+
+================================================================================
+Vendored content (benchmark corpus)
+================================================================================
+
+The datasource benchmarks vendor a source snapshot of one third-party project
+solely as benchmark content. Unlike the packages above, this snapshot is
+carried in-tree; it is not a runtime dependency and no part of it is imported
+by cairn's code.
+
+yarl (https://github.com/aio-libs/yarl), Copyright 2016-2021, Andrew Svetlov
+and aio-libs team. Vendored at pinned commit
+dddcb82e4aa9665e15b43d90ad370d7e54ac1fbb (GitHub source export taken
+2026-08-15) under benchmarks/datasource/t2/yarl/, and licensed under
+Apache-2.0. The full license text is retained in-tree, unmodified, at
+benchmarks/datasource/t2/yarl/LICENSE; the complete export record (origin,
+pin, license, kept and excluded files, and size) is kept alongside the
+snapshot in benchmarks/datasource/t2/provenance.json.
