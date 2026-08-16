@@ -1,0 +1,72 @@
+{
+  "schema": "cairn-bench-baseline/1",
+  "suite": "quality",
+  "timestamp": "2026-08-16T16:31:51.017783+00:00",
+  "dataset": {
+    "name": "benchmark-datasource",
+    "version": "DS-v1",
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "identity_size": 300
+  },
+  "cairn_version": "0.11.0",
+  "machine_profile": {
+    "arch": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "runner_class": "reference-local"
+  },
+  "embed": {
+    "backend": "local",
+    "model": "BAAI/bge-m3",
+    "embedded": 1066,
+    "skipped": 0,
+    "total": 1066,
+    "reaped": 0
+  },
+  "retrieval": {
+    "rerank": {
+      "enabled": true,
+      "model": "BAAI/bge-reranker-base",
+      "available": true
+    },
+    "torch_num_threads": 8,
+    "env": {
+      "CAIRN_EMBED_BACKEND": null,
+      "CAIRN_EMBED_LOCAL_MODEL": null,
+      "CAIRN_RERANK": null,
+      "CAIRN_RERANK_MODEL": null,
+      "CAIRN_FUSION": null,
+      "CAIRN_ANN_BACKEND": null,
+      "CAIRN_WARM_MODELS": null
+    }
+  },
+  "build": {
+    "repos": 1,
+    "files": 24,
+    "symbols": 1066,
+    "edges": 2432,
+    "parse_errors": 0
+  },
+  "ground_truth": {
+    "path": "benchmarks/datasource/t2/ground_truth",
+    "queries": 82,
+    "expectations": 234,
+    "authoring_task": "T011"
+  },
+  "l5_surface": "none (no OKF knowledge bundle for the t2 snapshot)",
+  "L1": {
+    "count": 58,
+    "recall_at_10": 0.4174,
+    "mrr": 0.2862,
+    "n_queries": 58,
+    "n_expectations": 160
+  },
+  "L5": {
+    "count": 24,
+    "recall_at_10": 0.0,
+    "mrr": 0.0,
+    "n_queries": 24,
+    "n_expectations": 74
+  }
+}

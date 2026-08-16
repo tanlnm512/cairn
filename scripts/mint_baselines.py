@@ -67,6 +67,50 @@ def _write_artifact(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _retrieval_state() -> dict:
+    """Record the effective retrieval state (D-009 consequence: quality mints
+    from DS-v1.1 on carry their rerank/threading state so the artifact is
+    reproducible by construction).
+
+    DS-v1's figures (0.4174/0.2862) were not bit-reproducible because the
+    rerank-active pipeline flips near-tie rankings under mint-time state
+    (reranker warm/cold, torch threading under a concurrent mint). Recording
+    that state here turns "reproduce the session" into "reproduce the recorded
+    configuration".
+    """
+    import os
+
+    from cairn.graph import reranker
+
+    torch_threads = None
+    try:
+        import torch
+
+        torch_threads = torch.get_num_threads()
+    except Exception:  # pragma: no cover - the local backend implies torch
+        pass
+    env_keys = (
+        "CAIRN_EMBED_BACKEND",  # popped by mint_quality -> recorded as None
+        "CAIRN_EMBED_LOCAL_MODEL",
+        "CAIRN_RERANK",
+        "CAIRN_RERANK_MODEL",
+        "CAIRN_FUSION",
+        "CAIRN_ANN_BACKEND",
+        "CAIRN_WARM_MODELS",
+    )
+    return {
+        "rerank": {
+            # EFFECTIVE state (env OR the persistent auto-enable marker --
+            # the T019 shipped config is rerank-auto), not just the env var.
+            "enabled": reranker.rerank_enabled(),
+            "model": reranker.current_rerank_model(),
+            "available": reranker.reranker_available(),
+        },
+        "torch_num_threads": torch_threads,
+        "env": {key: os.environ.get(key) for key in env_keys},
+    }
+
+
 def mint_cli_suite(suite: str, out_path: Path) -> dict:
     """Mint one CLI-suite baseline from `cairn bench --suite <s> --json`.
 
@@ -110,7 +154,9 @@ def mint_quality(out_path: Path) -> dict:
        payload records that explicitly (``l5_surface``) so a future L5
        bundle baseline is an additive change, never a silent rewrite.
     5. Stamp the payload with ``build_artifact_stamp()`` (T013) + the same
-       schema tag as the CLI suites.
+       schema tag as the CLI suites, plus a ``retrieval`` block recording the
+       effective rerank/threading state (D-009: mints from DS-v1.1 on are
+       reproducible by construction).
     """
     import os
 
@@ -184,6 +230,7 @@ def mint_quality(out_path: Path) -> dict:
                     "model": emb.current_model(),
                     **{k: embed_summary.get(k) for k in ("embedded", "skipped", "total", "reaped")},
                 },
+                "retrieval": _retrieval_state(),
                 "build": {
                     key: build.get(key)
                     for key in ("repos", "files", "symbols", "edges", "parse_errors")
