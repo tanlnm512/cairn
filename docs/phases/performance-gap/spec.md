@@ -150,8 +150,9 @@ time) so cairn's claims are evidence, not positioning.
   (graphify features) — cairn's semantic layer already covers retrieval;
   community analytics is a separate roadmap decision.
 - SCIP expansion, new languages, multi-repo federation.
-- Any storage-backend change (owned by the `postgres-backend` phase).
-- Cloud/service decomposition (owned by the `cloud-simulation` phase).
+- Any storage-backend change beyond SQLite (a Postgres backend and a
+  cloud/multi-service decomposition were scoped in earlier phase drafts and
+  removed from the roadmap on 2026-08-16; SQLite stays the only backend).
 
 ## 4. Non-goals & risks
 
@@ -166,8 +167,8 @@ time) so cairn's claims are evidence, not positioning.
 
 ## 5. Dependencies
 
-- Independent of the other two phases; **blocks nothing** but its EVID-1
-  output feeds the roadmap narrative for both `cloud-simulation` and
-  `postgres-backend`.
+- Standalone phase; **blocks nothing**. (Earlier drafts cross-linked
+  cloud-simulation and postgres-backend phases — removed from the roadmap
+  on 2026-08-16, so their gate relationships no longer exist.)
 - FRESH-1 depends on `incremental.reindex_paths` remaining transactional
   (already true: explicit BEGIN/COMMIT).
