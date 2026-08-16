@@ -221,7 +221,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: 4 artifacts + README + mint script (752s wall); first real
       quality numbers L1 recall@10=0.4174 MRR=0.2862 (bge-m3); L5=0.0 documented
       as surface-absent (no bundle); compares exit 0 (perf max +8.7%)]
-- [ ] T016 (after T015) (in-progress) Rewire the CI bench job to committed baselines
+- [x] T016 (after T015) Rewire the CI bench job to committed baselines
       (D-007): step 5 gains `--baseline DS-v1`; drop cache steps 4+7
       (actions/cache `bench-baseline-v1-*`, `cp bench-current.json
       bench-baseline.json`); keep steps 6/8/9 byte-compatible — advisory
@@ -231,13 +231,16 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       `.github/scripts/bench_compare.py` reads additively (`.get("ops", [])`)
       so stamps are safe, but `ops`/`median_ms` shapes must not change
       (FR-004, AC1).
+      [DONE 2026-08-16: cache steps deleted; --baseline DS-v1 wired; TC-011 guard
+      verified (continue-on-error absorbs exit 2); bench_compare.py re-pointed
+      read-side; orchestrator aligned --n-files 60 -> default 300 (= baseline corpus)]
 
 ## Phase 5: Generated reference tables (FR-005)
 <!-- Checkpoint: `grep -c "_fill_" docs/benchmarks.md` → 0 (was 47
      occurrences / 15 lines); regenerate twice → `git diff --exit-code
      docs/benchmarks.md` clean; sentinels around all three families; the CI
      docs check fails on a hand edit inside sentinels. -->
-- [ ] T017 (after T016) Add `scripts/gen_benchmark_tables.py` + sentinel
+- [ ] T017 (after T016) (in-progress) Add `scripts/gen_benchmark_tables.py` + sentinel
       markers in `docs/benchmarks.md`: wrap the three `_fill_` families
       (retrieval quality :60-61, perf :109-117, scaling :143-146 — 47
       occurrences today) between sentinels; the generator reads committed

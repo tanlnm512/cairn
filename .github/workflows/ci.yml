@@ -252,12 +252,18 @@ jobs:
   # --- Bench: advisory perf baseline comparison (T18) ---------------------
   # Runs `cairn bench` on a fixed deterministic synthetic corpus (seeded
   # generator + dep-free hash embed backend) and uploads the JSON result as
-  # a workflow artifact. On PRs the result is compared against a rolling
-  # baseline (an actions/cache entry refreshed by default-branch runs) and
-  # posted as an ADVISORY PR comment; main pushes refresh the baseline.
-  # Every bench step is continue-on-error: a timing regression -- or a noisy
-  # shared runner -- can never redden CI. "Advisory first, gate later if
-  # stable" (observability-telemetry plan, Phase 2).
+  # a workflow artifact. Since T016 (D-007) the comparison target is the
+  # committed, stamped baseline benchmarks/baselines/DS-v1/: `--baseline
+  # DS-v1` resolves it in-command, and .github/scripts/bench_compare.py
+  # renders the ADVISORY PR comment from the same artifact. (The old rolling
+  # actions/cache baseline was removed -- its run-id-unique key always
+  # missed, making regressions unattributable.) The ubuntu runner vs the
+  # reference-local minter trips the machine-profile mismatch warning every
+  # run -- by design, not noise (D-005: warn, never normalize).
+  # Every bench step is continue-on-error: a timing regression (bench exits
+  # 2 past the 15% threshold) -- or a noisy shared runner -- can never redden
+  # CI. "Advisory first, gate later if stable" (observability-telemetry
+  # plan, Phase 2).
   bench:
     name: Bench (advisory baseline comparison)
     runs-on: ubuntu-latest
@@ -302,39 +308,28 @@ jobs:
           pip install -e ".[test]"
           pytest tests/ -q -k t2
 
-      # Rolling baseline. The run-id-unique key always misses, so the post-job
-      # save always stores THIS run's result; restore-keys prefix restores the
-      # most recent entry -- on PRs cache scoping falls back to the latest
-      # default-branch baseline (and, when present, this PR's own earlier
-      # runs, which is an equally fair comparison point).
-      - name: Restore rolling bench baseline
-        uses: actions/cache@v4
-        with:
-          path: bench-baseline.json
-          key: bench-baseline-v1-${{ github.run_id }}
-          restore-keys: bench-baseline-v1-
-
+      # D-007 (T016): compare against the committed, stamped DS-v1 baseline.
+      # `--baseline` composes with `--save` (the payload is saved first, then
+      # the comparison table renders in this step's log). Exit contract: 0
+      # clean; 1 baseline-resolution error; 2 regressions past 15%. A
+      # machine-profile mismatch vs the reference-local minter only WARNS and
+      # keeps the exit code at whatever the comparison alone decides (D-005).
+      # Exit 2 is absorbed by continue-on-error below -- timing can never
+      # redden this job; the advisory PR-comment comparison lives in
+      # bench_compare.py.
       - name: Run bench (fixed corpus, hash backend)
         continue-on-error: true
         run: |
-          cairn bench --suite perf --n-files 60 --complexity medium \
-            --embed-backend hash --repeats 3 \
-            --json --save bench-current.json
+          cairn bench --suite perf --embed-backend hash --repeats 3 \
+            --json --save bench-current.json \
+            --baseline DS-v1
 
-      # Compare BEFORE the baseline payload is refreshed below (the compare
-      # reads the restored baseline; the copy then updates it to this run's
-      # result for the post-job cache save).
+      # Renders the advisory step summary + PR comment from bench-current.json
+      # and the committed DS-v1 artifact; never exits non-zero.
       - name: Compare vs baseline (advisory summary)
         if: always()
         continue-on-error: true
         run: python .github/scripts/bench_compare.py
-
-      - name: Refresh baseline payload for cache save
-        if: always()
-        run: |
-          if [ -f bench-current.json ]; then
-            cp bench-current.json bench-baseline.json
-          fi
 
       - name: Upload bench result
         if: always()
