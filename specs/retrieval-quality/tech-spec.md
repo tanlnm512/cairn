@@ -365,3 +365,31 @@ From research.md (why each matters here):
 - **Context**: the mint path is in-process (survey FR-005); env state would leak across combos; threshold/k/weights are call-site values today (survey FR-003); `embed_all`/`embed_symbols` don't thread a variant (session finding, gap 3).
 - **Decision**: an optional `RetrievalParams` object threaded `run_evaluation → semantic_search`, plus an explicit recipe param threaded into the embed pipeline; defaults preserve current behavior exactly.
 - **Consequences**: `run_evaluation` and both its callers' signatures grow an optional param (additive); the sweep harness never mutates process environment, keeping runs hermetic and order-independent.
+
+
+## D-009 — DS-v1 quality figures carry mint-time measurement noise (orchestrator, 2026-08-16)
+
+**Context**: T006's integrity checkpoint demanded exact 4-decimal reproduction of
+DS-v1's L1 recall@10 0.4174 / MRR 0.2862. A fresh deterministic measurement on
+the reference machine gives **0.4195 / 0.2925** — stable across two thread-pinned
+runs, identical through both the original `run_evaluation` entrypoint and the new
+sweep harness, and — the decisive bisect — **identical at the #35 merge commit
+itself**. The committed artifact's numbers are not bit-reproducible because the
+rerank-active pipeline flips near-tie rankings under mint-time environment state
+(reranker warm/cold, torch threading under the 752s concurrent mint).
+
+**Decision**: (1) DS-v1 stays immutable (D-010 of the datasource spec) — the
+artifact records what was measured then. (2) The integrity contract is
+henceforth *deterministic self-consistency*: the harness must reproduce the
+current deterministic measurement exactly (it does: 0.4195/0.2925, both
+entrypoints, twice), with the artifact band documented as ±0.002 recall /
+±0.006 MRR measurement noise. (3) Improvement targets (SC-1: ≥0.50 / ≥0.33) are
+unchanged — measured against the deterministic baseline, which is slightly
+higher, making the bar honestly harder. (4) Sweep measurements pin
+torch.set_num_threads(1) for reproducibility (protocol documented in the
+harness; a P5 publish task notes it in the ablation provenance).
+
+**Consequences**: the all-levers-off row of every sweep table reads 0.4195 /
+0.2925 (not the artifact's figures), with a provenance note explaining the band;
+future quality mints (DS-v2+) record their rerank/threading state so their
+artifacts are reproducible by construction.
