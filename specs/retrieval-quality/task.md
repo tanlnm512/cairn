@@ -140,7 +140,14 @@ Nothing is DONE — every task opens unchecked.
       enrich ON always-fused (0.6231/0.5172) BEATS always-rerank (0.5713/0.4101) —
       the cross-encoder can MASK upstream lever gains; rerank on/off is now a
       first-class T019 dimension]
-- [ ] T019 (after T016, T017, T018) (in-progress) Confirmation sweep and final rerank/gate defaults: leading combinations re-run on the tune split, held-out agreement via the bootstrap guard, joint winner ships; final marginal-value row captured at the shipped config; both splits + full set recorded; skip-reason behavior intact (TC-014). (FR-004, FR-006)
+- [x] T019 (after T016, T017, T018) Confirmation sweep and final rerank/gate defaults: leading combinations re-run on the tune split, held-out agreement via the bootstrap guard, joint winner ships; final marginal-value row captured at the shipped config; both splits + full set recorded; skip-reason behavior intact (TC-014). (FR-004, FR-006)
+      [DONE 2026-08-16: LADDER TO EXHAUSTION — 5/5 bootstrap no-ships; incumbent stays
+      (B / enrich-OFF / rerank-auto / flat pairs / gate 0.45). Tune leader C_TRIMxenrichx
+      rr-ON 0.6989 (+0.116 rec) collapses to +0.038 on validate (29-query overfit,
+      caught); closest Bxenrichxrr-OFF Delta+0.1123 p=0.118 — every near-miss points the
+      same direction (enrich+rerank-off) but none clears 95%. Cross-session determinism
+      proven end-to-end (C_TRIM validate byte-matches T015). Fullset before==after
+      0.4174/0.2862. SC-1 shortfall documentation = T024's charge with this evidence
 
 ## Phase 5: Prove & publish (FR-007)
 <!-- Checkpoint (plan.md, After Phase 5): `cairn bench --compare` exits 0 against DS-v1 perf.json + agent.json (threshold 0.15) or every regression is a documented trade with the quality gain quantified; regenerated tables show AFTER vs the untouched DS-v1 BEFORE; a warm-time artifact exists with a measured first-query number (322 ms advisory, decision recorded in its notes); `uv run python scripts/gen_benchmark_tables.py` succeeds; docs sentinel block updated; agent tokens within bounds vs 6848. -->
