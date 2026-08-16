@@ -104,3 +104,125 @@ def test_kill_switch_disables_pooling(tmp_path, monkeypatch, pool_env):
     _touch(db)
     _touch(db)
     assert pool_env["opens"] == 3  # every call opened fresh
+
+
+def test_pooled_read_only_conn_rejects_writes(tmp_path, monkeypatch, pool_env):
+    """P5.2: a pooled read connection under CAIRN_READ_ONLY stays read-only.
+
+    The pool must not silently upgrade a read-only server's connection to
+    writable just because it is long-lived; write tools keep using _rw_conn()
+    per call by design.
+    """
+    db = tmp_path / "ro.kg"
+    # mode=ro cannot create the file; materialize schema once, writable.
+    from cairn.graph.schema import get_db as _rw_open
+
+    _rw_open(str(db)).close()
+    monkeypatch.setenv("CAIRN_DB", str(db))
+    monkeypatch.setenv("CAIRN_READ_ONLY", "1")
+    _reset_conn_pool()
+    c = _conn()
+    try:
+        c.execute("SELECT 1").fetchone()  # reads work
+        with pytest.raises(sqlite3.OperationalError):
+            c.execute("CREATE TABLE _should_fail (x)")
+        # Same underlying connection on the next call -- still read-only.
+        c.close()
+        c2 = _conn()
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                c2.execute("CREATE TABLE _should_fail2 (x)")
+        finally:
+            c2.close()
+    finally:
+        _reset_conn_pool()
+
+
+def test_concurrent_update_with_pooled_reads_zero_contention(
+    tmp_path, monkeypatch
+):
+    """P5.2 scenario: a real incremental_update running beside pooled reads.
+
+    The deployment shape the pool changed: one long-lived server process
+    issuing tool reads through pooled connections while a CLI-side
+    `cairn update` writes under the build lock. WAL lets readers proceed
+    without blocking; the assertion is that NO lock_contention event is
+    recorded (busy_timeout absorbed everything) and every pooled read
+    still returned rows throughout the update window.
+    """
+    import threading
+    import time
+
+    from cairn.graph.builder import build_graph
+    from cairn.graph.incremental import incremental_update
+    from cairn.graph.queries import find_definition
+
+    repo = tmp_path / "wrepo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    (repo / "m_a.py").write_text("def alpha():\n    return 1\n")
+    (repo / "m_b.py").write_text("def beta():\n    return 2\n")
+    db = tmp_path / "c.kg"
+    build_graph(workspace=str(repo), db_path=str(db))
+    monkeypatch.setenv("CAIRN_DB", str(db))
+    _reset_conn_pool()
+
+    errors: list[Exception] = []
+    empty_reads = 0
+    reads = 0
+    stop = threading.Event()
+
+    def reader():
+        nonlocal empty_reads, reads
+        while not stop.is_set():
+            try:
+                c = _conn()
+                try:
+                    rows = find_definition(c, "alpha", limit=5)
+                finally:
+                    c.close()
+                reads += 1
+                if not rows:
+                    empty_reads += 1
+            except Exception as e:  # noqa: BLE001 - recorded, asserted below
+                errors.append(e)
+            time.sleep(0.005)
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        time.sleep(0.05)  # let the pooled reader warm up
+        (repo / "m_b.py").write_text(
+            "def beta():\n    return 2\n\n\ndef gamma_live():\n    return 3\n"
+        )
+        summary = incremental_update(workspace=str(repo), db_path=str(db))
+        time.sleep(0.05)  # reader keeps reading past the update window
+    finally:
+        stop.set()
+        t.join(timeout=5)
+
+    assert not errors, errors
+    assert reads > 10, f"reader barely ran ({reads} reads)"
+    assert empty_reads == 0, "alpha vanished mid-update -- WAL read isolation broke"
+
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM events WHERE name = 'lock_contention'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["c"] == 0, f"{row['c']} lock_contention events during the update"
+
+    # The update actually did its job while reads were live.
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.row_factory = sqlite3.Row
+        gamma = conn.execute(
+            "SELECT COUNT(*) AS c FROM symbols WHERE name = 'gamma_live'"
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    assert gamma == 1
+    assert summary.get("files_reindexed") == 1
