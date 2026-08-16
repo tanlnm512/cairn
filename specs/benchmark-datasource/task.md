@@ -158,7 +158,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: 82 queries (58 L1: 18 def/20 callers/10 impact/10 flow; 24 L5),
       234 expectations (82 grade-2), 234/234 empirically verified vs a real
       graph build of the yarl snapshot — zero aspirational entries]
-- [ ] T012 (after T010, T011) (in-progress) Add `scripts/verify_ground_truth.py`: build a
+- [x] T012 (after T010, T011) Add `scripts/verify_ground_truth.py`: build a
       fresh graph (+ OKF knowledge bundle for L5) from
       `benchmarks/datasource/t2/`, re-verify every expectation through the
       T010 matcher, name stale entries (query text + missing symbol) and
@@ -166,8 +166,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       stale entry (`eval.py:97-98` returns 0.0/0.0 there); the validator
       never auto-rewrites expectations (D-010 — stale sets ship as DS-v2)
       (FR-003, AC5, TC-021/TC-022).
+      [DONE 2026-08-16: 16 tests; real pair 234/234 exit 0 on a fresh build; stale
+      path names query+symbol, never rewrites (D-010); exit 2 > 1 > 0 precedence]
       [DONE 2026-08-16: 18-line section, 7/7 provenance facts scripted-verified in
-      NOTICE; citation typo FR-003→FR-002 corrected by orchestrator below]
+      NOTICE]
 
 ## Phase 4: Stamped baselines + `--baseline` compare (FR-004)
 <!-- Checkpoint: perf payload carries dataset-version, cairn-version,
@@ -208,7 +210,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       (FR-004, AC1, TC-007..TC-012).
       [DONE 2026-08-16: 12 tests; exit contract 0 clean / 1 usage+baseline / 2 regression;
       field-by-field advisory mismatch warning; unknown version names available ones]
-- [ ] T015 (after T014, T012) Generate + commit `benchmarks/baselines/DS-v1/`
+- [ ] T015 (after T014, T012) (in-progress) Generate + commit `benchmarks/baselines/DS-v1/`
       on the maintainer's machine (`runner_class reference-local`):
       `perf.json`, `scaling.json`, `quality.json` as self-describing JSONs
       (schema tag + T013 stamp + existing payload keys — D-001); quality from
