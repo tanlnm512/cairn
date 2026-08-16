@@ -92,7 +92,11 @@ class TestBuildArtifactStamp:
         }
         # The rest of the stamp is unaffected -- the bench must still run.
         assert stamp["cairn_version"] == __version__
-        assert stamp["machine_profile"]["runner_class"] == "reference-local"
+        from cairn.bench.datasource import runner_class as _rc
+
+        # Env-dependent by design (D-005): reference-local locally,
+        # ci-github-actions-<runner> under CI -- assert the computed class.
+        assert stamp["machine_profile"]["runner_class"] == _rc()
 
     def test_manifest_invalid_json_degrades(self, tmp_path):
         bad = tmp_path / "manifest.json"
@@ -207,7 +211,9 @@ class TestBenchCliStamp:
         assert payload["cairn_version"] == __version__
         profile = payload["machine_profile"]
         assert set(profile) == {"arch", "cpu", "cpu_count", "os", "runner_class"}
-        assert profile["runner_class"] == "reference-local"
+        from cairn.bench.datasource import runner_class as _rc
+
+        assert profile["runner_class"] == _rc()  # env-dependent (D-005)
         dataset = payload["dataset"]
         assert dataset["name"] == "benchmark-datasource"
         assert dataset["identity_size"] == STAMP_IDENTITY_SIZE

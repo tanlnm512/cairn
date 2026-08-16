@@ -353,7 +353,15 @@ class TestBenchCliBaseline:
         from cairn.bench.datasource import machine_profile
 
         current = machine_profile()  # exactly what the CLI's stamp computes
-        stamped = dict(current, runner_class="ci-ubuntu-latest", arch="x86_64")
+        # arch must differ on EVERY machine class (x86_64 collides with CI's
+        # real arch, collapsing the 2-field mismatch to 1) -- use a fake.
+        from cairn.bench.datasource import runner_class as _rc
+
+        stamped = dict(
+            current,
+            runner_class="ci-ubuntu-latest",
+            arch="benchmark-fake-arch-not-a-machine",
+        )
         _write_committed_baseline(tmp_path, monkeypatch, profile=stamped)
         _patch_perf_suite(monkeypatch, median_ms=100.0)  # clean comparison
         result = _invoke_perf_cli(["--baseline", "DS-v1"], tmp_path, monkeypatch)
@@ -366,8 +374,8 @@ class TestBenchCliBaseline:
         assert "cpu_count" not in named and "cpu" not in named and " os" not in named
         # Both sides of each mismatch are visible.
         assert "ci-ubuntu-latest" in result.output  # baseline runner_class
-        assert "reference-local" in result.output  # current runner_class
-        assert "x86_64" in result.output  # baseline arch
+        assert _rc() in result.output  # current runner_class (env-dependent)
+        assert "benchmark-fake-arch-not-a-machine" in result.output  # baseline arch
         assert platform.machine() in result.output  # current arch
 
     def test_matching_profile_prints_no_mismatch_warning(self, tmp_path, monkeypatch):
