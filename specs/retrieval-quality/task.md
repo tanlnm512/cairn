@@ -123,7 +123,14 @@ Nothing is DONE — every task opens unchecked.
       (binary-search prefix — this XLM-R tokenizer returns no offset mapping); sigmoid
       rerank_score_norm alongside raw; call site passes the enriched-when-on query;
       14 tests; 1704 full green]
-- [ ] T017 (after T016) (in-progress) Measure the rerank stage's marginal value: on/off rows (all else equal) for the structured pair at the leading configs in the results table — the stage's recall@10/MRR contribution becomes a number, not an assumption (TC-012); confident results still skip reranking with the stated reason (TC-014). (FR-004)
+- [x] T017 (after T016) Measure the rerank stage's marginal value: on/off rows (all else equal) for the structured pair at the leading configs in the results table — the stage's recall@10/MRR contribution becomes a number, not an assumption (TC-012); confident results still skip reranking with the stated reason (TC-014). (FR-004)
+      [DONE 2026-08-16: marginal value = +0.9..3.8pp recall / -6.5..-9.5pp MRR at ~40x p95;
+      strictly masks enrichment gains (worse on BOTH metrics under enrich ON); and the
+      MRR damage is T016's structured pair format itself (-10.4pp MRR vs flat on
+      identical pools, cross-session-anchored to T018's pre-T016 figures). ORCHESTRATOR
+      ACTION: structured default REVERTED to flat (reranker.py), basis cited in the
+      docstring; construction tests pin structured=True explicitly; default-pin test
+      added. 0/29 gate skips across configs (T018 consistent); 1705 full green]
 - [x] T018 [P] Re-calibrate the confidence gate: re-measure skip rate and skip-vs-rerank agreement under P2's enriched queries — the trigger is enrichment shifting `_exact_name_hit` corroboration (semantic.py:140-155), while the pair-format change itself is gate-safe (gate margin inputs are fused RRF scores set at semantic.py:520, gate at :546-564 runs before rerank at :567); recalibrate `_DEFAULT_RERANK_MIN_MARGIN` (semantic.py:97) or record the explicit no-change justification; update the calibration basis comment (semantic.py:81-94) (TC-013). Files: `src/cairn/graph/semantic.py` — disjoint from T016. (FR-004)
       [DONE 2026-08-16: NO-CHANGE at 0.45, measured — skip rate FLAT ZERO at every margin
       {0.30..0.75} in both enrich modes (all 29 DS-v1 tune queries are natural-language;
@@ -133,7 +140,7 @@ Nothing is DONE — every task opens unchecked.
       enrich ON always-fused (0.6231/0.5172) BEATS always-rerank (0.5713/0.4101) —
       the cross-encoder can MASK upstream lever gains; rerank on/off is now a
       first-class T019 dimension]
-- [ ] T019 (after T016, T017, T018) Confirmation sweep and final rerank/gate defaults: leading combinations re-run on the tune split, held-out agreement via the bootstrap guard, joint winner ships; final marginal-value row captured at the shipped config; both splits + full set recorded; skip-reason behavior intact (TC-014). (FR-004, FR-006)
+- [ ] T019 (after T016, T017, T018) (in-progress) Confirmation sweep and final rerank/gate defaults: leading combinations re-run on the tune split, held-out agreement via the bootstrap guard, joint winner ships; final marginal-value row captured at the shipped config; both splits + full set recorded; skip-reason behavior intact (TC-014). (FR-004, FR-006)
 
 ## Phase 5: Prove & publish (FR-007)
 <!-- Checkpoint (plan.md, After Phase 5): `cairn bench --compare` exits 0 against DS-v1 perf.json + agent.json (threshold 0.15) or every regression is a documented trade with the quality gain quantified; regenerated tables show AFTER vs the untouched DS-v1 BEFORE; a warm-time artifact exists with a measured first-query number (322 ms advisory, decision recorded in its notes); `uv run python scripts/gen_benchmark_tables.py` succeeds; docs sentinel block updated; agent tokens within bounds vs 6848. -->

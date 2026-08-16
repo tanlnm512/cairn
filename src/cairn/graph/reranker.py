@@ -371,7 +371,7 @@ def rerank(
     query: str,
     candidates: List[dict],
     limit: int,
-    structured: bool = True,
+    structured: bool = False,
 ) -> Tuple[List[dict], bool]:
     """Rerank a candidate shortlist; returns (results, reranked).
 
@@ -382,15 +382,19 @@ def rerank(
     returned dict gains a ``"rerank_score"`` float and the list is truncated
     to ``limit`` by that score, descending.
 
-    T016 (FR-004, D-005) — pair format: with ``structured=True`` (default)
-    the candidate side of each pair is the importance-ordered structured
-    text (kind + qualified name, file path, signature, docstring, then the
-    stored chunk — see `_structured_candidate_text`), pre-truncated with
-    query priority to `RERANK_MAX_LENGTH` so the query always reaches the
-    cross-encoder verbatim and only the candidate's tail loses tokens.
-    ``structured=False`` reproduces the legacy flat format
-    (raw chunk as the pair text, SDK-side joint truncation) for A/B
-    measurement of the pair format alone.
+    T016 (FR-004, D-005) — pair format: ``structured=True`` builds the
+    candidate side as importance-ordered structured text (kind + qualified
+    name, file path, signature, docstring, then the stored chunk — see
+    `_structured_candidate_text`), pre-truncated with query priority to
+    `RERANK_MAX_LENGTH` so the query always reaches the cross-encoder
+    verbatim and only the candidate's tail loses tokens.
+
+    T017 measured that format on identical production 50-candidate pools
+    (cross-session-anchored to T018's pre-T016 figures): structured buys
+    +0.7pp recall but costs -10.4pp MRR and ~10% stage latency vs the
+    legacy flat format — the default is therefore FLAT (``structured=
+    False``); the structured format stays reachable for future work and
+    re-measurement under other recipe/gate combinations.
 
     Scores: ``rerank_score`` stays the RAW logit (bge-reranker outputs are
     unbounded — ordering only, never threshold it directly); each result

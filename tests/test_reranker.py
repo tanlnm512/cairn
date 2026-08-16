@@ -294,7 +294,7 @@ class TestStructuredPairConstruction:
         model = _PairRecorder()
         _install_fake_model(monkeypatch, model)
         try:
-            rrk.rerank("retry logic", [_full_candidate()], limit=1)
+            rrk.rerank("retry logic", [_full_candidate()], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -329,7 +329,7 @@ class TestStructuredPairConstruction:
             "chunk": "",
         }
         try:
-            rrk.rerank("format a date", [candidate], limit=1)
+            rrk.rerank("format a date", [candidate], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -350,7 +350,7 @@ class TestStructuredPairConstruction:
             {"kind": "class"},  # kind without a name is useless alone
         ]
         try:
-            out, reranked = rrk.rerank("q", candidates, limit=3)
+            out, reranked = rrk.rerank("q", candidates, limit=3, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -382,7 +382,7 @@ class TestStructuredPairConstruction:
             "chunk": chunk,
         }
         try:
-            rrk.rerank("q", [candidate], limit=1)
+            rrk.rerank("q", [candidate], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -448,6 +448,20 @@ class TestMaxLengthPin:
 
 
 class TestQueryPriorityTruncation:
+    def test_default_is_flat_per_t017(self, monkeypatch):
+        """T017 measured structured pairs at -10.4pp MRR vs flat on identical
+        pools (cross-session-anchored); the default is FLAT, structured
+        reachable for re-measurement."""
+        from cairn.graph import reranker as rrk
+
+        model = _PairRecorder()
+        _install_fake_model(monkeypatch, model)
+        try:
+            rrk.rerank("retry logic", [_full_candidate()], limit=1)
+        finally:
+            rrk._RERANKER_CACHE.clear()
+        assert model.pairs, "rerank ran"
+        assert model.pairs[0][1] == _VARIANT_B_CHUNK
     def _long_candidate(self):
         head = "function xyz.huge\nFile: /tmp/test/H.kt\n"
         body = "x" * 600
@@ -470,7 +484,7 @@ class TestQueryPriorityTruncation:
         query = "find the huge function"  # 22 chars == 22 tokens
         candidate = self._long_candidate()
         try:
-            rrk.rerank(query, [candidate], limit=1)
+            rrk.rerank(query, [candidate], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -490,7 +504,7 @@ class TestQueryPriorityTruncation:
         _install_fake_model(monkeypatch, model)
         candidate = _full_candidate()
         try:
-            rrk.rerank("retry logic", [candidate], limit=1)
+            rrk.rerank("retry logic", [candidate], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -509,7 +523,7 @@ class TestQueryPriorityTruncation:
         huge_query = "q" * 600
         candidate = {"kind": "function", "qualified_name": "x.y", "chunk": "abc"}
         try:
-            rrk.rerank(huge_query, [candidate], limit=1)
+            rrk.rerank(huge_query, [candidate], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -530,7 +544,7 @@ class TestQueryPriorityTruncation:
         chunk = "function xyz.huge\n" + "y" * 2500 + "SENTINEL_TAIL_LOSES_FIRST"
         candidate = {"kind": "function", "qualified_name": "xyz.huge", "chunk": chunk}
         try:
-            rrk.rerank(query, [candidate], limit=1)
+            rrk.rerank(query, [candidate], limit=1, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
@@ -558,7 +572,7 @@ class TestSigmoidNormalization:
             for i in range(3)
         ]
         try:
-            out, reranked = rrk.rerank("q", candidates, limit=3)
+            out, reranked = rrk.rerank("q", candidates, limit=3, structured=True)
         finally:
             rrk._RERANKER_CACHE.clear()
 
