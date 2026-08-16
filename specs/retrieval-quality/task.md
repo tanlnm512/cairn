@@ -68,8 +68,25 @@ Nothing is DONE — every task opens unchecked.
       NEW sparse_top_n lever (top-N over score-threshold — bm25() rank is negative-
       inverted and LIKE rows carry no rank; RRF consumes ranks); rrf_fuse signature
       untouched; 10 tests + live transcripts]
-- [ ] T011 (after T008, T009) (in-progress) Run the enrichment sweep on the tune split: on/off rows at incumbent fusion values; choose the enrichment default through T002's bootstrap accept guard; report tune/validate/full-set figures (TC-020 shape); identifier-shaped queries non-regressing vs baseline (TC-002). (FR-001, FR-003)
-- [ ] T012 (after T010, T011) Run the fusion/threshold sweep and ship defaults: conservative (k, w_dense, w_sparse) grid including the k=60/equal incumbent (Benham grid discipline) plus dense-threshold calibration on the tune split's labeled score distribution (0.3 is folklore — survey FR-003; no universal bge-m3 cutoff); record every parameter's swept range and chosen value (TC-009); full-set row moved vs baseline. Order is load-bearing: enrichment must land first — weighting a BM25 leg that contributes nothing measures noise (tech-spec order dependency). (FR-003, D-002, D-003)
+- [x] T011 (after T008, T009) Run the enrichment sweep on the tune split: on/off rows at incumbent fusion values; choose the enrichment default through T002's bootstrap accept guard; report tune/validate/full-set figures (TC-020 shape); identifier-shaped queries non-regressing vs baseline (TC-002). (FR-001, FR-003)
+      [DONE 2026-08-16: DEFAULT OFF — bootstrap p=0.7198, negative point estimates on all
+      three surfaces (tune 0.5828->0.5713, validate 0.2521->0.2371, full 0.4174->0.4042),
+      TC-002 def-subset regressed (L1-D03 1.0->0.0: corpus-ubiquitous 'URL' token dilutes
+      both legs), +30% p95. Wiring ships; default off until P3/P4 re-test. Finding: the
+      D-009 deterministic baseline is session-state-dependent — today's twice-reproducible
+      all-levers-off IS the artifact figure 0.4174/0.2862 (band flips sides across
+      sessions); guard verdict unaffected (within-process pairing); T024 provenance records
+      the session-measured row]
+- [x] T012 (after T010, T011) Run the fusion/threshold sweep and ship defaults: conservative (k, w_dense, w_sparse) grid including the k=60/equal incumbent (Benham grid discipline) plus dense-threshold calibration on the tune split's labeled score distribution (0.3 is folklore — survey FR-003; no universal bge-m3 cutoff); record every parameter's swept range and chosen value (TC-009); full-set row moved vs baseline. Order is load-bearing: enrichment must land first — weighting a BM25 leg that contributes nothing measures noise (tech-spec order dependency). (FR-003, D-002, D-003)
+      [DONE 2026-08-16: HONEST NO-SHIP — 18 combos/3 passes; every fusion lever INERT under the
+      shipped pipeline (two structural causes proven: cross-encoder flattens order —
+      byte-identical top-10s 29/29 across k{1,10,60}xweights{...}xtopN; sparse leg EMPTY
+      29/29 with enrich OFF — RRF fuses [empty, dense], the task's own order warning
+      realized). Threshold: no cutoff separates true/false (unmatched top-1s ABOVE
+      matched median); 0.3 folklore-right, vacuously (flat plateau to ~0.45). Incumbent
+      k60/w(1,1)/topN=none/thr0.3 stays; validate half untouched; full-set unmoved
+      0.4174/0.2862. Quality upside now rests on P3 (chunks) + P4 (pairs/gate) + the
+      P3/P4 enrichment re-test]
 
 ## Phase 3: Corpus recipe (FR-002)
 <!-- Checkpoint (plan.md, After Phase 3): variant table (recall@10 / MRR / db_mb / p95) on the tune split under P2 defaults; chosen recipe + size bounds recorded; re-embed round-trip proven (hash change detected → full re-embed → vec0 rowids stable); `grep -n "CAIRN_CHUNK_VARIANT" src/cairn/graph/embeddings.py` default reflects the winner; embedding suite green after fixture churn. -->
