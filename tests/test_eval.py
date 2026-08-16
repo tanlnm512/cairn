@@ -410,7 +410,7 @@ class TestEvalCli:
         assert "L1" in result.output
         assert "L5" in result.output
 
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         assert set(payload) == {"L1", "L5"}
         # Both queries ran (retrieval over an empty index scores 0, but the
         # buckets count them) and the additive keys ride along.
@@ -482,6 +482,6 @@ class TestEvalCli:
             ],
         )
         assert result.exit_code == 0
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         assert payload["L1"]["count"] == 30
         assert payload["L5"]["count"] == 10
