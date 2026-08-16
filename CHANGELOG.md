@@ -103,7 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (unindexed vs stale entries) with the recovery command.
 
 ### Fixed
-- _Nothing yet._
+- `semantic_search` no longer silently degrades to the FTS fallback when
+  called with a bare `sqlite3` connection (no `Row` factory): retrieval rows
+  are normalized at the fetch boundary, and a regression test pins it.
 
 ### Removed
 - _Nothing yet._
