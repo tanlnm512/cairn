@@ -310,3 +310,55 @@ def test_telemetry_off_suppresses_semantic_events(fresh_db, monkeypatch):
     semantic_search(fresh_db, "safeApiCall", limit=5)  # empty -> would normally fire both
 
     assert _buffered_events() == [], "telemetry off -> zero events buffered"
+
+
+def test_bare_connection_returns_semantic_results(tmp_path, monkeypatch):
+    """A raw sqlite3.connect (no Row factory) must not silently degrade
+    semantic_search to the FTS fallback.
+
+    Found while minting the DS-v1 quality baseline: the brute-force scan
+    reads rows by column name (r["vec"]), a bare connection yields tuples,
+    and the TypeError was swallowed into retrieval degradation -- a quality
+    run through a bare connection measured recall 0.0. The fix normalizes
+    rows at the fetch boundary (_mapping_rows).
+    """
+    import sqlite3 as _sq
+
+    from cairn.graph import embeddings as emb
+    from cairn.graph.queries import semantic_search
+    from cairn.graph.schema import _apply_schema
+
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+    emb.reset_backend_cache()
+
+    db = tmp_path / "bare.kg"
+    conn = _sq.connect(str(db))
+    conn.row_factory = _sq.Row
+    _apply_schema(conn)
+    conn.execute("INSERT INTO repos (id, name, path, language) VALUES ('r1','r1','/r1','python')")
+    conn.execute("INSERT INTO files (id, repo_id, path, language) VALUES ('f1','r1','m.py','python')")
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, docstring) "
+        "VALUES ('s1','f1','alpha_handler','alpha_handler','function','handles retries with backoff')"
+    )
+    conn.commit()
+
+    # Embed through the hash backend so the corpus has real vectors.
+    emb.embed_symbols(conn, ["s1"])
+    conn.commit()
+    model = emb.current_model()
+    n = conn.execute("SELECT COUNT(*) AS c FROM embeddings WHERE model = ?", (model,)).fetchone()["c"]
+    assert n == 1
+    conn.close()
+
+    # The regression: a BARE connection (tuple rows) doing the same search.
+    bare = _sq.connect(str(db))  # no row_factory -- tuples
+    try:
+        assert isinstance(bare.execute("SELECT 1").fetchone(), tuple)
+        results = semantic_search(bare, "retry backoff handler", limit=5)
+        assert results, "bare connection returned nothing -- silent degradation returned"
+        assert any("alpha_handler" == r["name"] for r in results), (
+            f"semantic hit missing under bare connection: {[r['name'] for r in results]}"
+        )
+    finally:
+        bare.close()

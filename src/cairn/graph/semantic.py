@@ -188,6 +188,25 @@ def _fused_confident(query: str, candidates: List[dict], limit: int) -> bool:
     return _exact_name_hit(query, candidates[0])
 
 
+def _mapping_rows(cursor) -> list:
+    """Normalize fetched rows to mapping access regardless of ``row_factory``.
+
+    A bare ``sqlite3.connect()`` (no ``Row`` factory) yields plain tuples;
+    this module reads rows by column name (``r["vec"]``, ``r["symbol_id"]``),
+    so a bare connection used to raise ``TypeError`` inside the retrieval
+    path and the search silently degraded to the FTS fallback (found while
+    minting the DS-v1 quality baseline: a quality run through a bare
+    connection measured recall 0.0). Normalizing once at each fetch boundary
+    makes any caller's connection shape safe. Row-connection rows pass
+    through untouched (zero copies on the standard path).
+    """
+    rows = cursor.fetchall()
+    if not rows or not isinstance(rows[0], tuple):
+        return rows
+    cols = [d[0] for d in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
+
+
 def _candidates_from_ann_hits(
     conn: sqlite3.Connection, ann_hits: List[Tuple[str, float]], threshold: float
 ) -> List[dict]:
@@ -202,15 +221,17 @@ def _candidates_from_ann_hits(
         return []
     score_by_id = {sid: score for sid, score in ann_hits}
     placeholders = ",".join("?" for _ in ids)
-    rows = conn.execute(
-        f"SELECT e.symbol_id, e.chunk, "
-        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-        "FROM embeddings e "
-        "JOIN symbols s ON e.symbol_id = s.id "
-        "JOIN files f ON s.file_id = f.id "
-        f"WHERE e.symbol_id IN ({placeholders})",
-        tuple(ids),
-    ).fetchall()
+    rows = _mapping_rows(
+        conn.execute(
+            f"SELECT e.symbol_id, e.chunk, "
+            "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+            "FROM embeddings e "
+            "JOIN symbols s ON e.symbol_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            f"WHERE e.symbol_id IN ({placeholders})",
+            tuple(ids),
+        )
+    )
     by_id = {r["symbol_id"]: r for r in rows}
     candidates = []
     for sid in ids:
@@ -406,16 +427,18 @@ def semantic_search(
         if not ann_enabled:
             ann.warn_ann_fallback_once(logger, context="semantic_search")
         brute_force_limit = 50000
-        rows = conn.execute(
-            "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
-            "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-            "FROM embeddings e "
-            "JOIN symbols s ON e.symbol_id = s.id "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE e.model = ? "
-            "LIMIT ?",
-            (model, brute_force_limit),
-        ).fetchall()
+        rows = _mapping_rows(
+            conn.execute(
+                "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                "FROM embeddings e "
+                "JOIN symbols s ON e.symbol_id = s.id "
+                "JOIN files f ON s.file_id = f.id "
+                "WHERE e.model = ? "
+                "LIMIT ?",
+                (model, brute_force_limit),
+            )
+        )
         if not rows:
             return _finish([])
 

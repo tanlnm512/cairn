@@ -184,19 +184,17 @@ case "$JOB" in
 
   bench)
     # ci.yml: bench job -- fixed corpus, hash backend, advisory throughout.
+    # Mirrors the T016 rewiring: compare against the COMMITTED DS-v1
+    # baseline (the old rolling bench-baseline.json cache dance is gone;
+    # bench_compare.py still honors an explicit bench-baseline.json as a
+    # local override, and falls back to the committed artifact without it).
     install_extras ""
-    log "cairn bench (CI: Run bench -- advisory)"
-    cairn bench --suite perf --n-files 60 --complexity medium \
-      --embed-backend hash --repeats 3 \
-      --json --save bench-current.json \
+    log "cairn bench vs committed DS-v1 (CI: Run bench -- advisory)"
+    cairn bench --suite perf --embed-backend hash --repeats 3 \
+      --json --save bench-current.json --baseline DS-v1 \
       || warn "bench failed (advisory in CI too)"
-    if [[ -f bench-baseline.json && -f bench-current.json ]]; then
-      log "comparing against bench-baseline.json (CI: Compare vs baseline)"
-      python .github/scripts/bench_compare.py || warn "comparison failed (advisory)"
-    else
-      log "no baseline yet -- this run establishes bench-baseline.json"
-    fi
-    [[ -f bench-current.json ]] && cp bench-current.json bench-baseline.json
+    log "advisory comparison (CI: Compare vs baseline)"
+    python .github/scripts/bench_compare.py || warn "comparison failed (advisory)"
     ;;
 
   *) die "inner: unknown job '$JOB'" ;;
