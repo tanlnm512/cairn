@@ -99,18 +99,21 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       (82 lines, deps-only today): upstream project + license, distinct from
       the dependency families; keep the existing scope intact incl. the
       bge-m3 note (NOTICE:79-82) (FR-002, TC-016).
-- [ ] T007 [P] (after T005) Add the size-budget mode to
+- [ ] T007 [P] (after T005) (in-progress) Add the size-budget mode to
       `scripts/verify_datasource.py`: `benchmarks/datasource/t2/` ≤ 3 MB and
       `benchmarks/datasource/` ≤ 5 MB, non-zero on breach; pre-commit
       `check-added-large-files --maxkb=500` is per-file, not a tree budget
       (survey FR-002), so this check is load-bearing not ceremony (FR-002,
       AC4, TC-017/TC-018).
-- [ ] T008 [P] (after T005) Add the build+query smoke test over `t2/` (new
+- [x] T008 [P] (after T005) Add the build+query smoke test over `t2/` (new
       `tests/test_datasource_t2.py`, selected by `-k t2`): create the scanner
       marker at runtime exactly as `generate_corpus` does (git does not track
       empty dirs — tech-spec pitfall), build a graph over `t2/`, answer a
       known-symbol query and one cross-file callers query (FR-002, AC3,
       TC-013/TC-014).
+      [DONE 2026-08-16: TC-013 identity asserts + TC-014 pinned cross-file pair
+      (encode_url@_url.py -> split_url@_parse.py, resolution=exact); root-collection
+      collision with vendored upstream tests found+fixed via testpaths config]
 - [ ] T009 (after T007, T008) Wire T2 checks into the CI bench job: steps
       running the size-budget check and the t2 smoke test (plan checkpoint
       command: `uv run pytest -q -k "t2 or smoke"` green locally and in CI)
@@ -181,7 +184,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: 16 tests; both payload sites stamped via one build_artifact_stamp();
       to_dict untouched (D-006); dataset_version=DS-v1 minted by orchestrator spine-edit
       after T013 found the field absent — stamp now carries it]
-- [ ] T014 (after T013) Add `--baseline <DS-version>` resolution to
+- [ ] T014 (after T013) (in-progress) Add `--baseline <DS-version>` resolution to
       `cairn bench --compare` (`cli/bench.py`): resolve
       `benchmarks/baselines/<DS-version>/`, render a dataset-version header,
       print a loud machine-profile mismatch warning naming the mismatched
