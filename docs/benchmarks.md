@@ -163,6 +163,47 @@ cairn bench --suite scaling --json
 
 ---
 
+## T3 scale runs (local)
+
+For real-world scale points beyond the synthetic corpus, the manifest also
+pins two public repositories (`benchmarks/datasource/manifest.json`, `t3`
+section — added in T019, never vendored):
+
+| entry | pinned commit | scale point |
+|-------|---------------|-------------|
+| `home-assistant/core` | `0308f01b295a8ecfef9938b67514aa1b7b95e5bc` | ~27k files (18.2k Python) — mid scale |
+| `torvalds/linux` | `3eb40771c00a8488fa6ed2cc1fe203477908bf38` | ~70k files (26.7k .c, 16.6k .h) — extreme scale |
+
+These are fetched by a **local, maintainer-run** command — the multi-GB
+clones are deliberately outside CI (the suite stays offline; no T3 fetch
+step exists in `ci.yml`):
+
+```bash
+uv run python scripts/fetch_t3_corpus.py --list                # pins, no network
+uv run python scripts/fetch_t3_corpus.py "home-assistant/core" # fetch by pin
+uv run python scripts/fetch_t3_corpus.py "torvalds/linux" --run-bench
+```
+
+**Pin-enforcement contract.** The command *always* checks out the manifest's
+pinned commit explicitly (`git clone --no-checkout` + `git checkout --detach
+<pin>`, then a `rev-parse HEAD` equality check against the pin). The
+default-branch HEAD is never materialized, and an unreachable pin (moved,
+force-pushed away, typo'd) fails loudly — exit 3, naming the entry, the
+expected pin, and what was found — rather than silently benching some other
+commit. Clones cache outside the repository (`~/.cairn/bench-t3/<name>` by
+default; `--cache`/`--dest` override), so nothing T3-related lands in the
+checkout. The script lives in `scripts/` (decision D-009): no `git clone`
+ever appears in `src/cairn`.
+
+**Results record the manifest entry.** With `--run-bench`, the verified
+checkout is benched via `cairn bench --workspace <checkout> --json --save
+<dest>/<name>.json`, and the script stamps the manifest entry (repo +
+commit + scale hint, the `t3_entry` shape the T013 artifact-stamp hook
+defines) into the saved artifact's `dataset` block — so every T3 result is
+self-describing about exactly which pinned corpus measured it.
+
+---
+
 ## The resolution-label methodology (cairn's differentiator)
 
 cairn labels every call edge `exact`, `ambiguous`, or `unresolved`. Precise

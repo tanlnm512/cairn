@@ -262,6 +262,8 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       --exit-code docs/benchmarks.md` (same spirit as
       `scripts/verify_no_code_change.py`); verified by a temporary local edit
       inside a sentinel (FR-005, AC6, TC-027).
+      [DONE 2026-08-16: one real-gate CI step; STAGED in-sentinel hand-edit proof —
+      generator repairs, diff --exit-code fails with exactly the repaired line]
 
 ## Phase 6: T3 scale pins + local fetch (FR-006)
 <!-- Checkpoint: `jq '.t3 | length' benchmarks/datasource/manifest.json`
@@ -275,7 +277,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       risk: one manifest, one writer at a time); T3 stays manifest-pinned,
       never vendored — a T3 addition must not invalidate DS-v1 (D-010)
       (FR-006, TC-029).
-- [ ] T020 (after T019) Implement + document the local T3 fetch-by-pin
+      [DONE 2026-08-16: home-assistant/core@dev 0308f01 (27,079 blobs measured)
+      + torvalds/linux@master 3eb4077 (67,653+ truncated); additive optional-t3
+      validator; DS-v1 stamp unbroken]
+- [x] T020 (after T019) Implement + document the local T3 fetch-by-pin
       command (new script under `scripts/`, NOT `src/cairn` — D-009; today
       `grep -rn "git clone" src/cairn --include="*.py"` → 0 matches and it
       stays that way): fetch a manifest entry by explicit pinned-commit
@@ -288,6 +293,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       guard: no T3 fetch step appears in `ci.yml`. Verify-before:
       `grep -rni "offline\|network" .github/workflows/ci.yml` → no output
       (survey FR-006) (FR-006, AC7, TC-030..TC-033).
+      [DONE 2026-08-16: fetch-by-pin with exact-HEAD verification (exit 3 names
+      entry+expected+found); cache outside repo (D-009 guard); --run-bench
+      stamps t3_entry into the artifact; 19 hermetic tests via local git
+      fixtures; standing guards intact (no CI wiring, src/ stays clone-free)]
 
 ## Conventions
 - `- [ ]` todo · `(in-progress)` claimed · `- [x]` done + proof note:
