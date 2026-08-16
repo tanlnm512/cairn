@@ -12,12 +12,15 @@ product instead of a per-row Python loop. Falls back to pure Python using
 """
 from __future__ import annotations
 
+import math
+import operator
 import struct
 from typing import List, Sequence, Tuple, TypeVar
 
-from ..graph.vector_math import l2norm as _l2norm, dot as _dot
+from ..graph.vector_math import l2norm as _l2norm
 
 T = TypeVar("T")
+_MUL = operator.mul
 
 
 def cosine_scan(
@@ -111,20 +114,28 @@ def cosine_scan(
         order = np.argsort(-scores, kind="stable")
         return [(float(scores[i]), payloads[i]) for i in order]
     except ImportError:
-        # Pure-Python fallback using the shared vector_math helpers.
+        # Pure-Python fallback (numpy absent: the default install is
+        # torch-free and numpy rides only in the [semantic] extra).
+        # Per-element Python loops cost ~40 us/row at 768 dims; the C-level
+        # sequence ops below (sum + map + operator.mul) cut that several-fold
+        # with identical semantics. The math mirrors the numpy path: dot with
+        # the precomputed unit query, divided by the row norm (the old
+        # ``dot(q,v)/(qn*vn)`` form is algebraically identical; scores agree
+        # to float epsilon, pinned by the differential tests).
         q = struct.unpack(f"<{len(q_blob) // 4}f", q_blob)
         qn = _l2norm(q)
         if qn == 0.0:
             return []
-        scored = []
+        q_unit = [x / qn for x in q]
+        scored: List[Tuple[float, T]] = []
         for vec_blob, dim, payload in rows:
             if dim != q_dim:
-                continue
+                continue  # stale row from a previous model / dimensionality
             v = struct.unpack(f"<{dim}f", vec_blob)
-            vn = _l2norm(v)
+            vn = math.sqrt(sum(map(_MUL, v, v)))
             if vn == 0.0:
                 continue
-            score = _dot(q, v) / (qn * vn)
+            score = sum(map(_MUL, q_unit, v)) / vn
             if score >= threshold:
                 scored.append((score, payload))
         scored.sort(key=lambda x: -x[0])

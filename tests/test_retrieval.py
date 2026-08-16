@@ -145,3 +145,121 @@ class TestNoScanDuplication:
     def test_graph_semantic_uses_shared_scan(self):
         src = self._source("graph", "semantic.py")
         assert "cosine_scan" in src, "graph/semantic.py must use the shared cosine_scan"
+
+
+# --- Pure-Python fallback batched rewrite (perf follow-up) -------------------
+#
+# sys.modules["numpy"] = None makes `import numpy` raise ImportError inside
+# cosine_scan, forcing the fallback branch deterministically -- the tests pass
+# identically on machines with and without numpy.
+
+def _old_fallback_loop(q_blob, q_dim, rows, threshold=0.0):
+    """The pre-batching fallback, verbatim, as the differential oracle."""
+    import struct as _s
+
+    from cairn.graph.vector_math import dot as _d, l2norm as _n
+
+    q = _s.unpack(f"<{len(q_blob) // 4}f", q_blob)
+    qn = _n(q)
+    if qn == 0.0:
+        return []
+    scored = []
+    for vec_blob, dim, payload in rows:
+        if dim != q_dim:
+            continue
+        v = _s.unpack(f"<{dim}f", vec_blob)
+        vn = _n(v)
+        if vn == 0.0:
+            continue
+        score = _d(q, v) / (qn * vn)
+        if score >= threshold:
+            scored.append((score, payload))
+    scored.sort(key=lambda x: -x[0])
+    return scored
+
+
+def _random_rows(rng, n, dim):
+    rows = []
+    for i in range(n):
+        if i % 10 == 3:  # dim-mismatched rows are skipped
+            d = dim + 8
+        else:
+            d = dim
+        vec = [rng.uniform(-1, 1) for _ in range(d)]
+        if i % 20 == 5:  # zero-norm rows are skipped
+            vec = [0.0] * d
+        rows.append((_f32(*vec), d, f"payload-{i}"))
+    return rows
+
+
+def test_fallback_batched_matches_old_loop():
+    import random
+    import struct
+
+    rng = random.Random(0xFEED)
+    for dim in (8, 33, 768):
+        q = [rng.uniform(-1, 1) for _ in range(dim)]
+        q_blob = struct.pack(f"<{dim}f", *q)
+        rows = _random_rows(rng, 120, dim)
+        for threshold in (0.0, 0.5):
+            import sys
+
+            saved = sys.modules.get("numpy", "ABSENT")
+            sys.modules["numpy"] = None
+            try:
+                got = cosine_scan(q_blob, dim, rows, threshold)
+            finally:
+                if saved == "ABSENT":
+                    sys.modules.pop("numpy", None)
+                else:
+                    sys.modules["numpy"] = saved
+            want = _old_fallback_loop(q_blob, dim, rows, threshold)
+            assert [p for _, p in got] == [p for _, p in want]
+            for (gs, gp), (ws, _) in zip(got, want):
+                assert abs(gs - ws) < 1e-9, (gs, ws)
+
+
+def test_fallback_agrees_with_numpy_path_when_numpy_present():
+    import random
+    import struct
+    import sys
+
+    __import__("pytest").importorskip("numpy")
+
+    rng = random.Random(0xC0FFEE)
+    dim = 64
+    q = [rng.uniform(-1, 1) for _ in range(dim)]
+    q_blob = struct.pack(f"<{dim}f", *q)
+    rows = _random_rows(rng, 200, dim)
+
+    saved = sys.modules.get("numpy")
+    sys.modules["numpy"] = None
+    try:
+        fallback = cosine_scan(q_blob, dim, rows, 0.0)
+    finally:
+        sys.modules["numpy"] = saved
+    np_path = cosine_scan(q_blob, dim, rows, 0.0)
+
+    assert [p for _, p in fallback] == [p for _, p in np_path]
+    for (fs, _), (ns, _) in zip(fallback, np_path):
+        assert abs(fs - ns) < 1e-6
+
+
+def test_fallback_skips_empty_and_single_rows():
+    import struct
+
+    dim = 4
+    q_blob = struct.pack(f"<{dim}f", *([0.25] * dim))
+    import sys
+
+    saved = sys.modules.get("numpy", "ABSENT")
+    sys.modules["numpy"] = None
+    try:
+        assert cosine_scan(q_blob, dim, []) == []
+        one = [(_f32(*[1.0, 0.0, 0.0, 0.0]), dim, "only")]
+        assert cosine_scan(q_blob, dim, one) == [(0.5, "only")]  # q_hat=[.5]*4 . [1,0,0,0] -> 0.5
+    finally:
+        if saved == "ABSENT":
+            sys.modules.pop("numpy", None)
+        else:
+            sys.modules["numpy"] = saved

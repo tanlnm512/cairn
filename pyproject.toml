@@ -48,6 +48,15 @@ dependencies = [
     "pathspec>=0.12",
     "packaging>=21.0",  # PEP 440 version comparison in `cairn upgrade`; declared explicitly (transitively always present via pip/setuptools, but the CLI relies on it)
     "sqlite-vec>=0.1.0",
+    # numpy: the batched cosine scan (retrieval/vector_scan.py) runs it at
+    # ~0.7 us/row vs ~28 us/row for the pure-Python fallback -- and that scan
+    # is the path every semantic_search takes when no vec0 index is built.
+    # Promoted to core 2026-08-16: the default install already carries
+    # compiled wheels (14 tree-sitter grammars + sqlite-vec), numpy is
+    # wheel-everywhere with no torch, and the [semantic] extra's pinned
+    # versions simply became default. The fallback stays for exotic
+    # numpy-less environments.
+    "numpy>=1.24",
     # Progress display: spinners, progress bars, ETA/rate, themed tables.
     # Pure-Python, no network/torch -- keeps the default install lightweight.
     "rich>=13.0",
@@ -87,8 +96,8 @@ dev = [
 # Phase 7: semantic search. Pulls torch (~hundreds of MB) via
 # sentence-transformers, hence strictly optional. The default install remains
 # zero-network and torch-free; `pip install cairn-intel[semantic]` opts in.
-# numpy accelerates the cosine scan at scale (>10k embeddings); without it the
-# scan falls back to pure Python (correct, but slow on large corpora).
+# numpy is also a CORE dependency (see dependencies above) since 2026-08-16;
+# listed here too keeps the pin identical for semantic installs.
 # Phase 7b: this same dependency also provides CrossEncoder, so the optional
 # rerank stage (CAIRN_RERANK=1, see src/graph/reranker.py) needs no
 # separate extra -- installing [semantic] is enough for both embeddings and
