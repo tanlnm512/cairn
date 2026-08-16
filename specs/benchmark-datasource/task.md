@@ -85,14 +85,17 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      `du -sk benchmarks/datasource` ≤ 5120; provenance names repo+commit+
      license; NOTICE has a vendored-content section; build+query smoke green
      (`uv run pytest -q -k "t2 or smoke"`). -->
-- [ ] T005 (after T004) Vendor the yarl source export at a pinned commit
+- [x] T005 (after T004) Vendor the yarl source export at a pinned commit
       under `benchmarks/datasource/t2/` + `t2/provenance.json`
       {upstream repo, commit, license, export notes} (D-002; budget measures
       the vendored tree, not GitHub repo size). Closes survey gap "NO
       benchmarks/ dir ... No provenance manifests". Verify-before:
       `ls benchmarks 2>/dev/null || echo "NO benchmarks/ dir"` → "NO
       benchmarks/ dir" (survey FR-002) (FR-002, TC-015).
-- [ ] T006 [P] Add the vendored-content attribution section to `NOTICE`
+      [DONE 2026-08-16: pin dddcb82 (yarl master HEAD — default branch is master,
+      not main); 33 files / 437 KB vendored; provenance.json complete; smoke
+      test builds 1066 symbols / 2432 edges, URL findable]
+- [ ] T006 (after T005) (in-progress) Add the vendored-content attribution section to `NOTICE`
       (82 lines, deps-only today): upstream project + license, distinct from
       the dependency families; keep the existing scope intact incl. the
       bge-m3 note (NOTICE:79-82) (FR-002, TC-016).
@@ -157,7 +160,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      exists; `cairn bench --compare --baseline DS-v1` renders the dataset-version
      header + mismatch warning; `pytest tests/test_bench.py
      tests/test_agent_suite.py` green (34 at baseline). -->
-- [ ] T013 [P] (after T004) Stamp every bench artifact at the CLI payload
+- [ ] T013 [P] (after T004) (in-progress) Stamp every bench artifact at the CLI payload
       layer (D-006): a stamp step beside `payload["timestamp"] =
       datetime.now(timezone.utc).isoformat()` (`cli/bench.py:122/157`) adding
       `dataset {name, version, tree-hash, t3-entry?}` (read via the T001
