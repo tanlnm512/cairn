@@ -7,15 +7,21 @@ state on v0.10.0 @ `7e90628` (surveyed 2026-08-15), not intent.
 
 | Status | Count |
 |--------|-------|
-| done | 16 |
-| partial | 0 |
-| todo | 10 |
+| done | 23 |
+| deferred | 2 |
+| todo | 1 |
 | **total** | **26** |
 
 Milestone 1 (query-path wins) landed on `feat/perf-query-path-wins`
 (2026-08-15): P1.1-P1.4, P2.1-P2.2, P5.1. Measured: impact_analysis
 20.9 -> 0.1 ms p50 (-99.5%); MCP read-conn path 0.826 -> 0.071 ms
 (-91.5%).
+
+Milestones 3-4 (freshness + evidence, 2026-08-16): FRESH-1 landed
+(live watcher; save->queryable 2.1s), EVID-1 landed (agent-effort
+suite: 99.0% fewer calls / 99.5% fewer tokens vs grep control), FRESH-2
+deferred by its own gate. Remaining: P5.2 (concurrent-contention
+scenario test).
 
 Milestone 2 (write-path wins, 2026-08-16): PERF-3 + PERF-4 landed.
 Measured: single-file `cairn update` at 1000 files 377s -> ~9.5s
@@ -157,18 +163,18 @@ file saves (≤ 2 s) into `incremental.reindex_paths`, the staleness banner
 disappears for watched workspaces, and without `watchdog` behavior is exactly
 today's boot-time catch-up.
 
-- [ ] **F1.1 — Watcher service.** New module (extend `graph/watcher.py`)
+- [ ] **F1.1 — Watcher service [DONE bff02d1: FileWatcherService, 2s fixed-window debounce, both pending_sync path forms, lock-contention latch; live smoke save->queryable 2.1s].** New module (extend `graph/watcher.py`)
       starting a `watchdog` observer when importable; debounce ≤2 s; calls
       `incremental.reindex_paths` under `build_lock`; skips when
       `CAIRN_READ_ONLY`. Graceful no-op (log once) when `watchdog` missing.
       verify: integration test with a temp workspace — save file → poll DB
       until new symbol visible (≤5 s); no-watchdog path asserts boot
       catch-up unchanged.
-- [ ] **F1.2 — Wire into serve.** Start/stop in both stdio and SSE paths of
+- [ ] **F1.2 — Wire into serve [DONE bff02d1: shared path in run() covers stdio+SSE; stop() in finally; PYTEST guard mirrors warm-up pattern].** Start/stop in both stdio and SSE paths of
       `mcp_server/server.py` `run()`; update the staleness banner logic in
       `_server_core` to reflect watcher liveness.
       verify: `uv run pytest tests/ -q -k watcher or serve`.
-- [ ] **F1.3 — Docs + extra.** Promote `watchdog` guidance in README /
+- [ ] **F1.3 — Docs + extra [DONE bff02d1: configuration.md CAIRN_WATCH row + behavior; README freshness note].** Promote `watchdog` guidance in README /
       docs/configuration.md (`[watch]` extra stays optional; behavior is
       additive).
       verify: docs grep for watcher section; `uv run --extra watch pytest -q`.
@@ -179,16 +185,16 @@ Done when: the parser layer caches the last tree per file (bounded LRU),
 reparses changed files incrementally, and a parse-parity test proves symbol
 extraction is byte-identical to full reparse on a mutation corpus.
 
-- [ ] **F2.1 — Tree cache.** Per-file `Tree` cache keyed by content hash in
+- [ ] **F2.1 — Tree cache [DEFERRED per F2.3 gate: post-M2 update cost is resolver+closure dominated; parse is ms-level].** Per-file `Tree` cache keyed by content hash in
       `parsers/_registry.py` (alongside `get_parser`'s lru_cache); bounded.
       verify: cache unit tests; memory ceiling asserted in
       `bench/scaling_suite.py` peak-memory column (no >15% growth).
-- [ ] **F2.2 — Incremental parse + parity corpus.** `parse(bytes, old_tree)`
+- [ ] **F2.2 — Incremental parse + parity corpus [DEFERRED per F2.3 gate].** `parse(bytes, old_tree)`
       path; mutation corpus (edits applied to seeded corpus files) with
       byte-identical symbol extraction vs full reparse.
       verify: parity test green across ≥3 languages (python, typescript,
       kotlin — the parsers with most usage).
-- [ ] **F2.3 — Gate decision.** If PERF-1..4 already meet the phase's perf
+- [ ] **F2.3 — Gate decision [DONE 2026-08-16: DEFERRED -- PERF-1..4 met all phase gates; single-file update 9.7s at 1000 files with parse contributing milliseconds, so old_tree reparse optimizes a non-bottleneck while adding tree-id parity risk. Decision recorded to tribal memory.].** If PERF-1..4 already meet the phase's perf
       gates, record decision to defer F2.3+ to a follow-up.
       verify: `record_memory(type="decision")` note linked from
       docs/benchmarks.md update.
@@ -201,17 +207,17 @@ reporting tool-calls/tokens/time with medians over ≥ 3 runs, and
 `docs/benchmarks.md`'s `_fill_` placeholders for it are replaced with
 measured numbers and methodology.
 
-- [ ] **E1.1 — Task set + harness.** 5–8 representative tasks (find symbol,
+- [ ] **E1.1 — Task set + harness [DONE 78bcd34: 6 tasks x 2 arms, medians, --save/--compare; 99.0% fewer calls / 99.5% fewer tokens vs grep control].** 5–8 representative tasks (find symbol,
       blast radius, flow trace, hybrid search) executed via MCP tool calls
       against a pinned snapshot; control arm = grep/read-only tool loop;
       medians over ≥3 seeded runs.
       verify: `uv run python -m cairn bench agent --help` runs; output JSON
       includes tool_calls/tokens/wall_time per task per arm.
-- [ ] **E1.2 — Publish.** Replace the `_fill_` agent-effort placeholders in
+- [ ] **E1.2 — Publish [DONE 78bcd34: benchmarks.md agent-effort placeholders replaced with tables + methodology incl. honest grep-wins-concept-search finding].** Replace the `_fill_` agent-effort placeholders in
       `docs/benchmarks.md` with numbers + methodology paragraph (name the
       control arm, seed count, and repo snapshot hash).
       verify: `grep -c "_fill_" docs/benchmarks.md` decreases; docs render.
-- [ ] **E1.3 — Record learnings.**
+- [ ] **E1.3 — Record learnings [DONE 2026-08-16: methodology decision recorded to tribal memory].**
       `cairn memory record decision "agent-effort benchmark methodology"`.
 
 ---

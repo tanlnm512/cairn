@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Live file watching**: with the `[watch]` extra installed, `cairn serve`
+  now sees source edits made while it runs — debounced (≤2 s) file events
+  insert `pending_sync` rows (so concurrent readers get staleness banners)
+  and trigger an incremental update under the build lock, with contention
+  absorbed and retried on the next batch. `CAIRN_WATCH=0` disables;
+  read-only servers never watch. Live smoke: save → new symbol queryable in
+  2.1 s.
+- **Agent-effort benchmark** (`cairn bench --suite agent`): six task-shaped
+  questions answered by scripted cairn tool sequences vs a deterministic
+  grep/read control — measured 99.0% fewer tool calls and 99.5% fewer
+  context tokens per query (grep wins concept-search wall-time; reported),
+  with `--save`/`--compare` baselines and methodology in
+  `docs/benchmarks.md`.
 - `impact_analysis` index mode: precise, structural, depth ≤ 3 queries are
   answered from the `transitive_edges` closure in one indexed statement
   (~200× faster p50 on the bench corpus; shortest-path depths, DFS fallback
