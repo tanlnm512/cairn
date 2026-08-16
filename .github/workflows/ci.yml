@@ -277,6 +277,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      # T1 content pin (FR-001/AC2): regenerate the corpus from the manifest
+      # recipe and assert the pinned tree-hash + counts. This is the one
+      # deliberate exception to the continue-on-error rule above -- a
+      # deterministic content check, not a noisy timing measurement.
+      # Size 300 = the perf default `cairn bench` itself uses (--n-files);
+      # the full 5000 pin would burn CI minutes for no extra signal here.
+      - name: Verify benchmark datasource (T1 content pin)
+        run: python scripts/verify_datasource.py --size 300
+
       # Rolling baseline. The run-id-unique key always misses, so the post-job
       # save always stores THIS run's result; restore-keys prefix restores the
       # most recent entry -- on PRs cache scoping falls back to the latest

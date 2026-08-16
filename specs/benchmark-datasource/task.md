@@ -71,12 +71,14 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       seed-flip → non-zero (FR-001, AC2, TC-002/TC-003/TC-004/TC-005).
       [DONE 2026-08-16: 14 tests; exit contract 0/1/2 (drift vs schema distinct);
       fact-level naming per task text — aggregate digest cannot attribute files]
-- [ ] T004 (after T003) (in-progress) Wire the T1 check into the CI bench job
+- [x] T004 (after T003) Wire the T1 check into the CI bench job
       (`.github/workflows/ci.yml:261-321`): new step running
       `scripts/verify_datasource.py` before the bench run; network-free.
       Verify-before: `grep -n "hash" .github/workflows/ci.yml` → only pip
       cache + `hashFiles('.pre-commit-config.yaml')` + actions/cache today
       (survey FR-001) (FR-001, AC2).
+      [DONE 2026-08-16: one added CI step after install, before bench; real gate
+      (deterministic content check); local --size 300 exit 0 in 0.16s]
 
 ## Phase 2: T2 vendored real-code snapshot (FR-002)
 <!-- Checkpoint: snapshot vendored, attributed, guarded, exercised —
