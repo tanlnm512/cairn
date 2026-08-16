@@ -350,6 +350,28 @@ def default_manifest_path() -> Path | None:
     return None
 
 
+def default_baselines_root() -> Path | None:
+    """Locate ``benchmarks/baselines/``; None when neither candidate exists.
+
+    Same two-candidate precedence as :func:`default_manifest_path`: the
+    working directory first (how CI and maintainers invoke ``cairn bench`` --
+    from the repo root), then the source tree the package lives in (covers
+    CliRunner-style isolated cwds and editable installs). T015 commits the
+    stamped ``DS-v1`` tree here; T014's ``--baseline <DS-version>`` resolves
+    ``<root>/<DS-version>/<suite>.json`` against it. A wheel/sdist install
+    has no ``benchmarks/`` directory and ``--baseline`` correctly reports the
+    unknown version instead of guessing.
+    """
+    candidates = [
+        Path.cwd() / "benchmarks" / "baselines",
+        Path(__file__).resolve().parents[3] / "benchmarks" / "baselines",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def runner_class(env: dict[str, str] | None = None) -> str:
     """Classify where the bench ran: ``reference-local`` or ``ci-<runner>``.
 

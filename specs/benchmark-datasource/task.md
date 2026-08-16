@@ -186,7 +186,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       [DONE 2026-08-16: 16 tests; both payload sites stamped via one build_artifact_stamp();
       to_dict untouched (D-006); dataset_version=DS-v1 minted by orchestrator spine-edit
       after T013 found the field absent — stamp now carries it]
-- [ ] T014 (after T013) (in-progress) Add `--baseline <DS-version>` resolution to
+- [x] T014 (after T013) Add `--baseline <DS-version>` resolution to
       `cairn bench --compare` (`cli/bench.py`): resolve
       `benchmarks/baselines/<DS-version>/`, render a dataset-version header,
       print a loud machine-profile mismatch warning naming the mismatched
@@ -198,6 +198,8 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       (`src/cairn/cli/bench.py`) and same tests (`tests/test_bench.py`,
       `tests/test_agent_suite.py`, TC-012 regression guard: 34 passing)
       (FR-004, AC1, TC-007..TC-012).
+      [DONE 2026-08-16: 12 tests; exit contract 0 clean / 1 usage+baseline / 2 regression;
+      field-by-field advisory mismatch warning; unknown version names available ones]
 - [ ] T015 (after T014, T012) Generate + commit `benchmarks/baselines/DS-v1/`
       on the maintainer's machine (`runner_class reference-local`):
       `perf.json`, `scaling.json`, `quality.json` as self-describing JSONs

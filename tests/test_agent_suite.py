@@ -222,3 +222,91 @@ class TestAgentCli:
         assert result.exit_code == 0
         assert "agent" in result.output
         assert "--runs" in result.output
+
+
+# --- CLI --baseline resolution (T014, FR-004/AC1, agent-suite path) --------
+
+
+class TestAgentBaselineCli:
+    def test_agent_baseline_headers_and_compares(self, tmp_path, monkeypatch):
+        """--baseline resolves <version>/agent.json for the agent suite too:
+        the dataset-version header renders and the token comparison table
+        names the requested version (clean run -> exit 0)."""
+        from click.testing import CliRunner
+
+        from cairn import __version__
+        from cairn.bench.datasource import machine_profile
+        from cairn.cli import main
+
+        # Deterministic synthetic report (no build, no timing noise): one
+        # task whose est_tokens exactly matches the baseline -> delta 0.
+        report = AgentReport(
+            tasks=[TaskEffort(
+                label="definition-lookup",
+                question="q",
+                cairn=ArmEffort(2, 400, 100, 0.01),
+                control=ArmEffort(10, 4000, 1000, 0.02),
+            )],
+        )
+        monkeypatch.setattr(
+            "cairn.bench.agent_suite.run_agent_suite", lambda *a, **k: report
+        )
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("RUNNER_NAME", raising=False)
+        baseline = {
+            "tasks": [{"label": "definition-lookup", "cairn": {"est_tokens": 100}}],
+            "dataset": {"name": "benchmark-datasource", "version": "DS-ag"},
+            "cairn_version": __version__,
+            "machine_profile": machine_profile(),  # matches -> no warning
+        }
+        root = tmp_path / "benchmarks" / "baselines" / "DS-ag"
+        root.mkdir(parents=True)
+        (root / "agent.json").write_text(json.dumps(baseline), encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ag.db"))
+
+        result = CliRunner().invoke(main, [
+            "bench", "--suite", "agent", "--n-files", "3", "--complexity", "low",
+            "--embed-backend", "hash", "--runs", "1", "--baseline", "DS-ag",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Baseline DS-ag" in result.output  # dataset-version header
+        assert "vs baseline DS-ag" in result.output  # version in the comparison
+        assert "definition-lookup" in result.output  # agent compare table rendered
+        assert "MACHINE-PROFILE MISMATCH" not in result.output  # profile matches
+
+    def test_agent_baseline_regression_exits_2(self, tmp_path, monkeypatch):
+        """The agent suite's exit-2 regression signal also carries over."""
+        from click.testing import CliRunner
+
+        from cairn.bench.datasource import machine_profile
+        from cairn.cli import main
+
+        report = AgentReport(
+            tasks=[TaskEffort(
+                label="definition-lookup",
+                question="q",
+                cairn=ArmEffort(2, 800, 200, 0.01),  # est_tokens 200 vs 100
+                control=ArmEffort(10, 4000, 1000, 0.02),
+            )],
+        )
+        monkeypatch.setattr(
+            "cairn.bench.agent_suite.run_agent_suite", lambda *a, **k: report
+        )
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        baseline = {
+            "tasks": [{"label": "definition-lookup", "cairn": {"est_tokens": 100}}],
+            "machine_profile": machine_profile(),
+        }
+        root = tmp_path / "benchmarks" / "baselines" / "DS-ag"
+        root.mkdir(parents=True)
+        (root / "agent.json").write_text(json.dumps(baseline), encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ag.db"))
+
+        result = CliRunner().invoke(main, [
+            "bench", "--suite", "agent", "--n-files", "3", "--complexity", "low",
+            "--embed-backend", "hash", "--runs", "1", "--baseline", "DS-ag",
+        ])
+        assert result.exit_code == 2, result.output
+        assert "REGRESSED" in result.output
