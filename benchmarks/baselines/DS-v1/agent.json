@@ -1,0 +1,174 @@
+{
+  "schema": "cairn-bench-baseline/1",
+  "corpus": {
+    "files": 301,
+    "lines": 63900,
+    "bytes": 1718400
+  },
+  "seed": 49374,
+  "runs": 3,
+  "embed_backend": "hash",
+  "chars_per_token": 4,
+  "tasks": [
+    {
+      "label": "definition-lookup",
+      "question": "Where is Cls0011_1 defined?",
+      "cairn": {
+        "tool_calls": 1,
+        "chars": 1709,
+        "est_tokens": 427,
+        "wall_ms": 0.1
+      },
+      "control": {
+        "tool_calls": 2,
+        "chars": 5728,
+        "est_tokens": 1432,
+        "wall_ms": 7.7
+      },
+      "reduction": {
+        "calls_pct": 50.0,
+        "tokens_pct": 70.2,
+        "time_ratio": 111.9
+      }
+    },
+    {
+      "label": "caller-enumeration",
+      "question": "Which code calls Cls0011_1?",
+      "cairn": {
+        "tool_calls": 2,
+        "chars": 5716,
+        "est_tokens": 1429,
+        "wall_ms": 0.2
+      },
+      "control": {
+        "tool_calls": 5,
+        "chars": 22912,
+        "est_tokens": 5728,
+        "wall_ms": 7.7
+      },
+      "reduction": {
+        "calls_pct": 60.0,
+        "tokens_pct": 75.1,
+        "time_ratio": 50.1
+      }
+    },
+    {
+      "label": "blast-radius-depth3",
+      "question": "What breaks if Cls0011_1 changes (callers of callers, depth 3)?",
+      "cairn": {
+        "tool_calls": 2,
+        "chars": 2849,
+        "est_tokens": 712,
+        "wall_ms": 0.2
+      },
+      "control": {
+        "tool_calls": 303,
+        "chars": 1718400,
+        "est_tokens": 429600,
+        "wall_ms": 39.8
+      },
+      "reduction": {
+        "calls_pct": 99.3,
+        "tokens_pct": 99.8,
+        "time_ratio": 176.5
+      }
+    },
+    {
+      "label": "entry-to-leaf-flow",
+      "question": "What does method_2 execute end-to-end?",
+      "cairn": {
+        "tool_calls": 1,
+        "chars": 6261,
+        "est_tokens": 1565,
+        "wall_ms": 2.3
+      },
+      "control": {
+        "tool_calls": 302,
+        "chars": 1718400,
+        "est_tokens": 429600,
+        "wall_ms": 74.2
+      },
+      "reduction": {
+        "calls_pct": 99.7,
+        "tokens_pct": 99.6,
+        "time_ratio": 32.9
+      }
+    },
+    {
+      "label": "concept-search",
+      "question": "Which code is related to the Cls0039 cluster?",
+      "cairn": {
+        "tool_calls": 1,
+        "chars": 2405,
+        "est_tokens": 601,
+        "wall_ms": 35.6
+      },
+      "control": {
+        "tool_calls": 6,
+        "chars": 28640,
+        "est_tokens": 7160,
+        "wall_ms": 8.4
+      },
+      "reduction": {
+        "calls_pct": 83.3,
+        "tokens_pct": 91.6,
+        "time_ratio": 0.2
+      }
+    },
+    {
+      "label": "common-name-impact",
+      "question": "What breaks if method_0 changes? (name shared by many definitions)",
+      "cairn": {
+        "tool_calls": 2,
+        "chars": 8457,
+        "est_tokens": 2114,
+        "wall_ms": 7.1
+      },
+      "control": {
+        "tool_calls": 301,
+        "chars": 1718400,
+        "est_tokens": 429600,
+        "wall_ms": 12.7
+      },
+      "reduction": {
+        "calls_pct": 99.3,
+        "tokens_pct": 99.5,
+        "time_ratio": 1.8
+      }
+    }
+  ],
+  "totals": {
+    "cairn": {
+      "tool_calls": 9,
+      "chars": 27397,
+      "est_tokens": 6848,
+      "wall_ms": 45.4
+    },
+    "control": {
+      "tool_calls": 919,
+      "chars": 5212480,
+      "est_tokens": 1303120,
+      "wall_ms": 150.4
+    },
+    "reduction": {
+      "calls_pct": 99.0,
+      "tokens_pct": 99.5,
+      "time_ratio": 3.3
+    }
+  },
+  "timestamp": "2026-08-16T07:08:58.234340+00:00",
+  "dataset": {
+    "name": "benchmark-datasource",
+    "version": "DS-v1",
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "identity_size": 300
+  },
+  "cairn_version": "0.11.0",
+  "machine_profile": {
+    "arch": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "runner_class": "reference-local"
+  }
+}

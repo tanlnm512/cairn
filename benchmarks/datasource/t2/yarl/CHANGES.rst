@@ -1,0 +1,2936 @@
+=========
+Changelog
+=========
+
+..
+    You should *NOT* be adding new change log entries to this file, this
+    file is managed by towncrier. You *may* edit previous change logs to
+    fix problems like typo corrections or such.
+    To add a new change log entry, please see
+    https://pip.pypa.io/en/latest/development/#adding-a-news-entry
+    we named the news folder "changes".
+
+    WARNING: Don't drop the next directive!
+
+.. towncrier release notes start
+
+v1.24.5
+=======
+
+*(2026-07-19)*
+
+
+Contributor-facing changes
+--------------------------
+
+- Restricted the exhaustive IDNA default-ignorable sweep test to a native
+  Linux x86_64 runner. It iterates roughly 140,000 code points and its result
+  does not depend on the architecture, so running it under emulated wheel
+  builds only added minutes and intermittently crashed the test workers
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1806`.
+
+
+----
+
+
+v1.24.4
+=======
+
+*(2026-07-19)*
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- Stopped installing ``hypothesis`` in the wheel-build test environment. The
+  property-based quoting tests that need it are skipped there already, and
+  building it from source on architectures without a prebuilt wheel (such as
+  ``armv7l`` musllinux, where the build pulls in a Rust toolchain) was failing
+  the wheel jobs -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1804`.
+
+
+----
+
+
+v1.24.3
+=======
+
+*(2026-07-19)*
+
+
+Bug fixes
+---------
+
+- Fixed the :attr:`~yarl.URL.host` property incorrectly returning the
+  percent-encoded zone ID separator ``%25`` instead of decoding it to ``%``
+  for IPv6 Zone ID URLs (e.g. ``http://[fe80::1%251]/`` now correctly exposes
+  ``.host`` as ``fe80::1%1`` per :rfc:`6874`)
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1653`.
+
+- Fixed ``_check_netloc()`` missing ``%`` from its NFKC normalization character
+  check, which allowed Unicode characters U+FF05 (FULLWIDTH PERCENT SIGN) and
+  U+FE6A (SMALL PERCENT SIGN) to produce a literal ``%`` in ``url.host`` via
+  the standard library IDNA fallback
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1655`.
+
+- Fixed :meth:`~yarl.URL.build` failing to validate characters in the zone ID
+  portion of IPv6 addresses when ``validate_host=True``, allowing control
+  characters such as CR, LF, and NUL to pass through into ``url.host``.
+  Zone IDs now reject ASCII control characters and the empty string (a bare
+  trailing ``%``) per
+  `RFC 9844 §6.3 <https://datatracker.ietf.org/doc/html/rfc9844#section-6-3>`_
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1655`.
+
+- Fixed the Cython quoting backend retaining a lone surrogate code
+  point when it was the only character forcing a rewrite; the
+  pure-Python backend already dropped lone surrogates, so both now
+  drop them and produce identical output
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1751`.
+
+- Fixed the Cython quoting backend percent-encoding the ``%`` of a
+  ``%XX`` escape when a lone surrogate fell within it, instead of
+  dropping the surrogate and keeping the escape; it now matches the
+  pure-Python backend and produces identical output
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1752`.
+
+- Fixed the Cython quoter preserving lone surrogate characters
+  (``U+D800``..``U+DFFF``) instead of dropping them; it now matches the
+  pure-Python quoter, which strips them, so both backends produce the
+  same output for the same input -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1799`.
+
+- Fixed :meth:`URL.build() <yarl.URL.build>` and
+  :meth:`~yarl.URL.with_host` accepting hosts that expand to a URL
+  delimiter (``/``, ``?`` or ``#``) under IDNA normalization; such hosts
+  are now rejected, so the builder APIs agree with the parser
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1800`.
+
+- Fixed host encoding accepting Unicode default-ignorable and format code
+  points (such as soft hyphen, zero-width space, and word joiner) that IDNA
+  normalization silently drops or otherwise folds into a different host,
+  so the parsed host could differ from the input string; such hosts are now
+  rejected on both the :class:`~yarl.URL` constructor and the builder APIs
+  (:meth:`URL.build() <yarl.URL.build>` and :meth:`~yarl.URL.with_host`)
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1801`.
+
+- Fixed :meth:`~yarl.URL.build`, :meth:`~yarl.URL.joinpath` (and the ``/``
+  operator), :meth:`~yarl.URL.with_name`, and :meth:`~yarl.URL.with_suffix`
+  building a URL with no host and no scheme whose serialized string could be
+  parsed back as an absolute or executable-scheme URL; a scheme-shaped leading
+  colon in a relative path is now percent-encoded, matching the parser and
+  :meth:`~yarl.URL.human_repr` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1802`.
+
+
+Improved documentation
+----------------------
+
+- Documented how :attr:`~yarl.URL.host` and :attr:`~yarl.URL.raw_host`
+  expose :rfc:`6874` IPv6 zone identifiers and that the host subcomponent
+  properties include the zone identifier verbatim
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`998`.
+
+- Fixed the stale ``with_name()`` example output in the API reference; the
+  apostrophe is a character that :rfc:`3986` allows unencoded in path
+  segments -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1784`.
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- The ``setuptools`` build dependency lower bound has been restored to be
+  ``>= 47`` after an incorrect automated increase in :pr:`1657`
+  -- by :user:`bbhtt`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1764`.
+
+- Fixed the in-tree PEP 517 build backend to import Cython at the point
+  of use instead of module load time. The build front-ends that serve all
+  the build hooks from a single long-running backend process, the way
+  ``pyproject-api`` under ``tox`` does, import the backend before the
+  dynamically declared Cython build dependency is provisioned, so the
+  accelerated build used to fail with a ``NameError``
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1784`.
+
+
+Contributor-facing changes
+--------------------------
+
+- Added ``UV_CONSTRAINT`` and ``UV_BUILD_CONSTRAINT`` alongside
+  ``PIP_CONSTRAINT`` and ``PIP_BUILD_CONSTRAINT`` in the
+  ``cibuildwheel`` environment so the :file:`requirements/cython.txt`
+  pin is honored under the ``build[uv]`` frontend; ``uv pip``
+  ignores the ``PIP_`` variables and reads only the ``UV_`` ones,
+  while the ``PIP_`` variants are kept for the pip fallback path
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1729`.
+
+- Dependabot has been restricted to the ``requirements`` subdirectory to
+  avoid unintended updates outside dependency requirement files
+  -- by :user:`bbhtt`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1764`.
+
+- Started running the Sphinx ``doctest`` builder in CI through the
+  ``doctest-docs`` tox environment, which existed but was never wired
+  into the lint matrix and never installed the package whose examples it
+  runs. Also added spelling word list entries so the spell check passes
+  with dictionary backends other than the one CI uses
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1784`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Added regression tests ensuring that lone surrogates produced by
+  decoding invalid UTF-8 with ``surrogateescape`` are preserved when
+  building a URL with ``encoded=True`` and are dropped consistently by
+  the C and pure-Python quoting backends when parsing
+  -- by :user:`pajod`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`991`.
+
+- Expanded the test suite to pin IPv6 zone identifier handling per the
+  :rfc:`6874` compatibility research: the ``%25`` and legacy bare ``%``
+  separator forms, empty zone and reserved character corner cases,
+  ``encoded=True`` round-trips, and zone survival through URL mutation
+  APIs -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`998`.
+
+
+----
+
+
+v1.24.2
+=======
+
+*(2026-05-19)*
+
+
+Contributor-facing changes
+--------------------------
+
+- Switched the aarch64 and armv7l wheel builds to GitHub's native ARM
+  runners. The aarch64 wheels now build without QEMU emulation, and
+  armv7l runs on aarch64 hosts so its 32-bit ARM execution is far
+  cheaper than the previous aarch64-on-x86_64 path
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1724`.
+
+- Restored per-runner native arches in the Windows wheel matrix on tag
+  releases. The previous ``CIBW_ARCHS_WINDOWS=AMD64 ARM64`` setting made
+  both ``windows-latest`` and ``windows-11-arm`` cross-compile the other
+  arch, producing two artifacts with identically-named wheels whose
+  bytes differed; the deploy job's ``download-artifact ... merge-multiple``
+  step tore those writes together, yielding a wheel that PyPI rejected
+  with ``400 Invalid distribution file. ZIP archive not accepted:
+  Mis-matched data size`` during the 1.24.0 and 1.24.1 releases
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1725`.
+
+
+----
+
+
+v1.24.1
+=======
+
+*(2026-05-19)*
+
+
+Contributor-facing changes
+--------------------------
+
+- Allowed re-running the deploy job after a partial release failure: the
+  ``Make Release`` step now skips when the GitHub Release already exists,
+  and the PyPI publish step uses ``skip-existing`` so dists that were
+  already uploaded on a prior attempt do not break the retry
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1721`.
+
+
+----
+
+
+v1.24.0
+=======
+
+*(2026-05-19)*
+
+
+Bug fixes
+---------
+
+- Delayed importing pydantic until it's needed to avoid increased import time -- by :user:`Dreamsorcerer`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1607`, :issue:`1702`.
+
+- Fixed pickling of :class:`~yarl.URL` on Python 3.15, where ``SplitResult``
+  gained a ``__getstate__`` that requires attributes set by ``__init__``.
+  ``__getstate__`` now returns the raw 5-tuple instead of a ``SplitResult``
+  built via ``tuple.__new__``, so pickling no longer touches ``SplitResult``
+  serialization at all. Pickles produced by older yarl releases (which embed
+  a ``SplitResult``) continue to load unchanged
+  -- by :user:`befeleme`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1632`, :issue:`1642`, :issue:`1687`.
+
+- Fixed a parsing issue where URLs containing text before an opening bracket
+  in the host component (e.g. ``http://127.0.0.1[aa::ff]``) were silently accepted
+  instead of being rejected as strictly invalid per RFC 3986
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1654`.
+
+- Raise :exc:`ValueError` when a URL's authority component contains a
+  backslash, which is not a valid character per :rfc:`3986`
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1659`.
+
+- Fixed a host-confusion parsing bug where URLs containing multiple bracket
+  characters in the host component (e.g. ``http://[:localhost[]].google:80``)
+  were silently parsed as an unintended host. Both ``split_url()`` and
+  ``split_netloc()`` now raise :exc:`ValueError` when more than one ``[`` or
+  ``]`` is found in the authority, or when ``[`` does not appear at the start of
+  the host subcomponent, in compliance with :rfc:`3986` -- by
+  :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1661`.
+
+- Fixed a parser/serializer inconsistency where percent-encoded characters in
+  the scheme portion of a URL (e.g. ``ht%74p://...``) were decoded by the
+  requoter, causing ``str()`` and :py:meth:`~yarl.URL.human_repr` to emit an
+  absolute URL with a scheme and host while the parsed properties
+  (:attr:`~yarl.URL.scheme`, :attr:`~yarl.URL.host`, :attr:`~yarl.URL.absolute`)
+  reported a relative, hostless URL. The fix preserves the percent-encoding of
+  the colon (``%3A``) in relative paths whenever decoding it would materialize a
+  URL scheme -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1669`.
+
+- Fixed a parsing issue where URLs containing text after the closing bracket
+  of an IP-literal host (e.g. ``http://[::1]allowed.example:1/``) were silently
+  accepted and normalized to the bracketed IP address (``http://[::1]:1/``),
+  dropping the trailing suffix and changing the effective host identity.
+  Per RFC 3986, after the closing ``]`` only ``:`` followed by a port number or
+  end-of-authority is valid
+  -- by :user:`rodrigobnogueira`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1672`.
+
+
+Features
+--------
+
+- Start building and shipping riscv64 wheels
+  -- by :user:`justeph`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1626`.
+
+
+Removals and backward incompatible breaking changes
+---------------------------------------------------
+
+- Dropped support for the experimental free-threaded build of Python 3.13 -- by :user:`ngoldbaum`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1667`.
+
+
+Improved documentation
+----------------------
+
+- Added a note in the :meth:`~yarl.URL.with_query` documentation explaining
+  that types implementing ``__int__`` (e.g. :class:`~uuid.UUID`) are
+  converted to integers, and advising users to cast to :class:`str` when the
+  human-readable representation is needed -- by :user:`r266-tech`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1638`, :issue:`1645`.
+
+
+Contributor-facing changes
+--------------------------
+
+- Resolved a ruff ``ISC004`` violation in the PEP 517 build backend so the
+  pre-commit ``ruff-check`` hook passes again
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1674`.
+
+- Renamed the ``actions/checkout`` ``depth`` input to ``fetch-depth`` in the
+  reusable codspeed workflow so the actionlint pre-commit hook passes and the
+  intended shallow clone actually takes effect
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1676`.
+
+- Bumped the pinned ``pyupgrade`` pre-commit hook to ``v3.21.2`` so it stops
+  crashing on Python 3.14, which made ``tokenize.cookie_re`` bytes-only
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1677`.
+
+- The type preciseness coverage report generated by `MyPy
+  <https://mypy-lang.org>`__ is now uploaded to `Coveralls
+  <https://coveralls.io/github/aio-libs/yarl>`__ and
+  will not be included in the `Codecov views
+  <https://app.codecov.io/gh/aio-libs/yarl>`__ going forward
+  -- by :user:`webknjaz`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1680`.
+
+- Raised the per-matrix-cell timeout of the CI ``Test`` job from
+  5 to 10 minutes to prevent false failures on slower runners
+  -- by :user:`aiolibsbot`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1683`.
+
+- Added an ``AGENTS.md`` orientation file at the repository root,
+  covering the pull request template, ``CHANGES/`` news fragment
+  conventions, draft-PR workflow, and the Cython quoter layout, so
+  LLM contributors land changes that match project style
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1685`.
+
+- Documented in :file:`AGENTS.md` that the coverage gate also
+  applies to test code, so unreachable defensive ``raise`` guards
+  and one-sided cleanup branches in tests will fail CI
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1689`.
+
+- Shrunk the CI wheel-build matrix on pull requests and non-tag pushes by
+  restricting ``CIBW_ARCHS_MACOS`` to ``arm64``, ``CIBW_ARCHS_WINDOWS`` to
+  ``AMD64``, and skipping the ``windows-11-arm`` runner -- the test matrix only
+  exercises those architectures, so the previously-built ``x86_64`` macOS and
+  ``ARM64`` Windows wheels were never installed. Tag releases still build the
+  full architecture set
+  -- by :user:`aiolibsbot`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1692`.
+
+- Documented the docs spell check (``make doc-spelling``) in
+  :file:`AGENTS.md` as a pre-push gate, mirroring
+  `aio-libs/multidict#1345
+  <https://github.com/aio-libs/multidict/pull/1345>`__. The
+  spell checker reads every ``CHANGES/*.rst`` fragment as part
+  of the docs build, so an unknown technical word in a news
+  fragment fails CI before a human sees the PR
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1693`.
+
+- Added a ``CLAUDE.md`` at the repository root that imports
+  :file:`AGENTS.md` via Claude Code's ``@``-syntax, so the
+  project's LLM contributor rules load automatically when
+  working in Claude Code
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1696`.
+
+- Enforced top-level imports across ``yarl`` and ``tests`` via the ruff
+  ``PLC0415`` rule, wired through a new ``ruff-check`` pre-commit hook.
+  Function-scoped imports must now opt in with ``# noqa: PLC0415`` plus
+  a comment explaining the import-time reason. Dropped the ``yesqa``
+  hook, which could not recognize ruff-only codes and stripped the new
+  ``noqa`` comments as stale; a wider migration off flake8 onto ruff
+  will follow separately
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1697`.
+
+- Migrated the main tree from standalone ``black`` and ``isort``
+  pre-commit hooks to ``ruff format`` and the ruff ``I`` lint rule,
+  sharing the existing ``[tool.ruff]`` config in ``pyproject.toml``.
+  ``ruff-check`` now runs with ``--fix`` so import-order fixes apply
+  on commit, and the orphan ``[isort]`` block in ``setup.cfg`` was
+  removed. The ``packaging/pep517_backend/`` subtree keeps its own
+  ``.ruff.toml`` and is unaffected
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1698`.
+
+- Switched the ``cibuildwheel`` build frontend to ``build[uv]`` so
+  that ``uv`` provisions every build and test virtual environment
+  in the wheel matrix. Test-dependency installation in particular
+  drops from a multi-second ``pip install`` per ABI to a roughly
+  sub-second ``uv`` resolve
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1699`.
+
+- Restructured the root :file:`CLAUDE.md` to import contributor
+  context from a shared ``aio-libs`` layer
+  (``~/.claude/aio-libs/context.md``), a project-specific layer
+  (``~/.claude/aio-libs/yarl/context.md``), the in-tree
+  :file:`AGENTS.md`, and an optional per-checkout
+  :file:`CLAUDE.local.md` override (added to :file:`.gitignore`),
+  so shared ``aio-libs`` guidance can live outside the repository
+  while project rules continue to load automatically in Claude
+  Code -- by :user:`aiolibsbot`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1700`, :issue:`1701`.
+
+- Switched CI/CD to ``tox-dev/workflow``'s :file:`reusable-tox.yml`
+  driven by an in-tree :file:`tox.ini`. The ``build``,
+  ``metadata-validation`` and ``lint`` (``pre-commit``,
+  ``spellcheck-docs``, ``build-docs``) jobs all run through the
+  reusable workflow; MyPy coverage uploads to Coveralls from a
+  ``post-tox-job`` hook
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1711`.
+
+- Switched the CI ``test`` job from ``actions/setup-python`` to
+  ``astral-sh/setup-uv`` with ``uv pip install``. Pre-release
+  interpreters skip the wheel cache so each run resolves freshly
+  against the current snapshot
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1715`.
+
+- Switched the ``Aiohttp`` workflow that runs the aiohttp test
+  suite against the in-tree yarl checkout from
+  ``actions/setup-python`` to ``astral-sh/setup-uv`` with ``uv
+  pip install``
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1716`.
+
+- Switched the ``Aiohttp`` workflow's ``make .develop`` step to
+  install aiohttp's dev env through ``uv pip`` by passing
+  ``PIP="uv pip"``
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1717`.
+
+
+----
+
+
+1.23.0
+======
+
+*(2025-12-16)*
+
+
+Features
+--------
+
+- Added support for ``pydantic``, the :class:`~yarl.URL` could be used as a
+  field type in ``pydantic`` models seamlessly.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1607`.
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- The CI has been set up to notify Codecov about upload completion
+  -- by :user:`webknjaz`.
+
+  With this, Codecov no longer needs to guess whether it received all
+  the intended coverage reports or not.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1577`.
+
+- The in-tree build backend allows the end-users appending
+  ``CFLAGS`` and ``LDFLAGS`` by setting respective environment
+  variables externally.
+
+  It additionally sets up default compiler flags to perform
+  building with maximum optimization in release mode. This
+  makes the resulting artifacts shipped to PyPI smaller.
+
+  When line tracing is requested, the compiler and linker
+  flags are configured to include as much information as
+  possible for debugging and coverage tracking. The
+  development builds are therefore smaller.
+
+  -- by :user:`webknjaz`
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1586`.
+
+- The :pep:`517` build backend now supports a new config
+  setting for controlling whether to build the project in-tree
+  or in a temporary directory. It only affects wheels and is
+  set up to build in a temporary directory by default. It does
+  not affect editable wheel builds — they will keep being
+  built in-tree regardless.
+
+  -- by :user:`webknjaz`
+
+  Here's an example of using this setting:
+
+  .. code-block:: console
+
+     $ python -m build \
+         --config-setting=build-inplace=true
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1590`.
+
+- Starting this version, when building the wheels is happening
+  in an automatically created temporary directory, the build
+  backend makes an effort to normalize the respective file
+  system path to a deterministic source checkout directory.
+
+  -- by :user:`webknjaz`
+
+  It does so by injecting the ``-ffile-prefix-map`` compiler
+  option into the ``CFLAGS`` environment variable as suggested
+  by known `reproducible build practices
+  <https://reproducible-builds.org/docs/build-path/>`__.
+
+  The effect is that downstreams will get more reproducible
+  build results.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1591`.
+
+- Dropped Python 3.9 support; Python 3.10 is the minimal supported Python version
+  -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1609`.
+
+
+Contributor-facing changes
+--------------------------
+
+- The deprecated license classifier was removed from :file:`setup.cfg`
+  -- by :user:`yegorich`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1550`.
+
+- The in-tree build backend allows the end-users appending
+  ``CFLAGS`` and ``LDFLAGS`` by setting respective environment
+  variables externally.
+
+  It additionally sets up default compiler flags to perform
+  building with maximum optimization in release mode. This
+  makes the resulting artifacts shipped to PyPI smaller.
+
+  When line tracing is requested, the compiler and linker
+  flags are configured to include as much information as
+  possible for debugging and coverage tracking. The
+  development builds are therefore smaller.
+
+  -- by :user:`webknjaz`
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1586`.
+
+- The CI has been updated to consistently benchmark optimized
+  release builds -- by :user:`webknjaz`.
+
+  When the release workflow is triggered, the pre-built wheels
+  ready to hit PyPI are being tested. Otherwise, the job
+  builds the project from source, while the rest of the
+  workflow uses debug builds for line tracing and coverage
+  collection.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1587`.
+
+
+----
+
+
+1.22.0
+======
+
+*(2025-10-05)*
+
+
+Features
+--------
+
+- Added arm64 Windows wheel builds
+  -- by :user:`finnagin`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1516`.
+
+
+----
+
+
+1.21.0
+======
+
+*(2025-10-05)*
+
+
+Contributor-facing changes
+--------------------------
+
+- The :file:`reusable-cibuildwheel.yml` workflow has been refactored to
+  be more generic and :file:`ci-cd.yml` now holds all the configuration
+  toggles -- by :user:`webknjaz`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1535`.
+
+- When building wheels, the source distribution is now passed directly
+  to the ``cibuildwheel`` invocation -- by :user:`webknjaz`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1536`.
+
+- Added CI for Python 3.14 -- by :user:`kumaraditya303`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1560`.
+
+
+----
+
+
+1.20.1
+======
+
+*(2025-06-09)*
+
+
+Bug fixes
+---------
+
+- Started raising a :exc:`ValueError` exception raised for corrupted
+  IPv6 URL values.
+
+  These fixes the issue where exception :exc:`IndexError` was
+  leaking from the internal code because of not being handled and
+  transformed into a user-facing error. The problem was happening
+  under the following conditions: empty IPv6 URL, brackets in
+  reverse order.
+
+  -- by :user:`MaelPic`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1512`.
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- Updated to use Cython 3.1 universally across the build path -- by :user:`lysnikolaou`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1514`.
+
+- Made Cython line tracing opt-in via the ``with-cython-tracing`` build config setting -- by :user:`bdraco`.
+
+  Previously, line tracing was enabled by default in :file:`pyproject.toml`, which caused build issues for some users and made wheels nearly twice as slow.
+  Now line tracing is only enabled when explicitly requested via ``pip install . --config-setting=with-cython-tracing=true`` or by setting the ``YARL_CYTHON_TRACING`` environment variable.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1521`.
+
+
+----
+
+
+1.20.0
+======
+
+*(2025-04-16)*
+
+
+Features
+--------
+
+- Implemented support for the free-threaded build of CPython 3.13 -- by :user:`lysnikolaou`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1456`.
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- Started building wheels for the free-threaded build of CPython 3.13 -- by :user:`lysnikolaou`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1456`.
+
+
+----
+
+
+1.19.0
+======
+
+*(2025-04-05)*
+
+
+Bug fixes
+---------
+
+- Fixed entire name being re-encoded when using :py:meth:`yarl.URL.with_suffix` -- by :user:`NTFSvolume`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1468`.
+
+
+Features
+--------
+
+- Started building armv7l wheels for manylinux -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1495`.
+
+
+Contributor-facing changes
+--------------------------
+
+- GitHub Actions CI/CD is now configured to manage caching pip-ecosystem
+  dependencies using `re-actors/cache-python-deps`_ -- an action by
+  :user:`webknjaz` that takes into account ABI stability and the exact
+  version of Python runtime.
+
+  .. _`re-actors/cache-python-deps`:
+     https://github.com/marketplace/actions/cache-python-deps
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1471`.
+
+- Increased minimum `propcache`_ version to 0.2.1 to fix failing tests -- by :user:`bdraco`.
+
+  .. _`propcache`:
+     https://github.com/aio-libs/propcache
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1479`.
+
+- Added all hidden folders to pytest's ``norecursedirs`` to prevent it
+  from trying to collect tests there -- by :user:`lysnikolaou`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1480`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved accuracy of type annotations -- by :user:`Dreamsorcerer`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1484`.
+
+- Improved performance of parsing query strings -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1493`, :issue:`1497`.
+
+- Improved performance of the C unquoter -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1496`, :issue:`1498`.
+
+
+----
+
+
+1.18.3
+======
+
+*(2024-12-01)*
+
+
+Bug fixes
+---------
+
+- Fixed uppercase ASCII hosts being rejected by :meth:`URL.build() <yarl.URL.build>` and :py:meth:`~yarl.URL.with_host` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`954`, :issue:`1442`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performances of multiple path properties on cache miss -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1443`.
+
+
+----
+
+
+1.18.2
+======
+
+*(2024-11-29)*
+
+
+No significant changes.
+
+
+----
+
+
+1.18.1
+======
+
+*(2024-11-29)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved cache performance when :class:`~yarl.URL` objects are constructed from :py:meth:`~yarl.URL.build` with ``encoded=True`` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1432`.
+
+- Improved cache performance for operations that produce a new :class:`~yarl.URL` object -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1434`, :issue:`1436`.
+
+
+----
+
+
+1.18.0
+======
+
+*(2024-11-21)*
+
+
+Features
+--------
+
+- Added ``keep_query`` and ``keep_fragment`` flags in the :py:meth:`yarl.URL.with_path`, :py:meth:`yarl.URL.with_name` and :py:meth:`yarl.URL.with_suffix` methods, allowing users to optionally retain the query string and fragment in the resulting URL when replacing the path -- by :user:`paul-nameless`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`111`, :issue:`1421`.
+
+
+Contributor-facing changes
+--------------------------
+
+- Started running downstream ``aiohttp`` tests in CI -- by :user:`Cycloctane`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1415`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of converting :class:`~yarl.URL` to a string -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1422`.
+
+
+----
+
+
+1.17.2
+======
+
+*(2024-11-17)*
+
+
+Bug fixes
+---------
+
+- Stopped implicitly allowing the use of Cython pre-release versions when
+  building the distribution package -- by :user:`ajsanchezsanz` and
+  :user:`markgreene74`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1411`, :issue:`1412`.
+
+- Fixed a bug causing :attr:`~yarl.URL.port` to return the default port when the given port was zero
+  -- by :user:`gmacon`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1413`.
+
+
+Features
+--------
+
+- Make error messages include details of incorrect type when ``port`` is not int in :py:meth:`~yarl.URL.build`.
+  -- by :user:`Cycloctane`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1414`.
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- Stopped implicitly allowing the use of Cython pre-release versions when
+  building the distribution package -- by :user:`ajsanchezsanz` and
+  :user:`markgreene74`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1411`, :issue:`1412`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of the :py:meth:`~yarl.URL.joinpath` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1418`.
+
+
+----
+
+
+1.17.1
+======
+
+*(2024-10-30)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of many :class:`~yarl.URL` methods -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1396`, :issue:`1397`, :issue:`1398`.
+
+- Improved performance of passing a `dict` or `str` to :py:meth:`~yarl.URL.extend_query` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1401`.
+
+
+----
+
+
+1.17.0
+======
+
+*(2024-10-28)*
+
+
+Features
+--------
+
+- Added :attr:`~yarl.URL.host_port_subcomponent` which returns the :rfc:`3986#section-3.2.2` host and :rfc:`3986#section-3.2.3` port subcomponent -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1375`.
+
+
+----
+
+
+1.16.0
+======
+
+*(2024-10-21)*
+
+
+Bug fixes
+---------
+
+- Fixed blocking I/O to load Python code when creating a new :class:`~yarl.URL` with non-ascii characters in the network location part -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1342`.
+
+
+Removals and backward incompatible breaking changes
+---------------------------------------------------
+
+- Migrated to using a single cache for encoding hosts -- by :user:`bdraco`.
+
+  Passing ``ip_address_size`` and ``host_validate_size`` to :py:meth:`~yarl.cache_configure` is deprecated in favor of the new ``encode_host_size`` parameter and will be removed in a future release. For backwards compatibility, the old parameters affect the ``encode_host`` cache size.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1348`, :issue:`1357`, :issue:`1363`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of constructing :class:`~yarl.URL` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1336`.
+
+- Improved performance of calling :py:meth:`~yarl.URL.build` and constructing unencoded :class:`~yarl.URL` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1345`.
+
+- Reworked the internal encoding cache to improve performance on cache hit -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1369`.
+
+
+----
+
+
+1.15.5
+======
+
+*(2024-10-18)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of the :py:meth:`~yarl.URL.joinpath` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1304`.
+
+- Improved performance of the :py:meth:`~yarl.URL.extend_query` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1305`.
+
+- Improved performance of the :py:meth:`~yarl.URL.origin` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1306`.
+
+- Improved performance of the :py:meth:`~yarl.URL.with_path` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1307`.
+
+- Improved performance of the :py:meth:`~yarl.URL.with_query` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1308`, :issue:`1328`.
+
+- Improved performance of the :py:meth:`~yarl.URL.update_query` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1309`, :issue:`1327`.
+
+- Improved performance of the :py:meth:`~yarl.URL.join` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1313`.
+
+- Improved performance of :class:`~yarl.URL` equality checks -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1315`.
+
+- Improved performance of :class:`~yarl.URL` methods that modify the network location -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1316`.
+
+- Improved performance of the :py:meth:`~yarl.URL.with_fragment` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1317`.
+
+- Improved performance of calculating the hash of :class:`~yarl.URL` objects -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1318`.
+
+- Improved performance of the :py:meth:`~yarl.URL.relative` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1319`.
+
+- Improved performance of the :py:meth:`~yarl.URL.with_name` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1320`.
+
+- Improved performance of :attr:`~yarl.URL.parent` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1321`.
+
+- Improved performance of the :py:meth:`~yarl.URL.with_scheme` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1322`.
+
+
+----
+
+
+1.15.4
+======
+
+*(2024-10-16)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of the quoter when all characters are safe -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1288`.
+
+- Improved performance of unquoting strings -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1292`, :issue:`1293`.
+
+- Improved performance of calling :py:meth:`~yarl.URL.build` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1297`.
+
+
+----
+
+
+1.15.3
+======
+
+*(2024-10-15)*
+
+
+Bug fixes
+---------
+
+- Fixed :py:meth:`~yarl.URL.build` failing to validate paths must start with a ``/`` when passing ``authority`` -- by :user:`bdraco`.
+
+  The validation only worked correctly when passing ``host``.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1265`.
+
+
+Removals and backward incompatible breaking changes
+---------------------------------------------------
+
+- Removed support for Python 3.8 as it has reached end of life -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1203`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of constructing :class:`~yarl.URL` when the net location is only the host -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1271`.
+
+
+----
+
+
+1.15.2
+======
+
+*(2024-10-13)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of converting :class:`~yarl.URL` to a string -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1234`.
+
+- Improved performance of :py:meth:`~yarl.URL.joinpath` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1248`, :issue:`1250`.
+
+- Improved performance of constructing query strings from :class:`~multidict.MultiDict` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1256`.
+
+- Improved performance of constructing query strings with ``int`` values -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1259`.
+
+
+----
+
+
+1.15.1
+======
+
+*(2024-10-12)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of calling :py:meth:`~yarl.URL.build` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1222`.
+
+- Improved performance of all :class:`~yarl.URL` methods that create new :class:`~yarl.URL` objects -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1226`.
+
+- Improved performance of :class:`~yarl.URL` methods that modify the network location -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1229`.
+
+
+----
+
+
+1.15.0
+======
+
+*(2024-10-11)*
+
+
+Bug fixes
+---------
+
+- Fixed validation with :py:meth:`~yarl.URL.with_scheme` when passed scheme is not lowercase -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1189`.
+
+
+Features
+--------
+
+- Started building ``armv7l`` wheels -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1204`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of constructing unencoded :class:`~yarl.URL` objects -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1188`.
+
+- Added a cache for parsing hosts to reduce overhead of encoding :class:`~yarl.URL` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1190`.
+
+- Improved performance of constructing query strings from :class:`~collections.abc.Mapping` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1193`.
+
+- Improved performance of converting :class:`~yarl.URL` objects to strings -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1198`.
+
+
+----
+
+
+1.14.0
+======
+
+*(2024-10-08)*
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- Switched to using the :mod:`propcache <propcache.api>` package for property caching
+  -- by :user:`bdraco`.
+
+  The :mod:`propcache <propcache.api>` package is derived from the property caching
+  code in :mod:`yarl` and has been broken out to avoid maintaining it for multiple
+  projects.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1169`.
+
+
+Contributor-facing changes
+--------------------------
+
+- Started testing with Hypothesis -- by :user:`webknjaz` and :user:`bdraco`.
+
+  Special thanks to :user:`Zac-HD` for helping us get started with this framework.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`860`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of :py:meth:`~yarl.URL.is_default_port` when no explicit port is set -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1168`.
+
+- Improved performance of converting :class:`~yarl.URL` to a string when no explicit port is set -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1170`.
+
+- Improved performance of the :py:meth:`~yarl.URL.origin` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1175`.
+
+- Improved performance of encoding hosts -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1176`.
+
+
+----
+
+
+1.13.1
+======
+
+*(2024-09-27)*
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of calling :py:meth:`~yarl.URL.build` with ``authority`` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1163`.
+
+
+----
+
+
+1.13.0
+======
+
+*(2024-09-26)*
+
+
+Bug fixes
+---------
+
+- Started rejecting ASCII hostnames with invalid characters. For host strings that
+  look like authority strings, the exception message includes advice on what to do
+  instead -- by :user:`mjpieters`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`880`, :issue:`954`.
+
+- Fixed IPv6 addresses missing brackets when the :class:`~yarl.URL` was converted to a string -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1157`, :issue:`1158`.
+
+
+Features
+--------
+
+- Added :attr:`~yarl.URL.host_subcomponent` which returns the :rfc:`3986#section-3.2.2` host subcomponent -- by :user:`bdraco`.
+
+  The only current practical difference between :attr:`~yarl.URL.raw_host` and :attr:`~yarl.URL.host_subcomponent` is that IPv6 addresses are returned bracketed.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1159`.
+
+
+----
+
+
+1.12.1
+======
+
+*(2024-09-23)*
+
+
+No significant changes.
+
+
+----
+
+
+1.12.0
+======
+
+*(2024-09-23)*
+
+
+Features
+--------
+
+- Added :attr:`~yarl.URL.path_safe` to be able to fetch the path without ``%2F`` and ``%25`` decoded -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1150`.
+
+
+Removals and backward incompatible breaking changes
+---------------------------------------------------
+
+- Restore decoding ``%2F`` (``/``) in ``URL.path`` -- by :user:`bdraco`.
+
+  This change restored the behavior before :issue:`1057`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1151`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of processing paths -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1143`.
+
+
+----
+
+
+1.11.1
+======
+
+*(2024-09-09)*
+
+
+Bug fixes
+---------
+
+- Allowed scheme replacement for relative URLs if the scheme does not require a host -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`280`, :issue:`1138`.
+
+- Allowed empty host for URL schemes other than the special schemes listed in the WHATWG URL spec -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1136`.
+
+
+Features
+--------
+
+- Loosened restriction on integers as query string values to allow classes that implement ``__int__`` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1139`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of normalizing paths -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1137`.
+
+
+----
+
+
+1.11.0
+======
+
+*(2024-09-08)*
+
+
+Features
+--------
+
+- Added :meth:`URL.extend_query() <yarl.URL.extend_query>` method, which can be used to extend parameters without replacing same named keys -- by :user:`bdraco`.
+
+  This method was primarily added to replace the inefficient hand rolled method currently used in ``aiohttp``.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1128`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of the Cython ``cached_property`` implementation -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1122`.
+
+- Simplified computing ports by removing unnecessary code -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1123`.
+
+- Improved performance of encoding non IPv6 hosts -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1125`.
+
+- Improved performance of :meth:`URL.build() <yarl.URL.build>` when the path, query string, or fragment is an empty string -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1126`.
+
+- Improved performance of the :meth:`URL.update_query() <yarl.URL.update_query>` method -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1130`.
+
+- Improved performance of processing query string changes when arguments are :class:`str` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1131`.
+
+
+----
+
+
+1.10.0
+======
+
+*(2024-09-06)*
+
+
+Bug fixes
+---------
+
+- Fixed joining a path when the existing path was empty -- by :user:`bdraco`.
+
+  A regression in :meth:`URL.join() <yarl.URL.join>` was introduced in :issue:`1082`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1118`.
+
+
+Features
+--------
+
+- Added :meth:`URL.without_query_params() <yarl.URL.without_query_params>` method, to drop some parameters from query string -- by :user:`hongquan`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`774`, :issue:`898`, :issue:`1010`.
+
+- The previously protected types ``_SimpleQuery``, ``_QueryVariable``, and ``_Query`` are now available for use externally as ``SimpleQuery``, ``QueryVariable``, and ``Query`` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1050`, :issue:`1113`.
+
+
+Contributor-facing changes
+--------------------------
+
+- Replaced all :class:`~typing.Optional` with :class:`~typing.Union` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1095`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Significantly improved performance of parsing the network location -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1112`.
+
+- Added internal types to the cache to prevent future refactoring errors -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1117`.
+
+
+----
+
+
+1.9.11
+======
+
+*(2024-09-04)*
+
+
+Bug fixes
+---------
+
+- Fixed a :exc:`TypeError` with ``MultiDictProxy`` and Python 3.8 -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1084`, :issue:`1105`, :issue:`1107`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of encoding hosts -- by :user:`bdraco`.
+
+  Previously, the library would unconditionally try to parse a host as an IP Address. The library now avoids trying to parse a host as an IP Address if the string is not in one of the formats described in :rfc:`3986#section-3.2.2`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1104`.
+
+
+----
+
+
+1.9.10
+======
+
+*(2024-09-04)*
+
+
+Bug fixes
+---------
+
+- :meth:`URL.join() <yarl.URL.join>` has been changed to match
+  :rfc:`3986` and align with
+  :meth:`/ operation <yarl.URL.__truediv__>` and :meth:`URL.joinpath() <yarl.URL.joinpath>`
+  when joining URLs with empty segments.
+  Previously :py:func:`urllib.parse.urljoin` was used,
+  which has known issues with empty segments
+  (`python/cpython#84774 <https://github.com/python/cpython/issues/84774>`_).
+
+  Due to the semantics of :meth:`URL.join() <yarl.URL.join>`, joining an
+  URL with scheme requires making it relative, prefixing with ``./``.
+
+  .. code-block:: pycon
+
+     >>> URL("https://web.archive.org/web/").join(URL("./https://github.com/aio-libs/yarl"))
+     URL('https://web.archive.org/web/https://github.com/aio-libs/yarl')
+
+
+  Empty segments are honored in the base as well as the joined part.
+
+  .. code-block:: pycon
+
+     >>> URL("https://web.archive.org/web/https://").join(URL("github.com/aio-libs/yarl"))
+     URL('https://web.archive.org/web/https://github.com/aio-libs/yarl')
+
+
+
+  -- by :user:`commonism`
+
+  This change initially appeared in 1.9.5 but was reverted in 1.9.6 to resolve a problem with query string handling.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1039`, :issue:`1082`.
+
+
+Features
+--------
+
+- Added :attr:`~yarl.URL.absolute` which is now preferred over ``URL.is_absolute()`` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1100`.
+
+
+----
+
+
+1.9.9
+=====
+
+*(2024-09-04)*
+
+
+Bug fixes
+---------
+
+- Added missing type on :attr:`~yarl.URL.port` -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1097`.
+
+
+----
+
+
+1.9.8
+=====
+
+*(2024-09-03)*
+
+
+Features
+--------
+
+- Covered the :class:`~yarl.URL` object with types -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1084`.
+
+- Cache parsing of IP Addresses when encoding hosts -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1086`.
+
+
+Contributor-facing changes
+--------------------------
+
+- Covered the :class:`~yarl.URL` object with types -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1084`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of handling ports -- by :user:`bdraco`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1081`.
+
+
+----
+
+
+1.9.7
+=====
+
+*(2024-09-01)*
+
+
+Removals and backward incompatible breaking changes
+---------------------------------------------------
+
+- Removed support :rfc:`3986#section-3.2.3` port normalization when the scheme is not one of ``http``, ``https``, ``wss``, or ``ws`` -- by :user:`bdraco`.
+
+  Support for port normalization was recently added in :issue:`1033` and contained code that would do blocking I/O if the scheme was not one of the four listed above. The code has been removed because this library is intended to be safe for usage with :mod:`asyncio`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1076`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- Improved performance of property caching -- by :user:`bdraco`.
+
+  The ``reify`` implementation from ``aiohttp`` was adapted to replace the internal ``cached_property`` implementation.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1070`.
+
+
+----
+
+
+1.9.6
+=====
+
+*(2024-08-30)*
+
+
+Bug fixes
+---------
+
+- Reverted :rfc:`3986` compatible :meth:`URL.join() <yarl.URL.join>` honoring empty segments which was introduced in :issue:`1039`.
+
+  This change introduced a regression handling query string parameters with joined URLs. The change was reverted to maintain compatibility with the previous behavior.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1067`.
+
+
+----
+
+
+1.9.5
+=====
+
+*(2024-08-30)*
+
+
+Bug fixes
+---------
+
+- Joining URLs with empty segments has been changed
+  to match :rfc:`3986`.
+
+  Previously empty segments would be removed from path,
+  breaking use-cases such as
+
+  .. code-block:: python
+
+     URL("https://web.archive.org/web/") / "https://github.com/"
+
+  Now :meth:`/ operation <yarl.URL.__truediv__>` and :meth:`URL.joinpath() <yarl.URL.joinpath>`
+  keep empty segments, but do not introduce new empty segments.
+  e.g.
+
+  .. code-block:: python
+
+     URL("https://example.org/") / ""
+
+  does not introduce an empty segment.
+
+  -- by :user:`commonism` and :user:`youtux`
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1026`.
+
+- The default protocol ports of well-known URI schemes are now taken into account
+  during the normalization of the URL string representation in accordance with
+  :rfc:`3986#section-3.2.3`.
+
+  Specified ports are removed from the :class:`str` representation of a :class:`~yarl.URL`
+  if the port matches the scheme's default port -- by :user:`commonism`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1033`.
+
+- :meth:`URL.join() <yarl.URL.join>` has been changed to match
+  :rfc:`3986` and align with
+  :meth:`/ operation <yarl.URL.__truediv__>` and :meth:`URL.joinpath() <yarl.URL.joinpath>`
+  when joining URLs with empty segments.
+  Previously :py:func:`urllib.parse.urljoin` was used,
+  which has known issues with empty segments
+  (`python/cpython#84774 <https://github.com/python/cpython/issues/84774>`_).
+
+  Due to the semantics of :meth:`URL.join() <yarl.URL.join>`, joining an
+  URL with scheme requires making it relative, prefixing with ``./``.
+
+  .. code-block:: pycon
+
+     >>> URL("https://web.archive.org/web/").join(URL("./https://github.com/aio-libs/yarl"))
+     URL('https://web.archive.org/web/https://github.com/aio-libs/yarl')
+
+
+  Empty segments are honored in the base as well as the joined part.
+
+  .. code-block:: pycon
+
+     >>> URL("https://web.archive.org/web/https://").join(URL("github.com/aio-libs/yarl"))
+     URL('https://web.archive.org/web/https://github.com/aio-libs/yarl')
+
+
+
+  -- by :user:`commonism`
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1039`.
+
+
+Removals and backward incompatible breaking changes
+---------------------------------------------------
+
+- Stopped decoding ``%2F`` (``/``) in ``URL.path``, as this could lead to code incorrectly treating it as a path separator
+  -- by :user:`Dreamsorcerer`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1057`.
+
+- Dropped support for Python 3.7 -- by :user:`Dreamsorcerer`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1016`.
+
+
+Improved documentation
+----------------------
+
+- On the :doc:`Contributing docs <contributing/guidelines>` page,
+  a link to the ``Towncrier philosophy`` has been fixed.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`981`.
+
+- The pre-existing :meth:`/ magic method <yarl.URL.__truediv__>`
+  has been documented in the API reference -- by :user:`commonism`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1026`.
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- A flaw in the logic for copying the project directory into a
+  temporary folder that led to infinite recursion when :envvar:`TMPDIR`
+  was set to a project subdirectory path. This was happening in Fedora
+  and its downstream due to the use of `pyproject-rpm-macros
+  <https://src.fedoraproject.org/rpms/pyproject-rpm-macros>`__. It was
+  only reproducible with ``pip wheel`` and was not affecting the
+  ``pyproject-build`` users.
+
+  -- by :user:`hroncok` and :user:`webknjaz`
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`992`, :issue:`1014`.
+
+- Support Python 3.13 and publish non-free-threaded wheels
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1054`.
+
+
+Contributor-facing changes
+--------------------------
+
+- The CI/CD setup has been updated to test ``arm64`` wheels
+  under macOS 14, except for Python 3.7 that is unsupported
+  in that environment -- by :user:`webknjaz`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1015`.
+
+- Removed unused type ignores and casts -- by :user:`hauntsaninja`.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1031`.
+
+
+Miscellaneous internal changes
+------------------------------
+
+- ``port``, ``scheme``, and ``raw_host`` are now ``cached_property`` -- by :user:`bdraco`.
+
+  ``aiohttp`` accesses these properties quite often, which cause :mod:`urllib` to build the ``_hostinfo`` property every time. ``port``, ``scheme``, and ``raw_host`` are now cached properties, which will improve performance.
+
+  *Related issues and pull requests on GitHub:*
+  :issue:`1044`, :issue:`1058`.
+
+
+----
+
+
+1.9.4 (2023-12-06)
+==================
+
+Bug fixes
+---------
+
+- Started raising :py:exc:`TypeError` when a string value is passed into
+  :py:meth:`~yarl.URL.build` as the ``port`` argument  -- by :user:`commonism`.
+
+  Previously the empty string as port would create malformed URLs when rendered as string representations. (:issue:`883`)
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- The leading ``--`` has been dropped from the :pep:`517` in-tree build
+  backend config setting names. ``--pure-python`` is now just ``pure-python``
+  -- by :user:`webknjaz`.
+
+  The usage now looks as follows:
+
+  .. code-block:: console
+
+      $ python -m build \
+          --config-setting=pure-python=true \
+          --config-setting=with-cython-tracing=true
+
+  (:issue:`963`)
+
+
+Contributor-facing changes
+--------------------------
+
+- A step-by-step :doc:`Release Guide <contributing/release_guide>` guide has
+  been added, describing how to release *yarl* -- by :user:`webknjaz`.
+
+  This is primarily targeting maintainers. (:issue:`960`)
+- Coverage collection has been implemented for the Cython modules
+  -- by :user:`webknjaz`.
+
+  It will also be reported to Codecov from any non-release CI jobs.
+
+  To measure coverage in a development environment, *yarl* can be
+  installed in editable mode:
+
+  .. code-block:: console
+
+      $ python -Im pip install -e .
+
+  Editable install produces C-files required for the Cython coverage
+  plugin to map the measurements back to the PYX-files.
+
+  :issue:`961`
+
+- It is now possible to request line tracing in Cython builds using the
+  ``with-cython-tracing`` :pep:`517` config setting
+  -- :user:`webknjaz`.
+
+  This can be used in CI and development environment to measure coverage
+  on Cython modules, but is not normally useful to the end-users or
+  downstream packagers.
+
+  Here's a usage example:
+
+  .. code-block:: console
+
+      $ python -Im pip install . --config-settings=with-cython-tracing=true
+
+  For editable installs, this setting is on by default. Otherwise, it's
+  off unless requested explicitly.
+
+  The following produces C-files required for the Cython coverage
+  plugin to map the measurements back to the PYX-files:
+
+  .. code-block:: console
+
+      $ python -Im pip install -e .
+
+  Alternatively, the ``YARL_CYTHON_TRACING=1`` environment variable
+  can be set to do the same as the :pep:`517` config setting.
+
+  :issue:`962`
+
+
+1.9.3 (2023-11-20)
+==================
+
+Bug fixes
+---------
+
+- Stopped dropping trailing slashes in :py:meth:`~yarl.URL.joinpath` -- by :user:`gmacon`. (:issue:`862`, :issue:`866`)
+- Started accepting string subclasses in :meth:`~yarl.URL.__truediv__` operations (``URL / segment``) -- by :user:`mjpieters`. (:issue:`871`, :issue:`884`)
+- Fixed the human representation of URLs with square brackets in usernames and passwords -- by :user:`mjpieters`. (:issue:`876`, :issue:`882`)
+- Updated type hints to include ``URL.missing_port()``, ``URL.__bytes__()``
+  and the ``encoding`` argument to :py:meth:`~yarl.URL.joinpath`
+  -- by :user:`mjpieters`. (:issue:`891`)
+
+
+Packaging updates and notes for downstreams
+-------------------------------------------
+
+- Integrated Cython 3 to enable building *yarl* under Python 3.12 -- by :user:`mjpieters`. (:issue:`829`, :issue:`881`)
+- Declared modern ``setuptools.build_meta`` as the :pep:`517` build
+  backend in :file:`pyproject.toml` explicitly -- by :user:`webknjaz`. (:issue:`886`)
+- Converted most of the packaging setup into a declarative :file:`setup.cfg`
+  config -- by :user:`webknjaz`. (:issue:`890`)
+- The packaging is replaced from an old-fashioned :file:`setup.py` to an
+  in-tree :pep:`517` build backend -- by :user:`webknjaz`.
+
+  Whenever the end-users or downstream packagers need to build ``yarl`` from
+  source (a Git checkout or an sdist), they may pass a ``config_settings``
+  flag ``--pure-python``. If this flag is not set, a C-extension will be built
+  and included into the distribution.
+
+  Here is how this can be done with ``pip``:
+
+  .. code-block:: console
+
+      $ python -m pip install . --config-settings=--pure-python=false
+
+  This will also work with ``-e | --editable``.
+
+  The same can be achieved via ``pypa/build``:
+
+  .. code-block:: console
+
+      $ python -m build --config-setting=--pure-python=false
+
+  Adding ``-w | --wheel`` can force ``pypa/build`` produce a wheel from source
+  directly, as opposed to building an ``sdist`` and then building from it. (:issue:`893`)
+
+  .. attention::
+
+     v1.9.3 was the only version using the ``--pure-python`` setting name.
+     Later versions dropped the ``--`` prefix, making it just ``pure-python``.
+
+- Declared Python 3.12 supported officially in the distribution package metadata
+  -- by :user:`edgarrmondragon`. (:issue:`942`)
+
+
+Contributor-facing changes
+--------------------------
+
+- A regression test for no-host URLs was added per :issue:`821`
+  and :rfc:`3986` -- by :user:`kenballus`. (:issue:`821`, :issue:`822`)
+- Started testing *yarl* against Python 3.12 in CI -- by :user:`mjpieters`. (:issue:`881`)
+- All Python 3.12 jobs are now marked as required to pass in CI
+  -- by :user:`edgarrmondragon`. (:issue:`942`)
+- MyST is now integrated in Sphinx -- by :user:`webknjaz`.
+
+  This allows the contributors to author new documents in Markdown
+  when they have difficulties with going straight RST. (:issue:`953`)
+
+
+1.9.2 (2023-04-25)
+==================
+
+Bugfixes
+--------
+
+- Fix regression with :meth:`~yarl.URL.__truediv__` and absolute URLs with empty paths causing the raw path to lack the leading ``/``.
+  (`#854 <https://github.com/aio-libs/yarl/issues/854>`_)
+
+
+1.9.1 (2023-04-21)
+==================
+
+Bugfixes
+--------
+
+- Marked tests that fail on older Python patch releases (< 3.7.10, < 3.8.8 and < 3.9.2) as expected to fail due to missing a security fix for CVE-2021-23336. (`#850 <https://github.com/aio-libs/yarl/issues/850>`_)
+
+
+1.9.0 (2023-04-19)
+==================
+
+This release was never published to PyPI, due to issues with the build process.
+
+Features
+--------
+
+- Added ``URL.joinpath(*elements)``, to create a new URL appending multiple path elements. (`#704 <https://github.com/aio-libs/yarl/issues/704>`_)
+- Made :meth:`URL.__truediv__() <yarl.URL.__truediv__>` return ``NotImplemented`` if called with an
+  unsupported type — by :user:`michaeljpeters`.
+  (`#832 <https://github.com/aio-libs/yarl/issues/832>`_)
+
+
+Bugfixes
+--------
+
+- Path normalization for absolute URLs no longer raises a ValueError exception
+  when ``..`` segments would otherwise go beyond the URL path root.
+  (`#536 <https://github.com/aio-libs/yarl/issues/536>`_)
+- Fixed an issue with update_query() not getting rid of the query when argument is None. (`#792 <https://github.com/aio-libs/yarl/issues/792>`_)
+- Added some input restrictions on with_port() function to prevent invalid boolean inputs or out of valid port inputs; handled incorrect 0 port representation. (`#793 <https://github.com/aio-libs/yarl/issues/793>`_)
+- Made :py:meth:`~yarl.URL.build` raise a :py:exc:`TypeError` if the ``host`` argument is :py:data:`None` — by :user:`paulpapacz`. (`#808 <https://github.com/aio-libs/yarl/issues/808>`_)
+- Fixed an issue with ``update_query()`` getting rid of the query when the argument
+  is empty but not ``None``. (`#845 <https://github.com/aio-libs/yarl/issues/845>`_)
+
+
+Misc
+----
+
+- `#220 <https://github.com/aio-libs/yarl/issues/220>`_
+
+
+1.8.2 (2022-12-03)
+==================
+
+This is the first release that started shipping wheels for Python 3.11.
+
+
+1.8.1 (2022-08-01)
+==================
+
+Misc
+----
+
+- `#694 <https://github.com/aio-libs/yarl/issues/694>`_, `#699 <https://github.com/aio-libs/yarl/issues/699>`_, `#700 <https://github.com/aio-libs/yarl/issues/700>`_, `#701 <https://github.com/aio-libs/yarl/issues/701>`_, `#702 <https://github.com/aio-libs/yarl/issues/702>`_, `#703 <https://github.com/aio-libs/yarl/issues/703>`_, `#739 <https://github.com/aio-libs/yarl/issues/739>`_
+
+
+1.8.0 (2022-08-01)
+==================
+
+Features
+--------
+
+- Added ``URL.raw_suffix``, ``URL.suffix``, ``URL.raw_suffixes``, ``URL.suffixes``, ``URL.with_suffix``. (`#613 <https://github.com/aio-libs/yarl/issues/613>`_)
+
+
+Improved Documentation
+----------------------
+
+- Fixed broken internal references to :meth:`~yarl.URL.human_repr`.
+  (`#665 <https://github.com/aio-libs/yarl/issues/665>`_)
+- Fixed broken external references to :doc:`multidict:index` docs. (`#665 <https://github.com/aio-libs/yarl/issues/665>`_)
+
+
+Deprecations and Removals
+-------------------------
+
+- Dropped Python 3.6 support. (`#672 <https://github.com/aio-libs/yarl/issues/672>`_)
+
+
+Misc
+----
+
+- `#646 <https://github.com/aio-libs/yarl/issues/646>`_, `#699 <https://github.com/aio-libs/yarl/issues/699>`_, `#701 <https://github.com/aio-libs/yarl/issues/701>`_
+
+
+1.7.2 (2021-11-01)
+==================
+
+Bugfixes
+--------
+
+- Changed call in ``with_port()`` to stop reencoding parts of the URL that were already encoded. (`#623 <https://github.com/aio-libs/yarl/issues/623>`_)
+
+
+1.7.1 (2021-10-07)
+==================
+
+Bugfixes
+--------
+
+- Fix 1.7.0 build error
+
+1.7.0 (2021-10-06)
+==================
+
+Features
+--------
+
+- Add ``__bytes__()`` magic method so that ``bytes(url)`` will work and use optimal ASCII encoding.
+  (`#582 <https://github.com/aio-libs/yarl/issues/582>`_)
+- Started shipping platform-specific arm64 wheels for Apple Silicon. (`#622 <https://github.com/aio-libs/yarl/issues/622>`_)
+- Started shipping platform-specific wheels with the ``musl`` tag targeting typical Alpine Linux runtimes. (`#622 <https://github.com/aio-libs/yarl/issues/622>`_)
+- Added support for Python 3.10. (`#622 <https://github.com/aio-libs/yarl/issues/622>`_)
+
+
+1.6.3 (2020-11-14)
+==================
+
+Bugfixes
+--------
+
+- No longer loose characters when decoding incorrect percent-sequences (like ``%e2%82%f8``). All non-decodable percent-sequences are now preserved.
+  `#517 <https://github.com/aio-libs/yarl/issues/517>`_
+- Provide x86 Windows wheels.
+  `#535 <https://github.com/aio-libs/yarl/issues/535>`_
+
+
+----
+
+
+1.6.2 (2020-10-12)
+==================
+
+
+Bugfixes
+--------
+
+- Provide generated ``.c`` files in TarBall distribution.
+  `#530  <https://github.com/aio-libs/multidict/issues/530>`_
+
+1.6.1 (2020-10-12)
+==================
+
+Features
+--------
+
+- Provide wheels for ``aarch64``, ``i686``, ``ppc64le``, ``s390x`` architectures on
+  Linux as well as ``x86_64``.
+  `#507  <https://github.com/aio-libs/yarl/issues/507>`_
+- Provide wheels for Python 3.9.
+  `#526 <https://github.com/aio-libs/yarl/issues/526>`_
+
+Bugfixes
+--------
+
+- ``human_repr()`` now always produces valid representation equivalent to the original URL (if the original URL is valid).
+  `#511 <https://github.com/aio-libs/yarl/issues/511>`_
+- Fixed  requoting a single percent followed by a percent-encoded character in the Cython implementation.
+  `#514 <https://github.com/aio-libs/yarl/issues/514>`_
+- Fix ValueError when decoding ``%`` which is not followed by two hexadecimal digits.
+  `#516 <https://github.com/aio-libs/yarl/issues/516>`_
+- Fix decoding ``%`` followed by a space and hexadecimal digit.
+  `#520 <https://github.com/aio-libs/yarl/issues/520>`_
+- Fix annotation of ``with_query()``/``update_query()`` methods for ``key=[val1, val2]`` case.
+  `#528 <https://github.com/aio-libs/yarl/issues/528>`_
+
+Removal
+-------
+
+- Drop Python 3.5 support; Python 3.6 is the minimal supported Python version.
+
+
+----
+
+
+1.6.0 (2020-09-23)
+==================
+
+Features
+--------
+
+- Allow for int and float subclasses in query, while still denying bool.
+  `#492 <https://github.com/aio-libs/yarl/issues/492>`_
+
+
+Bugfixes
+--------
+
+- Do not requote arguments in ``URL.build()``, ``with_xxx()`` and in ``/`` operator.
+  `#502 <https://github.com/aio-libs/yarl/issues/502>`_
+- Keep IPv6 brackets in ``origin()``.
+  `#504 <https://github.com/aio-libs/yarl/issues/504>`_
+
+
+----
+
+
+1.5.1 (2020-08-01)
+==================
+
+Bugfixes
+--------
+
+- Fix including relocated internal ``yarl._quoting_c`` C-extension into published PyPI dists.
+  `#485 <https://github.com/aio-libs/yarl/issues/485>`_
+
+
+Misc
+----
+
+- `#484 <https://github.com/aio-libs/yarl/issues/484>`_
+
+
+----
+
+
+1.5.0 (2020-07-26)
+==================
+
+Features
+--------
+
+- Convert host to lowercase on URL building.
+  `#386 <https://github.com/aio-libs/yarl/issues/386>`_
+- Allow using ``mod`` operator (``%``) for updating query string (an alias for ``update_query()`` method).
+  `#435 <https://github.com/aio-libs/yarl/issues/435>`_
+- Allow use of sequences such as ``list`` and ``tuple`` in the values
+  of a mapping such as ``dict`` to represent that a key has many values::
+
+      url = URL("http://example.com")
+      assert url.with_query({"a": [1, 2]}) == URL("http://example.com/?a=1&a=2")
+
+  `#443 <https://github.com/aio-libs/yarl/issues/443>`_
+- Support ``URL.build()`` with scheme and path (creates a relative URL).
+  `#464 <https://github.com/aio-libs/yarl/issues/464>`_
+- Cache slow IDNA encode/decode calls.
+  `#476 <https://github.com/aio-libs/yarl/issues/476>`_
+- Add ``@final`` / ``Final`` type hints
+  `#477 <https://github.com/aio-libs/yarl/issues/477>`_
+- Support URL authority/raw_authority properties and authority argument of ``URL.build()`` method.
+  `#478 <https://github.com/aio-libs/yarl/issues/478>`_
+- Hide the library implementation details, make the exposed public list very clean.
+  `#483 <https://github.com/aio-libs/yarl/issues/483>`_
+
+
+Bugfixes
+--------
+
+- Fix tests with newer Python (3.7.6, 3.8.1 and 3.9.0+).
+  `#409 <https://github.com/aio-libs/yarl/issues/409>`_
+- Fix a bug where query component, passed in a form of mapping or sequence, is unquoted in unexpected way.
+  `#426 <https://github.com/aio-libs/yarl/issues/426>`_
+- Hide ``Query`` and ``QueryVariable`` type aliases in ``__init__.pyi``, now they are prefixed with underscore.
+  `#431 <https://github.com/aio-libs/yarl/issues/431>`_
+- Keep IPv6 brackets after updating port/user/password.
+  `#451 <https://github.com/aio-libs/yarl/issues/451>`_
+
+
+----
+
+
+1.4.2 (2019-12-05)
+==================
+
+Features
+--------
+
+- Workaround for missing ``str.isascii()`` in Python 3.6
+  `#389 <https://github.com/aio-libs/yarl/issues/389>`_
+
+
+----
+
+
+1.4.1 (2019-11-29)
+==================
+
+* Fix regression, make the library work on Python 3.5 and 3.6 again.
+
+1.4.0 (2019-11-29)
+==================
+
+* Distinguish an empty password in URL from a password not provided at all (#262)
+
+* Fixed annotations for optional parameters of ``URL.build`` (#309)
+
+* Use None as default value of ``user`` parameter of ``URL.build`` (#309)
+
+* Enforce building C Accelerated modules when installing from source tarball, use
+  ``YARL_NO_EXTENSIONS`` environment variable for falling back to (slower) Pure Python
+  implementation (#329)
+
+* Drop Python 3.5 support
+
+* Fix quoting of plus in path by pure python version (#339)
+
+* Don't create a new URL if fragment is unchanged (#292)
+
+* Included in error message the path that produces starting slash forbidden error (#376)
+
+* Skip slow IDNA encoding for ASCII-only strings (#387)
+
+
+1.3.0 (2018-12-11)
+==================
+
+* Fix annotations for ``query`` parameter (#207)
+
+* An incoming query sequence can have int variables (the same as for
+  Mapping type) (#208)
+
+* Add ``URL.explicit_port`` property (#218)
+
+* Give a friendlier error when port can't be converted to int (#168)
+
+* ``bool(URL())`` now returns ``False`` (#272)
+
+1.2.6 (2018-06-14)
+==================
+
+* Drop Python 3.4 trove classifier (#205)
+
+1.2.5 (2018-05-23)
+==================
+
+* Fix annotations for ``build`` (#199)
+
+1.2.4 (2018-05-08)
+==================
+
+* Fix annotations for ``cached_property`` (#195)
+
+1.2.3 (2018-05-03)
+==================
+
+* Accept ``str`` subclasses in ``URL`` constructor (#190)
+
+1.2.2 (2018-05-01)
+==================
+
+* Fix build
+
+1.2.1 (2018-04-30)
+==================
+
+* Pin minimal required Python to 3.5.3 (#189)
+
+1.2.0 (2018-04-30)
+==================
+
+* Forbid inheritance, replace ``__init__`` with ``__new__`` (#171)
+
+* Support PEP-561 (provide type hinting marker) (#182)
+
+1.1.1 (2018-02-17)
+==================
+
+* Fix performance regression: don't encode empty ``netloc`` (#170)
+
+1.1.0 (2018-01-21)
+==================
+
+* Make pure Python quoter consistent with Cython version (#162)
+
+1.0.0 (2018-01-15)
+==================
+
+* Use fast path if quoted string does not need requoting (#154)
+
+* Speed up quoting/unquoting by ``_Quoter`` and ``_Unquoter`` classes (#155)
+
+* Drop ``yarl.quote`` and ``yarl.unquote`` public functions (#155)
+
+* Add custom string writer, reuse static buffer if available (#157)
+  Code is 50-80 times faster than Pure Python version (was 4-5 times faster)
+
+* Don't recode IP zone (#144)
+
+* Support ``encoded=True`` in ``yarl.URL.build()`` (#158)
+
+* Fix updating query with multiple keys (#160)
+
+0.18.0 (2018-01-10)
+===================
+
+* Fallback to IDNA 2003 if domain name is not IDNA 2008 compatible (#152)
+
+0.17.0 (2017-12-30)
+===================
+
+* Use IDNA 2008 for domain name processing (#149)
+
+0.16.0 (2017-12-07)
+===================
+
+* Fix raising ``TypeError`` by ``url.query_string()`` after
+  ``url.with_query({})`` (empty mapping) (#141)
+
+0.15.0 (2017-11-23)
+===================
+
+* Add ``raw_path_qs`` attribute (#137)
+
+0.14.2 (2017-11-14)
+===================
+
+* Restore ``strict`` parameter as no-op in ``quote`` / ``unquote``
+
+0.14.1 (2017-11-13)
+===================
+
+* Restore ``strict`` parameter as no-op for sake of compatibility with
+  aiohttp 2.2
+
+0.14.0 (2017-11-11)
+===================
+
+* Drop strict mode (#123)
+
+* Fix ``"ValueError: Unallowed PCT %"`` when there's a ``"%"`` in the URL (#124)
+
+0.13.0 (2017-10-01)
+===================
+
+* Document ``encoded`` parameter (#102)
+
+* Support relative URLs like ``'?key=value'`` (#100)
+
+* Unsafe encoding for QS fixed. Encode ``;`` character in value parameter (#104)
+
+* Process passwords without user names (#95)
+
+0.12.0 (2017-06-26)
+===================
+
+* Properly support paths without leading slash in ``URL.with_path()`` (#90)
+
+* Enable type annotation checks
+
+0.11.0 (2017-06-26)
+===================
+
+* Normalize path (#86)
+
+* Clear query and fragment parts in ``.with_path()`` (#85)
+
+0.10.3 (2017-06-13)
+===================
+
+* Prevent double URL arguments unquoting (#83)
+
+0.10.2 (2017-05-05)
+===================
+
+* Unexpected hash behavior (#75)
+
+
+0.10.1 (2017-05-03)
+===================
+
+* Unexpected compare behavior (#73)
+
+* Do not quote or unquote + if not a query string. (#74)
+
+
+0.10.0 (2017-03-14)
+===================
+
+* Added ``URL.build`` class method (#58)
+
+* Added ``path_qs`` attribute (#42)
+
+
+0.9.8 (2017-02-16)
+==================
+
+* Do not quote ``:`` in path
+
+
+0.9.7 (2017-02-16)
+==================
+
+* Load from pickle without _cache (#56)
+
+* Percent-encoded pluses in path variables become spaces (#59)
+
+
+0.9.6 (2017-02-15)
+==================
+
+* Revert backward incompatible change (BaseURL)
+
+
+0.9.5 (2017-02-14)
+==================
+
+* Fix BaseURL rich comparison support
+
+
+0.9.4 (2017-02-14)
+==================
+
+* Use BaseURL
+
+
+0.9.3 (2017-02-14)
+==================
+
+* Added BaseURL
+
+
+0.9.2 (2017-02-08)
+==================
+
+* Remove debug print
+
+
+0.9.1 (2017-02-07)
+==================
+
+* Do not lose tail chars (#45)
+
+
+0.9.0 (2017-02-07)
+==================
+
+* Allow to quote ``%`` in non strict mode (#21)
+
+* Incorrect parsing of query parameters with %3B (;) inside (#34)
+
+* Fix core dumps (#41)
+
+* ``tmpbuf`` - compiling error (#43)
+
+* Added ``URL.update_path()`` method
+
+* Added ``URL.update_query()`` method (#47)
+
+
+0.8.1 (2016-12-03)
+==================
+
+* Fix broken aiohttp: revert back ``quote`` / ``unquote``.
+
+
+0.8.0 (2016-12-03)
+==================
+
+* Support more verbose error messages in ``.with_query()`` (#24)
+
+* Don't percent-encode ``@`` and ``:`` in path (#32)
+
+* Don't expose ``yarl.quote`` and ``yarl.unquote``, these functions are
+  part of private API
+
+0.7.1 (2016-11-18)
+==================
+
+* Accept not only ``str`` but all classes inherited from ``str`` also (#25)
+
+0.7.0 (2016-11-07)
+==================
+
+* Accept ``int`` as value for ``.with_query()``
+
+0.6.0 (2016-11-07)
+==================
+
+* Explicitly use UTF8 encoding in :file:`setup.py` (#20)
+* Properly unquote non-UTF8 strings (#19)
+
+0.5.3 (2016-11-02)
+==================
+
+* Don't use :py:class:`typing.NamedTuple` fields but indexes on URL construction
+
+0.5.2 (2016-11-02)
+==================
+
+* Inline ``_encode`` class method
+
+0.5.1 (2016-11-02)
+==================
+
+* Make URL construction faster by removing extra classmethod calls
+
+0.5.0 (2016-11-02)
+==================
+
+* Add Cython optimization for quoting/unquoting
+* Provide binary wheels
+
+0.4.3 (2016-09-29)
+==================
+
+* Fix typing stubs
+
+0.4.2 (2016-09-29)
+==================
+
+* Expose ``quote()`` and ``unquote()`` as public API
+
+0.4.1 (2016-09-28)
+==================
+
+* Support empty values in query (``'/path?arg'``)
+
+0.4.0 (2016-09-27)
+==================
+
+* Introduce ``relative()`` (#16)
+
+0.3.2 (2016-09-27)
+==================
+
+* Typo fixes #15
+
+0.3.1 (2016-09-26)
+==================
+
+* Support sequence of pairs as ``with_query()`` parameter
+
+0.3.0 (2016-09-26)
+==================
+
+* Introduce ``is_default_port()``
+
+0.2.1 (2016-09-26)
+==================
+
+* Raise ValueError for URLs like 'http://:8080/'
+
+0.2.0 (2016-09-18)
+==================
+
+* Avoid doubling slashes when joining paths (#13)
+
+* Appending path starting from slash is forbidden (#12)
+
+0.1.4 (2016-09-09)
+==================
+
+* Add ``kwargs`` support for ``with_query()`` (#10)
+
+0.1.3 (2016-09-07)
+==================
+
+* Document ``with_query()``, ``with_fragment()`` and ``origin()``
+
+* Allow ``None`` for ``with_query()`` and ``with_fragment()``
+
+0.1.2 (2016-09-07)
+==================
+
+* Fix links, tune docs theme.
+
+0.1.1 (2016-09-06)
+==================
+
+* Update README, old version used obsolete API
+
+0.1.0 (2016-09-06)
+==================
+
+* The library was deeply refactored, bytes are gone away but all
+  accepted strings are encoded if needed.
+
+0.0.1 (2016-08-30)
+==================
+
+* The first release.

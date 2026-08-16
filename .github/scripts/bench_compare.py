@@ -3,8 +3,12 @@
 
 Inputs (CWD-relative, produced by the workflow):
   - bench-current.json   this run's ``cairn bench --save`` payload
-  - bench-baseline.json  rolling baseline restored via actions/cache
-                         (absent on the first run or after cache eviction)
+  - bench-baseline.json  optional explicit baseline (local override; CI's
+                         rolling-cache source for it was removed in T016)
+  - benchmarks/baselines/DS-v1/perf.json
+                         the committed, stamped reference baseline (D-007),
+                         read when no explicit baseline file is present --
+                         the CI path since the actions/cache dance retired
 
 Outputs:
   - appends a markdown comparison to $GITHUB_STEP_SUMMARY (run summary)
@@ -23,6 +27,13 @@ import sys
 from pathlib import Path
 
 MARKER = "<!-- cairn-bench-advisory -->"
+# D-007 (T016): the committed, stamped DS-v1 baseline replaced the old
+# actions/cache rolling file (bench-baseline.json) -- its run-id-unique cache
+# key always missed, so regressions were unattributable. An explicit
+# bench-baseline.json still wins when present (local override); CI never has
+# one and always lands on the committed artifact. Reads are additive: the
+# T013 stamp added top-level keys, ops/median_ms shapes are unchanged.
+COMMITTED_BASELINE = Path("benchmarks/baselines/DS-v1/perf.json")
 # Looser than the 15% CLI default: shared CI runners are noisy, and this is
 # advisory -- the goal is signal for reviewers, not false alarms.
 THRESHOLD = 0.25
@@ -54,8 +65,8 @@ def _render(current: dict, baseline: dict | None) -> str:
     if baseline is None:
         lines += [
             "",
-            "No baseline available yet (first run or cache evicted); "
-            "current timings:",
+            "No baseline available (neither an explicit bench-baseline.json "
+            "nor the committed baseline); current timings:",
             "",
             "| operation | median ms | p95 ms |",
             "|---|---:|---:|",
@@ -65,7 +76,16 @@ def _render(current: dict, baseline: dict | None) -> str:
                          f"| {op['p95_ms']:.1f} |")
         return "\n".join(lines)
 
-    lines += ["", f"Baseline from **{baseline.get('timestamp', 'unknown time')}**:",
+    # Cite the baseline's dataset version + corpus (T013 stamps, read
+    # additively) so reviewers can attribute the numbers (AC1/D-007).
+    dataset = baseline.get("dataset")
+    dataset = dataset if isinstance(dataset, dict) else {}
+    base_corpus = baseline.get("corpus")
+    base_corpus = base_corpus if isinstance(base_corpus, dict) else {}
+    lines += ["",
+              f"Baseline **{dataset.get('version', 'DS-v1')}** "
+              f"({base_corpus.get('files', '?')} files) from "
+              f"**{baseline.get('timestamp', 'unknown time')}**:",
               "", "| operation | baseline ms | current ms | delta |",
               "|---|---:|---:|---:|"]
     from cairn.bench import compare_reports
@@ -88,7 +108,9 @@ def _render(current: dict, baseline: dict | None) -> str:
 
 def main() -> int:
     current = _load("bench-current.json")
-    baseline = _load("bench-baseline.json")
+    # Explicit local override first, committed DS-v1 artifact otherwise
+    # (D-007/T016 -- the CI path: no rolling cache file exists anymore).
+    baseline = _load("bench-baseline.json") or _load(str(COMMITTED_BASELINE))
 
     if current is None:
         body = "_Bench did not produce a result this run (see the job log)._"

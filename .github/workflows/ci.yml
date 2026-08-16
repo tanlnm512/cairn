@@ -252,12 +252,18 @@ jobs:
   # --- Bench: advisory perf baseline comparison (T18) ---------------------
   # Runs `cairn bench` on a fixed deterministic synthetic corpus (seeded
   # generator + dep-free hash embed backend) and uploads the JSON result as
-  # a workflow artifact. On PRs the result is compared against a rolling
-  # baseline (an actions/cache entry refreshed by default-branch runs) and
-  # posted as an ADVISORY PR comment; main pushes refresh the baseline.
-  # Every bench step is continue-on-error: a timing regression -- or a noisy
-  # shared runner -- can never redden CI. "Advisory first, gate later if
-  # stable" (observability-telemetry plan, Phase 2).
+  # a workflow artifact. Since T016 (D-007) the comparison target is the
+  # committed, stamped baseline benchmarks/baselines/DS-v1/: `--baseline
+  # DS-v1` resolves it in-command, and .github/scripts/bench_compare.py
+  # renders the ADVISORY PR comment from the same artifact. (The old rolling
+  # actions/cache baseline was removed -- its run-id-unique key always
+  # missed, making regressions unattributable.) The ubuntu runner vs the
+  # reference-local minter trips the machine-profile mismatch warning every
+  # run -- by design, not noise (D-005: warn, never normalize).
+  # Every bench step is continue-on-error: a timing regression (bench exits
+  # 2 past the 15% threshold) -- or a noisy shared runner -- can never redden
+  # CI. "Advisory first, gate later if stable" (observability-telemetry
+  # plan, Phase 2).
   bench:
     name: Bench (advisory baseline comparison)
     runs-on: ubuntu-latest
@@ -277,39 +283,69 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      # Rolling baseline. The run-id-unique key always misses, so the post-job
-      # save always stores THIS run's result; restore-keys prefix restores the
-      # most recent entry -- on PRs cache scoping falls back to the latest
-      # default-branch baseline (and, when present, this PR's own earlier
-      # runs, which is an equally fair comparison point).
-      - name: Restore rolling bench baseline
-        uses: actions/cache@v4
-        with:
-          path: bench-baseline.json
-          key: bench-baseline-v1-${{ github.run_id }}
-          restore-keys: bench-baseline-v1-
+      # T1 content pin (FR-001/AC2): regenerate the corpus from the manifest
+      # recipe and assert the pinned tree-hash + counts. This is the one
+      # deliberate exception to the continue-on-error rule above -- a
+      # deterministic content check, not a noisy timing measurement.
+      # Size 300 = the perf default `cairn bench` itself uses (--n-files);
+      # the full 5000 pin would burn CI minutes for no extra signal here.
+      - name: Verify benchmark datasource (T1 content pin)
+        run: python scripts/verify_datasource.py --size 300
 
+      # T2 checks (FR-002/AC3+AC4). The size-budget half needs NO extra step:
+      # since T007, verify_datasource.py measures both budget scopes (t2/ <=
+      # 3 MB, the whole datasource/ tree <= 5 MB, exit 3 on breach) on EVERY
+      # invocation, so the step above already carries it. The smoke half
+      # below builds a graph over the vendored snapshot and answers pinned
+      # queries (TC-013/TC-014) -- like the T1 pin, a deterministic content
+      # check (the deliberate exception to the continue-on-error rule above),
+      # not a timing, so it is a real gate. The bench job otherwise installs
+      # bare `pip install -e .`, so pytest rides the [test] extra; tests/ is
+      # path-scoped and pyproject's testpaths additionally protects bare runs
+      # from collecting the vendored upstream's own test files.
+      - name: T2 smoke test (vendored snapshot build+query)
+        run: |
+          pip install -e ".[test]"
+          pytest tests/ -q -k t2
+
+      # T018 (FR-005/AC6, TC-027): docs/benchmarks.md tables are generated,
+      # never hand-owned. Regenerate from the committed baselines and require
+      # byte-identity with the checkout -- like the T1/T2 pins above, a
+      # deterministic content check (the deliberate exception to the
+      # continue-on-error rule), not a timing. Catches both stale tables
+      # (baselines changed, docs not regenerated) and hand edits inside the
+      # sentinels: the generator rewrites sentinel content from the artifacts,
+      # so any committed deviation surfaces as a non-empty diff vs the index.
+      # The script is stdlib-only (no cairn import), so the bare
+      # `pip install -e .` above suffices; actions/checkout supplies the git
+      # context the diff needs.
+      - name: Verify docs tables regenerated (T018 hand-edit guard)
+        run: |
+          python scripts/gen_benchmark_tables.py
+          git diff --exit-code docs/benchmarks.md
+
+      # D-007 (T016): compare against the committed, stamped DS-v1 baseline.
+      # `--baseline` composes with `--save` (the payload is saved first, then
+      # the comparison table renders in this step's log). Exit contract: 0
+      # clean; 1 baseline-resolution error; 2 regressions past 15%. A
+      # machine-profile mismatch vs the reference-local minter only WARNS and
+      # keeps the exit code at whatever the comparison alone decides (D-005).
+      # Exit 2 is absorbed by continue-on-error below -- timing can never
+      # redden this job; the advisory PR-comment comparison lives in
+      # bench_compare.py.
       - name: Run bench (fixed corpus, hash backend)
         continue-on-error: true
         run: |
-          cairn bench --suite perf --n-files 60 --complexity medium \
-            --embed-backend hash --repeats 3 \
-            --json --save bench-current.json
+          cairn bench --suite perf --embed-backend hash --repeats 3 \
+            --json --save bench-current.json \
+            --baseline DS-v1
 
-      # Compare BEFORE the baseline payload is refreshed below (the compare
-      # reads the restored baseline; the copy then updates it to this run's
-      # result for the post-job cache save).
+      # Renders the advisory step summary + PR comment from bench-current.json
+      # and the committed DS-v1 artifact; never exits non-zero.
       - name: Compare vs baseline (advisory summary)
         if: always()
         continue-on-error: true
         run: python .github/scripts/bench_compare.py
-
-      - name: Refresh baseline payload for cache save
-        if: always()
-        run: |
-          if [ -f bench-current.json ]; then
-            cp bench-current.json bench-baseline.json
-          fi
 
       - name: Upload bench result
         if: always()

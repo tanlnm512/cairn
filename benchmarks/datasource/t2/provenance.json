@@ -1,0 +1,20 @@
+{
+  "upstream_repo": "https://github.com/aio-libs/yarl",
+  "upstream_commit": "dddcb82e4aa9665e15b43d90ad370d7e54ac1fbb",
+  "license": "Apache-2.0",
+  "license_file": "yarl/LICENSE",
+  "export_date": "2026-08-15",
+  "export_notes": [
+    "Pinned commit = default-branch HEAD at export time (yarl's default branch is 'master', not 'main'); commit date 2026-08-14, subject: 'Update hypothesis requirement from >=6.165.2 to >=6.165.3 in /requirements (#1851)'.",
+    "Fetched as the GitHub source export https://github.com/aio-libs/yarl/archive/dddcb82e4aa9665e15b43d90ad370d7e54ac1fbb.tar.gz (source exports carry no VCS internals).",
+    "Kept: the yarl/ package (all .py modules, py.typed marker, and the Cython source _quoting_c.pyx), tests/ (16 text .py files -- realistic call shapes for the corpus), CHANGES.rst + CHANGES/ fragments, LICENSE, NOTICE, README.rst, pyproject.toml (project identity metadata).",
+    "Excluded (CI configs / VCS internals): .github/ (workflows, issue templates, reusable actions), .gitignore, .git-blame-ignore-revs, CHANGES/.gitignore.",
+    "Excluded (docs build machinery): docs/ entirely, including the binary images docs/_static/yarl-icon-128x128.png and docs/_static/yarl-icon-128x128.xcf and docs/make.bat.",
+    "Excluded (benchmarks): the upstream benchmark scripts benchmark.py and url_benchmark.py.",
+    "Excluded (build/dev tooling): requirements/ (CI + dev tooling pins), packaging/ (PEP-517 build backend), .codecov.yml, .coveragerc, .mypy.ini, .pre-commit-config.yaml, .readthedocs.yaml, .yamllint, tox.ini, pytest.ini, towncrier.toml, setup.cfg, MANIFEST.in, Makefile, AGENTS.md, CLAUDE.md.",
+    "No .git* dirs/files, .so, or images anywhere in the vendored tree (verified: find -name '.git*' -o -name '*.so' -o -name '*.png' returns 0 hits).",
+    "Size: vendored_bytes = 437498 across 33 files (du -sk of the t2 tree = 500 KB), within the 3 MB T2 budget; per D-002 the budget measures the vendored tree, not the ~2.75 MB GitHub repo size.",
+    "The committed tree intentionally has NO .git marker; the build+query smoke test (tests/test_t2_snapshot.py) copies the tree to tmp and adds the marker there (same scanner-marker trick as bench/corpus.py uses for T1)."
+  ],
+  "vendored_bytes": 437498
+}

@@ -1,0 +1,393 @@
+"""Tests for scripts/gen_benchmark_tables.py -- T017 (FR-005, AC6).
+
+Hermetic strategy (same pattern as tests/test_verify_datasource.py): every
+behavioral test mints TINY scratch baselines and a scratch docs fixture with
+sentinel markers in tmp_path, then drives the generator as a library call.
+The wire-level tests prove the CLI exit codes. One cheap end-to-end smoke
+works on a tmp COPY of the real docs/benchmarks.md against the committed
+DS-v1 artifacts (reads only, fast) -- it never writes the working tree.
+
+Covers the spec's test plan:
+  TC-024 placeholders replaced / missing family fails loudly
+  TC-025 regeneration is byte-idempotent
+  TC-026 values trace 1:1 to the artifacts (cell-level expected strings)
+  TC-028 bytes outside the sentinels are never touched
+"""
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import List
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = REPO_ROOT / "scripts" / "gen_benchmark_tables.py"
+REAL_BASELINES = REPO_ROOT / "benchmarks" / "baselines" / "DS-v1"
+REAL_DOCS = REPO_ROOT / "docs" / "benchmarks.md"
+
+# scripts/ is not a package; load the generator by file path so the object
+# under test is the same module the subprocess executes. Registered in
+# sys.modules first so introspection behaves like a normal import.
+_spec = importlib.util.spec_from_file_location("gen_benchmark_tables", SCRIPT)
+gbt = importlib.util.module_from_spec(_spec)
+sys.modules.setdefault("gen_benchmark_tables", gbt)
+_spec.loader.exec_module(gbt)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: tiny baselines + a scratch doc with sentinels
+# ---------------------------------------------------------------------------
+
+STAMP = {
+    "schema": "cairn-bench-baseline/1",
+    "timestamp": "2026-01-02T03:04:05+00:00",
+    "dataset": {"name": "bench", "version": "DS-t9", "tree_hash": "abc", "identity_size": 3},
+    "cairn_version": "9.9.9",
+    "machine_profile": {
+        "arch": "test64",
+        "cpu": "test",
+        "cpu_count": 2,
+        "os": "TestOS-1.0",
+        "runner_class": "reference-local",
+    },
+    "embed": {"backend": "hash", "model": "hash-8"},
+}
+
+QUALITY = {
+    **STAMP,
+    "l5_surface": "none (test bundle)",
+    "ground_truth": {
+        "path": "benchmarks/datasource/t9/ground_truth",
+        "queries": 7,
+        "expectations": 12,
+    },
+    "L1": {"count": 5, "recall_at_10": 0.5, "mrr": 0.25, "n_queries": 5, "n_expectations": 9},
+    "L5": {"count": 2, "recall_at_10": 0.0, "mrr": 0.0, "n_queries": 2, "n_expectations": 3},
+}
+
+# Ops deliberately out of name order: the generator must sort rows itself.
+PERF = {
+    **STAMP,
+    "ops": [
+        {"name": "zeta_query", "median_ms": 2.0, "p95_ms": 3.0, "ops_per_sec": 500.0},
+        {"name": "alpha_build", "median_ms": 10.5, "p95_ms": 12.256, "ops_per_sec": 0.095},
+    ],
+}
+
+# Points deliberately out of size order: rows must come back sorted by files.
+SCALING = {
+    **STAMP,
+    "points": [
+        {"n_files": 50, "symbols": 400, "build_s": 0.5, "embed_s": 0.25, "db_mb": 4.0,
+         "resolve_rate": 0.5, "peak_mem_mb": 8.0},
+        {"n_files": 10, "symbols": 80, "build_s": 0.1, "embed_s": 0.05, "db_mb": 1.5,
+         "resolve_rate": 1.0, "peak_mem_mb": 3.25},
+    ],
+}
+
+DOCS_FIXTURE = """# Bench
+
+Hand-owned intro.
+
+## Quality
+
+prose above
+
+<!-- cairn-bench-tables:quality start -->
+| corpus | samples | recall@10 | mrr |
+|--------|---------|-----------|-----|
+| L1     | 30      | _fill_    | _fill_ |
+| L5     | 10      | _fill_    | _fill_ |
+<!-- cairn-bench-tables:quality end -->
+
+prose between quality and perf (hand-owned, must survive)
+
+<!-- cairn-bench-tables:perf start -->
+| operation | median (ms) | p95 (ms) | ops/sec |
+|-----------|-------------|----------|---------|
+| old_op    | _fill_      | _fill_   | _fill_  |
+<!-- cairn-bench-tables:perf end -->
+
+<!-- cairn-bench-tables:scaling start -->
+| files | symbols | build (s) | embed (s) | DB MB | resolve | peak MB |
+|-------|---------|-----------|-----------|-------|---------|---------|
+| 100   | _fill_  | _fill_    | _fill_    | _fill_ | _fill_  | _fill_  |
+<!-- cairn-bench-tables:scaling end -->
+
+Hand-owned tail (also must survive).
+"""
+
+
+def _write_baselines(root: Path, skip: str = "") -> Path:
+    baselines = root / "baselines"
+    baselines.mkdir()
+    payloads = {"quality": QUALITY, "perf": PERF, "scaling": SCALING}
+    for family, payload in payloads.items():
+        if family == skip:
+            continue
+        (baselines / f"{family}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return baselines
+
+
+def _write_docs(root: Path, text: str = DOCS_FIXTURE) -> Path:
+    docs = root / "benchmarks.md"
+    docs.write_text(text, encoding="utf-8")
+    return docs
+
+
+def _region(text: str, family: str) -> str:
+    """The generated bytes strictly between a family's sentinels."""
+    lines = text.split("\n")
+    start, end = gbt._sentinel_indices(lines, family)
+    return "\n".join(lines[start + 1 : end])
+
+
+def _data_rows(text: str, family: str) -> List[List[str]]:
+    """A family's data rows as stripped cell lists (padding-insensitive):
+    the table lines that follow the separator row."""
+    rows = []
+    past_separator = False
+    for line in _region(text, family).split("\n"):
+        if line.startswith("|-"):
+            past_separator = True
+        elif past_separator and line.startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            rows.append(cells)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# TC-024 / TC-026: placeholders replaced with values that trace to the artifact
+# ---------------------------------------------------------------------------
+
+
+def test_quality_rows_and_notes_match_artifact_values(tmp_path):
+    docs = _write_docs(tmp_path)
+    assert gbt.generate(_write_baselines(tmp_path), docs)
+
+    out = docs.read_text(encoding="utf-8")
+    assert "_fill_" not in out
+    # Exact expected table incl. header/separator rendering (pinned formats:
+    # samples as int, recall/mrr as {:.4f}, L5 carries the surface dagger).
+    assert (
+        "| corpus | samples | recall@10 | mrr    |\n"
+        "|--------|---------|-----------|--------|\n"
+        "| L1     | 5       | 0.5000    | 0.2500 |\n"
+        "| L5 †   | 2       | 0.0000    | 0.0000 |"
+        in _region(out, "quality")
+    )
+    # Notes: per-corpus query/expectation counts, L5 annotation, provenance.
+    assert "> 5 L1 queries / 9 expectations; 2 L5 queries / 3 expectations" in out
+    assert "graded pair (benchmarks/datasource/t9/ground_truth)" in out
+    assert "† L5 surface absent for DS-t9: none (test bundle)" in out
+    assert (
+        "> Source: DS-t9 baseline (benchmarks/baselines/DS-t9/quality.json) — "
+        "runner class reference-local (TestOS-1.0, test64, 2 CPUs), "
+        "minted 2026-01-02, cairn 9.9.9, embed hash / hash-8."
+    ) in out
+
+
+def test_perf_rows_sorted_with_pinned_formats(tmp_path):
+    docs = _write_docs(tmp_path)
+    gbt.generate(_write_baselines(tmp_path), docs)
+
+    # Sorted by op name; median/p95/ops-per-sec all {:.2f} straight from the
+    # artifact's OpTiming keys (12.256 -> 12.26, 0.095 -> 0.10).
+    assert _data_rows(docs.read_text(encoding="utf-8"), "perf") == [
+        ["alpha_build", "10.50", "12.26", "0.10"],
+        ["zeta_query", "2.00", "3.00", "500.00"],
+    ]
+
+
+def test_scaling_rows_sorted_by_files_with_pinned_formats(tmp_path):
+    docs = _write_docs(tmp_path)
+    gbt.generate(_write_baselines(tmp_path), docs)
+
+    # Sorted by n_files; build/embed {:.3f}, db/peak {:.2f}, resolve a
+    # fraction {:.3f} (0.5 -> 0.500, 3.25 -> 3.25).
+    assert _data_rows(docs.read_text(encoding="utf-8"), "scaling") == [
+        ["10", "80", "0.100", "0.050", "1.50", "1.000", "3.25"],
+        ["50", "400", "0.500", "0.250", "4.00", "0.500", "8.00"],
+    ]
+
+
+def test_regen_replaces_every_placeholder_cell(tmp_path):
+    """TC-024: after generation, zero placeholder markers remain in the doc."""
+    docs = _write_docs(tmp_path)
+    gbt.generate(_write_baselines(tmp_path), docs)
+    assert docs.read_text(encoding="utf-8").count("_fill_") == 0
+
+
+# ---------------------------------------------------------------------------
+# TC-025: byte-idempotency
+# ---------------------------------------------------------------------------
+
+
+def test_second_run_is_byte_identical(tmp_path):
+    docs = _write_docs(tmp_path)
+    baselines = _write_baselines(tmp_path)
+
+    assert gbt.generate(baselines, docs) is True  # first run changes bytes
+    first = hashlib.sha256(docs.read_bytes()).hexdigest()
+    assert gbt.generate(baselines, docs) is False  # second run: no write at all
+    second = hashlib.sha256(docs.read_bytes()).hexdigest()
+    assert first == second
+
+
+def test_regenerated_block_is_restored_after_edit_inside_sentinel(tmp_path):
+    """A hand edit between the sentinels is repaired by regeneration -- the
+    block is a pure function of the artifacts, so the result is byte-equal to
+    the golden regeneration."""
+    docs = _write_docs(tmp_path)
+    baselines = _write_baselines(tmp_path)
+    gbt.generate(baselines, docs)
+    golden = docs.read_text(encoding="utf-8")
+
+    damaged = golden.replace(
+        "| L1     | 5       | 0.5000    | 0.2500 |",
+        "| L1     | 99      | 9.9999    | 9.9999 |",
+    )
+    assert damaged != golden
+    docs.write_text(damaged, encoding="utf-8")
+    assert gbt.generate(baselines, docs) is True
+    assert docs.read_text(encoding="utf-8") == golden
+
+
+# ---------------------------------------------------------------------------
+# TC-028: bytes outside the sentinels are never touched
+# ---------------------------------------------------------------------------
+
+
+def test_bytes_outside_sentinels_untouched(tmp_path):
+    docs = _write_docs(tmp_path)
+    before = docs.read_text(encoding="utf-8")
+
+    prefix = before.split("<!-- cairn-bench-tables:quality start -->")[0]
+    mid = before.split("<!-- cairn-bench-tables:quality end -->")[1].split(
+        "<!-- cairn-bench-tables:perf start -->"
+    )[0]
+    suffix = before.split("<!-- cairn-bench-tables:scaling end -->")[1]
+
+    gbt.generate(_write_baselines(tmp_path), docs)
+    after = docs.read_text(encoding="utf-8")
+
+    assert after.split("<!-- cairn-bench-tables:quality start -->")[0] == prefix
+    assert (
+        after.split("<!-- cairn-bench-tables:quality end -->")[1].split(
+            "<!-- cairn-bench-tables:perf start -->"
+        )[0]
+        == mid
+    )
+    assert after.split("<!-- cairn-bench-tables:scaling end -->")[1] == suffix
+    # The sentinel lines themselves are preserved verbatim.
+    for family in gbt.FAMILIES:
+        assert f"<!-- cairn-bench-tables:{family} start -->" in after
+        assert f"<!-- cairn-bench-tables:{family} end -->" in after
+
+
+# ---------------------------------------------------------------------------
+# TC-024 failure path: missing artifact / missing family fails loudly
+# ---------------------------------------------------------------------------
+
+
+def test_missing_baseline_artifact_fails_naming_family(tmp_path):
+    docs = _write_docs(tmp_path)
+    baselines = _write_baselines(tmp_path, skip="scaling")
+
+    with pytest.raises(gbt.GenerationError, match=r"scaling.*scaling\.json.*does not exist"):
+        gbt.generate(baselines, docs)
+
+
+def test_missing_sentinel_family_in_docs_fails_naming_family(tmp_path):
+    docs = _write_docs(
+        tmp_path,
+        DOCS_FIXTURE.replace(
+            "<!-- cairn-bench-tables:perf start -->\n"
+            "| operation | median (ms) | p95 (ms) | ops/sec |\n"
+            "|-----------|-------------|----------|---------|\n"
+            "| old_op    | _fill_      | _fill_   | _fill_  |\n"
+            "<!-- cairn-bench-tables:perf end -->\n\n",
+            "",
+        ),
+    )
+    with pytest.raises(gbt.GenerationError, match="perf"):
+        gbt.generate(_write_baselines(tmp_path), docs)
+
+
+def test_missing_required_key_fails_naming_op():
+    broken = {"ops": [{"name": "no_p95", "median_ms": 1.0, "ops_per_sec": 1.0}]}
+    with pytest.raises(gbt.GenerationError, match=r"no_p95.*p95_ms"):
+        gbt.render_perf(broken)
+
+
+def test_cli_missing_artifact_exits_nonzero(tmp_path):
+    docs = _write_docs(tmp_path)
+    baselines = _write_baselines(tmp_path, skip="quality")
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--baselines", str(baselines), "--docs", str(docs)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "quality" in proc.stderr and "quality.json" in proc.stderr
+
+
+def test_cli_success_exits_zero(tmp_path):
+    docs = _write_docs(tmp_path)
+    baselines = _write_baselines(tmp_path)
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--baselines", str(baselines), "--docs", str(docs)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "_fill_" not in docs.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Smoke against the real committed doc + DS-v1 artifacts (reads only)
+# ---------------------------------------------------------------------------
+
+
+def test_real_doc_placeholder_state_regenerates_idempotently(tmp_path):
+    """End-to-end on real inputs, into a tmp copy: rewind each family to a
+    placeholder state, regenerate from the committed DS-v1 artifacts, and
+    check the known real numbers land + a second run changes nothing."""
+    docs = tmp_path / "benchmarks.md"
+    text = REAL_DOCS.read_text(encoding="utf-8")
+    for family in gbt.FAMILIES:
+        text = gbt.apply_family(text, family, [f"| {family} | _fill_ |"])
+    docs.write_text(text, encoding="utf-8")
+
+    assert gbt.generate(REAL_BASELINES, docs) is True
+    out = docs.read_text(encoding="utf-8")
+    assert "_fill_" not in out
+    # Known DS-v1 numbers (TC-026 cross-check against the committed artifacts).
+    assert "| L1     | 58      | 0.4174    | 0.2862 |" in out
+    assert ["build.derived.closure", "25284.88", "25284.88", "0.04"] in _data_rows(out, "perf")
+    assert _data_rows(out, "scaling") == [
+        ["100", "3000", "1.807", "1.033", "12.56", "1.000", "12.43"],
+        ["500", "15000", "7.703", "5.149", "61.88", "1.000", "59.33"],
+        ["1000", "30000", "17.808", "10.327", "123.63", "1.000", "118.38"],
+        ["5000", "150000", "475.929", "51.555", "618.92", "1.000", "591.20"],
+    ]
+    assert "runner class reference-local" in out and "minted 2026-08-16" in out
+
+    assert gbt.generate(REAL_BASELINES, docs) is False
+    assert docs.read_text(encoding="utf-8") == out
+
+
+def test_real_doc_working_tree_matches_generator_output(tmp_path):
+    """CI-gate equivalent (T018's check, proven here): regenerating the
+    committed doc from the committed DS-v1 artifacts reproduces the working
+    tree's bytes exactly -- no hand drift inside the sentinels."""
+    rendered = REAL_DOCS.read_text(encoding="utf-8")
+    scratch = tmp_path / "benchmarks.md"
+    scratch.write_text(rendered, encoding="utf-8")
+    assert gbt.generate(REAL_BASELINES, scratch) is False
+    assert scratch.read_text(encoding="utf-8") == rendered

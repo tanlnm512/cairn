@@ -1,0 +1,149 @@
+{
+  "schema": "cairn-bench-baseline/1",
+  "corpus": {
+    "files": 301,
+    "lines": 63900,
+    "bytes": 1718400
+  },
+  "db_path": "/var/folders/ly/7hlkt4pj6z929zcblnp57lzh0000gn/T/cg_bench_db_7tni31sq/bench.db",
+  "db_size_mb": 37.2,
+  "symbols": 9000,
+  "edges": 42000,
+  "ops": [
+    {
+      "name": "build (total)",
+      "median_ms": 1736.78,
+      "p50_ms": 1736.78,
+      "p95_ms": 1736.78,
+      "p99_ms": 1736.78,
+      "ops_per_sec": 0.58
+    },
+    {
+      "name": "build.insert",
+      "median_ms": 412.48,
+      "p50_ms": 412.48,
+      "p95_ms": 412.48,
+      "p99_ms": 412.48,
+      "ops_per_sec": 2.42
+    },
+    {
+      "name": "build.parse",
+      "median_ms": 255.97,
+      "p50_ms": 255.97,
+      "p95_ms": 255.97,
+      "p99_ms": 255.97,
+      "ops_per_sec": 3.91
+    },
+    {
+      "name": "build.resolve",
+      "median_ms": 645.09,
+      "p50_ms": 645.09,
+      "p95_ms": 645.09,
+      "p99_ms": 645.09,
+      "ops_per_sec": 1.55
+    },
+    {
+      "name": "build.scan",
+      "median_ms": 423.23,
+      "p50_ms": 423.23,
+      "p95_ms": 423.23,
+      "p99_ms": 423.23,
+      "ops_per_sec": 2.36
+    },
+    {
+      "name": "embed_all",
+      "median_ms": 105.71,
+      "p50_ms": 105.71,
+      "p95_ms": 106.54,
+      "p99_ms": 106.61,
+      "ops_per_sec": 9.46
+    },
+    {
+      "name": "build.derived.closure",
+      "median_ms": 25284.88,
+      "p50_ms": 25284.88,
+      "p95_ms": 25284.88,
+      "p99_ms": 25284.88,
+      "ops_per_sec": 0.04
+    },
+    {
+      "name": "find_definition",
+      "median_ms": 0.02,
+      "p50_ms": 0.02,
+      "p95_ms": 0.03,
+      "p99_ms": 0.03,
+      "ops_per_sec": 41595.33
+    },
+    {
+      "name": "search_symbols",
+      "median_ms": 6.21,
+      "p50_ms": 6.21,
+      "p95_ms": 6.25,
+      "p99_ms": 6.25,
+      "ops_per_sec": 161.02
+    },
+    {
+      "name": "get_callers",
+      "median_ms": 0.05,
+      "p50_ms": 0.05,
+      "p95_ms": 0.06,
+      "p99_ms": 0.06,
+      "ops_per_sec": 18882.46
+    },
+    {
+      "name": "get_callees",
+      "median_ms": 0.02,
+      "p50_ms": 0.02,
+      "p95_ms": 0.03,
+      "p99_ms": 0.03,
+      "ops_per_sec": 47904.43
+    },
+    {
+      "name": "impact_analysis",
+      "median_ms": 0.1,
+      "p50_ms": 0.1,
+      "p95_ms": 0.11,
+      "p99_ms": 0.11,
+      "ops_per_sec": 10407.65
+    },
+    {
+      "name": "impact_analysis_wide",
+      "median_ms": 0.89,
+      "p50_ms": 0.89,
+      "p95_ms": 0.89,
+      "p99_ms": 0.89,
+      "ops_per_sec": 1129.62
+    },
+    {
+      "name": "semantic_search",
+      "median_ms": 196.12,
+      "p50_ms": 196.12,
+      "p95_ms": 201.67,
+      "p99_ms": 202.45,
+      "ops_per_sec": 5.1
+    },
+    {
+      "name": "explore",
+      "median_ms": 453.18,
+      "p50_ms": 453.18,
+      "p95_ms": 513.73,
+      "p99_ms": 525.61,
+      "ops_per_sec": 2.21
+    }
+  ],
+  "timestamp": "2026-08-16T06:58:50.216998+00:00",
+  "dataset": {
+    "name": "benchmark-datasource",
+    "version": "DS-v1",
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "identity_size": 300
+  },
+  "cairn_version": "0.11.0",
+  "machine_profile": {
+    "arch": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "runner_class": "reference-local"
+  }
+}

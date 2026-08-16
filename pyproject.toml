@@ -155,6 +155,12 @@ where = ["src"]
 # `core` marks the fast smoke subset (tests/test_core_smoke.py): one focused
 # test per core function across all 5 layers, runnable via `pytest -m core` for
 # a <3s feedback loop. The full suite (no marker) remains the CI path.
+#
+# testpaths pins collection to tests/ : the benchmark datasource vendors a
+# real upstream repo (benchmarks/datasource/t2/) whose own test files are
+# corpus content, not cairn's suite — bare `pytest -q` from the root would
+# collect them and die on import (found by T008's smoke work, 2026-08-16).
+testpaths = ["tests"]
 markers = [
     "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
     "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment),"
