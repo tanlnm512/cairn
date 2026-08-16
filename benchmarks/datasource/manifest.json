@@ -1,4 +1,5 @@
 {
+  "dataset_version": "DS-v1",
   "schema": "cairn-bench-datasource-manifest",
   "t1": {
     "complexity": "medium",

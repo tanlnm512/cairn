@@ -103,6 +103,11 @@ def bench(
         compare_reports,
     )
     from cairn.bench.agent_suite import compare_agent_reports, run_agent_suite
+    from cairn.bench.datasource import build_artifact_stamp
+
+    # FR-004 stamp (D-006): computed once per invocation, applied beside the
+    # timestamp at every payload site below -- never inside to_dict.
+    stamp = build_artifact_stamp()
 
     tmp_root = None
     tmp_db = None  # cg_bench_db_* dir created only by the perf/agent suites
@@ -118,8 +123,11 @@ def bench(
             )
             payload = report.to_dict()
             # Stamp the machine-readable payload so a saved baseline records
-            # when it was measured (consumed by the CI comparison + humans).
+            # when it was measured (consumed by the CI comparison + humans),
+            # and what measured it: dataset identity + cairn version +
+            # machine profile (FR-004).
             payload["timestamp"] = datetime.now(timezone.utc).isoformat()
+            payload.update(stamp)
             if not as_json:
                 report.to_table()
             else:
@@ -153,8 +161,11 @@ def bench(
                 )
             payload = report.to_dict()
             # Stamp the machine-readable payload so a saved baseline records
-            # when it was measured (consumed by the CI comparison + humans).
+            # when it was measured (consumed by the CI comparison + humans),
+            # and what measured it: dataset identity + cairn version +
+            # machine profile (FR-004).
             payload["timestamp"] = datetime.now(timezone.utc).isoformat()
+            payload.update(stamp)
             if not as_json:
                 report.to_table()
             else:

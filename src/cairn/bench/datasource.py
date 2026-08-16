@@ -1,4 +1,5 @@
-"""Datasource manifest helpers: path-order-independent tree hash + JSON I/O.
+"""Datasource manifest helpers: path-order-independent tree hash + JSON I/O,
+plus the bench-artifact stamp (dataset/cairn-version/machine-profile, FR-004).
 
 Why this module exists (FR-001): the T1 benchmark corpus is *regenerated*
 from a seed, not committed, so CI on any runner must be able to prove its
@@ -75,9 +76,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import stat
 from pathlib import Path
+
+from .. import __version__
 
 # Schema tag + version for self-describing manifest artifacts (D-001's
 # doctrine: artifacts carry their own provenance; the tag lets a reader
@@ -302,3 +306,156 @@ def validate_manifest(manifest: object) -> list[str]:
                                 f"integer, got {value!r}"
                             )
     return errors
+
+
+# --- bench-artifact stamp (FR-004, decisions D-005/D-006) -------------------
+#
+# Every `cairn bench` payload (perf / scaling / agent) is stamped at the CLI
+# layer -- beside the existing `payload["timestamp"]` assignment, never inside
+# the reports' ``to_dict`` (D-006: keeps the payload-shape tests and the 14
+# programmatic ``to_dict`` consumers untouched; additive keys are safe for
+# ``.github/scripts/bench_compare.py`` which reads via ``.get``).
+
+# The datasource this repo's benchmarks run against. The name is a stable
+# identifier for the whole benchmarks/datasource/ tree, independent of which
+# T-level section (T1 corpus / T2 snapshot / T3 pins) a run consumed.
+DATASET_NAME = "benchmark-datasource"
+
+# Which manifest entry's tree-hash represents *the dataset identity* in the
+# stamp. D-005 leaves the choice open; the default perf-suite corpus size
+# (300, cli/bench.py --n-files default) is used because it is a pure function
+# of the manifest -- independent of whatever --n-files/--sizes a particular
+# run used, and meaningful even for --workspace runs that bypass the synthetic
+# corpus entirely. A run's actual size is (and stays) the payload's own data;
+# the stamp answers "which pinned dataset does this artifact belong to".
+STAMP_IDENTITY_SIZE = 300
+
+
+def default_manifest_path() -> Path | None:
+    """Locate ``benchmarks/datasource/manifest.json``; None when not found.
+
+    Two candidates, in order: the working directory (how CI and maintainers
+    invoke ``cairn bench`` -- from the repo root) and the source tree the
+    package lives in (covers CliRunner-style isolated cwds and editable
+    installs). A wheel/sdist install has no ``benchmarks/`` directory and
+    correctly degrades to a stamped-but-unpinned dataset block.
+    """
+    candidates = [
+        Path.cwd() / "benchmarks" / "datasource" / "manifest.json",
+        Path(__file__).resolve().parents[3] / "benchmarks" / "datasource" / "manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def runner_class(env: dict[str, str] | None = None) -> str:
+    """Classify where the bench ran: ``reference-local`` or ``ci-<runner>``.
+
+    D-005: maintainer-generated baselines run outside CI and stamp
+    ``reference-local``; anything under GitHub Actions stamps
+    ``ci-<RUNNER_NAME>`` (slugified: the runner name may contain spaces and
+    digits, e.g. ``GitHub Actions 12`` -> ``ci-github-actions-12``). The
+    class is a *label to warn on*, never normalized away.
+    """
+    source = os.environ if env is None else env
+    if source.get("GITHUB_ACTIONS"):
+        name = source.get("RUNNER_NAME") or "github-actions"
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        return f"ci-{slug or 'github-actions'}"
+    return "reference-local"
+
+
+def machine_profile(env: dict[str, str] | None = None) -> dict:
+    """The D-005 machine-profile fields: cheap, honest, warn-don't-normalize.
+
+    ``cpu`` falls back to ``platform.machine()`` because
+    ``platform.processor()`` returns ``""`` on several Linux configurations --
+    an empty stamp field would be indistinguishable from "not collected".
+    """
+    arch = platform.machine()
+    return {
+        "arch": arch,
+        "cpu": platform.processor() or arch,
+        "cpu_count": os.cpu_count(),
+        "os": platform.platform(),
+        "runner_class": runner_class(env),
+    }
+
+
+def _dataset_block(manifest_path: Path | str | None, t3_entry) -> dict:
+    """The ``dataset`` stamp block; degrades with a reason, never raises.
+
+    Degradation contract (T013): a bench run must not crash because the
+    manifest is absent or short a field -- the block carries ``reason`` and
+    nulls instead, so an unstamped-dataset artifact is self-describing about
+    *why*. ``version`` reads the manifest's ``dataset_version`` field via
+    ``.get`` (additive): today's manifest records only the schema ``version``
+    (1) and the T1 pins, so version stamps null-with-reason until a later
+    manifest mints a dataset version (T019 is the next writer).
+    """
+    block: dict = {"name": DATASET_NAME}
+    if t3_entry is not None:
+        block["t3_entry"] = t3_entry
+
+    path = default_manifest_path() if manifest_path is None else Path(manifest_path)
+    if path is None or not path.is_file():
+        block["version"] = None
+        block["reason"] = "manifest missing"
+        return block
+    try:
+        manifest = load_manifest(path)
+    except (OSError, ValueError) as exc:
+        block["version"] = None
+        block["reason"] = f"manifest unreadable: {exc}"
+        return block
+
+    block["version"] = manifest.get("dataset_version")
+    t1 = manifest.get("t1")
+    entries = t1.get("entries", {}) if isinstance(t1, dict) else {}
+    entry = entries.get(str(STAMP_IDENTITY_SIZE))
+    block["tree_hash"] = entry.get("tree_hash") if isinstance(entry, dict) else None
+    block["identity_size"] = STAMP_IDENTITY_SIZE
+    missing = []
+    if block["version"] is None:
+        missing.append("dataset_version")
+    if block["tree_hash"] is None:
+        missing.append(f"tree_hash at identity size {STAMP_IDENTITY_SIZE}")
+    if missing:
+        block["reason"] = "manifest records no " + " and no ".join(missing)
+    return block
+
+
+def build_artifact_stamp(
+    *,
+    manifest_path: Path | str | None = None,
+    env: dict[str, str] | None = None,
+    t3_entry=None,
+) -> dict:
+    """Build the FR-004 stamp for a bench payload: dataset + cairn + machine.
+
+    Called ONCE per CLI invocation (``cairn bench`` computes it up front and
+    applies it beside the timestamp at every payload site -- D-006). All
+    sub-builds degrade instead of raising: a missing manifest yields
+    ``dataset: {name, version: null, reason: "manifest missing"}`` so the
+    bench always completes and the artifact explains its own gaps.
+
+    Args:
+        manifest_path: manifest to read the dataset identity from; None
+            (default) auto-locates it via :func:`default_manifest_path`.
+        env: environment mapping for :func:`runner_class` (tests inject a
+            synthetic one); None reads ``os.environ``.
+        t3_entry: optional T3 manifest pin (name/url/commit dict or its
+            name) recorded in the dataset block when a T3-scale run produced
+            the artifact (T020 wires this); None omits the key.
+
+    Returns:
+        ``{"dataset": {...}, "cairn_version": <cairn.__version__>,
+        "machine_profile": {arch, cpu, cpu_count, os, runner_class}}``.
+    """
+    return {
+        "dataset": _dataset_block(manifest_path, t3_entry),
+        "cairn_version": __version__,
+        "machine_profile": machine_profile(env),
+    }

@@ -162,7 +162,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      exists; `cairn bench --compare --baseline DS-v1` renders the dataset-version
      header + mismatch warning; `pytest tests/test_bench.py
      tests/test_agent_suite.py` green (34 at baseline). -->
-- [ ] T013 [P] (after T004) (in-progress) Stamp every bench artifact at the CLI payload
+- [x] T013 [P] (after T004) Stamp every bench artifact at the CLI payload
       layer (D-006): a stamp step beside `payload["timestamp"] =
       datetime.now(timezone.utc).isoformat()` (`cli/bench.py:122/157`) adding
       `dataset {name, version, tree-hash, t3-entry?}` (read via the T001
@@ -177,6 +177,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       `grep -n "timestamp\|version\|profile\|baseline" src/cairn/cli/bench.py`
       → only timestamp lines + `--save/--compare/--threshold` (survey FR-004)
       (FR-004, TC-006).
+
+      [DONE 2026-08-16: 16 tests; both payload sites stamped via one build_artifact_stamp();
+      to_dict untouched (D-006); dataset_version=DS-v1 minted by orchestrator spine-edit
+      after T013 found the field absent — stamp now carries it]
 - [ ] T014 (after T013) Add `--baseline <DS-version>` resolution to
       `cairn bench --compare` (`cli/bench.py`): resolve
       `benchmarks/baselines/<DS-version>/`, render a dataset-version header,
