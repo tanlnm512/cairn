@@ -63,13 +63,15 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       never from the tree (tech-spec pitfall) (FR-001, TC-001).
       [DONE 2026-08-16: manifest validates clean; re-hash spot check (size 100)
       matches — manifest-is-true; single complexity "medium" per frozen validator]
-- [ ] T003 (after T002) (in-progress) Add `scripts/verify_datasource.py` (assert mode): read
+- [x] T003 (after T002) Add `scripts/verify_datasource.py` (assert mode): read
       the manifest, regenerate the corpus per its recipe (`generate_corpus`,
       `corpus.py:22`) at every declared size into a temp root, assert tree-hash
       AND expected counts; exit 0 on match, non-zero naming the mismatched
       fact (hash/counts); two consecutive runs → identical hash; scratch
       seed-flip → non-zero (FR-001, AC2, TC-002/TC-003/TC-004/TC-005).
-- [ ] T004 (after T003) Wire the T1 check into the CI bench job
+      [DONE 2026-08-16: 14 tests; exit contract 0/1/2 (drift vs schema distinct);
+      fact-level naming per task text — aggregate digest cannot attribute files]
+- [ ] T004 (after T003) (in-progress) Wire the T1 check into the CI bench job
       (`.github/workflows/ci.yml:261-321`): new step running
       `scripts/verify_datasource.py` before the bench run; network-free.
       Verify-before: `grep -n "hash" .github/workflows/ci.yml` → only pip
