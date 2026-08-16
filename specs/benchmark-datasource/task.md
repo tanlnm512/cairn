@@ -240,7 +240,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      occurrences / 15 lines); regenerate twice → `git diff --exit-code
      docs/benchmarks.md` clean; sentinels around all three families; the CI
      docs check fails on a hand edit inside sentinels. -->
-- [ ] T017 (after T016) (in-progress) Add `scripts/gen_benchmark_tables.py` + sentinel
+- [x] T017 (after T016) Add `scripts/gen_benchmark_tables.py` + sentinel
       markers in `docs/benchmarks.md`: wrap the three `_fill_` families
       (retrieval quality :60-61, perf :109-117, scaling :143-146 — 47
       occurrences today) between sentinels; the generator reads committed
@@ -254,7 +254,10 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
       families unfilled; no sentinel markers; no table generator".
       Verify-before: `grep -c "_fill_" docs/benchmarks.md` → 15 lines /
       47 occurrences (survey FR-005) (FR-005, AC6, TC-024..TC-026/TC-028).
-- [ ] T018 (after T017) Add the CI docs hand-edit check: bench-job step that
+      [DONE 2026-08-16: _fill_ 47 -> 0; byte-idempotent double-regen (sha-stable);
+      provenance lines cite DS-v1/reference-local/mint date; 14 tests; stale
+      hand-owned prose refreshed by orchestrator (template headings, 0.0 note)]
+- [ ] T018 [P] (after T017) Add the CI docs hand-edit check: bench-job step that
       runs `scripts/gen_benchmark_tables.py` and fails on `git diff
       --exit-code docs/benchmarks.md` (same spirit as
       `scripts/verify_no_code_change.py`); verified by a temporary local edit
@@ -265,7 +268,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
      ≥ 2, each entry with url + commit; the documented local command for one
      entry fetches by pin and its result JSON records the manifest entry;
      `grep -rn "t3\|fetch" .github/workflows/ci.yml` shows no T3 fetch step. -->
-- [ ] T019 (after T018) Add the T3 section to
+- [ ] T019 [P] (after T018) Add the T3 section to
       `benchmarks/datasource/manifest.json`: ≥ 2 entries `{name, url, commit,
       scale hint}` at distinct scale points (20k-file class), extending the
       T002 schema; second and final writer of the serial-spine file (plan

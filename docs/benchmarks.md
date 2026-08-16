@@ -7,10 +7,12 @@ each one measures, **how** to run it, and the methodology for the
 resolution-label comparison that distinguishes cairn from name-only
 ("fuzzy") code graphs.
 
-> **Status:** the harnesses are checked in and self-running; the number tables
-> below are intentionally left as placeholders for you to fill with results
-> from your own hardware and corpus. Matching numbers across machines is
-> misleading — run them in your environment.
+> **Status:** the reference tables below are GENERATED from the committed
+> DS-v1 baseline artifacts (benchmarks/baselines/DS-v1/) between sentinel
+> markers — never hand-edited; regenerate with
+> `uv run python scripts/gen_benchmark_tables.py`. Matching numbers across
+> machines is misleading; these cite their dataset version, machine class,
+> and mint date in the provenance line under each table.
 
 ## Quick reference
 
@@ -53,19 +55,23 @@ back to `search_symbols` (FTS5 + BM25) if embeddings are empty or it throws.
 `eval_l5_query` uses the OKF bundle search. The fallback path means `cairn eval`
 works on a default (no-torch) install — it just exercises the lexical pipeline.
 
-**Results template:**
+**Results (generated from DS-v1):**
 
-| corpus | samples | recall@10 | mrr |
-|--------|---------|-----------|-----|
-| L1     | 30      | _fill_    | _fill_ |
-| L5     | 10      | _fill_    | _fill_ |
+<!-- cairn-bench-tables:quality start -->
+| corpus | samples | recall@10 | mrr    |
+|--------|---------|-----------|--------|
+| L1     | 58      | 0.4174    | 0.2862 |
+| L5 †   | 24      | 0.0000    | 0.0000 |
 
-> **Measured on cairn's own repo (Python, 2026-08):** L1 recall@10 = 0.0,
-> L5 recall@10 = 0.0. This is an honest finding, not a quality regression:
-> the query set in `tests/eval/queries.yaml` targets generic codebase shapes,
-> not cairn's specific symbol names, so no expected fragment matches. It
-> measures the query set's fit to the corpus, not retrieval quality. A
-> corpus-tuned query set is future work. See
+> 58 L1 queries / 160 expectations; 24 L5 queries / 74 expectations — graded pair (benchmarks/datasource/t2/ground_truth), identity-first matcher.
+> † L5 surface absent for DS-v1: none (no OKF knowledge bundle for the t2 snapshot) — scores are 0.0 by construction, not retrieval failures.
+> Source: DS-v1 baseline (benchmarks/baselines/DS-v1/quality.json) — runner class reference-local (macOS-26.5.2-arm64-arm-64bit, arm64, 10 CPUs), minted 2026-08-16, cairn 0.11.0, embed local / BAAI/bge-m3.
+<!-- cairn-bench-tables:quality end -->
+
+> **Historical note:** the pre-DS-v1 era (2026-08, generic queries.yaml set)
+> reported recall@10 = 0.0 — the set targeted generic codebase shapes, not
+> the corpus's symbols. DS-v1's hand-verified ground truth replaced that
+> surface; the first real numbers are the L1 row above. See
 > [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) for the
 > measurement that *does* characterize cairn's differentiator (the 82%
 > precise-vs-fuzzy false-positive rate on common names).
@@ -102,19 +108,27 @@ cairn bench --suite perf --compare base.json --threshold 0.10   # tighten to 10%
 > by more than `--threshold` (default 15%) versus the baseline. Wire it into CI
 > to catch performance regressions on PRs.
 
-**Results template:**
+**Results (generated from DS-v1):**
 
-| operation         | median (ms) | p95 (ms) | ops/sec |
-|-------------------|-------------|----------|---------|
-| build (total)     | _fill_      | —        | —       |
-| build.parse       | _fill_      | —        | —       |
-| build.resolve     | _fill_      | —        | —       |
-| embed_all         | _fill_      | —        | —       |
-| find_definition   | _fill_      | _fill_   | _fill_  |
-| search_symbols    | _fill_      | _fill_   | _fill_  |
-| get_callers       | _fill_      | _fill_   | _fill_  |
-| get_callees       | _fill_      | _fill_   | _fill_  |
-| impact_analysis   | _fill_      | _fill_   | _fill_  |
+<!-- cairn-bench-tables:perf start -->
+| operation             | median (ms) | p95 (ms) | ops/sec  |
+|-----------------------|-------------|----------|----------|
+| build (total)         | 1736.78     | 1736.78  | 0.58     |
+| build.derived.closure | 25284.88    | 25284.88 | 0.04     |
+| build.insert          | 412.48      | 412.48   | 2.42     |
+| build.parse           | 255.97      | 255.97   | 3.91     |
+| build.resolve         | 645.09      | 645.09   | 1.55     |
+| build.scan            | 423.23      | 423.23   | 2.36     |
+| embed_all             | 105.71      | 106.54   | 9.46     |
+| explore               | 453.18      | 513.73   | 2.21     |
+| find_definition       | 0.02        | 0.03     | 41595.33 |
+| get_callees           | 0.02        | 0.03     | 47904.43 |
+| get_callers           | 0.05        | 0.06     | 18882.46 |
+| impact_analysis       | 0.10        | 0.11     | 10407.65 |
+| impact_analysis_wide  | 0.89        | 0.89     | 1129.62  |
+| search_symbols        | 6.21        | 6.25     | 161.02   |
+| semantic_search       | 196.12      | 201.67   | 5.10     |
+<!-- cairn-bench-tables:perf end -->
 
 ---
 
@@ -136,14 +150,16 @@ cairn bench --suite scaling --sizes 100,1000,10000
 cairn bench --suite scaling --json
 ```
 
-**Results template:**
+**Results (generated from DS-v1):**
 
-| files | symbols | build (s) | embed (s) | DB MB | resolve | peak MB |
-|-------|---------|-----------|-----------|-------|---------|---------|
-| 100   | _fill_  | _fill_    | _fill_    | _fill_ | _fill_  | _fill_  |
-| 500   | _fill_  | _fill_    | _fill_    | _fill_ | _fill_  | _fill_  |
-| 1000  | _fill_  | _fill_    | _fill_    | _fill_ | _fill_  | _fill_  |
-| 5000  | _fill_  | _fill_    | _fill_    | _fill_ | _fill_  | _fill_  |
+<!-- cairn-bench-tables:scaling start -->
+| files | symbols | build (s) | embed (s) | DB MB  | resolve | peak MB |
+|-------|---------|-----------|-----------|--------|---------|---------|
+| 100   | 3000    | 1.807     | 1.033     | 12.56  | 1.000   | 12.43   |
+| 500   | 15000   | 7.703     | 5.149     | 61.88  | 1.000   | 59.33   |
+| 1000  | 30000   | 17.808    | 10.327    | 123.63 | 1.000   | 118.38  |
+| 5000  | 150000  | 475.929   | 51.555    | 618.92 | 1.000   | 591.20  |
+<!-- cairn-bench-tables:scaling end -->
 
 ---
 
