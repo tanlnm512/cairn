@@ -327,12 +327,16 @@ class RetrievalParams:
       per-call ``rerank`` arg: ``None`` = auto (env-gated plus the
       confidence gate), ``True`` = force past the gate (``CAIRN_RERANK=0``
       still wins), ``False`` = never.
-    * ``enrich`` — query enrichment (FR-001): as of T008 the SPARSE leg
-      reads this flag — ``True`` routes the BM25 fetch through
-      ``query_enrich.enrich(query).sparse_query`` as an OR-of-prefix term
-      query (``lexical.search_symbols_terms``) instead of the raw query,
-      fixing the empty-BM25 defect for sentence queries. The dense leg
-      and the confidence-gate interplay land with T009. ``None``/``False``
+    * ``enrich`` — query enrichment (FR-001): ``True`` computes
+      ``query_enrich.enrich(query)`` ONCE at the ``semantic_search``
+      boundary and feeds BOTH legs from that single object — the one
+      ``embed_query`` call embeds ``dense_query`` (the original text with
+      each extracted identifier appended once; T009), and the BM25 fetch
+      consumes ``sparse_query`` as an OR-of-prefix term query
+      (``lexical.search_symbols_terms``; T008) instead of the raw query,
+      fixing the empty-BM25 defect for sentence queries. The confidence
+      gate's ``_exact_name_hit`` corroboration still sees the RAW query —
+      gate inputs shift only through the fused ranking. ``None``/``False``
       keeps today's exact behavior (the flag is carried, not defaulted on).
     * ``gate_min_margin`` — rerank confidence-gate margin override
       (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
@@ -404,9 +408,12 @@ def semantic_search(
     cutoff, rerank/gate overrides). ``params=None`` -- and every ``None`` field of a passed
     object -- preserves today's exact behavior; the eval/sweep path injects
     combinations through this object rather than mutating the environment.
-    ``params.enrich=True`` (T008) additionally routes the sparse (BM25)
-    fetch through query enrichment's term mode; the dense leg follows with
-    T009. Flags the function still does not know are ignored, never errors.
+    ``params.enrich=True`` (T008/T009) computes query enrichment ONCE at
+    this boundary and feeds both legs from it: the single ``embed_query``
+    call embeds the enriched ``dense_query`` (original + identifiers), and
+    the sparse (BM25) fetch goes through enrichment's term mode. The
+    confidence gate and the rerank stage keep seeing the raw query. Flags
+    the function still does not know are ignored, never errors.
 
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
     model, the candidate pool comes from a native ANN query instead of the
@@ -530,8 +537,26 @@ def semantic_search(
         # Explicit override of the computed pool size (both branches).
         pool_size = params.rerank_pool
 
+    # T009 (FR-001, D-001): query enrichment at the semantic_search boundary
+    # ONLY, computed ONCE per call whenever params.enrich is truthy and fed
+    # to BOTH retrieval legs from that single object -- the one embed_query
+    # call below embeds `dense_query` (the original text with each extracted
+    # identifier appended once, per EnrichedQuery's contract), and the
+    # sparse leg's term fetch reads the SAME object's sparse_query.
+    # embeddings.embed_query itself stays untouched: the memory layer shares
+    # it (promotion.py) and must keep receiving raw queries. Everything
+    # downstream of the embedding keeps the RAW `query` -- the confidence
+    # gate's _exact_name_hit corroboration and the rerank pair -- so gate
+    # inputs shift only through the fused ranking itself (T018's
+    # measurement). enrich() is a pure regex function, so evaluating it even
+    # on paths that never reach a leg (e.g. the no-rows early return) is
+    # harmless; with enrich off/None _enriched stays None and both legs see
+    # the raw query exactly as today.
+    _enriched = enrich_query(query) if (params is not None and params.enrich) else None
+    _dense_query = _enriched.dense_query if _enriched is not None else query
+
     model = emb.current_model()
-    q_blob, q_dim = emb.embed_query(query)
+    q_blob, q_dim = emb.embed_query(_dense_query)
 
     candidates = None
     ann_enabled = ann.ann_backend_enabled()
@@ -609,19 +634,19 @@ def semantic_search(
             if params is not None and params.sparse_limit is not None:
                 sparse_limit = params.sparse_limit
             # T008 (FR-001) term-mode sparse fetch: with params.enrich on,
-            # the enrichment's stopword-trimmed term list feeds
-            # search_symbols_terms, whose OR-of-quoted-prefix MATCH lets
-            # BM25 rank symbols whose indexed tokens begin with ANY term.
-            # The raw sentence through search_symbols would fold into ONE
-            # quoted FTS phrase (_pattern_to_fts) that matches no symbol
-            # name -- the empty-BM25 defect. Empty sparse_query ("every
-            # token was a stopword") keeps the raw-query call per the
-            # EnrichedQuery contract. The dense leg and the gate interplay
-            # are T009's; with enrich off/None the fetch below is
+            # the stopword-trimmed term list of the ONE EnrichedQuery
+            # computed above feeds search_symbols_terms, whose
+            # OR-of-quoted-prefix MATCH lets BM25 rank symbols whose
+            # indexed tokens begin with ANY term. The raw sentence through
+            # search_symbols would fold into ONE quoted FTS phrase
+            # (_pattern_to_fts) that matches no symbol name -- the
+            # empty-BM25 defect. Empty sparse_query ("every token was a
+            # stopword") keeps the raw-query call per the EnrichedQuery
+            # contract. With enrich off/None the fetch below is
             # byte-identical to today's.
-            sparse_terms: List[str] = []
-            if params is not None and params.enrich:
-                sparse_terms = enrich_query(query).sparse_query.split()
+            sparse_terms: List[str] = (
+                _enriched.sparse_query.split() if _enriched is not None else []
+            )
             if sparse_terms:
                 bm25_raw = [
                     dict(r)

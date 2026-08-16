@@ -703,6 +703,311 @@ class TestEnrichSparseLeg:
 
 
 # ---------------------------------------------------------------------------
+# The T009 lever: enrich -- dense-leg wiring at the search boundary (FR-001)
+#
+# The ONE EnrichedQuery computed inside semantic_search feeds BOTH legs from
+# a single enrichment: the existing single embed_query call embeds
+# ``dense_query`` (original + identifiers) when the flag is on and the raw
+# query when it is not; the sparse fetch consumes the SAME object's
+# ``sparse_query``; and the confidence gate's ``_exact_name_hit``
+# corroboration keeps the RAW query (gate inputs shift only through the
+# fused ranking -- T018's measurement problem).
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichDenseLeg:
+    SENTENCE = "what handles `parseUnencodedURL` when building the outgoing request"
+    IDENTIFIERS = ("parseUnencodedURL", "parse", "Unencoded", "URL")
+
+    @staticmethod
+    def _install_embed_spy(monkeypatch):
+        """Spy on embeddings.embed_query (the module attribute semantic.py's
+        lazy ``emb`` import resolves at call time), wrapping the real hash
+        embedder so results stay live."""
+        from cairn.graph import embeddings as emb_mod
+
+        calls = []
+        real = emb_mod.embed_query
+
+        def spy(text):
+            calls.append(text)
+            return real(text)
+
+        monkeypatch.setattr(emb_mod, "embed_query", spy)
+        return calls
+
+    def test_embed_query_receives_dense_query_under_the_flag(
+        self, monkeypatch, seeded_db
+    ):
+        """The dense leg's input under enrich=True is EnrichedQuery's
+        dense_query in T007's exact format: the original sentence as prefix,
+        each extracted identifier appended once, space-joined."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        calls = self._install_embed_spy(monkeypatch)
+        semantic_search(
+            seeded_db, self.SENTENCE, limit=10, params=RetrievalParams(enrich=True)
+        )
+        assert len(calls) == 1
+        expected = f"{self.SENTENCE} {' '.join(self.IDENTIFIERS)}"
+        assert calls[0] == expected
+        # The never-loses-information invariant: original text is a prefix.
+        assert calls[0].startswith(self.SENTENCE)
+
+    @pytest.mark.parametrize(
+        "params",
+        [None, "empty-object", "explicit-false"],
+        ids=["no-params", "all-none-object", "enrich-false"],
+    )
+    def test_embed_query_receives_the_raw_query_without_the_flag(
+        self, monkeypatch, seeded_db, params
+    ):
+        """Off-mode equivalence at the embed boundary: enrich=None inside an
+        otherwise-empty object, explicit enrich=False, and no params at all
+        all hand embed_query the RAW query."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        if params == "empty-object":
+            params = RetrievalParams()
+        elif params == "explicit-false":
+            params = RetrievalParams(enrich=False)
+        calls = self._install_embed_spy(monkeypatch)
+        semantic_search(seeded_db, self.SENTENCE, limit=10, params=params)
+        assert calls == [self.SENTENCE]
+
+    def test_exactly_one_embed_call_per_search_in_both_modes(
+        self, monkeypatch, seeded_db
+    ):
+        """The latency doctrine, spy-proven: embedding happens exactly once
+        per search regardless of the enrich flag -- enrichment rewrites the
+        call's argument, it never adds a second call."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        calls = self._install_embed_spy(monkeypatch)
+        semantic_search(seeded_db, self.SENTENCE, limit=10)
+        semantic_search(
+            seeded_db,
+            self.SENTENCE,
+            limit=10,
+            params=RetrievalParams(enrich=True),
+        )
+        assert len(calls) == 2  # one per search, both modes
+        assert [c == self.SENTENCE for c in calls] == [True, False]
+
+    def test_enrich_computed_exactly_once_per_search(self, monkeypatch, seeded_db):
+        """One-enrichment-per-search: the module-level enrich reference
+        semantic.py calls is invoked exactly once under the flag and never
+        without it (both legs must share the single EnrichedQuery)."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        calls = []
+        real = semantic_mod.enrich_query
+
+        def spy(query):
+            calls.append(query)
+            return real(query)
+
+        monkeypatch.setattr(semantic_mod, "enrich_query", spy)
+        semantic_search(
+            seeded_db, self.SENTENCE, limit=10, params=RetrievalParams(enrich=True)
+        )
+        assert calls == [self.SENTENCE]
+        calls.clear()
+        semantic_search(seeded_db, self.SENTENCE, limit=10)
+        semantic_search(
+            seeded_db,
+            self.SENTENCE,
+            limit=10,
+            params=RetrievalParams(enrich=False),
+        )
+        assert calls == []
+
+    def test_both_legs_consume_the_one_shared_enrichment(
+        self, monkeypatch, seeded_db
+    ):
+        """Cross-leg consistency: in ONE enriched search the argument
+        embed_query received and the terms the sparse fetch received both
+        derive from the SAME enrich() invocation (one call, coherent
+        dense_query/sparse_query pair)."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.query_enrich import enrich
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        enrich_calls = []
+        real_enrich = semantic_mod.enrich_query
+
+        def enrich_spy(query):
+            enrich_calls.append(query)
+            return real_enrich(query)
+
+        term_calls = []
+        real_terms = semantic_mod.search_symbols_terms
+
+        def terms_spy(conn, terms, kind=None, limit=100):
+            term_calls.append(list(terms))
+            return real_terms(conn, terms, kind=kind, limit=limit)
+
+        embed_calls = self._install_embed_spy(monkeypatch)
+        monkeypatch.setattr(semantic_mod, "enrich_query", enrich_spy)
+        monkeypatch.setattr(semantic_mod, "search_symbols_terms", terms_spy)
+
+        semantic_search(
+            seeded_db, self.SENTENCE, limit=10, params=RetrievalParams(enrich=True)
+        )
+        assert len(enrich_calls) == 1
+        expected = enrich(self.SENTENCE)
+        assert embed_calls == [expected.dense_query]
+        assert term_calls == [expected.sparse_query.split()]
+
+    def test_off_mode_results_are_byte_identical(self, url_db):
+        """Off-mode equivalence end to end: for the identifier-bearing
+        sentence (the strictest case -- enrichment WOULD rewrite both legs)
+        no params, an all-None object, and enrich=False return byte-identical
+        result lists."""
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        plain = semantic_search(url_db, self.SENTENCE, limit=10)
+        empty_obj = semantic_search(
+            url_db, self.SENTENCE, limit=10, params=RetrievalParams()
+        )
+        off = semantic_search(
+            url_db,
+            self.SENTENCE,
+            limit=10,
+            params=RetrievalParams(enrich=False),
+        )
+        assert empty_obj == plain
+        assert off == plain
+
+    def test_confidence_gate_keeps_the_raw_query(self, armed_gate, monkeypatch):
+        """T018's contract pinned now: under enrich=True the gate's
+        ``_fused_confident`` (and through it ``_exact_name_hit``) still
+        receives the RAW user query -- enrichment must not leak into the
+        gate's inputs, only into the fused ranking it measures."""
+        from cairn.graph import semantic as semantic_mod
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+
+        gate_queries = []
+
+        def gate_spy(query, candidates, limit, min_margin=None):
+            gate_queries.append(query)
+            return False  # force the rerank stage to run so its query is visible too
+
+        monkeypatch.setattr(semantic_mod, "_fused_confident", gate_spy)
+        conn, rec = armed_gate
+        # safeApiCall is itself identifier-shaped: enrich() rewrites the
+        # DENSE input to "safeApiCall safe Api Call" -- the gate must not see that.
+        semantic_search(
+            conn,
+            "safeApiCall",
+            limit=5,
+            params=RetrievalParams(dense_threshold=0.0, enrich=True),
+        )
+        assert gate_queries == ["safeApiCall"]
+        # The rerank pair keeps the raw query too (changing it is T016's task).
+        assert rec.calls[0]["query"] == "safeApiCall"
+
+
+def _seed_url_fixture(conn) -> None:
+    """T009's end-to-end corpus: the identifier-bearing sentence's target
+    (``parseUnencodedURL``) plus a prose decoy (``buildOutgoingRequest``).
+    All figures below are PROBED under the hash backend, not guessed:
+
+    * raw sentence vs the target's chunk: cosine 0.0348 -- below the 0.3
+      default, so the dense leg alone misses; and the sentence through
+      today's ``search_symbols`` folds into one quoted FTS phrase that
+      matches no symbol (the empty-BM25 defect), so PLAIN mode returns
+      only the decoy.
+    * enriched ``dense_query`` vs the target's chunk: cosine 0.2055 -- the
+      appended ``parse``/``URL`` sub-tokens overlap the docstring
+      ``"Parse URL."``, a genuine ~6x cosine gain (what subword overlap
+      gives a real embedder); still sub-threshold under token-hash
+      vectors, so the target ENTERS through the enriched sparse leg
+      (provenance ``bm25``) -- the task's sanctioned proof level.
+    * decoy: 0.3503 raw (a plain-mode dense hit), 0.2796 enriched -- the
+      appended identifier tail dilutes a chunk it does not overlap; honest
+      evidence that enrichment is a ranked trade, not a free win.
+    """
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/src/Net.kt', 'kotlin')"
+    )
+    rows = [
+        (1, "parseUnencodedURL", "net.parseUnencodedURL", "Parse URL."),
+        (2, "buildOutgoingRequest", "net.buildOutgoingRequest", "Builds the outgoing request."),
+    ]
+    for sid, name, qual, doc in rows:
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, line_start, line_end) "
+            "VALUES (?, 1, ?, 'function', ?, ?, 1, 10)",
+            (sid, name, qual, doc),
+        )
+    conn.commit()
+
+
+@pytest.fixture()
+def url_db(fresh_db):
+    """The URL fixture, embedded with the deterministic hash backend."""
+    from cairn.graph import embeddings as emb
+
+    _seed_url_fixture(fresh_db)
+    emb.embed_all(fresh_db)
+    return fresh_db
+
+
+class TestEnrichDenseLegEndToEnd:
+    """The full boundary behavior on an honest seeded fixture: an
+    identifier-bearing sentence query finds its symbol under enrich=True
+    on a corpus where the dense leg alone misses it without enrichment."""
+
+    def test_identifier_sentence_finds_its_symbol_only_under_enrich(self, url_db):
+        from cairn.graph import embeddings as emb
+        from cairn.graph.query_enrich import enrich
+        from cairn.graph.semantic import RetrievalParams, semantic_search
+        from cairn.retrieval import cosine_scan
+
+        sentence = TestEnrichDenseLeg.SENTENCE
+        plain = semantic_search(url_db, sentence, limit=10)
+        plain_names = [r["name"] for r in plain]
+        # Without enrichment the target is MISSED: dense cosine 0.0348 <
+        # 0.3, and the sentence's quoted FTS phrase matches nothing (the
+        # empty-BM25 defect) -- plain mode returns only the decoy.
+        assert plain_names == ["buildOutgoingRequest"]
+        assert "parseUnencodedURL" not in plain_names
+
+        hit = semantic_search(
+            url_db, sentence, limit=10, params=RetrievalParams(enrich=True)
+        )
+        hit_names = [r["name"] for r in hit]
+        assert hit_names[0] == "parseUnencodedURL"
+        # How it entered: the enriched sparse leg (BM25-only candidates
+        # bypass the dense threshold); the dense gain below is real but
+        # sub-threshold under token-hash vectors.
+        assert hit[0]["provenance"] == "bm25"
+
+        # The dense leg genuinely improved at the embed_query-argument
+        # level: embedding the enriched dense_query lifts the target's
+        # cosine ~6x over the raw query's (probed figures pinned exactly).
+        eq = enrich(sentence)
+        triples = [
+            (r["vec"], r["dim"], dict(r))
+            for r in url_db.execute(
+                "SELECT e.symbol_id, e.vec, e.dim, s.name FROM embeddings e "
+                "JOIN symbols s ON e.symbol_id = s.id"
+            )
+        ]
+        target = [t for t in triples if t[2]["name"] == "parseUnencodedURL"]
+        raw_blob, raw_dim = emb.embed_query(sentence)
+        enr_blob, enr_dim = emb.embed_query(eq.dense_query)
+        raw_cos = cosine_scan(raw_blob, raw_dim, target, -1.0)[0][0]
+        enr_cos = cosine_scan(enr_blob, enr_dim, target, -1.0)[0][0]
+        assert round(raw_cos, 4) == 0.0348
+        assert round(enr_cos, 4) == 0.2055
+        assert enr_cos > raw_cos
+
+
+# ---------------------------------------------------------------------------
 # Rerank / gate knobs (recorder proves the stage ran or was skipped)
 # ---------------------------------------------------------------------------
 
