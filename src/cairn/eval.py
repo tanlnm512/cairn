@@ -11,6 +11,17 @@ with identity-first matching and grade-aware scoring. ``split_queries``
 for held-out lever selection; ``evaluate_on`` (FR-006, TC-019) is the guarded
 evaluation seam that enforces it, and ``paired_bootstrap`` (D-006) is the
 accept gate any lever must pass on the validate split.
+
+The sweep harness (FR-005, D-007, T004) sits on top of that seam:
+``run_sweep`` enumerates lever combinations (each an injected
+``RetrievalParams``), evaluates every combo on the tune split only —
+held-out enforcement is inherited from the seam, not re-implemented — and
+emits the machine-readable multi-row results table in its own schema
+(``cairn-quality-sweep/1``). ``evaluate_full_set`` is the post-selection
+reporting path (the full set, no split) behind the integrity row and final
+numbers. Neither opens a write path anywhere (TC-025): the ground-truth
+files are only ever read, and serializing the table is the caller's job
+(``format_sweep_json`` gives the canonical bytes).
 """
 from __future__ import annotations
 
@@ -19,17 +30,20 @@ import logging
 import math
 import random
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     Iterable,
     List,
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -373,6 +387,8 @@ def evaluate_on(
     k: int = 10,
     n_resamples: int = 10000,
     seed: int = DEFAULT_BOOTSTRAP_SEED,
+    params: Optional["RetrievalParams"] = None,
+    timer: Callable[[], float] = time.perf_counter,
 ) -> Dict[str, Any]:
     """Evaluate the queries named in ``ids`` under held-out discipline.
 
@@ -403,11 +419,20 @@ def evaluate_on(
       constructible call.
 
     Returns a report with ``purpose``, ``n_queries``, ``recall_at_10``,
-    ``mrr``, and ``per_query`` (``{qid: {"recall_at_10", "mrr"}}`` — the
-    candidate per-query arrays future validate runs pair against). In
-    validate mode the report additionally carries ``metric``,
-    ``baseline_mean``, and ``bootstrap`` (the full
-    :func:`paired_bootstrap` verdict).
+    ``mrr``, ``per_query`` (``{qid: {"recall_at_10", "mrr"}}`` — the
+    candidate per-query arrays future validate runs pair against), and
+    ``durations_ms`` (``{qid: wall-clock milliseconds}`` — per-query
+    retrieval wall time, the input the sweep harness percentiles into its
+    ``p95_ms`` column; raw floats, never rounded here). In validate mode the
+    report additionally carries ``metric``, ``baseline_mean``, and
+    ``bootstrap`` (the full :func:`paired_bootstrap` verdict).
+
+    ``params`` (D-008, FR-005) threads through to every
+    ``evaluate_graded_query`` retrieval call — the injection channel the
+    sweep harness uses; ``None`` (and every ``None`` field) preserves
+    today's retrieval behavior exactly. ``timer`` is the wall-clock source
+    for ``durations_ms`` (injectable so deterministic tests can pin the
+    timing column; ``time.perf_counter`` in production).
 
     ``ValueError`` is raised for malformed calls (unknown purpose/metric,
     empty or unknown ids, selection without ``held_out_ids``, validate
@@ -462,9 +487,12 @@ def evaluate_on(
 
     # --- Evaluate (only reachable with a legal id set for the mode). -----
     per_query: Dict[str, Dict[str, float]] = {}
+    durations_ms: Dict[str, float] = {}
     for qid in id_list:
         graded = by_id[qid]
-        rec, rr = evaluate_graded_query(conn, bundle_root, graded, k=k)
+        started = timer()
+        rec, rr = evaluate_graded_query(conn, bundle_root, graded, k=k, params=params)
+        durations_ms[qid] = (timer() - started) * 1000.0
         per_query[qid] = {"recall_at_10": rec, "mrr": rr}
 
     report: Dict[str, Any] = {
@@ -473,6 +501,7 @@ def evaluate_on(
         "recall_at_10": round(sum(p["recall_at_10"] for p in per_query.values()) / len(id_list), 4),
         "mrr": round(sum(p["mrr"] for p in per_query.values()) / len(id_list), 4),
         "per_query": per_query,
+        "durations_ms": durations_ms,
     }
     if purpose == "selection":
         return report
@@ -716,6 +745,290 @@ def _betacf(a: float, b: float, x: float, max_iter: int = 300, eps: float = 3e-1
         if abs(delta - 1.0) < eps:
             break
     return h
+
+
+# --------------------------------------------------------------------------
+# Sweep harness core (FR-005, D-007, T004)
+#
+# Enumerates lever combinations and evaluates each on the TUNE split only,
+# through the guarded evaluate_on seam — held-out discipline is inherited
+# from the seam (purpose="selection" + held_out_ids=validate), never
+# re-implemented here. The results table is a separate artifact shape from
+# quality.json (D-007): ``cairn-quality-sweep/1``, destined for
+# benchmarks/quality/ablation.json (AC1) — committing it is T024's job;
+# this module only RETURNS the table (no write path anywhere, TC-025).
+# --------------------------------------------------------------------------
+
+#: Schema tag of the sweep results table (D-007: own artifact shape, never
+#: inside quality.json's exact-key contract).
+SWEEP_SCHEMA = "cairn-quality-sweep/1"
+
+#: Row name of the implicit all-levers-off combo — ``params=None``, today's
+#: retrieval exactly. This is the integrity row T006 re-measures against
+#: DS-v1 (full-set recall@10 0.4174 / MRR 0.2862).
+ALL_LEVERS_OFF = "all-levers-off"
+
+
+def _normalize_combos(
+    combos: Iterable[Any],
+) -> List[Tuple[str, Optional["RetrievalParams"]]]:
+    """Validate and freeze the sweep grid into ``(name, params)`` pairs.
+
+    Each combo is a mapping ``{"name": str, "params": RetrievalParams | None}``
+    (``params`` may be omitted — omitted means ``None`` means today's
+    defaults). Raises ``ValueError`` on a non-mapping combo, a missing or
+    blank name, a ``params`` that is neither ``None`` nor a
+    ``RetrievalParams`` instance, or a duplicate name (rows are keyed by
+    name; a duplicate would silently overwrite results downstream).
+    """
+    from cairn.graph.semantic import RetrievalParams  # lazy: keeps import light
+
+    normalized: List[Tuple[str, Optional["RetrievalParams"]]] = []
+    seen: Set[str] = set()
+    for index, combo in enumerate(combos):
+        if not isinstance(combo, Mapping):
+            raise ValueError(
+                f"combo #{index} must be a mapping "
+                f"{{'name': str, 'params': RetrievalParams | None}}, "
+                f"got {type(combo).__name__}"
+            )
+        name = combo.get("name")
+        params = combo.get("params", None)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"combo #{index} needs a non-empty string 'name', got {name!r}"
+            )
+        if params is not None and not isinstance(params, RetrievalParams):
+            raise ValueError(
+                f"combo {name!r}: 'params' must be a RetrievalParams instance "
+                f"or None, got {type(params).__name__}"
+            )
+        if name in seen:
+            raise ValueError(
+                f"duplicate combo name {name!r}: sweep rows are keyed by name"
+            )
+        seen.add(name)
+        normalized.append((name, params))
+    return normalized
+
+
+def run_sweep(
+    conn: sqlite3.Connection,
+    queries: Iterable[Any],
+    *,
+    combos: Sequence[Mapping[str, Any]],
+    split_seed: int = DEFAULT_SPLIT_SEED,
+    ids: Optional[Iterable[str]] = None,
+    baseline: Optional[str] = None,
+    metric: str = "recall_at_10",
+    dataset_name: str = "ground-truth",
+    dataset_version: str = "1",
+    bundle_root: Optional[str] = None,
+    k: int = 10,
+    timer: Callable[[], float] = time.perf_counter,
+) -> Dict[str, Any]:
+    """Run every lever combination on the tune split; return the D-007 table.
+
+    This is the library core (T005's CLI is a thin consumer). For each combo
+    ``{"name": ..., "params": RetrievalParams | None}`` the harness calls the
+    guarded seam — ``evaluate_on(ids=..., purpose="selection",
+    held_out_ids=validate)`` — so held-out enforcement is the seam's, not a
+    copy of it: any requested id that intersects the validate half raises
+    :class:`HeldOutError` *before any retrieval runs* (FR-006, TC-019).
+
+    Query-subset selection (the FR-005 gap: ``corpus_filter`` selects level
+    only, ``load_ground_truth`` full-loads) lives in the seam's ``ids=``
+    parameter: by default the harness selects the tune half of
+    ``split_queries(queries, seed=split_seed)``; pass ``ids=`` explicitly for
+    a narrower tune-side subset (still guarded — validate intersection
+    raises). ``queries`` is the loaded ground truth (``load_ground_truth``
+    output); a generator is fine, it is materialized once.
+
+    Rows carry ``{combo, recall_at_10, mrr, p95_ms, n_queries}`` where
+    ``p95_ms`` is the 95th-percentile per-query retrieval wall time measured
+    by the seam (``timer`` injectable for deterministic tests). The implicit
+    **all-levers-off** row (``params=None``, named :data:`ALL_LEVERS_OFF`) is
+    prepended FIRST whenever the caller's grid carries no ``params=None``
+    combo of its own — the integrity row T006 depends on; an explicit
+    ``params=None`` combo suppresses the implicit one (never evaluated
+    twice).
+
+    Returns the D-007 document::
+
+        {"schema": "cairn-quality-sweep/1",
+         "dataset": {"name", "version", "split_seed", "split", "metric",
+                     "n_queries"},
+         "rows": [...],
+         "baseline": {"combo", "metric", "per_query"}}
+
+    ``baseline`` selects the incumbent combo by name (default: the
+    all-levers-off row) — the emitted ``per_query`` map carries its
+    selection-metric values keyed by query id, exactly what a downstream
+    ``evaluate_on(purpose="validate", baseline_metrics=...)`` run pairs
+    against (T011/T012 flow). All metrics are rounded to 4 decimals
+    deterministically.
+
+    Read-only by construction (TC-025): the harness opens no write path —
+    the ground-truth files behind ``queries`` are only ever read, no file is
+    created, and the only database statements issued are retrieval reads.
+    Serializing (and committing to ``benchmarks/quality/ablation.json``) is
+    the caller's job — :func:`format_sweep_json` gives the canonical bytes.
+
+    ``ValueError`` is raised for an unknown metric, malformed or
+    duplicate-named combos, or a ``baseline`` naming no combo in the sweep.
+    """
+    if metric not in _METRICS:
+        raise ValueError(
+            f"unknown metric {metric!r}; expected one of {list(_METRICS)}"
+        )
+
+    # Materialize once: split_queries and every seam call iterate queries.
+    query_list = list(queries)
+    normalized = _normalize_combos(combos)
+
+    # The integrity row: today's retrieval (params=None), first, whenever
+    # the grid doesn't already carry a params-None combo.
+    if not any(params is None for _name, params in normalized):
+        normalized.insert(0, (ALL_LEVERS_OFF, None))
+
+    names = {name for name, _params in normalized}
+    if baseline is not None and baseline not in names:
+        raise ValueError(
+            f"baseline {baseline!r} names no combo in the sweep "
+            f"(combos: {sorted(names)})"
+        )
+
+    # The split (T001) and the guard it feeds. held_out_ids is handed to the
+    # seam unconditionally — the seam IS the enforcement.
+    tune_ids, validate_ids = split_queries(query_list, seed=split_seed)
+    id_list = tune_ids if ids is None else sorted(set(ids))
+
+    reports: Dict[str, Dict[str, Any]] = {}
+    rows: List[Dict[str, Any]] = []
+    for name, params in normalized:
+        report = evaluate_on(
+            conn,
+            query_list,
+            ids=id_list,
+            purpose="selection",
+            held_out_ids=validate_ids,
+            metric=metric,
+            bundle_root=bundle_root,
+            k=k,
+            params=params,
+            timer=timer,
+        )
+        reports[name] = report
+        durations = sorted(report["durations_ms"].values())
+        rows.append(
+            {
+                "combo": name,
+                "recall_at_10": report["recall_at_10"],
+                "mrr": report["mrr"],
+                "p95_ms": round(_percentile(durations, 95.0), 4),
+                "n_queries": report["n_queries"],
+            }
+        )
+
+    baseline_name = baseline if baseline is not None else next(
+        name for name, params in normalized if params is None
+    )
+    base_report = reports[baseline_name]
+    return {
+        "schema": SWEEP_SCHEMA,
+        "dataset": {
+            "name": dataset_name,
+            "version": dataset_version,
+            "split_seed": split_seed,
+            "split": "tune",
+            "metric": metric,
+            "n_queries": len(id_list),
+        },
+        "rows": rows,
+        "baseline": {
+            "combo": baseline_name,
+            "metric": metric,
+            "per_query": {
+                qid: base_report["per_query"][qid][metric]
+                for qid in sorted(base_report["per_query"])
+            },
+        },
+    }
+
+
+def evaluate_full_set(
+    conn: sqlite3.Connection,
+    queries: Iterable[Any],
+    *,
+    params: Optional["RetrievalParams"] = None,
+    bundle_root: Optional[str] = None,
+    k: int = 10,
+    timer: Callable[[], float] = time.perf_counter,
+) -> Dict[str, Any]:
+    """Evaluate the FULL query set — every id, no split, no guard.
+
+    The reporting path behind the sweep's integrity row (T006: the
+    all-levers-off full-set run reproduces DS-v1's L1 recall@10 0.4174 /
+    MRR 0.2862 at 4 decimals) and Phase 5's final numbers. It is NOT a
+    selection path: lever decisions run through :func:`run_sweep` on the
+    tune split and the bootstrap guard on validate — this function is only
+    legitimate *after* those decisions, with the split disclosed wherever
+    its numbers are reported (FR-006).
+
+    ``queries`` is the loaded ground truth (level filtering is the caller's
+    choice — hand it the 58 L1 queries for the DS-v1 figure); ``params`` is
+    the injected ``RetrievalParams`` (``None`` = today's retrieval, the
+    integrity config).
+
+    Returns the seam's report shape — ``{purpose: "full-set", n_queries,
+    recall_at_10, mrr, per_query, durations_ms}`` with recall/MRR rounded
+    to 4 decimals. ``ValueError`` on an empty query set or bare id strings
+    (same contract as the seam).
+    """
+    by_id: Dict[str, Any] = {}
+    for q in queries:
+        if isinstance(q, str):
+            raise ValueError(
+                "evaluate_full_set requires GradedQuery objects "
+                "(load_ground_truth output); bare id strings carry no "
+                "expectations to score"
+            )
+        by_id[q.query_id] = q
+    id_list = sorted(by_id)
+    if not id_list:
+        raise ValueError("evaluate_full_set received no queries")
+
+    per_query: Dict[str, Dict[str, float]] = {}
+    durations_ms: Dict[str, float] = {}
+    for qid in id_list:
+        started = timer()
+        rec, rr = evaluate_graded_query(
+            conn, bundle_root, by_id[qid], k=k, params=params
+        )
+        durations_ms[qid] = (timer() - started) * 1000.0
+        per_query[qid] = {"recall_at_10": rec, "mrr": rr}
+
+    n = len(id_list)
+    return {
+        "purpose": "full-set",
+        "n_queries": n,
+        "recall_at_10": round(sum(p["recall_at_10"] for p in per_query.values()) / n, 4),
+        "mrr": round(sum(p["mrr"] for p in per_query.values()) / n, 4),
+        "per_query": per_query,
+        "durations_ms": durations_ms,
+    }
+
+
+def format_sweep_json(doc: Mapping[str, Any]) -> str:
+    """Canonical byte serialization of a sweep table (D-007).
+
+    ``json.dumps`` with sorted keys and a trailing newline: the same
+    document always serializes to identical bytes, so re-runs diff clean
+    and the committed ``benchmarks/quality/ablation.json`` (AC1, T024) has
+    exactly one canonical shape. Write it with ``open(path, "w")`` at the
+    CLI layer — this function stays read-only (TC-025).
+    """
+    return json.dumps(doc, indent=2, sort_keys=True) + "\n"
 
 
 def evaluate_l1_query(
