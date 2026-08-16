@@ -97,6 +97,17 @@ def install_hint() -> str:
 # ---------------------------------------------------------------------------
 
 
+# All selectable chunking recipes (see chunk_for_symbol). Order is the
+# ablation ladder: A legacy baseline, B default, C maximal, then the T013
+# field-dropout variants. The TC-008 identity floor (qualified name, file
+# path, signature, docstring) is present in EVERY entry; tests iterate this
+# tuple to enforce it. Values are case-normalized (upper) before matching.
+CHUNK_VARIANTS = (
+    "A", "B", "C",
+    "B_NO_SCOPE", "B_NO_SIG", "B_IDENTITIES", "C_TRIM",
+)
+
+
 def chunk_for_symbol(
     row: sqlite3.Row,
     signature: Optional[str] = None,
@@ -107,6 +118,23 @@ def chunk_for_symbol(
 
     Variants: A (kind + name + first signature line), B (A + docstring +
     parameters + return_type + full signature), C (B + body + context).
+
+    Field-dropout variants of B (T013, FR-002/D-004 -- each removes one field
+    family so the retrieval-quality ablation can measure its contribution;
+    the TC-008 identity floor holds in every one):
+
+    * ``B_NO_SCOPE`` -- B minus ``Enclosing Scope``/``Imports`` (file path
+      stays; tests the contextual-scope fields).
+    * ``B_NO_SIG`` -- B minus ``Parameters``/``Return Type`` (``Signature``
+      stays per the floor; tests the structured signature metadata).
+    * ``B_IDENTITIES`` -- the minimal legal variant: ONLY the identity floor
+      (qualified name + file path + signature + docstring).
+    * ``C_TRIM`` -- B plus the body truncated to half the chunk budget
+      (tests whether a trimmed body keeps C's gains at lower size).
+
+    ``variant`` (explicit) overrides ``CAIRN_CHUNK_VARIANT`` (env, default B)
+    without ever mutating the environment (D-008 doctrine); both are
+    case-insensitive.
     """
     v = (variant or os.environ.get("CAIRN_CHUNK_VARIANT", "B")).upper()
     kind = (row["kind"] or "").strip() if row["kind"] is not None else ""
@@ -121,12 +149,17 @@ def chunk_for_symbol(
     parent_scope = row["parent_scope"] if "parent_scope" in row.keys() and row["parent_scope"] else None
     imports_summary = row["imports_summary"] if "imports_summary" in row.keys() and row["imports_summary"] else None
 
+    # Field-dropout variants that remove the contextual scope extras; the
+    # File: line itself always stays (TC-008 floor). A/B/C never take this
+    # branch, so their output stays byte-identical to pre-T013.
+    drop_scope_extras = v in ("B_NO_SCOPE", "B_IDENTITIES")
+
     scope_header = []
     if file_path:
         scope_header.append(f"File: {file_path}")
-    if parent_scope:
+    if parent_scope and not drop_scope_extras:
         scope_header.append(f"Enclosing Scope: {parent_scope}")
-    if imports_summary:
+    if imports_summary and not drop_scope_extras:
         scope_header.append(f"Imports: {imports_summary}")
 
     parts = []
@@ -144,18 +177,23 @@ def chunk_for_symbol(
             parts.append(first_line)
         if doc:
             parts.append(doc)
-    elif v in ("B", "C"):
+    elif v in ("B", "C", "B_NO_SCOPE", "B_NO_SIG", "B_IDENTITIES", "C_TRIM"):
         if sig and sig != header:
             parts.append(f"Signature: {sig}")
-        if params_raw:
+        if params_raw and v not in ("B_NO_SIG", "B_IDENTITIES"):
             parts.append(f"Parameters: {params_raw}")
-        if ret_type:
+        if ret_type and v not in ("B_NO_SIG", "B_IDENTITIES"):
             parts.append(f"Return Type: {ret_type}")
         if doc:
             parts.append(f"Docstring: {doc}")
 
-        if v == "C" and "body" in row.keys() and row["body"]:
-            parts.append(f"Body:\n{row['body']}")
+        if v in ("C", "C_TRIM") and "body" in row.keys() and row["body"]:
+            body = row["body"]
+            if v == "C_TRIM":
+                # Body prefix capped at half the chunk's truncation budget;
+                # identity fields (which precede the body) keep the full budget.
+                body = body[: max_tokens * 4 // 2]
+            parts.append(f"Body:\n{body}")
 
     res = "\n".join(parts) if parts else qname or kind
     # Simple character truncation approximation for max_tokens (approx 4 chars per token)
@@ -666,6 +704,7 @@ def embed_all(
     limit: Optional[int] = None,
     progress=None,
     reap_orphans: bool = True,
+    variant: Optional[str] = None,
 ) -> dict:
     """Embed every symbol missing or stale under the current model.
 
@@ -673,6 +712,13 @@ def embed_all(
     current chunk text. Re-embeds on a model swap (model name change) or on a
     content edit (chunk hash change). Rows with ``content_hash IS NULL`` are
     treated as stale and self-heal.
+
+    ``variant`` selects the chunking recipe (see ``chunk_for_symbol`` /
+    ``CHUNK_VARIANTS``). ``None`` (default) resolves via the
+    ``CAIRN_CHUNK_VARIANT`` env var exactly as before; an explicit string
+    overrides it WITHOUT touching the process environment (D-008
+    no-env-mutation doctrine) -- this is the seam per-variant sweep runs
+    (T014/T015) use to re-embed the corpus under each recipe.
 
     When ``reap_orphans`` is True (default), also deletes embedding rows for
     symbols that no longer exist. ``progress`` is an optional
@@ -703,7 +749,7 @@ def embed_all(
     # Filter to rows that are missing or whose chunk changed since last embed.
     stale_rows = []
     for r in all_rows:
-        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]))
+        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]), variant=variant)
         if not chunk.strip():
             continue
         new_hash = _chunk_hash(chunk)
@@ -771,6 +817,7 @@ def embed_symbols(
     conn: sqlite3.Connection,
     symbol_ids: Sequence[str],
     sync_ann: bool = True,
+    variant: Optional[str] = None,
 ) -> dict:
     """(Re-)embed specific symbols now -- the per-upsert ANN sync seam.
 
@@ -790,7 +837,9 @@ def embed_symbols(
 
     Idempotent like ``embed_all``: symbols whose stored ``content_hash``
     still matches are skipped, as are empty-chunk symbols; unknown ids are
-    dropped silently (nothing to embed). Returns ``{model, embedded,
+    dropped silently (nothing to embed). ``variant`` selects the chunking
+    recipe exactly as in ``embed_all`` (None = env resolution, explicit
+    string overrides without env mutation). Returns ``{model, embedded,
     skipped, ann_synced}`` where
     ``ann_synced`` is the number of rows whose vec0 entry was actually
     written (0 when the backend is off, no index exists yet, or sync
@@ -820,7 +869,7 @@ def embed_symbols(
 
     stale_rows = []
     for r in rows:
-        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]))
+        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]), variant=variant)
         if not chunk.strip():
             continue
         new_hash = _chunk_hash(chunk)
