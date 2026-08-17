@@ -221,6 +221,39 @@ jobs:
               print("_(coverage report unavailable)_")
           EOF
 
+  # --- DS-v2 ground-truth seal: the eval dataset's own regenerate-and-assert -
+  # Closes the audit defect where the seal lived only in the tree (pinned
+  # tree_hash values in benchmarks/datasource/ds2/ground_truth/manifest.json)
+  # with no CI leg: the attrs pin had been minted over the authoring machine's
+  # untracked .ruff_cache noise, and nothing caught the drift until a
+  # fresh-clone run failed. This job runs the dataset's own verifier, which
+  # builds FRESH graphs over both vendored corpora, resolves every one of the
+  # 558 expectations tier-1-exact, and cross-checks the corpus tree_hash pins
+  # + authoring build facts. Like the T1/T2 pins in the bench job, this is a
+  # deterministic content check, not a timing -- a real gate. The verifier's
+  # imports (cairn.eval / cairn.bench.datasource / cairn.graph.builder) are
+  # all core dependencies; tree_hash prunes build-noise caches, so a clean
+  # runner reproduces the pins exactly. Local runtime ~1s post-install.
+  ds2-seal:
+    name: Verify DS-v2 seal
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (with dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Verify DS-v2 ground-truth seal (558 expectations, both corpora)
+        run: python benchmarks/datasource/ds2/verify_dataset.py
+
   build:
     name: Build wheel + sdist
     runs-on: ubuntu-latest
