@@ -28,7 +28,7 @@
         "repos": 1,
         "symbols": 1672
       },
-      "tree_hash": "847e73ef5eabab33d15a466544901c2d0d554efedff8e09a7b750af242d7c4f2"
+      "tree_hash": "ad6eec778ba82da2ac4493676f990c6d155e7b0634900c36a54da0de2d515097"
     },
     "yarl": {
       "facts": {
@@ -101,14 +101,17 @@
     "grade_scale": "2 = primary target (exactly one per query), 1 = must-return context"
   },
   "pins": {
-    "algorithm": "cairn.bench.datasource.tree_hash \u2014 Git-tree-shaped sorted-manifest digest: sha256 over sorted '<mode> <relpath>\\0<sha256(content)>' entries (modes normalized git-style; .git dir contents excluded)",
+    "algorithm": "cairn.bench.datasource.tree_hash \u2014 Git-tree-shaped sorted-manifest digest: sha256 over sorted '<mode> <relpath>\\0<sha256(content)>' entries (modes normalized git-style; .git dir contents and build-noise caches (__pycache__/.ruff_cache/.mypy_cache/.pytest_cache) excluded)",
     "corpora": {
-      "attrs-26.1.0": "847e73ef5eabab33d15a466544901c2d0d554efedff8e09a7b750af242d7c4f2",
+      "attrs-26.1.0": "ad6eec778ba82da2ac4493676f990c6d155e7b0634900c36a54da0de2d515097",
       "yarl": "b2ac9f50845b86bdc14388365490e714dad5cb57a0a4896e8879fc9e8745b974"
     },
     "corpora_scope": "the vendored corpus source trees named by manifest.corpora.<name>.source",
     "dataset_content": "d83beefc23ede049d559c4567c173f2df563d6daf5addadb97b04d589c443a05",
-    "dataset_content_scope": "the dataset DATA pair only \u2014 queries.jsonl + expectations.tsv staged in a scratch dir and hashed with the same tree_hash function; manifest.json/VERIFICATION*/AUTHORING.md are excluded so the pin can never be self-referential"
+    "dataset_content_scope": "the dataset DATA pair only \u2014 queries.jsonl + expectations.tsv staged in a scratch dir and hashed with the same tree_hash function; manifest.json/VERIFICATION*/AUTHORING.md are excluded so the pin can never be self-referential",
+    "revisions": [
+      "2026-08-17 re-mint of corpora.attrs-26.1.0: the original pin 847e73ef... was minted over the authoring tree INCLUDING untracked build noise (a .ruff_cache dropped inside the vendored tree by pre-commit ruff runs), so a fresh clone failed the seal with 'corpus content drifted' despite 558/558 expectations verifying. tree_hash now prunes build-noise caches (hash-neutral for clean trees) and the pin was re-minted over the pristine HEAD tree (git-archive export, no local noise). The yarl pin b2ac9f50... and the dataset_content pin d83beefc... were minted over noise-free trees and verified unchanged under the hardened function; no corpus data or expectation row was touched."
+    ]
   },
   "tc007_ds_v1_immutability": {
     "checked_paths": [

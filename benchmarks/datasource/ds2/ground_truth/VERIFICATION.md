@@ -76,17 +76,33 @@ The fresh builds reproduce exactly the facts recorded during authoring
 manifest). All pins use the repo's existing content-pin mechanism —
 `cairn.bench.datasource.tree_hash`, the Git-tree-shaped sorted-manifest
 digest (`sha256` over sorted `<mode> <relpath>\0<sha256(content)>` entries,
-modes normalized git-style, `.git` contents excluded) — the same function
-DS-v1's `benchmarks/datasource/manifest.json` t1 pins use:
+modes normalized git-style, `.git` contents and build-noise caches —
+`__pycache__`/`.ruff_cache`/`.mypy_cache`/`.pytest_cache` — excluded) — the
+same function DS-v1's `benchmarks/datasource/manifest.json` t1 pins use:
 
 | manifest key | covers | value |
 |--------------|--------|-------|
-| `corpora.attrs-26.1.0.tree_hash` | the vendored attrs-26.1.0 source tree | `847e73ef5eabab33d15a466544901c2d0d554efedff8e09a7b750af242d7c4f2` |
+| `corpora.attrs-26.1.0.tree_hash` | the vendored attrs-26.1.0 source tree | `ad6eec778ba82da2ac4493676f990c6d155e7b0634900c36a54da0de2d515097` |
 | `corpora.yarl.tree_hash` | the vendored yarl snapshot (`t2/yarl`) | `b2ac9f50845b86bdc14388365490e714dad5cb57a0a4896e8879fc9e8745b974` |
 | `tree_hash` (top level) | the dataset DATA pair — `queries.jsonl` + `expectations.tsv` staged in a scratch dir and hashed with the same function; `manifest.json`/`VERIFICATION*`/`AUTHORING.md` are excluded so the pin is never self-referential | `d83beefc23ede049d559c4567c173f2df563d6daf5addadb97b04d589c443a05` |
 
 `verify_dataset.py` recomputes the two corpus pins on every run and fails on
 mismatch — a corpus edit anywhere breaks the seal loudly.
+
+### Pin revision (2026-08-17, same day as the seal)
+
+The original attrs pin `847e73ef5eabab33...` was minted over the authoring
+tree **including untracked build noise** — a `.ruff_cache` dropped inside the
+vendored tree by pre-commit ruff runs — so a fresh clone (no caches) hashed
+differently and the seal failed with "corpus content drifted" for attrs even
+though all 558 expectations verified. The fix went into the pin mechanism,
+not the data: `tree_hash` now prunes build-noise caches exactly as it always
+pruned `.git` (hash-neutral for clean trees, so every pin minted over a
+noise-free tree survives unchanged), and the attrs pin was re-minted over
+the pristine `HEAD` tree (`git archive` export — no local noise). The yarl
+(`b2ac9f50...`) and data-pair (`d83beefc...`) pins were verified unchanged
+under the hardened function. No corpus data or expectation row was touched.
+The re-mint is machine-recorded in `VERIFICATION.json` (`pins.revisions`).
 
 ## TC-007 — DS-v1 byte-identical
 

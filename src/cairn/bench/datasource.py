@@ -48,6 +48,22 @@ flag therefore governs something else: whether files *inside* real
 mtimes and machine-specific state -- precisely the noise a content pin
 must not see.
 
+The build-noise rule (same class of noise as ``.git``, so same treatment):
+directories named in :data:`NOISE_DIR_NAMES` (``__pycache__``,
+``.ruff_cache``, ``.mypy_cache``, ``.pytest_cache``) are pruned from every
+walk, always. These caches are dropped *inside* vendored corpus trees by
+the very tools that operate on them (a pre-commit ruff run inside the
+checkout, a pytest collection over the vendored tests), so a seal minted
+on the authoring machine silently embedded that machine's cache state and
+a fresh clone -- with no caches -- hashed differently: the DS-v2 attrs
+seal failed exactly this way. Exclusion is hash-NEUTRAL for clean trees
+(a tree without noise dirs hashes identically before and after the rule),
+so every pin minted over a noise-free tree -- all T1 generated corpora,
+the yarl snapshot, the staged DS-v2 data pair -- survives unchanged; only
+pins wrongly minted *over* noise (see DS-v2 attrs, re-minted noise-free)
+needed re-minting. Unlike ``.git`` there is no opt-in: no caller has ever
+legitimately needed cache files in a content pin.
+
 Manifest JSON schema (minted by T002, validated here):
 
     {
@@ -104,6 +120,14 @@ REQUIRED_COUNT_KEYS = ("files", "lines", "bytes")
 REQUIRED_T3_ENTRY_KEYS = ("name", "url", "commit", "scale_hint")
 # The three complexity profiles generate_corpus understands (corpus.py:43-48).
 VALID_COMPLEXITIES = ("low", "medium", "high")
+# Machine build-noise directory names pruned from every tree_hash walk, in
+# addition to .git: caches that dev tools (python, ruff, mypy, pytest) drop
+# inside whatever tree they touch. They are machine state, never corpus
+# content -- same class of noise as .git metadata, hence the same exclusion
+# (see the module docstring's build-noise rule for the seal this protects).
+NOISE_DIR_NAMES = frozenset(
+    {"__pycache__", ".ruff_cache", ".mypy_cache", ".pytest_cache"}
+)
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _HEX_SHA = re.compile(r"[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?")
@@ -129,12 +153,15 @@ def _iter_files(root: Path, *, include_git_dir_marker: bool):
     Only entries for which ``os.path.isfile`` holds are yielded (symlinks
     to files are followed and hashed by target content); directories and
     other non-files (fifos, sockets) contribute nothing. Directories named
-    ``.git`` are pruned unless ``include_git_dir_marker`` -- see the module
-    docstring for the constant marker rule.
+    ``.git`` are pruned unless ``include_git_dir_marker`` (see the module
+    docstring for the constant marker rule); directories named in
+    :data:`NOISE_DIR_NAMES` are always pruned (see the build-noise rule).
     """
     for dirpath, dirnames, filenames in os.walk(root):
-        if not include_git_dir_marker:
-            dirnames[:] = [d for d in dirnames if d != ".git"]
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in NOISE_DIR_NAMES and (include_git_dir_marker or d != ".git")
+        ]
         for name in filenames:
             path = Path(dirpath) / name
             if path.is_file():
@@ -150,6 +177,11 @@ def tree_hash(root: Path | str, *, include_git_dir_marker: bool = False) -> str:
     same files, contents, and exec bits hash identically regardless of the
     order files were created in or the order the filesystem enumerates
     them -- the property the CI regenerate-and-assert check (AC2) relies on.
+
+    Machine-noise directories (``.git`` unless opted in, plus every name
+    in :data:`NOISE_DIR_NAMES`) are never hashed, so a tree with dropped
+    caches hashes identically to a clean checkout of the same content --
+    the property the vendored-corpus seals (DS-v2) rely on.
 
     Args:
         root: directory to hash. Must exist and be a directory.
