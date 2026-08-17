@@ -3,12 +3,20 @@
 
 Inputs (CWD-relative, produced by the workflow):
   - bench-current.json   this run's ``cairn bench --save`` payload
-  - bench-baseline.json  optional explicit baseline (local override; CI's
-                         rolling-cache source for it was removed in T016)
+  - bench-baseline.json  the ROLLING CI baseline (restored from the
+                         actions/cache entry a main-branch run minted --
+                         same hosted runner class, so deltas are same-class
+                         and meaningful; see the workflow's bench job)
+  - bench-baseline.sha   sidecar written by the minting step: the main
+                         commit the rolling baseline was minted on
+                         (attribution -- the fix for the old run-id-unique
+                         cache whose misses were unattributable)
   - benchmarks/baselines/DS-v1/perf.json
                          the committed, stamped reference baseline (D-007),
-                         read when no explicit baseline file is present --
-                         the CI path since the actions/cache dance retired
+                         the COLD-START fallback while no rolling entry
+                         exists yet (and the local default) -- cross-machine
+                         vs the CI runner, so its deltas carry the
+                         machine-profile noise the rolling path removes
 
 Outputs:
   - appends a markdown comparison to $GITHUB_STEP_SUMMARY (run summary)
@@ -27,12 +35,12 @@ import sys
 from pathlib import Path
 
 MARKER = "<!-- cairn-bench-advisory -->"
-# D-007 (T016): the committed, stamped DS-v1 baseline replaced the old
-# actions/cache rolling file (bench-baseline.json) -- its run-id-unique cache
-# key always missed, so regressions were unattributable. An explicit
-# bench-baseline.json still wins when present (local override); CI never has
-# one and always lands on the committed artifact. Reads are additive: the
-# T013 stamp added top-level keys, ops/median_ms shapes are unchanged.
+# The rolling CI baseline (restored by the workflow) wins when present;
+# the committed DS-v1 artifact (D-007/T016) is the cold-start fallback.
+# Reads are additive: the T013 stamp added top-level keys, ops/median_ms
+# shapes are unchanged.
+ROLLING_BASELINE = Path("bench-baseline.json")
+ROLLING_SHA = Path("bench-baseline.sha")
 COMMITTED_BASELINE = Path("benchmarks/baselines/DS-v1/perf.json")
 # Looser than the 15% CLI default: shared CI runners are noisy, and this is
 # advisory -- the goal is signal for reviewers, not false alarms.
@@ -47,6 +55,33 @@ def _load(path: str) -> dict | None:
         return json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _baseline_source(baseline: dict) -> str:
+    """One line naming WHICH baseline the numbers are against and why."""
+    dataset = baseline.get("dataset")
+    dataset = dataset if isinstance(dataset, dict) else {}
+    base_corpus = baseline.get("corpus")
+    base_corpus = base_corpus if isinstance(base_corpus, dict) else {}
+    sha = None
+    if ROLLING_SHA.exists():
+        sha = ROLLING_SHA.read_text(encoding="utf-8").strip() or None
+    if sha:
+        return (
+            f"Baseline **rolling CI** ({base_corpus.get('files', '?')} files) "
+            f"minted on `main` @ `{sha[:12]}` "
+            f"({baseline.get('timestamp', 'unknown time')}) -- same hosted "
+            f"runner class, deltas are comparable;"
+        )
+    return (
+        f"Baseline **{dataset.get('version', 'DS-v1')}** "
+        f"({base_corpus.get('files', '?')} files) from "
+        f"**{baseline.get('timestamp', 'unknown time')}** -- COLD START: no "
+        f"rolling CI baseline cached yet (the next `main` push mints one); "
+        f"this fallback is the reference-local artifact, so deltas below "
+        f"carry cross-machine noise -- treat them as a prompt to run "
+        f"`cairn bench --compare` locally, not as a verdict;"
+    )
 
 
 def _render(current: dict, baseline: dict | None) -> str:
@@ -76,16 +111,9 @@ def _render(current: dict, baseline: dict | None) -> str:
                          f"| {op['p95_ms']:.1f} |")
         return "\n".join(lines)
 
-    # Cite the baseline's dataset version + corpus (T013 stamps, read
-    # additively) so reviewers can attribute the numbers (AC1/D-007).
-    dataset = baseline.get("dataset")
-    dataset = dataset if isinstance(dataset, dict) else {}
-    base_corpus = baseline.get("corpus")
-    base_corpus = base_corpus if isinstance(base_corpus, dict) else {}
-    lines += ["",
-              f"Baseline **{dataset.get('version', 'DS-v1')}** "
-              f"({base_corpus.get('files', '?')} files) from "
-              f"**{baseline.get('timestamp', 'unknown time')}**:",
+    # Cite the baseline's source + stamp so reviewers can attribute the
+    # numbers (AC1/D-007; attribution is the rolling design's whole point).
+    lines += ["", _baseline_source(baseline),
               "", "| operation | baseline ms | current ms | delta |",
               "|---|---:|---:|---:|"]
     from cairn.bench import compare_reports
@@ -108,9 +136,9 @@ def _render(current: dict, baseline: dict | None) -> str:
 
 def main() -> int:
     current = _load("bench-current.json")
-    # Explicit local override first, committed DS-v1 artifact otherwise
-    # (D-007/T016 -- the CI path: no rolling cache file exists anymore).
-    baseline = _load("bench-baseline.json") or _load(str(COMMITTED_BASELINE))
+    # Rolling CI baseline first (restored by the workflow's cache step);
+    # committed DS-v1 artifact otherwise (cold start / local default).
+    baseline = _load(str(ROLLING_BASELINE)) or _load(str(COMMITTED_BASELINE))
 
     if current is None:
         body = "_Bench did not produce a result this run (see the job log)._"

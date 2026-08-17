@@ -249,17 +249,22 @@ jobs:
           name: dist
           path: dist/
 
-  # --- Bench: advisory perf baseline comparison (T18) ---------------------
+  # --- Bench: advisory perf baseline comparison -----------------------------
   # Runs `cairn bench` on a fixed deterministic synthetic corpus (seeded
   # generator + dep-free hash embed backend) and uploads the JSON result as
-  # a workflow artifact. Since T016 (D-007) the comparison target is the
-  # committed, stamped baseline benchmarks/baselines/DS-v1/: `--baseline
-  # DS-v1` resolves it in-command, and .github/scripts/bench_compare.py
-  # renders the ADVISORY PR comment from the same artifact. (The old rolling
-  # actions/cache baseline was removed -- its run-id-unique key always
-  # missed, making regressions unattributable.) The ubuntu runner vs the
-  # reference-local minter trips the machine-profile mismatch warning every
-  # run -- by design, not noise (D-005: warn, never normalize).
+  # a workflow artifact. COMPARISON TARGET (rolling, attributable): every
+  # push to main mints the run's payload into the actions/cache under a
+  # SHA-unique key; PR runs restore the most recent main-minted entry via
+  # prefix restore-keys and compare same-class (CI vs CI). The SHA-unique
+  # exact key is the deliberate inversion of the OLD rolling design's bug
+  # (run-id keys that "always missed" made misses unattributable): now the
+  # exact key always misses BY DESIGN, the prefix supplies the newest
+  # main baseline, and the bench-baseline.sha sidecar names the commit it
+  # was minted on. The committed benchmarks/baselines/DS-v1/ artifact
+  # (D-007/T016) remains the cold-start fallback and the local default --
+  # cross-machine vs the CI runner, so its deltas carry machine-profile
+  # noise (D-005: warn, never normalize; the CLI's mismatch check buckets
+  # same-pool runner_class/os at class level so CI-vs-CI renders clean).
   # Every bench step is continue-on-error: a timing regression (bench exits
   # 2 past the 15% threshold) -- or a noisy shared runner -- can never redden
   # CI. "Advisory first, gate later if stable" (observability-telemetry
@@ -277,6 +282,22 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+
+      # Restore the newest main-minted rolling baseline (same hosted runner
+      # class). The exact key embeds the run id so it always misses by
+      # design; restore-keys' prefix match yields the most recently created
+      # main entry. Cold start (no entry yet): nothing restores, and the
+      # run step falls back to the committed DS-v1 artifact.
+      - name: Restore rolling bench baseline
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bench-baseline.json
+            bench-baseline.sha
+          key: bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: |
+            bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install
         run: |
@@ -324,24 +345,52 @@ jobs:
           python scripts/gen_benchmark_tables.py
           git diff --exit-code docs/benchmarks.md
 
-      # D-007 (T016): compare against the committed, stamped DS-v1 baseline.
-      # `--baseline` composes with `--save` (the payload is saved first, then
-      # the comparison table renders in this step's log). Exit contract: 0
-      # clean; 1 baseline-resolution error; 2 regressions past 15%. A
-      # machine-profile mismatch vs the reference-local minter only WARNS and
-      # keeps the exit code at whatever the comparison alone decides (D-005).
-      # Exit 2 is absorbed by continue-on-error below -- timing can never
-      # redden this job; the advisory PR-comment comparison lives in
-      # bench_compare.py.
+      # Rolling comparison: prefer the restored main-minted baseline
+      # (same hosted class, deltas meaningful); cold start falls back to
+      # the committed DS-v1 artifact (cross-machine -- the CLI's mismatch
+      # warning fires and bench_compare marks the comment COLD START).
+      # `--compare`/`--baseline` compose with `--save` (payload saved
+      # first, then the table). Exit contract: 0 clean; 1 baseline/file
+      # error; 2 regressions past 15%. A machine-profile mismatch only
+      # WARNS and keeps the exit code at whatever the comparison alone
+      # decides (D-005). Exit 2 is absorbed by continue-on-error below --
+      # timing can never redden this job; the advisory PR-comment
+      # comparison lives in bench_compare.py.
       - name: Run bench (fixed corpus, hash backend)
         continue-on-error: true
         run: |
+          if [ -f bench-baseline.json ]; then
+            BASE="--compare bench-baseline.json"
+          else
+            BASE="--baseline DS-v1"
+          fi
           cairn bench --suite perf --embed-backend hash --repeats 3 \
             --json --save bench-current.json \
-            --baseline DS-v1
+            $BASE
+
+      # Mint the rolling baseline from THIS run (main pushes only -- PR
+      # runs never write cache entries, so a PR's numbers can't become the
+      # baseline) and save it under a SHA-unique key: never collides with
+      # an existing entry, and the prefix restore above picks up the newest.
+      # The sidecar SHA gives every comparison its attribution.
+      - name: Mint rolling baseline (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cp bench-current.json bench-baseline.json
+          echo "${{ github.sha }}" > bench-baseline.sha
+
+      - name: Save rolling baseline cache (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            bench-baseline.json
+            bench-baseline.sha
+          key: bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
 
       # Renders the advisory step summary + PR comment from bench-current.json
-      # and the committed DS-v1 artifact; never exits non-zero.
+      # and whichever baseline applies (rolling first, committed fallback);
+      # never exits non-zero.
       - name: Compare vs baseline (advisory summary)
         if: always()
         continue-on-error: true

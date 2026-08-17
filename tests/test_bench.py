@@ -387,6 +387,53 @@ class TestBenchCliBaseline:
         assert "MACHINE-PROFILE MISMATCH" not in result.output
         assert " vs current " not in result.output
 
+    def test_same_hosted_pool_instances_do_not_mismatch(
+        self, tmp_path, monkeypatch
+    ):
+        """Rolling-baseline support: two instances of GitHub's hosted pool
+        (ci-github-actions-<N>, drifting N) are the same CLASS -- no mismatch
+        marker for the runner_class field, so a main-minted rolling baseline
+        compared PR-over-PR renders clean."""
+        from cairn.bench.datasource import machine_profile
+
+        # Make the CURRENT run stamp as a hosted-pool instance, then have
+        # the baseline carry a different instance number of the same pool.
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.setenv("RUNNER_NAME", "GitHub Actions 1000001128")
+        current = machine_profile()
+        stamped = dict(
+            current,
+            runner_class="ci-github-actions-12",
+        )
+        _write_committed_baseline(tmp_path, monkeypatch, profile=stamped)
+        # (the fixture delenvs GITHUB_ACTIONS/RUNNER_NAME -- re-arm so the
+        # CLI's own stamp computes the hosted-pool profile)
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.setenv("RUNNER_NAME", "GitHub Actions 1000001128")
+        _patch_perf_suite(monkeypatch, median_ms=100.0)
+        result = _invoke_perf_cli(["--baseline", "DS-v1"], tmp_path, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert "MACHINE-PROFILE MISMATCH" not in result.output
+
+    def test_different_hosted_runner_names_still_mismatch(
+        self, tmp_path, monkeypatch
+    ):
+        """Class bucketing only folds the instance suffix: a genuinely
+        different runner name (ci-github-actions-12 vs ci-self-hosted-7)
+        still warns, and reference-local never buckets with ci-*."""
+        from cairn.bench.datasource import machine_profile
+
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.setenv("RUNNER_NAME", "GitHub Actions 1000001128")
+        current = machine_profile()
+        stamped = dict(current, runner_class="ci-self-hosted-7")
+        _write_committed_baseline(tmp_path, monkeypatch, profile=stamped)
+        _patch_perf_suite(monkeypatch, median_ms=100.0)
+        result = _invoke_perf_cli(["--baseline", "DS-v1"], tmp_path, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert "MACHINE-PROFILE MISMATCH" in result.output
+        assert "runner_class: baseline ci-self-hosted-7 vs current " in result.output
+
     def test_unstamped_baseline_notes_unknown_not_mismatch(self, tmp_path, monkeypatch):
         """A pre-T013 baseline (no machine_profile key) is 'unknown', not
         'mismatched': noted without the MISMATCH marker, compare proceeds."""
@@ -477,3 +524,37 @@ class TestBenchCliBaseline:
         )
         assert result.exit_code == 1
         assert "Baseline file not found" in result.output
+
+class TestProfileClassBucketing:
+    """Unit tests for _profile_class (the rolling-baseline class rule)."""
+
+    def test_runner_class_strips_instance_suffix(self):
+        from cairn.cli.bench import _profile_class
+
+        assert (
+            _profile_class("runner_class", "ci-github-actions-1000001128")
+            == _profile_class("runner_class", "ci-github-actions-12")
+            == "ci-github-actions"
+        )
+        # Different runner NAMES stay distinct; reference-local is exact.
+        assert _profile_class("runner_class", "ci-self-hosted-7") == "ci-self-hosted"
+        assert _profile_class("runner_class", "reference-local") == "reference-local"
+        # A suffix that is part of the name (letters) is not stripped.
+        assert _profile_class("runner_class", "ci-runner-x86") == "ci-runner-x86"
+
+    def test_os_buckets_linux_kernels_only(self):
+        from cairn.cli.bench import _profile_class
+
+        assert _profile_class(
+            "os", "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+        ) == _profile_class("os", "Linux-6.20.1-1234-azure-x86_64") == "Linux"
+        # Non-Linux values (macOS point releases) stay exact: the reference
+        # minter's OS delta is a real comparability fact.
+        assert _profile_class("os", "macOS-26.5.2-arm64") == "macOS-26.5.2-arm64"
+
+    def test_other_fields_and_unstamped_pass_through(self):
+        from cairn.cli.bench import _UNSTAMPED, _profile_class
+
+        assert _profile_class("arch", "x86_64") == "x86_64"
+        assert _profile_class("cpu_count", 4) == "4"
+        assert _profile_class("runner_class", _UNSTAMPED) is _UNSTAMPED

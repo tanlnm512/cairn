@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -40,6 +41,38 @@ _UNSTAMPED = object()
 def _profile_value(value: object) -> str:
     """Render one machine-profile value for the mismatch warning."""
     return "<unstamped>" if value is _UNSTAMPED else str(value)
+
+
+def _profile_class(key: str, value: object) -> object:
+    """Bucket a profile value into its comparison CLASS (rolling baselines).
+
+    The rolling CI baseline (bench-baseline.json minted on main, compared
+    PR-over-PR on the same hosted pool) must not fire the D-005 warning
+    for fields that merely identify *which instance of the same class*
+    produced the number:
+
+    * ``runner_class`` -- GitHub stamps ``ci-<slug(RUNNER_NAME)>`` and the
+      hosted pool names instances with trailing digits
+      (``ci-github-actions-12`` vs ``ci-github-actions-1000001128``).
+      Strip the trailing instance number; different runner *names* still
+      mismatch, and ``reference-local`` never buckets with anything.
+    * ``os`` -- hosted runners drift kernel revisions over time
+      (``Linux-6.17.0-1022-azure...`` vs ``Linux-6.20...``). Two Linux
+      kernels are the same hosted class; macOS point releases stay exact
+      (the reference minter's OS delta is a real comparability fact).
+
+    Everything else (arch, cpu, cpu_count) stays exact-equality -- those
+    are real comparability signals. This is metadata bucketing only: D-005
+    still forbids normalizing the TIMINGS themselves.
+    """
+    if value is _UNSTAMPED:
+        return value
+    text = str(value)
+    if key == "runner_class":
+        return re.sub(r"-\d+$", "", text)
+    if key == "os" and text.startswith("Linux-"):
+        return "Linux"
+    return text
 
 
 def _resolve_baseline_file(version: str, suite: str) -> Path:
@@ -108,14 +141,21 @@ def _render_baseline_header(version: str, path: Path, data: dict) -> None:
 
 
 def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
-    """Loud advisory on ANY machine-profile field difference (D-005).
+    """Loud advisory on machine-profile CLASS differences (D-005).
 
-    TC-009: every mismatched field is named with both the baseline's and the
-    current value. TC-010: an exact match prints nothing (no false-warning
+    TC-009: every mismatched field is named with both the baseline's and
+    the current value. TC-010: an exact match prints nothing (no false-warning
     marker). TC-011: the warning is advisory only -- it never gates, so the
     exit code stays whatever the regression comparison alone decides. A
     baseline with no machine_profile stamp at all is "unknown", not
     "mismatched": noted, but without the MISMATCH marker.
+
+    Fields are compared at class level (``_profile_class``): the rolling
+    CI baseline runs PR-over-PR on GitHub's hosted pool, where
+    ``runner_class`` carries a per-instance suffix and ``os`` carries a
+    drifting kernel revision -- same class, not a mismatch. Cross-class
+    pairs (``reference-local`` vs ``ci-*``, macOS vs Linux, x86_64 vs
+    arm64, different CPU counts) still warn with both values.
     """
     from . import display
 
@@ -126,10 +166,13 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
         return
     mismatched = []
     for key in sorted(set(current) | set(stamped)):
-        base = stamped.get(key, _UNSTAMPED)
-        cur = current.get(key, _UNSTAMPED)
-        if base != cur:
-            mismatched.append((key, base, cur))
+        base_class = _profile_class(key, stamped.get(key, _UNSTAMPED))
+        cur_class = _profile_class(key, current.get(key, _UNSTAMPED))
+        if base_class != cur_class:
+            # Display the RAW stamps (exactly what each side recorded);
+            # only the comparison buckets to class level.
+            mismatched.append((key, stamped.get(key, _UNSTAMPED),
+                               current.get(key, _UNSTAMPED)))
     if not mismatched:
         return
     display.warning(

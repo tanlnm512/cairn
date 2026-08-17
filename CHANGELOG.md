@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `benchmarks/quality/ablation.md`.
 
 ### Changed
+- **CI bench: rolling same-class baseline**: the advisory comparison now
+  targets a rolling baseline minted on every `main` push (same hosted
+  runner class) instead of the reference-local committed artifact, with a
+  SHA sidecar naming the commit it was minted on (the attribution fix for
+  the old rolling design); the committed DS-v1 artifact stays as the
+  cold-start fallback, the CLI's machine-profile check now buckets
+  same-pool `runner_class`/`os` stamps at class level (CI-vs-CI renders
+  clean; cross-class pairs still warn), and the advisory PR comment names
+  which baseline the numbers are against.
 - **Unified ablation record**: the two retrieval-quality campaign records
   (`ablation.{json,md}` v1 + `ablation-v2.{json,md}` v2, artifacts of the two
   campaign PRs) merged into one `benchmarks/quality/ablation.{json,md}`
