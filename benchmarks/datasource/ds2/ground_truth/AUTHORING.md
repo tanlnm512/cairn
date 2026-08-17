@@ -1,4 +1,4 @@
-# DS-v2 ground truth — authoring notes (T008 L1, T009 L5)
+# DS-v2 ground truth — authoring notes (T008 L1, T009 L5; sealed by T010)
 
 Shape: byte-for-byte mirror of DS-v1 (`benchmarks/datasource/t2/ground_truth/`):
 `queries.jsonl` (one JSON object per line: `query_id`, `level`, `kind`, `text`,
@@ -55,7 +55,13 @@ Per batch (~22-38 queries), after landing:
    primaries.
 
 Full sealing (every expectation vs a fresh build, pass-rate artifact, tree_hash
-pin) is T010's; `manifest.json` carries `"T010 pins this"` placeholders.
+pin) is DONE — T010, 2026-08-17: 558/558 expectations tier-1-exact over fresh
+scratch builds of both corpora (pass rate 1.0000, zero aspirational). The
+verification record lives beside this file (`VERIFICATION.md` + machine
+readable `VERIFICATION.json`, schema `cairn-ds2-verification/1`); the
+reproducible verifier is `../verify_dataset.py`; `manifest.json` carries the
+pinned `tree_hash` values (per-corpus source trees + the data pair) and
+`dataset_version: "DS-v2"`.
 
 ## Batches
 

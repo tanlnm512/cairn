@@ -5,23 +5,23 @@
     "attrs-26.1.0": {
       "source": "benchmarks/datasource/ds2/second-corpus/attrs-26.1.0",
       "symbol_id_prefix": "attrs-26.1.0/",
-      "counts": {
-        "l1_queries": 106,
-        "l5_queries": 30,
-        "expectations": 389
+        "counts": {
+          "l1_queries": 106,
+          "l5_queries": 30,
+          "expectations": 389
+        },
+        "tree_hash": "847e73ef5eabab33d15a466544901c2d0d554efedff8e09a7b750af242d7c4f2"
       },
-      "tree_hash": "T010 pins this"
-    },
-    "yarl": {
-      "source": "benchmarks/datasource/t2/yarl",
-      "symbol_id_prefix": "yarl/",
-      "counts": {
-        "l1_queries": 48,
-        "l5_queries": 14,
-        "expectations": 169
-      },
-      "tree_hash": "T010 pins this"
-    }
+      "yarl": {
+        "source": "benchmarks/datasource/t2/yarl",
+        "symbol_id_prefix": "yarl/",
+        "counts": {
+          "l1_queries": 48,
+          "l5_queries": 14,
+          "expectations": 169
+        },
+        "tree_hash": "b2ac9f50845b86bdc14388365490e714dad5cb57a0a4896e8879fc9e8745b974"
+      }
   },
   "ground_truth": {
     "l1_queries": 154,
@@ -42,6 +42,6 @@
       "yarl": 14
     }
   },
-  "tree_hash": "T010 pins this",
+  "tree_hash": "d83beefc23ede049d559c4567c173f2df563d6daf5addadb97b04d589c443a05",
   "version": 1
 }

@@ -1,0 +1,166 @@
+{
+  "schema": "cairn-ds2-verification/1",
+  "dataset_version": "DS-v2",
+  "task": "T010 (specs/retrieval-quality-v2, FR-002) \u2014 seal: TC-006 empirical verification + TC-005 floors + TC-007 immutability",
+  "date": "2026-08-17",
+  "dataset": {
+    "ground_truth_dir": "benchmarks/datasource/ds2/ground_truth",
+    "queries_file": "benchmarks/datasource/ds2/ground_truth/queries.jsonl",
+    "expectations_file": "benchmarks/datasource/ds2/ground_truth/expectations.tsv",
+    "manifest": "benchmarks/datasource/ds2/ground_truth/manifest.json",
+    "loader": "cairn.eval.load_ground_truth (fails loudly on any shape violation)"
+  },
+  "corpora": {
+    "attrs-26.1.0": {
+      "facts": {
+        "edges": 4174,
+        "files": 50,
+        "parse_errors": 0,
+        "repos": 1,
+        "symbols": 1672
+      },
+      "facts_match_authoring": true,
+      "inventory": 1672,
+      "recorded_facts": {
+        "edges": 4174,
+        "files": 50,
+        "parse_errors": 0,
+        "repos": 1,
+        "symbols": 1672
+      },
+      "tree_hash": "847e73ef5eabab33d15a466544901c2d0d554efedff8e09a7b750af242d7c4f2"
+    },
+    "yarl": {
+      "facts": {
+        "edges": 2432,
+        "files": 24,
+        "parse_errors": 0,
+        "repos": 1,
+        "symbols": 1066
+      },
+      "facts_match_authoring": true,
+      "inventory": 1066,
+      "recorded_facts": {
+        "edges": 2432,
+        "files": 24,
+        "parse_errors": 0,
+        "repos": 1,
+        "symbols": 1066
+      },
+      "tree_hash": "b2ac9f50845b86bdc14388365490e714dad5cb57a0a4896e8879fc9e8745b974"
+    }
+  },
+  "counts": {
+    "queries_total": 198,
+    "l1_queries": 154,
+    "l1_by_kind": {
+      "callers": 42,
+      "definition": 46,
+      "flow": 32,
+      "impact": 34
+    },
+    "l5_queries": 44,
+    "queries_per_corpus": {
+      "attrs-26.1.0": 136,
+      "yarl": 62
+    },
+    "l1_per_corpus": {
+      "attrs-26.1.0": 106,
+      "yarl": 48
+    },
+    "l5_per_corpus": {
+      "attrs-26.1.0": 30,
+      "yarl": 14
+    },
+    "expectations_total": 558,
+    "expectations_per_corpus": {
+      "attrs-26.1.0": 389,
+      "yarl": 169
+    },
+    "expectations_per_level_kind": {
+      "L1:callers": 131,
+      "L1:definition": 66,
+      "L1:flow": 107,
+      "L1:impact": 88,
+      "L5:knowledge": 166
+    }
+  },
+  "floors": {
+    "l1_min_150": true,
+    "l1_all_four_kinds_nonzero": true,
+    "l5_min_40": true
+  },
+  "verification": {
+    "method": "Fresh scratch graph build per corpus (vendored tree copied to a throwaway workspace; the COPY gets the empty .git scanner marker; cairn.graph.builder.build_graph over the workspace), then EVERY expectation resolved tier-1-exact against that build's full symbol inventory: exact symbol-name equality AND exact repo-relative file-path equality after stripping the corpus prefix. match_rank (the committed two-tier matcher) parity over the full pool: exact implies tier-1 (file suffix), tier-1 implies rank > 0.",
+    "rule": "tier-1-exact: (symbol_name, repo_relative_path) in inventory",
+    "expectations_checked": 558,
+    "expectations_tier1_exact": 558,
+    "unresolved_or_aspirational": 0,
+    "pass_rate": 1.0,
+    "every_query_exactly_one_grade2_primary": true,
+    "grade_scale": "2 = primary target (exactly one per query), 1 = must-return context"
+  },
+  "pins": {
+    "algorithm": "cairn.bench.datasource.tree_hash \u2014 Git-tree-shaped sorted-manifest digest: sha256 over sorted '<mode> <relpath>\\0<sha256(content)>' entries (modes normalized git-style; .git dir contents excluded)",
+    "corpora": {
+      "attrs-26.1.0": "847e73ef5eabab33d15a466544901c2d0d554efedff8e09a7b750af242d7c4f2",
+      "yarl": "b2ac9f50845b86bdc14388365490e714dad5cb57a0a4896e8879fc9e8745b974"
+    },
+    "corpora_scope": "the vendored corpus source trees named by manifest.corpora.<name>.source",
+    "dataset_content": "d83beefc23ede049d559c4567c173f2df563d6daf5addadb97b04d589c443a05",
+    "dataset_content_scope": "the dataset DATA pair only \u2014 queries.jsonl + expectations.tsv staged in a scratch dir and hashed with the same tree_hash function; manifest.json/VERIFICATION*/AUTHORING.md are excluded so the pin can never be self-referential"
+  },
+  "tc007_ds_v1_immutability": {
+    "checked_paths": [
+      "benchmarks/datasource/t2 (whole tree)",
+      "benchmarks/quality/ablation.json",
+      "benchmarks/quality/ablation.md"
+    ],
+    "method": "git status --porcelain + git diff against HEAD over the DS-v1 paths (every DS-v1 artifact byte-identical); DS-v2 content lives only under benchmarks/datasource/ds2/ with its own version label DS-v2 (manifest.dataset_version)",
+    "result": "clean \u2014 no DS-v1 path modified (verified again after the seal landed; see VERIFICATION.md for the exact commands)"
+  },
+  "spot_check": {
+    "required": ">= 10 expectations across levels and kinds (TC-006 pass condition), human-confirmed against corpus source",
+    "queries_checked": 12,
+    "expectations_covered": 31,
+    "query_ids": [
+      "DS2-L1-D01",
+      "DS2-L1-D40",
+      "DS2-L1-C05",
+      "DS2-L1-C35",
+      "DS2-L1-I03",
+      "DS2-L1-I25",
+      "DS2-L1-F02",
+      "DS2-L1-F27",
+      "DS2-L5-K01",
+      "DS2-L5-K20",
+      "DS2-L5-K31",
+      "DS2-L5-K44"
+    ],
+    "coverage": "both corpora, all four L1 kinds, L5 knowledge, grades 1+2",
+    "result": "12/12 agree \u2014 every target found at its claimed file/line (incl. exact line citations: attrs _make.py:2839 Factory-storing line for I03, _make.py:2038 call site for F02, yarl _url.py:777/788/799/809 credential property defs for K44); grade-2 rows are the load-bearing primary in every case"
+  },
+  "reproduce": [
+    "uv run python benchmarks/datasource/ds2/verify_dataset.py",
+    "uv run python benchmarks/datasource/ds2/verify_dataset.py --json",
+    "uv run python -c \"from collections import Counter; from cairn.eval import load_ground_truth; qs = load_ground_truth('benchmarks/datasource/ds2/ground_truth'); print(len(qs), Counter(q.level for q in qs), Counter(q.kind for q in qs))\"",
+    "git status --porcelain benchmarks/datasource/t2 benchmarks/quality/ablation.json benchmarks/quality/ablation.md (TC-007: must be empty)"
+  ],
+  "build_facts_verified_against": {
+    "attrs-26.1.0": {
+      "edges": 4174,
+      "files": 50,
+      "parse_errors": 0,
+      "repos": 1,
+      "symbols": 1672
+    },
+    "yarl": {
+      "edges": 2432,
+      "files": 24,
+      "parse_errors": 0,
+      "repos": 1,
+      "symbols": 1066
+    },
+    "source_of_record": "ground_truth/AUTHORING.md (T008/T009 authoring notes); observed == recorded for both corpora"
+  }
+}
