@@ -362,6 +362,15 @@ class RetrievalParams:
       gate's ``_exact_name_hit`` corroboration still sees the RAW query —
       gate inputs shift only through the fused ranking. ``None``/``False``
       keeps today's exact behavior (the flag is carried, not defaulted on).
+    * ``enrich_idf`` — IDF-aware enrichment (FR-003, T013): ``True`` makes
+      the ONE ``enrich`` call corpus-aware by injecting a ``term_df``
+      lookup built HERE (one indexed PRIMARY-KEY SELECT per distinct
+      case-folded query token, memoized -- the D-005 O(#query tokens)
+      bound), so terms prevalent in > 0.90 of the corpus's symbols are
+      dropped from the enriched legs. Inert unless ``enrich`` is also on.
+      ``None``/``False`` keeps the enrichment DF-blind: no lookup is
+      built, no ``term_df`` SELECT runs, and the ``enrich`` call is
+      byte-identical to today's single-argument form.
     * ``gate_min_margin`` — rerank confidence-gate margin override
       (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
       ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
@@ -377,7 +386,44 @@ class RetrievalParams:
     rerank_pool: Optional[int] = None
     rerank: Optional[bool] = None
     enrich: Optional[bool] = None
+    enrich_idf: Optional[bool] = None
     gate_min_margin: Optional[float] = None
+
+
+def _term_df_lookup(conn: sqlite3.Connection):
+    """Build a memoized per-term DF lookup over the persisted ``term_df``.
+
+    The FR-003 / D-005 boundary half: ``semantic_search`` (and only it --
+    ``enrich`` stays pure) calls this when ``params.enrich_idf`` is truthy
+    and hands the returned callable to ``enrich`` as ``df_lookup``.
+
+    Contract of the returned ``lookup(token)``:
+
+    * ``token`` is the CASE-FOLDED key (the caller -- ``enrich``'s
+      ubiquity predicate -- lower-cases before the call, matching the
+      FTS5 unicode61 case-folding ``term_df`` keys were built with);
+    * one indexed ``SELECT symbol_df, n_symbols FROM term_df WHERE
+      token = ?`` per DISTINCT token, memoized in a per-lookup dict, so a
+      ``semantic_search`` call costs O(#distinct query tokens) SELECTs --
+      the documented D-005 bound -- each a ``token`` PRIMARY-KEY probe,
+      never a table scan;
+    * returns ``None`` for an absent token ("no DF data": the term keeps
+      full weight) or the ``(symbol_df, n_symbols)`` 2-tuple; the
+      drop/keep decision (the 0.90 cutoff) belongs to ``enrich``, not
+      here -- this is a read-only view over the connection's corpus.
+    """
+    cache: dict = {}
+
+    def lookup(token: str):
+        if token not in cache:
+            row = conn.execute(
+                "SELECT symbol_df, n_symbols FROM term_df WHERE token = ?",
+                (token,),
+            ).fetchone()
+            cache[token] = None if row is None else (row[0], row[1])
+        return cache[token]
+
+    return lookup
 
 
 def semantic_search(
@@ -438,7 +484,11 @@ def semantic_search(
     the sparse (BM25) fetch goes through enrichment's term mode. The
     confidence gate keeps seeing the raw query (T018's measurement domain);
     the rerank pair's query side is the enriched ``dense_query`` (T016,
-    D-005) — which equals the raw query whenever enrichment is off. Flags
+    D-005) — which equals the raw query whenever enrichment is off.
+    ``params.enrich_idf=True`` (T013) additionally injects the per-term
+    ``term_df`` DF lookup into that one ``enrich`` call (one indexed
+    SELECT per distinct query token, D-005); off/``None`` builds no
+    lookup and issues no ``term_df`` SELECT. Flags
     the function still does not know are ignored, never errors.
 
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
@@ -578,7 +628,19 @@ def semantic_search(
     # on paths that never reach a leg (e.g. the no-rows early return) is
     # harmless; with enrich off/None _enriched stays None and both legs see
     # the raw query exactly as today.
-    _enriched = enrich_query(query) if (params is not None and params.enrich) else None
+    #
+    # T013 (FR-003, D-005): with enrich_idf ALSO truthy the DF signal
+    # enters exactly here -- the boundary builds the per-term term_df
+    # lookup (one indexed SELECT per distinct case-folded query token)
+    # and injects it, keeping enrich() itself pure. With enrich_idf
+    # off/None the call below stays today's single-argument form: no
+    # lookup built, no term_df SELECT (flag-off byte-equivalence).
+    _enriched = None
+    if params is not None and params.enrich:
+        if params.enrich_idf:
+            _enriched = enrich_query(query, df_lookup=_term_df_lookup(conn))
+        else:
+            _enriched = enrich_query(query)
     _dense_query = _enriched.dense_query if _enriched is not None else query
 
     model = emb.current_model()
