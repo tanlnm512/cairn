@@ -4,21 +4,20 @@
 Status reflects code state per [survey.md](survey.md), not intent — survey: 0 DONE /
 3 PARTIAL (FR-002, FR-003, FR-006) / 3 TODO (FR-001, FR-004, FR-005). Nothing is
 done, so every task opens `- [ ]`; PARTIAL items carry their survey gap quoted in
-the phase note. This spec lands docs-only this cycle — the list below is
-execution-ready for a future implementation wave (one commit per task, code +
-docs together; branches per plan.md Delivery: k-fold+spine, DS-v2, lever
-families).
+the phase note. The implementation wave started 2026-08-17 (one commit per
+task, code + docs together; branches per plan.md Delivery: k-fold+spine, DS-v2,
+lever families).
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 4     | 0    |
-| 2     | 6     | 0    |
-| 3     | 4     | 0    |
+| 1     | 4     | 1    |
+| 2     | 6     | 3    |
+| 3     | 4     | 1    |
 | 4     | 7     | 0    |
-| 5     | 3     | 0    |
-| **Σ** | 24    | 0    |
+| 5     | 3     | 1    |
+| **Σ** | 24    | 6    |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -40,7 +39,8 @@ the authoring long pole.
   done 2026-08-17 — `uv run python benchmarks/datasource/ds2/recompute_power.py` reproduces every figure; target n = 150 L1 (n_required 44–54 detectable / 90–109 at 80% power for Δ+0.11; half-effect +0.05 → 220–269 recorded out of reach) / ≥40 L5; σ_d from the five committed CI half-widths at n=29 (ablation.json carries no per-query matrices)
 - [x] T006 [P] Add the `DS2_BUDGET_KB` sibling rule to `scripts/verify_datasource.py` (beside `T2_BUDGET_KB`/`DATASOURCE_BUDGET_KB`, lines 97–101) so the new ds2 dir is covered by a rule, not exempt by omission; `uv run python scripts/verify_datasource.py --budget` stays green (TC-009) (FR-002)
   done 2026-08-17 — `uv run pytest tests/test_verify_datasource.py -q` → 30 passed (4 new incl. over-budget breach); `verify_datasource.py --budget` → OK 3/3 with ds2 engaged (705.0/3072 KB), total 1173.6/5120 KB
-- [ ] T007 [P] (in-progress) Evaluate second-corpus candidate(s) against the datasource constraints (per-corpus <= 3 MB, datasource total <= 5 MB, permissive license, full provenance + NOTICE) and commit the vendored-or-deferred decision artifact naming concrete size/license findings, never a vague "later" (D-011; TC-008) (FR-002)
+- [x] T007 [P] Evaluate second-corpus candidate(s) against the datasource constraints (per-corpus <= 3 MB, datasource total <= 5 MB, permissive license, full provenance + NOTICE) and commit the vendored-or-deferred decision artifact naming concrete size/license findings, never a vague "later" (D-011; TC-008) (FR-002)
+  done 2026-08-17 — vendored attrs 26.1.0 (MIT, 674.9 KB / 67 files, sha256-pinned sdist): DECISION.md carries the 3-candidate table (attrs / markdown-it-py 4.2.0 / cachetools 7.1.7) with measured sizes + licenses; budget total 1173.6/5120 KB OK
 - [ ] T008 (after T005, T007) Author DS-v2 L1 queries under `benchmarks/datasource/ds2/ground_truth/` — >=150 with all four kinds represented, staged batches that each load through `load_ground_truth` (`queries.jsonl` + `expectations.tsv`, the loader shape from survey FR-002 evidence), sized to T005's target (FR-002)
 - [ ] T009 (after T008) Author DS-v2 L5 queries — >=40, same directory + loader shapes, staged batches landing verifiable (FR-002)
 - [ ] T010 (after T009) Verify and seal DS-v2 — empirically verify every expectation against a fresh graph build (zero aspirational entries) and commit the provenance artifact beside the dataset (per-kind/level counts, pass rate 100%, the build facts verified against); pin tree_hash and the manifest dataset_version; DS-v1 artifacts byte-identical throughout (TC-006, TC-007) (FR-002)
@@ -52,7 +52,8 @@ down-weight/drop; enrich's purity doctrine (no env reads) means the DF signal
 must be INJECTED as a parameter/table." The verified L1-D03 repro
 (`enrich(...).identifiers == ('URL',)`) is T012's unit-test anchor.
 
-- [ ] T011 [P] (in-progress) Add the persisted `term_df(token TEXT PRIMARY KEY, symbol_df INTEGER, n_symbols INTEGER)` table to `src/cairn/graph/schema.py` (following the `EMBEDDINGS_CONTENT_HASH_MIGRATION` migration pattern) plus a builder from the `symbols_fts` FTS5 vocabulary (fts5vocab row mode; fallback: one aggregate scan at embed time), refreshed on the embed pass (D-005) (FR-003)
+- [x] T011 [P] Add the persisted `term_df(token TEXT PRIMARY KEY, symbol_df INTEGER, n_symbols INTEGER)` table to `src/cairn/graph/schema.py` (following the `EMBEDDINGS_CONTENT_HASH_MIGRATION` migration pattern) plus a builder from the `symbols_fts` FTS5 vocabulary (fts5vocab row mode; fallback: one aggregate scan at embed time), refreshed on the embed pass (D-005) (FR-003)
+  done 2026-08-17 — `uv run pytest tests/test_term_df.py -q` → 9 passed (migration, determinism, fallback parity, embed-pass wiring); fts5vocab read needed the 3-arg `fts5vocab(main, symbols_fts, row)` form → D-013
 - [ ] T012 (after T011) Extend `enrich` in `src/cairn/graph/query_enrich.py` to `enrich(query, df_lookup=None)` — hard cutoff 0.90 (D-004, the scikit-learn `max_df` convention): terms with symbol_df/n_symbols > 0.90 dropped from the appended identifier tail and the sparse term list; the original dense-query prefix untouched; lookup keys case-folded (FTS5 unicode61 vs enrich casing); unit test pins the L1-D03 'URL' repro fixed deterministically (TC-010, TC-012, TC-015) (FR-003)
 - [ ] T013 (after T012) Inject the DF lookup at the boundary seam in `src/cairn/graph/semantic.py` (`_enriched = enrich_query(query)`, ~L581) — per-term indexed SELECTs bounded by the query's distinct token count (documented O(#query tokens) bound); add flag-off `RetrievalParams.enrich_idf` (additive-field doctrine); equivalence tests prove default behavior byte-identical (FR-003)
 - [ ] T014 (after T013, T004) Calibrate and measure FR-003 — sweep the cutoff within 0.75–0.95 on the DS-v1 k-fold, record the shipped value (default 0.90) in code + the ablation record, emit ablation rows on both splits, and prove no previously-passing DS-v1 tune-split query regresses to zero with L1-D03 recovered (AC4; TC-011, TC-013, TC-014) (FR-003)
@@ -79,7 +80,8 @@ path undecided (new doc vs schema v2); ladder needs only fold aggregation +
 DS-v2." The extension path is now decided: D-008 (new `ablation-v2` document,
 schema `cairn-quality-ablation/2`).
 
-- [ ] T022 [P] (in-progress) Create `benchmarks/quality/ablation-v2.{json,md}` (schema `cairn-quality-ablation/2`) plus its own guard test file — v1 record byte-identical and `uv run pytest tests/test_ablation_artifact.py` → 6 passed unmodified; v2 rows carry their own dataset/family labels and no v2 row diffs against a DS-v1 row (D-008; TC-028) (FR-006)
+- [x] T022 [P] Create `benchmarks/quality/ablation-v2.{json,md}` (schema `cairn-quality-ablation/2`) plus its own guard test file — v1 record byte-identical and `uv run pytest tests/test_ablation_artifact.py` → 6 passed unmodified; v2 rows carry their own dataset/family labels and no v2 row diffs against a DS-v1 row (D-008; TC-028) (FR-006)
+  done 2026-08-17 — `uv run pytest tests/test_ablation_v2_artifact.py -q` → 6 passed (v1 suite 6 passed unmodified, blob-hash-pinned); families ds-v1-kfold + ds-v2 (t2, attrs-26.1.0); verdict pending with SC-1 0.50/0.33 and TC-029 slots
 - [ ] T023 (after T004, T010, T014, T020, T021, T022) Re-run the confirmation ladder on the upgraded evidence base — k-fold pooled aggregate over DS-v1 + zero-shot DS-v2 validation reported as per-corpus rows plus macro-average (D-011, never an aggregate alone, never cross-corpus row diffs); verdict block cites its evidence: fold count >= 5 with per-fold spread and DS-v2 counts >= 150 L1 / >= 40 L5; SC-1 targets stay 0.50/0.33, match rules never loosened, all-levers-off row reproduces the committed DS-v1 baseline at 4 dp (TC-026, TC-027, TC-029) (FR-006)
 - [ ] T024 (after T023) Close ship-or-document — if a combination clears the pooled bootstrap guard: ship it as defaults with a shipped_defaults row and re-measure every protected baseline (perf search_symbols p95 6.25 / semantic_search 201.67 / explore 453.18/513.73 / impact 0.11; agent est_tokens 6848; warm_time cold 15497.2 / warm 232.6 / 66.6x); if nothing clears: record the shortfall (best candidate's interval + p) and name the next binding constraint in the ablation-v2 verdict — exactly one of the two branches (TC-024, TC-025) (FR-006)
 
