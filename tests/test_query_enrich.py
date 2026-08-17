@@ -1,5 +1,11 @@
 """T007: deterministic query enrichment (FR-001 / D-001, TC-003/004/005).
 
+T012 adds the FR-003 / D-004 / D-005 coverage: the injected ``df_lookup``
+(0.90 hard cutoff), the L1-D03 'URL' repro fixed deterministically
+(TC-010), the threshold boundary on both sides (TC-011), rare-term
+survival (TC-012), and the None-lookup purity equivalence regression
+guard (TC-015).
+
 Pure-function unit tests for ``cairn.graph.query_enrich.enrich``: the
 extraction rules (backticks, camelCase, snake_case, dotted, ALLCAPS,
 letter-digit), the no-identifier boundary, determinism, purity, the
@@ -14,12 +20,28 @@ from pathlib import Path
 
 import pytest
 
-from cairn.graph.query_enrich import EnrichedQuery, enrich
+from cairn.graph.query_enrich import ENRICH_DF_MAX_FRACTION, EnrichedQuery, enrich
 
 # The FR-001 defect sentence: today search_symbols folds this into the quoted
 # FTS5 phrase '"where is the function that parses an unencoded URL string"*'
 # (empty BM25); enrichment must decompose it into terms + identifiers.
 SPEC_EXAMPLE = "where is the function that parses an unencoded URL string"
+
+# The L1-D03 regression text (survey FR-003 verify command, verbatim): the
+# one-command repro whose enrichment output today pins ('URL',).
+L1_D03 = (
+    "Where is the function that parses an already-encoded URL string "
+    "without re-quoting?"
+)
+
+
+def _lookup(table: dict[str, tuple[int, int]]):
+    """Build a df_lookup callable from a case-folded-key -> (df, n) table."""
+
+    def df_lookup(key: str):
+        return table.get(key)
+
+    return df_lookup
 
 
 class TestExtractionRules:
@@ -217,3 +239,174 @@ class TestReEnrichment:
             "  ",
         ):
             assert enrich(q).dense_query.startswith(q)
+
+
+class TestDfLookupL1D03:
+    """TC-010: the L1-D03 'URL' repro, fixed deterministically."""
+
+    def test_ubiquitous_url_dropped_from_both_legs(self) -> None:
+        # 'url' marked ubiquitous at 91/100 (> 0.90): dropped from the
+        # sparse term list AND from the appended identifier tail (the only
+        # identifier is URL, so the dense query falls back to the original
+        # with NO tail). The dense PREFIX keeps the user's original text
+        # verbatim (the never-modify contract) -- the full-weight emphasis
+        # is what disappears, from both legs, not moved between them.
+        r = enrich(L1_D03, df_lookup=_lookup({"url": (91, 100)}))
+        assert r.identifiers == ("URL",)  # extraction record stays unfiltered
+        assert r.dense_query == L1_D03  # no appended tail
+        assert "URL" not in r.sparse_query.split()
+        assert r.sparse_query == "parses already encoded string without re quoting"
+
+    def test_repro_is_deterministic_across_runs_and_lookup_instances(self) -> None:
+        # Run the survey's one-command repro shape twice with independently
+        # built lookups marking 'url' ubiquitous: byte-identical output.
+        r1 = enrich(L1_D03, df_lookup=_lookup({"url": (91, 100)}))
+        r2 = enrich(L1_D03, df_lookup=_lookup({"url": (91, 100)}))
+        assert r1 == r2
+        r3 = enrich(L1_D03, df_lookup=_lookup({"url": (9999, 10000)}))
+        assert r1 == r3  # any prevalence > 0.90 gives the same answer
+
+    def test_none_lookup_repro_unchanged(self) -> None:
+        # TC-015: the survey repro's output with no lookup is byte-identical
+        # to today's -- ('URL',) with the appended tail and URL term intact.
+        r = enrich(L1_D03)
+        assert r.identifiers == ("URL",)
+        assert r.dense_query == L1_D03 + " URL"
+        assert "URL" in r.sparse_query.split()
+
+    def test_partial_filter_keeps_the_rest(self) -> None:
+        # Only 'url' is ubiquitous; every other term/identifier keeps full
+        # weight exactly where the legacy path put it.
+        base = enrich("how does parseUnencodedURL handle quirks")
+        r = enrich(
+            "how does parseUnencodedURL handle quirks",
+            df_lookup=_lookup({"url": (95, 100)}),
+        )
+        assert r.identifiers == base.identifiers  # ("parse", "Unencoded", "URL")
+        assert r.sparse_query == "parseUnencodedURL handle quirks parse Unencoded"
+        assert r.dense_query == (
+            "how does parseUnencodedURL handle quirks parse Unencoded"
+        )  # tail keeps parse/Unencoded, drops URL
+
+
+class TestDfLookupThresholdBoundary:
+    """TC-011: behavior switches exactly at the documented 0.90 cut."""
+
+    def test_documented_threshold_value(self) -> None:
+        # The shipped, documented value (scikit-learn max_df convention).
+        assert ENRICH_DF_MAX_FRACTION == 0.90
+
+    @pytest.mark.parametrize(
+        ("symbol_df", "n_symbols", "kept"),
+        [
+            (89, 100, True),  # just below -> full weight
+            (90, 100, True),  # exactly at the cut -> kept (strictly-greater drop)
+            (9, 10, True),  # exactly 0.90 via a different denominator
+            (900, 1000, True),  # exactly 0.90 at scale
+            (91, 100, False),  # just above -> dropped
+            (9001, 10000, False),  # just above at scale
+        ],
+    )
+    def test_prevalence_cut(self, symbol_df: int, n_symbols: int, kept: bool) -> None:
+        q = "how is HTTP retry handled"
+        r = enrich(q, df_lookup=_lookup({"http": (symbol_df, n_symbols)}))
+        if kept:
+            assert r.sparse_query == "HTTP retry handled"
+            assert r.dense_query == q + " HTTP"
+        else:
+            assert r.sparse_query == "retry handled"
+            assert r.dense_query == q  # no tail, prefix untouched
+
+    def test_no_df_data_keeps_term(self) -> None:
+        # Unknown key (None) and empty-corpus rows (n_symbols == 0) both
+        # mean "no data": never a penalty.
+        q = "how is HTTP retry handled"
+        for info in (None, (0, 0), (5, 0)):
+            table = {} if info is None else {"http": info}
+            r = enrich(q, df_lookup=_lookup(table))
+            assert r.sparse_query == "HTTP retry handled"
+            assert r.dense_query == q + " HTTP"
+
+    def test_all_ubiquitous_terms_yield_empty_sparse_fallback_signal(self) -> None:
+        # The documented sparse-leg signal survives filtering: empty
+        # sparse_query means "fall back to the raw query".
+        r = enrich("where is the URL", df_lookup=_lookup({"url": (100, 100)}))
+        assert r.sparse_query == ""
+        assert r.dense_query == "where is the URL"
+
+
+class TestDfLookupRareTermSurvival:
+    """TC-012: discriminative terms keep full weight."""
+
+    def test_rare_terms_byte_identical_to_no_lookup(self) -> None:
+        # Rare identifiers (2/1000, 3/5000) survive at FULL weight: the
+        # enriched output equals the no-lookup legacy output byte for byte.
+        q = "how do I decode utf8 bytes with `split_url`"
+        lookup = _lookup({"utf8": (2, 1000), "url": (3, 5000), "split": (1, 5000)})
+        assert enrich(q, df_lookup=lookup) == enrich(q)
+
+    def test_rare_survives_alongside_ubiquitous_dropped(self) -> None:
+        # One rare + one ubiquitous in the same query: the repair
+        # suppresses ubiquity, not specificity.
+        q = "retry HTTP via `backoff_policy`"
+        r = enrich(q, df_lookup=_lookup({"http": (99, 100)}))
+        # HTTP stays in the extraction record (prose ALLCAPS is extracted);
+        # it is dropped from the tail and the sparse terms.
+        assert r.identifiers == ("backoff_policy", "backoff", "policy", "HTTP")
+        assert r.sparse_query == "retry via backoff_policy backoff policy"
+        assert r.dense_query == q + " backoff_policy backoff policy"
+
+
+class TestDfLookupPurityEquivalence:
+    """TC-015: enrich stays pure; default behavior is byte-identical."""
+
+    PROBES = [
+        L1_D03,
+        SPEC_EXAMPLE,
+        "how does `parse_url` differ from split_url",
+        "Where does `ApiFactory` call build_client for the HTTPClient",
+        "where do we handle retries",
+        "",
+        "   \t\n ",
+        "where is the function",
+    ]
+
+    @pytest.mark.parametrize("q", PROBES)
+    def test_none_and_empty_and_all_miss_lookups_equal_legacy(self, q: str) -> None:
+        legacy = enrich(q)
+        assert enrich(q, df_lookup=None) == legacy
+        assert enrich(q, df_lookup=_lookup({})) == legacy
+        assert enrich(q, df_lookup=lambda key: None) == legacy
+
+    @pytest.mark.parametrize("q", PROBES)
+    def test_dense_prefix_untouched_under_filtering(self, q: str) -> None:
+        # The never-lose-information invariant holds even when terms are
+        # DF-dropped: the original text is always the dense prefix.
+        r = enrich(q, df_lookup=lambda key: (100, 100))  # everything ubiquitous
+        assert r.dense_query.startswith(q)
+        assert r.identifiers == enrich(q).identifiers
+
+    def test_deterministic_repeats_with_lookup(self) -> None:
+        lookup = _lookup({"url": (91, 100), "parse": (50, 100)})
+        for q in self.PROBES[:4]:
+            assert enrich(q, df_lookup=lookup) == enrich(q, df_lookup=lookup)
+
+    def test_lookup_called_once_per_distinct_casefolded_token(self) -> None:
+        # D-005's O(#distinct query tokens) bound: the memo means repeated
+        # occurrences (any casing) trigger exactly one lookup per key.
+        calls: list[str] = []
+
+        def counting(key: str):
+            calls.append(key)
+            return None
+
+        enrich("url URL url parse_url", df_lookup=counting)
+        assert calls.count("url") == 1
+        assert sorted(set(calls)) == sorted(calls)  # no key probed twice
+        assert set(calls) == {"url", "parse_url", "parse"}
+
+    def test_lookup_not_invoked_when_omitted(self) -> None:
+        # The default path stays a pure function of the string: the None
+        # default never dereferences a lookup (structurally impossible --
+        # no lookup object is conjured from env or globals).
+        assert enrich(SPEC_EXAMPLE, df_lookup=None) == enrich(SPEC_EXAMPLE)

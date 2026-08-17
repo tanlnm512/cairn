@@ -89,22 +89,62 @@ match a real symbol/docstring word), so anything not in this list stays a
 term. No stemming: ``parses`` stays ``parses`` (deterministic, hermetic;
 prefix handling belongs to the T008 term-mode FTS expression, not here).
 
+IDF-aware filtering (FR-003 / D-004 / D-005)
+---------------------------------------------
+An optional ``df_lookup`` argument lets the caller INJECT the corpus-side
+document-frequency signal, keeping ``enrich`` pure (the signal arrives as
+an argument; nothing is fetched from env/graph/DB inside -- see the
+purity section). Terms whose ``symbol_df / n_symbols`` prevalence is
+STRICTLY greater than :data:`ENRICH_DF_MAX_FRACTION` (0.90, the
+scikit-learn ``max_df`` convention: a term appearing in more than 90% of
+the corpus's symbols carries no discriminative signal) are dropped from
+the appended identifier tail and from the sparse term list. Three things
+are deliberately NOT touched:
+
+* the ``dense_query`` prefix -- the original query text is preserved
+  verbatim (the never-lose-information contract; D-004's "original query
+  text never modified" consequence);
+* the ``identifiers`` tuple -- it stays the UNFILTERED extraction record
+  (extraction is corpus-independent; only what the two legs consume is
+  filtered);
+* unknown terms -- a lookup miss (``None``) or zero ``n_symbols`` means
+  "no DF data", and no data never penalizes a term.
+
+Lookup keys are CASE-FOLDED (``token.lower()``) before the call because
+the persisted ``term_df`` keys come from FTS5's unicode61 tokenizer,
+which case-folds, while enrich's extracted tokens keep their casing
+(``URL`` stays ``URL``; the lookup receives ``url``). Exactly 0.90 keeps
+the term (the cut is strictly-greater, the documented TC-011 boundary).
+With ``df_lookup=None`` (the default) the filtering is inert and the
+output is byte-identical to the pre-FR-003 behavior (TC-015 regression
+guard).
+
 Purity / idempotence
 --------------------
-``enrich`` depends only on its input string. Re-enriching an already
-enriched ``dense_query`` adds no NEW identifier sub-tokens (the appended
-tail is already split, and backticks survive verbatim in the original
-text), but it is NOT idempotent: the appended identifier tail is appended
-again, so ``dense_query`` grows. This is benign by construction --
-enrichment is applied exactly once at the ``semantic_search`` boundary
-(T009), never nested.
+``enrich`` depends only on its input string (and, when given, on the
+injected ``df_lookup`` callable, which the caller supplies as a pure
+read-only DB/index view -- D-005). Re-enriching an already enriched
+``dense_query`` adds no NEW identifier sub-tokens (the appended tail is
+already split, and backticks survive verbatim in the original text), but
+it is NOT idempotent: the appended identifier tail is appended again, so
+``dense_query`` grows. This is benign by construction -- enrichment is
+applied exactly once at the ``semantic_search`` boundary (T009), never
+nested.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-__all__ = ["EnrichedQuery", "enrich"]
+__all__ = ["EnrichedQuery", "ENRICH_DF_MAX_FRACTION", "enrich"]
+
+# Hard document-frequency cutoff for FR-003 (D-004): a query term whose
+# symbol_df/n_symbols prevalence EXCEEDS this fraction is dropped from the
+# appended identifier tail and the sparse term list. Scikit-learn's max_df
+# convention: strictly greater than 0.90 drops, exactly 0.90 keeps. The value
+# is the shipped default (TC-011 pins it); T014's ablation sweeps 0.75-0.95
+# around it but 0.90 is what code and docs document.
+ENRICH_DF_MAX_FRACTION = 0.90
 
 # --- Extraction regexes (compiled once; pure functions of the input string).
 
@@ -162,9 +202,13 @@ class EnrichedQuery:
             preserved as the prefix; never loses information).
         sparse_query: Whitespace-separated BM25 term string
             (stopword-trimmed; empty means "all stopwords -- fall back to
-            the raw query").
+            the raw query"). With ``df_lookup`` given, also DF-filtered
+            (corpus-ubiquitous terms dropped).
         identifiers: Ordered, case-insensitively deduped identifier tokens
             extracted from the query (first occurrence's casing kept).
+            Stays the UNFILTERED extraction record even under DF filtering
+            -- only ``dense_query``'s appended tail and ``sparse_query``
+            consume the filter.
     """
 
     dense_query: str
@@ -225,16 +269,75 @@ def _is_identifier_shaped(candidate: str) -> bool:
     return has_digit and has_alpha
 
 
-def enrich(query: str) -> EnrichedQuery:
+def _ubiquity_predicate(df_lookup):
+    """Build a memoized case-folded ubiquity test from an injected lookup.
+
+    Returns a predicate ``is_ubiquitous(token) -> bool`` that is True iff
+    the corpus marks ``token`` as ubiquitous (prevalence strictly greater
+    than :data:`ENRICH_DF_MAX_FRACTION`). The lookup is called with the
+    CASE-FOLDED token and is invoked at most once per distinct case-folded
+    token (memoized), so a query costs O(#distinct tokens) lookups -- the
+    D-005 bound. With ``df_lookup`` None the predicate is constantly False
+    (no lookup is ever made).
+    """
+
+    cache: dict[str, bool] = {}
+
+    def is_ubiquitous(token: str) -> bool:
+        key = token.lower()
+        if key not in cache:
+            info = df_lookup(key) if df_lookup is not None else None
+            if info is None:
+                cache[key] = False  # unknown term: no data, no penalty
+            else:
+                symbol_df, n_symbols = info
+                cache[key] = n_symbols > 0 and (
+                    symbol_df / n_symbols > ENRICH_DF_MAX_FRACTION
+                )
+        return cache[key]
+
+    return is_ubiquitous
+
+
+def enrich(query: str, df_lookup=None) -> EnrichedQuery:
     """Deterministically enrich one query for the dense and sparse legs.
 
-    Pure function of ``query``: no randomness, time, environment, LLM, or
-    network (TC-003/TC-004 doctrine). See the module docstring for the
-    full consumer contract and extraction rules.
+    Pure function of ``query`` (and, when given, of the injected
+    ``df_lookup``): no randomness, time, environment, LLM, or network
+    (TC-003/TC-004 doctrine) -- the DF signal is INJECTED, never fetched
+    (D-005). See the module docstring for the full consumer contract and
+    extraction rules.
+
+    ``df_lookup`` -- the injected per-corpus document-frequency lookup
+    (FR-003; the caller at the ``semantic_search`` boundary builds it from
+    the persisted ``term_df`` table). Contract:
+
+    * a CALLABLE taking one ``str`` and returning ``None`` or a 2-tuple
+      ``(symbol_df, n_symbols)`` of non-negative ints, where ``symbol_df``
+      is the number of distinct symbols whose indexed text contains the
+      token and ``n_symbols`` the total symbol count;
+    * it receives the CASE-FOLDED token (``token.lower()``) -- ``term_df``
+      keys are FTS5 unicode61 case-folded while enrich tokens keep casing,
+      so the passed key matches the table directly;
+    * a term whose ``symbol_df / n_symbols`` is STRICTLY greater than
+      ``ENRICH_DF_MAX_FRACTION`` (0.90; exactly 0.90 keeps) is dropped
+      from ``dense_query``'s appended identifier tail and from
+      ``sparse_query`` -- never from the original text prefix and never
+      from the ``identifiers`` extraction record;
+    * ``None`` return, absent key, or ``n_symbols <= 0`` means "no DF
+      data": the term keeps full weight;
+    * it is called at most once per distinct case-folded token per
+      ``enrich`` call (memoized; D-005's O(#distinct query tokens) bound);
+    * ``df_lookup=None`` (the default) disables filtering entirely:
+      byte-identical to the pre-FR-003 single-argument behavior
+      (TC-015).
 
     Boundary (TC-005): a query with no extractable identifiers returns
     ``identifiers == ()`` and ``dense_query == query`` (the original,
     unmodified) -- enrichment never manufactures matches out of nothing.
+    The same holds when every extracted identifier is DF-dropped: the
+    dense query falls back to the original with NO appended tail (an
+    empty tail would only add a trailing space).
     """
     identifiers: list[str] = []
     seen_ids: set[str] = set()
@@ -271,11 +374,18 @@ def enrich(query: str) -> EnrichedQuery:
     #    (compounds included verbatim -- FTS5 unicode61 keeps camelCase as
     #    one token, so the compound itself can still exact-match a name),
     #    then the identifier tokens not already present, stopword-trimmed.
+    #    DF filtering (FR-003/D-004): corpus-ubiquitous terms (prevalence
+    #    strictly > ENRICH_DF_MAX_FRACTION) are dropped from BOTH source
+    #    loops -- the dilution fix must not merely move a term from one
+    #    loop to the other (TC-010).
+    is_ubiquitous = _ubiquity_predicate(df_lookup)
     terms: list[str] = []
     seen_terms: set[str] = set()
     for token in candidates:
         key = token.lower()
         if key in _STOPWORDS or key in seen_terms:
+            continue
+        if is_ubiquitous(token):
             continue
         seen_terms.add(key)
         terms.append(token)
@@ -283,13 +393,18 @@ def enrich(query: str) -> EnrichedQuery:
         key = ident.lower()
         if key in _STOPWORDS or key in seen_terms:
             continue
+        if is_ubiquitous(ident):
+            continue
         seen_terms.add(key)
         terms.append(ident)
 
     # 4. Dense query: original plus each identifier once. The embedder sees
     #    name-shaped tokens in isolation; nothing from the original text is
-    #    ever dropped.
-    dense_query = query if not identifiers else f"{query} {' '.join(identifiers)}"
+    #    ever dropped. DF-dropped identifiers are simply not appended (the
+    #    original-text prefix still contains the term if the user typed it
+    #    -- the prefix contract); an all-dropped tail means NO tail at all.
+    tail = [ident for ident in identifiers if not is_ubiquitous(ident)]
+    dense_query = query if not tail else f"{query} {' '.join(tail)}"
 
     return EnrichedQuery(
         dense_query=dense_query,
