@@ -91,7 +91,10 @@ def test_families_declared_with_verbatim_ds_v1_identity():
     assert fam["ground_truth"]["l1_expectations"] == 160
     # ds-v2 family: BEIR-style protocol + declared per-corpus labels.
     ds2 = doc["dataset"]["families"]["ds-v2"]
-    assert ds2["corpora"] == ["t2", "attrs-26.1.0"]  # from T007's DECISION.md
+    # T023 finalized the label set from the manifest's symbol_id_prefix
+    # convention (manifest.json corpora keys) — the prefixes the
+    # expectations' corpus-prefixed file paths carry.
+    assert ds2["corpora"] == ["yarl", "attrs-26.1.0"]
     assert "never an aggregate alone" in ds2["protocol"]
     assert ds2["sizing"]["floor_l1_queries"] == 150
     assert ds2["sizing"]["floor_l5_queries"] == 40
@@ -127,23 +130,37 @@ def test_rows_carry_family_and_dataset_labels():
         assert doc["shipped_defaults"]["row"] is None
 
 
-def test_verdict_pending_with_sc1_targets_and_tc029_slots():
-    """TC-026 (targets 0.50/0.33) + TC-029 slots (folds >= 5, DS-v2 counts)."""
+def test_verdict_evidence_filled_targets_unchanged():
+    """TC-026 (targets 0.50/0.33) + TC-029 evidence slots, post-T023.
+
+    T023 filled the verdict's evidence (fold count with per-fold spread,
+    DS-v2 counts, per-leg SC-1 actuals); the ship-or-document DISPOSITION
+    (status/outcome leaving 'pending') is T024's, so while it pends the
+    coupling to shipped_defaults still binds.
+    """
     doc = _doc()
     v = doc["verdict"]
     assert v["status"] == "pending"
     assert v["outcome"] == "pending"
     assert v["sc1_targets"] == {"recall_at_10": 0.50, "mrr": 0.33}
     assert "never gamed" in v["honesty_clause"]
-    # Slots for T023/T024 to fill — declared with their TC-029 minimums.
+    # TC-029 slots, now FILLED: fold count >= 5 with a spread, DS-v2
+    # counts above their floors.
     assert v["fold_count_minimum"] == 5
-    for slot in ("fold_count", "per_fold_spread"):
-        assert slot in v
+    assert v["fold_count"] >= v["fold_count_minimum"]
+    spread = v["per_fold_spread"]
+    assert isinstance(spread, dict) and "delta_min" in spread and "delta_max" in spread
     assert v["ds2_counts"]["minimum"] == {"l1_queries": 150, "l5_queries": 40}
-    for slot in ("l1_queries", "l5_queries"):
-        assert slot in v["ds2_counts"]
-    # While pending, no actuals or margins exist to be misread.
-    assert v["sc1_actual"] is None and v["margins"] is None
+    assert v["ds2_counts"]["l1_queries"] >= 150
+    assert v["ds2_counts"]["l5_queries"] >= 40
+    # The actuals are per-leg (D-011: never a single-leg figure alone):
+    # DS-v1 k-fold best AND DS-v2 macro best, with the full-evidence verdict.
+    assert v["sc1_actual"]["ds_v1_kfold_best"]["both_targets_reached"] is True
+    assert v["sc1_actual"]["ds_v2_macro_best"]["both_targets_reached"] is False
+    assert v["sc1_actual"]["reached_on_full_evidence_base"] is False
+    assert v["margins"]["ds_v2_macro_best_vs_targets"]["recall_at_10"] < 0
+    # The zero-shot refutation is part of the record, not a footnote:
+    assert v["sc1_actual"]["ds_v1_kfold_best"]["zero_shot_validated"] is False
 
 
 def test_v1_record_files_are_byte_identical():

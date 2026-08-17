@@ -20,10 +20,10 @@
       "ds-v2": {
         "aggregate": "macro-average across the per-corpus rows, never presented alone (D-011)",
         "corpora": [
-          "t2",
+          "yarl",
           "attrs-26.1.0"
         ],
-        "corpora_note": "Per-corpus labels for the corpus dirs under benchmarks/datasource/ at authoring time: 't2' (in-repo) plus the second corpus vendored by T007 as 'attrs-26.1.0' (MIT) under benchmarks/datasource/ds2/second-corpus/, per its DECISION.md (674.9 KB / 67 files, within the per-corpus 3072 KB rule). T023 finalizes the label set when it mints the DS-v2 rows.",
+        "corpora_note": "Labels finalized by T023 from the manifest's symbol_id_prefix convention (manifest.json corpora keys: 'yarl' for the t2 snapshot, 'attrs-26.1.0' for the T007-vendored MIT corpus) \u2014 the same prefixes the expectations' corpus-prefixed file paths carry, so per-corpus rows derive straight from the dataset.",
         "declared_in": "D-011 (BEIR-style cross-corpus protocol, FR-002/FR-006)",
         "name": "benchmark-datasource-ds2",
         "path": "benchmarks/datasource/ds2/",
@@ -44,15 +44,15 @@
     "landed": [
       "T014 (FR-003): cutoff calibration rows landed (family ds-v1-kfold) -- integrity row + enrich+enrich_idf grid {0.75,0.80,0.85,0.90} (0.95 descoped, D-014); raw sweeps, analysis, quiet p95 re-measure and the L1-D03 diagnostic under benchmarks/quality/fr003-calibration/",
       "T020 (FR-004): PRF ablation rows landed (family ds-v1-kfold) -- grid fb_docs {3,10} x fb_terms 10 x lambda 0.5 (D-002 anchors); raw sweeps + rows payload under benchmarks/quality/fr004-prf/ (integrity gate PASS: pooled 0.4174/0.2862 exact, tune/validate anchors 4dp, cross-run implicit rows identical)",
-      "T021 (FR-005): multi-vector ablation row landed (family ds-v1-kfold) -- pooled 0.5588/0.3395 (both SC-1 targets), bootstrap delta +0.1414 p=0.0035; raw sweep under benchmarks/quality/fr005-mv/ (integrity 58/58 per-query identity vs the committed T014 baseline)"
+      "T021 (FR-005): multi-vector ablation row landed (family ds-v1-kfold) -- pooled 0.5588/0.3395 (both SC-1 targets), bootstrap delta +0.1414 p=0.0035; raw sweep under benchmarks/quality/fr005-mv/ (integrity 58/58 per-query identity vs the committed T014 baseline)",
+      "T023 (FR-006): confirmation ladder re-run on the upgraded evidence base \u2014 DS-v1 legs (a)/(b) via run_ladder_candidates.py, (c)=multivector via the T021 sweep; DS-v2 zero-shot leg via run_ds2_zeroshot.py (per-corpus + macro rows, ds-v2 family); verdict evidence filled, disposition pending T024"
     ],
     "p95_discipline": "T014: the integrity row and the shipped-cutoff row carry quiet-machine re-measured p95 (p95-remeasure.json; the k-fold sweeps overlapped a full test suite on the same machine, orchestrator-confirmed); non-shipped grid rows carry in-sweep p95 under that stated caveat",
     "protocol": "inherits the v1 D-009 protocol discipline pinned in benchmarks/quality/ablation.json (measurement.protocol): torch threads 1, local bge-m3, brute-force cosine (no vec0), rerank under the CAIRN_RERANK=1 marker with flat pairs and gate margin 0.45, reference-local machine",
     "protocol_inherited_from": "benchmarks/quality/ablation.json",
     "status": "pending",
     "todo": [
-      "T023: mint DS-v2, finalize the second-corpus label, fill ds-v2 per-corpus + macro-average rows",
-      "T024: run the k-fold ladder via kfold_partitions and fill ds-v1-kfold rows",
+      "T024: close ship-or-document \u2014 shipped_defaults row + protected-baseline re-measures on the ship branch, or the documented shortfall + next binding constraint on the document branch (exactly one)",
       "re-measure the protected baselines on shipping (TC-027: all-levers-off equals the committed artifact at 4 decimals)"
     ]
   },
@@ -531,6 +531,298 @@
         "p95_ms": 690.0509,
         "recall_at_10": 0.4915
       }
+    },
+    {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.20057573891625613,
+        "ci_low": 0.0036514778325123388,
+        "delta": 0.0988095238095238,
+        "n_queries": 58,
+        "p_value": 0.049095090490950906,
+        "p_value_t": 0.053023813076008855,
+        "significant": true
+      },
+      "combo": "enrich+rerank-off",
+      "dataset": "DS-v1",
+      "db_mb": 6.8789,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "enrich_idf": null,
+        "pair_format": "flat",
+        "rerank": "off (explicit \u2014 the v1 record's first candidate direction; the reranker masks enrichment gains at ~40x p95)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.3131,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "D-016 ladder candidate (a): the v1 record's own first candidate, re-measured under D-009 pooling (the 29-query single split that scored it delta+0.1123 p=0.118 superseded by the 5-fold rotation, n=58). CLEARS the 95% pooled bootstrap guard \u2014 the campaign's headline question answered: doubling the evidence base converts the v1 near-miss into significance (margin thin: CI_low +0.0037, t-test cross-check p=0.0530 \u2014 recorded, guard is the bootstrap per D-009). Candidate (b) is byte-identical per-query (0/58 differ; the 0.90 cutoff drops nothing on DS-v1 \u2014 T014). SC-1: recall 0.5163 clears 0.50; MRR 0.3131 misses 0.33 by 0.0169.",
+      "p95_ms": 54.8157,
+      "p95_source": "kfold-sweep (serial run, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.5163,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4981,
+        "n_queries": 29,
+        "p95_ms": 52.7661,
+        "recall_at_10": 0.6337
+      },
+      "validate": {
+        "mrr": 0.1282,
+        "n_queries": 29,
+        "p95_ms": 55.2569,
+        "recall_at_10": 0.3989
+      }
+    },
+    {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.20057573891625613,
+        "ci_low": 0.0036514778325123388,
+        "delta": 0.0988095238095238,
+        "n_queries": 58,
+        "p_value": 0.049095090490950906,
+        "p_value_t": 0.053023813076008855,
+        "significant": true
+      },
+      "combo": "enrich_idf+rerank-off",
+      "dataset": "DS-v1",
+      "db_mb": 6.8789,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "enrich_idf": true,
+        "pair_format": "flat",
+        "rerank": "off (explicit \u2014 same direction as (a); D-012's replaces-not-stacks logic applies to PRF, enrich composes)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.3131,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "D-016 ladder candidate (b): the FR-003 repaired successor, at the SHIPPED ENRICH_DF_MAX_FRACTION=0.90 (never overridden). Byte-identical per-query outcomes to candidate (a) on DS-v1 (0/58 differ): the highest term_df fraction is 'test' at 0.8583 < 0.90, so the cutoff's drop-set is empty on this corpus (T014's calibration finding). Clears the guard with (a)'s exact figures; the (a)-vs-(b) separation is DS-v2's to show (the attrs corpus has its own term_df distribution).",
+      "p95_ms": 55.9158,
+      "p95_source": "kfold-sweep (serial run, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.5163,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4981,
+        "n_queries": 29,
+        "p95_ms": 56.6657,
+        "recall_at_10": 0.6337
+      },
+      "validate": {
+        "mrr": 0.1282,
+        "n_queries": 29,
+        "p95_ms": 45.7682,
+        "recall_at_10": 0.3989
+      }
+    },
+    {
+      "combo": "all-levers-off",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3358,
+      "mv": false,
+      "n_queries": 106,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 883.7137,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4835,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "all-levers-off",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.4179,
+      "mv": false,
+      "n_queries": 48,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 1018.3128,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4722,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "all-levers-off",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3769,
+      "mv": false,
+      "n_queries": 154,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 951.0132,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4778,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "multivector",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2431,
+      "mv": false,
+      "n_queries": 106,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 781.7256,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4403,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "multivector",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3257,
+      "mv": false,
+      "n_queries": 48,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 754.7168,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4861,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "multivector",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2844,
+      "mv": false,
+      "n_queries": 154,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 768.2212,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4632,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2936,
+      "mv": false,
+      "n_queries": 106,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 57.6919,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4961,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.4171,
+      "mv": false,
+      "n_queries": 48,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 38.983,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4601,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3554,
+      "mv": false,
+      "n_queries": 154,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 48.3374,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4781,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2936,
+      "mv": false,
+      "n_queries": 106,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 41.4819,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4961,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.4171,
+      "mv": false,
+      "n_queries": 48,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 43.7033,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4601,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3554,
+      "mv": false,
+      "n_queries": 154,
+      "notes": "T023 DS-v2 zero-shot validation leg (D-011): tune on DS-v1, validate zero-shot on DS-v2; per-corpus rows plus macro-average, never an aggregate alone, never diffed against any DS-v1 row. L1 leg only \u2014 the 44 L5 queries are evaluated and recorded separately (structural zero: L5 retrieval is OKF bundle search, and the benchmark corpora carry no .knowledge/ bundle \u2014 see the verdict's l5 note).",
+      "p95_ms": 42.5926,
+      "p95_source": "zero-shot run (serial, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.4781,
+      "split_basis": "zero-shot full-set over the DS-v2 ground truth (evaluate_full_set; lever decisions were made on DS-v1)"
     }
   ],
   "schema": "cairn-quality-ablation/2",
@@ -542,27 +834,68 @@
   "task": "T022 (FR-006); skeleton -- measurement rows land with T023 (ds-v2) and T024 (ds-v1-kfold)",
   "verdict": {
     "ds2_counts": {
-      "l1_queries": null,
-      "l5_queries": null,
+      "l1_queries": 154,
+      "l5_queries": 44,
       "minimum": {
         "l1_queries": 150,
         "l5_queries": 40
       },
-      "note": "slot: filled by T023 when DS-v2 lands; TC-029 requires >= 150 L1 / >= 40 L5 (D-010 floor)"
+      "note": "filled by T023 from the sealed dataset (T009/T010 loader counts); floors met: 154 >= 150 L1, 44 >= 40 L5"
     },
-    "evidence_base": "slot: the verdict must cite the k-fold aggregate (fold count, per-fold spread) over the legacy set AND the DS-v2 measurement (query counts) -- never the legacy single split (TC-029)",
-    "fold_count": null,
+    "evidence_base": "5-fold seeded rotation over the 58 DS-v1 L1 queries (pooled per-query paired bootstrap at n=58, per-fold spread descriptive only) PLUS zero-shot DS-v2 validation over both corpora (154 L1 / 44 L5 queries; per-corpus rows + macro-average in the ds-v2 family) \u2014 never the legacy single split (TC-029)",
+    "fold_count": 5,
     "fold_count_minimum": 5,
     "honesty_clause": "same clause as the v1 record: if the sweep cannot reach the margin without violating the protected baselines or the precision doctrine, the best evidenced configuration ships and the shortfall is documented in this document -- never gamed (spec.md SC-1)",
-    "margins": null,
+    "l5_note": "The 44 DS-v2 L5 queries were evaluated through the same seam and score 0.0 for every configuration: L5 retrieval is OKF bundle search (no retrieval tunables), and the benchmark corpora carry no .knowledge/ bundle \u2014 the same recorded-as-structural-zero discipline as the committed DS-v1 quality baseline ('surface absent', benchmarks/baselines/DS-v1/README.md). Never blended into the L1 rows.",
+    "margins": {
+      "basis": "per-family actual minus target, per metric; the full-evidence outcome is governed by the weaker leg",
+      "ds_v1_kfold_best_vs_targets": {
+        "mrr": 0.0095,
+        "recall_at_10": 0.0588
+      },
+      "ds_v2_macro_best_vs_targets": {
+        "mrr": 0.0469,
+        "recall_at_10": -0.0222
+      }
+    },
     "outcome": "pending",
-    "per_fold_spread": null,
-    "sc1_actual": null,
+    "per_fold_spread": {
+      "delta_max": 0.1832,
+      "delta_min": 0.0969,
+      "note": "descriptive only, never the significance basis (D-009); all five folds positive \u2014 the DS-v1 leg leaves; the zero-shot leg lives in the ds-v2 rows",
+      "per_fold_delta": [
+        0.1832,
+        0.1624,
+        0.1491,
+        0.1169,
+        0.0969
+      ],
+      "rotation_mean_delta": 0.1417,
+      "winning_candidate": "multivector"
+    },
+    "sc1_actual": {
+      "basis": "SC-1 is evaluated on the full upgraded evidence base (DS-v1 k-fold pooled + DS-v2 zero-shot), per family \u2014 never a single-leg figure presented alone. The DS-v1 leg reached both targets via multivector (0.5588/0.3395); that configuration is refuted zero-shot (DS-v2 macro 0.4632/0.2844, MRR -0.0925 vs the incumbent). The DS-v2 leg reaches neither target for any configuration (best recall macro 0.4778 < 0.50; the 0.3769 MRR figure belongs to that same recall-short incumbent row).",
+      "ds_v1_kfold_best": {
+        "both_targets_reached": true,
+        "combo": "multivector",
+        "mrr": 0.3395,
+        "recall_at_10": 0.5588,
+        "zero_shot_validated": false
+      },
+      "ds_v2_macro_best": {
+        "both_targets_reached": false,
+        "combo": "all-levers-off (incumbent)",
+        "mrr": 0.3769,
+        "note": "the incumbent carries the best DS-v2 macro-average of every measured configuration \u2014 no candidate improves on it zero-shot",
+        "recall_at_10": 0.4778
+      },
+      "reached_on_full_evidence_base": false
+    },
     "sc1_targets": {
       "mrr": 0.33,
       "recall_at_10": 0.5
     },
-    "statement": "PENDING: this document is the T022 skeleton; the FR-006 ladder re-run has not executed. The SC-1 targets are the same bar as the first campaign -- recall@10 >= 0.50, MRR >= 0.33 (TC-026; no goalpost moves). No verdict may be read from this block until status leaves 'pending'.",
+    "statement": "EVIDENCE COMPLETE, DISPOSITION PENDING (T024). The ladder's three D-016 candidates on the DS-v1 k-fold pooled aggregate: (a) enrich+rerank-off delta+0.0988 p=0.0491 CI[+0.0037,+0.2006] CLEARS; (b) enrich_idf+rerank-off byte-identical to (a) on DS-v1 CLEARS; (c) multivector delta+0.1414 p=0.0035 CI[+0.0527,+0.2373] CLEARS decisively and reaches both SC-1 targets on that leg (0.5588/0.3395). The zero-shot DS-v2 leg refutes transfer: multivector's gain reverses on the unseen corpus (attrs delta-0.0432 p=0.15; macro MRR -0.0925) and enrich+rerank-off's +9.9pp recall collapses to +0.0003 macro with -0.0215 MRR (per-corpus bootstraps n.s.; on DS-v2's NEW yarl queries the enrich delta is -0.0122 \u2014 a query-population effect, not only a corpus effect). PRF measured negative at both grid points (T020). SC-1 targets stay 0.50/0.33 and match rules are untouched; the ship-or-document disposition lands with T024.",
     "status": "pending"
   }
 }

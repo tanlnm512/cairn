@@ -33,9 +33,11 @@ workroot; facts verified at startup), never rebuilt.
 re-retrieval: pooled Δ/p/95% CI per candidate (the D-009 aggregate's own
 bootstrap, n = 58), per-split tune/validate recall/MRR/p95 reconstructed
 from the fold reports over the seed-24301 29/29 halves (T014's
-analyze_fr003.py approach), and the 95% guard verdict.  In-sweep p95 is
-marked contention-noisy: these sweeps run in the D-015 parallel wave, not
-on a quiet machine.
+analyze_fr003.py approach), and the 95% guard verdict.  The runs execute
+SERIALLY on an otherwise-quiet reference machine per MEASURE.md (the
+D-015 parallel-wave plan was replaced by that runbook before any run:
+concurrent model processes time-share one GPU and only inflate p95), so
+in-sweep p95 is a quiet-machine figure, not a contention caveat.
 """
 from __future__ import annotations
 
@@ -341,9 +343,10 @@ def cmd_analyze(_args: argparse.Namespace) -> int:
         "wins over the marker), everything else incumbent. Candidate (b) "
         "ran at the SHIPPED query_enrich.ENRICH_DF_MAX_FRACTION — never "
         "overridden.\n",
-        "Cells are recall@10/MRR. `*` in-sweep p95 — contention-noisy "
-        "(D-015 parallel wave, not a quiet machine; T014's quiet-remeasure "
-        "discipline applies to shipped rows only, which these are not).\n",
+        "Cells are recall@10/MRR. `*` in-sweep p95 — measured in the "
+        "serial run on an otherwise-quiet reference machine (MEASURE.md; "
+        "the D-015 parallel-wave plan was dropped before any run), so it "
+        "is a quiet-machine figure rather than a contention caveat.\n",
         "## Headline — does either pooled Δ clear 95% at n=58?\n",
         f"**{headline}.** (a) enrich+rerank-off: Δ {va['delta']:+.4f}, "
         f"p = {va['p_value']:.4f}, CI [{va['ci_low']:+.4f}, "

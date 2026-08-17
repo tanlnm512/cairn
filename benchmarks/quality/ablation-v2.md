@@ -6,13 +6,13 @@ Machine-readable source of record: [`ablation-v2.json`](ablation-v2.json)
 sort_keys=True)`). This file is its human rendering; where the two could
 drift, the JSON wins.
 
-**STATUS: PENDING.** The FR-006 verdict is still pending (T023 fills the
-ds-v2 rows, T024 the ds-v1-kfold ladder, and the ladder mints the v2
-shipped-defaults row). The document is no longer empty, though: **T014
-(FR-003) landed the first measurement rows** — the cutoff-calibration
-family below, measured 2026-08-17 on the D-009 protocol. Every other
-quantitative figure outside the FR-003 section is copied verbatim from the
-cited committed artifacts.
+**STATUS: PENDING (disposition).** The FR-006 verdict's evidence is
+complete — T014 (FR-003 calibration), T020 (FR-004 PRF), T021 (FR-005
+multi-vector), and T023 (the confirmation ladder + DS-v2 zero-shot) have
+all landed their rows below, measured 2026-08-17 on the D-009 protocol —
+and exactly one branch remains: T024's ship-or-document disposition.
+Every other quantitative figure in this document is measured or copied
+verbatim from the cited committed artifacts.
 
 ## Dataset and measurement families (D-008/D-009/D-011)
 
@@ -57,7 +57,7 @@ additionally carry `corpus` (a per-corpus label or `macro-average`). The
 guards assert `set(row) >=` these keys, so later tasks may add columns but
 never remove or retype them.
 
-## Rows — T014 (FR-003) + T020 (FR-004) + T021 (FR-005) landed; T023/T024 pending
+## Rows — T014 + T020 + T021 + T023 landed; T024 disposition pending
 
 The ds-v1-kfold family's first rows are T014's FR-003 cutoff calibration:
 the all-levers-off **integrity row** plus the `enrich+enrich_idf` grid, 5
@@ -65,8 +65,8 @@ seeded rotation folds over the 58 L1 queries (D-009; per-query outcomes
 pooled exactly once each; the tune/validate columns are the seed-24301
 29/29 halves reconstructed from the same per-query maps — they reproduce
 the committed Figure 1/2 anchors 0.5828/0.4444 and 0.2521/0.1279 to 4
-decimals). T023 fills the DS-v2 rows; T024 the ladder rows and the
-shipped-defaults disposition. All rows carry
+decimals). T023 added the confirmation-ladder rows and the DS-v2 family
+below; T024 carries the ship-or-document disposition. All rows carry
 `family`/`dataset`/`combo`/`recall_at_10`/`mrr`/`p95_ms`/`db_mb`/`mv`.
 
 | combo (ds-v1-kfold) | tune r@10 / MRR | validate r@10 / MRR | pooled r@10 / MRR | p95 source |
@@ -79,6 +79,8 @@ shipped-defaults disposition. All rows carry
 | prf@docs=3,terms=10,lambda=0.5 | 0.5484 / 0.2642 | 0.1972 / 0.0862 | 0.3728 / 0.1752 | sweep (serial, quiet machine) |
 | prf@docs=10,terms=10,lambda=0.5 | 0.5713 / 0.2368 | 0.1535 / 0.0768 | 0.3624 / 0.1568 | sweep (serial, quiet machine) |
 | **multivector** | 0.6262 / 0.4664 | 0.4915 / 0.2126 | **0.5588 / 0.3395** | sweep (serial, quiet machine) |
+| enrich+rerank-off | 0.6337 / 0.4981 | 0.3989 / 0.1282 | 0.5163 / 0.3131 | sweep (serial, quiet machine) |
+| enrich_idf+rerank-off | 0.6337 / 0.4981 | 0.3989 / 0.1282 | 0.5163 / 0.3131 | sweep (serial, quiet machine) |
 
 ### T021 (FR-005) — multi-vector: the strongest row, both SC-1 targets reached
 
@@ -99,6 +101,53 @@ the committed T014 baseline with 58/58 per-query identity, drift
 0.000000 — the mv rows sit unread in the DB during that row, proving the
 flag-off byte-equivalence T018 pinned. Raw sweep under
 `benchmarks/quality/fr005-mv/`.
+
+### T023 (FR-006) — the confirmation ladder on the upgraded evidence base
+
+**The DS-v1 leg (k-fold pooled aggregate, n=58).** The v1 campaign's
+headline near-miss — enrich+rerank-off at Δ+0.1123, p=0.118 on the
+29-query single split — **clears the 95% pooled bootstrap guard at
+n=58**: Δ +0.0988, p = 0.0491, CI [+0.0037, +0.2006], per-fold Δ
+[+0.0680, +0.1239] all positive (t-test cross-check p = 0.0530 —
+recorded; the guard is the bootstrap per D-009). Candidate (b)
+(enrich_idf, at the SHIPPED 0.90 cutoff) is byte-identical per-query to
+(a) — 0/58 differ; the cutoff's drop-set is empty on DS-v1 (highest
+term_df fraction `test` 0.8583 < 0.90). Together with T021's
+multivector row (Δ +0.1414, p = 0.0035), **all three D-016 candidates
+clear on the DS-v1 leg**, and multivector reaches both SC-1 targets on
+that leg (0.5588 / 0.3395). The evidence-power bet paid: the same
+levers, unchanged, went from p = 0.118 to significance purely by
+doubling n through the rotation.
+
+**The DS-v2 leg (zero-shot validation, D-011) — and it refutes
+transfer.** Tune on DS-v1, validate zero-shot over both DS-v2 corpora
+(per-corpus rows + macro-average, never diffed against DS-v1 rows; the
+44 L5 queries evaluated and recorded as the structural zero above).
+On the 154 L1 queries:
+
+| combo (ds-v2) | attrs r@10 / MRR (n=106) | yarl r@10 / MRR (n=48) | macro r@10 / MRR |
+|---|---|---|---|
+| all-levers-off (incumbent) | 0.4835 / 0.3358 | 0.4722 / 0.4179 | **0.4778 / 0.3769** |
+| multivector | 0.4403 / 0.2431 | 0.4861 / 0.3257 | 0.4632 / 0.2844 |
+| enrich+rerank-off | 0.4961 / 0.2936 | 0.4601 / 0.4171 | 0.4781 / 0.3554 |
+| enrich_idf+rerank-off | 0.4961 / 0.2936 | 0.4601 / 0.4171 | 0.4781 / 0.3554 |
+
+* **multivector's +14pp DS-v1 gain reverses zero-shot**: on the unseen
+  attrs corpus Δ −0.0432 (p = 0.15, CI [−0.1017, +0.0157]); macro MRR
+  −0.0925 vs the incumbent. The DS-v1 win was corpus-specific.
+* **enrich+rerank-off's +9.9pp recall collapses to +0.0003 macro**
+  (MRR −0.0215); both per-corpus bootstraps are non-significant
+  (attrs Δ+0.0126 p=0.70; yarl Δ−0.0122 p=0.76). On DS-v2's *new* yarl
+  queries the delta is −0.0122 — the DS-v1 gain was as much a
+  query-population effect as a corpus effect. Its one robust transfer
+  is latency: macro p95 48.3 ms vs the incumbent's 951.0 ms (rerank-off).
+* (a) ≡ (b) byte-identical again — the 0.90 cutoff's drop-set is empty
+  on the DS-v2 corpus mix as well.
+* The **incumbent carries the best DS-v2 macro of every measured
+  configuration** — no candidate improves on it zero-shot.
+
+Raw sweeps, the zero-shot runner, and the one-pass merge script live
+under `benchmarks/quality/ladder-v2/`.
 
 ### T020 (FR-004) — PRF: an honest negative, inside the budget it replaces
 
@@ -173,25 +222,39 @@ the protocol pins and stand as measured.
 Raw sweeps, the analysis record, the quiet p95 pass, and the diagnostic
 live under `benchmarks/quality/fr003-calibration/` (see its README).
 
-## SC-1 verdict — PENDING
+## SC-1 verdict — evidence complete, disposition pending (T024)
 
 | | recall@10 | MRR |
 |---|---|---|
 | SC-1 target (unchanged) | ≥ 0.50 | ≥ 0.33 |
-| Actual | *pending* | *pending* |
+| DS-v1 k-fold leg, best (multivector) | **0.5588** ✓ | **0.3395** ✓ |
+| DS-v2 zero-shot macro, best (incumbent) | 0.4778 ✗ | 0.3769 ✓ |
+| **Full evidence base** | **not reached** | **not reached** |
 
 The targets are the same bar as the first campaign — **0.50 / 0.33,
 untouchable by this campaign (TC-026)**; no re-scoped target, no metric
-swap. The verdict block in the JSON carries slots that T023/T024 fill:
-`fold_count` (minimum 5 per D-009/TC-029) with `per_fold_spread`, and
-`ds2_counts` (TC-029 requires ≥ 150 L1 / ≥ 40 L5). Per TC-029 the verdict
-must cite the k-fold aggregate over the legacy set AND the DS-v2
-measurement with its query counts — never the legacy single split — so a
-reader can see the evidence power actually bought. The honesty clause is
-unchanged from v1: if the sweep cannot reach the margin without violating
-the protected baselines or the precision doctrine, the best evidenced
-configuration ships and the shortfall is documented here — never gamed
-(spec.md SC-1).
+swap. The verdict's evidence (filled by T023): 5-fold seeded rotation
+over the 58 DS-v1 L1 queries (pooled per-query paired bootstrap at
+n=58 — all three D-016 candidates clear; per-fold spread descriptive
+only) plus zero-shot DS-v2 validation (154 L1 / 44 L5; per-corpus rows
++ macro-average). **SC-1 is reached on the DS-v1 leg alone by
+multivector (0.5588/0.3395) — the first configuration in either
+campaign to do so — but that configuration is refuted zero-shot**
+(DS-v2 macro 0.4632/0.2844; attrs Δ −0.0432; macro MRR −0.0925 vs the
+incumbent), and no configuration reaches both targets on the DS-v2 leg
+(best macro belongs to the recall-short incumbent row). On the full
+evidence base, SC-1 is not reached.
+
+The 44 L5 queries are evaluated and recorded as a structural zero (L5
+retrieval is OKF bundle search; the benchmark corpora carry no
+`.knowledge/` bundle — the committed DS-v1 baseline's "surface absent"
+discipline), never blended into the L1 rows.
+
+The ship-or-document disposition (exactly one branch) lands with T024.
+The honesty clause is unchanged from v1: if the sweep cannot reach the
+margin without violating the protected baselines or the precision
+doctrine, the best evidenced configuration ships and the shortfall is
+documented here — never gamed (spec.md SC-1).
 
 ## Standing rules this document is pinned to
 
