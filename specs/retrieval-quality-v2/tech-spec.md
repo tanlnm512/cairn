@@ -538,3 +538,50 @@ record); no source on PRF specifically over RRF-fused first passes
 - **Consequences**: none beyond the mechanism; an additional fallback arm
   (zero rows from fts5vocab on a non-empty corpus → stale/empty FTS index)
   re-runs the aggregate scan rather than leaving term_df empty.
+
+### D-014: T014's calibration grid truncated at the upper bound (0.95 dropped)
+- **Context**: task T014 names a 0.75–0.95 cutoff sweep; the user asked to
+  shorten the wall clock mid-run (baseline + 0.90/0.85/0.80 complete, 0.75
+  in flight, 0.95 not started).
+- **Decision** (orchestrator, user-requested descope): the committed grid is
+  baseline + {0.90, 0.85, 0.80, 0.75}; the 0.95 run was killed and its
+  partial artifact removed. The quiet p95 re-measurement covers the shipped
+  config row only. AC3's wording — "the sweep **may** calibrate within
+  0.75–0.95 but the shipped value must be recorded" — keeps the truncated
+  grid spec-compliant; the shipped default 0.90 sits mid-grid.
+- **Consequences**: the record's grid README states the truncation and
+  reason; evidence for the shipped 0.90 (the load-bearing output) is
+  unaffected; TC-013/AC4 (the L1-D03 non-regression proof) still lands from
+  the shipped config's per-query outcomes.
+
+### D-015: parallel measurement wave — rows serialized through the orchestrator; one consolidated quiet-p95 pass
+- **Context**: T020 (PRF rows) and T021 (multi-vector rows) plus the
+  ladder's DS-v1 k-fold candidates all write to `ablation-v2` and all need
+  quiet-machine p95; serializing them costs 3× the wall clock.
+- **Decision** (user-requested speedup): the measurement agents run
+  CONCURRENTLY in separate artifact dirs (`fr004-prf/`, `fr005-mv/`,
+  `ladder-v2/`), driving `run_sweep_kfold`/`evaluate_on` directly from
+  their own runner scripts with explicit `RetrievalParams` (no sweep-spec
+  parsing changes; no `eval.py` edits). Recall/MRR are deterministic under
+  the D-009 pins, so concurrency is safe for them; every in-sweep p95 is
+  designated contention-noisy and ONE consolidated quiet p95 pass re-prices
+  the committed rows at the end. `ablation-v2` is written once, by the
+  orchestrator, from the agents' measured JSONs.
+- **Consequences**: per-lever agents deliver figures + row payloads in
+  their digests instead of editing the record; guard tests validate the
+  final single-write state.
+
+### D-016: the confirmation ladder runs 3 candidates, not every near-miss
+- **Context**: T023's ladder over all v1 near-misses + new levers is the
+  campaign's longest tail; the user asked for the fastest defensible close.
+- **Decision** (user-requested descope): the ladder evaluates three
+  directions — (a) enrich + rerank-off (the ablation record's own "first
+  candidate"; best v1 near-miss Δ+0.1123 at p=0.118), (b) repaired
+  enrichment + rerank-off (enrich_idf, the FR-003 successor), (c) the best
+  new-lever combo by the T020/T021 rows (PRF or multi-vector). k-fold
+  pooled aggregate over DS-v1 + zero-shot DS-v2 per-corpus rows +
+  macro-average, per D-011 unchanged.
+- **Consequences**: the verdict names its candidate set explicitly (so the
+  trim is visible, not silent); any direction not run is listed in the
+  record as untested-this-cycle, never as failed. SC-1 targets and match
+  rules untouched.
