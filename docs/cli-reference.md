@@ -271,7 +271,13 @@ The navigation tools; the recommended first move from code is `cairn def` or
 | `cairn download-reranker` | Download the CrossEncoder reranker weights and enable reranking. |
 
 `embed` options: `--db`, `--batch-size 64`, `--limit`, `--no-reap`,
-`--build-index`, `--install-deps`, `--download-model`.
+`--build-index`, `--install-deps`, `--download-model`, `--multivector`.
+
+`--multivector` also embeds name-only and docstring-only vectors (stored in
+`embeddings_mv`) and rebuilds a `vecmv_` ANN index beside the main one. It is
+off by default: a default build stores one vector per symbol, unchanged. Every
+embed pass — flag or not — also refreshes the persisted `term_df` table, so
+enrichment's IDF signal stays current with the embedded corpus.
 
 `--install-deps` installs the semantic dependencies (torch +
 sentence-transformers) into the shared `~/.cairn/lib/` directory, which
@@ -322,18 +328,36 @@ and wiring them into `cairn.json` for build-time hybrid indexing.
 | `cairn doctor` | Run 8 system health checks (PASS/WARN/FAIL each); exit 0 or 1 so agents can gate on it. Read-only. |
 | `cairn report` | Print a redacted diagnostic bundle (versions, doctor, recent errors, config) for bug reports / GitHub issues. Never uploads. |
 | `cairn status` | System status and health across all layers. |
-| `cairn eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`). |
-| `cairn bench` | Run performance or scalability benchmarks. |
+| `cairn eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`; `--sweep`/`--kfold` for lever sweeps). |
+| `cairn bench` | Run performance, scalability, or agent-effort benchmarks. |
 
 `metrics` options: `--db`, `--tool NAME` (default aggregation only), `--json`,
 plus the telemetry-trend flags `--builds`, `--quality`, `--contention`, `--tasks`.
 `doctor` options: `--db`, `--json`.
 `report` options: `--db`, `--json`, `--out PATH`.
 `status` options: `--db`, `--knowledge`.
-`eval` options: `--db`, `--knowledge`, `--corpus L1|L5|all`, `--queries PATH`, `--json`.
-`bench` options: `--suite perf|scaling`, `--workspace`, `--sizes`, `--n-files`,
-`--complexity`, `--embed-backend`, `--json`, `--save`, `--compare`, `--threshold`,
-`--repeats`.
+`eval` options: `--db`, `--knowledge`, `--corpus L1|L5|all`, `--queries PATH`
+(a queries.yaml file, or a ground-truth directory holding `queries.jsonl` +
+`expectations.tsv`), `--json`, plus the lever-sweep flags: `--sweep` (a JSON
+file or inline JSON list of `{name, params}` combos — `RetrievalParams`
+fields, `null`/omitted = today's default; evaluates the TUNE split only,
+held-out ids guarded; requires the ground-truth-directory form of
+`--queries`), `--out` (with `--sweep`: write the canonical sweep document —
+the harness itself never writes), `--kfold` (with `--sweep`: run the sweep
+once per fold of the seeded k-fold rotation), `--folds 5` (fold count; the
+harness refuses fewer than 5).
+`bench` options: `--suite perf|scaling|agent`, `--workspace`, `--sizes`,
+`--n-files`, `--complexity`, `--embed-backend`, `--json`, `--save`,
+`--compare`, `--baseline`, `--threshold`, `--repeats`, `--runs`.
+
+`--baseline DS-v1` compares against the committed, stamped baseline under
+`benchmarks/baselines/<DS-version>/<suite>.json` (mutually exclusive with
+`--compare`) and prints a provenance header — dataset version + tree hash,
+cairn version, runner class — before the comparison table. A machine-profile
+class mismatch between the baseline and the current run (macOS vs Linux,
+arm64 vs x86_64, different CPU counts) only warns: timings stay advisory,
+never normalized. `--runs` sets the agent suite's measured runs per task
+(medians reported).
 
 #### `cairn doctor` — the 8 health checks
 

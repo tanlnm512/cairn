@@ -229,10 +229,13 @@ The task backend is selected by `CAIRN_LLM_BACKEND` (default `file-queue`).
 Two things live on disk, side by side under one store directory:
 
 1. **The SQLite graph DB** (`<store>/.kg`). Symbols, call edges with resolution
-   labels, embeddings (and a `vec0` ANN table when the `sqlite-vec` backend is
-   active), FTS5 indexes for symbol search, cross-repo dependency maps. This is
-   the structural ground truth, written by the parser/builder, read by every
-   graph tool.
+   labels, embeddings (and a per-model `vec0` ANN table when the `sqlite-vec`
+   backend is active — plus the opt-in `embeddings_mv` table and its `vecmv_`
+   twin, populated only by `cairn embed --multivector` and empty on default
+   builds), `term_df` (persisted document frequencies for IDF-aware query
+   enrichment, refreshed by `cairn embed`), FTS5 indexes for symbol search,
+   cross-repo dependency maps. This is the structural ground truth, written by
+   the parser/builder, read by every graph tool.
 
 2. **The `.knowledge/` markdown bundle** (`<store>/.knowledge/`). OKF markdown,
    human- and agent-readable:

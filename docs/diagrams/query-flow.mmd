@@ -30,7 +30,7 @@ flowchart TD
         TE[("transitive_edges<br/>depth-4 closure,<br/>structural kinds only")]
         DFT[("dataflow")]
         FTS[("symbols_fts (FTS5)")]
-        VEC[("vec0 + embeddings")]
+        VEC[("vec0 + embeddings<br/>(opt-in: vecmv_ + embeddings_mv —<br/>empty on default builds)")]
         MET[("tool_metrics / events")]
     end
 
@@ -66,4 +66,4 @@ flowchart TD
     INSTR -.->|"buffer (deque 2000)"| FLUSH -.-> MET
 
     FTS -.->|"search_symbols<br/>(sibling path)"| RENDER
-    VEC -.->|"semantic_search: ANN or brute cosine<br/>+ RRF fusion + optional rerank<br/>(sibling path)"| RENDER
+    VEC -.->|"semantic_search: ANN or brute cosine<br/>+ RRF fusion + optional rerank<br/>(sibling path; eval-only levers —<br/>PRF, multivector, IDF — off by default)"| RENDER

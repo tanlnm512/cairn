@@ -286,6 +286,7 @@ def _write_committed_baseline(
     a dict stamps that profile verbatim; None omits the key entirely
     (pre-T013 unstamped baseline shape).
     """
+    from cairn import __version__
     from cairn.bench.datasource import machine_profile
 
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
@@ -299,7 +300,10 @@ def _write_committed_baseline(
                 "version": version,
                 "tree_hash": "f" * 64,
             },
-            "cairn_version": "0.11.0",
+            # The stamp carries whatever version minted it -- dynamic, so the
+            # header assertion (current __version__ in output) never rots at
+            # a version bump.
+            "cairn_version": __version__,
         }
         if stamped is not None:
             payload["machine_profile"] = stamped

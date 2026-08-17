@@ -245,6 +245,7 @@ The `cairn` command groups the main functionality. Run `cairn --help`
 | `cairn wiki …` | Generate / search the architecture wiki |
 | `cairn install-agents` | Drop integration files into supported AI agents |
 | `cairn upgrade` | Update cairn in place from PyPI (detects install method; `--check` to preview) |
+| `cairn eval` | Retrieval-quality harness vs ground truth (k-fold lever sweeps) |
 | `cairn bench` | Performance / scalability benchmarks (`--save`/`--compare` for regression checks) |
 | `cairn doctor` | 8 system health checks (PASS/WARN/FAIL each; exit code gates CI/agents) |
 | `cairn metrics` | Tool-call metrics, plus `--builds`/`--quality`/`--contention` telemetry trends |
@@ -294,6 +295,8 @@ via Apple's [`container`](https://github.com/apple/container) CLI (no Docker
 required) — no host PATH, HOME, or agent CLIs leak in, so it catches
 non-hermetic tests before you push. It mirrors `.github/workflows/ci.yml`
 job-by-job (`test`, `security`, `typecheck`, `precommit`, `build`, `bench`;
+the `ds2-seal` job is runnable directly as
+`python benchmarks/datasource/ds2/verify_dataset.py`;
 `make ci-local-all` covers the 3.10–3.14 matrix). Caches persist under
 `.cache/ci-local/`; see `scripts/ci-local.sh` for flags, including
 `CI_LOCAL_ARCH=linux/amd64` for GitHub-runner parity via Rosetta.
@@ -317,7 +320,7 @@ end user at install time.
 
 ## Status
 
-**Beta — pre-1.0 (v0.10.0).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.12.0).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 

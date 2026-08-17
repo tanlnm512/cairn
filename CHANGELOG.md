@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- _Nothing yet._
+
+### Changed
+- _Nothing yet._
+
+## [0.12.0] - 2026-08-17
+
+> **Focus:** the second retrieval-quality campaign — an evidence-base upgrade,
+> not a default change. `cairn eval` gains k-fold cross-validation (>=5 seeded
+> folds, pooled per-query paired bootstrap); DS-v2 brings a cross-corpus ground
+> truth (198 queries over yarl + attrs-26.1.0, sealed by a new CI job); and
+> three new levers are measured for the first time — IDF-aware enrichment,
+> RM3 pseudo-relevance feedback, and multi-vector-per-symbol embeddings
+> (`cairn embed --multivector`). Multivector reached both SC-1 targets on
+> DS-v1 (recall@10 0.5588, MRR 0.3395 — the first configuration to do so) but
+> was refuted zero-shot on DS-v2, so nothing ships; the honest verdict lives
+> in the unified ablation record, and four scope-audit defect fixes (seal
+> re-mint, k-fold embedding-state isolation, the vecmv purge trap, mv row
+> metadata) round out the release.
+
+### Added
 - **Retrieval-quality evidence base, second campaign (no default changes)**:
   k-fold cross-validation in `cairn eval` (`--kfold`, >=5 seeded folds, pooled
   per-query paired bootstrap — per-fold spread descriptive only); a DS-v2
@@ -48,6 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard test files merged into one `tests/test_ablation_artifact.py`.
   Dataset labels (`DS-v1`/`DS-v2`) and measurement families are untouched —
   they name datasets and protocols, not campaign versions.
+- **Docs synced with the retrieval stack**: architecture docs (html +
+  overview + query-flow + diagrams) now cover the `embeddings_mv`/`vecmv_`
+  dual index, the `term_df` table, and the flag-off PRF/multivector/IDF
+  levers; `docs/benchmarks.md` documents the eval sweep/k-fold harness,
+  DS-v2, and the campaign verdict; `docs/cli-reference.md` gains
+  `--multivector`, `--sweep/--kfold/--folds`, and the bench baseline flags;
+  README adds a `cairn eval` row. Also corrected pre-existing stale claims
+  (27 MCP tools, 8 memory tools, 5 resolver tiers, incremental `cairn update`
+  rebuilding derived indexes).
 
 ### Fixed
 - **Scope-audit defects from the retrieval-quality-v2 campaign** (audit

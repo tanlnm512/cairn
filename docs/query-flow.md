@@ -41,7 +41,7 @@ flowchart TD
         TE[("transitive_edges<br/>depth-4 closure,<br/>structural kinds only")]
         DFT[("dataflow")]
         FTS[("symbols_fts (FTS5)")]
-        VEC[("vec0 + embeddings")]
+        VEC[("vec0 + embeddings<br/>(opt-in: vecmv_ + embeddings_mv —<br/>empty on default builds)")]
         MET[("tool_metrics / events")]
     end
 
@@ -77,7 +77,7 @@ flowchart TD
     INSTR -.->|"buffer (deque 2000)"| FLUSH -.-> MET
 
     FTS -.->|"search_symbols<br/>(sibling path)"| RENDER
-    VEC -.->|"semantic_search: ANN or brute cosine<br/>+ RRF fusion + optional rerank<br/>(sibling path)"| RENDER
+    VEC -.->|"semantic_search: ANN or brute cosine<br/>+ RRF fusion + optional rerank<br/>(sibling path; eval-only levers —<br/>PRF, multivector, IDF — off by default)"| RENDER
 ```
 
 ## Stage by stage
@@ -177,7 +177,12 @@ when `pending_sync` has rows (live watcher installs only), and truncated at
 - `semantic_search` — `graph/semantic.py`: embed the query → ANN via
   `ann_index.ann_query` (sqlite-vec vec0 KNN) or brute-force cosine (50k-row
   cap) → Reciprocal Rank Fusion with the BM25 list (`fusion.rrf_fuse`, on by
-  default) → optional CrossEncoder rerank (`reranker.py`).
+  default) → optional CrossEncoder rerank (`reranker.py`). Flag-off levers
+  exist beyond this default path but are eval-harness-only (never default, not
+  exposed over MCP): an RM3 PRF second pass over the fused first pass (which
+  replaces the rerank stage when on), a multi-vector dual-index
+  (`vec_`/`vecmv_`) max-score merge, and IDF-aware query enrichment via
+  `term_df`.
 - `explore` — `graph/explore.py`, the front door: FTS + semantic seeds →
   1-hop neighborhood → `impact_analysis` at depth 2 (index mode) → one
   consolidated answer.
@@ -186,7 +191,10 @@ when `pending_sync` has rows (live watcher installs only), and truncated at
 
 One SQLite file per workspace (`~/.cairn/<key>/.kg`, WAL, busy_timeout):
 `symbols`/`edges`/`imports` (the structural graph), `symbols_fts` (FTS5),
-`vec_*` + `embeddings` (sqlite-vec ANN), `dataflow` and `transitive_edges`
+`vec_*` + `embeddings` (sqlite-vec ANN), `vecmv_*` + `embeddings_mv` (the
+opt-in multi-vector pair, empty without `cairn embed --multivector`),
+`term_df` (persisted document frequencies for IDF-aware enrichment,
+refreshed by `cairn embed`), `dataflow` and `transitive_edges`
 (the derived indexes — closure is kind-filtered and materialised to distance
 4 on every build/update), and the telemetry tables (`events`,
 `tool_metrics`, `build_runs`).

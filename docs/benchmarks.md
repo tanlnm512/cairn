@@ -18,11 +18,12 @@ resolution-label comparison that distinguishes cairn from name-only
 
 | Command | Measures | Output |
 |---------|----------|--------|
-| `cairn eval` | Retrieval quality — Recall@10 and MRR vs ground-truth queries | per-corpus table or JSON |
+| `cairn eval` | Retrieval quality — Recall@10 and MRR vs ground truth; `--sweep` / `--kfold` lever sweeps (pooled paired bootstrap) | per-corpus table, JSON, or sweep document |
 | `cairn bench --suite perf` | Build phase timings, embed cost, query latency | per-op table (median / p95 / ops/sec) |
 | `cairn bench --suite scaling` | How build/embed cost scales with corpus size | per-size table (build / embed / DB MB / **resolve_rate**) |
 | `cairn bench --suite agent` | Agent effort — tool calls + context tokens, cairn vs a grep/read control | per-task table (calls / est tokens / wall ms) |
 | `scripts/measure_warm_time.py` | Warm-time — first semantic-query wall-time in a fresh process, warm-up active vs cold | `benchmarks/quality/warm_time.json` |
+| `benchmarks/quality/ablation.md` | The retrieval-quality campaigns' unified ablation record (DS-v1 k-fold + DS-v2 zero-shot legs; verdict: no ship) | committed record, schema `cairn-quality-ablation/2` |
 
 ---
 
@@ -34,7 +35,9 @@ ground-truth query set.
 **Fixture:** `tests/eval/queries.yaml` — 40 queries (30 L1 + 10 L5), each with
 a `query` string and an `expect` list of expected symbol-name / concept-id
 fragments. A query "passes" if any expected fragment is a case-insensitive
-substring of any retrieved name in the top-*k*.
+substring of any retrieved name in the top-*k*. `--queries` also accepts a
+**ground-truth directory** — a `queries.jsonl` + `expectations.tsv` pair, the
+form the committed datasets ship in; the sweep mode below requires it.
 
 **Metrics:**
 
@@ -48,13 +51,29 @@ cairn eval                       # against the current DB + knowledge store
 cairn eval --corpus L1           # code only
 cairn eval --corpus L5           # knowledge only
 cairn eval --json                # machine-readable
-cairn eval --queries path/to/queries.yaml   # custom ground-truth set
+cairn eval --queries path/to/queries.yaml       # custom ground-truth yaml
+cairn eval --queries path/to/ground_truth/      # ground-truth directory
+cairn eval --queries path/to/ground_truth/ --sweep combos.json --out sweep.json
+cairn eval --queries path/to/ground_truth/ --sweep combos.json --kfold --folds 5
 ```
 
 **What it exercises:** `eval_l1_query` tries `semantic_search` first, falls
 back to `search_symbols` (FTS5 + BM25) if embeddings are empty or it throws.
 `eval_l5_query` uses the OKF bundle search. The fallback path means `cairn eval`
 works on a default (no-torch) install — it just exercises the lexical pipeline.
+
+**Ground truth: DS-v1 and DS-v2.** Two committed datasets live under
+`benchmarks/datasource/`. **DS-v1** (`t2/ground_truth`) is the graded pair the
+tables below cite. **DS-v2** (`ds2/`) is the larger successor: 198 queries —
+154 L1 spanning four kinds (callers / definition / flow / impact) across the
+two vendored corpora `yarl` and `attrs-26.1.0`, plus 44 L5 — carrying 558
+hand-verified expectations, every one resolvable **tier-1-exact** (zero
+aspirational rows). DS-v2 ships with its own verifier,
+`benchmarks/datasource/ds2/verify_dataset.py` (runnable directly): it builds
+fresh graphs over both corpora, re-resolves all 558 expectations, and
+cross-checks the manifest's pinned corpus tree hashes. CI re-runs that
+verifier on every push as the `ds2-seal` job, so the ground truth cannot
+drift silently.
 
 **Results (generated from DS-v1):**
 
@@ -76,6 +95,47 @@ works on a default (no-torch) install — it just exercises the lexical pipeline
 > [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) for the
 > measurement that *does* characterize cairn's differentiator (the 82%
 > precise-vs-fuzzy false-positive rate on common names).
+
+### Lever sweeps and k-fold cross-validation
+
+`--sweep` replaces the single evaluation with a sweep over retrieval-lever
+combinations: a JSON file or inline JSON list of `{name, params}` combos
+(`RetrievalParams` fields; `null`/omitted = today's default). It requires
+`--queries` pointing at a ground-truth directory, and by default evaluates
+the TUNE split only — held-out ids are guarded by the harness. `--out` writes
+the canonical sweep document; the harness itself never writes, so that flag
+is the only writer.
+
+`--kfold` (requires `--sweep`) runs the sweep once per fold of a seeded
+k-fold rotation instead of one tune/validate split; `--folds` (default 5)
+sets the fold count, and the harness refuses fewer than 5. The discipline is
+deliberate: the significance verdict comes from a **pooled per-query paired
+bootstrap across all folds** (every query is scored held-out exactly once),
+with per-fold spread reported descriptively only — never as five independent
+verdicts.
+
+### Campaign verdict — nothing shipped
+
+Two retrieval-quality campaigns ran through this harness. The unified record
+is committed at `benchmarks/quality/ablation.{json,md}` (schema
+`cairn-quality-ablation/2`; the first campaign's record is embedded verbatim
+under `campaigns.retrieval-quality-v1`). The honest summary:
+
+- On the DS-v1 k-fold leg, all three candidate levers **cleared the 95%
+  pooled bootstrap guard**, and **multivector reached both SC-1 targets**
+  (recall@10 **0.5588**, MRR **0.3395** — the first configuration in either
+  campaign to do so).
+- Zero-shot validation on DS-v2 **refuted the transfer**: multivector scored
+  macro **0.4632 / 0.2844** across the two unseen corpora — below the
+  incumbent's 0.4778 / 0.3769 macro — and no candidate improved on the
+  incumbent zero-shot.
+- The verdict is therefore **no ship**: defaults are unchanged, every lever
+  remains flag-off and eval-harness-only (none is exposed through the MCP
+  tools), and the committed figures of record stand.
+
+The next binding constraint is lever generalization across corpora, not
+evidence power; the armed follow-up experiments are listed in the ablation
+record.
 
 ---
 
@@ -122,7 +182,14 @@ cairn bench --suite perf --compare base.json --threshold 0.10   # tighten to 10%
 
 > **CI signal:** `--compare` exits with code **2** if any operation regressed
 > by more than `--threshold` (default 15%) versus the baseline. Wire it into CI
-> to catch performance regressions on PRs.
+> to catch performance regressions on PRs. `--baseline DS-v1` compares against
+> the committed stamped artifact instead and prints a provenance header
+> (dataset version + tree hash, cairn version, runner class) before the table,
+> warning — advisory only — when the baseline's machine-profile *class* differs
+> from the current run's. CI's bench job compares each PR against a **rolling
+> same-class baseline** minted on every push to `main` (a SHA sidecar names the
+> commit it was minted on); the committed DS-v1 artifact is the cold-start
+> fallback.
 
 **Results (generated from DS-v1):**
 
@@ -217,6 +284,13 @@ checkout is benched via `cairn bench --workspace <checkout> --json --save
 commit + scale hint, the `t3_entry` shape the T013 artifact-stamp hook
 defines) into the saved artifact's `dataset` block — so every T3 result is
 self-describing about exactly which pinned corpus measured it.
+
+**The eval ground truth is pinned the same way.** Beyond the T1/T2 content
+pins in CI's bench job, the `ds2-seal` job re-runs
+`benchmarks/datasource/ds2/verify_dataset.py` on every push — rebuilding
+fresh graphs over both DS-v2 corpora and re-resolving all 558 expectations
+tier-1-exact. Like the T1/T2 pins, it is a deterministic content check, not
+a timing, so drift reddens CI instead of hiding in the tree.
 
 ---
 
@@ -382,7 +456,9 @@ far below the 15% `--compare` gate.
   means many edges are `unresolved` (external/stdlib) — expected, not a bug.
 - **Regression gates** (`--compare`) should pin a baseline on your main branch
   and run on every PR. Use `--threshold 0.15` as a starting point; tighten as
-  the baseline stabilizes.
+  the baseline stabilizes. CI already does this with a rolling same-class
+  baseline (re-minted on every push to `main`, SHA-attributed via sidecar),
+  falling back to the committed DS-v1 artifact on cold start.
 
 ## See also
 
