@@ -136,6 +136,26 @@ def sweep_db(fresh_db):
     return fresh_db
 
 
+@pytest.fixture()
+def sweep_cli_db(tmp_path):
+    """File-backed variant for CLI tests: --db/CAIRN_DB must receive a real
+    path — an in-memory Connection str()'s to its repr, which get_db then
+    creates as a stray database file in the process CWD."""
+    import sqlite3
+
+    from cairn.graph import embeddings as emb
+    from cairn.graph.schema import _apply_schema
+
+    db_path = tmp_path / "sweep-cli.kg"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    _seed_corpus(conn)
+    emb.embed_all(conn)
+    conn.close()
+    return db_path
+
+
 SWEEP_QUERIES = [
     {
         "query_id": "l1-alpha",
@@ -848,7 +868,7 @@ class TestSweepCli:
         assert "ground-truth directory" in result.output
 
     def test_sweep_inline_combos_emit_canonical_doc(
-        self, tmp_path, monkeypatch, sweep_db, gt_dir
+        self, tmp_path, monkeypatch, sweep_cli_db, gt_dir
     ):
         import json as _json
 
@@ -856,12 +876,12 @@ class TestSweepCli:
 
         from cairn.cli.system import eval_cmd
 
-        monkeypatch.setenv("CAIRN_DB", str(sweep_db))
+        monkeypatch.setenv("CAIRN_DB", str(sweep_cli_db))
         runner = CliRunner()
         spec = _json.dumps([{"name": "loose", "params": {"dense_threshold": 0.0}}])
         result = runner.invoke(
             eval_cmd,
-            ["--db", str(sweep_db), "--sweep", spec, "--queries", str(gt_dir)],
+            ["--db", str(sweep_cli_db), "--sweep", spec, "--queries", str(gt_dir)],
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
@@ -870,17 +890,17 @@ class TestSweepCli:
         names = [r["combo"] for r in doc["rows"]]
         assert names[0] == "all-levers-off" and "loose" in names
 
-    def test_sweep_out_writes_file(self, tmp_path, monkeypatch, sweep_db, gt_dir):
+    def test_sweep_out_writes_file(self, tmp_path, monkeypatch, sweep_cli_db, gt_dir):
         from click.testing import CliRunner
 
         from cairn.cli.system import eval_cmd
 
-        monkeypatch.setenv("CAIRN_DB", str(sweep_db))
+        monkeypatch.setenv("CAIRN_DB", str(sweep_cli_db))
         out = tmp_path / "sweep.json"
         runner = CliRunner()
         result = runner.invoke(
             eval_cmd,
-            ["--db", str(sweep_db), "--sweep", "[]",
+            ["--db", str(sweep_cli_db), "--sweep", "[]",
              "--queries", str(gt_dir), "--out", str(out)],
             catch_exceptions=True,
         )
