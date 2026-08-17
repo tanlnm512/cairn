@@ -1,0 +1,19 @@
+{
+  "upstream_repo": "https://github.com/python-attrs/attrs",
+  "upstream_version": "26.1.0",
+  "source_archive": "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz",
+  "source_archive_sha256": "d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "export_date": "2026-08-17",
+  "export_notes": [
+    "Pinned artifact = the attrs 26.1.0 sdist from PyPI (registry-pinned, not a moving git ref); the sha256 above matched the digest published on pypi.org/attrs/26.1.0 at download time.",
+    "Kept: src/attr + src/attrs (both API generations: legacy 'attr' and modern 'attrs' packages -- 34 .py modules + .pyi stubs + py.typed markers), tests/ (16 .py test files + tests/test_mypy.yml -- realistic call shapes for the corpus), LICENSE (verbatim MIT), README.md, CHANGELOG.md, pyproject.toml (project identity metadata).",
+    "Excluded (docs build machinery): docs/ entirely (860 KB du, including its images and theme assets), typing-examples/ (external-repo test fixtures), changelog.d/ (towncrier fragments).",
+    "Excluded (build/dev tooling): tox.ini, uv.lock (460 KB dependency lockfile), bench/ (benchmark scripts), CITATION.cff, PKG-INFO (sdist metadata duplicate of pyproject.toml).",
+    "No .git* dirs/files, .so, images, or files above the pre-commit 500 KB single-file cap anywhere in the vendored tree (verified: largest file is src/attr/_make.py at 106,129 bytes; find -name '.git*' -o -name '*.so' -o -name '*.png' returns 0 hits).",
+    "Size: vendored_bytes = 691124 across 67 files (du -sk = 844 KB), within the 3 MB per-corpus budget; datasource total with this corpus present = 1143.5 KB of the 5120 KB total budget (byte-sum method, matching scripts/verify_datasource.py).",
+    "The committed tree intentionally has NO .git marker (same discipline as t2: the build+query smoke test copies the tree to tmp and adds the marker there)."
+  ],
+  "vendored_bytes": 691124
+}

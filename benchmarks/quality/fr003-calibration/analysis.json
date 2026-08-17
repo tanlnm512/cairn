@@ -1,0 +1,500 @@
+{
+  "ac4": {
+    "L1_D03": {
+      "all_levers_off": {
+        "mrr": 0.16666666666666666,
+        "recall_at_10": 1.0
+      },
+      "half": "validate",
+      "note": "L1-D03 has exactly one grade-2 expectation (yarl/_url.py#pre_encoded_url): per-query recall 1.0 <-> target in top 10. Its committed historical passing state (the recorded 1.0 -> 0.0 fall under naive enrichment) is RECALL 1.0; the incumbent (all-levers-off) holds the target at rank 6 (MRR 1/6), not rank 1 -- measured here and recorded in d03-diagnostic.json. Under the committed seed-24301 29/29 split the query lands in the validate half -- reported on that half, not silently re-homed"
+    },
+    "per_cutoff": {
+      "0.75": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_rank1": false,
+        "clean": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ],
+        "validate_clean": false,
+        "validate_regressed_to_zero": [
+          "L1-D03"
+        ]
+      },
+      "0.80": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_rank1": false,
+        "clean": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ],
+        "validate_clean": false,
+        "validate_regressed_to_zero": [
+          "L1-D03"
+        ]
+      },
+      "0.85": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_rank1": false,
+        "clean": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ],
+        "validate_clean": false,
+        "validate_regressed_to_zero": [
+          "L1-D03"
+        ]
+      },
+      "0.90": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_rank1": false,
+        "clean": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ],
+        "validate_clean": false,
+        "validate_regressed_to_zero": [
+          "L1-D03"
+        ]
+      }
+    },
+    "previously_passing_set": {
+      "derived_from": "T014 integrity run (all-levers-off, k-fold rotation, per-query outcomes), anchored to the first campaign by the integrity band check vs the committed Figure-1 tune anchor 0.5828/0.4444 and Figure-2 validate anchor 0.2521/0.1279 (the v1 record commits aggregates only; per-query outcomes are reproduced, not retyped)",
+      "tune_ids": [
+        "L1-C01",
+        "L1-C06",
+        "L1-C07",
+        "L1-C08",
+        "L1-C09",
+        "L1-C12",
+        "L1-C14",
+        "L1-C16",
+        "L1-C19",
+        "L1-D04",
+        "L1-D05",
+        "L1-D08",
+        "L1-D09",
+        "L1-D12",
+        "L1-D13",
+        "L1-D14",
+        "L1-D15",
+        "L1-D16",
+        "L1-D17",
+        "L1-I02",
+        "L1-I03",
+        "L1-I06",
+        "L1-I10"
+      ],
+      "tune_n": 23,
+      "validate_ids": [
+        "L1-C04",
+        "L1-C05",
+        "L1-C10",
+        "L1-C13",
+        "L1-C17",
+        "L1-C18",
+        "L1-C20",
+        "L1-D02",
+        "L1-D03",
+        "L1-D06",
+        "L1-I01",
+        "L1-I08",
+        "L1-I09"
+      ],
+      "validate_n": 13
+    }
+  },
+  "cutoffs": {
+    "0.75": {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "confidence": 0.95,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "n_resamples": 10000,
+        "p_value": 0.8177182281771823,
+        "p_value_t": 0.809672602251538,
+        "significant": false,
+        "t_statistic": -0.24196904576937503
+      },
+      "cutoff": 0.9,
+      "descriptive": {
+        "per_fold": {
+          "baseline": [
+            0.3734,
+            0.3408,
+            0.4631,
+            0.4513,
+            0.457
+          ],
+          "candidate": [
+            0.3669,
+            0.3343,
+            0.4566,
+            0.4556,
+            0.4464
+          ],
+          "delta": [
+            -0.0065,
+            -0.0065,
+            -0.0065,
+            0.0043,
+            -0.0106
+          ]
+        },
+        "rotation_mean": {
+          "baseline": 0.4171,
+          "candidate": 0.412,
+          "delta": -0.0052
+        },
+        "spread": {
+          "delta_max": 0.0043,
+          "delta_min": -0.0106
+        }
+      },
+      "pooled": {
+        "mrr": 0.2603,
+        "n_queries": 58,
+        "recall_at_10": 0.4123
+      },
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3120.6619,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3178.0491,
+        "recall_at_10": 0.2417
+      }
+    },
+    "0.80": {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "confidence": 0.95,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "n_resamples": 10000,
+        "p_value": 0.8177182281771823,
+        "p_value_t": 0.809672602251538,
+        "significant": false,
+        "t_statistic": -0.24196904576937503
+      },
+      "cutoff": 0.9,
+      "descriptive": {
+        "per_fold": {
+          "baseline": [
+            0.3734,
+            0.3408,
+            0.4631,
+            0.4513,
+            0.457
+          ],
+          "candidate": [
+            0.3669,
+            0.3343,
+            0.4566,
+            0.4556,
+            0.4464
+          ],
+          "delta": [
+            -0.0065,
+            -0.0065,
+            -0.0065,
+            0.0043,
+            -0.0106
+          ]
+        },
+        "rotation_mean": {
+          "baseline": 0.4171,
+          "candidate": 0.412,
+          "delta": -0.0052
+        },
+        "spread": {
+          "delta_max": 0.0043,
+          "delta_min": -0.0106
+        }
+      },
+      "pooled": {
+        "mrr": 0.2603,
+        "n_queries": 58,
+        "recall_at_10": 0.4123
+      },
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3120.6619,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3178.0491,
+        "recall_at_10": 0.2417
+      }
+    },
+    "0.85": {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "confidence": 0.95,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "n_resamples": 10000,
+        "p_value": 0.8177182281771823,
+        "p_value_t": 0.809672602251538,
+        "significant": false,
+        "t_statistic": -0.24196904576937503
+      },
+      "cutoff": 0.9,
+      "descriptive": {
+        "per_fold": {
+          "baseline": [
+            0.3734,
+            0.3408,
+            0.4631,
+            0.4513,
+            0.457
+          ],
+          "candidate": [
+            0.3669,
+            0.3343,
+            0.4566,
+            0.4556,
+            0.4464
+          ],
+          "delta": [
+            -0.0065,
+            -0.0065,
+            -0.0065,
+            0.0043,
+            -0.0106
+          ]
+        },
+        "rotation_mean": {
+          "baseline": 0.4171,
+          "candidate": 0.412,
+          "delta": -0.0052
+        },
+        "spread": {
+          "delta_max": 0.0043,
+          "delta_min": -0.0106
+        }
+      },
+      "pooled": {
+        "mrr": 0.2603,
+        "n_queries": 58,
+        "recall_at_10": 0.4123
+      },
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3120.6619,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3178.0491,
+        "recall_at_10": 0.2417
+      }
+    },
+    "0.90": {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "confidence": 0.95,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "n_resamples": 10000,
+        "p_value": 0.8177182281771823,
+        "p_value_t": 0.809672602251538,
+        "significant": false,
+        "t_statistic": -0.24196904576937503
+      },
+      "cutoff": 0.9,
+      "descriptive": {
+        "per_fold": {
+          "baseline": [
+            0.3734,
+            0.3408,
+            0.4631,
+            0.4513,
+            0.457
+          ],
+          "candidate": [
+            0.3669,
+            0.3343,
+            0.4566,
+            0.4556,
+            0.4464
+          ],
+          "delta": [
+            -0.0065,
+            -0.0065,
+            -0.0065,
+            0.0043,
+            -0.0106
+          ]
+        },
+        "rotation_mean": {
+          "baseline": 0.4171,
+          "candidate": 0.412,
+          "delta": -0.0052
+        },
+        "spread": {
+          "delta_max": 0.0043,
+          "delta_min": -0.0106
+        }
+      },
+      "pooled": {
+        "mrr": 0.2603,
+        "n_queries": 58,
+        "recall_at_10": 0.4123
+      },
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3120.6619,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3178.0491,
+        "recall_at_10": 0.2417
+      }
+    }
+  },
+  "decision": {
+    "head_to_head": {
+      "0.75": {
+        "ac4_clean": false,
+        "bootstrap_vs_df090": {
+          "ci_high": 0.0,
+          "ci_low": 0.0,
+          "confidence": 0.95,
+          "delta": 0.0,
+          "n_queries": 58,
+          "n_resamples": 10000,
+          "p_value": 1.0,
+          "p_value_t": 1.0,
+          "significant": false,
+          "t_statistic": 0.0
+        },
+        "ships_over_default": false
+      },
+      "0.80": {
+        "ac4_clean": false,
+        "bootstrap_vs_df090": {
+          "ci_high": 0.0,
+          "ci_low": 0.0,
+          "confidence": 0.95,
+          "delta": 0.0,
+          "n_queries": 58,
+          "n_resamples": 10000,
+          "p_value": 1.0,
+          "p_value_t": 1.0,
+          "significant": false,
+          "t_statistic": 0.0
+        },
+        "ships_over_default": false
+      },
+      "0.85": {
+        "ac4_clean": false,
+        "bootstrap_vs_df090": {
+          "ci_high": 0.0,
+          "ci_low": 0.0,
+          "confidence": 0.95,
+          "delta": 0.0,
+          "n_queries": 58,
+          "n_resamples": 10000,
+          "p_value": 1.0,
+          "p_value_t": 1.0,
+          "significant": false,
+          "t_statistic": 0.0
+        },
+        "ships_over_default": false
+      }
+    },
+    "rule": "a cutoff ships over the 0.90 default only when its pooled per-query recall is significantly better under paired bootstrap AND its AC4 proof is clean; ties and non-significant differences resolve to 0.90 (D-004 default, AC3)",
+    "shipped_cutoff": "0.90",
+    "shipped_matches_code_default": true
+  },
+  "grid_truncation": {
+    "decision": "D-014",
+    "descoped_point": 0.95,
+    "reason": "D-014 wall-clock descope (orchestrator); justified by the first three grid points' byte-identical per-query outcomes and the term_df distribution (nothing above 0.8583, so 0.95 == 0.90 in drop-set)"
+  },
+  "integrity": {
+    "band": {
+      "mrr": 0.006,
+      "recall_at_10": 0.002
+    },
+    "committed_full_set": {
+      "mrr": 0.2862,
+      "recall_at_10": 0.4174
+    },
+    "pooled": {
+      "mrr": 0.2862,
+      "n_queries": 58,
+      "recall_at_10": 0.4174
+    },
+    "tune_anchor": {
+      "committed": {
+        "mrr": 0.4444,
+        "recall_at_10": 0.5828
+      },
+      "measured": {
+        "mrr": 0.4444,
+        "n_queries": 29,
+        "p95_ms": 3616.4621,
+        "recall_at_10": 0.5828
+      }
+    },
+    "validate_anchor": {
+      "committed": {
+        "mrr": 0.1279,
+        "recall_at_10": 0.2521
+      },
+      "measured": {
+        "mrr": 0.1279,
+        "n_queries": 29,
+        "p95_ms": 2206.7598,
+        "recall_at_10": 0.2521
+      }
+    },
+    "within_band": {
+      "mrr": true,
+      "recall_at_10": true
+    }
+  },
+  "p95_note": "Committed p95 sources: the integrity row and the shipped-cutoff row carry quiet-machine re-measured p95 (p95-remeasure.json -- the k-fold sweeps ran while a full test suite executed on the same machine, orchestrator-confirmed, so in-sweep durations are contention-inflated); the non-shipped grid rows carry their in-sweep p95 under that stated caveat (D-014 descope: re-measure limited to the shipped row). The remeasure pass also cross-checks per-query recall/MRR equality with the sweeps (determinism under the protocol pins)",
+  "protocol": "D-009 as inherited from benchmarks/quality/ablation.md: torch threads 1, local bge-m3, brute-force cosine (no vec0), rerank under the CAIRN_RERANK=1 marker (flat pairs, gate 0.45); 5-fold seeded rotation (fold_seed 24301) over the 58 L1 queries through the unchanged evaluate_on seam; per-cutoff runs override query_enrich.ENRICH_DF_MAX_FRACTION process-locally",
+  "quiet_p95_xcheck": {
+    "0.90_determinism_xcheck_all_equal": true,
+    "baseline_determinism_xcheck_all_equal": true
+  },
+  "schema": "cairn-fr003-calibration/1",
+  "task": "T014 (FR-003): cutoff calibration on the DS-v1 k-fold"
+}

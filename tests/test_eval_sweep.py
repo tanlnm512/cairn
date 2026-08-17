@@ -136,6 +136,26 @@ def sweep_db(fresh_db):
     return fresh_db
 
 
+@pytest.fixture()
+def sweep_cli_db(tmp_path):
+    """File-backed variant for CLI tests: --db/CAIRN_DB must receive a real
+    path — an in-memory Connection str()'s to its repr, which get_db then
+    creates as a stray database file in the process CWD."""
+    import sqlite3
+
+    from cairn.graph import embeddings as emb
+    from cairn.graph.schema import _apply_schema
+
+    db_path = tmp_path / "sweep-cli.kg"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    _seed_corpus(conn)
+    emb.embed_all(conn)
+    conn.close()
+    return db_path
+
+
 SWEEP_QUERIES = [
     {
         "query_id": "l1-alpha",
@@ -848,7 +868,7 @@ class TestSweepCli:
         assert "ground-truth directory" in result.output
 
     def test_sweep_inline_combos_emit_canonical_doc(
-        self, tmp_path, monkeypatch, sweep_db, gt_dir
+        self, tmp_path, monkeypatch, sweep_cli_db, gt_dir
     ):
         import json as _json
 
@@ -856,12 +876,12 @@ class TestSweepCli:
 
         from cairn.cli.system import eval_cmd
 
-        monkeypatch.setenv("CAIRN_DB", str(sweep_db))
+        monkeypatch.setenv("CAIRN_DB", str(sweep_cli_db))
         runner = CliRunner()
         spec = _json.dumps([{"name": "loose", "params": {"dense_threshold": 0.0}}])
         result = runner.invoke(
             eval_cmd,
-            ["--db", str(sweep_db), "--sweep", spec, "--queries", str(gt_dir)],
+            ["--db", str(sweep_cli_db), "--sweep", spec, "--queries", str(gt_dir)],
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
@@ -870,19 +890,229 @@ class TestSweepCli:
         names = [r["combo"] for r in doc["rows"]]
         assert names[0] == "all-levers-off" and "loose" in names
 
-    def test_sweep_out_writes_file(self, tmp_path, monkeypatch, sweep_db, gt_dir):
+    def test_sweep_out_writes_file(self, tmp_path, monkeypatch, sweep_cli_db, gt_dir):
         from click.testing import CliRunner
 
         from cairn.cli.system import eval_cmd
 
-        monkeypatch.setenv("CAIRN_DB", str(sweep_db))
+        monkeypatch.setenv("CAIRN_DB", str(sweep_cli_db))
         out = tmp_path / "sweep.json"
         runner = CliRunner()
         result = runner.invoke(
             eval_cmd,
-            ["--db", str(sweep_db), "--sweep", "[]",
+            ["--db", str(sweep_cli_db), "--sweep", "[]",
              "--queries", str(gt_dir), "--out", str(out)],
             catch_exceptions=True,
         )
         assert result.exit_code == 0, result.output
         assert out.exists() and "row(s)" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# cairn eval --sweep --kfold (T004, FR-001)
+# ---------------------------------------------------------------------------
+
+
+#: The six-query rotation ground truth from tests/test_eval_kfold.py: the
+#: floor needs k <= distinct ids, so the 3-query SWEEP set cannot rotate.
+KFOLD_CLI_QUERIES = [
+    {
+        "query_id": "l1-alpha-1",
+        "level": "L1",
+        "kind": "definition",
+        "text": "function alpha",
+        "rationale": "primary target rank-1 in every config",
+    },
+    {
+        "query_id": "l1-alpha-2",
+        "level": "L1",
+        "kind": "definition",
+        "text": "alpha function",
+        "rationale": "same target, different phrasing",
+    },
+    {
+        "query_id": "l1-alpha-3",
+        "level": "L1",
+        "kind": "definition",
+        "text": "alpha",
+        "rationale": "grade-1 context expectation",
+    },
+    {
+        "query_id": "l1-bulk-1",
+        "level": "L1",
+        "kind": "definition",
+        "text": "alphaBulk words",
+        "rationale": "long-doc symbol",
+    },
+    {
+        "query_id": "l1-node-1",
+        "level": "L1",
+        "kind": "definition",
+        "text": "vector only node",
+        "rationale": "second-file target",
+    },
+    {
+        "query_id": "l1-node-2",
+        "level": "L1",
+        "kind": "definition",
+        "text": "node vector",
+        "rationale": "second-file target, different phrasing",
+    },
+]
+KFOLD_CLI_EXPECTATIONS = [
+    ("l1-alpha-1", "K.kt#alpha", 2),
+    ("l1-alpha-2", "K.kt#alpha", 2),
+    ("l1-alpha-3", "K.kt#alpha", 1),
+    ("l1-bulk-1", "K.kt#alphaBulk", 2),
+    ("l1-node-1", "V.kt#vectorOnlyNode", 2),
+    ("l1-node-2", "V.kt#vectorOnlyNode", 2),
+]
+
+
+@pytest.fixture()
+def kfold_gt_dir(tmp_path):
+    """Ground-truth directory with enough ids for the >= 5-fold floor."""
+    directory = tmp_path / "kfold_ground_truth"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "queries.jsonl").write_text(
+        "".join(json.dumps(q) + "\n" for q in KFOLD_CLI_QUERIES), encoding="utf-8"
+    )
+    lines = ["query_id\tsymbol_id\tgrade"]
+    lines += [f"{qid}\t{sym}\t{grade}" for qid, sym, grade in KFOLD_CLI_EXPECTATIONS]
+    (directory / "expectations.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return directory
+
+
+@pytest.fixture()
+def kfold_cli_db(tmp_path):
+    """File-backed seeded corpus for the CLI: --db must point at a real
+    path (an in-memory Connection str()'s to junk that creates a stray
+    file), and the fold reports must resolve against embedded symbols."""
+    import sqlite3
+
+    from cairn.graph import embeddings as emb
+    from cairn.graph.schema import _apply_schema
+
+    db_path = tmp_path / "kfold-cli.kg"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    _seed_corpus(conn)
+    emb.embed_all(conn)
+    conn.close()
+    return db_path
+
+
+def _inline_spec():
+    """One lever combo (plus the implicit all-levers-off row per fold)."""
+    return json.dumps([{"name": "loose", "params": {"dense_threshold": 0.0}}])
+
+
+class TestKfoldCli:
+    """T004: `cairn eval --sweep --kfold` is a thin consumer of
+    run_sweep_kfold — fold-level rows plus the pooled aggregate reach the
+    emitted document, and the fold-count floor surfaces verbatim."""
+
+    def test_kfold_out_writes_folds_and_aggregate(self, kfold_cli_db, kfold_gt_dir, tmp_path):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        out = tmp_path / "kfold-sweep.json"
+        result = CliRunner().invoke(
+            eval_cmd,
+            ["--db", str(kfold_cli_db), "--sweep", _inline_spec(), "--kfold",
+             "--queries", str(kfold_gt_dir), "--out", str(out)],
+            catch_exceptions=True,
+        )
+        assert result.exit_code == 0, result.output
+        assert "fold(s)" in result.stdout
+
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        # TC-001: >= 5 folds by default, each with its own quality figures.
+        assert doc["schema"] == "cairn-quality-sweep-kfold/1"
+        assert doc["dataset"]["split"] == "kfold"
+        assert doc["dataset"]["k_folds"] == 5
+        assert len(doc["folds"]) == 5
+        for fold in doc["folds"]:
+            assert fold["held_out_ids"]
+            assert [row["combo"] for row in fold["rows"]][0] == ALL_LEVERS_OFF
+            assert all("recall_at_10" in row and "mrr" in row for row in fold["rows"])
+        # ...and the aggregate: pooled bootstrap verdict + descriptive spread.
+        aggregate = doc["aggregate"]
+        assert aggregate["significance_basis"] == "pooled_per_query_paired_bootstrap"
+        combo = aggregate["combos"]["loose"]
+        assert combo["pooled"]["n_queries"] == 6
+        assert "bootstrap" in combo
+        descriptive = combo["descriptive"]
+        assert len(descriptive["per_fold"]["delta"]) == 5
+        assert descriptive["spread"]["delta_min"] <= descriptive["spread"]["delta_max"]
+
+    def test_kfold_fold_count_is_configurable(self, kfold_cli_db, kfold_gt_dir, tmp_path):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        out = tmp_path / "kfold-sweep-6.json"
+        result = CliRunner().invoke(
+            eval_cmd,
+            ["--db", str(kfold_cli_db), "--sweep", _inline_spec(), "--kfold",
+             "--folds", "6", "--queries", str(kfold_gt_dir), "--out", str(out)],
+            catch_exceptions=True,
+        )
+        assert result.exit_code == 0, result.output
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        assert doc["dataset"]["k_folds"] == 6
+        assert len(doc["folds"]) == 6
+
+    @pytest.mark.parametrize("folds", [2, 4])
+    def test_kfold_floor_refusals_name_the_minimum(self, kfold_cli_db, kfold_gt_dir, tmp_path, folds):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        out = tmp_path / "never-written.json"
+        result = CliRunner().invoke(
+            eval_cmd,
+            ["--db", str(kfold_cli_db), "--sweep", _inline_spec(), "--kfold",
+             "--folds", str(folds), "--queries", str(kfold_gt_dir), "--out", str(out)],
+            catch_exceptions=True,
+        )
+        # TC-004: refused with a non-zero exit naming the minimum, never
+        # mislabeled as an invalid dataset.
+        assert result.exit_code != 0
+        assert "k >= 5 folds" in result.output
+        assert "floor is 5" in result.output
+        assert "invalid eval dataset" not in result.output
+        assert not out.exists()
+
+    def test_kfold_requires_sweep(self, kfold_cli_db, tmp_path):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        result = CliRunner().invoke(
+            eval_cmd,
+            ["--db", str(kfold_cli_db), "--kfold"],
+            catch_exceptions=True,
+        )
+        assert result.exit_code != 0
+        assert "--kfold requires --sweep" in result.output
+
+    def test_single_split_doc_shape_unchanged_without_kfold(self, kfold_cli_db, kfold_gt_dir):
+        from click.testing import CliRunner
+
+        from cairn.cli.system import eval_cmd
+
+        result = CliRunner().invoke(
+            eval_cmd,
+            ["--db", str(kfold_cli_db), "--sweep", _inline_spec(),
+             "--queries", str(kfold_gt_dir)],
+            catch_exceptions=True,
+        )
+        assert result.exit_code == 0, result.output
+        doc = json.loads(result.stdout)
+        assert doc["schema"] == SWEEP_SCHEMA == "cairn-quality-sweep/2"
+        # The single-split document gains no k-fold keys.
+        assert "folds" not in doc and "aggregate" not in doc
+        assert doc["dataset"]["split"] == "tune"

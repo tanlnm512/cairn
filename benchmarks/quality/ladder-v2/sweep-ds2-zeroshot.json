@@ -1,0 +1,221 @@
+{
+  "candidates": {
+    "best-new-lever": "multivector",
+    "enrich-rerankoff": "enrich+rerank-off",
+    "enrichidf-rerankoff": "enrich_idf+rerank-off"
+  },
+  "configs": {
+    "all-levers-off": {
+      "bootstrap_vs_incumbent_by_corpus": {},
+      "l1_macro_average": {
+        "mrr": 0.3769,
+        "n_queries": 154,
+        "p95_ms": 951.0132,
+        "recall_at_10": 0.4778
+      },
+      "l1_per_corpus": {
+        "attrs-26.1.0": {
+          "mrr": 0.3358,
+          "n_queries": 106,
+          "p95_ms": 883.7137,
+          "recall_at_10": 0.4835
+        },
+        "yarl": {
+          "mrr": 0.4179,
+          "n_queries": 48,
+          "p95_ms": 1018.3128,
+          "recall_at_10": 0.4722
+        }
+      },
+      "l5_leg": {
+        "mrr": 0.0,
+        "n_queries": 44,
+        "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+        "p95_ms": 0.0046,
+        "recall_at_10": 0.0
+      }
+    },
+    "enrich+rerank-off": {
+      "bootstrap_vs_incumbent_by_corpus": {
+        "attrs-26.1.0": {
+          "ci_high": 0.07752358490566023,
+          "ci_low": -0.05125786163522013,
+          "confidence": 0.95,
+          "delta": 0.012578616352201264,
+          "n_queries": 106,
+          "n_resamples": 10000,
+          "p_value": 0.7028297170282972,
+          "p_value_t": 0.7076299449614107,
+          "significant": false,
+          "t_statistic": 0.3760614794014663
+        },
+        "yarl": {
+          "ci_high": 0.0625,
+          "ci_low": -0.0954861111111111,
+          "confidence": 0.95,
+          "delta": -0.012152777777777781,
+          "n_queries": 48,
+          "n_resamples": 10000,
+          "p_value": 0.7608239176082392,
+          "p_value_t": 0.7673708553313805,
+          "significant": false,
+          "t_statistic": -0.29753294014425075
+        }
+      },
+      "l1_macro_average": {
+        "mrr": 0.3554,
+        "n_queries": 154,
+        "p95_ms": 48.3374,
+        "recall_at_10": 0.4781
+      },
+      "l1_per_corpus": {
+        "attrs-26.1.0": {
+          "mrr": 0.2936,
+          "n_queries": 106,
+          "p95_ms": 57.6919,
+          "recall_at_10": 0.4961
+        },
+        "yarl": {
+          "mrr": 0.4171,
+          "n_queries": 48,
+          "p95_ms": 38.983,
+          "recall_at_10": 0.4601
+        }
+      },
+      "l5_leg": {
+        "mrr": 0.0,
+        "n_queries": 44,
+        "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+        "p95_ms": 0.004,
+        "recall_at_10": 0.0
+      }
+    },
+    "enrich_idf+rerank-off": {
+      "bootstrap_vs_incumbent_by_corpus": {
+        "attrs-26.1.0": {
+          "ci_high": 0.07752358490566023,
+          "ci_low": -0.05125786163522013,
+          "confidence": 0.95,
+          "delta": 0.012578616352201264,
+          "n_queries": 106,
+          "n_resamples": 10000,
+          "p_value": 0.7028297170282972,
+          "p_value_t": 0.7076299449614107,
+          "significant": false,
+          "t_statistic": 0.3760614794014663
+        },
+        "yarl": {
+          "ci_high": 0.0625,
+          "ci_low": -0.0954861111111111,
+          "confidence": 0.95,
+          "delta": -0.012152777777777781,
+          "n_queries": 48,
+          "n_resamples": 10000,
+          "p_value": 0.7608239176082392,
+          "p_value_t": 0.7673708553313805,
+          "significant": false,
+          "t_statistic": -0.29753294014425075
+        }
+      },
+      "l1_macro_average": {
+        "mrr": 0.3554,
+        "n_queries": 154,
+        "p95_ms": 42.5926,
+        "recall_at_10": 0.4781
+      },
+      "l1_per_corpus": {
+        "attrs-26.1.0": {
+          "mrr": 0.2936,
+          "n_queries": 106,
+          "p95_ms": 41.4819,
+          "recall_at_10": 0.4961
+        },
+        "yarl": {
+          "mrr": 0.4171,
+          "n_queries": 48,
+          "p95_ms": 43.7033,
+          "recall_at_10": 0.4601
+        }
+      },
+      "l5_leg": {
+        "mrr": 0.0,
+        "n_queries": 44,
+        "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+        "p95_ms": 0.0037,
+        "recall_at_10": 0.0
+      }
+    },
+    "multivector": {
+      "bootstrap_vs_incumbent_by_corpus": {
+        "attrs-26.1.0": {
+          "ci_high": 0.01572327044025156,
+          "ci_low": -0.10172955974842768,
+          "confidence": 0.95,
+          "delta": -0.04323899371069183,
+          "n_queries": 106,
+          "n_resamples": 10000,
+          "p_value": 0.14558544145585442,
+          "p_value_t": 0.15452281360805198,
+          "significant": false,
+          "t_statistic": -1.4340731754881686
+        },
+        "yarl": {
+          "ci_high": 0.08333333333333333,
+          "ci_low": -0.052083333333333336,
+          "confidence": 0.95,
+          "delta": 0.01388888888888889,
+          "n_queries": 48,
+          "n_resamples": 10000,
+          "p_value": 0.6792320767923208,
+          "p_value_t": 0.6928196256495875,
+          "significant": false,
+          "t_statistic": 0.3974709967749985
+        }
+      },
+      "l1_macro_average": {
+        "mrr": 0.2844,
+        "n_queries": 154,
+        "p95_ms": 768.2212,
+        "recall_at_10": 0.4632
+      },
+      "l1_per_corpus": {
+        "attrs-26.1.0": {
+          "mrr": 0.2431,
+          "n_queries": 106,
+          "p95_ms": 781.7256,
+          "recall_at_10": 0.4403
+        },
+        "yarl": {
+          "mrr": 0.3257,
+          "n_queries": 48,
+          "p95_ms": 754.7168,
+          "recall_at_10": 0.4861
+        }
+      },
+      "l5_leg": {
+        "mrr": 0.0,
+        "n_queries": 44,
+        "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+        "p95_ms": 0.0035,
+        "recall_at_10": 0.0
+      }
+    }
+  },
+  "counts": {
+    "l1": 154,
+    "l1_by_corpus": {
+      "attrs-26.1.0": 106,
+      "yarl": 48
+    },
+    "l5": 44,
+    "l5_by_corpus": {
+      "attrs-26.1.0": 30,
+      "yarl": 14
+    },
+    "queries": 198
+  },
+  "db_mb": 35.1602,
+  "protocol": "D-009 pins (threads 1, local bge-m3, brute cosine, CAIRN_RERANK=1 marker with flat pairs + gate 0.45); evaluate_full_set over all 198 DS-v2 queries after untimed per-config warm-up; serial run on an otherwise-quiet reference machine (MEASURE.md)",
+  "schema": "cairn-ds2-zeroshot/1",
+  "task": "T023 (FR-006): D-016 ladder candidates, DS-v2 zero-shot validation leg (D-011)"
+}

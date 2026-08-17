@@ -1,0 +1,258 @@
+{
+  "counts": {
+    "l1": 154,
+    "l1_by_corpus": {
+      "attrs-26.1.0": 106,
+      "yarl": 48
+    },
+    "l5": 44,
+    "l5_by_corpus": {
+      "attrs-26.1.0": 30,
+      "yarl": 14
+    },
+    "queries": 198
+  },
+  "db_mb": 35.1602,
+  "l5_legs": {
+    "all-levers-off": {
+      "mrr": 0.0,
+      "n_queries": 44,
+      "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+      "p95_ms": 0.0046,
+      "recall_at_10": 0.0
+    },
+    "enrich+rerank-off": {
+      "mrr": 0.0,
+      "n_queries": 44,
+      "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+      "p95_ms": 0.004,
+      "recall_at_10": 0.0
+    },
+    "enrich_idf+rerank-off": {
+      "mrr": 0.0,
+      "n_queries": 44,
+      "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+      "p95_ms": 0.0037,
+      "recall_at_10": 0.0
+    },
+    "multivector": {
+      "mrr": 0.0,
+      "n_queries": 44,
+      "note": "structural zero: L5 retrieval is OKF bundle search (no retrieval tunables; evaluate_graded_query routes by level) and the benchmark corpora carry no .knowledge/ bundle -- identical for every config, recorded, never blended into the L1 rows",
+      "p95_ms": 0.0035,
+      "recall_at_10": 0.0
+    }
+  },
+  "rows": [
+    {
+      "combo": "all-levers-off",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3358,
+      "mv": false,
+      "n_queries": 106,
+      "p95_ms": 883.7137,
+      "recall_at_10": 0.4835
+    },
+    {
+      "combo": "all-levers-off",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.4179,
+      "mv": false,
+      "n_queries": 48,
+      "p95_ms": 1018.3128,
+      "recall_at_10": 0.4722
+    },
+    {
+      "combo": "all-levers-off",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3769,
+      "mv": false,
+      "n_queries": 154,
+      "p95_ms": 951.0132,
+      "recall_at_10": 0.4778
+    },
+    {
+      "combo": "all-levers-off",
+      "corpus": "all",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L5",
+      "mrr": 0.0,
+      "mv": false,
+      "n_queries": 44,
+      "p95_ms": 0.0046,
+      "recall_at_10": 0.0
+    },
+    {
+      "combo": "multivector",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2431,
+      "mv": false,
+      "n_queries": 106,
+      "p95_ms": 781.7256,
+      "recall_at_10": 0.4403
+    },
+    {
+      "combo": "multivector",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3257,
+      "mv": false,
+      "n_queries": 48,
+      "p95_ms": 754.7168,
+      "recall_at_10": 0.4861
+    },
+    {
+      "combo": "multivector",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2844,
+      "mv": false,
+      "n_queries": 154,
+      "p95_ms": 768.2212,
+      "recall_at_10": 0.4632
+    },
+    {
+      "combo": "multivector",
+      "corpus": "all",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L5",
+      "mrr": 0.0,
+      "mv": false,
+      "n_queries": 44,
+      "p95_ms": 0.0035,
+      "recall_at_10": 0.0
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2936,
+      "mv": false,
+      "n_queries": 106,
+      "p95_ms": 57.6919,
+      "recall_at_10": 0.4961
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.4171,
+      "mv": false,
+      "n_queries": 48,
+      "p95_ms": 38.983,
+      "recall_at_10": 0.4601
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3554,
+      "mv": false,
+      "n_queries": 154,
+      "p95_ms": 48.3374,
+      "recall_at_10": 0.4781
+    },
+    {
+      "combo": "enrich+rerank-off",
+      "corpus": "all",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L5",
+      "mrr": 0.0,
+      "mv": false,
+      "n_queries": 44,
+      "p95_ms": 0.004,
+      "recall_at_10": 0.0
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "attrs-26.1.0",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.2936,
+      "mv": false,
+      "n_queries": 106,
+      "p95_ms": 41.4819,
+      "recall_at_10": 0.4961
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "yarl",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.4171,
+      "mv": false,
+      "n_queries": 48,
+      "p95_ms": 43.7033,
+      "recall_at_10": 0.4601
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "macro-average",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L1",
+      "mrr": 0.3554,
+      "mv": false,
+      "n_queries": 154,
+      "p95_ms": 42.5926,
+      "recall_at_10": 0.4781
+    },
+    {
+      "combo": "enrich_idf+rerank-off",
+      "corpus": "all",
+      "dataset": "DS-v2",
+      "db_mb": 35.1602,
+      "family": "ds-v2",
+      "level": "L5",
+      "mrr": 0.0,
+      "mv": false,
+      "n_queries": 44,
+      "p95_ms": 0.0037,
+      "recall_at_10": 0.0
+    }
+  ],
+  "schema": "cairn-ds2-rows/1",
+  "task": "T023 (FR-006): DS-v2 rows to merge into benchmarks/quality/ablation-v2.json"
+}

@@ -10,6 +10,7 @@ The survey found zero dedicated eval tests; this is the first suite. Covers:
 * ``run_evaluation`` / ``eval_cmd --queries`` directory dispatch;
 * the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape);
 * the seeded 50/50 tune/validate split (FR-006, TC-018);
+* the seeded k-fold rotation partition (FR-001, TC-002, TC-004);
 * the held-out guard on ``evaluate_on`` selection runs (FR-006, TC-019);
 * the paired-bootstrap accept guard (D-006: bootstrap/t, not Wilcoxon).
 
@@ -31,9 +32,11 @@ import cairn.eval as eval_mod
 from cairn.cli import main
 from cairn.eval import (
     DEFAULT_SPLIT_SEED,
+    MIN_KFOLD_K,
     Expectation,
     HeldOutError,
     evaluate_on,
+    kfold_partitions,
     load_eval_queries,
     load_ground_truth,
     match_rank,
@@ -617,6 +620,87 @@ class TestSplitQueries:
 
         tune, validate = split_queries(SYNTH_IDS_58)
         assert outputs.pop() == ",".join(tune) + " | " + ",".join(validate)
+
+
+# ---------------------------------------------------------------------------
+# Seeded k-fold rotation partition (FR-001, TC-002, TC-004)
+# ---------------------------------------------------------------------------
+
+
+class TestKfoldPartitions:
+    def test_regenerating_with_the_same_seed_diffs_empty(self):
+        # TC-002: regenerate the fold assignment and diff — empty.
+        first = kfold_partitions(SYNTH_IDS_58)
+        second = kfold_partitions(SYNTH_IDS_58)
+        assert first == second
+
+    def test_input_order_duplicates_and_set_input_do_not_matter(self):
+        ids = sorted(f"sym-{i}" for i in range(12))
+        baseline = kfold_partitions(ids)
+        assert kfold_partitions(list(reversed(ids))) == baseline
+        assert kfold_partitions(set(ids)) == baseline
+        assert kfold_partitions(ids + ids) == baseline  # duplicates deduped
+
+    def test_default_seed_is_the_split_seed_constant(self):
+        # The k-fold rotation rides the same fixed-seed contract as the
+        # single split: same dataset, same folds, forever.
+        assert kfold_partitions(SYNTH_IDS_58) == kfold_partitions(
+            SYNTH_IDS_58, seed=DEFAULT_SPLIT_SEED
+        )
+        assert isinstance(DEFAULT_SPLIT_SEED, int)
+
+    def test_union_of_held_out_folds_is_the_full_set_with_no_overlap(self):
+        # TC-002: every id is held out exactly once — the union of the
+        # held-out folds equals the full id set and no id repeats.
+        folds = kfold_partitions(SYNTH_IDS_58)
+        held_out = [qid for fold in folds for qid in fold]
+        assert len(held_out) == len(set(held_out))  # no id in two folds
+        assert set(held_out) == set(SYNTH_IDS_58)  # union == full set
+        assert sum(len(fold) for fold in folds) == len(SYNTH_IDS_58)
+
+    def test_rotation_properties_hold_across_seeds(self):
+        ids = [f"q-{i:02d}" for i in range(23)]  # not divisible by any k
+        for seed in range(8):
+            folds = kfold_partitions(ids, k=5, seed=seed)
+            assert len(folds) == 5
+            sizes = [len(fold) for fold in folds]
+            assert max(sizes) - min(sizes) <= 1  # contiguous balanced slices
+            assert all(sizes)  # every fold non-empty
+            held_out = [qid for fold in folds for qid in fold]
+            assert len(held_out) == len(set(held_out))
+            assert set(held_out) == set(ids)
+
+    def test_real_l1_set_rotates_every_query_exactly_once(self):
+        l1 = [q for q in load_ground_truth(REAL_GROUND_TRUTH) if q.level == "L1"]
+        assert len(l1) == N_REAL_L1  # the dataset this contract is written for
+
+        folds = kfold_partitions(l1)  # GradedQuery objects coerce to ids
+        assert len(folds) == 5
+        held_out = [qid for fold in folds for qid in fold]
+        assert len(held_out) == len(set(held_out))
+        assert set(held_out) == {q.query_id for q in l1}
+        assert sorted(len(fold) for fold in folds) == [11, 11, 12, 12, 12]
+
+    def test_below_floor_fold_counts_are_refused_naming_the_minimum(self):
+        # TC-004: 2 and 4 folds are both rejected with an error naming
+        # the >= 5 floor — a floor, not a suggestion.
+        for weak_k in (2, 4):
+            with pytest.raises(ValueError, match=r"k >= 5") as excinfo:
+                kfold_partitions(SYNTH_IDS_58, k=weak_k)
+            assert str(MIN_KFOLD_K) in str(excinfo.value)
+
+    def test_default_k_meets_the_floor(self):
+        # TC-004: the default configuration runs at >= 5 folds.
+        folds = kfold_partitions(SYNTH_IDS_58)
+        assert len(folds) == MIN_KFOLD_K
+        assert folds == kfold_partitions(SYNTH_IDS_58, k=MIN_KFOLD_K)
+
+    def test_fewer_ids_than_folds_is_an_error(self):
+        # An empty fold would silently degenerate the rotation; the call
+        # fails loudly instead (same doctrine as split_queries's ratio
+        # bounds).
+        with pytest.raises(ValueError, match="non-empty"):
+            kfold_partitions(["a", "b", "c"])
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,292 @@
+{
+  "rows": [
+    {
+      "combo": "all-levers-off (T014 integrity row)",
+      "dataset": "DS-v1",
+      "db_mb": 6.8945,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "enrich_idf": null,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.2862,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "T014 hard gate: reproduces the committed DS-v1 session baseline (ablation.md Figure 3, all-levers-off full-set) EXACTLY -- pooled 0.4174/0.2862, drift 0.0000 against the documented +/-0.002 recall / +/-0.006 MRR session band; tune 0.5828/0.4444 and validate 0.2521/0.1279 match the committed Figure 1/2 anchors to 4 decimals. p95 from the quiet re-measurement pass (see analysis.p95_note).",
+      "p95_ms": 2588.1766,
+      "p95_source": "quiet-remeasure",
+      "recall_at_10": 0.4174,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4444,
+        "n_queries": 29,
+        "p95_ms": 2609.9097,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1279,
+        "n_queries": 29,
+        "p95_ms": 2574.6823,
+        "recall_at_10": 0.2521
+      }
+    },
+    {
+      "ac4": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_recovered": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ]
+      },
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "p_value": 0.8177182281771823,
+        "significant": false
+      },
+      "combo": "enrich+enrich_idf@df_max=0.75",
+      "cutoff": 0.75,
+      "dataset": "DS-v1",
+      "db_mb": 6.8945,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "enrich_idf": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.2603,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "FR-003 calibration grid point (T014, D-014 truncated grid: 0.95 descoped on wall-clock). p95 in-sweep, contention-window caveat (D-014: re-measure limited to the shipped row). On DS-v1 the [0.75,0.95] band is empirically inert: the highest term_df fraction is 'test' at 0.8583 and 'url' sits at 0.2711 (289/1066), so no in-band cutoff drops 'url' -- see d03-diagnostic.json and the AC4 record in analysis.json.",
+      "p95_ms": 3472.3948,
+      "p95_source": "kfold-sweep (contention-window caveat)",
+      "recall_at_10": 0.4123,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3661.7658,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3016.2692,
+        "recall_at_10": 0.2417
+      }
+    },
+    {
+      "ac4": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_recovered": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ]
+      },
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "p_value": 0.8177182281771823,
+        "significant": false
+      },
+      "combo": "enrich+enrich_idf@df_max=0.80",
+      "cutoff": 0.8,
+      "dataset": "DS-v1",
+      "db_mb": 6.8945,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "enrich_idf": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.2603,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "FR-003 calibration grid point (T014, D-014 truncated grid: 0.95 descoped on wall-clock). p95 in-sweep, contention-window caveat (D-014: re-measure limited to the shipped row). On DS-v1 the [0.75,0.95] band is empirically inert: the highest term_df fraction is 'test' at 0.8583 and 'url' sits at 0.2711 (289/1066), so no in-band cutoff drops 'url' -- see d03-diagnostic.json and the AC4 record in analysis.json.",
+      "p95_ms": 2991.952,
+      "p95_source": "kfold-sweep (contention-window caveat)",
+      "recall_at_10": 0.4123,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 2955.4998,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3013.9014,
+        "recall_at_10": 0.2417
+      }
+    },
+    {
+      "ac4": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_recovered": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ]
+      },
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "p_value": 0.8177182281771823,
+        "significant": false
+      },
+      "combo": "enrich+enrich_idf@df_max=0.85",
+      "cutoff": 0.85,
+      "dataset": "DS-v1",
+      "db_mb": 6.8945,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "enrich_idf": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.2603,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "FR-003 calibration grid point (T014, D-014 truncated grid: 0.95 descoped on wall-clock). p95 in-sweep, contention-window caveat (D-014: re-measure limited to the shipped row). On DS-v1 the [0.75,0.95] band is empirically inert: the highest term_df fraction is 'test' at 0.8583 and 'url' sits at 0.2711 (289/1066), so no in-band cutoff drops 'url' -- see d03-diagnostic.json and the AC4 record in analysis.json.",
+      "p95_ms": 3196.7226,
+      "p95_source": "kfold-sweep (contention-window caveat)",
+      "recall_at_10": 0.4123,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3206.0188,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3066.4452,
+        "recall_at_10": 0.2417
+      }
+    },
+    {
+      "ac4": {
+        "L1_D03": {
+          "mrr": 0.0,
+          "recall_at_10": 0.0
+        },
+        "L1_D03_recovered": false,
+        "tune_clean": false,
+        "tune_regressed_to_zero": [
+          "L1-I03"
+        ]
+      },
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.03160919540229885,
+        "ci_low": -0.051149425287356325,
+        "delta": -0.005172413793103449,
+        "n_queries": 58,
+        "p_value": 0.8177182281771823,
+        "significant": false
+      },
+      "combo": "enrich+enrich_idf@df_max=0.90 (shipped cutoff)",
+      "cutoff": 0.9,
+      "dataset": "DS-v1",
+      "db_mb": 6.8945,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": true,
+        "enrich_idf": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.2603,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "FR-003 calibration grid point (T014, D-014 truncated grid: 0.95 descoped on wall-clock). SHIPPED: matches ENRICH_DF_MAX_FRACTION=0.90 in code (D-004 default; no in-band cutoff beats it under paired bootstrap, ties resolve to 0.90). p95 quiet-machine re-measured. On DS-v1 the [0.75,0.95] band is empirically inert: the highest term_df fraction is 'test' at 0.8583 and 'url' sits at 0.2711 (289/1066), so no in-band cutoff drops 'url' -- see d03-diagnostic.json and the AC4 record in analysis.json.",
+      "p95_ms": 3581.2085,
+      "p95_source": "quiet-remeasure",
+      "recall_at_10": 0.4123,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.4115,
+        "n_queries": 29,
+        "p95_ms": 3449.3734,
+        "recall_at_10": 0.5828
+      },
+      "validate": {
+        "mrr": 0.1092,
+        "n_queries": 29,
+        "p95_ms": 3552.7646,
+        "recall_at_10": 0.2417
+      }
+    }
+  ],
+  "schema": "cairn-fr003-rows/1",
+  "shipped_cutoff": "0.90",
+  "task": "T014 (FR-003): rows to merge into benchmarks/quality/ablation-v2.json"
+}

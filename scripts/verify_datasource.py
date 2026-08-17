@@ -28,8 +28,10 @@ compared at all (exit 2), so CI can tell "the pin is stale" (exit 1) from
 "the pin is malformed" (exit 2).
 
 2. Size budgets (FR-002/AC4): EVERY invocation also asserts the committed
-tree's byte size -- ``benchmarks/datasource/t2/`` <= 3072 KB (the vendored
-snapshot, decision D-002) and ``benchmarks/datasource/`` <= 5120 KB total --
+   tree's byte size -- ``benchmarks/datasource/t2/`` <= 3072 KB (the vendored
+   snapshot, decision D-002), ``benchmarks/datasource/ds2/`` <= 3072 KB (the
+   second corpus; an absent dir measures 0 and passes), and
+   ``benchmarks/datasource/`` <= 5120 KB total --
 so one CI step gets content and budget enforcement for free. Trees are
 measured as the sum of file sizes (``sum(f.stat().st_size)``), NOT
 ``du``-style disk blocks: block accounting varies by filesystem and block
@@ -49,7 +51,7 @@ Usage:
     uv run python scripts/verify_datasource.py --manifest /tmp/scratch.json
 
 Exit codes (the contract the CI step depends on):
-    0  verified -- every requested size matched tree-hash AND counts AND both
+    0  verified -- every requested size matched tree-hash AND counts AND all
        size budgets held (TC-002, TC-017)
     1  content drift -- a hash and/or count mismatch (TC-003)
     2  unusable manifest -- unreadable/invalid JSON, schema errors, or a
@@ -95,9 +97,11 @@ EXIT_BUDGET = 3
 # (1 KB = 1024 bytes, matching du -sk and the pre-commit --maxkb convention).
 # Ordered subtree-before-total so the report reads inside-out.
 T2_BUDGET_KB = 3072  # the vendored snapshot alone: "<= 3 MB" (FR-002)
+DS2_BUDGET_KB = 3072  # the second-corpus dir: same per-corpus "<= 3 MB" ceiling as t2 (FR-002); an absent dir measures 0 and passes
 DATASOURCE_BUDGET_KB = 5120  # the whole datasource tree: "5 MB total" (FR-002)
 BUDGETS: tuple[tuple[str, int], ...] = (
     ("benchmarks/datasource/t2", T2_BUDGET_KB),
+    ("benchmarks/datasource/ds2", DS2_BUDGET_KB),
     ("benchmarks/datasource", DATASOURCE_BUDGET_KB),
 )
 KB = 1024

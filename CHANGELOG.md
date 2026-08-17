@@ -13,7 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- **Retrieval-quality evidence base, second campaign (no default changes)**:
+  k-fold cross-validation in `cairn eval` (`--kfold`, >=5 seeded folds, pooled
+  per-query paired bootstrap — per-fold spread descriptive only); a DS-v2
+  cross-corpus ground truth (198 queries over yarl + attrs-26.1.0, per-corpus
+  rows + macro-average); IDF-aware query enrichment (`enrich_idf`, cutoff 0.90
+  via the persisted `term_df` table); RM3-style pseudo-relevance feedback
+  (`prf` + `prf_docs`/`prf_terms`/`prf_lambda`, replaces-not-stacks rerank);
+  and multi-vector-per-symbol embeddings (`cairn embed --multivector`,
+  `multivector` query flag; name/docstring vectors, max-score dedup,
+  vecmv_ ANN index). All levers flag-off by default. The confirmation ladder
+  cleared three candidates on the DS-v1 k-fold guard — multivector reached
+  both SC-1 targets there (0.5588/0.3395) — but zero-shot DS-v2 refuted
+  transfer for all of them, so nothing ships and the shortfall + next
+  binding constraint (lever generalization) are documented in
+  `benchmarks/quality/ablation-v2.md`.
 
 ### Changed
 - _Nothing yet._

@@ -26,6 +26,14 @@ no vec0 index: those corpora are small and curated (dozens to low hundreds of
 rows), so a brute-force ``cosine_scan`` is sub-millisecond and not worth the
 per-write vec0 sync cost. If either corpus ever grows large, the pattern here
 (rebuild from the source table) is the template for adding one.
+
+The FR-005 multi-vector table ``embeddings_mv`` gets its own ``vecmv_<safe-
+model>`` vec0 index through the additive ``source`` parameter on
+:func:`rebuild_index` / :func:`ann_query` (D-007): a separate table, because
+the base ``vec_<model>`` rowid contract must never be shared with a table
+whose row population differs (``embeddings_mv`` holds up to one row per
+vector kind per symbol). Every existing caller passes no ``source`` and gets
+the ``embeddings``/``vec_`` pair exactly as before.
 """
 from __future__ import annotations
 
@@ -131,15 +139,30 @@ def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
     _ANN_FALLBACK_WARNED = True
 
 
-def _table_name(model: str) -> str:
-    """Sanitize a model name into a valid SQLite identifier.
+# vec0 sources (D-007): each source table gets its OWN per-model vec0 index
+# (rowid-keyed), so the base vec_<model> contract is never shared with a
+# table whose row population differs. Additive: callers that pass no source
+# get the embeddings/vec_ pair exactly as before.
+_SOURCE_PREFIX = {"embeddings": "vec_", "embeddings_mv": "vecmv_"}
+
+
+def _table_name(model: str, source: str = "embeddings") -> str:
+    """Sanitize a model name into a valid SQLite identifier for ``source``.
 
     Model names come from HF repo ids ('all-MiniLM-L6-v2',
     'jinaai/jina-embeddings-v2-base-code') or the hash/openai stamps -- none
     of those are safe as a bare identifier, so this is NOT just cosmetic.
+
+    ``source`` selects the indexed table: ``"embeddings"`` (the default,
+    table ``vec_<safe-model>``) or ``"embeddings_mv"`` (the FR-005
+    multi-vector parallel table, table ``vecmv_<safe-model>``). Any other
+    value raises ``ValueError`` -- sources are a closed set, never a
+    free-form table name (SQL-injection surface).
     """
+    if source not in _SOURCE_PREFIX:
+        raise ValueError(f"unknown source: {source!r}")
     safe = re.sub(r"[^a-zA-Z0-9_]", "_", model)
-    return f"vec_{safe}"
+    return f"{_SOURCE_PREFIX[source]}{safe}"
 
 
 def try_load(conn: sqlite3.Connection) -> bool:
@@ -176,43 +199,66 @@ def try_load(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def index_exists(conn: sqlite3.Connection, model: str) -> bool:
+def index_exists(conn: sqlite3.Connection, model: str, source: str = "embeddings") -> bool:
+    """Whether the vec0 table for ``model`` (and ``source``) exists.
+
+    ``source`` is additive (D-007): default probes ``vec_<safe-model>``,
+    ``"embeddings_mv"`` probes ``vecmv_<safe-model>``. Existing callers pass
+    two args and are unaffected.
+    """
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (_table_name(model),),
+        (_table_name(model, source),),
     ).fetchone()
     return row is not None
 
 
-def rebuild_index(conn: sqlite3.Connection, model: str) -> dict:
-    """Wholesale rebuild of the vec0 table for `model` from `embeddings`.
+def rebuild_index(conn: sqlite3.Connection, model: str, source: str = "embeddings") -> dict:
+    """Wholesale rebuild of the vec0 table for `model` from `source`.
+
+    ``source`` (additive, D-007) selects the indexed table: ``"embeddings"``
+    (the default -- vec0 table ``vec_<safe-model>``, byte-identical to the
+    pre-FR-005 behavior) or ``"embeddings_mv"`` (the multi-vector parallel
+    table -- its own ``vecmv_<safe-model>`` table, same DELETE+INSERT
+    rowid-keyed contract over that table's rows: every mv vector kind goes
+    in, the per-kind distinction lives in ``embeddings_mv`` itself).
 
     Returns {"model", "indexed", "dim"} or {"model", "indexed": 0, "skipped":
     reason} if sqlite-vec can't be loaded or there's nothing to index. Safe
     to call repeatedly (drops and recreates), and safe to call from a process
     that hasn't loaded the extension yet -- loads it itself via try_load().
     """
+    # Validate source BEFORE it reaches any SQL (closed set -- see
+    # _table_name; a near-miss like "embeddings_mv " must not execute).
+    table = _table_name(model, source)
     if not try_load(conn):
         return {"model": model, "indexed": 0, "skipped": "sqlite-vec unavailable"}
 
     row = conn.execute(
-        "SELECT dim FROM embeddings WHERE model = ? LIMIT 1", (model,)
+        f"SELECT dim FROM {source} WHERE model = ? LIMIT 1", (model,)
     ).fetchone()
     if row is None:
-        return {"model": model, "indexed": 0, "skipped": "no embeddings for model"}
+        # Keep the base-source reason byte-identical to the pre-FR-005
+        # string (it is user-visible CLI output and asserted in tests).
+        reason = (
+            "no embeddings for model"
+            if source == "embeddings"
+            else f"no {source} rows for model"
+        )
+        return {"model": model, "indexed": 0, "skipped": reason}
     dim = row["dim"] if hasattr(row, "keys") else row[0]
 
-    table = _table_name(model)
     conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.execute(
         f"CREATE VIRTUAL TABLE {table} USING vec0(embedding float[{int(dim)}] distance_metric=cosine)"
     )
-    # rowid here is embeddings' own hidden rowid -- stable for the lifetime of
-    # this rebuild pass, which is all sync_index/ann_query need (they always
-    # join back to embeddings.rowid within the same rebuild generation).
+    # rowid here is the source table's own hidden rowid -- stable for the
+    # lifetime of this rebuild pass, which is all sync_index/ann_query need
+    # (they always join back to <source>.rowid within the same rebuild
+    # generation).
     conn.execute(
         f"INSERT INTO {table}(rowid, embedding) "
-        "SELECT rowid, vec FROM embeddings WHERE model = ?",
+        f"SELECT rowid, vec FROM {source} WHERE model = ?",
         (model,),
     )
     conn.commit()
@@ -330,9 +376,21 @@ def delete_index_rows(conn: sqlite3.Connection, model: str, rowids) -> int:
 
 
 def ann_query(
-    conn: sqlite3.Connection, model: str, q_blob: bytes, k: int
+    conn: sqlite3.Connection,
+    model: str,
+    q_blob: bytes,
+    k: int,
+    source: str = "embeddings",
 ) -> Optional[List[Tuple[str, float]]]:
-    """ANN cosine search against the vec0 table for `model`.
+    """ANN cosine search against the vec0 table for `model` over `source`.
+
+    ``source`` (additive, D-007) selects the indexed table exactly as in
+    :func:`rebuild_index`: the default joins back to ``embeddings`` through
+    ``vec_<safe-model>``; ``"embeddings_mv"`` joins to the multi-vector
+    table through ``vecmv_<safe-model>``. A symbol with several mv rows can
+    therefore appear several times in the returned list (once per vector
+    kind) -- dedup by max score is the caller's contract
+    (``semantic._candidates_from_ann_hits``).
 
     Returns a list of ``(symbol_id, score)`` (score = 1 - cosine distance, so
     higher is more similar, matching the brute-force scan's score semantics)
@@ -342,8 +400,17 @@ def ann_query(
     """
     if not try_load(conn):
         return None
-    table = _table_name(model)
-    if not index_exists(conn, model):
+    table = _table_name(model, source)
+    # The default-source probe must stay on the exact 2-arg index_exists
+    # call shape: concurrency tests monkeypatch it as `lambda conn, model:
+    # ...` to force the vec0 MATCH path, and cli/system.py +
+    # mcp_server/_server_core.py call it with two args. Only the opt-in mv
+    # leg (D-007) passes its source through.
+    if source == "embeddings":
+        have_index = index_exists(conn, model)
+    else:
+        have_index = index_exists(conn, model, source)
+    if not have_index:
         # No vec0 index for this model (typically: embeddings were built but
         # `cairn embed` hasn't run since, or the DB predates sqlite-vec). This
         # is a recoverable setup state, not a crash -- but it silently costs
@@ -354,7 +421,7 @@ def ann_query(
     try:
         rows = conn.execute(
             f"SELECT e.symbol_id AS symbol_id, v.distance AS distance "
-            f"FROM {table} v JOIN embeddings e ON e.rowid = v.rowid "
+            f"FROM {table} v JOIN {source} e ON e.rowid = v.rowid "
             f"WHERE v.embedding MATCH ? AND v.k = ? "
             "ORDER BY v.distance",
             (q_blob, k),

@@ -31,7 +31,16 @@ from .main import DEFAULT_DB_PATH, get_db, main, queries
     is_flag=True,
     help="Pre-download model weights into local HuggingFace cache.",
 )
-def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_model):
+@click.option(
+    "--multivector",
+    is_flag=True,
+    help="Also embed name-only and docstring-only vectors (embeddings_mv, FR-005). "
+    "Off by default: default builds store one vector per symbol, byte-identical "
+    "to before.",
+)
+def embed(
+    db, batch_size, limit, no_reap, build_index, install_deps, download_model, multivector
+):
     """Build the semantic embedding index over the symbol corpus."""
     from . import display
     from cairn.graph import embeddings as emb
@@ -117,7 +126,12 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
             bar_state["bar"] = bar
             bar_state["task"] = bar._cg_task_id
             summary = emb.embed_all(
-                conn, batch_size=batch_size, limit=limit, progress=progress, reap_orphans=not no_reap
+                conn,
+                batch_size=batch_size,
+                limit=limit,
+                progress=progress,
+                reap_orphans=not no_reap,
+                multivector=multivector,
             )
             bar_state["bar"] = None
 
@@ -128,18 +142,30 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())
+                # --multivector: also rebuild the FR-005 mv index (D-007 --
+                # its own vecmv_<model> vec0 table over embeddings_mv). Flag
+                # off: this call is absent and the flow is byte-identical to
+                # the pre-FR-005 single-index build.
+                mv_idx_summary = (
+                    ann.rebuild_index(conn, emb.current_model(), source="embeddings_mv")
+                    if multivector
+                    else None
+                )
         elapsed = time.time() - t0
 
         after = emb.embed_count(conn)
+        kv_pairs=[
+            ("embedded", f"{summary['embedded']:,}"),
+            ("skipped", f"{summary['skipped']:,}"),
+            ("reaped", f"{summary.get('reaped', 0):,}"),
+            ("model", summary["model"]),
+            ("vectors", f"{before:,} -> {after:,}"),
+        ]
+        if multivector:
+            kv_pairs.append(("mv vectors", f"{summary.get('mv_embedded', 0):,}"))
         display.summary_panel(
             title=f"Embedded {summary['embedded']:,} symbols in {elapsed:.1f}s",
-            kv_pairs=[
-                ("embedded", f"{summary['embedded']:,}"),
-                ("skipped", f"{summary['skipped']:,}"),
-                ("reaped", f"{summary.get('reaped', 0):,}"),
-                ("model", summary["model"]),
-                ("vectors", f"{before:,} -> {after:,}"),
-            ],
+            kv_pairs=kv_pairs,
         )
 
         if build_ann:
@@ -150,6 +176,16 @@ def embed(db, batch_size, limit, no_reap, build_index, install_deps, download_mo
                     f"ANN index rebuilt: {idx_summary['indexed']:,} vectors, "
                     f"dim={idx_summary['dim']}, model='{idx_summary['model']}'"
                 )
+            if multivector and mv_idx_summary is not None:
+                if mv_idx_summary.get("skipped"):
+                    display.warning(
+                        f"MV ANN index not built: {mv_idx_summary['skipped']}"
+                    )
+                else:
+                    display.success(
+                        f"MV ANN index rebuilt: {mv_idx_summary['indexed']:,} vectors, "
+                        f"dim={mv_idx_summary['dim']}, model='{mv_idx_summary['model']}'"
+                    )
 
         # Persist an 'embed' build_runs row (best-effort; record_build_run
         # swallows all errors). Only the symbol/skipped counts are meaningful

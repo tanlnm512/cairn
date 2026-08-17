@@ -1,0 +1,165 @@
+{
+  "schema": "cairn-ds2-power-analysis/1",
+  "suite": "ds2-power-analysis",
+  "decision": {
+    "target_l1_queries": 150,
+    "target_l5_queries": 40,
+    "rule": "target n = max(150 L1 floor, n_required); >= 40 L5 (D-010; FR-002) -- the floor is never lowered",
+    "n_required_operative": 54,
+    "n_required_basis": "conservative detectable-effect figure for the observed effect (+0.1123 at 95%, sigma_d = max over the five committed CI rows); the decision is framing-invariant -- even the 80%-power figure (109) stays under the 150 floor",
+    "statement": "Target DS-v2 = 150 L1 queries (max(150, 54) = 150; all four kinds -- callers/definition/flow/impact -- represented) plus >= 40 L5. At 150 evaluated queries the minimum certifiable two-sided-95% effect is ~+0.061 (matched sigma) to +0.067 (conservative sigma): the observed +0.1123 certifies with ~1.7x margin; a half-effect +0.05 would need 220-269 evaluated queries at CI-clearing (450-549 at 80% power), beyond the authoring budget -- recorded as out of reach, not silently dropped."
+  },
+  "method": {
+    "name": "Sakai-style topic-set-size design; two-sided paired test at alpha=0.05; detectable-effect framing (primary) with an 80%-power paired variant (secondary)",
+    "approximation": "closed-form normal approximation (Sakai's paired-t Excel tools implement the same detectable-effect logic via the noncentral t); formulas stated so every figure is recomputable with stdlib arithmetic",
+    "constants": {
+      "alpha": 0.05,
+      "z_2sided_95pct": 1.959964,
+      "power_secondary": 0.8,
+      "z_80power": 0.841621
+    },
+    "formulas": {
+      "half_width": "h = (ci_high - ci_low) / 2",
+      "sigma_d": "sigma_d = h * sqrt(n) / z_2sided_95pct",
+      "n_detectable": "n = ceil((z_2sided_95pct * sigma_d / delta)^2)",
+      "n_power80": "n = ceil(((z_2sided_95pct + z_80power) * sigma_d / delta)^2)",
+      "min_detectable_effect": "delta_min = z_2sided_95pct * sigma_d / sqrt(N)"
+    },
+    "evaluated_n_mapping": "DS-v1's evidence unit is its 29-query validate split (seeded 50/50 of 58 L1, D-006). DS-v2's accept gate bootstraps pooled per-query paired differences with each query validate-side exactly once across the seeded >=5-fold rotation (D-009: 'a legitimate n=all-queries test'), so required n in evaluated queries maps 1:1 onto the L1 authoring total -- this makes max(150, n_required) a like-for-like comparison. Under DS-v1's fixed-split convention the mapping would be 2:1; DS-v2 does not use that convention for its accept gate.",
+    "references": [
+      "Sakai, 'Topic Set Size Design', Information Retrieval Journal 2016 (https://dl.acm.org/doi/10.1145/2911451.2911492)",
+      "Smucker, Allan & Carterette, CIKM'07 (paired bootstrap is a first-class test)",
+      "Urbano et al., arXiv:1905.11096 (small query sets systematically under-detect true effects)"
+    ]
+  },
+  "inputs": {
+    "record": [
+      "benchmarks/quality/ablation.json",
+      "benchmarks/quality/ablation.md"
+    ],
+    "n_validate": 29,
+    "n_validate_source": "benchmarks/quality/ablation.json dataset.split.validate (seeded 50/50 split of the 58 L1 queries, D-006)",
+    "bootstrap_protocol": "paired bootstrap vs the incumbent's validate recall 0.2521, 10,000 resamples, 95% CI (benchmarks/quality/ablation.md Figure 2)",
+    "per_query_matrices": "not present in the committed record (the /tmp sweep artifacts named in ablation.json measurement.provenance are session-local and absent on this machine); sigma_d is derived from the committed 95% CI half-widths at n=29 -- the derivation input is itself committed evidence",
+    "constraints": "arithmetic over committed evidence only; no retrieval sweeps, no model inference, nothing re-measured",
+    "candidates": [
+      {
+        "combo": "recipe-C_TRIM (= C_TRIM + rerank-on)",
+        "delta": 0.0422,
+        "ci_low": -0.1118,
+        "ci_high": 0.1916
+      },
+      {
+        "combo": "enrich-on + rerank-off (B)",
+        "delta": 0.1123,
+        "ci_low": -0.024,
+        "ci_high": 0.2514
+      },
+      {
+        "combo": "C_TRIM + rerank-off",
+        "delta": -0.0563,
+        "ci_low": -0.1839,
+        "ci_high": 0.0575
+      },
+      {
+        "combo": "C_TRIM + enrich-on + rerank-on",
+        "delta": 0.0376,
+        "ci_low": -0.1149,
+        "ci_high": 0.1893
+      },
+      {
+        "combo": "C_TRIM + enrich-on + rerank-off",
+        "delta": 0.0911,
+        "ci_low": -0.048,
+        "ci_high": 0.2356
+      }
+    ]
+  },
+  "derived": {
+    "candidates": [
+      {
+        "combo": "recipe-C_TRIM (= C_TRIM + rerank-on)",
+        "half_width": 0.1517,
+        "sigma_d": 0.416808
+      },
+      {
+        "combo": "enrich-on + rerank-off (B)",
+        "half_width": 0.1377,
+        "sigma_d": 0.378342
+      },
+      {
+        "combo": "C_TRIM + rerank-off",
+        "half_width": 0.1207,
+        "sigma_d": 0.331633
+      },
+      {
+        "combo": "C_TRIM + enrich-on + rerank-on",
+        "half_width": 0.1521,
+        "sigma_d": 0.417907
+      },
+      {
+        "combo": "C_TRIM + enrich-on + rerank-off",
+        "half_width": 0.1418,
+        "sigma_d": 0.389607
+      }
+    ],
+    "half_width_range": [0.1207, 0.1521],
+    "half_width_range_note": "reproduces the ablation record's 'widths ~ +/-0.13-0.15' statement at n=29",
+    "sigma_matched": {
+      "combo": "enrich-on + rerank-off (B)",
+      "value": 0.378342,
+      "rationale": "the best near-miss's own CI -- the candidate DS-v2's first re-test is expected to carry"
+    },
+    "sigma_conservative_max": 0.417907,
+    "sigma_conservative_rationale": "max over the five committed CI rows; guards against an unknown future candidate having the largest observed dispersion"
+  },
+  "outputs": {
+    "a_observed_effect": {
+      "delta": 0.1123,
+      "n_detectable_matched": 44,
+      "n_detectable_matched_raw": 43.602,
+      "n_detectable_conservative": 54,
+      "n_detectable_conservative_raw": 53.198,
+      "n_power80_matched": 90,
+      "n_power80_matched_raw": 89.088,
+      "n_power80_conservative": 109,
+      "n_power80_conservative_raw": 108.695,
+      "note": "all four framings <= 150, so the D-010 floor governs and certifies the observed effect with margin"
+    },
+    "b_half_effect": {
+      "delta": 0.05,
+      "n_detectable_matched": 220,
+      "n_detectable_matched_raw": 219.951,
+      "n_detectable_conservative": 269,
+      "n_detectable_conservative_raw": 268.359,
+      "n_power80_matched": 450,
+      "n_power80_matched_raw": 449.404,
+      "n_power80_conservative": 549,
+      "n_power80_conservative_raw": 548.312,
+      "note": "beyond the D-010 authoring budget (and the ~3-5x envelope); recorded as out of reach -- at 150, effects smaller than ~+0.06 remain undetectable at 95%"
+    },
+    "min_detectable_effect_at_150": {
+      "matched": 0.060546,
+      "conservative": 0.066878
+    },
+    "target_l1": 150,
+    "target_l5": 40
+  },
+  "cross_checks": {
+    "sqrt_n_direct_route": "ceil(29 * (0.1377/0.1123)^2) = 44 = n_detectable_matched -- shrinking the best candidate's own half-width agrees with the sigma_d route (algebraically identical, numerically equal)",
+    "rq4_arithmetic": "h(120) = 0.1377 * sqrt(29/120) = 0.067693 ~= the '~+/-0.07-0.08 at n~120' of specs/retrieval-quality-v2/research.md RQ4 (re-derived from the committed CI, not copied)",
+    "ds1_failure_quantified": "at n=29, delta_min = z * sigma_matched / sqrt(29) = 0.1377 = exactly the measured half-width -- Urbano et al.'s small-set under-detection regime, the expected behavior rather than an anomaly"
+  },
+  "spec_trace": {
+    "decision": "tech-spec.md D-010 (150/40 floor; target max(150 L1, n_required))",
+    "protocol": "tech-spec.md D-006 (evidence split), D-009 (pooled per-query accept gate; evaluated-n mapping)",
+    "research": "research.md RQ4 (Sakai topic-set-size; Smucker et al.; Urbano et al.; 1/sqrt(n) CI scaling)",
+    "requirement": "spec.md FR-002 (>=150 L1, all four kinds, >=40 L5); test.md TC-005 (count floors)",
+    "query_kinds_source": "benchmarks/datasource/t2/ground_truth/queries.jsonl L1 kinds: callers, definition, flow, impact"
+  },
+  "provenance": {
+    "recompute_command": "uv run python benchmarks/datasource/ds2/recompute_power.py",
+    "artifact_pair": "benchmarks/datasource/ds2/power-analysis.md (prose) + this file (machine mirror)",
+    "ds1_touched": false
+  }
+}

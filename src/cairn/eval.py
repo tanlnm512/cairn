@@ -10,7 +10,12 @@ with identity-first matching and grade-aware scoring. ``split_queries``
 (FR-006) turns that ground truth into the seeded tune/validate split used
 for held-out lever selection; ``evaluate_on`` (FR-006, TC-019) is the guarded
 evaluation seam that enforces it, and ``paired_bootstrap`` (D-006) is the
-accept gate any lever must pass on the validate split.
+accept gate any lever must pass on the validate split. ``kfold_partitions``
+(FR-001) rotates the same determinism recipe into k >= 5 seeded folds in
+which every query is held out exactly once, and ``run_sweep_kfold``
+(FR-001) runs the lever sweep once per fold through that unchanged seam —
+selection ids = all minus the fold's, the fold's own ids handed to the
+seam as the flat ``held_out_ids`` iterable.
 
 The sweep harness (FR-005, D-007, T004) sits on top of that seam:
 ``run_sweep`` enumerates lever combinations (each an injected
@@ -346,6 +351,92 @@ def split_queries(
     # ceil hands the odd element to tune.
     n_tune = math.ceil(round(len(ids) * ratio, 10))
     return ids[:n_tune], ids[n_tune:]
+
+
+# --------------------------------------------------------------------------
+# Seeded k-fold rotation partition (FR-001, TC-002, TC-004)
+#
+# The single seeded split above rotates: the same determinism recipe
+# (dedupe + sort BEFORE the seeded shuffle) cut into k contiguous slices,
+# so every id is held out exactly once across the rotation. The >= 5 fold
+# floor is deliberate — a weaker fold count must be refused loudly, never
+# silently run.
+# --------------------------------------------------------------------------
+
+#: Fold-count floor for k-fold rotation (FR-001): 5 is the minimum the
+#: harness will run; anything less is a configuration error (TC-004).
+MIN_KFOLD_K = 5
+
+
+def kfold_partitions(
+    ids: Iterable[Any],
+    *,
+    k: int = MIN_KFOLD_K,
+    seed: int = DEFAULT_SPLIT_SEED,
+) -> List[List[str]]:
+    """Partition query ids into k seeded rotation folds (FR-001).
+
+    ``ids`` is any iterable of id strings or objects exposing a
+    ``query_id`` field (same coercion as :func:`split_queries` — only the
+    id is read, so the function is level-agnostic; filtering is the
+    caller's choice). The input is never mutated.
+
+    The determinism recipe is :func:`split_queries`'s exactly: ids are
+    deduplicated and *sorted before* the seeded ``random.Random(seed)
+    .shuffle``, then the shuffled list is cut into k contiguous slices —
+    the first ``n mod k`` folds take one extra id, so fold sizes differ
+    by at most one. The partition is a pure function of (id set, k,
+    seed): never of input order, set/dict iteration order, or
+    ``PYTHONHASHSEED``.
+
+    Contract (TC-002, TC-004):
+
+    * **Reproducible** — two calls with the same (ids, k, seed) return
+      identical folds, in-process or not; the default seed is the fixed
+      :data:`DEFAULT_SPLIT_SEED`.
+    * **Rotation-exact** — the folds partition the input: the union of
+      all k folds equals the id set and no id appears in two folds (each
+      id is held out exactly once and serves as tuning material in all
+      other folds).
+    * **Non-degenerate** — every fold is non-empty: ``k`` folds need at
+      least ``k`` distinct ids.
+    * **Floor** — ``k < 5`` raises ``ValueError`` naming the minimum;
+      the fold count is a floor, not a suggestion, and the default runs
+      at exactly 5.
+
+    Returned folds keep shuffle order (fold 0 first) so re-run diffs are
+    empty.
+    """
+    if k < MIN_KFOLD_K:
+        raise ValueError(
+            f"k-fold rotation requires k >= {MIN_KFOLD_K} folds, got {k!r}: "
+            f"the fold-count floor is {MIN_KFOLD_K} — a weaker evaluation "
+            "is refused rather than silently run (FR-001, TC-004)"
+        )
+
+    # Dedupe + sort BEFORE shuffling: the sort kills any dependence on
+    # input order or hash randomization, making the shuffle deterministic
+    # given (id set, seed) — the same rule split_queries relies on.
+    shuffled = sorted(
+        {item if isinstance(item, str) else item.query_id for item in ids}
+    )
+    if len(shuffled) < k:
+        raise ValueError(
+            f"k-fold rotation needs at least {k} distinct ids to form {k} "
+            f"non-empty folds, got {len(shuffled)}"
+        )
+    rng = random.Random(seed)
+    rng.shuffle(shuffled)
+
+    # Contiguous slices; the first (n mod k) folds carry the remainder.
+    base, extra = divmod(len(shuffled), k)
+    folds: List[List[str]] = []
+    start = 0
+    for fold_index in range(k):
+        size = base + 1 if fold_index < extra else base
+        folds.append(shuffled[start : start + size])
+        start += size
+    return folds
 
 
 # --------------------------------------------------------------------------
@@ -799,6 +890,15 @@ SWEEP_SCHEMA = "cairn-quality-sweep/2"
 #: DS-v1 (full-set recall@10 0.4174 / MRR 0.2862).
 ALL_LEVERS_OFF = "all-levers-off"
 
+#: Schema tag of the k-fold sweep document (the rotation counterpart of
+#: :data:`SWEEP_SCHEMA`). The document carries one entry per fold in
+#: ``folds`` — each with the :data:`SWEEP_SCHEMA` row shape over that fold's
+#: selection material — plus the ``aggregate`` block (the pooled paired
+#: bootstrap verdict and descriptive rotation statistics), and is extended
+#: additively by later consumers (CLI emission); consumers must tolerate
+#: unknown keys.
+KFOLD_SWEEP_SCHEMA = "cairn-quality-sweep-kfold/1"
+
 
 def _normalize_combos(
     combos: Iterable[Any],
@@ -1127,6 +1227,312 @@ def run_sweep(
                 qid: base_report["per_query"][qid][metric]
                 for qid in sorted(base_report["per_query"])
             },
+        },
+    }
+
+
+def run_sweep_kfold(
+    conn: sqlite3.Connection,
+    queries: Iterable[Any],
+    *,
+    combos: Sequence[Mapping[str, Any]],
+    k_folds: int = MIN_KFOLD_K,
+    fold_seed: int = DEFAULT_SPLIT_SEED,
+    ids: Optional[Iterable[str]] = None,
+    baseline: Optional[str] = None,
+    metric: str = "recall_at_10",
+    dataset_name: str = "ground-truth",
+    dataset_version: str = "1",
+    bundle_root: Optional[str] = None,
+    k: int = 10,
+    timer: Callable[[], float] = time.perf_counter,
+) -> Dict[str, Any]:
+    """Run the lever sweep once per fold of the seeded k-fold rotation.
+
+    The rotation counterpart of :func:`run_sweep`: instead of one seeded
+    tune/validate split, :func:`kfold_partitions` cuts the id set into
+    ``k_folds`` seeded folds and the sweep runs once per fold i through the
+    SAME unchanged seam ``run_sweep`` uses — ``evaluate_on(ids=selection,
+    purpose="selection", held_out_ids=fold_i)`` — with the selection ids
+    being *all ids minus fold i's* and the fold's own ids handed as the flat
+    ``held_out_ids`` iterable. Held-out enforcement is inherited from the
+    seam per fold, never re-implemented: a selection-stage read touching
+    ANY fold's held-out ids raises :class:`HeldOutError` at that fold's
+    turn, before that fold's retrieval runs (TC-003 — the loud-failure
+    contract holds per fold, not just per single split).
+
+    Contract:
+
+    * **Per-fold discipline (D-009)** — every query is held out exactly
+      once (its own fold) and serves as selection material in all other
+      folds; the significance basis is never fold means: the
+      ``aggregate`` block pools each query exactly once across the
+      rotation and runs the unchanged :func:`paired_bootstrap` over the
+      pooled per-query arrays (see the ``aggregate`` paragraph below).
+    * **Determinism** — the folds are a pure function of (id set,
+      ``k_folds``, ``fold_seed``); with a pinned ``timer`` the whole
+      document serializes to identical bytes run over run.
+    * **Floor inheritance** — ``k_folds < 5`` and fewer distinct ids than
+      folds are refused loudly by :func:`kfold_partitions` (``ValueError``
+      naming the floor).
+    * **``ids=`` is the tamper channel, not a narrowing knob** — ``None``
+      (the default) selects all-ids-minus-fold-i per fold; an explicit
+      ``ids`` request is handed to the seam VERBATIM each fold, exactly as
+      ``run_sweep`` hands it. Because the rotation holds out every id in
+      exactly one fold, any non-empty request eventually names a held-out
+      id and aborts at that fold's turn with :class:`HeldOutError` — the
+      provable per-fold guard. To narrow the rotation, filter ``queries``
+      (the module doctrine: filtering is the caller's choice).
+
+    Returns the ``cairn-quality-sweep-kfold/1`` document::
+
+        {"schema": ..., "dataset": {"name", "version", "fold_seed",
+         "k_folds", "split": "kfold", "metric", "n_queries"},
+         "folds": [{"fold": i, "held_out_ids": [...], "rows": [...],
+                    "reports": {combo: report}, "baseline": {...}}],
+         "aggregate": {"metric", "baseline", "significance_basis",
+                       "combos": {candidate: {"pooled", "bootstrap",
+                                              "descriptive"}}}}
+
+    Each fold entry carries: ``held_out_ids`` (that fold's ids, sorted);
+    ``rows`` (the :data:`SWEEP_SCHEMA` row shape, evaluated on that fold's
+    selection material, implicit all-levers-off row first, size accounting
+    included, recipe variants re-embedded before their fold's evaluation
+    exactly as in ``run_sweep``); ``reports`` (the full seam report per
+    combo — per-query values a consumer needs to pair against without
+    re-running the rotation); and ``baseline`` (the incumbent combo's
+    per-query selection-metric map, same shape as ``run_sweep``'s).
+
+    ``aggregate`` (T003, D-009) is the rotation verdict per
+    candidate-vs-baseline combo. ``pooled`` is the per-query paired array:
+    every query EXACTLY ONCE across the rotation, attributed to the fold
+    that held it out (pool order = held-out fold, then id). Because the
+    seam scores each query independently of the fold's selection set
+    (retrieval sees the embedding state, the query, and the combo params —
+    never the other ids), a query's per-query values are identical in
+    every fold whose selection material includes it, so the pool
+    reconstructs one full-set paired array with ``n = all queries``; each
+    query's candidate and baseline values are read from the earliest fold
+    whose selection material includes it (the SAME fold for both, so the
+    pair shares one embedding state). ``bootstrap`` is the unchanged
+    :func:`paired_bootstrap` verdict over those pooled arrays — the
+    significance basis (``significance_basis`` names it). ``descriptive``
+    (the rotation-mean of the per-fold selection metrics, the per-fold
+    figures, and the min/max delta spread) is DESCRIPTIVE ONLY and never
+    feeds the significance test — Bengio–Grandvalet: no unbiased k-fold
+    variance estimator exists from fold scores, so fold figures describe
+    how much folds disagree and nothing more.
+
+    ``ValueError`` for an unknown metric, malformed or duplicate-named
+    combos, or a ``baseline`` naming no combo; ``RuntimeError`` when a
+    variant combo runs against an ``embed_all`` without the ``variant``
+    contract (both identical to ``run_sweep``); :class:`HeldOutError`
+    propagates from the seam when a request touches any fold's held-out
+    ids — nothing is returned in that case (no results table emitted).
+    """
+    if metric not in _METRICS:
+        raise ValueError(
+            f"unknown metric {metric!r}; expected one of {list(_METRICS)}"
+        )
+
+    # Materialize once: the partition and every seam call iterate queries.
+    query_list = list(queries)
+    normalized = _normalize_combos(combos)
+
+    # The integrity row per fold, identical rule to run_sweep: prepended
+    # whenever the grid carries no params-None variant-less combo of its
+    # own (a variant combo with params=None re-embeds, so it cannot serve).
+    if not any(
+        params is None and variant is None for _name, params, variant in normalized
+    ):
+        normalized.insert(0, (ALL_LEVERS_OFF, None, None))
+
+    names = {name for name, _params, _variant in normalized}
+    if baseline is not None and baseline not in names:
+        raise ValueError(
+            f"baseline {baseline!r} names no combo in the sweep "
+            f"(combos: {sorted(names)})"
+        )
+
+    all_ids = sorted(
+        {item if isinstance(item, str) else item.query_id for item in query_list}
+    )
+    # The rotation and its loud refusals (k < MIN_KFOLD_K, fewer ids than
+    # folds) come from kfold_partitions as-is.
+    folds = kfold_partitions(all_ids, k=k_folds, seed=fold_seed)
+    requested = None if ids is None else sorted(set(ids))
+
+    # Loop-invariant incumbent (run_sweep's selection rule), computed once:
+    # both the per-fold ``baseline`` maps and the ``aggregate`` pair against
+    # it.
+    baseline_name = baseline if baseline is not None else next(
+        name
+        for name, params, variant in normalized
+        if params is None and variant is None
+    )
+
+    fold_entries: List[Dict[str, Any]] = []
+    for fold_index, held_out in enumerate(folds):
+        held_set = set(held_out)
+        # Selection material: every id except this fold's. An explicit
+        # request is handed to the seam verbatim — the guard's channel.
+        selection_ids: List[str] = (
+            [qid for qid in all_ids if qid not in held_set]
+            if requested is None
+            else requested
+        )
+        reports: Dict[str, Dict[str, Any]] = {}
+        rows: List[Dict[str, Any]] = []
+        for name, params, variant in normalized:
+            if variant is not None:
+                _reembed_for_variant(conn, variant)
+            size = _size_accounting(conn)
+            report = evaluate_on(
+                conn,
+                query_list,
+                ids=selection_ids,
+                purpose="selection",
+                held_out_ids=held_out,
+                metric=metric,
+                bundle_root=bundle_root,
+                k=k,
+                params=params,
+                timer=timer,
+            )
+            reports[name] = report
+            durations = sorted(report["durations_ms"].values())
+            row: Dict[str, Any] = {
+                "combo": name,
+                "recall_at_10": report["recall_at_10"],
+                "mrr": report["mrr"],
+                "p95_ms": round(_percentile(durations, 95.0), 4),
+                "n_queries": report["n_queries"],
+                "db_mb": size["db_mb"],
+                "chunk_chars_max": size["chunk_chars_max"],
+                "chunk_chars_mean": size["chunk_chars_mean"],
+            }
+            if variant is not None:
+                row["variant"] = variant
+            rows.append(row)
+
+        base_report = reports[baseline_name]
+        fold_entries.append(
+            {
+                "fold": fold_index,
+                "held_out_ids": sorted(held_set),
+                "rows": rows,
+                "reports": reports,
+                "baseline": {
+                    "combo": baseline_name,
+                    "metric": metric,
+                    "per_query": {
+                        qid: base_report["per_query"][qid][metric]
+                        for qid in sorted(base_report["per_query"])
+                    },
+                },
+            }
+        )
+
+    # --- The fold aggregate (T003, D-009): pooled per-query bootstrap. ----
+    # Every query enters the pool EXACTLY ONCE, attributed to the fold that
+    # held it out (pool order: held-out fold, then id). The seam scores each
+    # query independently of the fold's selection set, so a query's values
+    # are identical in every fold whose selection material includes it —
+    # the pool reconstructs one full-set paired array (n = all queries), the
+    # legitimate paired_bootstrap basis. Fold means never enter the
+    # significance path (Bengio–Grandvalet: no unbiased k-fold variance
+    # estimator exists from fold scores).
+    owner_fold = {
+        qid: fold_index for fold_index, held_out in enumerate(folds) for qid in held_out
+    }
+    first_held = set(folds[0])
+    # The earliest fold whose selection material includes the query: fold 0,
+    # or fold 1 for fold 0's own members (k >= 5 guarantees fold 1 exists and
+    # does not hold them out). Candidate AND baseline values for a query are
+    # read from that same fold, so the pair shares one embedding state.
+    source_fold = {qid: (1 if qid in first_held else 0) for qid in all_ids}
+    pool_order = sorted(all_ids, key=lambda qid: (owner_fold[qid], qid))
+    rows_by_combo = [{row["combo"]: row for row in entry["rows"]} for entry in fold_entries]
+
+    def _pooled(combo: str) -> List[float]:
+        """Pooled per-query selection-metric array for ``combo``.
+
+        Each query read exactly once, from its source fold's seam report —
+        the per-query measurements themselves, never fold aggregates.
+        """
+        return [
+            fold_entries[source_fold[qid]]["reports"][combo]["per_query"][qid][metric]
+            for qid in pool_order
+        ]
+
+    combo_aggregates: Dict[str, Dict[str, Any]] = {}
+    for cand, _params, _variant in normalized:
+        if cand == baseline_name:
+            continue  # the baseline is the pairing anchor, not a candidate
+        pooled_candidate = _pooled(cand)
+        pooled_baseline = _pooled(baseline_name)
+        per_fold_candidate = [
+            rows_by_combo[fold_index][cand][metric]
+            for fold_index in range(len(fold_entries))
+        ]
+        per_fold_baseline = [
+            rows_by_combo[fold_index][baseline_name][metric]
+            for fold_index in range(len(fold_entries))
+        ]
+        per_fold_delta = [
+            round(c - b, 4) for c, b in zip(per_fold_candidate, per_fold_baseline)
+        ]
+        combo_aggregates[cand] = {
+            "pooled": {
+                "n_queries": len(pool_order),
+                "queries": pool_order,
+                "candidate": pooled_candidate,
+                "baseline": pooled_baseline,
+            },
+            # The significance basis (D-009): the unchanged single-split
+            # bootstrap over the POOLED per-query arrays — never fold means.
+            "bootstrap": paired_bootstrap(pooled_candidate, pooled_baseline),
+            # DESCRIPTIVE ONLY (D-009): rotation statistics never feed the
+            # significance test.
+            "descriptive": {
+                "rotation_mean": {
+                    "candidate": round(
+                        sum(per_fold_candidate) / len(per_fold_candidate), 4
+                    ),
+                    "baseline": round(
+                        sum(per_fold_baseline) / len(per_fold_baseline), 4
+                    ),
+                    "delta": round(sum(per_fold_delta) / len(per_fold_delta), 4),
+                },
+                "per_fold": {
+                    "candidate": per_fold_candidate,
+                    "baseline": per_fold_baseline,
+                    "delta": per_fold_delta,
+                },
+                "spread": {
+                    "delta_min": min(per_fold_delta),
+                    "delta_max": max(per_fold_delta),
+                },
+            },
+        }
+
+    return {
+        "schema": KFOLD_SWEEP_SCHEMA,
+        "dataset": {
+            "name": dataset_name,
+            "version": dataset_version,
+            "fold_seed": fold_seed,
+            "k_folds": len(folds),
+            "split": "kfold",
+            "metric": metric,
+            "n_queries": len(all_ids),
+        },
+        "folds": fold_entries,
+        "aggregate": {
+            "metric": metric,
+            "baseline": baseline_name,
+            "significance_basis": "pooled_per_query_paired_bootstrap",
+            "combos": combo_aggregates,
         },
     }
 

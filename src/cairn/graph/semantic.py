@@ -1,8 +1,10 @@
 """Semantic (embedding-based) symbol search.
 
 Two-stage retrieval:
-  1. Cosine scan (or sqlite-vec ANN) over the embeddings table, optionally
-     blended with BM25 via Reciprocal Rank Fusion.
+  1. Cosine scan (or sqlite-vec ANN) over the embeddings table (UNIONed
+     with the ``embeddings_mv`` multi-vector kinds under
+     ``params.multivector``), optionally blended with BM25 via Reciprocal
+     Rank Fusion.
   2. Optional cross-encoder rerank stage, skipped when the fused (RRF) ranking
      is already decisive (``_fused_confident`` -- see the gating note on
      ``semantic_search``).
@@ -20,6 +22,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .lexical import search_symbols, search_symbols_terms
+from .prf import expand as prf_expand
 from .query_enrich import enrich as enrich_query
 from .traversal import get_callers, get_callees
 
@@ -250,12 +253,24 @@ def _candidates_from_ann_hits(
     candidate dict shape the brute-force scan produces.
 
     Re-applies ``threshold`` (the vec0 MATCH query has no threshold concept of
-    its own — it just returns the nearest k).
+    its own — it just returns the nearest k). Dedups per symbol by MAX score
+    (FR-005, D-007): a symbol reaches the hit list once per vector when its
+    table holds multiple rows for it, and must surface exactly once at its
+    best score. At one row per symbol max equals the only score, so the
+    single-vector behavior is unchanged.
     """
-    ids = [sid for sid, score in ann_hits if score >= threshold]
+    # Max-score dedup per symbol: a symbol qualifies iff its BEST vector
+    # clears the threshold, appears exactly once, and carries that best
+    # score. (The previous dict comprehension was last-wins: a later
+    # below-threshold hit could overwrite a passing score, and a multi-hit
+    # symbol appeared once per hit.)
+    score_by_id: dict = {}
+    for sid, score in ann_hits:
+        if sid not in score_by_id or score > score_by_id[sid]:
+            score_by_id[sid] = score
+    ids = [sid for sid, score in score_by_id.items() if score >= threshold]
     if not ids:
         return []
-    score_by_id = {sid: score for sid, score in ann_hits}
     placeholders = ",".join("?" for _ in ids)
     rows = _mapping_rows(
         conn.execute(
@@ -289,6 +304,29 @@ def _candidates_from_ann_hits(
             }
         )
     return candidates
+
+
+def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
+    """Merge two already-deduped ANN candidate lists into one ranked list.
+
+    FR-005 / D-007: under ``params.multivector`` the same symbol can hit
+    both the ``vec_`` leg and the ``vecmv_`` leg -- once each, since
+    ``_candidates_from_ann_hits`` already max-dedups within a leg -- and
+    must surface exactly ONCE in the merged list, at its best (max) score
+    (TC-023). Both inputs are score-descending; the result is too, via a
+    stable sort that keeps ``base`` ahead of ``extra`` on exact score ties,
+    so the merge is deterministic. Candidate metadata (``chunk`` etc.) is
+    the base-table display text (``_candidates_from_ann_hits`` joins
+    ``embeddings``); only the SCORE is the max across vectors.
+    """
+    best: dict = {}
+    for cand in base:
+        best[cand["id"]] = cand
+    for cand in extra:
+        cur = best.get(cand["id"])
+        if cur is None or cand["score"] > cur["score"]:
+            best[cand["id"]] = cand
+    return sorted(best.values(), key=lambda c: c["score"], reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -362,10 +400,46 @@ class RetrievalParams:
       gate's ``_exact_name_hit`` corroboration still sees the RAW query —
       gate inputs shift only through the fused ranking. ``None``/``False``
       keeps today's exact behavior (the flag is carried, not defaulted on).
+    * ``enrich_idf`` — IDF-aware enrichment (FR-003, T013): ``True`` makes
+      the ONE ``enrich`` call corpus-aware by injecting a ``term_df``
+      lookup built HERE (one indexed PRIMARY-KEY SELECT per distinct
+      case-folded query token, memoized -- the D-005 O(#query tokens)
+      bound), so terms prevalent in > 0.90 of the corpus's symbols are
+      dropped from the enriched legs. Inert unless ``enrich`` is also on.
+      ``None``/``False`` keeps the enrichment DF-blind: no lookup is
+      built, no ``term_df`` SELECT runs, and the ``enrich`` call is
+      byte-identical to today's single-argument form.
     * ``gate_min_margin`` — rerank confidence-gate margin override
       (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
       ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
       the env path).
+    * ``multivector`` — multi-vector dense leg (FR-005): ``True`` UNIONs
+      the brute scan's rows with the parallel ``embeddings_mv`` table's
+      same-model ``name``/``docstring`` vectors, and the ANN leg queries
+      the ``vecmv_`` index beside the base ``vec_`` index; each leg
+      consolidates every symbol to ONE entry at its MAX score across
+      vectors. ``None``/``False`` never reads ``embeddings_mv`` -- the
+      brute SQL, the single-index ANN query, and every result byte are
+      today's single-vector behavior (the sweep's all-levers-off
+      integrity row).
+    * ``prf`` — pseudo-relevance feedback second pass (FR-004, T016):
+      ``True`` re-runs the full pass (both legs + fusion) ONCE at the
+      post-fusion seam with an RM3-expanded query: the top ``prf_docs``
+      fused candidates' text (chunk, ``name`` + ``qualified_name``
+      fallback) feeds ``prf.expand`` with the ``term_df`` DF lookup, the
+      expanded ``dense_query`` gets the call's SECOND ``embed_query`` --
+      the explicit D-012 exception to the one-embed-call doctrine -- and
+      the expansion terms join the sparse leg's term list. PRF REPLACES
+      the rerank stage (D-012: replaces-not-stacks): a PRF combo forces
+      the stage off regardless of ``rerank``/``CAIRN_RERANK``, so the
+      wider rerank pool is never fetched and the cross-encoder never
+      runs. An empty expansion (or empty first pass) skips the second
+      pass -- zero extra embeds, first-pass results unchanged.
+    * ``prf_docs`` / ``prf_terms`` / ``prf_lambda`` — the RM3 knobs
+      (``None`` = the D-002 Anserini anchors: 10 feedback docs, 10
+      terms, λ 0.5). ``prf_docs <= 0`` yields empty feedback (second
+      pass skipped); ``prf_lambda`` outside [0, 1] propagates
+      ``prf.expand``'s ``ValueError``.
     """
 
     dense_threshold: Optional[float] = None
@@ -377,7 +451,49 @@ class RetrievalParams:
     rerank_pool: Optional[int] = None
     rerank: Optional[bool] = None
     enrich: Optional[bool] = None
+    enrich_idf: Optional[bool] = None
     gate_min_margin: Optional[float] = None
+    multivector: Optional[bool] = None
+    prf: Optional[bool] = None
+    prf_docs: Optional[int] = None
+    prf_terms: Optional[int] = None
+    prf_lambda: Optional[float] = None
+
+
+def _term_df_lookup(conn: sqlite3.Connection):
+    """Build a memoized per-term DF lookup over the persisted ``term_df``.
+
+    The FR-003 / D-005 boundary half: ``semantic_search`` (and only it --
+    ``enrich`` stays pure) calls this when ``params.enrich_idf`` is truthy
+    and hands the returned callable to ``enrich`` as ``df_lookup``.
+
+    Contract of the returned ``lookup(token)``:
+
+    * ``token`` is the CASE-FOLDED key (the caller -- ``enrich``'s
+      ubiquity predicate -- lower-cases before the call, matching the
+      FTS5 unicode61 case-folding ``term_df`` keys were built with);
+    * one indexed ``SELECT symbol_df, n_symbols FROM term_df WHERE
+      token = ?`` per DISTINCT token, memoized in a per-lookup dict, so a
+      ``semantic_search`` call costs O(#distinct query tokens) SELECTs --
+      the documented D-005 bound -- each a ``token`` PRIMARY-KEY probe,
+      never a table scan;
+    * returns ``None`` for an absent token ("no DF data": the term keeps
+      full weight) or the ``(symbol_df, n_symbols)`` 2-tuple; the
+      drop/keep decision (the 0.90 cutoff) belongs to ``enrich``, not
+      here -- this is a read-only view over the connection's corpus.
+    """
+    cache: dict = {}
+
+    def lookup(token: str):
+        if token not in cache:
+            row = conn.execute(
+                "SELECT symbol_df, n_symbols FROM term_df WHERE token = ?",
+                (token,),
+            ).fetchone()
+            cache[token] = None if row is None else (row[0], row[1])
+        return cache[token]
+
+    return lookup
 
 
 def semantic_search(
@@ -438,7 +554,27 @@ def semantic_search(
     the sparse (BM25) fetch goes through enrichment's term mode. The
     confidence gate keeps seeing the raw query (T018's measurement domain);
     the rerank pair's query side is the enriched ``dense_query`` (T016,
-    D-005) — which equals the raw query whenever enrichment is off. Flags
+    D-005) — which equals the raw query whenever enrichment is off.
+    ``params.enrich_idf=True`` (T013) additionally injects the per-term
+    ``term_df`` DF lookup into that one ``enrich`` call (one indexed
+    SELECT per distinct query token, D-005); off/``None`` builds no
+    lookup and issues no ``term_df`` SELECT. ``params.multivector=True``
+    (T018, FR-005) widens the dense leg to the parallel ``embeddings_mv``
+    vectors: the brute scan UNIONs the mv rows (same model) beside
+    ``embeddings`` and the ANN leg queries the ``vecmv_`` index beside
+    ``vec_``, each leg consolidating every symbol to ONE entry at its MAX
+    score across vectors; the mv leg is strictly additive -- a missing
+    ``vecmv_`` index leaves the base candidates unchanged, never errors.
+    Off/``None`` never reads ``embeddings_mv``: identical SQL, identical
+    ANN calls, byte-identical results. ``params.prf=True`` (T016, FR-004)
+    re-runs the full pass (both legs + fusion) ONCE at the post-fusion
+    seam with an RM3-expanded query -- costing a SECOND ``embed_query``
+    call, the explicit flag-gated D-012 exception to the one-call
+    doctrine, budget-accounted by REPLACING the rerank stage (never
+    stacked: the stage is forced off on PRF combos regardless of
+    ``rerank``/``CAIRN_RERANK``). An empty expansion skips the second
+    pass. Off/``None`` runs no second pass: byte-identical results, one
+    ``embed_query`` call. Flags
     the function still does not know are ignored, never errors.
 
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
@@ -484,6 +620,11 @@ def semantic_search(
             # ratio, so out-of-range values are a harness bug, not an error
             # worth failing a sweep run over.
             _gate_margin_override = min(max(params.gate_min_margin, 0.0), 1.0)
+    # FR-005 (T018): the multi-vector query path. None and False both keep
+    # every scan byte-identical to the single-vector path (integrity
+    # doctrine -- the sweep's all-levers-off row must never read
+    # embeddings_mv).
+    _mv = params is not None and bool(params.multivector)
 
     # Under the dep-free hash fallback the embedding carries only token-overlap
     # signal, so annotate provenance strings to surface the degradation.
@@ -498,6 +639,15 @@ def semantic_search(
     # the stage might still run (the gate can only be evaluated after fusion).
     _rerank_enabled = rrk.rerank_enabled()
     rerank_on = _rerank_enabled if rerank is not False else False
+    # T016 (FR-004, D-012): PRF REPLACES the rerank stage -- the second
+    # pass spends the budget the cross-encoder would have, never stacks on
+    # it. With params.prf on, the stage is forced off no matter what
+    # rerank/CAIRN_RERANK requested (a caller setting both gets PRF; PRF
+    # wins). Must precede pool_size below: a stage that cannot run must
+    # never widen the pool.
+    _prf = params is not None and bool(params.prf)
+    if _prf:
+        rerank_on = False
     # Hoisted above the early-return path so the semantic_backend telemetry can
     # report it. Same expression explore.py / tools_graph.py use: fusion defaults
     # ON (anything other than the literal "0" leaves it on).
@@ -578,188 +728,327 @@ def semantic_search(
     # on paths that never reach a leg (e.g. the no-rows early return) is
     # harmless; with enrich off/None _enriched stays None and both legs see
     # the raw query exactly as today.
-    _enriched = enrich_query(query) if (params is not None and params.enrich) else None
+    #
+    # T013 (FR-003, D-005): with enrich_idf ALSO truthy the DF signal
+    # enters exactly here -- the boundary builds the per-term term_df
+    # lookup (one indexed SELECT per distinct case-folded query token)
+    # and injects it, keeping enrich() itself pure. With enrich_idf
+    # off/None the call below stays today's single-argument form: no
+    # lookup built, no term_df SELECT (flag-off byte-equivalence).
+    _enriched = None
+    if params is not None and params.enrich:
+        if params.enrich_idf:
+            _enriched = enrich_query(query, df_lookup=_term_df_lookup(conn))
+        else:
+            _enriched = enrich_query(query)
     _dense_query = _enriched.dense_query if _enriched is not None else query
 
     model = emb.current_model()
-    q_blob, q_dim = emb.embed_query(_dense_query)
 
-    candidates = None
-    ann_enabled = ann.ann_backend_enabled()
-    if ann_enabled:
-        ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
-        if ann_hits is not None:
-            # ANN path available and an index exists for this model.
-            candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
-            _ann_used = True
+    def _run_pass(
+        dense_text: str, extra_sparse_terms: Tuple[str, ...]
+    ) -> Optional[List[dict]]:
+        """Run ONE full retrieval pass: embed, dense leg, RRF fusion.
 
-    if candidates is None:
-        # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
-        # fetchall() can't grow unbounded with corpus size.
-        #
-        # Surface the degradation once when sqlite-vec was *expected* but is
-        # unavailable. When ann_enabled is False it's either that or an
-        # explicit CAIRN_ANN_BACKEND=off (the helper stays silent on the
-        # opt-out). When ann_enabled is True, ann_query has already surfaced
-        # its own once-guarded reason on every None path (load failure inside
-        # try_load; the no-index state and query errors in ann_query), so
-        # there is nothing left to warn about here.
-        if not ann_enabled:
-            ann.warn_ann_fallback_once(logger, context="semantic_search")
-        brute_force_limit = 50000
-        if params is not None and params.dense_pool is not None:
-            brute_force_limit = params.dense_pool
-        rows = _mapping_rows(
-            conn.execute(
-                "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
-                "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-                "FROM embeddings e "
-                "JOIN symbols s ON e.symbol_id = s.id "
-                "JOIN files f ON s.file_id = f.id "
-                "WHERE e.model = ? "
-                "LIMIT ?",
-                (model, brute_force_limit),
-            )
-        )
-        if not rows:
-            return _finish([])
+        Contract: returns the pass's candidate list (post-fusion when
+        fusion is on; ``None`` means the corpus has no embeddable rows at
+        all -- the caller's empty-result early return). The dense leg
+        embeds ``dense_text`` in the ONE ``embed_query`` call this pass
+        costs. ``extra_sparse_terms`` -- the PRF expansion terms, second
+        pass only -- are appended to the sparse leg's term list after any
+        enrichment terms; an empty tuple keeps the term fetch exactly
+        today's shape.
 
-        # Prefer numpy for the scan; fall back to pure Python. Both produce
-        # identical cosine scores. Shared via cairn.retrieval.cosine_scan.
-        from cairn.retrieval import cosine_scan
+        D-012 (FR-004): the second ``_run_pass`` call under ``params.prf``
+        is the explicit, flag-gated exception to the one-embed_query-
+        per-call doctrine -- budget-accounted by REPLACING (never
+        stacking) the rerank stage.
+        """
+        nonlocal _ann_used, _fusion_used, _fusion_degraded
 
-        triples = [(r["vec"], r["dim"], r) for r in rows]
-        scored = cosine_scan(q_blob, q_dim, triples, threshold)
-        candidates = []
-        for score, r in scored[:pool_size]:
-            candidates.append(
-                {
-                    "id": r["symbol_id"],
-                    "name": r["name"],
-                    "kind": r["kind"],
-                    "qualified_name": r["qualified_name"],
-                    "file_path": r["file_path"],
-                    "repo": r["repo"],
-                    "score": round(score, 4),
-                    "chunk": r["chunk"],
-                    "provenance": _sem_prov,
-                    "reranked": False,
-                }
-            )
+        q_blob, q_dim = emb.embed_query(dense_text)
 
-    # RRF Hybrid fusion (fusion_enabled hoisted above for the early-return path).
-    if fusion_enabled and candidates is not None:
-        try:
-            from cairn.graph.fusion import rrf_fuse
-
-            # Fetch BM25 candidates. search_symbols returns sqlite3.Row,
-            # which has no .get() — convert to dict at this boundary so the
-            # shared .get("id") access below works on both BM25 rows and the
-            # candidate dicts (which are already plain dicts).
-            sparse_limit = 30
-            if params is not None and params.sparse_limit is not None:
-                sparse_limit = params.sparse_limit
-            # T008 (FR-001) term-mode sparse fetch: with params.enrich on,
-            # the stopword-trimmed term list of the ONE EnrichedQuery
-            # computed above feeds search_symbols_terms, whose
-            # OR-of-quoted-prefix MATCH lets BM25 rank symbols whose
-            # indexed tokens begin with ANY term. The raw sentence through
-            # search_symbols would fold into ONE quoted FTS phrase
-            # (_pattern_to_fts) that matches no symbol name -- the
-            # empty-BM25 defect. Empty sparse_query ("every token was a
-            # stopword") keeps the raw-query call per the EnrichedQuery
-            # contract. With enrich off/None the fetch below is
-            # byte-identical to today's.
-            sparse_terms: List[str] = (
-                _enriched.sparse_query.split() if _enriched is not None else []
-            )
-            if sparse_terms:
-                bm25_raw = [
-                    dict(r)
-                    for r in search_symbols_terms(
-                        conn, sparse_terms, limit=sparse_limit
+        candidates = None
+        ann_enabled = ann.ann_backend_enabled()
+        if ann_enabled:
+            ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
+            if ann_hits is not None:
+                # ANN path available and an index exists for this model.
+                candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
+                _ann_used = True
+                if _mv:
+                    # FR-005 (T018): query the vecmv_ index beside vec_ and
+                    # merge -- each symbol once, at its best score across both
+                    # legs. Strictly additive: no vecmv index (None) leaves the
+                    # base candidates unchanged, never errors.
+                    mv_hits = ann.ann_query(
+                        conn, model, q_blob, pool_size, source="embeddings_mv"
                     )
-                ]
+                    if mv_hits is not None:
+                        candidates = _merge_ann_candidates(
+                            candidates,
+                            _candidates_from_ann_hits(conn, mv_hits, threshold),
+                        )
+
+        if candidates is None:
+            # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
+            # fetchall() can't grow unbounded with corpus size.
+            #
+            # Surface the degradation once when sqlite-vec was *expected* but is
+            # unavailable. When ann_enabled is False it's either that or an
+            # explicit CAIRN_ANN_BACKEND=off (the helper stays silent on the
+            # opt-out). When ann_enabled is True, ann_query has already surfaced
+            # its own once-guarded reason on every None path (load failure inside
+            # try_load; the no-index state and query errors in ann_query), so
+            # there is nothing left to warn about here.
+            if not ann_enabled:
+                ann.warn_ann_fallback_once(logger, context="semantic_search")
+            brute_force_limit = 50000
+            if params is not None and params.dense_pool is not None:
+                brute_force_limit = params.dense_pool
+            if _mv:
+                # FR-005 (T018): UNION the multi-vector kinds' rows beside the
+                # base rows (same model stamp on both arms); the LIMIT applies
+                # to the whole compound select. The flag-off query below stays
+                # verbatim -- never touch it (integrity doctrine).
+                rows = _mapping_rows(
+                    conn.execute(
+                        "SELECT symbol_id, vec, chunk, dim, name, kind, "
+                        "qualified_name, file_path, repo FROM ("
+                        "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                        "FROM embeddings e "
+                        "JOIN symbols s ON e.symbol_id = s.id "
+                        "JOIN files f ON s.file_id = f.id "
+                        "WHERE e.model = ? "
+                        "UNION ALL "
+                        "SELECT m.symbol_id, m.vec, m.chunk, m.dim, "
+                        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                        "FROM embeddings_mv m "
+                        "JOIN symbols s ON m.symbol_id = s.id "
+                        "JOIN files f ON s.file_id = f.id "
+                        "WHERE m.model = ?"
+                        ") LIMIT ?",
+                        (model, model, brute_force_limit),
+                    )
+                )
             else:
-                bm25_raw = [
-                    dict(r) for r in search_symbols(conn, query, limit=sparse_limit)
-                ]
-            bm25_map = {}
-            bm25_ids = []
-            for r in bm25_raw:
-                sid = r.get("id")
-                if sid:
-                    bm25_map[sid] = r
-                    bm25_ids.append(sid)
+                rows = _mapping_rows(
+                    conn.execute(
+                        "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                        "FROM embeddings e "
+                        "JOIN symbols s ON e.symbol_id = s.id "
+                        "JOIN files f ON s.file_id = f.id "
+                        "WHERE e.model = ? "
+                        "LIMIT ?",
+                        (model, brute_force_limit),
+                    )
+                )
+            if not rows:
+                # The pass cannot produce candidates at all; ``None`` (not
+                # an empty list -- that would run fusion over nothing and
+                # could still yield BM25-only rows) is the caller's signal
+                # to take the empty-result early return.
+                return None
 
-            vec_map = {}
-            vec_ids = []
-            for r in candidates:
-                sid = r.get("id")
-                if sid:
-                    vec_map[sid] = r
-                    vec_ids.append(sid)
+            # Prefer numpy for the scan; fall back to pure Python. Both produce
+            # identical cosine scores. Shared via cairn.retrieval.cosine_scan.
+            from cairn.retrieval import cosine_scan
 
-            rrf_k = 60
-            rrf_weights: Optional[List[float]] = None
-            if params is not None:
-                if params.rrf_k is not None:
-                    rrf_k = params.rrf_k
-                if params.rrf_weights is not None:
-                    # Field order is (dense, sparse); rrf_fuse pairs
-                    # weights[i] with rankings[i], and the rankings here are
-                    # [bm25(sparse), vec(dense)] -- reorder at the boundary.
-                    rrf_weights = [params.rrf_weights[1], params.rrf_weights[0]]
-                if params.sparse_top_n is not None:
-                    # Rank-position cutoff on the BM25 leg (T010's NEW
-                    # lever): keep the first N ids in search_symbols'
-                    # best-first order, dropping the tail before fusion.
-                    # Negative N clamps to 0 rather than erroring (the
-                    # gate_min_margin clamp doctrine: a harness bug must
-                    # not fail a sweep run) -- plain slicing with a
-                    # negative N would silently keep the WORST |N| matches
-                    # instead, which is the opposite of a cutoff.
-                    top_n = max(params.sparse_top_n, 0)
-                    if len(bm25_ids) > top_n:
-                        bm25_ids = bm25_ids[:top_n]
-            fused_rank = rrf_fuse([bm25_ids, vec_ids], k=rrf_k, weights=rrf_weights)
-            fused_candidates = []
-            for doc_id, fused_score in fused_rank:
-                in_bm25 = doc_id in bm25_map
-                in_vec = doc_id in vec_map
-
-                if in_bm25 and in_vec:
-                    base = dict(vec_map[doc_id])
-                    base["provenance"] = _fused_prov
-                elif in_vec:
-                    base = dict(vec_map[doc_id])
-                    base["provenance"] = _sem_prov
-                else:
-                    b_item = bm25_map[doc_id]
-                    base = {
-                        "id": b_item.get("id"),
-                        "name": b_item.get("name"),
-                        "kind": b_item.get("kind"),
-                        "qualified_name": b_item.get("qualified_name"),
-                        "file_path": b_item.get("file_path"),
-                        "repo": b_item.get("repo"),
-                        "score": 0.0,
-                        "chunk": "",
-                        "provenance": "bm25",
+            triples = [(r["vec"], r["dim"], r) for r in rows]
+            scored = cosine_scan(q_blob, q_dim, triples, threshold)
+            if _mv:
+                # FR-005 max-over-vectors: consolidate each symbol's UNION rows
+                # to its best score BEFORE the pool cap -- a symbol's duplicate
+                # representations must never crowd out another candidate
+                # (TC-023). cosine_scan is score-descending, so first
+                # occurrence is the max; the explicit compare keeps the
+                # contract independent of that ordering guarantee.
+                best: dict = {}
+                for score, r in scored:
+                    sid = r["symbol_id"]
+                    if sid not in best or score > best[sid][0]:
+                        best[sid] = (score, r)
+                scored = list(best.values())
+            candidates = []
+            for score, r in scored[:pool_size]:
+                candidates.append(
+                    {
+                        "id": r["symbol_id"],
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "qualified_name": r["qualified_name"],
+                        "file_path": r["file_path"],
+                        "repo": r["repo"],
+                        "score": round(score, 4),
+                        "chunk": r["chunk"],
+                        "provenance": _sem_prov,
                         "reranked": False,
                     }
-                base["score"] = round(fused_score, 4)
-                fused_candidates.append(base)
+                )
 
-            candidates = fused_candidates
-            _fusion_used = True
-        except Exception:
-            # Degrade to vector-only rather than failing the search, but log
-            # at WARNING (not debug): this path was once silently broken by a
-            # .get()-on-Row AttributeError swallowed here, so a future regression
-            # must be visible. The debug-level exc_info still gives the traceback.
-            _fusion_degraded = True
-            logger.warning("RRF fusion degraded to vector-only", exc_info=True)
+        # RRF Hybrid fusion (fusion_enabled hoisted above for the early-return path).
+        if fusion_enabled and candidates is not None:
+            try:
+                from cairn.graph.fusion import rrf_fuse
+
+                # Fetch BM25 candidates. search_symbols returns sqlite3.Row,
+                # which has no .get() — convert to dict at this boundary so the
+                # shared .get("id") access below works on both BM25 rows and the
+                # candidate dicts (which are already plain dicts).
+                sparse_limit = 30
+                if params is not None and params.sparse_limit is not None:
+                    sparse_limit = params.sparse_limit
+                # T008 (FR-001) term-mode sparse fetch: with params.enrich on,
+                # the stopword-trimmed term list of the ONE EnrichedQuery
+                # computed above feeds search_symbols_terms, whose
+                # OR-of-quoted-prefix MATCH lets BM25 rank symbols whose
+                # indexed tokens begin with ANY term. The raw sentence through
+                # search_symbols would fold into ONE quoted FTS phrase
+                # (_pattern_to_fts) that matches no symbol name -- the
+                # empty-BM25 defect. Empty sparse_query ("every token was a
+                # stopword") keeps the raw-query call per the EnrichedQuery
+                # contract. With enrich off/None the fetch below is
+                # byte-identical to today's.
+                sparse_terms: List[str] = (
+                    _enriched.sparse_query.split() if _enriched is not None else []
+                )
+                if extra_sparse_terms:
+                    # T016 (FR-004, D-001): the PRF expansion terms join
+                    # the sparse leg (second pass only) after any
+                    # enrichment terms; a duplicate is harmless under the
+                    # OR-of-prefix MATCH.
+                    sparse_terms = sparse_terms + list(extra_sparse_terms)
+                if sparse_terms:
+                    bm25_raw = [
+                        dict(r)
+                        for r in search_symbols_terms(
+                            conn, sparse_terms, limit=sparse_limit
+                        )
+                    ]
+                else:
+                    bm25_raw = [
+                        dict(r) for r in search_symbols(conn, query, limit=sparse_limit)
+                    ]
+                bm25_map = {}
+                bm25_ids = []
+                for r in bm25_raw:
+                    sid = r.get("id")
+                    if sid:
+                        bm25_map[sid] = r
+                        bm25_ids.append(sid)
+
+                vec_map = {}
+                vec_ids = []
+                for r in candidates:
+                    sid = r.get("id")
+                    if sid:
+                        vec_map[sid] = r
+                        vec_ids.append(sid)
+
+                rrf_k = 60
+                rrf_weights: Optional[List[float]] = None
+                if params is not None:
+                    if params.rrf_k is not None:
+                        rrf_k = params.rrf_k
+                    if params.rrf_weights is not None:
+                        # Field order is (dense, sparse); rrf_fuse pairs
+                        # weights[i] with rankings[i], and the rankings here are
+                        # [bm25(sparse), vec(dense)] -- reorder at the boundary.
+                        rrf_weights = [params.rrf_weights[1], params.rrf_weights[0]]
+                    if params.sparse_top_n is not None:
+                        # Rank-position cutoff on the BM25 leg (T010's NEW
+                        # lever): keep the first N ids in search_symbols'
+                        # best-first order, dropping the tail before fusion.
+                        # Negative N clamps to 0 rather than erroring (the
+                        # gate_min_margin clamp doctrine: a harness bug must
+                        # not fail a sweep run) -- plain slicing with a
+                        # negative N would silently keep the WORST |N| matches
+                        # instead, which is the opposite of a cutoff.
+                        top_n = max(params.sparse_top_n, 0)
+                        if len(bm25_ids) > top_n:
+                            bm25_ids = bm25_ids[:top_n]
+                fused_rank = rrf_fuse([bm25_ids, vec_ids], k=rrf_k, weights=rrf_weights)
+                fused_candidates = []
+                for doc_id, fused_score in fused_rank:
+                    in_bm25 = doc_id in bm25_map
+                    in_vec = doc_id in vec_map
+
+                    if in_bm25 and in_vec:
+                        base = dict(vec_map[doc_id])
+                        base["provenance"] = _fused_prov
+                    elif in_vec:
+                        base = dict(vec_map[doc_id])
+                        base["provenance"] = _sem_prov
+                    else:
+                        b_item = bm25_map[doc_id]
+                        base = {
+                            "id": b_item.get("id"),
+                            "name": b_item.get("name"),
+                            "kind": b_item.get("kind"),
+                            "qualified_name": b_item.get("qualified_name"),
+                            "file_path": b_item.get("file_path"),
+                            "repo": b_item.get("repo"),
+                            "score": 0.0,
+                            "chunk": "",
+                            "provenance": "bm25",
+                            "reranked": False,
+                        }
+                    base["score"] = round(fused_score, 4)
+                    fused_candidates.append(base)
+
+                candidates = fused_candidates
+                _fusion_used = True
+            except Exception:
+                # Degrade to vector-only rather than failing the search, but log
+                # at WARNING (not debug): this path was once silently broken by a
+                # .get()-on-Row AttributeError swallowed here, so a future regression
+                # must be visible. The debug-level exc_info still gives the traceback.
+                _fusion_degraded = True
+                logger.warning("RRF fusion degraded to vector-only", exc_info=True)
+        return candidates
+
+    candidates = _run_pass(_dense_query, ())
+    if candidates is None:
+        return _finish([])
+
+    # T016 (FR-004, D-001/D-003/D-012): the PRF second pass at the
+    # post-fusion seam -- the fused top-k (or the dense-only list when
+    # fusion is off/degraded) is the feedback signal, per D-003. The ONE
+    # extra embed_query inside _run_pass below is the explicit,
+    # flag-gated D-012 exception to the one-call doctrine, spent from the
+    # rerank budget it replaces (rerank_on was forced off above).
+    if _prf and candidates and params is not None:
+        # None-means-default resolves to the D-002 Anserini anchors
+        # (docs=10, terms=10, lambda=0.5). A negative prf_docs clamps to
+        # empty feedback -- a slice with a negative bound would silently
+        # keep the WORST |n| candidates (the harness-bug clamp doctrine).
+        fb_n = params.prf_docs if params.prf_docs is not None else 10
+        feedback_docs = [
+            c.get("chunk")
+            or " ".join(p for p in (c.get("name"), c.get("qualified_name")) if p)
+            for c in candidates[: max(fb_n, 0)]
+        ]
+        expansion = prf_expand(
+            _dense_query,
+            feedback_docs,
+            df_lookup=_term_df_lookup(conn),
+            fb_terms=params.prf_terms if params.prf_terms is not None else 10,
+            fb_lambda=params.prf_lambda if params.prf_lambda is not None else 0.5,
+        )
+        if expansion.terms:
+            # Second pass on the expanded text/terms; its candidates
+            # REPLACE the first pass's (D-001), then the confidence
+            # gate/slice path below continues on the new list.
+            candidates = _run_pass(expansion.dense_query, expansion.terms)
+            if candidates is None:
+                return _finish([])
+        # Empty expansion (or prf_docs <= 0): prf.expand's contract returns
+        # dense_query == _dense_query, so the second pass would be
+        # byte-identical to the first -- it is skipped: zero extra
+        # embeds, first-pass results returned unchanged (the bounded
+        # fallback).
 
     # Confidence gate (auto mode only -- `rerank=True` explicitly wants the
     # cross-encoder, `rerank=False` already turned the stage off above).

@@ -18,7 +18,7 @@ import threading
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
 
-from .schema import note_contention
+from .schema import note_contention, rebuild_term_df
 
 # ---------------------------------------------------------------------------
 # Model identity. Stored per-row so a model swap invalidates and re-embeds.
@@ -236,6 +236,56 @@ def _signature_lines_for_rows(rows: Sequence[sqlite3.Row]) -> dict:
             if ls - 1 < len(all_lines):
                 out[sid] = all_lines[ls - 1].strip()
     return out
+
+
+# Multi-vector kinds (spec retrieval-quality-v2 FR-005). Deliberately NOT
+# CHUNK_VARIANTS entries: the TC-008 identity-floor tests iterate
+# CHUNK_VARIANTS and would break for minimal per-kind texts. Each kind has
+# its own producer below and its own content-hash staleness over that text.
+MV_KINDS = ("name", "docstring")
+
+
+def name_text_for_symbol(row: sqlite3.Row, signature: Optional[str] = None) -> str:
+    """Name-only multi-vector text: symbol kind + qualified name + signature
+    line (the variant-A header shape minus the docstring).
+
+    Mirrors chunk_for_symbol's header construction so the two texts stay
+    consistent. Returns "" only when the symbol has neither name nor kind.
+    """
+    kind = (row["kind"] or "").strip() if row["kind"] is not None else ""
+    qname = (row["qualified_name"] or row["name"] or "").strip()
+    sig = (signature or "").strip()
+    header = f"{kind} {qname}".strip()
+    parts = [header] if header else []
+    first_line = sig.split("\n")[0] if sig else ""
+    if first_line and first_line != header:
+        parts.append(first_line)
+    return "\n".join(parts)
+
+
+def docstring_text_for_symbol(row: sqlite3.Row) -> str:
+    """Docstring-only multi-vector text: the symbol's docstring, stripped.
+
+    Returns "" when the symbol has no docstring -- the caller must skip
+    embedding (and drop any stale row) for that symbol/kind pair.
+    """
+    doc = row["docstring"] if "docstring" in row.keys() else None
+    return (doc or "").strip()
+
+
+def mv_text_for_kind(
+    row: sqlite3.Row, vector_kind: str, signature: Optional[str] = None
+) -> str:
+    """Dispatch to the producer for ``vector_kind`` ('name' | 'docstring').
+
+    Contract: one text per (symbol, kind); unknown kinds raise ValueError so
+    a typo in a future kind can never silently produce empty vectors.
+    """
+    if vector_kind == "name":
+        return name_text_for_symbol(row, signature=signature)
+    if vector_kind == "docstring":
+        return docstring_text_for_symbol(row)
+    raise ValueError(f"unknown vector_kind: {vector_kind!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +581,10 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
         c3 = cur.execute("DELETE FROM memory_embeddings WHERE model != ?", (target_model,)).rowcount
     except Exception:
         c3 = 0
+    # Multi-vector rows carry the same model stamp as their base row (FR-005);
+    # a model swap orphans them identically, so they purge with it. The table
+    # is created unconditionally by SCHEMA_SQL, so no try/except is needed.
+    c4 = cur.execute("DELETE FROM embeddings_mv WHERE model != ?", (target_model,)).rowcount
 
     tables = cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_%'").fetchall()
     # Resolve the active ANN table name once so an ImportError surfaces loudly
@@ -541,7 +595,7 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
             cur.execute(f"DROP TABLE IF EXISTS {tname}")
 
     conn.commit()
-    return c1 + c2 + c3
+    return c1 + c2 + c3 + c4
 
 
 def _embed_local(texts: Sequence[str]) -> Tuple[List[bytes], int]:
@@ -664,15 +718,110 @@ def _chunk_hash(chunk: str) -> str:
     return hashlib.sha256(chunk.encode("utf-8")).hexdigest()
 
 
+def _embed_mv_kinds(
+    conn: sqlite3.Connection,
+    rows: Sequence[sqlite3.Row],
+    signatures: dict,
+    model: str,
+    batch_size: int,
+    limit: Optional[int] = None,
+    progress=None,
+) -> int:
+    """Populate/refresh ``embeddings_mv`` rows for every MV_KINDS entry.
+
+    The opt-in FR-005 pass behind ``embed_all(multivector=True)``. Mirrors
+    the base chunk flow's shape per kind: build the kind-specific text via
+    :func:`mv_text_for_kind`, hash it with :func:`_chunk_hash` (per-kind
+    staleness -- the name row and docstring row of one symbol refresh
+    independently), and upsert keyed ``(symbol_id, model, vector_kind)``
+    only when the stored hash is missing or different. A symbol whose
+    docstring disappeared since the last pass has its stale docstring row
+    deleted (the kind has no text to serve). Returns the number of mv rows
+    embedded; commits per batch and swallows lock contention exactly like
+    ``embed_all``'s main loop.
+    """
+    existing = {
+        (r[0], r[1]): r[2]
+        for r in conn.execute(
+            "SELECT symbol_id, vector_kind, content_hash "
+            "FROM embeddings_mv WHERE model = ?",
+            (model,),
+        )
+    }
+
+    stale: List[Tuple[str, str, str, str]] = []  # (symbol_id, kind, text, hash)
+    emptied_docstring: List[str] = []
+    for r in rows:
+        sid = r["id"]
+        for kind in MV_KINDS:
+            text = mv_text_for_kind(r, kind, signature=signatures.get(sid))
+            if not text.strip():
+                if kind == "docstring" and (sid, kind) in existing:
+                    emptied_docstring.append(sid)
+                continue
+            chash = _chunk_hash(text)
+            if existing.get((sid, kind)) != chash:
+                stale.append((sid, kind, text, chash))
+
+    if emptied_docstring:
+        conn.executemany(
+            "DELETE FROM embeddings_mv "
+            "WHERE model = ? AND vector_kind = 'docstring' AND symbol_id = ?",
+            [(model, sid) for sid in emptied_docstring],
+        )
+        conn.commit()
+
+    if limit is not None:
+        stale = stale[:limit]
+
+    total = len(stale)
+    embedded = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for i in range(0, total, batch_size):
+        batch = stale[i : i + batch_size]
+        texts = [t for _, _, t, _ in batch]
+        blobs, _dim = _embed(texts)
+        for (sid, kind, text, chash), blob in zip(batch, blobs):
+            dim = len(blob) // 4
+            # Same rowid-stable upsert contract as the base table (see the
+            # comment in embed_all): preserves rowids so the FR-005 vecmv
+            # ANN sync (T019) can key on them like the vec0 tables do.
+            conn.execute(
+                "INSERT INTO embeddings_mv "
+                "(symbol_id, model, vector_kind, dim, vec, chunk, content_hash, embedded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(symbol_id, model, vector_kind) DO UPDATE SET "
+                "dim=excluded.dim, vec=excluded.vec, chunk=excluded.chunk, "
+                "content_hash=excluded.content_hash, embedded_at=excluded.embedded_at",
+                (sid, model, kind, dim, blob, text, chash, now),
+            )
+        try:
+            conn.commit()
+            embedded += len(batch)
+        except sqlite3.OperationalError as e:
+            note_contention("embeddings.mv_batch_flush", error=e)
+        if progress:
+            progress(min(i + batch_size, total), total)
+    return embedded
+
+
 def reap_orphaned_embeddings(conn: sqlite3.Connection) -> int:
     """Delete embedding rows whose symbol no longer exists.
 
-    Returns the number of rows removed. Safe to call any time. When the ANN
-    backend is on, the vec0 rows for the reaped embeddings are deleted in the
-    SAME transaction: a stale vec0 entry survives keyed on a rowid SQLite may
-    later reuse for a different embedding, which would pair the ann_query
-    join with an unrelated vector (wrong results, not just missing ones).
-    The vec sync itself is a no-op when no vec0 table exists for a model.
+    Covers both the base ``embeddings`` table and the parallel
+    ``embeddings_mv`` multi-vector table (FR-005): an orphaned mv row is the
+    same garbage as an orphaned base row, regardless of which pass wrote it,
+    so the mv DELETE is unconditional (a no-op when the table is empty, i.e.
+    on every default flag-off build). The mv table has no vec0 rows of its
+    own yet, so there is nothing index-side to clean here.
+
+    Returns the number of rows removed across both tables. Safe to call any
+    time. When the ANN backend is on, the vec0 rows for the reaped embeddings
+    are deleted in the SAME transaction: a stale vec0 entry survives keyed on
+    a rowid SQLite may later reuse for a different embedding, which would
+    pair the ann_query join with an unrelated vector (wrong results, not just
+    missing ones). The vec sync itself is a no-op when no vec0 table exists
+    for a model.
     """
     from .ann_index import ann_backend_enabled, delete_index_rows
 
@@ -692,10 +841,17 @@ def reap_orphaned_embeddings(conn: sqlite3.Connection) -> int:
     cur = conn.execute(
         "DELETE FROM embeddings WHERE symbol_id NOT IN (SELECT id FROM symbols)"
     )
+    mv_cur = conn.execute(
+        "DELETE FROM embeddings_mv WHERE symbol_id NOT IN (SELECT id FROM symbols)"
+    )
     for model, rowids in doomed.items():
         delete_index_rows(conn, model, rowids)
     conn.commit()
-    return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+    reaped = cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+    reaped_mv = (
+        mv_cur.rowcount if mv_cur.rowcount is not None and mv_cur.rowcount > 0 else 0
+    )
+    return reaped + reaped_mv
 
 
 def embed_all(
@@ -705,6 +861,7 @@ def embed_all(
     progress=None,
     reap_orphans: bool = True,
     variant: Optional[str] = None,
+    multivector: bool = False,
 ) -> dict:
     """Embed every symbol missing or stale under the current model.
 
@@ -720,8 +877,20 @@ def embed_all(
     no-env-mutation doctrine) -- this is the seam per-variant sweep runs
     (T014/T015) use to re-embed the corpus under each recipe.
 
+    ``multivector`` (FR-005, opt-in, default False) additionally populates
+    the parallel ``embeddings_mv`` table with the ``name`` and ``docstring``
+    kinds, each with its own per-kind ``_chunk_hash`` staleness (see
+    ``MV_KINDS`` / ``mv_text_for_kind``). When False -- the default -- the
+    run performs ZERO ``embeddings_mv`` writes and the ``embeddings``-table
+    flow (upserts, staleness, reaping) is byte-identical to a pre-FR-005
+    build (D-006/TC-020). ``limit`` caps stale base rows and stale mv rows
+    independently. The summary gains ``mv_embedded`` only when the flag is
+    on, so flag-off summaries keep their exact prior shape.
+
     When ``reap_orphans`` is True (default), also deletes embedding rows for
-    symbols that no longer exist. ``progress`` is an optional
+    symbols that no longer exist. Always refreshes the persisted ``term_df``
+    DF table (D-005), so enrichment's IDF signal stays current with the
+    embedded corpus. ``progress`` is an optional
     callable(n_done, n_total). Returns a dict summary
     {model, embedded, skipped, total, reaped}.
     """
@@ -802,7 +971,21 @@ def embed_all(
 
     reaped = reap_orphaned_embeddings(conn) if reap_orphans else 0
 
-    return {
+    # FR-005 opt-in: after the base flow (so flag-off runs never reach this
+    # line), refresh the parallel mv table for the two extra kinds. Reaping
+    # already ran above is fine -- it only removes rows for DEAD symbols, and
+    # the rows written here are for live ones.
+    mv_embedded = (
+        _embed_mv_kinds(conn, all_rows, signatures, model, batch_size, limit, progress)
+        if multivector
+        else None
+    )
+
+    # D-005: the DF table's refresh rides the embed pass, so a `cairn embed`
+    # --driven build leaves term_df current with the corpus it just embedded.
+    rebuild_term_df(conn)
+
+    summary = {
         "model": model,
         "embedded": embedded,
         "attempted": attempted,
@@ -811,6 +994,9 @@ def embed_all(
         "total": len(all_rows),
         "reaped": reaped,
     }
+    if multivector:
+        summary["mv_embedded"] = mv_embedded
+    return summary
 
 
 def embed_symbols(

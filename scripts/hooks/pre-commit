@@ -13,8 +13,11 @@
 
 set -euo pipefail
 
-# Only consider staged .py files (added/copied/modified).
-staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.py' 'src/**/*.py' 'tests/**/*.py' 'scripts/**/*.py' | grep '\.py$' || true)
+# Only consider staged .py files (added/copied/modified). Vendored corpora
+# under benchmarks/datasource/ carry upstream code AND upstream lint configs
+# (ruff resolves config per file, nearest-first) — linting them gates on rules
+# we don't own; CI's ruff scope (src/scripts/tests) never includes them.
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.py' | grep -v '^benchmarks/datasource/' | grep '\.py$' || true)
 
 if [ -z "$staged" ]; then
   exit 0  # no Python staged — nothing to check

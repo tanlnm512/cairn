@@ -1,0 +1,150 @@
+{
+  "integrity": {
+    "committed_full_set": {
+      "mrr": 0.2862,
+      "recall_at_10": 0.4174
+    },
+    "cross_run_all_levers_off_identical": true,
+    "pooled": {
+      "mrr": 0.2862,
+      "n_queries": 58,
+      "recall_at_10": 0.4174
+    },
+    "within_band": {
+      "mrr": true,
+      "recall_at_10": true
+    }
+  },
+  "prf_docs3_vs_docs10_bootstrap": {
+    "ci_high": 0.03850574712643678,
+    "ci_low": -0.05402298850574712,
+    "confidence": 0.95,
+    "delta": -0.010344827586206896,
+    "n_queries": 58,
+    "n_resamples": 10000,
+    "p_value": 0.6579342065793421,
+    "p_value_t": 0.6690269121640968,
+    "significant": false,
+    "t_statistic": -0.429709734503481
+  },
+  "rows": [
+    {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.04022988505747126,
+        "ci_low": -0.13146910919540228,
+        "delta": -0.04468390804597701,
+        "n_queries": 58,
+        "p_value": 0.30246975302469753,
+        "significant": false
+      },
+      "combo": "prf@docs=3,terms=10,lambda=0.5",
+      "dataset": "DS-v1",
+      "db_mb": 6.8789,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "enrich_idf": null,
+        "pair_format": "flat",
+        "prf": true,
+        "prf_docs": 3,
+        "prf_lambda": 0.5,
+        "prf_terms": 10,
+        "rerank": "off (PRF replaces the rerank stage, D-012; forced off before pool fetch regardless of rerank/CAIRN_RERANK)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.1752,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "FR-004 PRF grid point (T020, D-002 anchors: fb_terms 10, lambda 0.5; Anserini RM3 defaults). Single-lever combo over the all-levers-off base (enrich unset). p95 is recorded against the rerank budget it replaces (committed session figures: rerank-on 1142.0 ms p95 vs rerank-off 28.9 ms p95; never the unretained ~780 ms p50). In-sweep p95 measured in the serial run on an otherwise-quiet reference machine (MEASURE.md); recall/MRR are deterministic under the D-009 pins.",
+      "p95_budget_comparison": {
+        "note": "committed session figures; PRF's p95 is recorded against the 1142.0 ms p95 budget it replaces, never the unretained ~780 ms p50",
+        "rerank_off_p95_ms": 28.9,
+        "rerank_on_p95_ms": 1142.0
+      },
+      "p95_ms": 99.4126,
+      "p95_source": "kfold-sweep (serial run, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.3728,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.2642,
+        "n_queries": 29,
+        "p95_ms": 99.3524,
+        "recall_at_10": 0.5484
+      },
+      "validate": {
+        "mrr": 0.0862,
+        "n_queries": 29,
+        "p95_ms": 99.2586,
+        "recall_at_10": 0.1972
+      }
+    },
+    {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.025,
+        "ci_low": -0.1375,
+        "delta": -0.05502873563218391,
+        "n_queries": 58,
+        "p_value": 0.18568143185681432,
+        "significant": false
+      },
+      "combo": "prf@docs=10,terms=10,lambda=0.5",
+      "dataset": "DS-v1",
+      "db_mb": 6.8789,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "enrich_idf": null,
+        "pair_format": "flat",
+        "prf": true,
+        "prf_docs": 10,
+        "prf_lambda": 0.5,
+        "prf_terms": 10,
+        "rerank": "off (PRF replaces the rerank stage, D-012; forced off before pool fetch regardless of rerank/CAIRN_RERANK)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.1568,
+      "mv": false,
+      "n_queries": 58,
+      "notes": "FR-004 PRF grid point (T020, D-002 anchors: fb_terms 10, lambda 0.5; Anserini RM3 defaults). Single-lever combo over the all-levers-off base (enrich unset). p95 is recorded against the rerank budget it replaces (committed session figures: rerank-on 1142.0 ms p95 vs rerank-off 28.9 ms p95; never the unretained ~780 ms p50). In-sweep p95 measured in the serial run on an otherwise-quiet reference machine (MEASURE.md); recall/MRR are deterministic under the D-009 pins.",
+      "p95_budget_comparison": {
+        "note": "committed session figures; PRF's p95 is recorded against the 1142.0 ms p95 budget it replaces, never the unretained ~780 ms p50",
+        "rerank_off_p95_ms": 28.9,
+        "rerank_on_p95_ms": 1142.0
+      },
+      "p95_ms": 81.0575,
+      "p95_source": "kfold-sweep (serial run, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.3624,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "tune": {
+        "mrr": 0.2368,
+        "n_queries": 29,
+        "p95_ms": 77.7335,
+        "recall_at_10": 0.5713
+      },
+      "validate": {
+        "mrr": 0.0768,
+        "n_queries": 29,
+        "p95_ms": 85.0652,
+        "recall_at_10": 0.1535
+      }
+    }
+  ],
+  "schema": "cairn-fr004-rows/1",
+  "task": "T020 (FR-004): PRF rows to merge into benchmarks/quality/ablation-v2.json"
+}

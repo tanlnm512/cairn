@@ -209,44 +209,55 @@ class TestJsonOutput:
 
 class TestSizeBudgets:
     """FR-002/AC4 library layer: verify_budgets measures trees as byte sums
-    against the two limits, injectable via repo_root (T003's pattern)."""
+    against the per-corpus and total limits, injectable via repo_root
+    (T003's pattern)."""
 
-    def test_real_tree_within_both_budgets(self):
+    def test_real_tree_within_all_budgets(self):
         """TC-017 pass leg: the committed tree (T005's yarl snapshot) is under
-        both limits with exactly the budget pair the spec names."""
+        every limit with exactly the budget rules the spec names -- t2 and ds2
+        per-corpus, datasource total."""
         results = vd.verify_budgets()
         by_path = {b.path: b for b in results}
-        assert set(by_path) == {"benchmarks/datasource/t2", "benchmarks/datasource"}
+        assert set(by_path) == {
+            "benchmarks/datasource/t2",
+            "benchmarks/datasource/ds2",
+            "benchmarks/datasource",
+        }
         assert by_path["benchmarks/datasource/t2"].limit_kb == 3072
+        assert by_path["benchmarks/datasource/ds2"].limit_kb == 3072
         assert by_path["benchmarks/datasource"].limit_kb == 5120
         assert all(not b.breached for b in results)
         assert by_path["benchmarks/datasource/t2"].actual_bytes > 0  # t2 vendored (T005)
 
     def test_t2_breach_detected_with_injected_oversized_file(self, tmp_path):
         """TC-017 breach leg: pad t2/ past 3 MB while the WHOLE tree stays
-        under 5 MB -- the subtree budget fires alone, proving the two limits
+        under 5 MB -- the subtree budget fires alone, proving the limits
         are independent checks, not one folded into the other."""
         t2 = tmp_path / "benchmarks" / "datasource" / "t2"
         t2.mkdir(parents=True)
         (t2 / "yarl.py").write_text("# vendored snapshot stand-in\n")
         (t2 / "padding.bin").write_bytes(b"\0" * (3073 * 1024))
-        t2_result, total_result = vd.verify_budgets(repo_root=tmp_path)
+        t2_result, ds2_result, total_result = vd.verify_budgets(repo_root=tmp_path)
         assert t2_result.path == "benchmarks/datasource/t2"
         assert t2_result.breached
         assert not total_result.breached
+        assert ds2_result.actual_bytes == 0  # absent in this scratch layout
+        assert not ds2_result.breached
 
     def test_total_budget_breaches_independently_of_t2(self, tmp_path):
         """TC-018: > 5 MB of files OUTSIDE t2/ breaches the total budget
-        while t2 itself is absent (measured as 0 bytes -- nothing vendored,
-        nothing to guard)."""
+        while both per-corpus dirs are absent (measured as 0 bytes --
+        nothing vendored, nothing to guard)."""
         ds = tmp_path / "benchmarks" / "datasource"
         ds.mkdir(parents=True)
         (ds / "manifest.json").write_text("{}")
         (ds / "t1-scale.bin").write_bytes(b"\0" * (5121 * 1024))
-        t2_result, total_result = vd.verify_budgets(repo_root=tmp_path)
+        t2_result, ds2_result, total_result = vd.verify_budgets(repo_root=tmp_path)
         assert t2_result.actual_bytes == 0
         assert not t2_result.breached
         assert total_result.breached
+        assert ds2_result.actual_bytes == 0
+        assert not ds2_result.breached
 
     def test_budget_boundary_exact_limit_passes_one_byte_over_breaches(self, tmp_path):
         """The contract is "<=": exactly 3072 KB passes; one byte more fails.
@@ -288,6 +299,57 @@ class TestSizeBudgets:
         assert not result.breached
 
 
+class TestDs2Budget:
+    """FR-002/TC-009: the ds2 sibling corpus dir is covered by its own
+    per-corpus rule, not exempt by omission -- the rule is declared whether
+    or not the dir exists yet."""
+
+    def test_ds2_rule_declared_with_same_per_corpus_ceiling_as_t2(self):
+        by_path = {rel: limit for rel, limit in vd.BUDGETS}
+        assert by_path["benchmarks/datasource/ds2"] == vd.DS2_BUDGET_KB == 3072
+        assert by_path["benchmarks/datasource/t2"] == 3072  # same class
+        # Subtree-before-total ordering keeps the report inside-out.
+        paths = list(by_path)
+        assert paths.index("benchmarks/datasource/ds2") < paths.index("benchmarks/datasource")
+
+    def test_ds2_absent_measures_zero_and_is_not_an_error(self, tmp_path):
+        """The dataset is authored in stages: with no ds2/ dir the rule holds
+        trivially (0 bytes measured) instead of erroring or being skipped."""
+        by_path = {b.path: b for b in vd.verify_budgets(repo_root=tmp_path)}
+        assert by_path["benchmarks/datasource/ds2"].actual_bytes == 0
+        assert not by_path["benchmarks/datasource/ds2"].breached
+
+    def test_ds2_within_budget_passes_and_counts_toward_total(self, tmp_path):
+        """Present-within-budget pass leg: ds2 content under 3072 KB keeps
+        every rule green, and its bytes land in the DATASOURCE total --
+        ds2 contributes exactly as t2 does."""
+        ds = tmp_path / "benchmarks" / "datasource"
+        t2 = ds / "t2"
+        t2.mkdir(parents=True)
+        (t2 / "yarl.py").write_text("# vendored snapshot stand-in\n")
+        ds2 = ds / "ds2"
+        ds2.mkdir()
+        (ds2 / "corpus.bin").write_bytes(b"\0" * (512 * 1024))
+        by_path = {b.path: b for b in vd.verify_budgets(repo_root=tmp_path)}
+        assert not any(b.breached for b in by_path.values())
+        assert by_path["benchmarks/datasource/ds2"].actual_kb == 512.0
+        assert by_path["benchmarks/datasource"].actual_bytes == (
+            by_path["benchmarks/datasource/t2"].actual_bytes
+            + by_path["benchmarks/datasource/ds2"].actual_bytes
+        )
+
+    def test_ds2_over_budget_breaches_its_own_rule_alone(self, tmp_path):
+        """Over-budget fail leg: > 3 MB in ds2/ with the total still under
+        5 MB -- the ds2 per-corpus rule fires independently of the others."""
+        ds2 = tmp_path / "benchmarks" / "datasource" / "ds2"
+        ds2.mkdir(parents=True)
+        (ds2 / "corpus.bin").write_bytes(b"\0" * (3073 * 1024))
+        by_path = {b.path: b for b in vd.verify_budgets(repo_root=tmp_path)}
+        assert by_path["benchmarks/datasource/ds2"].breached
+        assert not by_path["benchmarks/datasource"].breached
+        assert not by_path["benchmarks/datasource/t2"].breached
+
+
 class TestBudgetCli:
     """FR-002/AC4 wire layer: --budget mode, default-run wiring, exit codes.
     vd.REPO_ROOT is monkeypatched to a scratch tree so main() measures the
@@ -306,7 +368,11 @@ class TestBudgetCli:
         assert payload["results"] == []  # nothing was regenerated
         assert payload["ok"] is True
         by_path = {b["path"]: b for b in payload["budgets"]}
-        assert set(by_path) == {"benchmarks/datasource/t2", "benchmarks/datasource"}
+        assert set(by_path) == {
+            "benchmarks/datasource/t2",
+            "benchmarks/datasource/ds2",
+            "benchmarks/datasource",
+        }
         for b in payload["budgets"]:
             assert set(b) == {"path", "actual_kb", "limit_kb", "breached"}
             assert b["breached"] is False
