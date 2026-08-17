@@ -356,6 +356,98 @@ def test_embed_all_reaps_mv_by_default(fresh_db):
 
 
 # ---------------------------------------------------------------------------
+# purge_stale_models vs the vec_/vecmv_ ANN index tables (DEFECT 3 regression)
+# ---------------------------------------------------------------------------
+
+
+def _build_both_model_indexes(conn: sqlite3.Connection, monkeypatch):
+    """Embed the corpus (multivector) for the active model, add a retired
+    model's rows, then rebuild BOTH vec-family indexes for BOTH models.
+
+    Returns (active_model, stale_model). Purge drops real vec0 virtual tables,
+    so they are built exactly the way production builds them
+    (ann_index.rebuild_index) -- which needs the sqlite-vec extension.
+    """
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
+    from cairn.graph import ann_index as ann, embeddings as emb
+
+    _seed_corpus(conn)
+    emb.embed_all(conn, multivector=True)
+    model = emb.current_model()
+
+    # The retired model's rows (same shape the active model's inserts have):
+    # one base row + one mv row, with a dim-valid float32 blob so the vec0
+    # rebuild accepts it.
+    stale = "old-model-v1"
+    zero4 = "00000000000000000000000000000000"  # float32[4]
+    conn.execute(
+        "INSERT INTO embeddings (symbol_id, model, vec, dim, chunk) "
+        f"VALUES ('1', ?, X'{zero4}', 4, 'c1')",
+        (stale,),
+    )
+    conn.execute(
+        "INSERT INTO embeddings_mv (symbol_id, model, vector_kind, vec, dim, chunk) "
+        f"VALUES ('1', ?, 'name', X'{zero4}', 4, 'c1')",
+        (stale,),
+    )
+    conn.commit()
+    for m in (model, stale):
+        ann.rebuild_index(conn, m)
+        ann.rebuild_index(conn, m, source="embeddings_mv")
+    return model, stale
+
+
+def test_purge_keeps_active_vec_and_vecmv_tables(fresh_db, monkeypatch):
+    """Purging with model M in the keep-set must keep BOTH of M's ANN tables:
+    vec_<M> and vecmv_<M>.
+
+    Regression (DEFECT 3): the discovery pattern was ``name LIKE 'vec_%'``
+    with '_' unescaped -- a single-char LIKE wildcard -- so it also swept up
+    ``vecmv_<model>`` tables, and the keep-test compared each name only
+    against ``vec_<model>``. A purge after ``cairn embed --multivector``
+    therefore DROPped the active multi-vector index."""
+    pytest.importorskip(
+        "sqlite_vec", reason="sqlite-vec not installed -- vec0 tables need the real extension"
+    )
+    from cairn.graph import ann_index as ann
+    from cairn.graph.embeddings import purge_stale_models
+
+    model, stale = _build_both_model_indexes(fresh_db, monkeypatch)
+    assert ann.index_exists(fresh_db, model), "fixture: base index built"
+    assert ann.index_exists(fresh_db, model, "embeddings_mv"), "fixture: mv index built"
+
+    purged = purge_stale_models(fresh_db, active_model=model)
+    assert purged == 2, "one stale embeddings row + one stale embeddings_mv row"
+
+    assert ann.index_exists(fresh_db, model), "active vec_<model> survives the purge"
+    assert ann.index_exists(
+        fresh_db, model, "embeddings_mv"
+    ), "active vecmv_<model> survives the purge"
+    assert not ann.index_exists(fresh_db, stale), "stale vec_<old> dropped"
+    assert not ann.index_exists(fresh_db, stale, "embeddings_mv"), "stale vecmv_<old> dropped"
+
+
+def test_purge_drops_both_families_of_stale_models(fresh_db, monkeypatch):
+    """The complementary direction: a vecmv table is exactly as stale as its
+    vec sibling, so purging its model must drop BOTH families -- the fix may
+    not overcorrect into 'never drop vecmv'."""
+    pytest.importorskip(
+        "sqlite_vec", reason="sqlite-vec not installed -- vec0 tables need the real extension"
+    )
+    from cairn.graph import ann_index as ann
+    from cairn.graph.embeddings import purge_stale_models
+
+    model, stale = _build_both_model_indexes(fresh_db, monkeypatch)
+
+    purge_stale_models(fresh_db, active_model="a-third-model")
+
+    assert not ann.index_exists(fresh_db, model)
+    assert not ann.index_exists(fresh_db, model, "embeddings_mv")
+    assert not ann.index_exists(fresh_db, stale)
+    assert not ann.index_exists(fresh_db, stale, "embeddings_mv")
+
+
+# ---------------------------------------------------------------------------
 # CLI wiring (TC-020's user-facing surface)
 # ---------------------------------------------------------------------------
 
