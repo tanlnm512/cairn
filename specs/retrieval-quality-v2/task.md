@@ -15,9 +15,9 @@ lever families).
 | 1     | 4     | 4    |
 | 2     | 6     | 6    |
 | 3     | 4     | 3    |
-| 4     | 7     | 2    |
+| 4     | 7     | 3    |
 | 5     | 3     | 1    |
-| **Σ** | 24    | 16   |
+| **Σ** | 24    | 17   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -78,7 +78,8 @@ FR-005 both TODO (grep-confirmed: no prf/rm3/feedback, no embeddings_mv/vecmv).
 - [ ] T016 (after T013, T015) Wire PRF at the post-fusion seam in `src/cairn/graph/semantic.py` (`candidates = fused_candidates`, ~L726–752, immediately before the confidence gate): one flag-gated second full pass (both legs + fusion) with at most one extra `embed_query` — the explicit doctrine exception documented at the boundary (D-012), REPLACING the rerank stage (`rerank=False` enforced on PRF combos, never stacking); add `RetrievalParams` fields `prf`/`prf_docs`/`prf_terms`/`prf_lambda` (additive, None-means-default); flag-off equivalence + offline determinism tests (TC-016, TC-017, TC-019) (FR-004)
 - [x] T017 [P] Add the parallel `embeddings_mv` table (PRIMARY KEY (symbol_id, model, vector_kind); `name` + `docstring` kinds only) to `src/cairn/graph/schema.py`, with new producer functions building kind-specific texts and their own `_chunk_hash` staleness in `src/cairn/graph/embeddings.py`, wired into the embed CLI (`src/cairn/cli/embed.py`) — producers NOT added to `CHUNK_VARIANTS` (identity-floor tests iterate it); the `embeddings` table, its upserts/staleness/reaping, and flag-off behavior byte-identical (D-006; TC-020). Front-load first in the phase: deepest blast radius (80 impacted symbols via `embed_all`) (FR-005)
   done 2026-08-17 — `uv run pytest tests/test_embeddings_mv.py -q` → 14 passed (flag-off zero-mv-writes + base-table byte-equivalence, per-kind staleness, reaping); `--multivector` CLI flag; CHUNK_VARIANTS unchanged
-- [ ] T018 (after T013, T017) (in-progress) Multi-vector query path in `src/cairn/graph/semantic.py` — brute scan UNIONs `embeddings` + `embeddings_mv` rows and the candidate-dict construction dedups per symbol by MAX score; add flag-off `RetrievalParams.multivector`; result lists contain each symbol at most once (TC-021, TC-023) (FR-005)
+- [x] T018 (after T013, T017) Multi-vector query path in `src/cairn/graph/semantic.py` — brute scan UNIONs `embeddings` + `embeddings_mv` rows and the candidate-dict construction dedups per symbol by MAX score; add flag-off `RetrievalParams.multivector`; result lists contain each symbol at most once (TC-021, TC-023) (FR-005)
+  done 2026-08-17 — `uv run pytest tests/test_multivector_query.py -q` → 23 passed (flag-off byte-equivalence battery + zero-mv-SQL proof, TC-021 poles, TC-023 duplicate-free sweep, ANN dual-index merge); scoped regression 196 passed
 - [x] T019 [P] (after T017) Dedicated `vecmv_<safe-model>` vec0 index — additive source parameter on `rebuild_index`/`ann_query` (`src/cairn/graph/ann_index.py`) with the same DELETE+INSERT rowid-keyed contract; rebuild call site `src/cairn/cli/embed.py` (line 130); `_candidates_from_ann_hits` (`src/cairn/graph/semantic.py`, line 246) dedup changes last-wins → max (correctness even single-vector) (D-007) (FR-005)
   done 2026-08-17 — `uv run pytest tests/test_ann_vecmv.py -q` → 10 passed (default-source byte-equivalence, vecmv contract, mv round-trip, dedup max + threshold-on-max + single-vector no-op, CLI wiring); scoped regression 213 passed
 - [ ] T020 (after T016) Emit PRF ablation rows on the DS-v1 k-fold — grid fb_docs {3, 10}, fb_terms 10, λ 0.5 (D-002); recall@10/MRR/p95 on both splits, all columns populated; p95 recorded against the rerank budget it replaces (committed figures 1142.0 vs 28.9 ms p95 — never the unretained ~780 ms p50); the sweep's implicit all-levers-off integrity row still reproduces the session baseline (TC-018, TC-019) (FR-004)

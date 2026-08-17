@@ -1,8 +1,10 @@
 """Semantic (embedding-based) symbol search.
 
 Two-stage retrieval:
-  1. Cosine scan (or sqlite-vec ANN) over the embeddings table, optionally
-     blended with BM25 via Reciprocal Rank Fusion.
+  1. Cosine scan (or sqlite-vec ANN) over the embeddings table (UNIONed
+     with the ``embeddings_mv`` multi-vector kinds under
+     ``params.multivector``), optionally blended with BM25 via Reciprocal
+     Rank Fusion.
   2. Optional cross-encoder rerank stage, skipped when the fused (RRF) ranking
      is already decisive (``_fused_confident`` -- see the gating note on
      ``semantic_search``).
@@ -303,6 +305,29 @@ def _candidates_from_ann_hits(
     return candidates
 
 
+def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
+    """Merge two already-deduped ANN candidate lists into one ranked list.
+
+    FR-005 / D-007: under ``params.multivector`` the same symbol can hit
+    both the ``vec_`` leg and the ``vecmv_`` leg -- once each, since
+    ``_candidates_from_ann_hits`` already max-dedups within a leg -- and
+    must surface exactly ONCE in the merged list, at its best (max) score
+    (TC-023). Both inputs are score-descending; the result is too, via a
+    stable sort that keeps ``base`` ahead of ``extra`` on exact score ties,
+    so the merge is deterministic. Candidate metadata (``chunk`` etc.) is
+    the base-table display text (``_candidates_from_ann_hits`` joins
+    ``embeddings``); only the SCORE is the max across vectors.
+    """
+    best: dict = {}
+    for cand in base:
+        best[cand["id"]] = cand
+    for cand in extra:
+        cur = best.get(cand["id"])
+        if cur is None or cand["score"] > cur["score"]:
+            best[cand["id"]] = cand
+    return sorted(best.values(), key=lambda c: c["score"], reverse=True)
+
+
 # ---------------------------------------------------------------------------
 # Explicit retrieval tunables (D-008, FR-005)
 #
@@ -387,6 +412,15 @@ class RetrievalParams:
       (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
       ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
       the env path).
+    * ``multivector`` — multi-vector dense leg (FR-005): ``True`` UNIONs
+      the brute scan's rows with the parallel ``embeddings_mv`` table's
+      same-model ``name``/``docstring`` vectors, and the ANN leg queries
+      the ``vecmv_`` index beside the base ``vec_`` index; each leg
+      consolidates every symbol to ONE entry at its MAX score across
+      vectors. ``None``/``False`` never reads ``embeddings_mv`` -- the
+      brute SQL, the single-index ANN query, and every result byte are
+      today's single-vector behavior (the sweep's all-levers-off
+      integrity row).
     """
 
     dense_threshold: Optional[float] = None
@@ -400,6 +434,7 @@ class RetrievalParams:
     enrich: Optional[bool] = None
     enrich_idf: Optional[bool] = None
     gate_min_margin: Optional[float] = None
+    multivector: Optional[bool] = None
 
 
 def _term_df_lookup(conn: sqlite3.Connection):
@@ -500,7 +535,15 @@ def semantic_search(
     ``params.enrich_idf=True`` (T013) additionally injects the per-term
     ``term_df`` DF lookup into that one ``enrich`` call (one indexed
     SELECT per distinct query token, D-005); off/``None`` builds no
-    lookup and issues no ``term_df`` SELECT. Flags
+    lookup and issues no ``term_df`` SELECT. ``params.multivector=True``
+    (T018, FR-005) widens the dense leg to the parallel ``embeddings_mv``
+    vectors: the brute scan UNIONs the mv rows (same model) beside
+    ``embeddings`` and the ANN leg queries the ``vecmv_`` index beside
+    ``vec_``, each leg consolidating every symbol to ONE entry at its MAX
+    score across vectors; the mv leg is strictly additive -- a missing
+    ``vecmv_`` index leaves the base candidates unchanged, never errors.
+    Off/``None`` never reads ``embeddings_mv``: identical SQL, identical
+    ANN calls, byte-identical results. Flags
     the function still does not know are ignored, never errors.
 
     When ``CAIRN_ANN_BACKEND=sqlite-vec`` and an index exists for the current
@@ -546,6 +589,11 @@ def semantic_search(
             # ratio, so out-of-range values are a harness bug, not an error
             # worth failing a sweep run over.
             _gate_margin_override = min(max(params.gate_min_margin, 0.0), 1.0)
+    # FR-005 (T018): the multi-vector query path. None and False both keep
+    # every scan byte-identical to the single-vector path (integrity
+    # doctrine -- the sweep's all-levers-off row must never read
+    # embeddings_mv).
+    _mv = params is not None and bool(params.multivector)
 
     # Under the dep-free hash fallback the embedding carries only token-overlap
     # signal, so annotate provenance strings to surface the degradation.
@@ -666,6 +714,19 @@ def semantic_search(
             # ANN path available and an index exists for this model.
             candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
             _ann_used = True
+            if _mv:
+                # FR-005 (T018): query the vecmv_ index beside vec_ and
+                # merge -- each symbol once, at its best score across both
+                # legs. Strictly additive: no vecmv index (None) leaves the
+                # base candidates unchanged, never errors.
+                mv_hits = ann.ann_query(
+                    conn, model, q_blob, pool_size, source="embeddings_mv"
+                )
+                if mv_hits is not None:
+                    candidates = _merge_ann_candidates(
+                        candidates,
+                        _candidates_from_ann_hits(conn, mv_hits, threshold),
+                    )
 
     if candidates is None:
         # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
@@ -683,18 +744,45 @@ def semantic_search(
         brute_force_limit = 50000
         if params is not None and params.dense_pool is not None:
             brute_force_limit = params.dense_pool
-        rows = _mapping_rows(
-            conn.execute(
-                "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
-                "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-                "FROM embeddings e "
-                "JOIN symbols s ON e.symbol_id = s.id "
-                "JOIN files f ON s.file_id = f.id "
-                "WHERE e.model = ? "
-                "LIMIT ?",
-                (model, brute_force_limit),
+        if _mv:
+            # FR-005 (T018): UNION the multi-vector kinds' rows beside the
+            # base rows (same model stamp on both arms); the LIMIT applies
+            # to the whole compound select. The flag-off query below stays
+            # verbatim -- never touch it (integrity doctrine).
+            rows = _mapping_rows(
+                conn.execute(
+                    "SELECT symbol_id, vec, chunk, dim, name, kind, "
+                    "qualified_name, file_path, repo FROM ("
+                    "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                    "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                    "FROM embeddings e "
+                    "JOIN symbols s ON e.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE e.model = ? "
+                    "UNION ALL "
+                    "SELECT m.symbol_id, m.vec, m.chunk, m.dim, "
+                    "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                    "FROM embeddings_mv m "
+                    "JOIN symbols s ON m.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE m.model = ?"
+                    ") LIMIT ?",
+                    (model, model, brute_force_limit),
+                )
             )
-        )
+        else:
+            rows = _mapping_rows(
+                conn.execute(
+                    "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                    "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                    "FROM embeddings e "
+                    "JOIN symbols s ON e.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE e.model = ? "
+                    "LIMIT ?",
+                    (model, brute_force_limit),
+                )
+            )
         if not rows:
             return _finish([])
 
@@ -704,6 +792,19 @@ def semantic_search(
 
         triples = [(r["vec"], r["dim"], r) for r in rows]
         scored = cosine_scan(q_blob, q_dim, triples, threshold)
+        if _mv:
+            # FR-005 max-over-vectors: consolidate each symbol's UNION rows
+            # to its best score BEFORE the pool cap -- a symbol's duplicate
+            # representations must never crowd out another candidate
+            # (TC-023). cosine_scan is score-descending, so first
+            # occurrence is the max; the explicit compare keeps the
+            # contract independent of that ordering guarantee.
+            best: dict = {}
+            for score, r in scored:
+                sid = r["symbol_id"]
+                if sid not in best or score > best[sid][0]:
+                    best[sid] = (score, r)
+            scored = list(best.values())
         candidates = []
         for score, r in scored[:pool_size]:
             candidates.append(
