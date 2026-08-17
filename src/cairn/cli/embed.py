@@ -142,6 +142,15 @@ def embed(
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())
+                # --multivector: also rebuild the FR-005 mv index (D-007 --
+                # its own vecmv_<model> vec0 table over embeddings_mv). Flag
+                # off: this call is absent and the flow is byte-identical to
+                # the pre-FR-005 single-index build.
+                mv_idx_summary = (
+                    ann.rebuild_index(conn, emb.current_model(), source="embeddings_mv")
+                    if multivector
+                    else None
+                )
         elapsed = time.time() - t0
 
         after = emb.embed_count(conn)
@@ -167,6 +176,16 @@ def embed(
                     f"ANN index rebuilt: {idx_summary['indexed']:,} vectors, "
                     f"dim={idx_summary['dim']}, model='{idx_summary['model']}'"
                 )
+            if multivector and mv_idx_summary is not None:
+                if mv_idx_summary.get("skipped"):
+                    display.warning(
+                        f"MV ANN index not built: {mv_idx_summary['skipped']}"
+                    )
+                else:
+                    display.success(
+                        f"MV ANN index rebuilt: {mv_idx_summary['indexed']:,} vectors, "
+                        f"dim={mv_idx_summary['dim']}, model='{mv_idx_summary['model']}'"
+                    )
 
         # Persist an 'embed' build_runs row (best-effort; record_build_run
         # swallows all errors). Only the symbol/skipped counts are meaningful

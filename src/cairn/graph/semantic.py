@@ -250,12 +250,24 @@ def _candidates_from_ann_hits(
     candidate dict shape the brute-force scan produces.
 
     Re-applies ``threshold`` (the vec0 MATCH query has no threshold concept of
-    its own — it just returns the nearest k).
+    its own — it just returns the nearest k). Dedups per symbol by MAX score
+    (FR-005, D-007): a symbol reaches the hit list once per vector when its
+    table holds multiple rows for it, and must surface exactly once at its
+    best score. At one row per symbol max equals the only score, so the
+    single-vector behavior is unchanged.
     """
-    ids = [sid for sid, score in ann_hits if score >= threshold]
+    # Max-score dedup per symbol: a symbol qualifies iff its BEST vector
+    # clears the threshold, appears exactly once, and carries that best
+    # score. (The previous dict comprehension was last-wins: a later
+    # below-threshold hit could overwrite a passing score, and a multi-hit
+    # symbol appeared once per hit.)
+    score_by_id: dict = {}
+    for sid, score in ann_hits:
+        if sid not in score_by_id or score > score_by_id[sid]:
+            score_by_id[sid] = score
+    ids = [sid for sid, score in score_by_id.items() if score >= threshold]
     if not ids:
         return []
-    score_by_id = {sid: score for sid, score in ann_hits}
     placeholders = ",".join("?" for _ in ids)
     rows = _mapping_rows(
         conn.execute(
