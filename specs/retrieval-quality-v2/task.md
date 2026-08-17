@@ -16,9 +16,9 @@ through T019 + T022 are done.
 | 1     | 4     | 4    |
 | 2     | 6     | 6    |
 | 3     | 4     | 4    |
-| 4     | 7     | 4    |
+| 4     | 7     | 5    |
 | 5     | 3     | 1    |
-| **Σ** | 24    | 19   |
+| **Σ** | 24    | 20   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
