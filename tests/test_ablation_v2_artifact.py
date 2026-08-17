@@ -117,9 +117,13 @@ def test_rows_carry_family_and_dataset_labels():
     ds2_rows = [r for r in doc["rows"] if r["family"] == "ds-v2"]
     if any(r["corpus"] == MACRO for r in ds2_rows):
         assert any(r["corpus"] != MACRO for r in ds2_rows)
-    # Skeleton honesty: a PENDING verdict means no measurements yet.
+    # Honesty: a PENDING verdict means no v2 SHIPPED-DEFAULTS row yet.
+    # Measurement rows may land incrementally (T014's FR-003 calibration
+    # rows landed while the FR-006 ladder verdict stayed pending -- the
+    # ladder, not the calibration, mints the shipped row and the verdict
+    # actuals), so the skeleton-honesty coupling is to shipped_defaults,
+    # never to the measurement rows themselves.
     if doc["verdict"]["status"] == "pending":
-        assert doc["rows"] == []
         assert doc["shipped_defaults"]["row"] is None
 
 
