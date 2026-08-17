@@ -335,7 +335,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     rows: list[dict] = []
     per_corpus: dict[str, dict] = {}
-    for label, _fields in configs:
+    for label, fields in configs:
+        # The mv marker is DERIVED from the combo's own lever spec (the
+        # CANDIDATES fields above), never hardcoded: only a combo whose
+        # fields carry multivector=True is measured against the
+        # embeddings_mv store (the incumbent's None = all levers off).
+        mv = bool(fields and fields.get("multivector"))
         report = reports[label]
         pq, dur = report["per_query"], report["durations_ms"]
         blocks = {
@@ -384,7 +389,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     "dataset": "DS-v2",
                     "corpus": corpus,
                     "combo": label,
-                    "mv": False,
+                    "mv": mv,
                     "db_mb": db_mb,
                     "level": "L1",
                     **blocks[corpus],
@@ -396,7 +401,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "dataset": "DS-v2",
                 "corpus": "macro-average",
                 "combo": label,
-                "mv": False,
+                "mv": mv,
                 "db_mb": db_mb,
                 "level": "L1",
                 **{
@@ -411,7 +416,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "dataset": "DS-v2",
                 "corpus": "all",
                 "combo": label,
-                "mv": False,
+                "mv": mv,
                 "db_mb": db_mb,
                 "level": "L5",
                 **{

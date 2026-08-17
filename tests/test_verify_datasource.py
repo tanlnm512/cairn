@@ -163,6 +163,84 @@ class TestDrift:
         assert first.results[0].actual_hash == second.results[0].actual_hash
 
 
+class TestTreeHashNoiseExclusion:
+    """tree_hash must not see machine build-noise dropped inside a corpus tree.
+
+    The DS-v2 defect this guards: the attrs seal was minted on the authoring
+    machine with a pre-commit ruff run's ``.ruff_cache`` inside the vendored
+    tree, so a fresh clone (no caches) hashed differently and the seal failed
+    with "corpus content drifted" despite the data being fine. Caches are
+    machine state, not corpus content -- same class of noise as ``.git``
+    metadata, so the walk prunes them (NOISE_DIR_NAMES) exactly as it prunes
+    ``.git``. Recorded before-state: with the unfixed function, adding
+    ``__pycache__/x.pyc`` + ``.ruff_cache/entries.bin`` to the pristine attrs
+    tree changed ad6eec77... -> 52b920c8..., i.e. the hash tracked the noise.
+    """
+
+    def test_dropped_caches_never_change_the_digest(self, tmp_path):
+        """Hash a clean tree, drop every noise dir into it, hash again: the
+        digest must be noise-neutral -- a used dev tree and a fresh clone of
+        the same content seal identically."""
+        tree = tmp_path / "corpus"
+        (tree / "src").mkdir(parents=True)
+        (tree / "src" / "m.py").write_text("x = 1\n")
+        clean = tree_hash(tree)
+        (tree / "__pycache__").mkdir()
+        (tree / "__pycache__" / "m.cpython-312.pyc").write_bytes(b"\x00pyc")
+        (tree / ".ruff_cache").mkdir()
+        (tree / ".ruff_cache" / "entries.bin").write_bytes(b"ruff")
+        (tree / ".mypy_cache").mkdir()
+        (tree / ".mypy_cache" / "cache.json").write_text("{}")
+        (tree / ".pytest_cache").mkdir()
+        (tree / ".pytest_cache" / "CACHEDIR.TAG").write_text("pytest")
+        assert tree_hash(tree) == clean
+
+    def test_every_noise_dir_name_is_pruned_at_any_depth(self, tmp_path):
+        """The contract is the SET (NOISE_DIR_NAMES), not a special case per
+        name: each name is pruned wherever os.walk meets it, nested included,
+        and the exclusion survives include_git_dir_marker=True (that flag
+        governs .git only -- noise stays noise)."""
+        from cairn.bench.datasource import NOISE_DIR_NAMES
+
+        for name in sorted(NOISE_DIR_NAMES):
+            tree = tmp_path / f"corpus-{name.lstrip('.')}"
+            (tree / "pkg").mkdir(parents=True)
+            (tree / "pkg" / "m.py").write_text("x = 1\n")
+            clean = tree_hash(tree)
+            (tree / "pkg" / name).mkdir()
+            (tree / "pkg" / name / "dropped.bin").write_bytes(b"noise")
+            assert tree_hash(tree) == clean, name
+            assert tree_hash(tree, include_git_dir_marker=True) == clean, name
+
+    def test_content_changes_are_still_detected_with_noise_present(self, tmp_path):
+        """Noise-blind, not blind: with caches sitting in the tree, a real
+        content edit still moves the digest -- the seal keeps its bite."""
+        tree = tmp_path / "corpus"
+        tree.mkdir()
+        (tree / "m.py").write_text("x = 1\n")
+        (tree / "__pycache__").mkdir()
+        (tree / "__pycache__" / "m.cpython-312.pyc").write_bytes(b"\x00pyc")
+        before = tree_hash(tree)
+        (tree / "m.py").write_text("x = 2\n")
+        assert tree_hash(tree) != before
+
+    def test_real_ds2_seal_pins_verify_against_local_checkouts(self):
+        """The defect's exact failure mode, end to end against the committed
+        dataset: both DS-v2 corpus pins must match tree_hash of the LOCAL
+        working trees -- which carry this machine's untracked .ruff_cache /
+        __pycache__ noise -- because the pins (re)minted over pristine trees
+        are only reproducible when hashing ignores that noise."""
+        ds2 = REPO_ROOT / "benchmarks" / "datasource" / "ds2"
+        manifest = json.loads((ds2 / "ground_truth" / "manifest.json").read_text())
+        corpora = manifest["corpora"]
+        for name, pin in (
+            ("attrs-26.1.0", corpora["attrs-26.1.0"]["tree_hash"]),
+            ("yarl", corpora["yarl"]["tree_hash"]),
+        ):
+            source = REPO_ROOT / corpora[name]["source"]
+            assert tree_hash(source) == pin, name
+
+
 class TestManifestFailureClass:
     def test_schema_error_is_distinct_from_drift(self, tmp_path):
         manifest = _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [4])

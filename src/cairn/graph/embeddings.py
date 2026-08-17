@@ -586,12 +586,22 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
     # is created unconditionally by SCHEMA_SQL, so no try/except is needed.
     c4 = cur.execute("DELETE FROM embeddings_mv WHERE model != ?", (target_model,)).rowcount
 
-    tables = cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_%'").fetchall()
-    # Resolve the active ANN table name once so an ImportError surfaces loudly
+    # Both vec0 table families are model-scoped and purge together: vec_<model>
+    # (embeddings) and vecmv_<model> (embeddings_mv, D-007). '_' must be
+    # escaped in the LIKE patterns -- it is a single-char wildcard, so the old
+    # unescaped 'vec_%' also swept up vecmv_<model> tables (and any unrelated
+    # "vecX..." name), and the keep-test below then dropped the ACTIVE vecmv
+    # index because it never equals vec_<model>.
+    tables = cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND (name LIKE 'vec\\_%' ESCAPE '\\' OR name LIKE 'vecmv\\_%' ESCAPE '\\')"
+    ).fetchall()
+    # Resolve the active ANN table names once so an ImportError surfaces loudly
     # rather than being swallowed per-iteration.
     from .ann_index import _table_name as ann_table_name
+    keep = {ann_table_name(target_model), ann_table_name(target_model, "embeddings_mv")}
     for (tname,) in tables:
-        if tname != ann_table_name(target_model):
+        if tname not in keep:
             cur.execute(f"DROP TABLE IF EXISTS {tname}")
 
     conn.commit()

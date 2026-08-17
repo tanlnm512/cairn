@@ -49,6 +49,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dataset labels (`DS-v1`/`DS-v2`) and measurement families are untouched —
   they name datasets and protocols, not campaign versions.
 
+### Fixed
+- **Scope-audit defects from the retrieval-quality-v2 campaign** (audit
+  2026-08-17; none affect the campaign's conclusions — its sweeps used no
+  variant combos and no ship happened): `tree_hash` now excludes build-noise
+  directories (`__pycache__`, `.ruff_cache`, `.mypy_cache`, `.pytest_cache`)
+  — hash-neutral for clean trees — and the DS-v2 attrs corpus seal is
+  re-minted over the committed content (the old pin was minted over an
+  authoring tree with untracked noise, so a fresh clone failed the seal);
+  the seal now also runs as a CI job (`Verify DS-v2 seal`). `run_sweep` /
+  `run_sweep_kfold` measure every combo under its own declared embedding
+  state (a state machine snapshots the session baseline and restores it
+  before any non-variant combo that follows a variant one — previously
+  folds >= 1 and later combos inherited the last variant's embeddings).
+  `purge_stale_models` no longer drops the active `vecmv_<model>` index
+  (`LIKE 'vec_%'` matched `vecmv_` too because `_` is a SQL wildcard; both
+  index families are now kept/dropped by exact model membership). The DS-v2
+  zero-shot runner derives the `mv` row marker from the combo definition
+  instead of hardcoding `false`, and the committed `ablation.json` /
+  `rows-ds2.json` multivector rows are corrected to `mv: true` (the DS-v1
+  record is embedded verbatim and untouched).
+
 ## [0.11.0] - 2026-08-16
 
 > **Focus:** performance across the whole arc an agent feels — query path,

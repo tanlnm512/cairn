@@ -20,6 +20,10 @@ the artifact). The guards below pin, so drift fails loudly:
   families, satisfies the additive row-shape contract, and no v2 row
   presents a delta against a v1 row (TC-028/D-008/D-011); ds-v2
   aggregates never appear without per-corpus rows;
+* the ``mv`` marker follows the combo's lever, not a row-constructor
+  constant: a row whose combo IS the multivector lever carries
+  ``mv=true`` in every family (the DS-v2 runner once hardcoded ``mv``
+  false, mislabeling the refuted-transfer rows);
 * the (closed) verdict: SC-1 targets exactly 0.50/0.33, evidence slots
   filled (folds >= 5, DS-v2 counts), per-leg actuals, the document-branch
   close with the best candidate's intervals and the next constraint;
@@ -156,6 +160,35 @@ def test_rows_carry_family_and_dataset_labels():
     else:
         assert "no-ship" not in sd["status"], sd["status"]
         assert doc["verdict"]["outcome"] not in ("pending", "documented-shortfall-no-ship")
+
+
+def test_mv_marker_follows_the_multivector_lever_not_a_constant():
+    """The mv lever marker is a function of the combo, never a hardcode.
+
+    The DS-v2 zero-shot runner once hardcoded ``"mv": False`` in its row
+    constructors, so the committed artifact labeled the multivector
+    combo's DS-v2 rows (attrs / yarl / macro-average) single-vector —
+    wrong lever metadata for the campaign's headline zero-shot
+    refutation (DS-v1 SC-1 0.5588/0.3395, refuted at macro
+    0.4632/0.2844). Invariant, every family: a row whose combo is the
+    multivector lever was measured against the ``embeddings_mv`` store
+    and must carry ``mv=true``; weaker, DS-v2 rows of every other combo
+    measured flag-off shapes and must carry ``mv=false``.
+    """
+    doc = _doc()
+    for row in doc["rows"]:
+        if row["combo"] == "multivector":
+            assert row["mv"] is True, (row["family"], row.get("corpus"))
+    for row in doc["rows"]:
+        if row["family"] == "ds-v2" and row["combo"] != "multivector":
+            assert row["mv"] is False, (row["combo"], row.get("corpus"))
+    # The intermediate payload that merge_t023.py folds into the artifact
+    # carries the same invariant — a merge re-run must not reintroduce it.
+    ds2_rows = json.loads(QUALITY.joinpath(
+        "ladder-v2", "rows-ds2.json").read_text())["rows"]
+    for row in ds2_rows:
+        expected = row["combo"] == "multivector"
+        assert row["mv"] is expected, (row["combo"], row.get("corpus"))
 
 
 def test_verdict_evidence_filled_targets_unchanged():
