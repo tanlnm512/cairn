@@ -198,6 +198,29 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
 
+-- Parallel multi-vector embeddings table (spec retrieval-quality-v2 FR-005).
+-- Holds ONLY the extra vector kinds ('name', 'docstring') as one row per
+-- (symbol, model, kind); the base embeddings table above -- PK (symbol_id,
+-- model), whose rowids key the per-model vec0 ANN tables -- is NEVER
+-- repurposed or re-PK'd (D-006). Populated solely by the opt-in
+-- `cairn embed --multivector` pass; stays EMPTY on default builds, so
+-- single-vector storage and query behavior are byte-identical (TC-020).
+-- Additive-only: plain CREATE TABLE IF NOT EXISTS rides the idempotent
+-- executescript in _apply_schema with NO MIGRATIONS entry, so existing DBs
+-- gain the table on next connect -- the same pattern term_df used.
+CREATE TABLE IF NOT EXISTS embeddings_mv (
+    symbol_id TEXT NOT NULL REFERENCES symbols(id),
+    model TEXT NOT NULL,          -- same model stamp as the embeddings row
+    vector_kind TEXT NOT NULL,    -- 'name' | 'docstring' (MV_KINDS)
+    dim INTEGER NOT NULL,         -- vector dimensionality
+    vec BLOB NOT NULL,            -- float32 little-endian
+    chunk TEXT NOT NULL,          -- the kind-specific text that was embedded
+    content_hash TEXT,            -- _chunk_hash of the kind text (staleness)
+    embedded_at TIMESTAMP,
+    PRIMARY KEY (symbol_id, model, vector_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_mv_model ON embeddings_mv(model);
+
 -- semantic embeddings for knowledge documents. doc_id is a concept_id path on
 -- disk (NOT a DB row), so there is NO foreign key constraint. The batch
 -- `cairn knowledge embed` command populates it on demand.
