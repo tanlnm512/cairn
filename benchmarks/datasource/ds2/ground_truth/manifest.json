@@ -1,0 +1,41 @@
+{
+  "dataset_version": "DS-v2",
+  "schema": "cairn-bench-datasource-manifest",
+  "corpora": {
+    "attrs-26.1.0": {
+      "source": "benchmarks/datasource/ds2/second-corpus/attrs-26.1.0",
+      "symbol_id_prefix": "attrs-26.1.0/",
+      "counts": {
+        "l1_queries": 106,
+        "expectations": 276
+      },
+      "tree_hash": "T010 pins this"
+    },
+    "yarl": {
+      "source": "benchmarks/datasource/t2/yarl",
+      "symbol_id_prefix": "yarl/",
+      "counts": {
+        "l1_queries": 48,
+        "expectations": 116
+      },
+      "tree_hash": "T010 pins this"
+    }
+  },
+  "ground_truth": {
+    "l1_queries": 154,
+    "l1_by_kind": {
+      "callers": 42,
+      "definition": 46,
+      "flow": 32,
+      "impact": 34
+    },
+    "l1_by_corpus": {
+      "attrs-26.1.0": 106,
+      "yarl": 48
+    },
+    "expectations": 392,
+    "l5_queries": 0
+  },
+  "tree_hash": "T010 pins this",
+  "version": 1
+}
