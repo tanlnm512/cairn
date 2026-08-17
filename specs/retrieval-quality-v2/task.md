@@ -36,8 +36,10 @@ the budget checker covers only t2 + the total — a new sibling corpus dir needs
 its own budget rule." T005–T007 close the decision/rule surface; T008–T010 do
 the authoring long pole.
 
-- [ ] T005 [P] (in-progress) Run the Sakai topic-set-size power analysis on DS-v1's per-query matrices and record target n = max(150 L1, n_required) plus >=40 L5 as a decision with method + inputs (D-010; TC-005) (FR-002)
-- [ ] T006 [P] (in-progress) Add the `DS2_BUDGET_KB` sibling rule to `scripts/verify_datasource.py` (beside `T2_BUDGET_KB`/`DATASOURCE_BUDGET_KB`, lines 97–101) so the new ds2 dir is covered by a rule, not exempt by omission; `uv run python scripts/verify_datasource.py --budget` stays green (TC-009) (FR-002)
+- [x] T005 [P] Run the Sakai topic-set-size power analysis on DS-v1's per-query matrices and record target n = max(150 L1, n_required) plus >=40 L5 as a decision with method + inputs (D-010; TC-005) (FR-002)
+  done 2026-08-17 — `uv run python benchmarks/datasource/ds2/recompute_power.py` reproduces every figure; target n = 150 L1 (n_required 44–54 detectable / 90–109 at 80% power for Δ+0.11; half-effect +0.05 → 220–269 recorded out of reach) / ≥40 L5; σ_d from the five committed CI half-widths at n=29 (ablation.json carries no per-query matrices)
+- [x] T006 [P] Add the `DS2_BUDGET_KB` sibling rule to `scripts/verify_datasource.py` (beside `T2_BUDGET_KB`/`DATASOURCE_BUDGET_KB`, lines 97–101) so the new ds2 dir is covered by a rule, not exempt by omission; `uv run python scripts/verify_datasource.py --budget` stays green (TC-009) (FR-002)
+  done 2026-08-17 — `uv run pytest tests/test_verify_datasource.py -q` → 30 passed (4 new incl. over-budget breach); `verify_datasource.py --budget` → OK 3/3 with ds2 engaged (705.0/3072 KB), total 1173.6/5120 KB
 - [ ] T007 [P] (in-progress) Evaluate second-corpus candidate(s) against the datasource constraints (per-corpus <= 3 MB, datasource total <= 5 MB, permissive license, full provenance + NOTICE) and commit the vendored-or-deferred decision artifact naming concrete size/license findings, never a vague "later" (D-011; TC-008) (FR-002)
 - [ ] T008 (after T005, T007) Author DS-v2 L1 queries under `benchmarks/datasource/ds2/ground_truth/` — >=150 with all four kinds represented, staged batches that each load through `load_ground_truth` (`queries.jsonl` + `expectations.tsv`, the loader shape from survey FR-002 evidence), sized to T005's target (FR-002)
 - [ ] T009 (after T008) Author DS-v2 L5 queries — >=40, same directory + loader shapes, staged batches landing verifiable (FR-002)
