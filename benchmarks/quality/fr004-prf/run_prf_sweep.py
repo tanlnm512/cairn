@@ -22,10 +22,11 @@ band). That integrity row runs with rerank under the CAIRN_RERANK=1 marker
 off BEFORE the pool fetch (D-012: PRF replaces-not-stacks the rerank
 budget), so its latency is PRF-only by construction.
 
-D-015: this sweep runs concurrently with the FR-005 mv and ladder-prep
-measurement agents -- every in-sweep p95 here is CONTENTION-NOISY by
-design (recall/MRR are deterministic under the pins); the consolidated
-quiet-p95 pass re-prices the committed rows afterwards.
+D-015: the original plan ran this sweep concurrently with the FR-005 mv
+and ladder-prep measurements; MEASURE.md replaced that with the SERIAL
+runbook before any run (concurrent model processes time-share one GPU
+and only inflate p95 -- D-015's diagnosis).  In-sweep p95 is therefore a
+quiet-machine figure; recall/MRR are deterministic under the pins.
 
 Reuses T014's scratch DB read-only (/tmp/fr003-calibration/graph.db:
 1066 real bge-m3 embeddings + 852 term_df rows; the PRF df_lookup reads

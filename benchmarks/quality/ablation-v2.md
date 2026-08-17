@@ -57,7 +57,7 @@ additionally carry `corpus` (a per-corpus label or `macro-average`). The
 guards assert `set(row) >=` these keys, so later tasks may add columns but
 never remove or retype them.
 
-## Rows — T014 (FR-003) calibration rows landed; T023/T024 pending
+## Rows — T014 (FR-003) + T020 (FR-004) landed; T021/T023/T024 pending
 
 The ds-v1-kfold family's first rows are T014's FR-003 cutoff calibration:
 the all-levers-off **integrity row** plus the `enrich+enrich_idf` grid, 5
@@ -65,7 +65,8 @@ seeded rotation folds over the 58 L1 queries (D-009; per-query outcomes
 pooled exactly once each; the tune/validate columns are the seed-24301
 29/29 halves reconstructed from the same per-query maps — they reproduce
 the committed Figure 1/2 anchors 0.5828/0.4444 and 0.2521/0.1279 to 4
-decimals). T023 fills the ds-v2 rows; T024 the ladder rows. All rows carry
+decimals). T021 fills the multi-vector row; T023 the DS-v2 rows; T024
+the ladder rows and the shipped-defaults disposition. All rows carry
 `family`/`dataset`/`combo`/`recall_at_10`/`mrr`/`p95_ms`/`db_mb`/`mv`.
 
 | combo (ds-v1-kfold) | tune r@10 / MRR | validate r@10 / MRR | pooled r@10 / MRR | p95 source |
@@ -75,6 +76,28 @@ decimals). T023 fills the ds-v2 rows; T024 the ladder rows. All rows carry
 | enrich+enrich_idf@df_max=0.80 | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | sweep (contention caveat) |
 | enrich+enrich_idf@df_max=0.85 | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | sweep (contention caveat) |
 | enrich+enrich_idf@df_max=**0.90 (shipped)** | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | quiet re-measure |
+| prf@docs=3,terms=10,lambda=0.5 | 0.5484 / 0.2642 | 0.1972 / 0.0862 | 0.3728 / 0.1752 | sweep (serial, quiet machine) |
+| prf@docs=10,terms=10,lambda=0.5 | 0.5713 / 0.2368 | 0.1535 / 0.0768 | 0.3624 / 0.1568 | sweep (serial, quiet machine) |
+
+### T020 (FR-004) — PRF: an honest negative, inside the budget it replaces
+
+The D-002 grid (fb_terms 10, λ 0.5, fb_docs {3, 10}; Anserini RM3
+anchors) measured on the same 5-fold rotation through the unchanged
+seam. **Both grid points hurt and neither approaches significance**:
+docs=3 Δ −0.0447 (p = 0.30, CI [−0.1315, +0.0402]), docs=10 Δ −0.0550
+(p = 0.19, CI [−0.1375, +0.0250]); MRR falls harder than recall
+(0.2862 → 0.1752 / 0.1568), and docs=10 is not significantly worse than
+docs=3 head-to-head (Δ −0.0103, p = 0.66). The latency half of AC5
+**holds**: p95 99.4 / 81.1 ms sits far inside the rerank budget PRF
+replaces (committed session figures: rerank-on 1142.0 ms vs rerank-off
+28.9 ms p95 — never the unretained ~780 ms p50), but the quality half is
+negative, so PRF stays flag-off and out of the ladder's ship set.
+Integrity for both runs: the implicit all-levers-off row reproduces the
+committed DS-v1 baseline exactly (pooled 0.4174/0.2862; tune/validate
+anchors 0.5828/0.4444 and 0.2521/0.1279 to 4 decimals), and the two
+runs' implicit rows are byte-identical cross-run (determinism under the
+D-009 pins). Raw sweeps and the merge payload live under
+`benchmarks/quality/fr004-prf/`.
 
 **Integrity gate (the hard gate, first run of the session).** The
 all-levers-off k-fold rotation reproduces the committed DS-v1 session

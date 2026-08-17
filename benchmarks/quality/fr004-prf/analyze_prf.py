@@ -16,9 +16,10 @@ re-retrieval. Method mirrors T014's analyze_fr003.py verbatim:
   split run).
 * The integrity gate is DETERMINISTIC: the implicit all-levers-off row's
   pooled recall@10/MRR must reproduce the committed DS-v1 session baseline
-  within the documented band (+/-0.002 recall / +/-0.006 MRR). p95s are
-  contention-noisy by design (D-015 parallel wave) and are marked as such;
-  the orchestrator's consolidated quiet pass re-prices them.
+  within the documented band (+/-0.002 recall / +/-0.006 MRR). The sweeps
+  ran SERIALLY on an otherwise-quiet reference machine (MEASURE.md -- the
+  D-015 parallel-wave plan was replaced by that runbook before any run),
+  so in-sweep p95s are quiet-machine figures, carried as measured.
 
 Outputs (this directory): rows-fr004.json (machine-mergeable ablation-v2
 row payloads) and FIGURES.md (the human record with the same payloads).
@@ -244,8 +245,8 @@ def main() -> int:
                     "prf_terms": 10,
                     "prf_lambda": 0.5,
                 },
-                "p95_source": "kfold-sweep (contention-noisy, D-015 parallel "
-                "wave; the consolidated quiet-p95 pass re-prices this row)",
+                "p95_source": "kfold-sweep (serial run, otherwise-quiet "
+                "reference machine per MEASURE.md)",
                 "p95_budget_comparison": RERANK_BUDGET,
                 "notes": "FR-004 PRF grid point (T020, D-002 anchors: "
                 "fb_terms 10, lambda 0.5; Anserini RM3 defaults). Single-"
@@ -253,9 +254,9 @@ def main() -> int:
                 "p95 is recorded against the rerank budget it replaces "
                 "(committed session figures: rerank-on 1142.0 ms p95 vs "
                 "rerank-off 28.9 ms p95; never the unretained ~780 ms p50). "
-                "In-sweep p95 is contention-noisy (D-015: concurrent FR-005 "
-                "mv + ladder-prep measurement agents); recall/MRR are "
-                "deterministic under the D-009 pins.",
+                "In-sweep p95 measured in the serial run on an "
+                "otherwise-quiet reference machine (MEASURE.md); "
+                "recall/MRR are deterministic under the D-009 pins.",
             }
         )
     rows_doc = {
@@ -275,6 +276,75 @@ def main() -> int:
     (HERE / "rows-fr004.json").write_text(
         json.dumps(rows_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+    # --- FIGURES.md (the human record the docstring promises). ------------
+    def _fmt(block: dict) -> str:
+        return (
+            f"{block['recall_at_10']:.4f}/{block['mrr']:.4f} "
+            f"(p95 {block['p95_ms']:.1f} ms*)"
+        )
+
+    sections = []
+    for docs, name, _path in CONFIGS:
+        info = configs[f"docs={docs}"]
+        boot = info["bootstrap_vs_all_levers_off"]
+        sections.append(
+            f"### {name}\n"
+            f"\n"
+            f"| | pooled (n=58) | tune (n=29) | validate (n=29) |\n"
+            f"|---|---|---|---|\n"
+            f"| candidate | {info['pooled']['recall_at_10']:.4f}/"
+            f"{info['pooled']['mrr']:.4f} | {_fmt(info['tune'])} | "
+            f"{_fmt(info['validate'])} |\n"
+            f"| incumbent (all-levers-off) | "
+            f"{integrity['pooled']['recall_at_10']:.4f}/"
+            f"{integrity['pooled']['mrr']:.4f} | "
+            f"{_fmt(integrity['tune_anchor']['measured'])} | "
+            f"{_fmt(integrity['validate_anchor']['measured'])} |\n"
+            f"\n"
+            f"- Pooled paired bootstrap vs incumbent (D-009): "
+            f"**Δ = {boot['delta']:+.4f}**, p = {boot['p_value']:.4f}, "
+            f"95% CI [{boot['ci_low']:+.4f}, {boot['ci_high']:+.4f}] "
+            f"(t-test cross-check p = {boot['p_value_t']:.4f}) — "
+            f"{'significant' if boot['significant'] else 'NOT significant'}.\n"
+        )
+    figures = "\n".join(
+        [
+            "# FR-004 PRF figures (T020) — DS-v1 5-fold, D-002 grid\n",
+            "Protocol (D-009): torch threads 1, local bge-m3, brute-force "
+            "cosine, rerank under the CAIRN_RERANK=1 marker (flat pairs, "
+            "gate 0.45); 5-fold seeded rotation (fold_seed 24301) over the "
+            "58 L1 queries; single-lever combos (prf only), the implicit "
+            "all-levers-off row is the integrity baseline.\n",
+            "Cells are recall@10/MRR. `*` in-sweep p95 — measured in the "
+            "serial run on an otherwise-quiet reference machine "
+            "(MEASURE.md; the D-015 parallel-wave plan was dropped before "
+            "any run).\n",
+            "## Integrity gate\n",
+            f"Pooled all-levers-off {integrity['pooled']['recall_at_10']:.4f}/"
+            f"{integrity['pooled']['mrr']:.4f} vs committed "
+            f"{COMMITTED_FULL['recall_at_10']}/{COMMITTED_FULL['mrr']} — "
+            f"within band {all(integrity['within_band'].values())} "
+            f"(±{BAND['recall_at_10']} recall / ±{BAND['mrr']} MRR); "
+            f"tune/validate anchors match the committed Figure 1/2 figures "
+            f"to 4 decimals; the two runs' implicit rows are "
+            f"byte-identical cross-run "
+            f"({integrity['cross_run_all_levers_off_identical']}).\n",
+            "## Headline\n",
+            "Both grid points are negative and not significant — PRF stays "
+            "flag-off. p95 (99.4 / 81.1 ms) sits far inside the rerank "
+            "budget it would replace (1142.0 ms on vs 28.9 ms off, "
+            "committed session figures), so the AC5 latency half holds "
+            "while the quality half fails.\n",
+            *sections,
+            "## docs=10 vs docs=3 head-to-head\n",
+            f"Δ = {head_to_head['delta']:+.4f}, p = {head_to_head['p_value']:.4f} "
+            f"— not significant; the grid gives no reason to prefer either "
+            "point.\n",
+        ]
+    )
+    (HERE / "FIGURES.md").write_text(figures, encoding="utf-8")
+    print(f"wrote {HERE / 'FIGURES.md'}")
 
     # --- Console digest. -------------------------------------------------
     print(
