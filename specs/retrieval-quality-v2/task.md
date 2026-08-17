@@ -15,9 +15,9 @@ lever families).
 | 1     | 4     | 4    |
 | 2     | 6     | 6    |
 | 3     | 4     | 3    |
-| 4     | 7     | 3    |
+| 4     | 7     | 4    |
 | 5     | 3     | 1    |
-| **Σ** | 24    | 17   |
+| **Σ** | 24    | 18   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -75,7 +75,8 @@ FR-005 both TODO (grep-confirmed: no prf/rm3/feedback, no embeddings_mv/vecmv).
 
 - [x] T015 [P] (after T011) Create `src/cairn/graph/prf.py` — pure deterministic RM3-style expansion from the fused top-k: extract candidate expansion terms, score by summed corpus-aware IDF over the feedback docs (reads `term_df`), drop terms already in the query, keep the top `fb_terms` filtered by the `(1−λ)·max_weight` cap (D-001, D-003); no LLM, no randomness; unit tests (FR-004)
   done 2026-08-17 — `uv run pytest tests/test_prf.py -q` → 25 passed (IDF ordering, exact λ-cap boundary, determinism incl. PYTHONHASHSEED, hermeticity AST guard); expand() contract published for T016
-- [ ] T016 (after T013, T015) (in-progress) Wire PRF at the post-fusion seam in `src/cairn/graph/semantic.py` (`candidates = fused_candidates`, ~L726–752, immediately before the confidence gate): one flag-gated second full pass (both legs + fusion) with at most one extra `embed_query` — the explicit doctrine exception documented at the boundary (D-012), REPLACING the rerank stage (`rerank=False` enforced on PRF combos, never stacking); add `RetrievalParams` fields `prf`/`prf_docs`/`prf_terms`/`prf_lambda` (additive, None-means-default); flag-off equivalence + offline determinism tests (TC-016, TC-017, TC-019) (FR-004)
+- [x] T016 (after T013, T015) Wire PRF at the post-fusion seam in `src/cairn/graph/semantic.py` (`candidates = fused_candidates`, ~L726–752, immediately before the confidence gate): one flag-gated second full pass (both legs + fusion) with at most one extra `embed_query` — the explicit doctrine exception documented at the boundary (D-012), REPLACING the rerank stage (`rerank=False` enforced on PRF combos, never stacking); add `RetrievalParams` fields `prf`/`prf_docs`/`prf_terms`/`prf_lambda` (additive, None-means-default); flag-off equivalence + offline determinism tests (TC-016, TC-017, TC-019) (FR-004)
+  done 2026-08-17 — tests/test_prf_wiring.py → 19 passed (flag-off equivalence + embed-count==1 spy, rerank-never-runs-on-PRF spy, offline determinism); first pass extracted verbatim into _run_pass closure (whitespace-insensitive diff: 2 true lines); scoped regression 72+173 passed
 - [x] T017 [P] Add the parallel `embeddings_mv` table (PRIMARY KEY (symbol_id, model, vector_kind); `name` + `docstring` kinds only) to `src/cairn/graph/schema.py`, with new producer functions building kind-specific texts and their own `_chunk_hash` staleness in `src/cairn/graph/embeddings.py`, wired into the embed CLI (`src/cairn/cli/embed.py`) — producers NOT added to `CHUNK_VARIANTS` (identity-floor tests iterate it); the `embeddings` table, its upserts/staleness/reaping, and flag-off behavior byte-identical (D-006; TC-020). Front-load first in the phase: deepest blast radius (80 impacted symbols via `embed_all`) (FR-005)
   done 2026-08-17 — `uv run pytest tests/test_embeddings_mv.py -q` → 14 passed (flag-off zero-mv-writes + base-table byte-equivalence, per-kind staleness, reaping); `--multivector` CLI flag; CHUNK_VARIANTS unchanged
 - [x] T018 (after T013, T017) Multi-vector query path in `src/cairn/graph/semantic.py` — brute scan UNIONs `embeddings` + `embeddings_mv` rows and the candidate-dict construction dedups per symbol by MAX score; add flag-off `RetrievalParams.multivector`; result lists contain each symbol at most once (TC-021, TC-023) (FR-005)
