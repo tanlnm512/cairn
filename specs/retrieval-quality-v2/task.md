@@ -4,10 +4,11 @@
 Status reflects code state per [survey.md](survey.md), not intent — survey: 0 DONE /
 3 PARTIAL (FR-002, FR-003, FR-006) / 3 TODO (FR-001, FR-004, FR-005). The
 implementation wave ran 2026-08-17 (one commit per task, code + docs
-together). T020/T021/T023/T024's measurement runs are DEFERRED to the
-reference machine — the runners and runbook live in
-`benchmarks/quality/MEASURE.md` (D-015/D-016); all code and dataset tasks
-through T019 + T022 are done.
+together); the deferred measurement runs (T020/T021/T023/T024) executed
+2026-08-17 on the reference machine per `benchmarks/quality/MEASURE.md`
+(serial, quiet). **All 24 tasks done; the campaign closed on the document
+branch** — see [task.md T024](#phase-5-confirmation-ladder--extended-record-fr-006)
+and the ablation-v2 verdict.
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
@@ -17,8 +18,8 @@ through T019 + T022 are done.
 | 2     | 6     | 6    |
 | 3     | 4     | 4    |
 | 4     | 7     | 7    |
-| 5     | 3     | 2    |
-| **Σ** | 24    | 23   |
+| 5     | 3     | 3    |
+| **Σ** | 24    | 24   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -101,7 +102,8 @@ schema `cairn-quality-ablation/2`).
   done 2026-08-17 — `uv run pytest tests/test_ablation_v2_artifact.py -q` → 6 passed (v1 suite 6 passed unmodified, blob-hash-pinned); families ds-v1-kfold + ds-v2 (t2, attrs-26.1.0); verdict pending with SC-1 0.50/0.33 and TC-029 slots
 - [x] T023 (after T004, T010, T014, T020, T021, T022) Re-run the confirmation ladder on the upgraded evidence base — k-fold pooled aggregate over DS-v1 + zero-shot DS-v2 validation reported as per-corpus rows plus macro-average (D-011, never an aggregate alone, never cross-corpus row diffs); verdict block cites its evidence: fold count >= 5 with per-fold spread and DS-v2 counts >= 150 L1 / >= 40 L5; SC-1 targets stay 0.50/0.33, match rules never loosened, all-levers-off row reproduces the committed DS-v1 baseline at 4 dp (TC-026, TC-027, TC-029) (FR-006)
   done 2026-08-17 — ladder DS-v1 legs: (a) enrich+rerank-off Δ+0.0988 p=0.0491 CI[+0.0037,+0.2006] CLEARS (the v1 near-miss converts at n=58); (b) byte-identical to (a) (0/58 differ); (c)=multivector via T021's sweep. DS-v2 zero-shot (run_ds2_zeroshot.py, 198 queries, per-corpus+macro rows in the new ds-v2 family, labels finalized yarl/attrs-26.1.0 per the manifest): mv REFUTED transfer (attrs Δ−0.0432; macro MRR −0.0925), enrich-rerankoff neutral (macro Δ+0.0003 recall / −0.0215 MRR, per-corpus bootstraps n.s.), incumbent holds the best DS-v2 macro (0.4778/0.3769); L5 44 queries = recorded structural zero. Verdict evidence filled (fold 5, spread [+0.0969,+0.1832], counts 154/44, per-leg SC-1 actuals); integrity anchors exact; guard tests 12 passed (reshaped to the evidence-filled state)
-- [ ] T024 (after T023) Close ship-or-document — if a combination clears the pooled bootstrap guard: ship it as defaults with a shipped_defaults row and re-measure every protected baseline (perf search_symbols p95 6.25 / semantic_search 201.67 / explore 453.18/513.73 / impact 0.11; agent est_tokens 6848; warm_time cold 15497.2 / warm 232.6 / 66.6x); if nothing clears: record the shortfall (best candidate's interval + p) and name the next binding constraint in the ablation-v2 verdict — exactly one of the two branches (TC-024, TC-025) (FR-006)
+- [x] T024 (after T023) Close ship-or-document — if a combination clears the pooled bootstrap guard: ship it as defaults with a shipped_defaults row and re-measure every protected baseline (perf search_symbols p95 6.25 / semantic_search 201.67 / explore 453.18/513.73 / impact 0.11; agent est_tokens 6848; warm_time cold 15497.2 / warm 232.6 / 66.6x); if nothing clears: record the shortfall (best candidate's interval + p) and name the next binding constraint in the ablation-v2 verdict — exactly one of the two branches (TC-024, TC-025) (FR-006)
+  done 2026-08-17 — DOCUMENT BRANCH taken (exactly one): three candidates cleared the DS-v1 pooled guard but the zero-shot DS-v2 leg refutes transfer for all (mv attrs Δ−0.0432, macro MRR −0.0925; enrich macro Δ+0.0003 recall/−0.0215 MRR); under the honesty clause the best evidenced configuration on the full base is the incumbent → defaults unchanged, no protected baseline re-measured (binds the ship branch only); verdict records the best candidate's intervals on BOTH legs (mv DS-v1 Δ+0.1414 [+0.0527,+0.2373] p=0.0035 / DS-v2 attrs [−0.1017,+0.0157] p=0.15) and names the next binding constraint: lever generalization (not evidence power), with T014's ~0.27 cutoff band, mv's name-kind ablation, and the corpus-dependent rerank MRR finding as the armed experiments; guard tests 12 passed
 
 ## Conventions
 - `- [ ]` todo · `(in-progress)` claimed · `- [x]` done + proof note:

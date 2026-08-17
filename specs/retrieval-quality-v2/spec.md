@@ -1,6 +1,6 @@
 # Spec: retrieval-quality-v2
 
-**Status**: active (implementation wave started 2026-08-17)
+**Status**: done (closed 2026-08-17 on the document branch — no ship; all 24 tasks complete; verdict in `benchmarks/quality/ablation-v2.{json,md}`)
 **Created**: 2026-08-17
 **Branch**: `docs/retrieval-quality-v2-spec` (this spec lands docs-only; implementation branches cut later)
 **Origin**: the retrieval-quality ablation verdict (PR #37, `benchmarks/quality/ablation.md`): SC-1 targets (L1 recall@10 ≥ 0.50, MRR ≥ 0.33) were not reached — five bootstrap-guarded candidates failed significance on the 58-query ground truth (best Δ+0.1123 at p=0.118, validate CIs ±0.13–0.15 at n=29) — and the verdict identified the binding constraint as **evidence power**, not lever quality. This spec is the follow-up: raise the evidence power, repair the measured enrichment failure mode, spend the freed rerank budget on the best-sourced untried lever, and add one genuinely new dense-side lever family.

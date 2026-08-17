@@ -47,14 +47,14 @@
       "T021 (FR-005): multi-vector ablation row landed (family ds-v1-kfold) -- pooled 0.5588/0.3395 (both SC-1 targets), bootstrap delta +0.1414 p=0.0035; raw sweep under benchmarks/quality/fr005-mv/ (integrity 58/58 per-query identity vs the committed T014 baseline)",
       "T023 (FR-006): confirmation ladder re-run on the upgraded evidence base \u2014 DS-v1 legs (a)/(b) via run_ladder_candidates.py, (c)=multivector via the T021 sweep; DS-v2 zero-shot leg via run_ds2_zeroshot.py (per-corpus + macro rows, ds-v2 family); verdict evidence filled, disposition pending T024"
     ],
+    "note_closures": [
+      "T024 (document branch): no configuration ships; the shortfall and the next binding constraint (lever generalization, not evidence power) are recorded in the verdict with the best candidate's DS-v1 and DS-v2 intervals"
+    ],
     "p95_discipline": "T014: the integrity row and the shipped-cutoff row carry quiet-machine re-measured p95 (p95-remeasure.json; the k-fold sweeps overlapped a full test suite on the same machine, orchestrator-confirmed); non-shipped grid rows carry in-sweep p95 under that stated caveat",
     "protocol": "inherits the v1 D-009 protocol discipline pinned in benchmarks/quality/ablation.json (measurement.protocol): torch threads 1, local bge-m3, brute-force cosine (no vec0), rerank under the CAIRN_RERANK=1 marker with flat pairs and gate margin 0.45, reference-local machine",
     "protocol_inherited_from": "benchmarks/quality/ablation.json",
-    "status": "pending",
-    "todo": [
-      "T024: close ship-or-document \u2014 shipped_defaults row + protected-baseline re-measures on the ship branch, or the documented shortfall + next binding constraint on the document branch (exactly one)",
-      "re-measure the protected baselines on shipping (TC-027: all-levers-off equals the committed artifact at 4 decimals)"
-    ]
+    "status": "done",
+    "todo": []
   },
   "row_shape": {
     "columns": {
@@ -829,10 +829,32 @@
   "shipped_defaults": {
     "config_reference": "benchmarks/quality/ablation.json shipped_defaults -- the unchanged incumbent (all-levers-off) until a v2 row ships under its own family",
     "row": null,
-    "status": "pending"
+    "statement": "NO SHIP: the incumbent all-levers-off remains the shipped default configuration (config_reference unchanged). No v2 row ships: the three guard-clearing candidates all fail zero-shot DS-v2 transfer (see verdict). Because nothing ships, no protected baseline is re-measured in this campaign (the re-measure obligation binds the ship branch only); the committed baselines (perf search_symbols p95 6.25 / semantic_search 201.67 / explore 453.18/513.73 / impact 0.11; agent est_tokens 6848; warm_time cold 15497.2 / warm 232.6 / 66.6x) remain the protected figures of record.",
+    "status": "no-ship (document branch, T024)"
   },
   "task": "T022 (FR-006); skeleton -- measurement rows land with T023 (ds-v2) and T024 (ds-v1-kfold)",
   "verdict": {
+    "best_candidate_record": {
+      "candidate": "multivector",
+      "disposition": "guard-cleared on DS-v1, refuted zero-shot \u2014 not shipped; recorded as the campaign's best candidate with both intervals",
+      "ds_v1_kfold": {
+        "ci_high": 0.23734332238642583,
+        "ci_low": 0.05273518746579094,
+        "cleared": true,
+        "delta": 0.14138615216201422,
+        "p_value": 0.0034996500349965005
+      },
+      "ds_v2_zero_shot": {
+        "attrs_ci": [
+          -0.1017,
+          0.0157
+        ],
+        "attrs_delta": -0.0432,
+        "attrs_p_value": 0.1456,
+        "cleared": false,
+        "macro_mrr_delta_vs_incumbent": -0.0925
+      }
+    },
     "ds2_counts": {
       "l1_queries": 154,
       "l5_queries": 44,
@@ -858,7 +880,16 @@
         "recall_at_10": -0.0222
       }
     },
-    "outcome": "pending",
+    "next_binding_constraint": {
+      "armed_experiments": [
+        "T014's diagnostic, already in the record: the enrichment cutoff's real DS-v1 threshold is ~0.27 ('url' prevalence 0.2711), not 0.90 \u2014 a 0.25-0.30 cutoff band is the concrete untested knob for the enrich direction (d03-diagnostic.json showed L1-D03 recovering at cutoff 0.25, rank 6)",
+        "multivector's corpus-dependence: the name/docstring max-score union over-fits yarl's docstring style \u2014 a name-kind-only ablation or a DS-v2-era calibration (tune on DS-v2, validate on DS-v1) would isolate which vector kind carries the non-transferring gain",
+        "the rerank MRR finding is corpus-dependent too (v1: rerank costs 7-9pp MRR on DS-v1; DS-v2 zero-shot: the incumbent's rerank-active MRR is +2.2pp over rerank-off) \u2014 any rerank-off default proposal needs both corpora's evidence"
+      ],
+      "constraint": "cross-corpus / query-population generalization of the levers \u2014 not evidence power",
+      "evidence": "the v1 campaign's binding constraint (evidence power) was fixed: n=58 pooling converted the p=0.118 near-miss into three guard-clearing candidates. The v2 constraint is that every candidate's DS-v1 gain fails to transfer zero-shot (mv harms, enrich nulls), so no DS-v1-tuned lever can ship as a global default on this evidence"
+    },
+    "outcome": "documented-shortfall-no-ship",
     "per_fold_spread": {
       "delta_max": 0.1832,
       "delta_min": 0.0969,
@@ -895,7 +926,7 @@
       "mrr": 0.33,
       "recall_at_10": 0.5
     },
-    "statement": "EVIDENCE COMPLETE, DISPOSITION PENDING (T024). The ladder's three D-016 candidates on the DS-v1 k-fold pooled aggregate: (a) enrich+rerank-off delta+0.0988 p=0.0491 CI[+0.0037,+0.2006] CLEARS; (b) enrich_idf+rerank-off byte-identical to (a) on DS-v1 CLEARS; (c) multivector delta+0.1414 p=0.0035 CI[+0.0527,+0.2373] CLEARS decisively and reaches both SC-1 targets on that leg (0.5588/0.3395). The zero-shot DS-v2 leg refutes transfer: multivector's gain reverses on the unseen corpus (attrs delta-0.0432 p=0.15; macro MRR -0.0925) and enrich+rerank-off's +9.9pp recall collapses to +0.0003 macro with -0.0215 MRR (per-corpus bootstraps n.s.; on DS-v2's NEW yarl queries the enrich delta is -0.0122 \u2014 a query-population effect, not only a corpus effect). PRF measured negative at both grid points (T020). SC-1 targets stay 0.50/0.33 and match rules are untouched; the ship-or-document disposition lands with T024.",
-    "status": "pending"
+    "statement": "CLOSED (T024, document branch \u2014 exactly one branch taken): NO SHIP; defaults unchanged (the incumbent all-levers-off remains the shipped configuration). Three candidates cleared the DS-v1 pooled bootstrap guard \u2014 (a)/(b) enrich+rerank-off delta+0.0988 p=0.0491 CI[+0.0037,+0.2006], (c) multivector delta+0.1414 p=0.0035 CI[+0.0527,+0.2373] \u2014 but the zero-shot DS-v2 leg, the generalization check this campaign built, refutes transfer for all of them: multivector REVERSES on the unseen corpus (attrs delta-0.0432 CI[-0.1017,+0.0157] p=0.15; macro MRR -0.0925) and enrich+rerank-off's +9.9pp recall collapses to +0.0003 macro with -0.0215 MRR (per-corpus bootstraps n.s.; on DS-v2's new yarl queries delta-0.0122 \u2014 a query-population effect, not only a corpus effect). Under the honesty clause the best evidenced configuration on the FULL evidence base is the incumbent \u2014 it carries the best DS-v2 macro of every measured configuration (0.4778/0.3769) and reproduces the committed DS-v1 baseline exactly \u2014 so the incumbent ships and the shortfall is documented, never gamed. SC-1 (0.50/0.33, unchanged) is NOT reached on the full evidence base: reached on the DS-v1 leg alone by multivector (0.5588/0.3395) but refuted zero-shot; the DS-v2 leg reaches neither target for any configuration.",
+    "status": "done"
   }
 }

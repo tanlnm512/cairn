@@ -17,9 +17,11 @@ loudly:
   row-shape contract, and no v2 row presents a delta against a v1 row
   (TC-028/D-008); ds-v2 aggregates never appear without per-corpus rows
   (D-011);
-* the verdict block is visibly PENDING with SC-1 targets exactly 0.50/0.33
-  (TC-026) and TC-029's slots (fold count >= 5, DS-v2 counts >= 150 L1 /
-  >= 40 L5) declared as minimums;
+* the verdict block carries SC-1 targets exactly 0.50/0.33 (TC-026) with
+  TC-029's evidence (fold count >= 5, DS-v2 counts >= 150 L1 / >= 40 L5),
+  per-leg actuals, and — closed by T024 on the document branch — the
+  best candidate's intervals on both legs plus the named next binding
+  constraint;
 * the v1 record files are byte-identical to the hashes captured at T022
   authoring time via ``git hash-object`` (TC-028's byte-identical pin).
 """
@@ -120,32 +122,35 @@ def test_rows_carry_family_and_dataset_labels():
     ds2_rows = [r for r in doc["rows"] if r["family"] == "ds-v2"]
     if any(r["corpus"] == MACRO for r in ds2_rows):
         assert any(r["corpus"] != MACRO for r in ds2_rows)
-    # Honesty: a PENDING verdict means no v2 SHIPPED-DEFAULTS row yet.
-    # Measurement rows may land incrementally (T014's FR-003 calibration
-    # rows landed while the FR-006 ladder verdict stayed pending -- the
-    # ladder, not the calibration, mints the shipped row and the verdict
-    # actuals), so the skeleton-honesty coupling is to shipped_defaults,
-    # never to the measurement rows themselves.
-    if doc["verdict"]["status"] == "pending":
-        assert doc["shipped_defaults"]["row"] is None
+    # Honesty coupling, final state: the shipped_defaults row and the
+    # verdict status move together. The document branch (T024) ships
+    # NOTHING — row None with a status naming the branch; a future
+    # shipped row must coincide with a status naming the ship.
+    sd = doc["shipped_defaults"]
+    if sd["row"] is None:
+        assert "no-ship" in sd["status"], sd["status"]
+        assert doc["verdict"]["outcome"] == "documented-shortfall-no-ship"
+    else:
+        assert "no-ship" not in sd["status"], sd["status"]
+        assert doc["verdict"]["outcome"] not in ("pending", "documented-shortfall-no-ship")
 
 
 def test_verdict_evidence_filled_targets_unchanged():
-    """TC-026 (targets 0.50/0.33) + TC-029 evidence slots, post-T023.
+    """TC-026 (targets 0.50/0.33) + TC-029 evidence slots, closed (T024).
 
     T023 filled the verdict's evidence (fold count with per-fold spread,
-    DS-v2 counts, per-leg SC-1 actuals); the ship-or-document DISPOSITION
-    (status/outcome leaving 'pending') is T024's, so while it pends the
-    coupling to shipped_defaults still binds.
+    DS-v2 counts, per-leg SC-1 actuals) and T024 closed it on exactly one
+    branch: the DOCUMENT branch (no ship — defaults unchanged, shortfall
+    + next binding constraint recorded).
     """
     doc = _doc()
     v = doc["verdict"]
-    assert v["status"] == "pending"
-    assert v["outcome"] == "pending"
+    assert v["status"] == "done"
+    assert v["outcome"] == "documented-shortfall-no-ship"
     assert v["sc1_targets"] == {"recall_at_10": 0.50, "mrr": 0.33}
     assert "never gamed" in v["honesty_clause"]
-    # TC-029 slots, now FILLED: fold count >= 5 with a spread, DS-v2
-    # counts above their floors.
+    # TC-029 slots, FILLED: fold count >= 5 with a spread, DS-v2 counts
+    # above their floors.
     assert v["fold_count_minimum"] == 5
     assert v["fold_count"] >= v["fold_count_minimum"]
     spread = v["per_fold_spread"]
@@ -161,6 +166,13 @@ def test_verdict_evidence_filled_targets_unchanged():
     assert v["margins"]["ds_v2_macro_best_vs_targets"]["recall_at_10"] < 0
     # The zero-shot refutation is part of the record, not a footnote:
     assert v["sc1_actual"]["ds_v1_kfold_best"]["zero_shot_validated"] is False
+    # The document branch's required content (MEASURE.md Step 5): the best
+    # candidate's interval + p on BOTH legs, and a named next constraint.
+    best = v["best_candidate_record"]
+    assert best["candidate"] == "multivector"
+    assert best["ds_v1_kfold"]["cleared"] is True and best["ds_v1_kfold"]["p_value"] < 0.05
+    assert best["ds_v2_zero_shot"]["cleared"] is False
+    assert "generalization" in v["next_binding_constraint"]["constraint"]
 
 
 def test_v1_record_files_are_byte_identical():
@@ -175,9 +187,10 @@ def test_v1_record_files_are_byte_identical():
 
 
 def test_rendering_states_pending_targets_and_family_isolation():
-    """The human rendering carries the PENDING verdict + isolation rules."""
+    """The human rendering carries the CLOSED verdict + isolation rules."""
     md = RENDERING.read_text()
-    assert "STATUS: PENDING" in md
+    assert "STATUS: CLOSED (T024" in md
+    assert "no ship" in md
     assert "cairn-quality-ablation/2" in md
     assert "ablation-v2.json" in md  # source-of-record pointer
     # TC-026: the same bar as the first campaign, no goalpost moves.
@@ -188,7 +201,7 @@ def test_rendering_states_pending_targets_and_family_isolation():
     assert "never an aggregate alone" in md
     for family in FAMILIES:
         assert family in md, family
-    assert "attrs-26.1.0" in md  # second-corpus label from T007's DECISION.md
+    assert "attrs-26.1.0" in md  # second-corpus label (manifest convention)
     # Row shape documented: every additive column is named in the rendering.
     for column in sorted(ROW_KEYS):
         assert column in md, column
