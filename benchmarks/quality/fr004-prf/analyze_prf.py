@@ -21,7 +21,7 @@ re-retrieval. Method mirrors T014's analyze_fr003.py verbatim:
   D-015 parallel-wave plan was replaced by that runbook before any run),
   so in-sweep p95s are quiet-machine figures, carried as measured.
 
-Outputs (this directory): rows-fr004.json (machine-mergeable ablation-v2
+Outputs (this directory): rows-fr004.json (machine-mergeable ablation-record
 row payloads) and FIGURES.md (the human record with the same payloads).
 """
 from __future__ import annotations
@@ -198,7 +198,7 @@ def main() -> int:
 
     db_mb = base_doc["folds"][0]["rows"][0]["db_mb"]
 
-    # --- The ablation-v2 row payloads (family ds-v1-kfold). ---------------
+    # --- The ablation-record row payloads (family ds-v1-kfold). -----------
     levers_off = {
         "chunk_variant": "B",
         "dense_threshold": 0.3,
@@ -261,7 +261,7 @@ def main() -> int:
         )
     rows_doc = {
         "schema": "cairn-fr004-rows/1",
-        "task": "T020 (FR-004): PRF rows to merge into benchmarks/quality/ablation-v2.json",
+        "task": "T020 (FR-004): PRF rows to merge into benchmarks/quality/ablation.json (ablation-v2.json before the 2026-08-17 unification)",
         "integrity": {
             "pooled": integrity["pooled"],
             "committed_full_set": COMMITTED_FULL,
