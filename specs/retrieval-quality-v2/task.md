@@ -14,10 +14,10 @@ lever families).
 |-------|-------|------|
 | 1     | 4     | 4    |
 | 2     | 6     | 6    |
-| 3     | 4     | 3    |
+| 3     | 4     | 4    |
 | 4     | 7     | 4    |
 | 5     | 3     | 1    |
-| **Σ** | 24    | 18   |
+| **Σ** | 24    | 19   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -64,7 +64,8 @@ must be INJECTED as a parameter/table." The verified L1-D03 repro
   done 2026-08-17 — `uv run pytest tests/test_query_enrich.py -q` → 57 passed (34 new: L1-D03 repro, 0.89/0.90/0.91 boundary, rare-term survival, None-lookup equivalence); ENRICH_DF_MAX_FRACTION = 0.90 documented; df_lookup contract published for T013
 - [x] T013 (after T012) Inject the DF lookup at the boundary seam in `src/cairn/graph/semantic.py` (`_enriched = enrich_query(query)`, ~L581) — per-term indexed SELECTs bounded by the query's distinct token count (documented O(#query tokens) bound); add flag-off `RetrievalParams.enrich_idf` (additive-field doctrine); equivalence tests prove default behavior byte-identical (FR-003)
   done 2026-08-17 — `uv run pytest tests/test_semantic_enrichment.py -q` → 22 passed (19 new: flag-off byte-equivalence battery, ubiquitous-token drop through full path, EXPLAIN-proved index probes, memoization); RetrievalParams.enrich_idf additive
-- [ ] T014 (after T013, T004) (in-progress) Calibrate and measure FR-003 — sweep the cutoff within 0.75–0.95 on the DS-v1 k-fold, record the shipped value (default 0.90) in code + the ablation record, emit ablation rows on both splits, and prove no previously-passing DS-v1 tune-split query regresses to zero with L1-D03 recovered (AC4; TC-011, TC-013, TC-014) (FR-003)
+- [x] T014 (after T013, T004) Calibrate and measure FR-003 — sweep the cutoff within 0.75–0.95 on the DS-v1 k-fold, record the shipped value (default 0.90) in code + the ablation record, emit ablation rows on both splits, and prove no previously-passing DS-v1 tune-split query regresses to zero with L1-D03 recovered (AC4; TC-011, TC-013, TC-014) (FR-003)
+  done 2026-08-17 — guard tests 12 passed; integrity row reproduces 0.4174/0.2862 at 4dp; 4-point grid (D-014 truncation: 0.95 dropped, harmless — nothing exceeds 0.8583 prevalence) proves the cutoff INERT on DS-v1: all rows byte-identical because 'url' prevalence is only 0.2711 < 0.75 — the shipped 0.90 stays (SC default); AC4 honest finding: L1-D03 recovers only below-cutoff 0.27 (rank 6, diagnostic d03-diagnostic.json) and L1-I03's dilution is a RARE identifier (DF 0.0047) — recorded in ablation-v2 + README as the next-knob evidence; quiet p95 re-measured for integrity+shipped rows (58/58 per-query recall/MRR cross-check equal)
 
 ## Phase 4: New lever families — PRF + multi-vector (FR-004, FR-005)
 <!-- Checkpoint: both levers flag-off by default; default config's all-levers-off row still reproduces the session baseline (integrity doctrine); PRF's p95 recorded and under the rerank budget it replaces (~1113 ms p95 gap, ablation.json 1142.0 vs 28.9 — cite p95, not the unretained ~780 ms p50); multi-vector row carries db-size (<=3x growth) + p95; PRF's second-embed exception documented at the boundary (one-call doctrine amended, not silently broken). Verify: sweep with each flag flipped emits its rows; full pytest green. -->

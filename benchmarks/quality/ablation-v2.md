@@ -6,11 +6,13 @@ Machine-readable source of record: [`ablation-v2.json`](ablation-v2.json)
 sort_keys=True)`). This file is its human rendering; where the two could
 drift, the JSON wins.
 
-**STATUS: PENDING.** This is the T022 skeleton — the measurement rows land
-with T023 (ds-v2) and T024 (ds-v1-kfold). Nothing in this document is a
-measurement; every quantitative figure below is copied verbatim from the
-cited committed artifacts (the v1 record, the tech-spec decisions, the test
-spec).
+**STATUS: PENDING.** The FR-006 verdict is still pending (T023 fills the
+ds-v2 rows, T024 the ds-v1-kfold ladder, and the ladder mints the v2
+shipped-defaults row). The document is no longer empty, though: **T014
+(FR-003) landed the first measurement rows** — the cutoff-calibration
+family below, measured 2026-08-17 on the D-009 protocol. Every other
+quantitative figure outside the FR-003 section is copied verbatim from the
+cited committed artifacts.
 
 ## Dataset and measurement families (D-008/D-009/D-011)
 
@@ -55,14 +57,77 @@ additionally carry `corpus` (a per-corpus label or `macro-average`). The
 guards assert `set(row) >=` these keys, so later tasks may add columns but
 never remove or retype them.
 
-## Rows — pending
+## Rows — T014 (FR-003) calibration rows landed; T023/T024 pending
 
-`rows: []` — empty by design. T023 fills the ds-v2 per-corpus +
-macro-average rows; T024 fills the ds-v1-kfold ladder rows. Measurement
-protocol inherits the v1 D-009 discipline pinned in `ablation.json`
-(`measurement.protocol`); the protected baselines are re-measured on
-shipping (TC-027: the all-levers-off row equals the committed artifact at
-4 decimals).
+The ds-v1-kfold family's first rows are T014's FR-003 cutoff calibration:
+the all-levers-off **integrity row** plus the `enrich+enrich_idf` grid, 5
+seeded rotation folds over the 58 L1 queries (D-009; per-query outcomes
+pooled exactly once each; the tune/validate columns are the seed-24301
+29/29 halves reconstructed from the same per-query maps — they reproduce
+the committed Figure 1/2 anchors 0.5828/0.4444 and 0.2521/0.1279 to 4
+decimals). T023 fills the ds-v2 rows; T024 the ladder rows. All rows carry
+`family`/`dataset`/`combo`/`recall_at_10`/`mrr`/`p95_ms`/`db_mb`/`mv`.
+
+| combo (ds-v1-kfold) | tune r@10 / MRR | validate r@10 / MRR | pooled r@10 / MRR | p95 source |
+|---|---|---|---|---|
+| all-levers-off (integrity) | 0.5828 / 0.4444 | 0.2521 / 0.1279 | **0.4174 / 0.2862** | quiet re-measure |
+| enrich+enrich_idf@df_max=0.75 | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | sweep (contention caveat) |
+| enrich+enrich_idf@df_max=0.80 | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | sweep (contention caveat) |
+| enrich+enrich_idf@df_max=0.85 | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | sweep (contention caveat) |
+| enrich+enrich_idf@df_max=**0.90 (shipped)** | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | quiet re-measure |
+
+**Integrity gate (the hard gate, first run of the session).** The
+all-levers-off k-fold rotation reproduces the committed DS-v1 session
+baseline **exactly** — pooled 0.4174/0.2862, drift 0.0000 against the
+documented ±0.002 recall / ±0.006 MRR band — and the tune/validate
+reconstructions match the committed anchors to 4 decimals. The quiet
+re-measure pass reproduced the figures again (per-query equality with the
+sweeps: all 58/58, both configs).
+
+**Shipped cutoff: 0.90 — unchanged in code** (`ENRICH_DF_MAX_FRACTION =
+0.90`, D-004). The grid gives no reason to move it: all four cutoffs
+produce byte-identical per-query outcomes (pooled 0.4123/0.2603; bootstrap
+vs all-levers-off Δ −0.0052, p = 0.82, CI straddles zero), so no cutoff
+beats 0.90 under paired bootstrap and ties resolve to the default (AC3).
+The grid was truncated to {0.75, 0.80, 0.85, 0.90} by D-014 (wall-clock
+descope); AC3's wording permits calibration within 0.75–0.95, and 0.95
+measures the same drop-set as 0.90 on this corpus (nothing above 0.8583).
+
+**Why the band is inert on DS-v1 (the calibration's actual finding).** The
+corpus's `term_df` distribution puts the highest token at `test` 0.8583
+(915/1066); `url` — the token behind the recorded enrichment regression —
+sits at **0.2711** (289/1066). A max_df cutoff at any value in [0.75,
+0.95] therefore drops nothing that any of the 58 queries' enrichments
+append, and the four grid rows are byte-identical to DF-blind enrichment.
+The regression L1-D03 records is not a >90%-ubiquity effect on this corpus.
+
+**AC4 (TC-013), measured honestly — not met by the cutoff lever in-band.**
+The previously-passing tune set (23 queries with recall > 0 under the
+integrity run, anchored to the first campaign by the band check) shows
+exactly one regression to zero under every in-band cutoff: **L1-I03**
+(`What breaks if split_url's parsing rules change?`). L1-D03 itself (which
+lands in the seed-24301 **validate** half) stays at recall 0.0 — its
+`url` identifier is not droppable in-band. The diagnostic
+(`fr003-calibration/d03-diagnostic.json`) proves the mechanism and the
+root causes: below the band (cutoff 0.25 < 0.2711) `URL` drops from both
+legs and L1-D03 returns to its incumbent state (recall 1.0 at rank 6 —
+the committed "1.0 → 0.0" fall was recall, and the incumbent rank is 6,
+not 1); L1-I03 does **not** recover even at 0.25 because its rare `split`
+identifier (DF 0.0047) keeps the dilution — an identifier-append effect
+the DF lever cannot repair by construction (it suppresses ubiquity, not
+specificity). The unit-level repair proofs stand (T012/T013 boundary
+tests); the corpus-level disposition of AC4 is the orchestrator's call on
+this evidence.
+
+**p95 discipline.** The k-fold sweeps overlapped a full test suite on the
+same machine (orchestrator-confirmed), so in-sweep durations are
+contention-inflated; the integrity and shipped rows carry quiet-machine
+re-measured p95 (`p95-remeasure.json`), the non-shipped grid rows carry
+in-sweep p95 under that stated caveat. recall/MRR are deterministic under
+the protocol pins and stand as measured.
+
+Raw sweeps, the analysis record, the quiet p95 pass, and the diagnostic
+live under `benchmarks/quality/fr003-calibration/` (see its README).
 
 ## SC-1 verdict — PENDING
 

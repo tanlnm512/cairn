@@ -1,0 +1,149 @@
+{
+  "L1_I03_tune_casualty": {
+    "at_0.25": {
+      "mrr": 0.0,
+      "recall_at_10": 0.0
+    },
+    "at_0.90": {
+      "mrr": 0.0,
+      "recall_at_10": 0.0
+    },
+    "identifiers_at_0.25": [
+      "split",
+      "url"
+    ],
+    "identifiers_at_0.90": [
+      "split",
+      "url"
+    ],
+    "note": "the tune split's single regression under in-band cutoffs does NOT recover below the band either (measured at 0.25): its enrichment appends two identifiers ('split', 'url'); 'url' (DF 0.2711) drops below 0.2711 but 'split' is rare (DF 5/1066 = 0.0047) and no max_df-style cutoff in any plausible band drops a RARE token -- the dilution survives (the sparse leg also keeps the compound 'split_url'). This regression is an identifier-append effect the FR-003 DF lever cannot repair by construction (it suppresses ubiquity, not specificity; TC-012 keeps rare identifiers at full weight ON PURPOSE)."
+  },
+  "band_token_drops": {
+    "0.75": [],
+    "0.80": [],
+    "0.85": [],
+    "0.90": [],
+    "0.95": []
+  },
+  "below_band_probes": {
+    "0.2500": {
+      "identifiers": [
+        "URL"
+      ],
+      "mrr": 0.1667,
+      "rank_of_target": 6,
+      "recall_at_10": 1.0,
+      "sparse_query": "parses already encoded string without re quoting"
+    },
+    "0.2712": {
+      "identifiers": [
+        "URL"
+      ],
+      "mrr": 0.0,
+      "rank_of_target": null,
+      "recall_at_10": 0.0,
+      "sparse_query": "parses already encoded URL string without re quoting"
+    }
+  },
+  "d03_enrichment_vocabulary": [
+    "already",
+    "encoded",
+    "parses",
+    "quoting",
+    "re",
+    "string",
+    "url",
+    "without"
+  ],
+  "outcomes": {
+    "all_levers_off": {
+      "mrr": 0.1667,
+      "rank_of_target": 6,
+      "recall_at_10": 1.0
+    },
+    "enrich_df_blind": {
+      "mrr": 0.0,
+      "rank_of_target": null,
+      "recall_at_10": 0.0
+    },
+    "enrich_idf_at_0.90": {
+      "mrr": 0.0,
+      "rank_of_target": null,
+      "recall_at_10": 0.0
+    }
+  },
+  "query": {
+    "expectations": [
+      {
+        "grade": 2,
+        "symbol_id": "yarl/_url.py#pre_encoded_url"
+      }
+    ],
+    "id": "L1-D03",
+    "text": "Where is the function that parses an already-encoded URL string without re-quoting?"
+  },
+  "reading": "The [0.75,0.95] sweep band cannot drop 'url' on DS-v1 (its real DF fraction is ~0.271): the regression L1-D03 records is not a >90% ubiquity effect on this corpus, and no in-band cutoff recovers it. Lowering the cutoff below 0.2711 (diagnostic only, outside the spec'd band) drops 'URL' from both legs and restores L1-D03 to its all-levers-off state -- the mechanism itself is proven, on this corpus and in T012/T013's boundary unit tests. The tune split's single casualty (L1-I03) does NOT recover even at 0.25: its rare 'split' identifier (DF 0.0047) keeps the dilution -- an identifier-append effect outside the DF lever's reach by construction. NOTE: the 'identifiers' record is the extraction report and stays untouched by design; the drop applies to the appended dense tail and the sparse term list.",
+  "schema": "cairn-fr003-d03-diagnostic/1",
+  "term_df_top10": [
+    {
+      "fraction": 0.8583,
+      "n_symbols": 1066,
+      "symbol_df": 915,
+      "token": "test"
+    },
+    {
+      "fraction": 0.3405,
+      "n_symbols": 1066,
+      "symbol_df": 363,
+      "token": "with"
+    },
+    {
+      "fraction": 0.2711,
+      "n_symbols": 1066,
+      "symbol_df": 289,
+      "token": "url"
+    },
+    {
+      "fraction": 0.1764,
+      "n_symbols": 1066,
+      "symbol_df": 188,
+      "token": "query"
+    },
+    {
+      "fraction": 0.1623,
+      "n_symbols": 1066,
+      "symbol_df": 173,
+      "token": "path"
+    },
+    {
+      "fraction": 0.0938,
+      "n_symbols": 1066,
+      "symbol_df": 100,
+      "token": "run"
+    },
+    {
+      "fraction": 0.091,
+      "n_symbols": 1066,
+      "symbol_df": 97,
+      "token": "empty"
+    },
+    {
+      "fraction": 0.091,
+      "n_symbols": 1066,
+      "symbol_df": 97,
+      "token": "host"
+    },
+    {
+      "fraction": 0.0872,
+      "n_symbols": 1066,
+      "symbol_df": 93,
+      "token": "raw"
+    },
+    {
+      "fraction": 0.0807,
+      "n_symbols": 1066,
+      "symbol_df": 86,
+      "token": "build"
+    }
+  ]
+}
