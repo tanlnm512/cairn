@@ -1,4 +1,4 @@
-# DS-v2 L1 ground truth — authoring notes (T008)
+# DS-v2 ground truth — authoring notes (T008 L1, T009 L5)
 
 Shape: byte-for-byte mirror of DS-v1 (`benchmarks/datasource/t2/ground_truth/`):
 `queries.jsonl` (one JSON object per line: `query_id`, `level`, `kind`, `text`,
@@ -79,3 +79,65 @@ behavior-only phrasings ("Where is the converter that maps strings like yes,
 on and 1 to real booleans defined?"); test-surface queries ("Which tests
 exercise X?") for the callers kind, as in DS-v1 C12-C20. No query embeds a
 qualified symbol path (bare names appear only where DS-v1's style does).
+
+# L5 — knowledge queries (T009)
+
+L5 mirrors DS-v1's semantic level exactly: `kind: "knowledge"`, ids
+`DS2-L5-K##` (DS-v1's unprefixed `L5-K*` space never repeats), "How does X
+work?" mechanism questions whose answer spans several cooperating symbols,
+each query with exactly one grade-2 primary (the load-bearing symbol) plus
+grade-1 context rows (2-5 expectations per query, avg 3.8 — DS-v1 averaged
+3.1).
+
+## Counts (all through the loader)
+
+- L5 total: **44** (floor 40, T005/D-010/TC-005)
+- per corpus: attrs-26.1.0 **30**, yarl **14** (both corpora represented,
+  cross-corpus dominant stratum preserved)
+- L5 expectations: 166 (113 attrs + 53 yarl); combined with L1: 558 total
+- final loader counts: 198 queries = L1 154 + L5 44; kinds
+  {definition 46, callers 42, impact 34, flow 32, knowledge 44}
+
+## Method (same as the L1 batches above)
+
+Per batch (15/15/14 queries), after landing:
+
+1. Loader gate: `cairn.eval.load_ground_truth` over the full pair —
+   154 L1 rows unchanged every time, L5 15 -> 30 -> 44.
+2. Resolution gate against the same fresh scratch inventories (attrs
+   repos=1 files=50 symbols=1672 parse_errors=0; yarl 1/24/1066/0): every
+   L5 expectation resolved tier-1-exact (exact symbol name + exact
+   repo-relative path after stripping the corpus prefix), cumulatively
+   57/57, 113/113, 166/166.
+3. Rationales cite only code read in this snapshot (file:line), including
+   the overloads caveat (yarl's `update_query`/`extend_query`/`with_query`
+   def+overload rows share one file#name id) and assignment-not-indexed
+   names (`NOTHING`, `NO_OP`, `repr_context`, `mutable`, yarl's
+   `from_parts`) — none of those appear as expectations.
+
+## Batches
+
+- L5 batch 1: K01-K15 (attrs knowledge, 15 queries / 57 expectations)
+- L5 batch 2: K16-K30 (attrs knowledge, 15 / 56)
+- L5 batch 3: K31-K44 (yarl knowledge, 14 / 53)
+
+Authoring fix during verification (recorded in the wave log): K43 initially
+claimed `with_path` consumes `path_safe` — untrue in this snapshot
+(`with_path` quotes its input via PATH_QUOTER); the rationale now describes
+path_safe's real, read-side role.
+
+## Style notes vs DS-v1's L5
+
+- attrs topics: class-building machinery (init codegen, field collection,
+  slots/frozen/on_setattr), serialization (asdict/filters), dunder codegen
+  (eq/order/hash/repr), converters/validators composition and disabling,
+  next-gen define/field defaults, aliasing, pickling, cmp_using,
+  VersionInfo, introspection, NOTHING/Factory defaults, exception classes,
+  linecache debuggability, deep validators.
+- yarl topics are fresh angles distinct from DS-v1's 24 L5 rows and from
+  T008's L1 primaries: constructor dispatch, build() validation, query
+  merge (update/extend), per-instance cache under __slots__, encode_url
+  pipeline, special-scheme empty-host enforcement, with_name/suffix
+  surgery, explicit vs effective port, with_fragment self-return,
+  rewrite_module/cache rebinding, validate_host dichotomy, joinpath
+  mechanics, the three path decoders, credential decoding.

@@ -7,7 +7,8 @@
       "symbol_id_prefix": "attrs-26.1.0/",
       "counts": {
         "l1_queries": 106,
-        "expectations": 276
+        "l5_queries": 30,
+        "expectations": 389
       },
       "tree_hash": "T010 pins this"
     },
@@ -16,7 +17,8 @@
       "symbol_id_prefix": "yarl/",
       "counts": {
         "l1_queries": 48,
-        "expectations": 116
+        "l5_queries": 14,
+        "expectations": 169
       },
       "tree_hash": "T010 pins this"
     }
@@ -33,8 +35,12 @@
       "attrs-26.1.0": 106,
       "yarl": 48
     },
-    "expectations": 392,
-    "l5_queries": 0
+    "expectations": 558,
+    "l5_queries": 44,
+    "l5_by_corpus": {
+      "attrs-26.1.0": 30,
+      "yarl": 14
+    }
   },
   "tree_hash": "T010 pins this",
   "version": 1
