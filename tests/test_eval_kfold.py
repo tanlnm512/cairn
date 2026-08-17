@@ -8,7 +8,13 @@ own ids as the flat ``held_out_ids`` iterable). Two things must hold:
 * **Rotation discipline** — every query is held out exactly once, serves as
   selection material in all other folds, and never appears in its own
   fold's selection results (D-009: the per-fold results are the rotation's
-  building blocks; the pooled significance basis is the consumer's job).
+  building blocks).
+* **The aggregate is pooled, never fold-mean (D-009)** — the document's
+  ``aggregate`` block pairs every candidate against the baseline over a
+  pooled per-query array (each query exactly once across the rotation,
+  n = all queries) and runs the unchanged ``paired_bootstrap`` over it;
+  the rotation-mean and per-fold spread ride along under ``descriptive``
+  only and never form the significance basis.
 * **The guard extends per fold (TC-003)** — a tampered request naming any
   fold's held-out ids aborts at that fold's turn with ``HeldOutError``
   before that fold's retrieval runs, whether the breach surfaces in the
@@ -423,3 +429,186 @@ class TestKfoldHeldOutGuard:
         with pytest.raises(HeldOutError):
             run_sweep_kfold(kfold_db, gt_queries, combos=_combos(), ids=_all_ids())
         assert evaluated == []  # nothing scored anywhere: no table, no rows
+
+
+# ---------------------------------------------------------------------------
+# The fold aggregate (T003) — pooled significance, descriptive rotation stats
+# ---------------------------------------------------------------------------
+
+
+class TestKfoldFoldAggregate:
+    """D-009's verdict layer: the significance basis is the POOLED per-query
+    paired array (each query exactly once across the rotation, so the pool
+    reconstructs one full-set paired array with n = all queries), never fold
+    means; the rotation-mean and per-fold spread are descriptive only.
+    """
+
+    def test_aggregate_is_additive_on_the_document(self, kfold_db, gt_queries):
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos())
+        assert set(doc) == {"schema", "dataset", "folds", "aggregate"}
+        # T002's per-fold entries keep their exact landed shape.
+        for entry in doc["folds"]:
+            assert set(entry) == {
+                "fold",
+                "held_out_ids",
+                "rows",
+                "reports",
+                "baseline",
+            }
+        aggregate = doc["aggregate"]
+        assert set(aggregate) == {"metric", "baseline", "significance_basis", "combos"}
+        assert aggregate["metric"] == "recall_at_10"
+        assert aggregate["baseline"] == ALL_LEVERS_OFF
+        assert aggregate["significance_basis"] == "pooled_per_query_paired_bootstrap"
+        assert set(aggregate["combos"]) == {"wide", "tight"}  # baseline excluded
+        for entry in aggregate["combos"].values():
+            assert set(entry) == {"pooled", "bootstrap", "descriptive"}
+
+    def test_empty_grid_leaves_an_empty_candidate_map(self, kfold_db, gt_queries):
+        aggregate = run_sweep_kfold(kfold_db, gt_queries, combos=[])["aggregate"]
+        assert aggregate["baseline"] == ALL_LEVERS_OFF
+        assert aggregate["combos"] == {}
+
+    def test_pooled_array_covers_every_query_exactly_once(self, kfold_db, gt_queries):
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos())
+        all_ids = _all_ids()
+        owner = {
+            qid: entry["fold"]
+            for entry in doc["folds"]
+            for qid in entry["held_out_ids"]
+        }
+        for entry in doc["aggregate"]["combos"].values():
+            pooled = entry["pooled"]
+            assert set(pooled) == {"n_queries", "queries", "candidate", "baseline"}
+            assert pooled["n_queries"] == len(all_ids)
+            assert sorted(pooled["queries"]) == all_ids  # complete cover...
+            assert len(set(pooled["queries"])) == len(pooled["queries"])  # ...once each
+            # Pool order attributes every query to its held-out fold's slot
+            # in the rotation (then id) — the "validate-side exactly once"
+            # structure is readable off the array itself.
+            assert pooled["queries"] == sorted(
+                all_ids, key=lambda qid: (owner[qid], qid)
+            )
+            assert len(pooled["candidate"]) == len(all_ids)
+            assert len(pooled["baseline"]) == len(all_ids)
+
+    def test_pooled_values_come_from_the_per_query_measurements(
+        self, kfold_db, gt_queries
+    ):
+        # Fold-invariance: every fold report carrying a query holds the SAME
+        # value the pool read, so the pool is well defined regardless of
+        # which covering fold supplied it — and its elements are per-query
+        # measurements, not any kind of fold aggregate.
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos())
+        for combo, entry in doc["aggregate"]["combos"].items():
+            pooled = dict(zip(entry["pooled"]["queries"], entry["pooled"]["candidate"]))
+            pooled_base = dict(zip(entry["pooled"]["queries"], entry["pooled"]["baseline"]))
+            for fold_entry in doc["folds"]:
+                candidate_report = fold_entry["reports"][combo]["per_query"]
+                baseline_report = fold_entry["reports"][ALL_LEVERS_OFF]["per_query"]
+                for qid, values in candidate_report.items():
+                    assert pooled[qid] == values["recall_at_10"]
+                    assert pooled_base[qid] == baseline_report[qid]["recall_at_10"]
+
+    def test_bootstrap_receives_the_pooled_arrays_not_fold_means(
+        self, kfold_db, gt_queries, monkeypatch
+    ):
+        calls: list[tuple[list[float], list[float]]] = []
+        sentinel = {"sentinel": True}
+
+        def _recording_bootstrap(candidate, baseline, **kwargs):
+            calls.append((list(candidate), list(baseline)))
+            return sentinel
+
+        monkeypatch.setattr(eval_mod, "paired_bootstrap", _recording_bootstrap)
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos())
+
+        # Exactly one bootstrap per candidate-vs-baseline combo (the seam's
+        # selection reports never invoke it), and the emitted verdict IS the
+        # call's return value.
+        assert len(calls) == 2
+        emitted = [
+            (entry["pooled"]["candidate"], entry["pooled"]["baseline"])
+            for entry in doc["aggregate"]["combos"].values()
+        ]
+        assert [tuple(call) for call in calls] == emitted
+        for entry in doc["aggregate"]["combos"].values():
+            assert entry["bootstrap"] is sentinel
+        # The guard's input is per-query over the FULL id set (n = all
+        # queries) — fold means would arrive as one figure per fold instead.
+        n_folds = doc["dataset"]["k_folds"]
+        assert len(_all_ids()) != n_folds  # the lengths genuinely discriminate
+        for candidate, baseline in calls:
+            assert len(candidate) == len(baseline) == len(_all_ids())
+            assert len(candidate) != n_folds
+
+    def test_real_bootstrap_verdict_runs_over_the_pooled_array(
+        self, kfold_db, gt_queries
+    ):
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos())
+        for entry in doc["aggregate"]["combos"].values():
+            bootstrap = entry["bootstrap"]
+            assert {
+                "delta",
+                "ci_low",
+                "ci_high",
+                "p_value",
+                "significant",
+                "t_statistic",
+                "p_value_t",
+                "n_queries",
+                "n_resamples",
+                "confidence",
+            } <= set(bootstrap)
+            assert bootstrap["n_queries"] == len(_all_ids())  # n = all queries
+            assert bootstrap["n_resamples"] == 10000  # the unchanged regime
+            pooled = entry["pooled"]
+            expected_delta = sum(
+                c - b for c, b in zip(pooled["candidate"], pooled["baseline"])
+            ) / len(pooled["candidate"])
+            assert bootstrap["delta"] == pytest.approx(expected_delta)
+
+    def test_descriptive_rotation_statistics_present_and_labeled(
+        self, kfold_db, gt_queries
+    ):
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos())
+        k_folds = doc["dataset"]["k_folds"]
+        for combo, entry in doc["aggregate"]["combos"].items():
+            descriptive = entry["descriptive"]
+            assert set(descriptive) == {"rotation_mean", "per_fold", "spread"}
+            per_fold = descriptive["per_fold"]
+            assert set(per_fold) == {"candidate", "baseline", "delta"}
+            for figures in per_fold.values():
+                assert len(figures) == k_folds  # no fold's figure missing (TC-001)
+            # The per-fold figures are the emitted fold rows' metrics, and
+            # the delta is the candidate-minus-baseline row difference.
+            for fold_index, fold_entry in enumerate(doc["folds"]):
+                row = next(r for r in fold_entry["rows"] if r["combo"] == combo)
+                base_row = next(
+                    r for r in fold_entry["rows"] if r["combo"] == ALL_LEVERS_OFF
+                )
+                assert per_fold["candidate"][fold_index] == row["recall_at_10"]
+                assert per_fold["baseline"][fold_index] == base_row["recall_at_10"]
+                assert per_fold["delta"][fold_index] == round(
+                    row["recall_at_10"] - base_row["recall_at_10"], 4
+                )
+            assert descriptive["rotation_mean"] == {
+                "candidate": round(sum(per_fold["candidate"]) / k_folds, 4),
+                "baseline": round(sum(per_fold["baseline"]) / k_folds, 4),
+                "delta": round(sum(per_fold["delta"]) / k_folds, 4),
+            }
+            assert descriptive["spread"] == {
+                "delta_min": min(per_fold["delta"]),
+                "delta_max": max(per_fold["delta"]),
+            }
+
+    def test_metric_selection_threads_to_the_pooled_array(
+        self, kfold_db, gt_queries
+    ):
+        doc = run_sweep_kfold(kfold_db, gt_queries, combos=_combos(), metric="mrr")
+        assert doc["aggregate"]["metric"] == "mrr"
+        entry = doc["aggregate"]["combos"]["wide"]
+        pooled = dict(zip(entry["pooled"]["queries"], entry["pooled"]["candidate"]))
+        # Any fold report carrying the query holds the same mrr value.
+        for qid, values in doc["folds"][-1]["reports"]["wide"]["per_query"].items():
+            assert pooled[qid] == values["mrr"]

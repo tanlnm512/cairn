@@ -12,12 +12,12 @@ lever families).
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 4     | 2    |
-| 2     | 6     | 4    |
-| 3     | 4     | 2    |
+| 1     | 4     | 3    |
+| 2     | 6     | 5    |
+| 3     | 4     | 3    |
 | 4     | 7     | 1    |
 | 5     | 3     | 1    |
-| **Σ** | 24    | 10   |
+| **Σ** | 24    | 13   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -25,7 +25,8 @@ lever families).
   done 2026-08-17 — `uv run pytest tests/test_eval.py tests/test_eval_sweep.py -q` → 122 passed (9 new: determinism, union/disjoint, k<5 floor); full suite 1742 passed
 - [x] T002 Add `run_sweep_kfold` to `src/cairn/eval.py` — per fold i call the unchanged `run_sweep`/`evaluate_on` seam with selection ids = all minus fold i and `held_out_ids=fold_i` (flat iterable, no signature change); negative tests: selection-stage reads of any fold's validate ids raise `HeldOutError` before retrieval runs (FR-001)
   done 2026-08-17 — `uv run pytest tests/test_eval_kfold.py -q` → 18 passed (TC-003 negatives incl. consumed-fold breach + mid-rotation abort; cairn-quality-sweep-kfold/1 shape for T003)
-- [ ] T003 (after T002) (in-progress) Add the fold aggregate to `run_sweep_kfold` output — assemble the pooled per-query paired array (each query validate-side exactly once across the rotation) and run the unchanged `paired_bootstrap` over it for significance; report rotation-mean + per-fold spread as descriptive only, never the significance basis (D-009) (FR-001)
+- [x] T003 (after T002) Add the fold aggregate to `run_sweep_kfold` output — assemble the pooled per-query paired array (each query validate-side exactly once across the rotation) and run the unchanged `paired_bootstrap` over it for significance; report rotation-mean + per-fold spread as descriptive only, never the significance basis (D-009) (FR-001)
+  done 2026-08-17 — `uv run pytest tests/test_eval_kfold.py -q` → 26 passed (+8: exactly-once cover, patched-bootstrap-receives-pooled-array proof, descriptive fields)
 - [ ] T004 (after T003) Expose k-fold mode in `eval_cmd` (`src/cairn/cli/system.py`) — configurable fold count, fold-level rows in the emitted sweep doc; verify: `uv run cairn eval --sweep <spec> --queries benchmarks/datasource/t2/ground_truth --out /tmp/kfold-sweep.json` shows fold-level rows; targeted pytest for fold loop + guard green (FR-001)
 
 ## Phase 2: DS-v2 ground truth (FR-002)
@@ -44,7 +45,8 @@ the authoring long pole.
   done 2026-08-17 — vendored attrs 26.1.0 (MIT, 674.9 KB / 67 files, sha256-pinned sdist): DECISION.md carries the 3-candidate table (attrs / markdown-it-py 4.2.0 / cachetools 7.1.7) with measured sizes + licenses; budget total 1173.6/5120 KB OK
 - [x] T008 (after T005, T007) Author DS-v2 L1 queries under `benchmarks/datasource/ds2/ground_truth/` — >=150 with all four kinds represented, staged batches that each load through `load_ground_truth` (`queries.jsonl` + `expectations.tsv`, the loader shape from survey FR-002 evidence), sized to T005's target (FR-002)
   done 2026-08-17 — loader: 154 L1 queries (definition 46 / callers 42 / impact 34 / flow 32; attrs-26.1.0 106 / yarl 48) in 5 loadable batches; ALL 392 expectations resolved tier-1-exact against fresh scratch builds (AUTHORING.md carries method + per-batch counts); ids DS2-L1-*, no DS-v1 collision
-- [ ] T009 (after T008) (in-progress) Author DS-v2 L5 queries — >=40, same directory + loader shapes, staged batches landing verifiable (FR-002)
+- [x] T009 (after T008) Author DS-v2 L5 queries — >=40, same directory + loader shapes, staged batches landing verifiable (FR-002)
+  done 2026-08-17 — loader: 198 queries (L1 154 unchanged + L5 44: attrs 30 / yarl 14, kind=knowledge, DS-v1 L5 semantics mirrored); ALL 558/558 expectations tier-1-exact (L5 166/166 fresh); L1 rows byte-identical
 - [ ] T010 (after T009) Verify and seal DS-v2 — empirically verify every expectation against a fresh graph build (zero aspirational entries) and commit the provenance artifact beside the dataset (per-kind/level counts, pass rate 100%, the build facts verified against); pin tree_hash and the manifest dataset_version; DS-v1 artifacts byte-identical throughout (TC-006, TC-007) (FR-002)
 
 ## Phase 3: Enrichment repaired (FR-003)
@@ -58,7 +60,8 @@ must be INJECTED as a parameter/table." The verified L1-D03 repro
   done 2026-08-17 — `uv run pytest tests/test_term_df.py -q` → 9 passed (migration, determinism, fallback parity, embed-pass wiring); fts5vocab read needed the 3-arg `fts5vocab(main, symbols_fts, row)` form → D-013
 - [x] T012 (after T011) Extend `enrich` in `src/cairn/graph/query_enrich.py` to `enrich(query, df_lookup=None)` — hard cutoff 0.90 (D-004, the scikit-learn `max_df` convention): terms with symbol_df/n_symbols > 0.90 dropped from the appended identifier tail and the sparse term list; the original dense-query prefix untouched; lookup keys case-folded (FTS5 unicode61 vs enrich casing); unit test pins the L1-D03 'URL' repro fixed deterministically (TC-010, TC-012, TC-015) (FR-003)
   done 2026-08-17 — `uv run pytest tests/test_query_enrich.py -q` → 57 passed (34 new: L1-D03 repro, 0.89/0.90/0.91 boundary, rare-term survival, None-lookup equivalence); ENRICH_DF_MAX_FRACTION = 0.90 documented; df_lookup contract published for T013
-- [ ] T013 (after T012) (in-progress) Inject the DF lookup at the boundary seam in `src/cairn/graph/semantic.py` (`_enriched = enrich_query(query)`, ~L581) — per-term indexed SELECTs bounded by the query's distinct token count (documented O(#query tokens) bound); add flag-off `RetrievalParams.enrich_idf` (additive-field doctrine); equivalence tests prove default behavior byte-identical (FR-003)
+- [x] T013 (after T012) Inject the DF lookup at the boundary seam in `src/cairn/graph/semantic.py` (`_enriched = enrich_query(query)`, ~L581) — per-term indexed SELECTs bounded by the query's distinct token count (documented O(#query tokens) bound); add flag-off `RetrievalParams.enrich_idf` (additive-field doctrine); equivalence tests prove default behavior byte-identical (FR-003)
+  done 2026-08-17 — `uv run pytest tests/test_semantic_enrichment.py -q` → 22 passed (19 new: flag-off byte-equivalence battery, ubiquitous-token drop through full path, EXPLAIN-proved index probes, memoization); RetrievalParams.enrich_idf additive
 - [ ] T014 (after T013, T004) Calibrate and measure FR-003 — sweep the cutoff within 0.75–0.95 on the DS-v1 k-fold, record the shipped value (default 0.90) in code + the ablation record, emit ablation rows on both splits, and prove no previously-passing DS-v1 tune-split query regresses to zero with L1-D03 recovered (AC4; TC-011, TC-013, TC-014) (FR-003)
 
 ## Phase 4: New lever families — PRF + multi-vector (FR-004, FR-005)
