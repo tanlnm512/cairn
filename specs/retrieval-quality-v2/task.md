@@ -2,11 +2,12 @@
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 Status reflects code state per [survey.md](survey.md), not intent — survey: 0 DONE /
-3 PARTIAL (FR-002, FR-003, FR-006) / 3 TODO (FR-001, FR-004, FR-005). Nothing is
-done, so every task opens `- [ ]`; PARTIAL items carry their survey gap quoted in
-the phase note. The implementation wave started 2026-08-17 (one commit per
-task, code + docs together; branches per plan.md Delivery: k-fold+spine, DS-v2,
-lever families).
+3 PARTIAL (FR-002, FR-003, FR-006) / 3 TODO (FR-001, FR-004, FR-005). The
+implementation wave ran 2026-08-17 (one commit per task, code + docs
+together). T020/T021/T023/T024's measurement runs are DEFERRED to the
+reference machine — the runners and runbook live in
+`benchmarks/quality/MEASURE.md` (D-015/D-016); all code and dataset tasks
+through T019 + T022 are done.
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
