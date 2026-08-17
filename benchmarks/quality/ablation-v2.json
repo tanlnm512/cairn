@@ -1,0 +1,99 @@
+{
+  "dataset": {
+    "families": {
+      "ds-v1-kfold": {
+        "aggregate": "rotation-mean over the folds with per-fold spread reported descriptively; the accept gate is paired_bootstrap over pooled per-query paired differences, each query validate-side exactly once (D-009)",
+        "corpora": null,
+        "declared_in": "D-009 (kfold_partitions, FR-001)",
+        "ground_truth": {
+          "expectations": 234,
+          "l1_expectations": 160,
+          "l1_queries": 58,
+          "path": "benchmarks/datasource/t2/ground_truth",
+          "queries": 82
+        },
+        "name": "benchmark-datasource",
+        "note": "Same tree and ground truth as the v1 record (figures above copied verbatim from benchmarks/quality/ablation.json's dataset block); the v1 29/29 seeded split is superseded for this family by the D-009 fold rotation over all 58 L1 queries. Rows in this family are a NEW measurement family -- never diffed against v1 rows (D-008/D-011).",
+        "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+        "version": "DS-v1"
+      },
+      "ds-v2": {
+        "aggregate": "macro-average across the per-corpus rows, never presented alone (D-011)",
+        "corpora": [
+          "t2",
+          "attrs-26.1.0"
+        ],
+        "corpora_note": "Per-corpus labels for the corpus dirs under benchmarks/datasource/ at authoring time: 't2' (in-repo) plus the second corpus vendored by T007 as 'attrs-26.1.0' (MIT) under benchmarks/datasource/ds2/second-corpus/, per its DECISION.md (674.9 KB / 67 files, within the per-corpus 3072 KB rule). T023 finalizes the label set when it mints the DS-v2 rows.",
+        "declared_in": "D-011 (BEIR-style cross-corpus protocol, FR-002/FR-006)",
+        "name": "benchmark-datasource-ds2",
+        "path": "benchmarks/datasource/ds2/",
+        "protocol": "tune on DS-v1, validate zero-shot on DS-v2's corpora; report per-corpus rows plus macro-average, never an aggregate alone, never cross-corpus row diffs (D-011)",
+        "sizing": {
+          "floor_l1_queries": 150,
+          "floor_l5_queries": 40,
+          "method": "Sakai topic-set-size power analysis from DS-v1 evidence; target n = max(150 L1, n_required) within authoring budget, >= 40 L5 per FR-002 (D-010; analysis authored by T005)",
+          "status": "pending"
+        },
+        "status": "pending",
+        "tree_hash": null
+      }
+    },
+    "note": "Two measurement families (FR-006 'Chosen approach'). The v1 record (ablation.json, schema cairn-quality-ablation/1) stays DS-v1-era evidence, byte-identical; v2 rows are never diffed against v1 rows (D-008/D-011)."
+  },
+  "measurement": {
+    "protocol": "inherits the v1 D-009 protocol discipline pinned in benchmarks/quality/ablation.json (measurement.protocol): torch threads 1, local bge-m3, brute-force cosine (no vec0), rerank under the CAIRN_RERANK=1 marker with flat pairs and gate margin 0.45, reference-local machine",
+    "protocol_inherited_from": "benchmarks/quality/ablation.json",
+    "status": "pending",
+    "todo": [
+      "T023: mint DS-v2, finalize the second-corpus label, fill ds-v2 per-corpus + macro-average rows",
+      "T024: run the k-fold ladder via kfold_partitions and fill ds-v1-kfold rows",
+      "re-measure the protected baselines on shipping (TC-027: all-levers-off equals the committed artifact at 4 decimals)"
+    ]
+  },
+  "row_shape": {
+    "columns": {
+      "combo": "lever combination label",
+      "dataset": "family dataset label: 'DS-v1' for ds-v1-kfold rows, 'DS-v2' for ds-v2 rows",
+      "db_mb": "sqlite database size in MB at measurement time",
+      "family": "measurement family: 'ds-v1-kfold' | 'ds-v2'",
+      "mrr": "MRR on the row's evaluation split",
+      "mv": "multi-vector marker: true = measured against the embeddings_mv store (FR-005), false = single-vector default",
+      "p95_ms": "p95 latency in milliseconds",
+      "recall_at_10": "recall@10 on the row's evaluation split"
+    },
+    "contract": "Additive columns only: guards assert set(row) >= these keys, so later tasks may add columns but never remove or retype them (D-008 consequences; TC-028). ds-v2 rows additionally carry 'corpus': a per-corpus label from dataset.families.ds-v2.corpora or 'macro-average'."
+  },
+  "rows": [],
+  "schema": "cairn-quality-ablation/2",
+  "shipped_defaults": {
+    "config_reference": "benchmarks/quality/ablation.json shipped_defaults -- the unchanged incumbent (all-levers-off) until a v2 row ships under its own family",
+    "row": null,
+    "status": "pending"
+  },
+  "task": "T022 (FR-006); skeleton -- measurement rows land with T023 (ds-v2) and T024 (ds-v1-kfold)",
+  "verdict": {
+    "ds2_counts": {
+      "l1_queries": null,
+      "l5_queries": null,
+      "minimum": {
+        "l1_queries": 150,
+        "l5_queries": 40
+      },
+      "note": "slot: filled by T023 when DS-v2 lands; TC-029 requires >= 150 L1 / >= 40 L5 (D-010 floor)"
+    },
+    "evidence_base": "slot: the verdict must cite the k-fold aggregate (fold count, per-fold spread) over the legacy set AND the DS-v2 measurement (query counts) -- never the legacy single split (TC-029)",
+    "fold_count": null,
+    "fold_count_minimum": 5,
+    "honesty_clause": "same clause as the v1 record: if the sweep cannot reach the margin without violating the protected baselines or the precision doctrine, the best evidenced configuration ships and the shortfall is documented in this document -- never gamed (spec.md SC-1)",
+    "margins": null,
+    "outcome": "pending",
+    "per_fold_spread": null,
+    "sc1_actual": null,
+    "sc1_targets": {
+      "mrr": 0.33,
+      "recall_at_10": 0.5
+    },
+    "statement": "PENDING: this document is the T022 skeleton; the FR-006 ladder re-run has not executed. The SC-1 targets are the same bar as the first campaign -- recall@10 >= 0.50, MRR >= 0.33 (TC-026; no goalpost moves). No verdict may be read from this block until status leaves 'pending'.",
+    "status": "pending"
+  }
+}
