@@ -43,7 +43,8 @@
   "measurement": {
     "landed": [
       "T014 (FR-003): cutoff calibration rows landed (family ds-v1-kfold) -- integrity row + enrich+enrich_idf grid {0.75,0.80,0.85,0.90} (0.95 descoped, D-014); raw sweeps, analysis, quiet p95 re-measure and the L1-D03 diagnostic under benchmarks/quality/fr003-calibration/",
-      "T020 (FR-004): PRF ablation rows landed (family ds-v1-kfold) -- grid fb_docs {3,10} x fb_terms 10 x lambda 0.5 (D-002 anchors); raw sweeps + rows payload under benchmarks/quality/fr004-prf/ (integrity gate PASS: pooled 0.4174/0.2862 exact, tune/validate anchors 4dp, cross-run implicit rows identical)"
+      "T020 (FR-004): PRF ablation rows landed (family ds-v1-kfold) -- grid fb_docs {3,10} x fb_terms 10 x lambda 0.5 (D-002 anchors); raw sweeps + rows payload under benchmarks/quality/fr004-prf/ (integrity gate PASS: pooled 0.4174/0.2862 exact, tune/validate anchors 4dp, cross-run implicit rows identical)",
+      "T021 (FR-005): multi-vector ablation row landed (family ds-v1-kfold) -- pooled 0.5588/0.3395 (both SC-1 targets), bootstrap delta +0.1414 p=0.0035; raw sweep under benchmarks/quality/fr005-mv/ (integrity 58/58 per-query identity vs the committed T014 baseline)"
     ],
     "p95_discipline": "T014: the integrity row and the shipped-cutoff row carry quiet-machine re-measured p95 (p95-remeasure.json; the k-fold sweeps overlapped a full test suite on the same machine, orchestrator-confirmed); non-shipped grid rows carry in-sweep p95 under that stated caveat",
     "protocol": "inherits the v1 D-009 protocol discipline pinned in benchmarks/quality/ablation.json (measurement.protocol): torch threads 1, local bge-m3, brute-force cosine (no vec0), rerank under the CAIRN_RERANK=1 marker with flat pairs and gate margin 0.45, reference-local machine",
@@ -468,6 +469,67 @@
         "n_queries": 29,
         "p95_ms": 85.0652,
         "recall_at_10": 0.1535
+      }
+    },
+    {
+      "bootstrap_vs_all_levers_off": {
+        "ci_high": 0.23734332238642583,
+        "ci_low": 0.05273518746579094,
+        "delta": 0.14138615216201422,
+        "n_queries": 58,
+        "p_value": 0.0034996500349965005,
+        "p_value_t": 0.004045198005465291,
+        "significant": true
+      },
+      "combo": "multivector",
+      "dataset": "DS-v1",
+      "db_mb": 12.4531,
+      "family": "ds-v1-kfold",
+      "fold_count": 5,
+      "levers": {
+        "chunk_variant": "B",
+        "dense_threshold": 0.3,
+        "enrich": false,
+        "enrich_idf": null,
+        "multivector": true,
+        "pair_format": "flat",
+        "rerank": "auto (on under CAIRN_RERANK=1 marker; confidence gate margin 0.45)",
+        "rrf_k": 60,
+        "rrf_weights": [
+          1.0,
+          1.0
+        ],
+        "sparse_top_n": null
+      },
+      "mrr": 0.3395,
+      "mv": true,
+      "n_queries": 58,
+      "notes": "FR-005 multi-vector row (T021): RetrievalParams(multivector=True) over the incumbent base \u2014 name+docstring vectors beside the chunk vector, max-score dedup per symbol (T018/T019). Measured against the fr005-mv scratch DB (1066 base + 1240 mv rows: 1066 name + 174 docstring; one `cairn embed --multivector` pass). POOLED 0.5588/0.3395 reaches BOTH SC-1 targets (0.50/0.33) and clears the 95% pooled bootstrap guard decisively (p=0.0035, t-test cross-check 0.0040; per-fold delta range [+0.0969, +0.1832], all five folds positive). Storage growth 1.8103x (13058048 vs 7213056 bytes, same corpus, no-vec0 doctrine) \u2014 inside the <=3x bound (AC6/spec risk). p95 703.0 ms pooled is BELOW the incumbent's 1026.1 ms (rerank stays armed under the marker on this combo). Integrity (TC-022): the implicit all-levers-off row reproduces the committed T014 baseline with 58/58 per-query identity, drift 0.000000 \u2014 the mv rows sit UNREAD in the DB during that row (T018's flag-off byte-equivalence).",
+      "p95_ms": 703.0115,
+      "p95_source": "kfold-sweep (serial run, otherwise-quiet reference machine per MEASURE.md)",
+      "recall_at_10": 0.5588,
+      "split_basis": "pooled k-fold rotation (each query held out exactly once, D-009); tune/validate are the seed-24301 29/29 halves reconstructed from the same per-query maps",
+      "storage": {
+        "base_rows": 1066,
+        "bound": "<= 3x (FR-005/spec risk)",
+        "docstring_kind_rows": 174,
+        "growth_factor": 1.8103,
+        "multivector_db_bytes": 13058048,
+        "mv_rows": 1240,
+        "name_kind_rows": 1066,
+        "single_vector_reference_db_bytes": 7213056
+      },
+      "tune": {
+        "mrr": 0.4664,
+        "n_queries": 29,
+        "p95_ms": 892.9915,
+        "recall_at_10": 0.6262
+      },
+      "validate": {
+        "mrr": 0.2126,
+        "n_queries": 29,
+        "p95_ms": 690.0509,
+        "recall_at_10": 0.4915
       }
     }
   ],

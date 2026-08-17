@@ -57,7 +57,7 @@ additionally carry `corpus` (a per-corpus label or `macro-average`). The
 guards assert `set(row) >=` these keys, so later tasks may add columns but
 never remove or retype them.
 
-## Rows — T014 (FR-003) + T020 (FR-004) landed; T021/T023/T024 pending
+## Rows — T014 (FR-003) + T020 (FR-004) + T021 (FR-005) landed; T023/T024 pending
 
 The ds-v1-kfold family's first rows are T014's FR-003 cutoff calibration:
 the all-levers-off **integrity row** plus the `enrich+enrich_idf` grid, 5
@@ -65,8 +65,8 @@ seeded rotation folds over the 58 L1 queries (D-009; per-query outcomes
 pooled exactly once each; the tune/validate columns are the seed-24301
 29/29 halves reconstructed from the same per-query maps — they reproduce
 the committed Figure 1/2 anchors 0.5828/0.4444 and 0.2521/0.1279 to 4
-decimals). T021 fills the multi-vector row; T023 the DS-v2 rows; T024
-the ladder rows and the shipped-defaults disposition. All rows carry
+decimals). T023 fills the DS-v2 rows; T024 the ladder rows and the
+shipped-defaults disposition. All rows carry
 `family`/`dataset`/`combo`/`recall_at_10`/`mrr`/`p95_ms`/`db_mb`/`mv`.
 
 | combo (ds-v1-kfold) | tune r@10 / MRR | validate r@10 / MRR | pooled r@10 / MRR | p95 source |
@@ -78,6 +78,27 @@ the ladder rows and the shipped-defaults disposition. All rows carry
 | enrich+enrich_idf@df_max=**0.90 (shipped)** | 0.5828 / 0.4115 | 0.2417 / 0.1092 | 0.4123 / 0.2603 | quiet re-measure |
 | prf@docs=3,terms=10,lambda=0.5 | 0.5484 / 0.2642 | 0.1972 / 0.0862 | 0.3728 / 0.1752 | sweep (serial, quiet machine) |
 | prf@docs=10,terms=10,lambda=0.5 | 0.5713 / 0.2368 | 0.1535 / 0.0768 | 0.3624 / 0.1568 | sweep (serial, quiet machine) |
+| **multivector** | 0.6262 / 0.4664 | 0.4915 / 0.2126 | **0.5588 / 0.3395** | sweep (serial, quiet machine) |
+
+### T021 (FR-005) — multi-vector: the strongest row, both SC-1 targets reached
+
+`RetrievalParams(multivector=True)` over the incumbent base — name and
+docstring vectors beside the chunk vector, max-score dedup per symbol —
+on the same 5-fold rotation, against the fr005-mv scratch DB (1066 base
++ 1240 mv rows from one `cairn embed --multivector` pass). **Pooled
+0.5588 / 0.3395 reaches both SC-1 targets (0.50 / 0.33) — the first
+configuration in either campaign to do so — and clears the 95% pooled
+bootstrap guard decisively**: Δ +0.1414, p = 0.0035 (t-test cross-check
+p = 0.0040), 95% CI [+0.0527, +0.2373], per-fold Δ range
+[+0.0969, +0.1832] with all five folds positive. Storage growth is
+**1.8103×** (13,058,048 vs 7,215,056 bytes on the same corpus, no-vec0
+doctrine) — inside the ≤3× bound. Pooled p95 is 703.0 ms, *below* the
+incumbent's 1026.1 ms (rerank stays armed under the marker on this
+combo). Integrity (TC-022): the implicit all-levers-off row reproduces
+the committed T014 baseline with 58/58 per-query identity, drift
+0.000000 — the mv rows sit unread in the DB during that row, proving the
+flag-off byte-equivalence T018 pinned. Raw sweep under
+`benchmarks/quality/fr005-mv/`.
 
 ### T020 (FR-004) — PRF: an honest negative, inside the budget it replaces
 

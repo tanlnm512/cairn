@@ -16,9 +16,9 @@ through T019 + T022 are done.
 | 1     | 4     | 4    |
 | 2     | 6     | 6    |
 | 3     | 4     | 4    |
-| 4     | 7     | 6    |
+| 4     | 7     | 7    |
 | 5     | 3     | 1    |
-| **Σ** | 24    | 21   |
+| **Σ** | 24    | 22   |
 
 ## Phase 1: Evidence core — k-fold harness (FR-001)
 <!-- Checkpoint: a seeded >=5-fold sweep over DS-v1 emits per-fold spread + rotation-aggregated verdict; a negative test proves selection-stage reads of any fold's validate ids raise HeldOutError; fold count configurable. Survey FR-001 TODO: "no fold code anywhere" (grep confirms 0 hits in src/cairn/eval.py). -->
@@ -87,7 +87,8 @@ FR-005 both TODO (grep-confirmed: no prf/rm3/feedback, no embeddings_mv/vecmv).
   done 2026-08-17 — `uv run pytest tests/test_ann_vecmv.py -q` → 10 passed (default-source byte-equivalence, vecmv contract, mv round-trip, dedup max + threshold-on-max + single-vector no-op, CLI wiring); scoped regression 213 passed
 - [x] T020 (after T016) Emit PRF ablation rows on the DS-v1 k-fold — grid fb_docs {3, 10}, fb_terms 10, λ 0.5 (D-002); recall@10/MRR/p95 on both splits, all columns populated; p95 recorded against the rerank budget it replaces (committed figures 1142.0 vs 28.9 ms p95 — never the unretained ~780 ms p50); the sweep's implicit all-levers-off integrity row still reproduces the session baseline (TC-018, TC-019) (FR-004)
   done 2026-08-17 — serial quiet-machine runs per MEASURE.md: docs3 Δ−0.0447 (p=0.30, CI [−0.1315,+0.0402]), docs10 Δ−0.0550 (p=0.19, CI [−0.1375,+0.0250]) — honest negative, PRF stays flag-off; p95 99.4/81.1 ms vs the 1142.0 ms rerank budget (AC5 latency half holds); integrity GATE PASS (pooled 0.4174/0.2862 exact, tune/validate anchors 4dp, cross-run implicit rows identical); rows in ablation-v2 + fr004-prf/{rows,FIGURES,sweeps}; guard tests 12 passed
-- [ ] T021 (after T018, T019) Emit multi-vector ablation rows on the DS-v1 k-fold — recall@10/MRR/db_mb (via `_size_accounting`, same DB file) /p95 on both splits with the storage growth factor (<= 3x) stated and an additive `mv` row marker like `variant`; the sweep's implicit all-levers-off integrity row still reproduces the session baseline (TC-022) (FR-005)
+- [x] T021 (after T018, T019) Emit multi-vector ablation rows on the DS-v1 k-fold — recall@10/MRR/db_mb (via `_size_accounting`, same DB file) /p95 on both splits with the storage growth factor (<= 3x) stated and an additive `mv` row marker like `variant`; the sweep's implicit all-levers-off integrity row still reproduces the session baseline (TC-022) (FR-005)
+  done 2026-08-17 — serial quiet-machine run per MEASURE.md: pooled 0.5588/0.3395 — BOTH SC-1 targets (0.50/0.33) reached for the first time — bootstrap Δ+0.1414 p=0.0035 (t-test 0.0040), per-fold Δ [+0.0969,+0.1832] all positive; growth factor 1.8103x (SIZE.md; 1240 mv rows = 1066 name + 174 docstring); integrity 58/58 per-query identity vs committed T014 baseline, drift 0.000000; row in ablation-v2 + sweep-mv.json; guard tests 12 passed
 
 ## Phase 5: Confirmation ladder + extended record (FR-006)
 <!-- Checkpoint: ladder re-run on k-fold aggregate + DS-v2; v2 rows live in their new family and are never diffed against DS-v1 rows; the six existing guard tests still pass plus new v2-family guard tests; SC-1 targets unchanged at 0.50/0.33 and match rules untouched; if anything ships: shipped_defaults row + perf/agent-effort/warm-time baselines re-measured; if nothing ships: verdict states the shortfall and the next binding constraint. Hard-gated by Phase 2 completion and Phase 1's aggregate machinery. -->
