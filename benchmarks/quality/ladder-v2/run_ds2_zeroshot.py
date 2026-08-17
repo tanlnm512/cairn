@@ -451,7 +451,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     rows_payload = {
         "schema": "cairn-ds2-rows/1",
         "task": "T023 (FR-006): DS-v2 rows to merge into "
-        "benchmarks/quality/ablation-v2.json",
+        "benchmarks/quality/ablation.json",
         "counts": counts,
         "db_mb": db_mb,
         "rows": rows,

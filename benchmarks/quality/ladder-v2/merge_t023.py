@@ -1,5 +1,6 @@
 """T023 one-pass merge: ladder rows + DS-v2 rows + verdict evidence into
-ablation-v2.json. Run AFTER run_ds2_zeroshot.py has emitted rows-ds2.json.
+ablation.json (ablation-v2.json before the 2026-08-17 unification). Run
+AFTER run_ds2_zeroshot.py has emitted rows-ds2.json.
 Pure JSON transform over measured documents — no retrieval.
 """
 import json
@@ -10,7 +11,7 @@ sys.path.insert(0, "src")
 from cairn.eval import _percentile, load_ground_truth, split_queries  # noqa: E402
 
 REPO = Path(".")
-ART = REPO / "benchmarks/quality/ablation-v2.json"
+ART = REPO / "benchmarks/quality/ablation.json"
 
 LADDER = [
     (

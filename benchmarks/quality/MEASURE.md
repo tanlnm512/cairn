@@ -2,7 +2,7 @@
 
 Runbook for the campaign's deferred measurements. Everything before this
 (T001–T019, T022; 19/24 tasks) is landed on `feat/retrieval-quality-v2`,
-including T014's FR-003 calibration and its rows in `ablation-v2.{json,md}`.
+including T014's FR-003 calibration and its rows in `ablation.{json,md}` (the unified record; `ablation-v2.{json,md}` before the 2026-08-17 unification).
 What remains is machine-time: the PRF and multi-vector ablation rows, and the
 D-016 confirmation ladder. Run this on the **reference machine, quiet** (the
 D-009 protocol: no concurrent load — on MPS hardware, concurrent model
@@ -59,7 +59,7 @@ misses, STOP: the numbers were bought by something other than the lever.
 
 ## Step 3 — write the rows (single write; D-015)
 
-Append rows to `benchmarks/quality/ablation-v2.{json,md}` in ONE pass from
+Append rows to `benchmarks/quality/ablation.{json,md}` in ONE pass from
 the measured JSONs (canonical serialization: `json.dumps(..., indent=2,
 sort_keys=True)`), mirroring T014's rows' shape: family `ds-v1-kfold`,
 dataset `DS-v1`, combo, recall_at_10, mrr, p95_ms (+ `db_mb` and `mv: true`
@@ -78,7 +78,7 @@ The ladder's DS-v1 leg is Step 1's two runs. Still to do:
    `benchmarks/datasource/ds2/ground_truth` (198 queries) — per-corpus rows
    (derivable from the expectations' corpus-prefixed file paths) + macro
    average, never an aggregate alone (D-011), never diffed against DS-v1 rows.
-2. Write the verdict block into ablation-v2 citing its evidence: fold count
+2. Write the verdict block into ablation.json citing its evidence: fold count
    ≥5 with per-fold spread, DS-v2 counts ≥150 L1 / ≥40 L5 (actuals: 154/44).
    SC-1 targets stay 0.50/0.33; the all-levers-off row must reproduce the
    committed DS-v1 baseline at 4 dp.

@@ -27,10 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both SC-1 targets there (0.5588/0.3395) — but zero-shot DS-v2 refuted
   transfer for all of them, so nothing ships and the shortfall + next
   binding constraint (lever generalization) are documented in
-  `benchmarks/quality/ablation-v2.md`.
+  `benchmarks/quality/ablation.md`.
 
 ### Changed
-- _Nothing yet._
+- **Unified ablation record**: the two retrieval-quality campaign records
+  (`ablation.{json,md}` v1 + `ablation-v2.{json,md}` v2, artifacts of the two
+  campaign PRs) merged into one `benchmarks/quality/ablation.{json,md}`
+  (schema `cairn-quality-ablation/2`); the first campaign's `/1` record is
+  embedded verbatim under `campaigns.retrieval-quality-v1` (original blob
+  hashes recorded; git history keeps the standalone originals), and the two
+  guard test files merged into one `tests/test_ablation_artifact.py`.
+  Dataset labels (`DS-v1`/`DS-v2`) and measurement families are untouched —
+  they name datasets and protocols, not campaign versions.
 
 ## [0.11.0] - 2026-08-16
 

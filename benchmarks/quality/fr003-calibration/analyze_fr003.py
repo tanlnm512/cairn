@@ -10,8 +10,9 @@ Outputs:
   figures + bootstrap verdicts per cutoff, the tune/validate split
   reconstruction (seed 24301, the v1 campaign's split), the AC4/TC-013
   non-regression proof, and the shipped-cutoff decision.
-* ``rows-fr003.json`` -- the ablation-v2 row fragment (family
-  ds-v1-kfold) to merge into benchmarks/quality/ablation-v2.json.
+* ``rows-fr003.json`` -- the ablation-record row fragment (family
+  ds-v1-kfold) to merge into benchmarks/quality/ablation.json
+  (ablation-v2.json before the 2026-08-17 unification).
 
 Method notes:
 
@@ -370,7 +371,7 @@ def main() -> int:
           f"{decision['shipped_matches_code_default']})")
     print("GATE:", "PASS" if gate_ok else "FAIL")
 
-    # --- The ablation-v2 row fragment (family ds-v1-kfold). -------------
+    # --- The ablation-record row fragment (family ds-v1-kfold). ---------
     levers_off = {
         "chunk_variant": "B",
         "dense_threshold": 0.3,
@@ -484,7 +485,7 @@ def main() -> int:
 
     rows_doc = {
         "schema": "cairn-fr003-rows/1",
-        "task": "T014 (FR-003): rows to merge into benchmarks/quality/ablation-v2.json",
+        "task": "T014 (FR-003): rows to merge into benchmarks/quality/ablation.json (ablation-v2.json before the 2026-08-17 unification)",
         "shipped_cutoff": shipped_cutoff,
         "rows": rows,
     }

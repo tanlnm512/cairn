@@ -1,7 +1,7 @@
 # FR-003 cutoff calibration (T014)
 
 Artifacts, method, and caveats for the `ds-v1-kfold` FR-003 rows committed
-in [`../ablation-v2.json`](../ablation-v2.json). Measured 2026-08-17.
+in [`../ablation.json`](../ablation.json) (the unified record; `../ablation-v2.json` before the 2026-08-17 unification). Measured 2026-08-17.
 
 ## Method (D-009 protocol, inherited from the v1 record)
 
@@ -31,7 +31,7 @@ file is touched; the shipped code value stays 0.90) and runs
 | `p95-remeasure.json` | quiet p95 pass output (+ per-query determinism cross-check) |
 | `d03-diagnostic.json` | measured diagnostic output |
 | `analysis.json` | integrity gate, grid figures, bootstrap verdicts, AC4, decision |
-| `rows-fr003.json` | the row fragment merged into `ablation-v2.json` |
+| `rows-fr003.json` | the row fragment merged into `ablation.json` |
 
 ## Results in one paragraph
 
@@ -48,7 +48,7 @@ there). AC4's L1-D03 clause is not reachable in-band (diagnostic: below
 incumbent state — recall 1.0 at rank 6); the tune split's single
 regression (L1-I03) does not recover even below the band (its rare
 `split` identifier, DF 0.0047, keeps the dilution). Full detail in
-`analysis.json` and `../ablation-v2.md`.
+`analysis.json` and `../ablation.md`.
 
 ## Caveats
 
