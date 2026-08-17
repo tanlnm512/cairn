@@ -376,6 +376,7 @@ erDiagram
     symbols ||--o{ edges : "target of"
     files ||--o{ imports : declares
     symbols ||--o{ embeddings : "vector of"
+    symbols ||--o{ embeddings_mv : "extra vectors of"
     symbols ||--o{ transitive_edges : "closure source"
 
     repos { string id PK }
@@ -407,6 +408,20 @@ erDiagram
       string model PK
       blob vec
     }
+    embeddings_mv {
+      string symbol_id PK
+      string model PK
+      string vector_kind PK
+      int dim
+      blob vec
+      string chunk
+      string content_hash
+    }
+    term_df {
+      string token PK
+      int symbol_df
+      int n_symbols
+    }
     dataflow {
       string symbol PK
       json within_repo
@@ -426,6 +441,13 @@ erDiagram
 - **Derived tables**: `dataflow` (O(1) blast radius for public symbols),
   `transitive_edges` (closure matrix, default depth 3) — built by `cairn build`
   and rebuilt by `cairn update` whenever any file changed.
+- **Vector search artifacts**: per-model sqlite-vec `vec0` ANN tables —
+  `vec_<model>` over `embeddings` (populated by every `cairn embed`) and
+  `vecmv_<model>` over `embeddings_mv` (the opt-in multi-vector table, written
+  only by `cairn embed --multivector` and empty on default builds; multi-vector
+  queries merge by max score per symbol) — plus `term_df`, the persisted
+  document-frequency table refreshed by the same `cairn embed` pass, powering
+  IDF-aware query enrichment.
 
 ### OKF markdown bundle (`.knowledge/`)
 
