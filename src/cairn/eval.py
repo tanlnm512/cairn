@@ -26,10 +26,16 @@ emits the machine-readable multi-row results table in its own schema
 (``variant`` — T014, FR-002): the runner re-embeds the measurement DB
 under that variant through the content-hash staleness flow before
 evaluating the combo, and every row carries db_mb + chunk size bounds
-(the per-recipe size accounting the survey flagged missing). The
+(the per-recipe size accounting the survey flagged missing). Every combo
+measures under its OWN declared embedding state — variant combos under
+their recipe, non-variant combos under the session baseline, which
+``_EmbeddingStateMachine`` snapshots once and restores before any
+non-variant combo that follows a variant one (a fold's leftover recipe
+never leaks into the next fold's rows). The
 ground-truth files stay read-only (TC-025 — byte-identical after every
 sweep, recipe or not); the only write path is the measurement DB's
-embeddings table, via ``embed_all``, for variant combos.
+embeddings table, via ``embed_all``, for variant combos (plus the
+rowid-exact baseline restores).
 ``evaluate_full_set`` is the post-selection reporting path (the full set,
 no split) behind the integrity row and final numbers. Serializing the
 table is the caller's job (``format_sweep_json`` gives the canonical
@@ -866,12 +872,26 @@ def _betacf(a: float, b: float, x: float, max_iter: int = 300, eps: float = 3e-1
 # variant is idempotent — the hashes already match. Per-variant
 # measurement runs are serial machine time, not agent time.
 #
+# Per-combo embedding state: every combo measures under its OWN declared
+# state — the variant's for recipe combos, the session baseline (the state
+# the DB entered the sweep in) for every non-variant combo. Re-embedding is
+# destructive, so ``_EmbeddingStateMachine`` snapshots the baseline table
+# once before the first re-embed and restores it before any non-variant
+# combo that follows a variant one. Without that, a later combo — the
+# prepended integrity row of a k-fold fold >= 1, or any variant-less combo
+# ordered after a variant — would measure under the last variant's
+# leftovers: grid position and fold position, never the combo's own
+# declaration, would decide the state its numbers were taken under.
+#
 # Read-only scope (TC-025): the ground-truth files behind ``queries`` are
 # only ever read and no file other than the caller's chosen output is
 # written; the measurement DB's embeddings table IS written, but only for
-# variant combos and only through ``embed_all``. The DB ends the sweep in
-# the LAST re-embedded variant's state — run recipe sweeps on a disposable
-# copy when the starting state must survive.
+# variant combos (through ``embed_all``) and baseline restoration (the
+# rowid-exact snapshot rewrite, never a model call). The DB ends the sweep
+# in the LAST EVALUATED combo's declared state — the final variant's
+# recipe when a variant combo closes the grid, the restored session
+# baseline otherwise — so run recipe sweeps on a disposable copy when the
+# starting state must survive.
 # --------------------------------------------------------------------------
 
 #: Schema tag of the sweep results table (D-007: own artifact shape, never
@@ -1004,6 +1024,89 @@ def _reembed_for_variant(conn: sqlite3.Connection, variant: str) -> Dict[str, An
     return emb.embed_all(conn, variant=variant)
 
 
+class _EmbeddingStateMachine:
+    """Install each combo's declared embedding state before it is evaluated.
+
+    A sweep grid mixes two kinds of combos: variant combos, which re-embed
+    the measurement DB under their recipe through :func:`_reembed_for_variant`,
+    and non-variant combos, whose declared state is the SESSION BASELINE —
+    the embedding state the DB entered the sweep in (the integrity row's
+    measurement state, D-009/T011 doctrine). Re-embedding is destructive
+    (the previous state's rows are overwritten in place), so the machine
+    snapshots the baseline ``embeddings`` table once, lazily, at the last
+    moment that state is still installed (right before the first
+    re-embed), and restores that snapshot before every non-variant combo
+    that follows a variant one. One snapshot per sweep at most, one restore
+    per variant-to-baseline transition — never anything per combo "just in
+    case".
+
+    Why a snapshot rather than re-embedding back: the baseline state's
+    recipe is recorded nowhere the harness can read (the embeddings table
+    stores content hashes, not recipe names), so re-embedding under
+    ``variant=None`` would merely ASSUME the env-default recipe produced the
+    baseline — untrue for a DB that entered the sweep mid-variant or with
+    no embeddings at all. The snapshot restores the baseline
+    byte-identically in every case and never invokes the embed model.
+    Variant installs stay unconditional per variant combo (the
+    ``embed_all`` call per recipe combo is an observable orchestration
+    contract, and its content-hash staleness already makes a repeated
+    variant a no-op).
+
+    The restore is rowid-exact (DELETE + INSERT carrying the snapshot's
+    rowids), so a vec0 ANN index keyed on ``embeddings.rowid`` stays exactly
+    as aligned as the re-embed seam itself leaves it. Only the
+    ``embeddings`` table is restored: it is the only table the base embed
+    flow writes that retrieval reads — ``term_df`` is rebuilt from the
+    symbols table, which no recipe touches, so a re-embed never changes it.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        #: Recipe currently installed; None means the session baseline.
+        self._installed: Optional[str] = None
+        #: Lazy snapshot of the baseline embeddings rows (None until the
+        #: first re-embed is about to destroy that state).
+        self._baseline_rows: Optional[List[Tuple[Any, ...]]] = None
+
+    def install(self, variant: Optional[str]) -> None:
+        """Ensure the DB is in ``variant``'s state (``None`` = baseline).
+
+        Non-variant grids never leave the baseline, so they never snapshot,
+        never restore, and never touch the DB here at all — their sweeps
+        stay byte-identical to a build without this class.
+        """
+        if variant is not None:
+            self._leave_baseline_into(variant)
+        else:
+            self._restore_baseline()
+
+    def _leave_baseline_into(self, variant: str) -> None:
+        if self._baseline_rows is None:
+            # Last moment the session-baseline state is still installed.
+            self._baseline_rows = [
+                tuple(row)
+                for row in self._conn.execute(
+                    "SELECT rowid, symbol_id, model, dim, vec, chunk, "
+                    "content_hash, embedded_at FROM embeddings"
+                )
+            ]
+        _reembed_for_variant(self._conn, variant)
+        self._installed = variant
+
+    def _restore_baseline(self) -> None:
+        rows = self._baseline_rows
+        if rows is None:
+            return  # never left the baseline — nothing to restore
+        self._conn.execute("DELETE FROM embeddings")
+        self._conn.executemany(
+            "INSERT INTO embeddings (rowid, symbol_id, model, dim, vec, "
+            "chunk, content_hash, embedded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+        self._installed = None
+
+
 def _size_accounting(conn: sqlite3.Connection) -> Dict[str, Any]:
     """Measure the CURRENT embedding state's size figures (FR-002 gap).
 
@@ -1078,6 +1181,12 @@ def run_sweep(
     The variant keyword is verified against the resolved ``embed_all`` at
     runtime — a loud ``RuntimeError`` when the T013 contract is missing.
     Variant combos run serially; each is machine time, not agent time.
+    Every combo measures under its OWN declared embedding state: the
+    variant's for recipe combos, the session baseline for non-variant
+    combos, restored by :class:`_EmbeddingStateMachine` whenever a variant
+    combo overwrote it — grid position never decides which state a row's
+    numbers came from (a non-variant combo ordered after a variant one
+    measures the session baseline, not the leftover recipe).
 
     Query-subset selection (the FR-005 gap: ``corpus_filter`` selects level
     only, ``load_ground_truth`` full-loads) lives in the seam's ``ids=``
@@ -1101,10 +1210,12 @@ def run_sweep(
     The implicit **all-levers-off** row (``params=None`` AND no variant,
     named :data:`ALL_LEVERS_OFF`) is prepended FIRST whenever the caller's
     grid carries no such combo of its own — the integrity row T006 depends
-    on; it never re-embeds, so a recipe sweep still opens with the session
-    baseline. An explicit params-None variant-less combo suppresses the
-    implicit one (never evaluated twice). A variant combo with
-    ``params=None`` does NOT suppress it — it re-embeds by definition.
+    on; it never re-embeds, and its session-baseline state is RESTORED
+    before it whenever a variant combo preceded it, so it measures — and
+    size-accounts — the session baseline in every grid position alike. An
+    explicit params-None variant-less combo suppresses the implicit one
+    (never evaluated twice). A variant combo with ``params=None`` does NOT
+    suppress it — it re-embeds by definition.
 
     Returns the D-007 document::
 
@@ -1123,10 +1234,11 @@ def run_sweep(
 
     Read-only scope (TC-025): the ground-truth files behind ``queries``
     are only ever read and no file is created — recipe sweeps included.
-    The one write path is the measurement DB's ``embeddings`` table, only
-    for variant combos and only through ``embed_all``; the DB ends the
-    sweep in the LAST re-embedded variant's state, so run recipe sweeps
-    on a disposable copy when the starting state must survive.
+    The one write path is the measurement DB's ``embeddings`` table: the
+    ``embed_all`` re-embeds of variant combos plus the rowid-exact baseline
+    restores; the DB ends the sweep in the LAST EVALUATED combo's declared
+    state, so run recipe sweeps on a disposable copy when the starting
+    state must survive.
     Serializing (and committing to ``benchmarks/quality/ablation.json``)
     is the caller's job — :func:`format_sweep_json` gives the canonical
     bytes.
@@ -1168,12 +1280,14 @@ def run_sweep(
 
     reports: Dict[str, Dict[str, Any]] = {}
     rows: List[Dict[str, Any]] = []
+    embed_state = _EmbeddingStateMachine(conn)
     for name, params, variant in normalized:
-        # Recipe combos re-embed FIRST (embeddings.py's content-hash flow);
-        # the integrity row (variant=None) never does — its size figures are
-        # the session baseline measured on the current embedding state.
-        if variant is not None:
-            _reembed_for_variant(conn, variant)
+        # Per-combo embedding state: a variant combo re-embeds FIRST
+        # (embeddings.py's content-hash flow); a non-variant combo measures
+        # under the session baseline, restored by the machine whenever a
+        # variant combo overwrote it (the integrity row never re-embeds —
+        # its figures are the session baseline, D-009/T011 doctrine).
+        embed_state.install(variant)
         size = _size_accounting(conn)
         report = evaluate_on(
             conn,
@@ -1302,6 +1416,13 @@ def run_sweep_kfold(
     combo — per-query values a consumer needs to pair against without
     re-running the rotation); and ``baseline`` (the incumbent combo's
     per-query selection-metric map, same shape as ``run_sweep``'s).
+    Per-combo embedding state holds across the WHOLE rotation: the
+    :class:`_EmbeddingStateMachine` (and its baseline snapshot) outlives
+    the fold loop, so a fold's first non-variant combo measures under the
+    session baseline even when the previous fold's last variant combo
+    re-embedded — the leftover recipe of fold i never leaks into fold
+    i+1's integrity row (the fold-invariance premise the pooled aggregate
+    below is written on).
 
     ``aggregate`` (T003, D-009) is the rotation verdict per
     candidate-vs-baseline combo. ``pooled`` is the per-query paired array:
@@ -1309,12 +1430,14 @@ def run_sweep_kfold(
     that held it out (pool order = held-out fold, then id). Because the
     seam scores each query independently of the fold's selection set
     (retrieval sees the embedding state, the query, and the combo params —
-    never the other ids), a query's per-query values are identical in
-    every fold whose selection material includes it, so the pool
-    reconstructs one full-set paired array with ``n = all queries``; each
-    query's candidate and baseline values are read from the earliest fold
-    whose selection material includes it (the SAME fold for both, so the
-    pair shares one embedding state). ``bootstrap`` is the unchanged
+    never the other ids) AND every combo measures under its own declared
+    embedding state in every fold (the per-combo state guarantee above),
+    a query's per-query values are identical in every fold whose selection
+    material includes it, so the pool reconstructs one full-set paired
+    array with ``n = all queries``; each query's candidate and baseline
+    values are read from the earliest fold whose selection material
+    includes it (the SAME fold for both, so the pair shares one embedding
+    state). ``bootstrap`` is the unchanged
     :func:`paired_bootstrap` verdict over those pooled arrays — the
     significance basis (``significance_basis`` names it). ``descriptive``
     (the rotation-mean of the per-fold selection metrics, the per-fold
@@ -1371,6 +1494,13 @@ def run_sweep_kfold(
         if params is None and variant is None
     )
 
+    # Per-combo embedding state across the WHOLE rotation (the fold loop's
+    # invariant): built once here, the machine's baseline snapshot and its
+    # knowledge of the installed recipe survive the fold boundary, so fold
+    # i+1's first non-variant combo is restored to the session baseline
+    # instead of inheriting fold i's last variant state.
+    embed_state = _EmbeddingStateMachine(conn)
+
     fold_entries: List[Dict[str, Any]] = []
     for fold_index, held_out in enumerate(folds):
         held_set = set(held_out)
@@ -1384,8 +1514,11 @@ def run_sweep_kfold(
         reports: Dict[str, Dict[str, Any]] = {}
         rows: List[Dict[str, Any]] = []
         for name, params, variant in normalized:
-            if variant is not None:
-                _reembed_for_variant(conn, variant)
+            # Same per-combo rule as run_sweep: variant combos re-embed
+            # first; non-variant combos measure under the session baseline,
+            # restored when a variant combo (this fold's or the previous
+            # fold's) left another state installed.
+            embed_state.install(variant)
             size = _size_accounting(conn)
             report = evaluate_on(
                 conn,

@@ -44,7 +44,10 @@ Contracts pinned:
 * the seam threads ``params`` and reports per-query ``durations_ms``;
 * recipe sweeps re-embed per variant combo (right arg, never for the
   integrity row), report db_mb + chunk bounds per row, and fail loudly
-  when ``embed_all`` lacks the T013 variant contract.
+  when ``embed_all`` lacks the T013 variant contract;
+* per-combo embedding state — a non-variant combo ordered after a variant
+  one measures the RESTORED session baseline, never the leftover recipe
+  (the flip corpus below makes the two states produce different mrr).
 """
 from __future__ import annotations
 
@@ -477,6 +480,83 @@ class TestRunSweep:
 # ---------------------------------------------------------------------------
 
 
+def _seed_flip_corpus(conn) -> None:
+    """A corpus whose retrieval DIFFERS by chunk recipe (the state-leak probe
+    shared with tests/test_eval_kfold.py).
+
+    ``keeper`` carries the docstring ``magic words`` plus a wall of off-topic
+    ``parameters``/``return_type`` text. The default recipe B embeds that wall
+    (diluting keeper's vector below the 0.3 dense threshold); recipe A drops
+    both fields, so keeper's chunk is exactly the query text. ``rival`` has
+    neither field, so its chunk — and score — is byte-identical under every
+    recipe (the constant control). Probed under the hash backend (default
+    retrieval knobs, this module's pinned environment):
+
+      query -> keeper   B: no hit above threshold (rival only)  (0.0, 0.0)
+                       A: keeper rank 1                          (1.0, 1.0)
+    """
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/test/K.kt', 'kotlin')"
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, "
+        "parameters, return_type, line_start, line_end) VALUES "
+        "(1, 1, 'keeper', 'function', 'keeper', 'magic words', ?, 'zzret', 1, 10)",
+        (" ".join(f"zz{i}" for i in range(64)),),
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, "
+        "line_start, line_end) VALUES (2, 1, 'rival', 'function', 'rival', NULL, 1, 10)"
+    )
+    conn.commit()
+
+
+#: (recall_at_10, mrr) every flip query measures under each embedding state:
+#: the session-baseline recipe (the fixture's default embed) vs recipe A.
+FLIP_STATE_METRICS = {None: (0.0, 0.0), "A": (1.0, 1.0)}
+
+FLIP_QUERY_TEXTS = (
+    "function keeper magic words",
+    "function magic words keeper",
+    "function keeper words magic",
+)
+
+
+@pytest.fixture()
+def flip_db(fresh_db):
+    """The flip corpus embedded under the default recipe (session baseline)."""
+    from cairn.graph import embeddings as emb
+
+    _seed_flip_corpus(fresh_db)
+    emb.embed_all(fresh_db)
+    return fresh_db
+
+
+@pytest.fixture()
+def flip_gt_queries(tmp_path):
+    """Three keeper-targeting queries, one per probed phrasing."""
+    queries = [
+        {
+            "query_id": f"l1-keeper-{i}",
+            "level": "L1",
+            "kind": "definition",
+            "text": FLIP_QUERY_TEXTS[i],
+            "rationale": "keeper rank depends on the embedding recipe",
+        }
+        for i in range(3)
+    ]
+    directory = tmp_path / "flip_ground_truth"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "queries.jsonl").write_text(
+        "".join(json.dumps(q) + "\n" for q in queries), encoding="utf-8"
+    )
+    lines = ["query_id\tsymbol_id\tgrade"]
+    lines += [f"{q['query_id']}\tK.kt#keeper\t2" for q in queries]
+    (directory / "expectations.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return load_ground_truth(directory)
+
+
 class TestRecipeSweeps:
     """Variant combos re-embed through the content-hash flow before they
     are evaluated; rows carry db_mb + chunk bounds; the integrity row never
@@ -693,6 +773,37 @@ class TestRecipeSweeps:
         )
         assert [row["combo"] for row in doc["rows"]] == ["incumbent", "recipe-a"]
         assert doc["baseline"]["combo"] == "incumbent"
+
+    def test_variantless_combo_after_a_variant_measures_the_session_baseline(
+        self, flip_db, flip_gt_queries, recipe_calls
+    ):
+        # The single-split state leak this pins: re-embedding is destructive,
+        # and only grid POSITION used to decide which state a combo saw.
+        # "plain" trails "recipe-a", so it must measure the RESTORED session
+        # baseline (mrr 0.0 on the flip corpus), never A's leftovers (1.0).
+        tune, _validate = split_queries(flip_gt_queries)
+        doc = run_sweep(
+            flip_db,
+            flip_gt_queries,
+            combos=[
+                {"name": "recipe-a", "params": None, "variant": "A"},
+                {"name": "plain", "params": None},
+            ],
+            metric="mrr",
+        )
+        assert [row["combo"] for row in doc["rows"]] == ["recipe-a", "plain"]
+        rows = {row["combo"]: row for row in doc["rows"]}
+        assert rows["recipe-a"]["mrr"] == 1.0  # measured under recipe A
+        assert rows["plain"]["mrr"] == 0.0  # measured under the session baseline
+        # The default baseline is the params-None variant-less row ("plain"),
+        # and its per-query map pairs baseline-state values.
+        assert doc["baseline"]["combo"] == "plain"
+        assert set(doc["baseline"]["per_query"]) == set(tune)
+        assert set(doc["baseline"]["per_query"].values()) == {0.0}
+        # The restore never goes through embed_all: exactly one call, for the
+        # variant combo (keeper's hash flips B->A; rival's chunk is identical
+        # under both recipes, so exactly one row re-embeds).
+        assert recipe_calls == [("A", 1)]
 
     def test_missing_variant_contract_fails_loudly(self, sweep_db, gt_queries, monkeypatch):
         # A pre-T013 embed_all (no variant kwarg, no **kwargs): the runner

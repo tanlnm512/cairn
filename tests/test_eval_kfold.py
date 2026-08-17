@@ -612,3 +612,189 @@ class TestKfoldFoldAggregate:
         # Any fold report carrying the query holds the same mrr value.
         for qid, values in doc["folds"][-1]["reports"]["wide"]["per_query"].items():
             assert pooled[qid] == values["mrr"]
+
+
+# ---------------------------------------------------------------------------
+# Variant combos under the rotation — the per-combo embedding-state guarantee
+# ---------------------------------------------------------------------------
+
+
+def _seed_flip_corpus(conn) -> None:
+    """A corpus whose retrieval DIFFERS by chunk recipe (the state-leak probe).
+
+    ``keeper`` carries the docstring ``magic words`` plus a wall of off-topic
+    ``parameters``/``return_type`` text. The default recipe B embeds that wall
+    (diluting keeper's vector below the 0.3 dense threshold); recipe A drops
+    both fields, so keeper's chunk is exactly the query text. ``rival`` has
+    neither field, so its chunk — and score — is byte-identical under every
+    recipe (the constant control). Probed under the hash backend (default
+    retrieval knobs, this module's pinned environment):
+
+      query -> keeper   B: no hit above threshold (rival only)  (0.0, 0.0)
+                       A: keeper rank 1                          (1.0, 1.0)
+    """
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/test/K.kt', 'kotlin')"
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, "
+        "parameters, return_type, line_start, line_end) VALUES "
+        "(1, 1, 'keeper', 'function', 'keeper', 'magic words', ?, 'zzret', 1, 10)",
+        (" ".join(f"zz{i}" for i in range(64)),),
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, docstring, "
+        "line_start, line_end) VALUES (2, 1, 'rival', 'function', 'rival', NULL, 1, 10)"
+    )
+    conn.commit()
+
+
+#: The three probed phrasings (all flip identically between the states).
+FLIP_QUERY_TEXTS = (
+    "function keeper magic words",
+    "function magic words keeper",
+    "function keeper words magic",
+)
+
+#: (recall_at_10, mrr) every flip query measures under each embedding state:
+#: the session-baseline recipe (the fixture's default embed) vs recipe A.
+FLIP_STATE_METRICS = {None: (0.0, 0.0), "A": (1.0, 1.0)}
+
+
+@pytest.fixture()
+def flip_db(fresh_db):
+    """The flip corpus embedded under the default recipe (session baseline)."""
+    from cairn.graph import embeddings as emb
+
+    _seed_flip_corpus(fresh_db)
+    emb.embed_all(fresh_db)
+    return fresh_db
+
+
+@pytest.fixture()
+def flip_gt_queries(tmp_path):
+    """Six keeper-targeting queries (each phrasing twice) — enough ids for
+    the 5-fold floor, every one of them state-sensitive."""
+    queries = [
+        {
+            "query_id": f"l1-keeper-{i}",
+            "level": "L1",
+            "kind": "definition",
+            "text": FLIP_QUERY_TEXTS[i % len(FLIP_QUERY_TEXTS)],
+            "rationale": "keeper rank depends on the embedding recipe",
+        }
+        for i in range(6)
+    ]
+    directory = tmp_path / "flip_ground_truth"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "queries.jsonl").write_text(
+        "".join(json.dumps(q) + "\n" for q in queries), encoding="utf-8"
+    )
+    lines = ["query_id\tsymbol_id\tgrade"]
+    lines += [f"{q['query_id']}\tK.kt#keeper\t2" for q in queries]
+    (directory / "expectations.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return load_ground_truth(directory)
+
+
+class TestKfoldVariantCombos:
+    """A mixed variant grid under the rotation: every combo must measure
+    under its OWN declared embedding state in EVERY fold.
+
+    The state-leak defect this pins: a variant combo re-embeds the
+    measurement DB, and nothing used to restore the session-baseline state,
+    so in folds >= 1 the prepended all-levers-off row (and any non-variant
+    combo ordered after a variant one) measured under the LAST variant's
+    leftovers — breaking the fold-invariance the pooled aggregate's pairing
+    premise is written on (fold-0 members would pool baseline values read
+    from fold 1's wrong-state report).
+    """
+
+    def test_every_combo_measures_under_its_own_state_in_every_fold(
+        self, flip_db, flip_gt_queries, monkeypatch
+    ):
+        from cairn.graph import embeddings as emb
+
+        calls = []
+        real_embed_all = emb.embed_all
+
+        def _spying_embed_all(conn, **kwargs):
+            calls.append(kwargs.get("variant"))
+            return real_embed_all(conn, **kwargs)
+
+        monkeypatch.setattr(emb, "embed_all", _spying_embed_all)
+
+        doc = run_sweep_kfold(
+            flip_db,
+            flip_gt_queries,
+            combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+            metric="mrr",
+        )
+
+        # Every fold's every report holds the values its combo's declared
+        # state produces — the baseline's (0.0, 0.0) table in fold 0 AND in
+        # the folds that follow the previous fold's A re-embed.
+        for entry in doc["folds"]:
+            base = entry["reports"][ALL_LEVERS_OFF]["per_query"]
+            variant = entry["reports"]["recipe-a"]["per_query"]
+            assert base and variant  # non-empty selection material per fold
+            for values in base.values():
+                assert (values["recall_at_10"], values["mrr"]) == FLIP_STATE_METRICS[None]
+            for values in variant.values():
+                assert (values["recall_at_10"], values["mrr"]) == FLIP_STATE_METRICS["A"]
+
+        # Fold invariance, stated directly: every fold report carrying a
+        # query agrees with every other, combo for combo.
+        for combo in (ALL_LEVERS_OFF, "recipe-a"):
+            seen: dict[str, tuple] = {}
+            for entry in doc["folds"]:
+                for qid, values in entry["reports"][combo]["per_query"].items():
+                    measured = (values["recall_at_10"], values["mrr"])
+                    assert seen.setdefault(qid, measured) == measured
+
+        # The re-embed seam runs once per variant combo per fold (5 folds),
+        # always for the variant — the baseline's state restoration never
+        # goes through embed_all (no model re-run for the restore).
+        assert calls == ["A"] * 5
+
+    def test_baseline_rows_keep_their_state_size_figures_in_every_fold(
+        self, flip_db, flip_gt_queries
+    ):
+        doc = run_sweep_kfold(
+            flip_db,
+            flip_gt_queries,
+            combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+            metric="mrr",
+        )
+        base_sizes = []
+        variant_sizes = []
+        for entry in doc["folds"]:
+            rows = {row["combo"]: row for row in entry["rows"]}
+            base_sizes.append(rows[ALL_LEVERS_OFF]["chunk_chars_max"])
+            variant_sizes.append(rows["recipe-a"]["chunk_chars_max"])
+        # The baseline's chunk bounds are fold-invariant (session-baseline
+        # state in every fold) and distinct from the A-recipe bounds: B
+        # embeds keeper's off-topic parameter wall, A drops it.
+        assert len(set(base_sizes)) == 1
+        assert len(set(variant_sizes)) == 1
+        assert base_sizes[0] > variant_sizes[0] > 0
+
+    def test_pooled_arrays_pair_like_for_like_states(
+        self, flip_db, flip_gt_queries
+    ):
+        doc = run_sweep_kfold(
+            flip_db,
+            flip_gt_queries,
+            combos=[{"name": "recipe-a", "params": None, "variant": "A"}],
+            metric="mrr",
+        )
+        entry = doc["aggregate"]["combos"]["recipe-a"]
+        # Every pooled baseline value is a baseline-state measurement and
+        # every pooled candidate value an A-state one — including the fold-0
+        # members the pool reads from fold 1 (the exact rows the leak
+        # corrupted: their baseline values used to arrive from fold 1's
+        # wrong-state report).
+        assert entry["pooled"]["baseline"] == [FLIP_STATE_METRICS[None][1]] * 6
+        assert entry["pooled"]["candidate"] == [FLIP_STATE_METRICS["A"][1]] * 6
+        assert entry["bootstrap"]["delta"] == 1.0
+        assert entry["bootstrap"]["n_queries"] == 6
