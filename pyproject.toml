@@ -175,7 +175,17 @@ src = ["src", "scripts", "tests"]
 # Golden fixtures are test *input* data (deliberately-shaped source the parser
 # exercises), not test code -- linting them would rewrite the fixtures and
 # invalidate the very golden tests that consume them.
-extend-exclude = ["tests/fixtures"]
+# Vendored benchmark corpora are the same class of content: third-party
+# source trees pinned by tree_hash (t2/yarl, ds2/second-corpus/attrs-26.1.0).
+# The attrs tree additionally ships its own pyproject.toml with a ruff
+# `select = ["ALL"]` config, which ruff's per-file config discovery applies
+# to its own files (CPY001 et al.) -- linting a pinned vendored tree can
+# never produce a fixable finding, only a red gate over immutable data.
+extend-exclude = [
+  "tests/fixtures",
+  "benchmarks/datasource/t2/yarl",
+  "benchmarks/datasource/ds2/second-corpus",
+]
 
 [tool.ruff.lint]
 select = ["F"]
