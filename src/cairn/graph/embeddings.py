@@ -18,7 +18,7 @@ import threading
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
 
-from .schema import note_contention
+from .schema import note_contention, rebuild_term_df
 
 # ---------------------------------------------------------------------------
 # Model identity. Stored per-row so a model swap invalidates and re-embeds.
@@ -721,7 +721,9 @@ def embed_all(
     (T014/T015) use to re-embed the corpus under each recipe.
 
     When ``reap_orphans`` is True (default), also deletes embedding rows for
-    symbols that no longer exist. ``progress`` is an optional
+    symbols that no longer exist. Always refreshes the persisted ``term_df``
+    DF table (D-005), so enrichment's IDF signal stays current with the
+    embedded corpus. ``progress`` is an optional
     callable(n_done, n_total). Returns a dict summary
     {model, embedded, skipped, total, reaped}.
     """
@@ -801,6 +803,10 @@ def embed_all(
             progress(min(i + batch_size, total), total)
 
     reaped = reap_orphaned_embeddings(conn) if reap_orphans else 0
+
+    # D-005: the DF table's refresh rides the embed pass, so a `cairn embed`
+    # --driven build leaves term_df current with the corpus it just embedded.
+    rebuild_term_df(conn)
 
     return {
         "model": model,

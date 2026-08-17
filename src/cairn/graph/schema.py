@@ -101,6 +101,21 @@ CREATE TRIGGER IF NOT EXISTS symbols_au AFTER UPDATE ON symbols BEGIN
     VALUES (new.rowid, new.name, new.qualified_name, new.docstring);
 END;
 
+-- Persisted per-corpus document-frequency table for IDF-aware query
+-- enrichment (spec retrieval-quality-v2 FR-003/D-005). One row per indexed
+-- token: symbol_df = symbols whose symbols_fts-indexed text contains the
+-- token, n_symbols = total symbol count at build time. Rebuilt from the FTS5
+-- vocabulary by rebuild_term_df(); refresh rides the embed pass, query time
+-- only does per-token indexed SELECTs. Additive-only: plain CREATE TABLE IF
+-- NOT EXISTS rides the idempotent executescript in _apply_schema with NO
+-- MIGRATIONS entry, so existing DBs gain the table on next connect -- the
+-- same pattern build_runs/tool_metrics used.
+CREATE TABLE IF NOT EXISTS term_df (
+    token TEXT PRIMARY KEY,      -- case-folded FTS5 unicode61 token
+    symbol_df INTEGER,
+    n_symbols INTEGER
+);
+
 -- memory cross-session reference tracking
 CREATE TABLE IF NOT EXISTS memory_refs (
     id TEXT PRIMARY KEY,
@@ -538,6 +553,106 @@ def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
         # None of those is contention; note_contention's discrimination skips
         # them so only a genuine "database is locked" emits the signal.
         note_contention("schema.backfill_fts", error=e)
+
+
+def _unicode61_tokens(text: str):
+    """Yield the FTS5 unicode61 tokenization of ``text`` (approximate).
+
+    Case-folds and splits on non-alphanumeric runs, matching the
+    ``tokenize='unicode61'`` declaration on ``symbols_fts`` for the ASCII
+    identifiers and English docstrings this table serves (full unicode
+    diacritic folding differs only for exotic input). Used by the
+    ``rebuild_term_df`` fallback scan.
+    """
+    cur: list[str] = []
+    for ch in text.lower():
+        if ch.isalnum():
+            cur.append(ch)
+        elif cur:
+            yield "".join(cur)
+            cur = []
+    if cur:
+        yield "".join(cur)
+
+
+def _rebuild_term_df_vocab(conn: sqlite3.Connection, n_symbols: int) -> Optional[int]:
+    """term_df rebuild via the FTS5 vocabulary (primary path).
+
+    Returns the number of tokens written, or ``None`` when the fts5vocab
+    virtual table cannot be created or queried (caller falls back to the
+    aggregate scan). The vocab table lives in temp and targets main's
+    symbols_fts via the three-argument form (a temp fts5vocab may reference
+    an FTS5 table in any attached database). Row mode yields exactly one
+    row per distinct term with ``doc`` = number of FTS rows containing it,
+    which IS symbol_df -- no GROUP BY or COUNT needed.
+    """
+    try:
+        conn.execute("DROP TABLE IF EXISTS temp.term_df_vocab")
+        conn.execute(
+            "CREATE VIRTUAL TABLE temp.term_df_vocab "
+            "USING fts5vocab(main, symbols_fts, row)"
+        )
+        try:
+            conn.execute("DELETE FROM term_df")
+            cur = conn.execute(
+                "INSERT INTO term_df (token, symbol_df, n_symbols) "
+                "SELECT term, doc, ? FROM temp.term_df_vocab",
+                (n_symbols,),
+            )
+            return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+        finally:
+            conn.execute("DROP TABLE temp.term_df_vocab")
+    except sqlite3.OperationalError as e:
+        _logger.debug(
+            "term_df fts5vocab path unavailable (%s); falling back to scan", e
+        )
+        return None
+
+
+def _rebuild_term_df_scan(conn: sqlite3.Connection, n_symbols: int) -> int:
+    """term_df rebuild via one aggregate scan of symbols (fallback path).
+
+    Tokenizes each symbol's indexed text (name, qualified_name, docstring)
+    with the unicode61 approximation in :func:`_unicode61_tokens` and counts
+    the distinct symbols per token. Deterministic: a pure function of the
+    symbols table's contents.
+    """
+    df: dict[str, set[int]] = {}
+    for rowid, name, qname, doc in conn.execute(
+        "SELECT rowid, name, qualified_name, docstring FROM symbols"
+    ):
+        text = " ".join(t for t in (name, qname, doc) if t)
+        for token in set(_unicode61_tokens(text)):
+            df.setdefault(token, set()).add(rowid)
+    conn.execute("DELETE FROM term_df")
+    conn.executemany(
+        "INSERT INTO term_df (token, symbol_df, n_symbols) VALUES (?, ?, ?)",
+        [(token, len(rows), n_symbols) for token, rows in sorted(df.items())],
+    )
+    return len(df)
+
+
+def rebuild_term_df(conn: sqlite3.Connection) -> int:
+    """Rebuild the persisted per-corpus DF table from ``symbols_fts``.
+
+    Populates one row per indexed token: ``symbol_df`` = number of distinct
+    symbols whose indexed text contains the token, ``n_symbols`` = total
+    symbol count. Reads the FTS5 vocabulary in row mode via an fts5vocab
+    virtual table; when that is unusable, falls back to one aggregate scan
+    of the symbols table. A pure function of the DB contents -- no env,
+    network, or time dependence -- so repeated runs on the same DB produce
+    identical table contents (spec retrieval-quality-v2 TC-014). Commits;
+    returns the number of tokens written.
+    """
+    n_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    written = _rebuild_term_df_vocab(conn, n_symbols)
+    if written is None or (written == 0 and n_symbols > 0):
+        # No vocab path, or a zero-row vocab on a non-empty corpus -- the
+        # latter means the FTS index is stale/empty (e.g. symbols existed
+        # before symbols_fts did). Fall back to the aggregate scan.
+        written = _rebuild_term_df_scan(conn, n_symbols)
+    conn.commit()
+    return written
 
 
 # Paths whose schema has already been applied+backfilled in this process.

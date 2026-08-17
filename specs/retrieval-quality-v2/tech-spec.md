@@ -523,3 +523,18 @@ record); no source on PRF specifically over RRF-fused first passes
 - **Consequences**: stacking PRF + rerank is not a constructible combo; all
   latency claims cite p95 (the spec's "~780ms p50" is flagged unsourced in
   survey.md's Unknowns — do not cite it).
+
+### D-013: term_df's fts5vocab read uses the 3-arg form `fts5vocab(main, symbols_fts, row)`
+- **Context**: D-005 and task T011 name the 2-arg `fts5vocab(symbols_fts,
+  row)`; SQLite requires the 3-arg `(db, table, mode)` form when the vocab
+  virtual table lives in a different database (temp) than the FTS table
+  (main) — the 2-arg form cannot resolve a main-schema FTS table from temp.
+- **Decision** (T011 implementer deviation, accepted): create
+  `temp.term_df_vocab USING fts5vocab(main, symbols_fts, row)`; row mode
+  yields `term, doc, n` with `doc` = FTS rows containing the term, mapping
+  directly onto `symbol_df`. Everything else in D-005 (fallback aggregate
+  scan, refresh on the embed pass, per-term indexed lookups at query time)
+  unchanged.
+- **Consequences**: none beyond the mechanism; an additional fallback arm
+  (zero rows from fts5vocab on a non-empty corpus → stale/empty FTS index)
+  re-runs the aggregate scan rather than leaving term_df empty.
