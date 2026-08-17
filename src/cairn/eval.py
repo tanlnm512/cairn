@@ -10,7 +10,9 @@ with identity-first matching and grade-aware scoring. ``split_queries``
 (FR-006) turns that ground truth into the seeded tune/validate split used
 for held-out lever selection; ``evaluate_on`` (FR-006, TC-019) is the guarded
 evaluation seam that enforces it, and ``paired_bootstrap`` (D-006) is the
-accept gate any lever must pass on the validate split.
+accept gate any lever must pass on the validate split. ``kfold_partitions``
+(FR-001) rotates the same determinism recipe into k >= 5 seeded folds in
+which every query is held out exactly once.
 
 The sweep harness (FR-005, D-007, T004) sits on top of that seam:
 ``run_sweep`` enumerates lever combinations (each an injected
@@ -346,6 +348,92 @@ def split_queries(
     # ceil hands the odd element to tune.
     n_tune = math.ceil(round(len(ids) * ratio, 10))
     return ids[:n_tune], ids[n_tune:]
+
+
+# --------------------------------------------------------------------------
+# Seeded k-fold rotation partition (FR-001, TC-002, TC-004)
+#
+# The single seeded split above rotates: the same determinism recipe
+# (dedupe + sort BEFORE the seeded shuffle) cut into k contiguous slices,
+# so every id is held out exactly once across the rotation. The >= 5 fold
+# floor is deliberate — a weaker fold count must be refused loudly, never
+# silently run.
+# --------------------------------------------------------------------------
+
+#: Fold-count floor for k-fold rotation (FR-001): 5 is the minimum the
+#: harness will run; anything less is a configuration error (TC-004).
+MIN_KFOLD_K = 5
+
+
+def kfold_partitions(
+    ids: Iterable[Any],
+    *,
+    k: int = MIN_KFOLD_K,
+    seed: int = DEFAULT_SPLIT_SEED,
+) -> List[List[str]]:
+    """Partition query ids into k seeded rotation folds (FR-001).
+
+    ``ids`` is any iterable of id strings or objects exposing a
+    ``query_id`` field (same coercion as :func:`split_queries` — only the
+    id is read, so the function is level-agnostic; filtering is the
+    caller's choice). The input is never mutated.
+
+    The determinism recipe is :func:`split_queries`'s exactly: ids are
+    deduplicated and *sorted before* the seeded ``random.Random(seed)
+    .shuffle``, then the shuffled list is cut into k contiguous slices —
+    the first ``n mod k`` folds take one extra id, so fold sizes differ
+    by at most one. The partition is a pure function of (id set, k,
+    seed): never of input order, set/dict iteration order, or
+    ``PYTHONHASHSEED``.
+
+    Contract (TC-002, TC-004):
+
+    * **Reproducible** — two calls with the same (ids, k, seed) return
+      identical folds, in-process or not; the default seed is the fixed
+      :data:`DEFAULT_SPLIT_SEED`.
+    * **Rotation-exact** — the folds partition the input: the union of
+      all k folds equals the id set and no id appears in two folds (each
+      id is held out exactly once and serves as tuning material in all
+      other folds).
+    * **Non-degenerate** — every fold is non-empty: ``k`` folds need at
+      least ``k`` distinct ids.
+    * **Floor** — ``k < 5`` raises ``ValueError`` naming the minimum;
+      the fold count is a floor, not a suggestion, and the default runs
+      at exactly 5.
+
+    Returned folds keep shuffle order (fold 0 first) so re-run diffs are
+    empty.
+    """
+    if k < MIN_KFOLD_K:
+        raise ValueError(
+            f"k-fold rotation requires k >= {MIN_KFOLD_K} folds, got {k!r}: "
+            f"the fold-count floor is {MIN_KFOLD_K} — a weaker evaluation "
+            "is refused rather than silently run (FR-001, TC-004)"
+        )
+
+    # Dedupe + sort BEFORE shuffling: the sort kills any dependence on
+    # input order or hash randomization, making the shuffle deterministic
+    # given (id set, seed) — the same rule split_queries relies on.
+    shuffled = sorted(
+        {item if isinstance(item, str) else item.query_id for item in ids}
+    )
+    if len(shuffled) < k:
+        raise ValueError(
+            f"k-fold rotation needs at least {k} distinct ids to form {k} "
+            f"non-empty folds, got {len(shuffled)}"
+        )
+    rng = random.Random(seed)
+    rng.shuffle(shuffled)
+
+    # Contiguous slices; the first (n mod k) folds carry the remainder.
+    base, extra = divmod(len(shuffled), k)
+    folds: List[List[str]] = []
+    start = 0
+    for fold_index in range(k):
+        size = base + 1 if fold_index < extra else base
+        folds.append(shuffled[start : start + size])
+        start += size
+    return folds
 
 
 # --------------------------------------------------------------------------
