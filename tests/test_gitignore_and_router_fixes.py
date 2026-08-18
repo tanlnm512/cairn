@@ -46,10 +46,8 @@ class TestGitignoreCacheInvalidation:
                 mock_detect.return_value = [str(gitignore_path)]
                 watcher.ensure_fresh_force(fresh_db, str(tmp_path))
 
-        # Verify cache was invalidated (key removed or re-populated)
         # The fix should call invalidate_gitignore_cache when .gitignore changes
         # which pops the cache key, so it should no longer exist or be empty
-        # Currently this test will FAIL because invalidate_gitignore_cache is not called
         assert str(repo_dir) not in scanner_mod._gitignore_cache, (
             "gitignore cache should be invalidated when .gitignore file changes"
         )

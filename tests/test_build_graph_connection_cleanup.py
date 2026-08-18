@@ -55,11 +55,9 @@ def test_build_graph_closes_connection_on_exception():
         # again (or there would be lingering locks)
         import sqlite3
         try:
-            # Try to open and use the same db_path - this should work if conn was closed
             test_conn = sqlite3.connect(db_path)
             test_conn.execute("SELECT 1").fetchone()
             test_conn.close()
-            # Success - connection was properly closed
         except sqlite3.OperationalError as e:
             pytest.fail(f"Database file is locked or corrupted, likely due to unclosed connection: {e}")
 
@@ -86,11 +84,9 @@ def test_build_graph_closes_connection_on_keyboard_interrupt():
         # again (or there would be lingering locks)
         import sqlite3
         try:
-            # Try to open and use the same db_path - this should work if conn was closed
             test_conn = sqlite3.connect(db_path)
             test_conn.execute("SELECT 1").fetchone()
             test_conn.close()
-            # Success - connection was properly closed
         except sqlite3.OperationalError as e:
             pytest.fail(f"Database file is locked or corrupted, likely due to unclosed connection: {e}")
 
@@ -117,11 +113,9 @@ def test_build_graph_early_return_closes_connection():
         # again (or there would be lingering locks)
         import sqlite3
         try:
-            # Try to open and use the same db_path - this should work if conn was closed
             test_conn = sqlite3.connect(db_path)
             test_conn.execute("SELECT 1").fetchone()
             test_conn.close()
-            # Success - connection was properly closed
         except sqlite3.OperationalError as e:
             pytest.fail(f"Database file is locked or corrupted, likely due to unclosed connection: {e}")
 
@@ -146,10 +140,8 @@ def test_build_graph_closes_connection_on_normal_exit():
         # again (or there would be lingering locks)
         import sqlite3
         try:
-            # Try to open and use the same db_path - this should work if conn was closed
             test_conn = sqlite3.connect(db_path)
             test_conn.execute("SELECT 1").fetchone()
             test_conn.close()
-            # Success - connection was properly closed
         except sqlite3.OperationalError as e:
             pytest.fail(f"Database file is locked or corrupted, likely due to unclosed connection: {e}")

@@ -741,5 +741,4 @@ def test_task_lifecycle_event_literals_are_within_declared_set():
 # 6. ann_fallback / hash_fallback now have live emitters
 # ===========================================================================
 # (Wired into warn_*_fallback_once; validated by the parametrized live-emit
-# sweep in section 5 above. This section previously documented them as a source
-# gap -- closed.)
+# sweep in section 5 above.)
