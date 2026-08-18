@@ -17,7 +17,7 @@ ticked; tasks on PARTIAL FRs name the survey gap they close, and every
 | 4     | 4     | 4    |
 | 5     | 2     | 2    |
 | 6     | 2     | 2    |
-| **Σ** | 20    | 0    |
+| **Σ** | 20 | 20 |
 
 ## Wave map
 <!-- [P]/(after T###) chains are the execution map; PRs still land in phase
