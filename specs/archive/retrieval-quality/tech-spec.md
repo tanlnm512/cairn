@@ -95,8 +95,11 @@ harness ablates.
    split disclosed. Selection code structurally cannot load validation ids (harness asserts
    and fails otherwise).
 
-Supporting decisions: **D-007** sweep output is a new artifact (e.g.
-`benchmarks/baselines/DS-v1/sweep.json`) with its own schema, kept OUT of `quality.json`'s
+Supporting decisions: **D-007** sweep output is a new artifact (shipped
+under `benchmarks/quality/`; the illustrative benchmarks/baselines/DS-v1/sweep.json
+never existed — path corrected at the 2026-08-18 doc audit, which also
+confirmed PR #39's later unification into `ablation.json`, schema
+`cairn-quality-ablation/2`) with its own schema, kept OUT of `quality.json`'s
 role (gen_benchmark_tables.py's `render_quality` requires exact keys and raises — survey
 FR-007); `quality.json` is regenerated only by a full-set `mint_quality` run at the shipped
 config. **D-008** parameter injection is an explicit `RetrievalParams` object threaded

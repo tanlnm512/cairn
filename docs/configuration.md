@@ -1,5 +1,7 @@
 # Configuration
 
+← [Docs index](README.md)
+
 cairn is configured through environment variables and an optional
 per-workspace `cairn.json` file. All of them are optional: defaults are
 tuned for small and medium repos, and the base install needs nothing set to
@@ -16,6 +18,17 @@ options (`exclude` / `include` / `repo_namespaces`) are documented at the end.
 > **Defaults are sane for small/medium repos.** The semantic-search and ANN
 > variables only matter at scale or when you have installed the `[semantic]` /
 > `[ann]` extras. Leave them unset for a zero-network, torch-free install.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Storage paths`](#storage-paths) | Where the store resolves from: `CAIRN_HOME`, `CAIRN_DB`, `CAIRN_KNOWLEDGE`, and the workspace/session overrides. |
+| [`## Server and runtime`](#server-and-runtime) | Server behavior knobs — log level, telemetry, read-only mode, live file watching, workers, result-size cap — plus the watching behavior notes. |
+| [`## Semantic search`](#semantic-search) | The embedding/ANN/rerank variables (active only with the `[semantic]` extra), including disabling fusion for real cosine scores. |
+| [`## LLM and task queue`](#llm-and-task-queue) | How LLM-driven commands route their work without cairn ever calling an LLM. |
+| [`## Parsing`](#parsing) | The source-chunking variant selector. |
+| [`` `## Workspace config file (`cairn.json`)` ``](#workspace-config-file-cairnjson) | The optional per-repo JSON keys (`exclude`, `include`, `repo_namespaces`, `scip`) and the namespace-resolution priority order. |
 
 ## Storage paths
 

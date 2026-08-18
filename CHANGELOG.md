@@ -18,6 +18,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - _Nothing yet._
 
+## [0.12.1] - 2026-08-18
+
+> **Focus:** documentation as a product surface — no behavior changes to the
+> indexer, query path, or MCP tools. The README and the `docs/` set are
+> restructured for human navigation, the completed spec campaigns are audited
+> and archived, and the release ships one dev-tooling fix.
+
+### Added
+- `docs/README.md` — a docs index grouping the doc set by reader need (start
+  here / how it works / evidence / operate / contribute); every `docs/` page
+  now opens with a scannable orientation block (what/when summary + Contents
+  table on long pages) and a back-link to the index.
+- `benchmarks/README.md` — the artifact-by-artifact inventory: all 30
+  committed measurement JSONs keyed by path, each named by its human-readable
+  companion (one-command drift detector included).
+- `scripts/check_doc_links.py` — relative-link checker over `docs/` +
+  `README.md` + `benchmarks/README.md` with a resolution-based back-link
+  advisory (exit 0/1).
+
+### Changed
+- README revamped after the codegraph presentation pattern: linked TOC,
+  numbered Get Started (install → wire agents → build → stay fresh →
+  uninstall), a Language Support table (14 languages, extensions, per-language
+  SCIP/JSX/header-sniffing detail), Why cairn with honest trade-offs, an
+  architecture diagram, and a Measured Results section fed by committed
+  benchmark artifacts only.
+- Completed specs (benchmark-datasource, retrieval-quality,
+  retrieval-quality-v2) re-audited at `8dbf2ca` — every FR verified DONE with
+  verify commands re-run green — and archived under `specs/archive/`;
+  superseded `docs/phases/` sets removed.
+- Test-suite comments trimmed to general-purpose (assert-narration, stale
+  fossils, fixture-relocation history; 16 lines, zero behavior change).
+
+### Fixed
+- `scripts/ci-local.sh`: the bench job died at its install step
+  (`pip install -e ".[]"` is not a valid requirement); extras-free installs
+  now use plain `-e .`, matching CI's bench job.
+
 ## [0.12.0] - 2026-08-17
 
 > **Focus:** the second retrieval-quality campaign — an evidence-base upgrade,

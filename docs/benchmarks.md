@@ -1,5 +1,7 @@
 # Benchmarks
 
+← [Docs index](README.md)
+
 cairn ships three harnesses for measuring retrieval quality,
 build/query performance, and agent effort (tool calls + context tokens)
 against ground truth or a control arm. This document explains **what**
@@ -24,6 +26,7 @@ resolution-label comparison that distinguishes cairn from name-only
 | `cairn bench --suite agent` | Agent effort — tool calls + context tokens, cairn vs a grep/read control | per-task table (calls / est tokens / wall ms) |
 | `scripts/measure_warm_time.py` | Warm-time — first semantic-query wall-time in a fresh process, warm-up active vs cold | `benchmarks/quality/warm_time.json` |
 | `benchmarks/quality/ablation.md` | The retrieval-quality campaigns' unified ablation record (DS-v1 k-fold + DS-v2 zero-shot legs; verdict: no ship) | committed record, schema `cairn-quality-ablation/2` |
+| [`benchmarks/README.md`](../benchmarks/README.md) | Artifact-by-artifact inventory — every committed JSON under `benchmarks/` and the human-readable companion that names it | path-keyed table |
 
 ---
 
@@ -147,8 +150,9 @@ record.
 DB, cold (the lazy embedder + cross-encoder loads land inside the query)
 versus warm (`warm_models_in_background()` started and joined first). The
 committed artifact is `benchmarks/quality/warm_time.json`; its `notes`
-field records that the 322 ms figure in
-`docs/phases/performance-gap/task.md` is **advisory context, not a gate** —
+field records that the 322 ms figure from the former
+`docs/phases/performance-gap/task.md` phase doc (removed 2026-08-18; git
+history) is **advisory context, not a gate** —
 no committed baseline ever carried a warm-time number, so the artifact is
 the first committed measurement and has no BEFORE to regress against.
 

@@ -1,5 +1,7 @@
 # Bug Registry
 
+← [Docs index](README.md)
+
 Lessons learned, root-caused. Each entry is a one-time discovery converted to
 permanent, queryable memory — so the same bug doesn't get solved twice.
 

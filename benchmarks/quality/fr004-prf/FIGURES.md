@@ -33,3 +33,9 @@ Both grid points are negative and not significant — PRF stays flag-off. p95 (9
 ## docs=10 vs docs=3 head-to-head
 
 Δ = -0.0103, p = 0.6579 — not significant; the grid gives no reason to prefer either point.
+
+## Artifacts
+
+| Artifact | Role |
+|---|---|
+| `rows-fr004.json` | Machine-checkable backing for the tables above: one row per PRF grid point (levers, recall@10/MRR per pooled/tune/validate split, bootstrap vs the all-levers-off incumbent, p95 timing), plus the integrity-gate block and the docs=3-vs-docs=10 head-to-head bootstrap. |

@@ -1,9 +1,9 @@
 # Tasks: retrieval-quality
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Survey**: [survey.md](survey.md) | **Tech**: [tech-spec.md](tech-spec.md)
-Status reflects code state per survey.md, not intent: FR-001/005/006 TODO,
-FR-002/003/004/007 PARTIAL (gaps quoted in the tasks that build on them).
-Nothing is DONE — every task opens unchecked.
+Status reflects code state per survey.md — re-audited 2026-08-18 at
+baseline `8dbf2ca` (v0.12.0): all 7 FRs DONE at HEAD, every verify command
+re-run green; all 24 tasks complete with proof notes.
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
@@ -14,7 +14,7 @@ Nothing is DONE — every task opens unchecked.
 | 3     | 3     | 3    |
 | 4     | 4     | 4    |
 | 5     | 5     | 5    |
-| **Σ** | 24    | 0    |
+| **Σ** | 24 | 24 |
 
 ## Phase 1: Measurement substrate (FR-005, FR-006)
 <!-- Checkpoint (plan.md, After Phase 1): harness emits a machine-readable table whose baseline full-set row reproduces DS-v1's L1 recall@10 0.4174 / MRR 0.2862 (same DB, exact modulo runner noise); re-running produces an identical seeded split; a unit test proves selection touching the validation split fails loudly. -->

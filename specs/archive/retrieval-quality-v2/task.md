@@ -1,14 +1,15 @@
 # Tasks: retrieval-quality-v2
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
-Status reflects code state per [survey.md](survey.md), not intent — survey: 0 DONE /
-3 PARTIAL (FR-002, FR-003, FR-006) / 3 TODO (FR-001, FR-004, FR-005). The
-implementation wave ran 2026-08-17 (one commit per task, code + docs
-together); the deferred measurement runs (T020/T021/T023/T024) executed
-2026-08-17 on the reference machine per `benchmarks/quality/MEASURE.md`
-(serial, quiet). **All 24 tasks done; the campaign closed on the document
-branch** — see [task.md T024](#phase-5-confirmation-ladder--extended-record-fr-006)
-and the ablation-v2 verdict.
+Status reflects code state per [survey.md](survey.md) — re-audited
+2026-08-18 at baseline `8dbf2ca`: all 6 FRs DONE at HEAD, levers flag-off
+by default, document-branch verdict intact. The implementation wave ran
+2026-08-17 (one commit per task, code + docs together); the deferred
+measurement runs (T020/T021/T023/T024) executed 2026-08-17 on the
+reference machine per `benchmarks/quality/MEASURE.md` (serial, quiet).
+**All 24 tasks done; the campaign closed on the document branch** — see
+[task.md T024](#phase-5-confirmation-ladder--extended-record-fr-006)
+and the ablation verdict (unified `ablation.{json,md}` record, D-017).
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->

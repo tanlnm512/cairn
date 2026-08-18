@@ -1,5 +1,7 @@
 # Cairn System Architecture
 
+← [Docs index](README.md)
+
 > **Big-picture guide to how cairn fits together.** Layers, the interactions
 > between them, the build and query flows, and the LLM boundary — with flow and
 > sequence diagrams. For the per-module reference, see

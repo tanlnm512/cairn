@@ -1,11 +1,24 @@
 # `cairn` CLI Reference
 
+← [Docs index](README.md)
+
 The `cairn` command is the human-facing interface to cairn (package
 `cairn-intel`). It builds the local code graph, manages knowledge/memory,
 generates module guides, and runs the MCP server that AI agents consume.
+Consult it when you need any command's exact subcommands, options, or
+defaults — or to find which group a command lives under.
 
 > Run `cairn --help` for the live, authoritative command list. This page
 > documents every command as it is registered in `src/cairn/cli/`.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Global options`](#global-options) | The `--version`/`--help` flags and the conventions every subcommand shares (`--db`, `--json`, precise-vs-fuzzy defaults). |
+| [`## Command groups`](#command-groups) | The grouped subcommands — `serve`, `memory`, `knowledge` (+ `workflow`), `compass`, `wiki`, `dataflow`, `hooks`, `task`. |
+| [`## Top-level commands`](#top-level-commands) | Every bare command, grouped by purpose: setup/build, graph queries, semantic, natural-language, knowledge management, metrics/eval, agent lifecycle. |
+| [`## Where to look next`](#where-to-look-next) | Pointers to the MCP tool surface and the explore-first workflow. |
 
 ---
 

@@ -45,7 +45,7 @@ flowchart TD
     subgraph HARNESS["eval harness (FR-001/FR-006)"]
         KF["kfold_partitions (5 seeded rotation folds)<br/>per fold: evaluate_on(purpose=selection,<br/>held_out_ids=fold_i) — guard extends AS-IS"] --> AGG["rotation-mean + per-fold spread (descriptive)<br/>POOLED per-query paired_bootstrap — the guard"]
         DS2[("DS-v2 dataset dir (immutable, FR-002)<br/>+ second-corpus rows: per-corpus + macro-average")]
-        AGG --> LADDER["confirmation ladder on upgraded evidence<br/>-> benchmarks/quality/ablation-v2.{json,md}"]
+        AGG --> LADDER["confirmation ladder on upgraded evidence<br/>-> benchmarks/quality/ablation.{json,md} (D-017)"]
         DS2 --> LADDER
     end
 ```
@@ -63,7 +63,8 @@ harness gains k-fold rotation over the existing ground truth with a pooled
 per-query bootstrap guard (FR-001), a new immutable DS-v2 dataset directory
 with a second corpus evaluated per the datasource budget rules (FR-002), and
 the confirmation ladder re-runs into a NEW ablation record
-(`ablation-v2.{json,md}`, schema `cairn-quality-ablation/2`) because the
+(`ablation-v2.{json,md}` at design time — since unified into
+`ablation.{json,md}`, schema `cairn-quality-ablation/2`, per D-017) because the
 committed v1 record's dataset block is pinned to DS-v1 by
 `tests/test_ablation_artifact.py` test 1 (FR-006, survey FR-006 evidence).
 
@@ -164,8 +165,9 @@ marker like `variant`).
 (`run_sweep` + `evaluate_on(purpose="validate", baseline_metrics=...)` +
 `paired_bootstrap`; survey FR-006 evidence); it needs only the fold
 aggregation from FR-001 and the DS-v2 dataset from FR-002. The v2 record is
-a NEW document pair `benchmarks/quality/ablation-v2.{json,md}` (schema
-`cairn-quality-ablation/2`) — the v1 record's `doc[dataset]` is pinned to
+a NEW document pair `benchmarks/quality/ablation-v2.{json,md}` at design
+time (since unified into `ablation.{json,md}`, schema
+`cairn-quality-ablation/2` — D-017) — the v1 record's `doc[dataset]` is pinned to
 `(benchmark-datasource, DS-v1)` with split 29+29 by
 `tests/test_ablation_artifact.py` test 1, so v2 families cannot live there
 without breaking the pin (survey FR-006 evidence). DS-v2 rows are a new
@@ -585,3 +587,18 @@ record); no source on PRF specifically over RRF-fused first passes
   trim is visible, not silent); any direction not run is listed in the
   record as untested-this-cycle, never as failed. SC-1 targets and match
   rules untouched.
+
+### D-017: PR #39 unified the ablation record — ablation-v2.{json,md} no longer exists as a separate pair
+- **Context**: recorded at the 2026-08-18 doc audit (post-completion). After
+  this spec closed, PR #39 merged the v1 and v2 ablation records into a
+  single `benchmarks/quality/ablation.{json,md}` pair (schema
+  `cairn-quality-ablation/2`, v1 record embedded blob-pinned
+  3649dd1c/7112bb0); the v2 guard test file (test_ablation_v2_artifact.py)
+  was removed and `tests/test_ablation_artifact.py` reshaped 6→8 tests
+  (re-audit evidence: survey baseline `8dbf2ca`).
+- **Decision**: none reversed — D-008's verdict content is unchanged; only
+  the artifact path moved. Design-time references to `ablation-v2.*` in this
+  document are annotated in place; citations should target
+  `ablation.{json,md}` (22 rows re-counted: 10 ds-v1-kfold + 12 ds-v2).
+- **Consequences**: the per-spec v2 document named in D-008 is historical;
+  no test, table, or verdict content changed — path-only supersession.

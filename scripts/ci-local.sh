@@ -122,10 +122,15 @@ fi
 source "$VENV/bin/activate"
 export PATH="$VENV/bin:$PATH"
 
-install_extras() { # $@ = extras, e.g. dev / dev,otlp
-  log "pip install -e \".[$1]\" (CI: Install step)"
+install_extras() { # $@ = extras, e.g. dev / dev,otlp (empty = no extras)
   python -m pip install --upgrade pip -q
-  python -m pip install -e ".[$1]" -q
+  if [[ -n "$1" ]]; then
+    log "pip install -e \".[$1]\" (CI: Install step)"
+    python -m pip install -e ".[$1]" -q
+  else
+    log "pip install -e . (CI: Install step)"
+    python -m pip install -e . -q
+  fi
 }
 
 cd "$MOUNT_POINT"

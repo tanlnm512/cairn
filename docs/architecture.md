@@ -1,8 +1,22 @@
 # Architecture
 
+← [Docs index](README.md)
+
 This document describes cairn's design: what it is, how a query flows
 through its five layers, how it resolves symbols, where it draws the LLM
 boundary, and where data lives on disk.
+Read it when you need the system-level picture — when onboarding, before
+the per-topic pages, or when deciding which layer a question belongs to.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## What cairn is`](#what-cairn-is) | The defining properties (local, structural, agent-first, no LLM in the loop) and the verification contract they add up to. |
+| [`## Layers and query flow`](#layers-and-query-flow) | The layer map, the path a query takes through it, and each layer's tool inventory. |
+| [`## Resolution model`](#resolution-model) | The `exact` / `ambiguous` / `unresolved` edge labels, precise vs fuzzy query modes, and when to use which. |
+| [`## The LLM boundary`](#the-llm-boundary) | How synthesis work is queued for an external agent and fact-checked by the deterministic critic. |
+| [`## Storage`](#storage) | What lives in the SQLite store vs the `.knowledge/` markdown bundle, and how the store root is resolved. |
 
 ## What cairn is
 

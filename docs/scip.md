@@ -1,11 +1,15 @@
 # SCIP / Tree-sitter Coexistence Indexing
 
+← [Docs index](README.md)
+
 cairn can consume pre-built **SCIP** (Sourcegraph Code Intelligence Protocol)
 indexes for languages where compiler-grade symbol bindings beat tree-sitter's
 heuristic resolver — Kotlin, Java, Swift, and TypeScript in particular. Cairn
 stays a **consumer** of SCIP indexes; it never generates them (with one bounded
 exception for a missing index — see [Automatic generation](#automatic-generation-opt-in)
 below).
+Read it when you want compiler-grade resolution for a supported language, or
+when generating, declaring, or verifying a SCIP index for a workspace.
 
 When an index is configured **and present**, `cairn build` runs **both**
 sources and merges them: tree-sitter parses every file (providing modifiers,
@@ -23,6 +27,22 @@ uses tree-sitter alone for that language.
 > would otherwise break `get_callers` for both name forms. Indexers with
 > human-readable descriptors (scip-java, scip-typescript, scip-python, scip-go)
 > merge correctly and keep the coexistence benefit (source='merged').
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## 1. Generate an index (out-of-band)`](#1-generate-an-index-out-of-band) | The per-language indexer commands, the Swift/scip-swift notes, and why indexes are committed. |
+| [`## Automatic generation (opt-in)`](#automatic-generation-opt-in) | The bounded missing-index auto-generation, its limits, and the known-indexer table. |
+| [`` `## 2. Declare it in `cairn.json` ``](#2-declare-it-in-cairnjson) | The `scip` config keys and how present vs missing files are treated. |
+| [`## 3. Build`](#3-build) | The config-driven build and what the summary panel reports. |
+| [`## Verifying the wiring`](#verifying-the-wiring) | Using `cairn config` to see which languages will use SCIP. |
+| [`## The standalone escape hatch`](#the-standalone-escape-hatch) | `cairn import-scip` for importing one index without a full build. |
+| [`## What about edits? (incremental updates)`](#what-about-edits-incremental-updates) | How edited files re-parse and when SCIP resolution returns. |
+| [`## Dependency model`](#dependency-model) | The vendored protobuf stub, the `[scip]` extra, and their version coupling. |
+| [`## How the importer resolves edges`](#how-the-importer-resolves-edges) | The two-pass reference resolution and the invariant that guards `exact`. |
+| [`## How paths are resolved (multi-repo)`](#how-paths-are-resolved-multi-repo) | `project_root` normalization so rows land in the right repo. |
+| [`## Regenerating the vendored stub`](#regenerating-the-vendored-stub) | The dev-only regen script and the protobuf floor re-pin. |
 
 ## 1. Generate an index (out-of-band)
 

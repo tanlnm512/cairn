@@ -17,7 +17,6 @@ import tempfile
 import pytest
 
 # Apply the shared hash-backend fixture to every test in this module
-# (the local autouse copy used to live here; see tests/conftest.py).
 pytestmark = pytest.mark.usefixtures("hash_backend")
 
 
