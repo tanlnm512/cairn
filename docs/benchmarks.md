@@ -147,8 +147,9 @@ record.
 DB, cold (the lazy embedder + cross-encoder loads land inside the query)
 versus warm (`warm_models_in_background()` started and joined first). The
 committed artifact is `benchmarks/quality/warm_time.json`; its `notes`
-field records that the 322 ms figure in
-`docs/phases/performance-gap/task.md` is **advisory context, not a gate** —
+field records that the 322 ms figure from the former
+`docs/phases/performance-gap/task.md` phase doc (removed 2026-08-18; git
+history) is **advisory context, not a gate** —
 no committed baseline ever carried a warm-time number, so the artifact is
 the first committed measurement and has no BEFORE to regress against.
 
