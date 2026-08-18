@@ -1,8 +1,20 @@
 # Query Flow
 
+← [Docs index](README.md)
+
 How one query travels from an MCP client through the server, the connection
 layer, and the graph query layer to storage — as of the closure-index /
 pooled-connection changes (performance-gap phase, Milestone 1).
+Read it when debugging server-path latency or correctness, or when changing
+the dispatch, connection, impact, or render stages.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Stage by stage`](#stage-by-stage) | The numbered walk of the diagram: dispatch, the cached path, connection pooling, the routing fork, and render. |
+| [`## Sibling query paths (same skeleton, different engines)`](#sibling-query-paths-same-skeleton-different-engines) | How `find_definition`, `search_symbols`, `semantic_search`, and `explore` ride the same skeleton with different engines. |
+| [`## Storage map`](#storage-map) | Which tables live in the per-workspace SQLite file and what each serves. |
 
 Rendered assets: [SVG](diagrams/query-flow.svg) · [PNG](diagrams/query-flow.png) ·
 [source](diagrams/query-flow.mmd). The same diagram is embedded below

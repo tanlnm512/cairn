@@ -1,11 +1,25 @@
 # Quickstart
 
+← [Docs index](README.md)
+
 cairn is a local, structural code intelligence system: it parses your source
 with tree-sitter, builds a call-graph in SQLite, and exposes the result to you
 and to AI agents through a CLI (`cairn`) and an MCP server. It runs entirely
 on your machine and never calls an LLM by itself.
 
 This guide gets you from zero to querying a real repo in a few minutes.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Prerequisites`](#prerequisites) | The Python version and the optional `uv` install. |
+| [`## Install`](#install) | The base install, the optional extras, reranker setup, and the verify step. |
+| [`## Upgrading`](#upgrading) | Self-update and version-check commands. |
+| [`## Build the graph`](#build-the-graph) | First build vs incremental update, and where the store lands on disk. |
+| [`## Query the graph`](#query-the-graph) | The core query commands, `cairn ask`, and the precise-vs-fuzzy default. |
+| [`## Wire it to an AI agent`](#wire-it-to-an-ai-agent) | MCP config for agent clients and the one-shot `install-agents` setup. |
+| [`## Next steps`](#next-steps) | Pointers into the CLI, MCP, configuration, and architecture pages. |
 
 ## Prerequisites
 

@@ -1,9 +1,13 @@
 # cairn MCP Tools Reference
 
+← [Docs index](README.md)
+
 The `cairn` MCP server (started by `cairn serve`) exposes the codebase
 intelligence graph to AI agents. It is a FastMCP server implemented in
 `src/cairn/mcp_server/` and registers **27 tools** across 5 layers,
 plus an index-status resource.
+Read it when deciding which tool to call for a question, or when a tool's
+parameters or output shape need checking.
 
 > **`explore(query)` is the recommended first call** — it aggregates the
 > graph layer (verbatim source + call paths + blast radius) in one response.
@@ -12,6 +16,17 @@ Tool list and signatures below are verified from the `@mcp.tool()`-decorated
 functions in `tools_graph.py`, `tools_compass.py`, `tools_memory.py`, and
 `tools_knowledge.py`. For the full per-tool help, an agent can call
 `list_tools` at runtime.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Layer 1 — Graph (9 tools)`](#layer-1--graph-9-tools) | The structural tools (`explore` first, then definition/callers/impact/search/deps/viz), behavioral notes, and the `structured` output mode. |
+| [`## Layer 2 — Knowledge base + compass + router (5 tools)`](#layer-2--knowledge-base--compass--router-5-tools) | Compass retrieval, bundle-level knowledge search, the `ask_compass` router, and the two flow tools. |
+| [`## Layer 4 — Memory (8 tools)`](#layer-4--memory-8-tools) | The memory-tier tools, from `memory_digest` orientation to record/evolve/promote/decay. |
+| [`## Layer 5 — Knowledge (business docs + workflows) (5 tools)`](#layer-5--knowledge-business-docs--workflows-5-tools) | Business-document ingestion and search, and ordered workflow tracing. |
+| [`## Resource: index status`](#resource-index-status) | The `cairn://status` resource: freshness, build stats, and store health. |
+| [`` `## Workflow and resolution notes (from `AGENTS.md`)` ``](#workflow-and-resolution-notes-from-agentsmd) | The explore-first, before-editing, and after-task recipes, plus the freshness model. |
 
 ---
 

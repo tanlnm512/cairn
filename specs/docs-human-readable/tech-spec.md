@@ -280,7 +280,7 @@ deep-link `#anchors` into existing sections stay valid.
   `| Artifact | Named by |` keyed by repo-relative path, GAP rows flagged;
   append the `## Artifacts` tables per E2 to the two FIGURES.md files; add
   one hand-written pointer line in `docs/benchmarks.md` (outside sentinels)
-  to `../../benchmarks/README.md`.
+  to `../benchmarks/README.md`.
 - Verify before implementing: the survey FR-002 gap loop —
   `for j in $(find benchmarks -name '*.json' | sort); do grep -rl --include='*.md' -F "$(basename $j)" benchmarks docs > /dev/null || echo "GAP: $j"; done`
   (survey run prints 7 GAP lines: the 3 true gaps + 4 brace-glob

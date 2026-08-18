@@ -1,5 +1,7 @@
 # PR Review Checklist
 
+← [Docs index](README.md)
+
 > The review/audit gate for every change (feature, improvement, bugfix). Run by
 > the author before requesting review, and by the reviewer before approving.
 > Uses cairn's own tools to turn "does it look right?" into "what's the blast

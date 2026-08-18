@@ -1,8 +1,23 @@
 # Pre-Release Checklist
 
+← [Docs index](README.md)
+
 Run through this before tagging a release or merging a non-trivial PR.
 Each item maps to a real failure mode hit in this project's history —
 don't skip on "I'm sure it's fine."
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Tests`](#tests) | The full-suite local run and the no-new-skips check. |
+| [`## Build verification (for changes touching indexing/embedding)`](#build-verification-for-changes-touching-indexingembedding) | Real-workspace build, path spot-checks, and embed sanity for indexing/embedding changes. |
+| [`## "No behavior changed" claims`](#no-behavior-changed-claims) | AST verification for refactor/doc-only/comments-only changes. |
+| [`## Concurrency / DB locks`](#concurrency--db-locks) | Parallel serve/build and read-only-daemon checks. |
+| [`## Portability (the .kg is shared across machines)`](#portability-the-kg-is-shared-across-machines) | Repo-relative path checks for the cross-machine store. |
+| [`## Breaking changes`](#breaking-changes) | Schema additivity, CLI/MCP signature shape, and CHANGELOG state. |
+| [`## Agent / bulk-edit safety`](#agent--bulk-edit-safety) | Programmatic no-code-change verification for sub-agent or bulk edits. |
+| [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
 
 ## Tests
 - [ ] `uv run pytest tests/ -q` — full suite (~1100 tests). CI runs this too

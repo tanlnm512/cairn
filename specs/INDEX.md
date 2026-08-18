@@ -1,9 +1,10 @@
 # Specs index
 
-All three specs completed and archived 2026-08-18 to `archive/`, after the
-post-v0.12.0 doc re-audit at `8dbf2ca` (every FR verified DONE with verify
-commands re-run green — see each archived `survey.md`). New specs scaffold
-into `specs/<name>/` as usual (`scripts/scaffold.sh` registers them here).
+`scaffold.sh` registers new specs here. Specs move to `archive/` when done.
+
+## Active
+
+- [docs-human-readable](docs-human-readable/spec.md) — done (10/10 tasks 2026-08-18; orientation blocks ×15 pages, 30-row artifact inventory + gap fills, back-links + scripts/check_doc_links.py; all 12 TCs green, sealed bytes untouched)
 
 ## Archive
 
@@ -16,4 +17,3 @@ Note: sealed benchmark artifacts (`benchmarks/quality/ablation.json`,
 provenance citations — those records are immutable (blob-pinned or sealed);
 resolve such paths against `archive/<name>/` or the relevant merge-commit
 tree.
-- [docs-human-readable](docs-human-readable/spec.md) — draft (created 2026-08-18)

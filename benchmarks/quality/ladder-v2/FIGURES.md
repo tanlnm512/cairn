@@ -35,3 +35,10 @@ Cells are recall@10/MRR. `*` in-sweep p95 — measured in the serial run on an o
 ## (a) vs (b): the FR-003 repair's effect in this direction
 
 Per-query outcomes BYTE-IDENTICAL between enrich+rerank-off and enrich_idf+rerank-off at the shipped cutoff (0/58 queries differ). Consistent with T014's calibration finding: DS-v1's highest term_df fraction is 'test' at 0.8583, so the 0.90 cutoff's drop-set is empty and enrich_idf is inert on this corpus.
+
+## Artifacts
+
+| Artifact | Role |
+|---|---|
+| `rows-ds2.json` | Machine-checkable DS-v2 rows for the `ablation-v2.json` merge (schema `cairn-ds2-rows/1`): a flat `rows` list with one row per lever combo × level × corpus cell (`combo`, `corpus`, `level`, `n_queries`, `recall_at_10`, `mrr`, `p95_ms`, `mv`), plus the `counts`, `db_mb`, and `l5_legs` blocks. |
+| `sweep-ds2-zeroshot.json` | The DS-v2 zero-shot validation leg of the D-016 candidate ladder (schema `cairn-ds2-zeroshot/1`): `configs` holds per-combo aggregates (`l1_macro_average`, `l1_per_corpus`, `l5_leg`, `bootstrap_vs_incumbent_by_corpus`), `candidates` maps each candidate name to its lever combo, and `protocol`/`counts`/`db_mb` record the run context. |

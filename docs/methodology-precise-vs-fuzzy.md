@@ -1,7 +1,23 @@
 # Precise vs Fuzzy: A False-Positive Methodology for Trusting a Code Graph
 
+← [Docs index](README.md)
+
 > A standalone methodology note — legible without installing cairn. Linked
 > from the [README](../README.md) and [benchmarks](benchmarks.md).
+> Read it when deciding how far to trust a fuzzy-mode call-graph answer, or
+> when re-running the false-positive measurement on your own repo.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## The problem`](#the-problem) | Why a name-only "who calls this" answer can't be trusted at face value. |
+| [`## The methodology`](#the-methodology) | The three resolution labels, the two query modes, and the FP-rate formula. |
+| [`## The numbers (cairn on cairn, Python corpus)`](#the-numbers-cairn-on-cairn-python-corpus) | Per-name and aggregate false-positive rates, their interpretation, and the empty-precise caveat. |
+| [`## How to reproduce`](#how-to-reproduce) | The `cairn build` and `cairn callers` commands behind the counts. |
+| [`## Corpus details`](#corpus-details) | What the run measured on: corpus, build shape, resolution mix, eval recall. |
+| [`## What this measures, and what it doesn't`](#what-this-measures-and-what-it-doesnt) | The metric's scope — precision cost of trusting names, not recall. |
+| [`## Reproducibility note`](#reproducibility-note) | Why to re-run on your own repo rather than quote these numbers. |
 
 ## The problem
 

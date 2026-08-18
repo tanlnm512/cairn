@@ -1,5 +1,7 @@
 # Scope Audit Checklist
 
+← [Docs index](README.md)
+
 > Periodic, scope-based audits of whole areas of the codebase — **not** per-PR
 > review. Run these on a cadence (quarterly) or after heavy churn in an area.
 > For the per-change review gate, see [`review-checklist.md`](review-checklist.md).

@@ -1,5 +1,7 @@
 # Contribution Workflow (binding for agents)
 
+← [Docs index](README.md)
+
 > The mandatory procedure for making and shipping any change in this repo —
 > feature, improvement, bugfix, or docs. **Agents: follow this exactly; do not
 > improvise the order or skip steps.** CI enforces the automatable parts; this
@@ -10,6 +12,23 @@
 
 **The flow:** branch → local gates → conventional commit → push → PR → CI → merge → post-task.
 Each step has an exact command below.
+
+## Contents
+
+| Section | What it covers |
+|---------|----------------|
+| [`## Prerequisites (one-time)`](#prerequisites-one-time) | The two one-time setups: the pre-commit hook and branch protection. |
+| [`## 1. Branch off main`](#1-branch-off-main) | Creating the feature branch; why `main` is never committed to directly. |
+| [`## 2. Make the change (the *how* — see AGENTS.md)`](#2-make-the-change-the-how--see-agentsmd) | The explore-first editing rules and the comments-only verification escape hatch. |
+| [`## 3. Run local gates (Layer 0)`](#3-run-local-gates-layer-0) | The pre-commit gate and the optional containerized CI replication. |
+| [`` `## 4. Commit (conventional — required by CI and by `cz bump`)` ``](#4-commit-conventional--required-by-ci-and-by-cz-bump) | The conventional commit-title shape CI and `cz bump` depend on. |
+| [`## 5. Push the feature branch`](#5-push-the-feature-branch) | Pushing the branch, and why a push alone runs no CI. |
+| [`## 6. Open the PR`](#6-open-the-pr) | PR creation and the audit checklist the template carries. |
+| [`## 7. Watch CI; fix on the SAME branch`](#7-watch-ci-fix-on-the-same-branch) | When the checks run and the fix-on-the-same-branch rule. |
+| [`## 8. After merge — post-task (binding, see AGENTS.md §"After completing a task")`](#8-after-merge--post-task-binding-see-agentsmd-after-completing-a-task) | The mandatory post-merge graph update and memory capture. |
+| [`## Gate-failure decision table`](#gate-failure-decision-table) | The failed-check → fix mapping, and which checks are advisory-only. |
+| [`` `## Branch protection (one-time, via `gh`)` ``](#branch-protection-one-time-via-gh) | The `gh api` setup that makes the CI gates actually block merges. |
+| [`## Do NOT`](#do-not) | The hard prohibitions: direct pushes to main, `--no-verify`, PR close/reopen, skipped checklists, non-conventional titles. |
 
 ---
 

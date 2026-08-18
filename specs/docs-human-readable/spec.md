@@ -1,6 +1,6 @@
 # Spec: docs-human-readable
 
-**Status**: draft          <!-- draft while writing → active once the branch is cut
+**Status**: done          <!-- draft while writing → active once the branch is cut
                                 and the first task starts → done when all tasks are
                                 ticked and `check.py` re-runs green -->
 **Created**: 2026-08-18
