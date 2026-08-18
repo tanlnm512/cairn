@@ -16,3 +16,4 @@ Note: sealed benchmark artifacts (`benchmarks/quality/ablation.json`,
 provenance citations — those records are immutable (blob-pinned or sealed);
 resolve such paths against `archive/<name>/` or the relevant merge-commit
 tree.
+- [docs-human-readable](docs-human-readable/spec.md) — draft (created 2026-08-18)
