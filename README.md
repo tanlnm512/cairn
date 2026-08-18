@@ -346,7 +346,7 @@ time; the `BAAI/bge-m3` embedding model (MIT) downloads on demand to
 
 ## Status
 
-**Beta — pre-1.0 (v0.12.0).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.12.1).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 
