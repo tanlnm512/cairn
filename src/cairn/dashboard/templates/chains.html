@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Chains — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Session chains</h1>
+  <p class="muted">
+    Tool calls grouped per session, in call order; a new chain starts after
+    {{ gap_minutes }} minutes of inactivity.
+  </p>
+  {% if chains %}
+  <div class="chain-list">
+    {% for chain in chains %}
+    <div class="chain" data-session="{{ chain.session_id }}">
+      <div class="chain-head">
+        <code>{{ chain.session_id }}</code>
+        <span class="muted">
+          {{ chain.call_count }} call{{ "s" if chain.call_count != 1 }} ·
+          {{ chain.started_at | epoch }}{% if chain.call_count > 1 %} → {{ chain.ended_at | epoch }} · span {{ (chain.ended_at - chain.started_at) | span }}{% endif %}
+        </span>
+      </div>
+      <ol class="chain-calls">
+        {% for c in chain.calls %}
+        <li class="chain-call">
+          <span class="call-node">
+            <span class="call-tool">{{ c.tool_name }}</span>
+            <span class="badge badge-{{ c.status }}">{{ c.status }}</span>
+            <span class="muted">{{ c.invoked_at | offset(chain.started_at) }} · {{ c.duration_ms | duration }}</span>
+          </span>
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-state">No tool calls recorded yet.</p>
+  {% endif %}
+</section>
+<style>
+  /* CSS-only chain connection — this view adds no JavaScript. */
+  .chain {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    margin: 0.7rem 0;
+  }
+  .chain-head {
+    margin-bottom: 0.4rem;
+  }
+  .chain-calls {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+  }
+  .chain-call {
+    display: flex;
+    align-items: center;
+  }
+  .chain-call:not(:last-child)::after {
+    content: "→";
+    color: var(--muted);
+    margin: 0 0.45rem;
+    font-weight: 700;
+  }
+  .call-node {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.12rem 0.7rem;
+  }
+</style>
+{% endblock %}

@@ -10,6 +10,8 @@ Tests for:
 """
 from __future__ import annotations
 
+import os
+import re
 import sqlite3
 import sys
 import threading
@@ -220,6 +222,53 @@ class TestWatchdogBufferDrain:
         with pytest.raises(_Stop):
             server._watch_parent_loop()
         assert events == ["flush", ("exit", 0)], "drain must precede os._exit"
+
+
+class TestSessionIdentity:
+    """D-004 (FR-007): run() stamps a per-process CAIRN_SESSION at boot.
+
+    The env var has three readers (metric_buffering, telemetry/events,
+    graph/builder) that default the session column to "unknown" — boot is the
+    writer. An externally provided value must keep precedence (setdefault),
+    and the generated id must be a 12-char hex string.
+    """
+
+    @staticmethod
+    def _boot_server(monkeypatch, tmp_path):
+        """Run server.run(transport="stdio") against a valid sandboxed store,
+        with mcp.run() mocked so the call returns instead of serving."""
+        test_db = tmp_path / "session-test.db"
+        conn = sqlite3.connect(str(test_db))
+        from cairn.graph.schema import _apply_schema
+        _apply_schema(conn)
+        conn.close()
+        monkeypatch.setenv("CAIRN_DB", str(test_db))
+
+        with patch("cairn.mcp_server.server.mcp") as mock_mcp, \
+             patch("cairn.mcp_server.server.verify_tool_count"), \
+             patch("cairn.graph.watcher.ensure_fresh_force", return_value=0), \
+             patch("cairn.memory.promotion.decay",
+                   return_value={"expired_raw": 0, "archived_tribal": 0}):
+            try:
+                server.run(transport="stdio")
+            except SystemExit as e:
+                if e.code == 1:
+                    pytest.fail("server.run() should not exit with code 1 for valid store")
+            mock_mcp.run.assert_called_once()
+
+    def test_preset_session_env_wins(self, monkeypatch, tmp_path, fresh_db):
+        """A pre-set CAIRN_SESSION survives boot untouched."""
+        monkeypatch.setenv("CAIRN_SESSION", "preset-42")
+        self._boot_server(monkeypatch, tmp_path)
+        assert os.environ["CAIRN_SESSION"] == "preset-42"
+
+    def test_unset_session_env_gets_generated(self, monkeypatch, tmp_path, fresh_db):
+        """Without CAIRN_SESSION, boot generates a 12-hex-char id."""
+        monkeypatch.delenv("CAIRN_SESSION", raising=False)
+        self._boot_server(monkeypatch, tmp_path)
+        value = os.environ.get("CAIRN_SESSION", "")
+        assert re.fullmatch(r"[0-9a-f]{12}", value), \
+            f"expected a generated 12-hex id, got {value!r}"
 
 
 class TestModelCacheRace:

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Cairn Dashboard</h1>
+  <p class="muted">
+    Read-only view over the graph DB:
+    <code>{{ db_path }}</code>
+  </p>
+  <ul class="link-list">
+    <li><a href="/projects">Projects &amp; index status</a></li>
+    <li><a href="/history">Tool-call history</a></li>
+    <li><a href="/tokens">Token usage</a></li>
+    <li><a href="/chains">Session chains</a></li>
+    <li><a href="/health">Health</a></li>
+    <li><a href="/memory">Memory</a></li>
+    <li><a href="/tasks">Task queue</a></li>
+  </ul>
+</section>
+{% endblock %}

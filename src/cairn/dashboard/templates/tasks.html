@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Tasks — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Tasks</h1>
+  <form class="graph-controls" method="get" action="/tasks">
+    <label>Status
+      <select name="status">
+        <option value="all"{% if status == "all" %} selected{% endif %}>all</option>
+        {% for s in statuses %}
+        <option value="{{ s }}"{% if s == status %} selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+  {% if tasks %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Kind</th>
+        <th>Status</th>
+        <th>Resource</th>
+        <th>Assigned to</th>
+        <th>Created</th>
+        <th>Claimed</th>
+        <th>Completed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tasks %}
+      <tr>
+        <td><code>{{ t.id }}</code></td>
+        <td>{{ t.kind }}</td>
+        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+        <td><code>{{ t.resource }}</code></td>
+        <td>{{ t.assigned_to or "—" }}</td>
+        <td>{{ t.created_at or "—" }}</td>
+        <td>{{ t.claimed_at or "—" }}</td>
+        <td>{{ t.completed_at or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No tasks{% if status != "all" %} with status “{{ status }}”{% endif %} in the queue.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn dashboard` — a local, read-only web dashboard (127.0.0.1:8765,
+  zero new runtime deps): projects overview with index/embedding status,
+  interactive project graph (vendored vis-network, scope/depth controls),
+  tool-call history with filters, per-tool estimated token usage ranked by
+  cost, session-grouped tool call chains split at inactivity gaps, plus
+  health / memory / task-queue panels. A missing DB renders guidance
+  ("run `cairn build`"), never an error page.
+- MCP tool-call recording — `tool_metrics` gains `req_chars`, `resp_chars`,
+  and a redacted `args_summary` (additive migration; buffered off the hot
+  path, flushed on clean shutdown), and the server stamps a per-process
+  `CAIRN_SESSION` id so history and chains group per session.
+
+### Changed
 - `cairn config --db` — prints only the resolved graph DB path (machine-readable,
   for scripting). The README self-demo already piped this into `sqlite3`; the
   flag now exists to match.

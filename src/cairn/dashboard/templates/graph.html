@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Graph — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Graph</h1>
+  <form class="graph-controls" method="get" action="/graph">
+    <label>Scope
+      <select name="scope">
+        {% for s in scopes %}
+        <option value="{{ s }}"{% if s == scope %} selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Focus
+      <input type="text" name="focus" value="{{ focus }}" placeholder="symbol or module path">
+    </label>
+    <label>Repo
+      <input type="text" name="repo" value="{{ repo }}" placeholder="repo id">
+    </label>
+    <label>Depth
+      <input type="number" name="depth" min="1" value="{{ depth }}">
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+  <p class="muted">
+    scope <strong>{{ scope }}</strong> —
+    {{ graph.metadata.get("node_count", graph.nodes | length) }} nodes,
+    {{ graph.metadata.get("edge_count", graph.edges | length) }} edges shown
+    {%- if graph.metadata.get("total") is not none %},
+    {{ graph.metadata.total }} in the full result
+    {%- endif %};
+    scope queries are capped, so a count at the cap means the graph was truncated.
+  </p>
+  {% if graph.nodes %}
+  <div id="graph-canvas" style="height: 480px; border: 1px solid #d9dde3; border-radius: 8px; background: #ffffff;"></div>
+  {% else %}
+  <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
+  {% endif %}
+  <script id="graph-data" type="application/json">{{ graph | tojson }}</script>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='/vis-network.min.js') }}"></script>
+<script src="{{ url_for('static', path='/app.js') }}"></script>
+{% endblock %}

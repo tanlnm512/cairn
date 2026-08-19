@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from uuid import uuid4
 
 # Bootstrap: allow running as a script (python .../server.py) OR as a module
 # (python -m src.mcp_server.server). Agents invoke the script directly, so we
@@ -182,6 +183,11 @@ def run(transport: str = "stdio", port: int | None = None):
     boot catch-up + explicit ``cairn update``. It never starts in read-only
     mode or when CAIRN_WATCH=0.
     """
+    # Per-process session id: metric_buffering/telemetry/builder stamp rows
+    # with CAIRN_SESSION (default "unknown"); setdefault keeps an externally
+    # provided id in control.
+    os.environ.setdefault("CAIRN_SESSION", uuid4().hex[:12])
+
     # Central logging config for the server surface: reads CAIRN_LOG_LEVEL
     # (default WARNING) and attaches a stderr handler to the `cairn` logger
     # only — never root. stdout is the JSON-RPC channel under stdio, so every

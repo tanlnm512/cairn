@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Tokens — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Token usage</h1>
+  <p class="muted">
+    Estimated context tokens per tool, ranked by total — the most
+    context-expensive tool first.
+  </p>
+  {% if tools %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Tool</th>
+        <th>Calls</th>
+        <th>Est. req tokens</th>
+        <th>Est. resp tokens</th>
+        <th>Total est. tokens</th>
+        <th>Mean est. tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tools %}
+      <tr>
+        <td>{{ t.tool_name }}</td>
+        <td class="num">{{ t.calls }}</td>
+        <td class="num">~{{ t.est_req_tokens }}</td>
+        <td class="num">~{{ t.est_resp_tokens }}</td>
+        <td class="num">~{{ t.total_tokens }}</td>
+        <td class="num">~{{ t.mean_tokens | mean }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No tool calls recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

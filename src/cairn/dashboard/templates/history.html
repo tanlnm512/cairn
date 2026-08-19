@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}History — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>History</h1>
+  <form class="graph-controls" method="get" action="/history">
+    <label>Tool
+      <input type="text" name="tool" value="{{ tool }}">
+    </label>
+    <label>Session
+      <input type="text" name="session" value="{{ session }}">
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+  {% if calls %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Tool</th>
+        <th>Timestamp</th>
+        <th>Duration</th>
+        <th>Status</th>
+        <th>Session</th>
+        <th>Est. tokens (req/resp)</th>
+        <th>Arguments</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in calls %}
+      <tr>
+        <td>{{ h.tool_name }}</td>
+        <td>{{ h.invoked_at | epoch }}</td>
+        <td class="num">{{ h.duration_ms | duration }}</td>
+        <td><span class="badge badge-{{ h.status }}">{{ h.status }}</span></td>
+        <td><code>{{ h.session_id }}</code></td>
+        <td class="num">{{ h | tokens }}</td>
+        <td>{{ h.args_summary or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No matching calls{% if not tool and not session %} recorded yet{% endif %}.</p>
+  {% endif %}
+</section>
+{% endblock %}

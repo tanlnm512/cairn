@@ -98,3 +98,20 @@ Apache-2.0. The full license text is retained in-tree, unmodified, at
 benchmarks/datasource/t2/yarl/LICENSE; the complete export record (origin,
 pin, license, kept and excluded files, and size) is kept alongside the
 snapshot in benchmarks/datasource/t2/provenance.json.
+
+================================================================================
+Vendored content (dashboard static assets)
+================================================================================
+
+The dashboard vendors the minified standalone browser build of one third-party
+library as a static asset served by the dashboard app. These files are carried
+in-tree; no bundler or CDN is used at runtime.
+
+vis-network (https://github.com/visjs/vis-network), Copyright (c) 2011-2017
+Almende B.V, http://almende.com and (c) 2017-2019 vis.js contributors,
+https://github.com/visjs. The official standalone UMD minified build is
+vendored at pinned version 9.1.13 (unpkg dist file, downloaded 2026-08-20,
+sha256 39b9a36f17b4ca2e27d1e4327216860b042077b3307402ae315402ac826f878b) at
+src/cairn/dashboard/static/vis-network.min.js, and is dual licensed under the
+Apache License 2.0 OR MIT License. The upstream copyright and license notice
+are retained unmodified in the file's leading banner comment.

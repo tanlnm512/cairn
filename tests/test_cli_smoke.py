@@ -42,3 +42,32 @@ def test_cli_commands_smoke():
         res_eval = runner.invoke(main, ["eval", "--db", db_path, "--knowledge", knowledge_dir, "--json"])
         assert res_eval.exit_code == 0
         assert "L1" in res_eval.output
+
+
+def test_dashboard_help():
+    runner = CliRunner()
+    result = runner.invoke(main, ["dashboard", "--help"])
+    assert result.exit_code == 0
+    assert "--db" in result.output
+    assert "--host" in result.output
+    assert "--port" in result.output
+
+
+def test_dashboard_refuses_non_loopback_host():
+    runner = CliRunner()
+    result = runner.invoke(main, ["dashboard", "--host", "0.0.0.0"])
+    assert result.exit_code != 0
+    assert "localhost-only" in result.output
+
+
+def test_dashboard_db_defaults_to_central_store(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from cairn.cli.dashboard import _resolve_db
+
+    central = tmp_path / "central.kg"
+    monkeypatch.setattr(
+        "cairn.paths.resolve_store", lambda: SimpleNamespace(db=central)
+    )
+    assert _resolve_db(None) == str(central)
+    assert _resolve_db("/tmp/other.db") == "/tmp/other.db"

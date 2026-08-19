@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Memory — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Memory</h1>
+  <p class="muted">Recent memories from the knowledge bundle, newest first.</p>
+  {% if memories %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Title</th>
+        <th>Tier</th>
+        <th>Recorded</th>
+        <th>ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in memories %}
+      <tr>
+        <td><span class="badge badge-{{ m.type }}">{{ m.type }}</span></td>
+        <td>{{ m.title }}</td>
+        <td>{{ m.tier or "—" }}</td>
+        <td>{{ m.timestamp or "—" }}</td>
+        <td><code>{{ m.id }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No memories recorded yet — capture one with <code>cairn memory record</code>.</p>
+  {% endif %}
+</section>
+{% endblock %}

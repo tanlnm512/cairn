@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Health — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Health</h1>
+  <p class="muted">
+    Probes the same graph-layer helpers as <code>cairn doctor</code> on:
+    <code>{{ db_path }}</code>
+  </p>
+  <div class="card-grid">
+    <div class="card">
+      <h2>Database</h2>
+      <p class="card-value">{{ health.db_size_bytes | filesize }}</p>
+    </div>
+    <div class="card">
+      <h2>Index freshness</h2>
+      {% if health.last_build_age %}
+      <p class="card-value">{{ health.last_build_age }}</p>
+      <p class="muted">last build {{ health.last_build_at }}</p>
+      {% else %}
+      <p class="card-value">never</p>
+      <p class="muted">no build_runs recorded</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h2>Embedding backend</h2>
+      <p class="card-value">{{ health.embed_backend }}</p>
+      {% if health.hash_fallback %}
+      <span class="badge badge-warn">hash fallback</span>
+      {% else %}
+      <span class="badge badge-ok">model backend</span>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h2>Vector index</h2>
+      <p class="card-value">{{ health.ann_configured }}{% if not health.ann_backend_enabled %} (unavailable){% endif %}</p>
+      <p class="muted">{{ health.ann_embedding_rows }} embeddings · model {{ health.ann_model }}</p>
+      {% if health.ann_index_exists is none %}
+      <p class="muted">no embeddings to index yet</p>
+      {% elif health.ann_index_exists %}
+      <p class="muted">vec0 index: {{ health.ann_index_rows }} rows</p>
+      {% else %}
+      <p class="muted">no vec0 index built</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h2>Reranker</h2>
+      {% if health.reranker_available %}
+      <p class="card-value"><span class="badge badge-ok">available</span></p>
+      {% else %}
+      <p class="card-value"><span class="badge badge-warn">unavailable</span></p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

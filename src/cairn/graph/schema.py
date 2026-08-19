@@ -277,7 +277,10 @@ CREATE TABLE IF NOT EXISTS tool_metrics (
     invoked_at TIMESTAMP NOT NULL,
     duration_ms REAL,
     status TEXT NOT NULL DEFAULT 'ok',    -- 'ok' | 'error'
-    error_message TEXT
+    error_message TEXT,
+    req_chars INTEGER,          -- request payload size in chars; NULL on pre-migration rows
+    resp_chars INTEGER,         -- response payload size in chars; NULL on pre-migration rows
+    args_summary TEXT           -- redacted, truncated JSON summary of the call's kwargs
 );
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_tool ON tool_metrics(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_session ON tool_metrics(session_id);
@@ -388,6 +391,13 @@ TRANSITIVE_EDGES_TARGET_ID_MIGRATION = "ALTER TABLE transitive_edges ADD COLUMN 
 # qualified_name, docstring), so it composes with existing migrations cleanly.
 SYMBOL_SOURCE_MIGRATION = "ALTER TABLE symbols ADD COLUMN source TEXT"
 
+# Payload-size and arg-summary columns on tool_metrics: request/response
+# payload sizes in chars plus a redacted, truncated summary of the call's
+# kwargs. NULL on rows recorded before these migrations ran.
+TOOL_METRICS_REQ_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN req_chars INTEGER"
+TOOL_METRICS_RESP_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN resp_chars INTEGER"
+TOOL_METRICS_ARGS_SUMMARY_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN args_summary TEXT"
+
 # All additive migrations applied at connect time. Each is attempted in a
 # try/except so re-running on an already-migrated DB is a no-op.
 MIGRATIONS = [
@@ -403,6 +413,9 @@ MIGRATIONS = [
     SYMBOL_BODY_MIGRATION,
     TRANSITIVE_EDGES_TARGET_ID_MIGRATION,
     SYMBOL_SOURCE_MIGRATION,
+    TOOL_METRICS_REQ_CHARS_MIGRATION,
+    TOOL_METRICS_RESP_CHARS_MIGRATION,
+    TOOL_METRICS_ARGS_SUMMARY_MIGRATION,
 ]
 
 # Default DB location: resolved from the central store for the current workspace.
@@ -816,7 +829,10 @@ _TELEMETRY_TABLE_COLUMNS = {
         "parse_errors, skipped, workers, session_id"
     ),
     "events": "ts, name, session_id, attrs",
-    "tool_metrics": "tool_name, session_id, invoked_at, duration_ms, status, error_message",
+    "tool_metrics": (
+        "tool_name, session_id, invoked_at, duration_ms, status, error_message, "
+        "req_chars, resp_chars, args_summary"
+    ),
 }
 
 
