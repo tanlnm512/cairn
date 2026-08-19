@@ -149,10 +149,16 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
 @main.command()
 @click.option("--list", "list_all", is_flag=True, help="List all registered workspaces.")
 @click.option("--mcp-config", is_flag=True, help="Print a path-free .mcp.json snippet for agents.")
-def config(list_all, mcp_config):
+@click.option("--db", "db_only", is_flag=True,
+              help="Print only the resolved graph DB path (machine-readable; for scripting).")
+def config(list_all, mcp_config, db_only):
     """Show resolved store paths for this workspace (or all registered ones)."""
 
     from ..paths import REGISTRY_FILE, resolve_store, resolve_workspace
+
+    if db_only:
+        click.echo(str(resolve_store().db))
+        return
 
     if mcp_config:
         snippet = {
