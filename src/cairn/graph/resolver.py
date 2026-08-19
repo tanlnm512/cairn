@@ -3,7 +3,8 @@
 Resolves an edge to exactly one candidate across priority tiers, leaving
 otherwise-unresolved edges as ``resolution='ambiguous'`` (precise by default).
 
-Tiers: SAME-FILE -> IMPORT-AWARE -> SAME-REPO -> GLOBAL -> AMBIGUOUS.
+Tiers: TYPE-AWARE (receiver dispatch) -> SAME-FILE -> IMPORT-AWARE ->
+SAME-REPO -> GLOBAL -> AMBIGUOUS.
 Resolution is decided per tier: one candidate -> answer; many -> mark
 ambiguous and stop; zero -> try the next broader tier.
 """

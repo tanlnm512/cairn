@@ -4,7 +4,7 @@
 
 The `cairn` MCP server (started by `cairn serve`) exposes the codebase
 intelligence graph to AI agents. It is a FastMCP server implemented in
-`src/cairn/mcp_server/` and registers **27 tools** across 5 layers,
+`src/cairn/mcp_server/` and registers **27 tools** across 4 layers,
 plus an index-status resource.
 Read it when deciding which tool to call for a question, or when a tool's
 parameters or output shape need checking.
@@ -108,8 +108,8 @@ Bundle/OKF-read and cross-layer routing.
 
 ### Behavioral notes (knowledge base + compass)
 
-- **`ask_compass`** is the router (the L4 "router" tool in `AGENTS.md`'s layer
-  accounting). It routes correctly but can return thin body skeletons when
+- **`ask_compass`** is the router (the cross-layer router; it lives in Layer
+  2). It routes correctly but can return thin body skeletons when
   wiki/compass coverage is thin — **don't treat an empty response as "no info
   exists"**; drill down with the specific layer tool. It explicitly flags when
   every layer came up empty. With `file_path` set and no query, it runs in
@@ -130,6 +130,9 @@ Bundle/OKF-read and cross-layer routing.
 > which the live `mcp` instance enforces via an assertion in `server.py`.
 > `explore` is registered in the graph layer (1 of its 9) but acts as the
 > aggregator/front-door; `ask_compass` is the cross-layer router.
+> Layer numbering runs 1, 2, 4, 5: it follows the router's L1–L5 taxonomy
+> (L1 graph, L2 wiki, L3 compass, L4 memory, L5 knowledge), and wiki (L2) +
+> compass (L3) share one tool group — so there is no Layer 3 section.
 
 ---
 
@@ -191,7 +194,7 @@ procedural workflows.
 ### Behavioral notes (knowledge)
 
 - **`knowledge_search`** is the business-docs layer (different from the
-  Layer 2/3 bundle-level `search_knowledge`). It bridges to the code graph:
+  Layer 2 bundle-level `search_knowledge`). It bridges to the code graph:
   documents tagged with `affects_repos` get `cross_repo_deps` results
   appended. Lexical search works without the semantic extra; semantic adds
   recall. If the corpus isn't embedded, run `cairn knowledge embed`.

@@ -147,7 +147,7 @@ Desktop, Cursor, or ZCode, add it to the client's MCP config:
 }
 ```
 
-The server exposes 27 tools across 5 layers (graph, compass + knowledge base +
+The server exposes 27 tools across 4 layers (graph, compass + knowledge base +
 router, memory, knowledge). The aggregator tool `explore` is the recommended
 first call for almost any question — it fans a query across the graph layer and
 returns one consolidated answer in a single round trip.

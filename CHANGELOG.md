@@ -33,6 +33,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/contribution-workflow.md`: counts all nine CI jobs (the test matrix
   expands to five per-version checks) and adds the DS-v2-seal and advisory
   Bench rows to the gate-failure decision table.
+- Second strict docs re-audit: the MCP server exposes 27 tools across **4**
+  layers, not 5 — corrected across every surface that carries the phrase
+  (mcp-tools.md, architecture.md, architecture-overview.md, quickstart.md,
+  cli-reference.md, README, AGENTS.md, the server.py docstring, the
+  agent-install template `_common.py`, and the two surface-sync assertions in
+  test_agent_surface.py). The 1/2/4/5 tool-layer numbering stays: it follows
+  the router's L1–L5 taxonomy (L1 graph, L2 wiki, L3 compass, L4 memory, L5
+  knowledge), where wiki (L2) + compass (L3) share one tool group — so there
+  is no Layer 3 section (the router itself genuinely routes across 5 layers
+  and is unchanged). `architecture-overview.md` states the transitive closure
+  depth correctly: `transitive_edges` is materialised to distance 4
+  (`CLOSURE_MAX_DEPTH`), serving depth ≤ 3 DFS queries — the doc said
+  "depth 3". The `resolver.py` module docstring now lists the type-aware tier
+  (Tier 0) it actually runs first.
 
 ## [0.12.1] - 2026-08-18
 

@@ -230,7 +230,7 @@ def _render_agents_instructions_from_source() -> str:
             if (isinstance(node, ast.FunctionDef) and node.name == "_agents_instructions"):
                 for inner in ast.walk(node):
                     if (isinstance(inner, ast.Constant) and isinstance(inner.value, str)
-                            and "tools across 5 layers" in inner.value):
+                            and "tools across 4 layers" in inner.value):
                         agents_value = inner.value
                         break
                 break
@@ -417,7 +417,7 @@ def test_tool_count_string_matches_server():
             f"could not import _agents_instructions ({exc!r}) and the source "
             "fallback also failed to render the instruction text"
         )
-    expected_phrase = f"{expected} tools across 5 layers"
+    expected_phrase = f"{expected} tools across 4 layers"
     assert expected_phrase in instructions, (
         f"_agents_instructions() output does not contain {expected_phrase!r}; "
         f"the installer blurb drifted from _EXPECTED_TOOL_COUNT={expected}"

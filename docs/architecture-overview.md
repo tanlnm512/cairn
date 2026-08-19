@@ -11,7 +11,7 @@
 ## Table of contents
 
 1. [System at a glance](#1-system-at-a-glance)
-2. [The five layers](#2-the-five-layers)
+2. [The four tool layers](#2-the-four-tool-layers)
 3. [How the layers interact](#3-how-the-layers-interact)
 4. [Build flow: source → graph](#4-build-flow-source--graph)
 5. [Query flow: agent → answer](#5-query-flow-agent--answer)
@@ -79,7 +79,7 @@ fact-checked by a deterministic critic against the graph. See the
 
 ---
 
-## 2. The five layers
+## 2. The four tool layers
 
 | Layer | Tools | Purpose | Backed by |
 |-------|-------|---------|-----------|
@@ -156,7 +156,7 @@ flowchart TB
     RESOLVE --> PERSIST{in-memory<br/>build?}
     PERSIST -- "yes (full workspace)" --> SWAP["5a. persist<br/>atomic .tmp + os.replace<br/>(SQLite page copy)"]
     PERSIST -- "no (single repo)" --> DERIVED
-    SWAP --> DERIVED["6. derived indexes<br/>dataflow (O(1) impact)<br/>+ transitive closure (depth 3)"]
+    SWAP --> DERIVED["6. derived indexes<br/>dataflow (O(1) impact)<br/>+ transitive closure (distance 4)"]
     DERIVED --> DONE([done])
 ```
 
@@ -441,7 +441,7 @@ erDiagram
 - **FTS5** external-content table over `symbols` (name, qualified_name,
   docstring), synced by triggers, powers BM25-ranked lexical search.
 - **Derived tables**: `dataflow` (O(1) blast radius for public symbols),
-  `transitive_edges` (closure matrix, default depth 3) — built by `cairn build`
+  `transitive_edges` (closure matrix, materialised to distance 4) — built by `cairn build`
   and rebuilt by `cairn update` whenever any file changed.
 - **Vector search artifacts**: per-model sqlite-vec `vec0` ANN tables —
   `vec_<model>` over `embeddings` (populated by every `cairn embed`) and
