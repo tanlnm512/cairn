@@ -33,10 +33,11 @@ TASK_STATUSES = ("pending", "in-progress", "done", "failed")
 def _human_size(num_bytes) -> str:
     """Byte count as B / KiB / MiB / GiB / TiB, one decimal above 1024."""
     size = float(num_bytes or 0)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if size < 1024 or unit == "TiB":
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024:
             return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
+    return f"{size:.1f} TiB"
 
 
 def _human_ts(value) -> str:
