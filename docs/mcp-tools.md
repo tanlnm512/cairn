@@ -42,7 +42,7 @@ into specific relationships.
 | `get_callers(name, fuzzy?, limit?, structured?)` | Who calls this symbol. Precise by default; `fuzzy=True` adds name-only call sites. |
 | `get_callees(name, fuzzy?, limit?, structured?)` | What this symbol calls. Precise by default; `fuzzy=True` includes unresolved/external calls. |
 | `impact_analysis(name, depth?, fuzzy?, cached?, limit?, structured?)` | Recursive blast radius (callers up to `depth`). Reports total + by-depth + affected tests + cross-repo consumers. |
-| `semantic_search(query, limit?, include_callers?, structured?)` | Concept search — finds code by meaning. Requires the `semantic` extra. |
+| `semantic_search(query, limit?, include_callers?, structured?, rerank?)` | Concept search — finds code by meaning. Requires the `semantic` extra. |
 | `search_symbols(pattern, kind?, structured?)` | Lexical symbol search (`*` wildcards, BM25-ranked). The default discovery entry point. |
 | `cross_repo_deps(repo, limit?)` | Cross-repo dependency map: what `repo` depends on, what depends on it. |
 | `visualize_graph(scope?, symbol?, module?, repo?, depth?, format?)` | Generate a diagram (Mermaid/DOT/JSON) of a graph scope. |
@@ -70,9 +70,14 @@ into specific relationships.
   `fused(bm25+semantic)`) is shown. Rank order is meaningful either way; set
   `CAIRN_FUSION=0` for true 0..1 cosine scores. Rerank runs when enabled
   (auto-on after `cairn download-reranker`, or `CAIRN_RERANK=1`); each reranked
-  result is labelled `[rerank X.XX]`. If the configured rerank model is
-  missing/evicted from the cache, it falls back to the hybrid order rather than
-  failing. Set `CAIRN_RERANK=0` to force it off.
+  result is labelled `[rerank X.XX]`. In auto mode (default) the rerank stage
+  is skipped when the fused ranking is already decisive (margin over the RRF
+  scores ≥ `CAIRN_RERANK_MIN_MARGIN` and the top hit is an exact name match);
+  the per-call `rerank` parameter overrides that — `None`/omitted = auto (the
+  gate decides), `True` = force the rerank stage when enabled (bypasses the
+  confidence gate; `CAIRN_RERANK=0` still wins), `False` = never rerank. If the
+  configured rerank model is missing/evicted from the cache, it falls back to
+  the hybrid order rather than failing. Set `CAIRN_RERANK=0` to force it off.
 - **`search_symbols`**: FTS5 + phrase splitting handles underscored tokens,
   and unions in a LIKE-based substring pass for non-prefix patterns, so
   wildcards and substring queries both work on underscored and camelCase names.
@@ -236,9 +241,16 @@ area):
 
 ### Freshness
 
-The server reconciles freshness **once at boot** (diffing the files table
-against disk). Tool calls do **not** re-check freshness per query — edits
-made while a `cairn serve` process is up require a server restart (or `cairn build`)
-to show up in results. Per-query staleness banners surface when a result set
-touches files with unindexed edits pending in `pending_sync`. Use the
-`cairn://status` resource for the aggregate freshness picture.
+Freshness is maintained two ways. At boot, the server runs a one-time
+catch-up (diffing the files table against disk) to absorb edits made while it
+was down. Then — with the `[watch]` extra installed and `CAIRN_WATCH` not
+disabled — it starts a **live file watcher** so source edits made while the
+server runs are reindexed within a ~2s debounce window, without a restart or
+an explicit `cairn update`. Each changed file is first marked in
+`pending_sync`, so concurrent MCP readers immediately see a staleness banner
+on results touching that file until the reindex lands. Without the `[watch]`
+extra (or with `CAIRN_WATCH=0`, or in read-only mode), freshness falls back to
+boot catch-up + explicit `cairn update` — in that degraded mode, edits made
+while the server is up require a server restart (or `cairn build`) to show up
+in results. Use the `cairn://status` resource for the aggregate freshness
+picture.

@@ -13,10 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- `cairn config --db` — prints only the resolved graph DB path (machine-readable,
+  for scripting). The README self-demo already piped this into `sqlite3`; the
+  flag now exists to match.
 
 ### Changed
-- _Nothing yet._
+- Code-vs-docs drift fixes from a full docs audit. `docs/mcp-tools.md`: the
+  freshness section now describes the live file watcher (`[watch]` extra, ~2s
+  debounce, `pending_sync` staleness banners) instead of the pre-watcher
+  boot-only model, and `semantic_search` documents its `rerank` parameter and
+  the `CAIRN_RERANK_MIN_MARGIN` auto gate. `docs/cli-reference.md`: 15 (not 14)
+  memory subcommands with `cairn memory embed` documented, `update
+  --knowledge`, `config --db`, and the `build --staging`/`--repo` mutual
+  exclusion. `docs/configuration.md`: `CAIRN_WORKERS` is clamped to [1, 256]
+  (not uncapped); `CAIRN_LLM_BACKEND` documents `droid`/`opencode`/`claude`;
+  `CAIRN_CHUNK_VARIANT` documents all seven variants; the `openai` embed
+  backend's `OPENAI_API_KEY` requirement is stated; `CAIRN_CONN_POOL`,
+  `CAIRN_WARM_MODELS`, and `CAIRN_RERANK_MIN_MARGIN` are documented.
+  `docs/contribution-workflow.md`: counts all nine CI jobs (the test matrix
+  expands to five per-version checks) and adds the DS-v2-seal and advisory
+  Bench rows to the gate-failure decision table.
 
 ## [0.12.1] - 2026-08-18
 

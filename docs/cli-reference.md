@@ -80,7 +80,7 @@ read-only, contention-safe model that replaces one-stdio-server-per-client.
 > SSE `start`/`stop`/`status`/`restart` are macOS-only (launchd). On other
 > platforms run `cairn serve --port 9876` under a process supervisor.
 
-### `cairn memory` — agent memory (14 subcommands)
+### `cairn memory` — agent memory (15 subcommands)
 
 `cairn memory` records and curates agent learnings (decisions, patterns,
 mistakes, workarounds) across the tiers raw → drafts → tribal → canonical.
@@ -101,6 +101,7 @@ mistakes, workarounds) across the tiers raw → drafts → tribal → canonical.
 | `cairn memory demote PATH` | Demote a memory to a lower tier (`--tier raw\|archived`); rejects promotions. |
 | `cairn memory purge` | Delete old archived memories (`--max-days 90`, `--dry-run`). CLI-only — not exposed as MCP. |
 | `cairn memory consolidate` | Consolidate redundant raw memories into unified tribal knowledge. |
+| `cairn memory embed` | Backfill semantic embeddings for memories captured before embedding existed, or after a model swap (`--batch-size 64`, `--reap/--no-reap` to also delete rows whose memory no longer exists — default on). Ongoing capture/evolve embed on their own; this catches up the rest. |
 
 `record` options: `--body`, `--resource`, `--confidence 0.7`, `--db`, `--knowledge`.
 
@@ -233,7 +234,7 @@ These are registered directly on `cairn` (bare `@main.command()`).
 | Command | Description |
 |---------|-------------|
 | `cairn init` | Register this workspace with cairn's central store and build the graph. |
-| `cairn config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet). Also echoes the resolved [SCIP](./scip.md) config and whether each index file exists. |
+| `cairn config` | Show resolved store paths (`--list` all workspaces, `--mcp-config` prints a path-free `.mcp.json` snippet, `--db` prints only the resolved graph DB path — machine-readable, for scripting). Also echoes the resolved [SCIP](./scip.md) config and whether each index file exists. |
 | `cairn build` | Build (or rebuild) the code graph; also builds dataflow + transitive closure. |
 | `cairn stats` | Show graph statistics (repos, symbols, edges, by-repo/by-kind/skipped tables). |
 | `cairn checkpoint` | Checkpoint the graph DB's WAL back into the main file (TRUNCATE). |
@@ -244,13 +245,17 @@ These are registered directly on `cairn` (bare `@main.command()`).
 `cairn/.kg`), `--no-build`, `--import-docs` (ingest `docs/**/*.md`).
 
 `build` options: `--repo`, `--workspace`, `--db`, `-v/--verbose`, `--staging`
-(build to temp DB and atomic-swap for zero downtime). When `cairn.json`
+(build to temp DB and atomic-swap for zero downtime; **cannot be combined with
+`--repo`** — a staged single-repo build would swap in a DB containing only that
+repo, silently deleting every other repo's graph, so the combination is
+rejected). When `cairn.json`
 declares [SCIP](./scip.md) indexes, languages whose index file exists are
 imported from SCIP (exact resolution) and skipped by tree-sitter; the summary
 panel reports per-language SCIP symbol counts.
 
 `update` options: `--repo`, `--file PATH` (single-file, for PostToolUse hooks),
-`--workspace`, `--db`. Runs memory decay after reindex.
+`--workspace`, `--db`, `--knowledge` (knowledge bundle path, for the
+post-update memory staleness scan). Runs memory decay after reindex.
 
 ### Graph queries (L1)
 

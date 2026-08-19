@@ -56,8 +56,10 @@ database and a `.knowledge/` markdown bundle. Resolution order is
 | `CAIRN_OTEL_ENDPOINT` | URL, default unset (off) | Opt-in OTLP export of the local telemetry events as OpenTelemetry LogRecords (`body` = event name, attributes = the event's enum attrs + `session_id`, resource `service.name=cairn` — metadata only, never paths or payloads). **Unset (default) = completely off**: no export, no OpenTelemetry import, zero overhead — telemetry stays local-only in the `.kg` store, byte-identical to a build without this variable. Setting it (e.g. `http://localhost:4318/v1/logs`) requires the optional extra `pip install 'cairn-intel[otlp]'` (OpenTelemetry SDK + OTLP/http exporter); the SDK is imported lazily on the first flush only after this env var is set, and if it is absent cairn logs **one** warning and stays local — never an error, never a required install. Export rides the existing 30s background flush thread (never the tool/build hot path), is best-effort — a failed export retains the rows and retries on the next tick, logging at DEBUG, never raising — and the SQLite `events` table remains the source of truth (OTLP is an additional sink, not a replacement; read-only daemons export nothing, same as they write nothing). `CAIRN_TELEMETRY=off` overrides this variable: no export happens even when the endpoint is set. |
 | `CAIRN_READ_ONLY` | `0`/`1`, default unset (writable) | When `1`/`true`/`yes`, the MCP server opens the DB read-only. Set automatically by the SSE daemon (the safe shared-instance mode) and by `cairn serve` when read-only is requested. |
 | `CAIRN_WATCH` | `0`/`1`, default unset (on) | Hard kill switch for the MCP server's **live file watching**. When unset (or `1`), a running `cairn serve` watches the workspace repos with `watchdog` and reindexes source edits within a ~2s debounce window, so the graph stays fresh without restarting the server or running `cairn update`. Set `0`/`false`/`no`/`off` to disable. Requires the optional `[watch]` extra (`pip install cairn-intel[watch]`); without it (and with `CAIRN_WATCH` unset) the watcher degrades to a single info log line and freshness falls back to boot catch-up + explicit `cairn update`. Never runs when `CAIRN_READ_ONLY` is set — a read-only server must never write. |
-| `CAIRN_WORKERS` | int, default = CPU count | Number of parallel parse/build workers. Honored by the builder; uncapped so you can raise it on big machines. |
+| `CAIRN_WORKERS` | int, default = CPU count | Number of parallel parse/build workers. Honored by the builder; clamped to `[1, 256]`, and an unparseable value falls back to the CPU count. |
 | `CAIRN_MAX_RESULT_CHARS` | int, default `60000` | Cap on the character count of MCP tool results. Truncates oversized responses to keep agent context windows bounded. |
+| `CAIRN_CONN_POOL` | `0`/`1`, default `1` (on) | The MCP server pools one thread-local SQLite connection per DB path instead of opening/closing per tool call. Set `0`/`false`/`no` to disable pooling (escape hatch for connection-state debugging); pooled connections are closed on shutdown. |
+| `CAIRN_WARM_MODELS` | `0`/`1`, default unset (on) | Boot-time warm-up pre-loads the embedder/reranker models in a background thread so the first semantic query doesn't pay the cold-model cost. Set `0`/`false`/`no` to skip warm-up entirely. |
 
 **Live file watching behavior.** With the `[watch]` extra installed, `cairn serve`
 starts a filesystem observer at boot (after the DB guard and the boot catch-up
@@ -83,7 +85,7 @@ and the variables are inert. See also the `CAIRN_FUSION` note below.
 |----------|----------------|--------|
 | `CAIRN_FUSION` | `0`/`1`, default `1` | Reciprocal Rank Fusion of BM25 + vector scores. When on (default), the returned `score` is a fusion rank number (~0.01–0.02), not cosine similarity. Set to `0` to expose raw cosine scores. |
 | `CAIRN_ANN_BACKEND` | string, default `sqlite-vec` | When unset or `sqlite-vec` (and the `sqlite-vec` package is importable), uses a native ANN index. Set to `off` (or any other value) to force the brute-force cosine scan. Any load failure degrades to brute force automatically. |
-| `CAIRN_EMBED_BACKEND` | `local`/`openai`/`hash`, default `local` | Embedding provider. `local` uses sentence-transformers in-process (and silently falls back to `hash` when the package is missing); `openai` calls the OpenAI embeddings API; `hash` is a deterministic dep-free hash embedder (low quality, for tests/offline smoke checks). |
+| `CAIRN_EMBED_BACKEND` | `local`/`openai`/`hash`, default `local` | Embedding provider. `local` uses sentence-transformers in-process (and silently falls back to `hash` when the package is missing); `openai` calls the OpenAI embeddings API and **requires `OPENAI_API_KEY`** to be set (load fails fast otherwise); `hash` is a deterministic dep-free hash embedder (low quality, for tests/offline smoke checks). |
 | `CAIRN_EMBED_LOCAL_MODEL` | string, default `BAAI/bge-m3` | HuggingFace model id for the `local` backend. |
 | `CAIRN_EMBED_OPENAI_MODEL` | string, default `text-embedding-3-small` | Model name for the `openai` backend. |
 | `CAIRN_EMBED_KNOWLEDGE_MODEL` | string, default unset | Optional separate model for embedding the `.knowledge/` markdown corpus (lets docs use a different model than code). Falls back to the main model. |
@@ -93,6 +95,7 @@ and the variables are inert. See also the `CAIRN_FUSION` note below.
 | `CAIRN_EMBED_TRUST_REMOTE_CODE` | `0`/`1`, default unset | When `1`, sets `trust_remote_code=True` on model load — required by some custom-architecture models. |
 | `CAIRN_RERANK` | `0`/`1`, default unset | When `1`/`true`/`on`, runs a CrossEncoder reranker over retrieval results. Also auto-enabled by a successful `cairn download-reranker` (writes a `~/.cairn/rerank_enabled` marker). Set to `0`/`false`/`off` to force it OFF (hard kill switch — wins over the marker). Needs the `[semantic]` extra (no separate install); if the configured model isn't cached, falls back to hybrid (vector + BM25 + RRF) order. |
 | `CAIRN_RERANK_MODEL` | string, default `BAAI/bge-reranker-base` | CrossEncoder model used when reranking. The default is the natural pair for the `bge-m3` embedder (same BAAI family). |
+| `CAIRN_RERANK_MIN_MARGIN` | float, default `0.45` | Confidence gate for the rerank stage: when a fused ranking's top-to-edge margin is at or above this (and the top hit is an exact name match), rerank is skipped — the cross-encoder can't change such an answer and costs most of the latency. Clamped to `[0, 1]` (`1.0` effectively never skips, `0.0` skips on every decisive fused ranking); unparseable values fall back to the default. A latency knob, not correctness. The `semantic_search` tool's per-call `rerank` parameter bypasses this gate (`True` forces, `False` never). |
 
 ### Disabling fusion to read real cosine scores
 
@@ -122,13 +125,13 @@ claims and completes. See `cairn task list / show / claim / complete`.
 
 | Variable | Type / Default | Effect |
 |----------|----------------|--------|
-| `CAIRN_LLM_BACKEND` | string, default `file-queue` | How LLM-driven commands route their work. `file-queue` (default) enqueues tasks for an external agent; a deterministic critic fact-checks every completed result before it is committed. Recognized by the compass and memory commands. |
+| `CAIRN_LLM_BACKEND` | string, default `file-queue` | How LLM-driven commands route their work. `file-queue` (default) enqueues tasks for an external agent; a deterministic critic fact-checks every completed result before it is committed. Set to `droid`, `opencode`, or `claude` to instead spawn that agent CLI directly as a subprocess (no queue, no waiting for a separate agent to claim). Recognized by the compass and memory commands. |
 
 ## Parsing
 
 | Variable | Type / Default | Effect |
 |----------|----------------|--------|
-| `CAIRN_CHUNK_VARIANT` | `A`/`B`, default `B` | How source is chunked before embedding. Variant `B` is the current default; override to `A` for the legacy chunker if you need to reproduce older embeddings. Changing this invalidates existing embeddings on the next `cairn embed`. |
+| `CAIRN_CHUNK_VARIANT` | string, default `B` | How source is chunked before embedding (case-insensitive). The ablation ladder: `A` (legacy: kind + name + first signature line), `B` (default: A + docstring + parameters + return type + full signature), `C` (B + body + context), plus field-dropout variants of B for retrieval-quality ablations — `B_NO_SCOPE` (no enclosing scope/imports), `B_NO_SIG` (no parameters/return type), `B_IDENTITIES` (only the identity floor: qualified name + file path + signature + docstring), `C_TRIM` (B + body truncated to half the chunk budget). Changing this invalidates existing embeddings on the next `cairn embed`. |
 
 ## Workspace config file (`cairn.json`)
 
