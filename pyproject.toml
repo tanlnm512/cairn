@@ -150,6 +150,8 @@ where = ["src"]
 # Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
 # so `cairn install-agents` works from a wheel install, not just a source checkout.
 "cairn.agent_integration" = ["**/*"]
+# Same for the dashboard's Jinja2 templates and static assets.
+"cairn.dashboard" = ["templates/*", "static/*"]
 
 [tool.pytest.ini_options]
 # `core` marks the fast smoke subset (tests/test_core_smoke.py): one focused

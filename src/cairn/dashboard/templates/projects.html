@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Projects — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Projects</h1>
+  {% if projects %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Language</th>
+        <th>Path</th>
+        <th>Files</th>
+        <th>Symbols</th>
+        <th>Edges</th>
+        <th>Last indexed</th>
+        <th>Embeddings</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in projects %}
+      <tr>
+        <td><a href="/graph?scope=repo&amp;repo={{ p.id | urlencode }}">{{ p.name }}</a></td>
+        <td>{{ p.language or "—" }}</td>
+        <td><code>{{ p.path }}</code></td>
+        <td class="num">{{ p.file_count }}</td>
+        <td class="num">{{ p.symbol_count }}</td>
+        <td class="num">{{ p.edge_count }}</td>
+        <td>{{ p.last_indexed or "never" }}</td>
+        <td>
+          <span class="badge badge-{{ p.embedding_status }}">{{ p.embedding_status }}</span>
+          {%- if p.embedding_models %} <span class="muted">{{ p.embedding_models | join(", ") }}</span>
+          {%- endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No projects indexed yet — run <code>cairn build</code> first.</p>
+  {% endif %}
+</section>
+{% endblock %}

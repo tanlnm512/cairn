@@ -22,6 +22,13 @@ Covers:
      stamps ``session_id`` ('unknown' default). (The ``CAIRN_TELEMETRY=off``
      master-switch gate and error-message redaction added on top of
      ``_log_metric`` are covered in ``test_redaction_chokepoints.py``.)
+  5. Extended payload columns (``req_chars`` / ``resp_chars`` /
+     ``args_summary``) -- trailing-kwargs calls round-trip through a flush
+     while positional-only calls leave the new columns NULL; ``instrument``
+     measures the call (kwargs-JSON length, post-truncation result length,
+     the JSON summary); ``args_summary`` is scrubbed and capped at
+     ``MAX_ARGS_SUMMARY_CHARS`` at the write chokepoint; a single explicit
+     flush drains a K-row buffer completely (no silent drops).
 
 Module-global state (``_METRIC_BUFFER``, ``_conn_factory``,
 ``_METRIC_FLUSHER_STARTED``) is reset by the autouse ``_reset_metric_state``
@@ -31,6 +38,7 @@ waiting on the daemon's 30s sleep, and no test relies on ``time.sleep``.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -118,7 +126,8 @@ def test_instrument_ok_path_records_metric_row(monkeypatch):
 
     rows = list(mb._METRIC_BUFFER)
     assert len(rows) == 1, "exactly one metric row per successful call"
-    tool_name, session_id, invoked_at, duration_ms, status, error_message = rows[0]
+    (tool_name, session_id, invoked_at, duration_ms, status, error_message,
+     _req, _resp, _args) = rows[0]
     assert tool_name == "my_tool"
     assert session_id == "unknown"
     assert status == "ok"
@@ -144,7 +153,7 @@ def test_instrument_error_path_records_status_and_reraises():
 
     rows = list(mb._METRIC_BUFFER)
     assert len(rows) == 1, "exactly one error row even on exception"
-    tool_name, _session, _ts, _dur, status, error_message = rows[0]
+    tool_name, _session, _ts, _dur, status, error_message, _req, _resp, _args = rows[0]
     assert tool_name == "boom"
     assert status == "error"
     assert error_message == "kaboom"
@@ -457,7 +466,7 @@ def test_session_env_stamps_session_id(monkeypatch):
     monkeypatch.setenv("CAIRN_SESSION", "trace-42")
     mb._log_metric("tool", 10.0, "ok")
     assert len(mb._METRIC_BUFFER) == 1
-    _tool, session_id, _ts, _dur, _status, _err = mb._METRIC_BUFFER[0]
+    _tool, session_id, _ts, _dur, _status, _err, _req, _resp, _args = mb._METRIC_BUFFER[0]
     assert session_id == "trace-42"
 
 
@@ -466,5 +475,235 @@ def test_session_defaults_to_unknown(monkeypatch):
     monkeypatch.delenv("CAIRN_SESSION", raising=False)
     mb._log_metric("tool", 10.0, "ok")
     assert len(mb._METRIC_BUFFER) == 1
-    _tool, session_id, _ts, _dur, _status, _err = mb._METRIC_BUFFER[0]
+    _tool, session_id, _ts, _dur, _status, _err, _req, _resp, _args = mb._METRIC_BUFFER[0]
     assert session_id == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# 5. Extended payload columns (req_chars / resp_chars / args_summary)
+# ---------------------------------------------------------------------------
+
+
+def test_log_metric_extended_kwargs_round_trip_through_flush(fresh_db):
+    """Trailing-kwargs calls persist the new size/summary columns verbatim.
+
+    The buffered tuple carries the three new fields in trailing positions
+    and a flush lands them in the columns the dashboard reads -- a
+    row-tuple/INSERT column-count mismatch would instead show up as rows
+    permanently buffered at debug level, so the SELECT proves the lockstep.
+    """
+    mb.configure_conn(lambda: _UnclosableConn(fresh_db))
+    summary = '{"query":"get_symbol_graph","depth":2}'
+
+    mb._log_metric(
+        "explore",
+        12.5,
+        "ok",
+        req_chars=len(summary),
+        resp_chars=4321,
+        args_summary=summary,
+    )
+
+    row = mb._METRIC_BUFFER[0]
+    (_tool, _sess, _ts, _dur, _status, _err, req, resp, args) = row
+    assert (req, resp, args) == (len(summary), 4321, summary)
+
+    mb._flush_metrics()
+
+    stored = fresh_db.execute(
+        "SELECT req_chars, resp_chars, args_summary FROM tool_metrics"
+    ).fetchone()
+    assert stored["req_chars"] == len(summary)
+    assert stored["resp_chars"] == 4321
+    assert stored["args_summary"] == summary
+
+
+def test_log_metric_positional_backcompat_stores_null_new_columns(fresh_db):
+    """Positional-only calls (the pre-extension shape) stay valid.
+
+    The payload kwargs are optional so a caller that measures nothing leaves
+    NULL columns, never a broken row: legacy rows and extended rows coexist
+    in one table, and pre-existing call sites need no change.
+    """
+    mb.configure_conn(lambda: _UnclosableConn(fresh_db))
+    mb._log_metric("legacy_tool", 10.0, "ok")
+    mb._log_metric("legacy_tool", 20.0, "error", "boom")
+    assert len(mb._METRIC_BUFFER) == 2
+
+    mb._flush_metrics()
+
+    rows = fresh_db.execute(
+        "SELECT status, req_chars, resp_chars, args_summary "
+        "FROM tool_metrics ORDER BY id"
+    ).fetchall()
+    assert [r["status"] for r in rows] == ["ok", "error"]
+    for r in rows:
+        assert r["req_chars"] is None
+        assert r["resp_chars"] is None
+        assert r["args_summary"] is None
+
+
+def test_instrument_captures_sizes_and_args_summary():
+    """The wrapper measures the call into the new columns.
+
+    req_chars/args_summary come from the compact JSON of the call's kwargs
+    (the call shape, not a payload replay); resp_chars is the length of what
+    the client actually receives, measured after the cap. On the error path
+    there is no result, so resp_chars stays NULL while the request side is
+    still recorded.
+    """
+
+    @mb.instrument
+    def explore(query: str, fuzzy: bool = False) -> str:
+        return "x" * 120
+
+    @mb.instrument
+    def boom(query: str) -> str:
+        raise ValueError("kaboom")
+
+    explore(query="metric_buffering", fuzzy=True)
+    with pytest.raises(ValueError, match="kaboom"):
+        boom(query="explosion")
+
+    expected = json.dumps(
+        {"query": "metric_buffering", "fuzzy": True},
+        default=str,
+        separators=(",", ":"),
+    )
+    _t1, _s1, _ts1, _d1, status1, _e1, req1, resp1, args1 = mb._METRIC_BUFFER[0]
+    assert status1 == "ok"
+    assert req1 == len(expected)
+    assert resp1 == 120, "post-truncation result length (under cap, unchanged)"
+    assert args1 == expected
+
+    _t2, _s2, _ts2, _d2, status2, _e2, req2, resp2, args2 = mb._METRIC_BUFFER[1]
+    assert status2 == "error"
+    assert req2 == len(json.dumps({"query": "explosion"}, separators=(",", ":")))
+    assert resp2 is None, "no result on the error path -> NULL, not 0"
+    assert args2 == '{"query":"explosion"}'
+
+
+def test_args_summary_redacted_at_write_chokepoint(fresh_db):
+    """Secret-shaped kwargs are scrubbed from args_summary before storing.
+
+    kwargs routinely embed credentials; the summary is run through
+    ``strip_private_data`` inside ``_log_metric`` so the raw secret is never
+    buffered nor persisted -- redact-then-store, never the reverse.
+    """
+    mb.configure_conn(lambda: _UnclosableConn(fresh_db))
+    raw_summary = (
+        '{"dsn":"postgres://admin:sup3rs3cret@db.internal:5432/prod",'
+        '"api_key":"sk-proj-abcdefghijklmnopqrstuvwx",'
+        '"note":"<private>inner words</private>"}'
+    )
+
+    mb._log_metric("recall_memory", 5.0, "ok", args_summary=raw_summary)
+
+    buffered = mb._METRIC_BUFFER[0][-1]
+    assert "sup3rs3cret" not in buffered
+    assert "sk-proj-abcdefghijklmnopqrstuvwx" not in buffered
+    assert "<private>" not in buffered
+    assert "[REDACTED_SECRET]" in buffered
+    assert "[REDACTED]" in buffered
+
+    mb._flush_metrics()
+    stored = fresh_db.execute(
+        "SELECT args_summary FROM tool_metrics"
+    ).fetchone()["args_summary"]
+    assert "sup3rs3cret" not in stored
+    assert "sk-proj-abcdefghijklmnopqrstuvwx" not in stored
+    assert "[REDACTED_SECRET]" in stored
+
+
+def test_args_summary_truncated_at_write_chokepoint():
+    """args_summary is capped at MAX_ARGS_SUMMARY_CHARS when buffered.
+
+    The summary identifies the call shape, not a payload replay -- anything
+    past the cap is noise in an analytics table. The cut is a plain prefix
+    slice (redaction has already run); a summary at exactly the cap passes
+    through unmodified.
+    """
+    long_summary = '{"query":"' + "x" * 400 + '"}'
+    mb._log_metric("search_symbols", 5.0, "ok", args_summary=long_summary)
+    at_cap = '{"q":"' + "y" * 193 + "}"
+    assert len(at_cap) == mb.MAX_ARGS_SUMMARY_CHARS
+    mb._log_metric("search_symbols", 6.0, "ok", args_summary=at_cap)
+
+    stored_long = mb._METRIC_BUFFER[0][-1]
+    stored_at_cap = mb._METRIC_BUFFER[1][-1]
+    assert len(stored_long) == mb.MAX_ARGS_SUMMARY_CHARS
+    assert stored_long == long_summary[: mb.MAX_ARGS_SUMMARY_CHARS]
+    assert stored_at_cap == at_cap, "at-cap boundary is left alone"
+
+
+def test_single_explicit_flush_drains_every_buffered_row(fresh_db, monkeypatch):
+    """Durability: one explicit flush drains 100% of a K-row buffer.
+
+    K=60 extended rows are buffered across two sessions with one error
+    among them (K >= 50 sits far past any single-row hand-wave while
+    staying under the deque's 2000 maxlen, so nothing was dropped before the
+    flush either). The shared flush daemon ticks on a 30s cadence and this
+    test never sleeps, so the daemon cannot have interfered -- the one
+    explicit flush alone accounts for every row: count == K, buffer empty,
+    and every new column populated wherever it was provided.
+    """
+    mb.configure_conn(lambda: _UnclosableConn(fresh_db))
+    k = 60
+
+    monkeypatch.setenv("CAIRN_SESSION", "sess-alpha")
+    for i in range(30):
+        mb._log_metric(
+            "explore",
+            5.0 + i,
+            "ok",
+            req_chars=10 + i,
+            resp_chars=1000 + i,
+            args_summary=f'{{"i":{i},"scope":"symbol"}}',
+        )
+    monkeypatch.setenv("CAIRN_SESSION", "sess-beta")
+    for i in range(30):
+        if i == 29:
+            mb._log_metric(
+                "search_symbols",
+                7.0 + i,
+                "error",
+                "synthetic failure",
+                req_chars=10 + i,
+                args_summary=f'{{"i":{i},"pattern":"metric*"}}',
+            )
+        else:
+            mb._log_metric(
+                "search_symbols",
+                7.0 + i,
+                "ok",
+                req_chars=10 + i,
+                resp_chars=1000 + i,
+                args_summary=f'{{"i":{i},"pattern":"metric*"}}',
+            )
+
+    assert len(mb._METRIC_BUFFER) == k
+
+    mb._flush_metrics()
+
+    assert len(mb._METRIC_BUFFER) == 0, "explicit flush drained every buffered row"
+    count = fresh_db.execute("SELECT COUNT(*) AS c FROM tool_metrics").fetchone()["c"]
+    assert count == k
+
+    rows = fresh_db.execute(
+        "SELECT session_id, status, req_chars, resp_chars, args_summary "
+        "FROM tool_metrics"
+    ).fetchall()
+    per_session = {"sess-alpha": 0, "sess-beta": 0}
+    errors = 0
+    for r in rows:
+        per_session[r["session_id"]] += 1
+        errors += r["status"] == "error"
+        assert r["req_chars"] is not None, "req_chars populated in every row"
+        assert r["args_summary"] is not None, "args_summary populated in every row"
+        if r["status"] == "ok":
+            assert r["resp_chars"] is not None
+        else:
+            # The one error row provided no resp_chars (no result exists).
+            assert r["resp_chars"] is None
+    assert per_session == {"sess-alpha": 30, "sess-beta": 30}
+    assert errors == 1

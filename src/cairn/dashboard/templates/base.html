@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Cairn Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="site-nav">
+      <a class="brand" href="{{ url_for('index') }}">cairn</a>
+      <a href="/projects">Projects</a>
+      <a href="/history">History</a>
+      <a href="/tokens">Tokens</a>
+      <a href="/chains">Chains</a>
+      <a href="/health">Health</a>
+      <a href="/memory">Memory</a>
+      <a href="/tasks">Tasks</a>
+    </nav>
+  </header>
+  <main class="site-main">
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -5,6 +5,7 @@
 ## Active
 
 - [docs-human-readable](docs-human-readable/spec.md) — done (10/10 tasks 2026-08-18; orientation blocks ×15 pages, 30-row artifact inventory + gap fills, back-links + scripts/check_doc_links.py; all 12 TCs green, sealed bytes untouched)
+- [ui-dashboard](ui-dashboard/spec.md) — done (17/17 tasks 2026-08-20; `cairn dashboard` read-only Starlette UI — projects/embed status, vis-network graph, tool history/tokens/chains over extended `tool_metrics`, health/memory/tasks panels; 25 TCs, 67 new tests, missing-DB state D-010)
 
 ## Archive
 

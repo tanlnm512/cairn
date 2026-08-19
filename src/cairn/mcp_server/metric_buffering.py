@@ -10,8 +10,8 @@ per call.
 This module owns the ``tool_metrics`` buffer and its flush logic, but no
 longer spawns its own daemon thread: it registers ``_flush_metrics`` with the
 shared telemetry sink (:mod:`cairn.telemetry.sink`, spec §6.1) so events and
-tool_metrics share one writer cadence + one atexit drain. Behavior and the
-``tool_metrics`` row shape are unchanged. Self-contained except for a
+tool_metrics share one writer cadence + one atexit drain. Self-contained
+except for a
 connection factory (``_conn``) injected via :func:`configure_conn` (which also
 mirrors into the sink so a single boot call wires both tables).
 """
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import collections
 import functools
+import json
 import os
 import threading
 import time
@@ -35,6 +36,11 @@ _METRIC_FLUSHER_STARTED = False
 # notice instead of an opaque client-side rejection. ~4 chars/token, so this
 # stays well under typical 25k-token MCP result ceilings.
 MAX_RESULT_CHARS = int(os.environ.get("CAIRN_MAX_RESULT_CHARS", "60000"))
+
+# Cap on the redacted kwargs summary stored per tool_metrics row: the summary
+# identifies the call shape, it is not a payload replay, so anything past
+# ~200 chars is noise in an analytics table.
+MAX_ARGS_SUMMARY_CHARS = 200
 
 
 def _chars_bucket(n: int) -> str:
@@ -82,6 +88,34 @@ def _truncate_result(name: str, result: str) -> str:
         f"smaller `limit`, use fuzzy=False, a more specific pattern, or a "
         f"lower `depth` -- rather than relying on this truncated output.]"
     )
+
+
+def _kwargs_payload(kwargs: dict) -> tuple:
+    """Compact JSON form of a call's kwargs -> ``(req_chars, args_summary)``.
+
+    Never raises: this runs inside ``instrument``'s wrapper, which must not
+    fail a call that succeeded. ``default=str`` covers non-serializable
+    values; anything still pathological degrades to a missing size, not an
+    error.
+    """
+    try:
+        summary = json.dumps(kwargs, default=str, separators=(",", ":"))
+    except Exception:
+        return None, None
+    return len(summary), summary
+
+
+def _result_chars(result: object) -> Optional[int]:
+    """Char length of a tool result: O(1) on ``str``, ``len(str(result))``
+    otherwise.
+
+    Never raises: a result object whose ``__str__`` is broken must not fail
+    a call that succeeded.
+    """
+    try:
+        return len(result) if isinstance(result, str) else len(str(result))
+    except Exception:
+        return None
 
 
 # Connection factory injected by the server core (avoids a circular import
@@ -132,8 +166,9 @@ def _flush_metrics():
     try:
         conn = _conn_factory()
         conn.executemany(
-            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, duration_ms, status, error_message) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tool_metrics "
+            "(tool_name, session_id, invoked_at, duration_ms, status, error_message, "
+            "req_chars, resp_chars, args_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             batch,
         )
         conn.commit()
@@ -187,9 +222,19 @@ def _start_metric_flusher():
 
 
 def _log_metric(
-    tool_name: str, duration_ms: float, status: str = "ok", error_message: str = ""
+    tool_name: str,
+    duration_ms: float,
+    status: str = "ok",
+    error_message: str = "",
+    req_chars: Optional[int] = None,
+    resp_chars: Optional[int] = None,
+    args_summary: Optional[str] = None,
 ):
-    """Record a tool invocation (buffered; flushes on a background thread)."""
+    """Record a tool invocation (buffered; flushes on a background thread).
+
+    The payload fields are optional so positional callers stay valid; a
+    caller that measures nothing leaves NULL columns, never a broken row.
+    """
     # Read-only daemons open the DB with mode=ro, so INSERT INTO tool_metrics
     # would fail every flush and buffer indefinitely (capped by deque maxlen).
     # tool_metrics is analytics, not correctness -- skip the write entirely on
@@ -216,6 +261,13 @@ def _log_metric(
         from cairn.memory.privacy import strip_private_data
 
         error_message = strip_private_data(error_message)
+    # kwargs routinely embed user code, paths, and credentials -- the JSON
+    # summary is scrubbed before it is ever buffered, same chokepoint rule as
+    # error_message above.
+    if args_summary:
+        from cairn.memory.privacy import strip_private_data
+
+        args_summary = strip_private_data(args_summary)
     row = (
         tool_name,
         os.environ.get("CAIRN_SESSION", "unknown"),
@@ -223,6 +275,9 @@ def _log_metric(
         duration_ms,
         status,
         error_message[:500] if error_message else None,
+        req_chars,
+        resp_chars,
+        args_summary[:MAX_ARGS_SUMMARY_CHARS] if args_summary else None,
     )
     with _METRIC_LOCK:
         _METRIC_BUFFER.append(row)
@@ -230,7 +285,8 @@ def _log_metric(
 
 
 def instrument(fn):
-    """Decorator: wraps an MCP tool with timing + error capture + metric logging.
+    """Decorator: wraps an MCP tool with timing, payload-size capture, error
+    capture, and metric logging.
 
     Uses functools.wraps so ``__wrapped__`` is set and
     inspect.signature(wrapper) resolves to the original function's real
@@ -246,12 +302,22 @@ def instrument(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         name = fn.__name__
+        req_chars, args_summary = _kwargs_payload(kwargs)
         t0 = time.time()
         try:
             result = fn(*args, **kwargs)
-            _log_metric(name, (time.time() - t0) * 1000, "ok")
             if isinstance(result, str):
                 result = _truncate_result(name, result)
+            # resp_chars is measured post-truncation: the capped payload is
+            # what the client's context actually receives.
+            _log_metric(
+                name,
+                (time.time() - t0) * 1000,
+                "ok",
+                req_chars=req_chars,
+                resp_chars=_result_chars(result),
+                args_summary=args_summary,
+            )
             return result
         except Exception as exc:
             duration_ms = (time.time() - t0) * 1000
@@ -262,7 +328,14 @@ def instrument(fn):
             )
             logger.error(f"Error in {name}: {exc}\n{tb_str}")
 
-            _log_metric(name, duration_ms, "error", str(exc))
+            _log_metric(
+                name,
+                duration_ms,
+                "error",
+                str(exc),
+                req_chars=req_chars,
+                args_summary=args_summary,
+            )
 
             # Re-raise so FastMCP's Tool.run converts the exception into a
             # proper MCP error response (isError: true) rather than a prose
