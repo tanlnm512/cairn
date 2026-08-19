@@ -14,7 +14,7 @@ server. SKILL.md keeps only a name index — come here for the details.
 - `cross_repo_deps(repo, limit=50)` -- Cross-repo dependency map
 - `visualize_graph(scope, symbol?, module?, repo?, depth=3, format="mermaid")` -- Mermaid/DOT/JSON diagram of a symbol/module/impact/repo/deps scope
 
-## Layer 2/3: Knowledge Base + Compass
+## Layer 2: Knowledge Base + Compass
 - `search_knowledge(query, type_filter="", limit=10, full_body=False)` -- Search wiki, compass, patterns, memory. Use `type_filter="Wiki"` for wiki articles, `type_filter="Pattern"` for non-obvious patterns, `type_filter="Compass"` for module guides, or leave empty for all.
 - `get_compass(module)` -- Get navigation guide for a module
 - `trace_flow(entry, max_depth=8)` -- Trace the downward call chain from an entry-point symbol. Returns ordered call sequence, branch points (fan-out), and terminal calls (side effects). Read-only.

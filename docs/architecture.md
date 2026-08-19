@@ -3,7 +3,7 @@
 ← [Docs index](README.md)
 
 This document describes cairn's design: what it is, how a query flows
-through its five layers, how it resolves symbols, where it draws the LLM
+through its four tool layers, how it resolves symbols, where it draws the LLM
 boundary, and where data lives on disk.
 Read it when you need the system-level picture — when onboarding, before
 the per-topic pages, or when deciding which layer a question belongs to.
@@ -29,7 +29,7 @@ machine-check:
    (critic gate).
 3. **Every answer is re-derivable from local data** (LLM never in the query path).
 
-The five layers below are how the contract is delivered; resolution-labeled
+The four tool layers below are how the contract is delivered; resolution-labeled
 edges are the *evidence* for promise #1, not the headline.
 
 - **Local.** Everything runs on your machine. The store is a SQLite database
@@ -58,7 +58,7 @@ edges are the *evidence* for promise #1, not the headline.
 
 ## Layers and query flow
 
-cairn is organized into five layers. The router (`explore`) is the front
+cairn is organized into four tool layers. The router (`explore`) is the front
 door: it fans a query across the graph layer and returns one consolidated
 answer. The other layers answer specific question types.
 

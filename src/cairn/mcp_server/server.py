@@ -1,7 +1,7 @@
 """cairn MCP server: exposes graph query tools to AI agents.
 
-Implements 27 tools across 5 layers (graph, knowledge base, memory/router,
-knowledge). Transport: stdio (default) or SSE, via the mcp SDK (FastMCP).
+Implements 27 tools across 4 layers (graph, knowledge base + compass,
+memory, knowledge). Transport: stdio (default) or SSE, via the mcp SDK (FastMCP).
 
 This file owns boot (sys.path bootstrap shim, boot catch-up, parent-pid
 watchdog) and the run() entry point; tool implementations live in the

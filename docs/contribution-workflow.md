@@ -121,9 +121,11 @@ updated (`cairn update`), memory recorded, tests, CHANGELOG.
 
 ## 7. Watch CI; fix on the SAME branch
 
-Seven checks run on PR open (and on each later push). Use the gate-failure table
-below. Push fixes to the branch — CI re-runs automatically; do **not**
-close/reopen the PR.
+Nine CI jobs run on PR open (and on each later push): pre-commit, Security,
+Type check, PR title, Dependency review, the Test matrix (Python 3.10–3.14,
+one check per version), DS-v2 seal, Build, and the advisory Bench comparison.
+Use the gate-failure table below. Push fixes to the branch — CI re-runs
+automatically; do **not** close/reopen the PR.
 
 ## 8. After merge — post-task (binding, see AGENTS.md §"After completing a task")
 
@@ -148,11 +150,14 @@ Map the failed check to its fix. Check names match the CI job `name:` fields.
 | `PR title (conventional commits)` | title isn't `type: subject` | rename the PR title (no code change) |
 | `Dependency review (PR)` | a NEW dep in the PR is vulnerable/unlicensed | pick a different version/package |
 | `Test (Python X)` | a test failed | fix code or update the test; run `pytest -m core` locally first |
+| `Verify DS-v2 seal` | the vendored eval dataset drifted from its pinned tree-hashes / expectations | never hand-edit `benchmarks/datasource/`; regenerate via the dataset's own verifier (`benchmarks/datasource/ds2/verify_dataset.py`) |
 | `Build wheel + sdist` | wheel won't build or import | fix the packaging/import error |
+| `Bench (advisory baseline comparison)` | perf moved >15% past the rolling baseline | advisory only (never reddens CI); inspect `bench-comment.md` on the PR before merging |
 
-`Security / bandit` and `Type check (mypy, advisory)` are **advisory**: they show
-green even with findings (`continue-on-error`). Open their job logs and review any
-*new* finding — don't ignore them just because the check is green.
+`Security / bandit`, `Type check (mypy, advisory)`, and `Bench` are
+**advisory**: they show green even with findings (`continue-on-error`). Open
+their job logs and review any *new* finding — don't ignore them just because
+the check is green.
 
 ---
 

@@ -13,10 +13,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
+- `cairn config --db` — prints only the resolved graph DB path (machine-readable,
+  for scripting). The README self-demo already piped this into `sqlite3`; the
+  flag now exists to match.
 
 ### Changed
-- _Nothing yet._
+- Code-vs-docs drift fixes from a full docs audit. `docs/mcp-tools.md`: the
+  freshness section now describes the live file watcher (`[watch]` extra, ~2s
+  debounce, `pending_sync` staleness banners) instead of the pre-watcher
+  boot-only model, and `semantic_search` documents its `rerank` parameter and
+  the `CAIRN_RERANK_MIN_MARGIN` auto gate. `docs/cli-reference.md`: 15 (not 14)
+  memory subcommands with `cairn memory embed` documented, `update
+  --knowledge`, `config --db`, and the `build --staging`/`--repo` mutual
+  exclusion. `docs/configuration.md`: `CAIRN_WORKERS` is clamped to [1, 256]
+  (not uncapped); `CAIRN_LLM_BACKEND` documents `droid`/`opencode`/`claude`;
+  `CAIRN_CHUNK_VARIANT` documents all seven variants; the `openai` embed
+  backend's `OPENAI_API_KEY` requirement is stated; `CAIRN_CONN_POOL`,
+  `CAIRN_WARM_MODELS`, and `CAIRN_RERANK_MIN_MARGIN` are documented.
+  `docs/contribution-workflow.md`: counts all nine CI jobs (the test matrix
+  expands to five per-version checks) and adds the DS-v2-seal and advisory
+  Bench rows to the gate-failure decision table.
+- Second strict docs re-audit: the MCP server exposes 27 tools across **4**
+  layers, not 5 — corrected across every surface that carries the phrase
+  (mcp-tools.md, architecture.md, architecture-overview.md, quickstart.md,
+  cli-reference.md, README, AGENTS.md, the server.py docstring, the
+  agent-install template `_common.py`, and the two surface-sync assertions in
+  test_agent_surface.py). The 1/2/4/5 tool-layer numbering stays: it follows
+  the router's L1–L5 taxonomy (L1 graph, L2 wiki, L3 compass, L4 memory, L5
+  knowledge), where wiki (L2) + compass (L3) share one tool group — so there
+  is no Layer 3 section (the router itself genuinely routes across 5 layers
+  and is unchanged). `architecture-overview.md` states the transitive closure
+  depth correctly: `transitive_edges` is materialised to distance 4
+  (`CLOSURE_MAX_DEPTH`), serving depth ≤ 3 DFS queries — the doc said
+  "depth 3". The `resolver.py` module docstring now lists the type-aware tier
+  (Tier 0) it actually runs first.
 
 ## [0.12.1] - 2026-08-18
 

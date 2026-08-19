@@ -6,7 +6,7 @@ All AI coding agents working in this workspace should use these tools.
 ## MCP Server
 - Name: `cairn` (auto-connected at session start)
 - Transport: stdio
-- 27 tools across 5 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (5)
+- 27 tools across 4 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (5)
   (`explore` is the recommended first call -- it aggregates the graph layer;
   `ask_compass` is the cross-layer router)
 

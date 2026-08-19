@@ -4,7 +4,7 @@
 
 The `cairn` MCP server (started by `cairn serve`) exposes the codebase
 intelligence graph to AI agents. It is a FastMCP server implemented in
-`src/cairn/mcp_server/` and registers **27 tools** across 5 layers,
+`src/cairn/mcp_server/` and registers **27 tools** across 4 layers,
 plus an index-status resource.
 Read it when deciding which tool to call for a question, or when a tool's
 parameters or output shape need checking.
@@ -42,7 +42,7 @@ into specific relationships.
 | `get_callers(name, fuzzy?, limit?, structured?)` | Who calls this symbol. Precise by default; `fuzzy=True` adds name-only call sites. |
 | `get_callees(name, fuzzy?, limit?, structured?)` | What this symbol calls. Precise by default; `fuzzy=True` includes unresolved/external calls. |
 | `impact_analysis(name, depth?, fuzzy?, cached?, limit?, structured?)` | Recursive blast radius (callers up to `depth`). Reports total + by-depth + affected tests + cross-repo consumers. |
-| `semantic_search(query, limit?, include_callers?, structured?)` | Concept search — finds code by meaning. Requires the `semantic` extra. |
+| `semantic_search(query, limit?, include_callers?, structured?, rerank?)` | Concept search — finds code by meaning. Requires the `semantic` extra. |
 | `search_symbols(pattern, kind?, structured?)` | Lexical symbol search (`*` wildcards, BM25-ranked). The default discovery entry point. |
 | `cross_repo_deps(repo, limit?)` | Cross-repo dependency map: what `repo` depends on, what depends on it. |
 | `visualize_graph(scope?, symbol?, module?, repo?, depth?, format?)` | Generate a diagram (Mermaid/DOT/JSON) of a graph scope. |
@@ -70,9 +70,14 @@ into specific relationships.
   `fused(bm25+semantic)`) is shown. Rank order is meaningful either way; set
   `CAIRN_FUSION=0` for true 0..1 cosine scores. Rerank runs when enabled
   (auto-on after `cairn download-reranker`, or `CAIRN_RERANK=1`); each reranked
-  result is labelled `[rerank X.XX]`. If the configured rerank model is
-  missing/evicted from the cache, it falls back to the hybrid order rather than
-  failing. Set `CAIRN_RERANK=0` to force it off.
+  result is labelled `[rerank X.XX]`. In auto mode (default) the rerank stage
+  is skipped when the fused ranking is already decisive (margin over the RRF
+  scores ≥ `CAIRN_RERANK_MIN_MARGIN` and the top hit is an exact name match);
+  the per-call `rerank` parameter overrides that — `None`/omitted = auto (the
+  gate decides), `True` = force the rerank stage when enabled (bypasses the
+  confidence gate; `CAIRN_RERANK=0` still wins), `False` = never rerank. If the
+  configured rerank model is missing/evicted from the cache, it falls back to
+  the hybrid order rather than failing. Set `CAIRN_RERANK=0` to force it off.
 - **`search_symbols`**: FTS5 + phrase splitting handles underscored tokens,
   and unions in a LIKE-based substring pass for non-prefix patterns, so
   wildcards and substring queries both work on underscored and camelCase names.
@@ -103,8 +108,8 @@ Bundle/OKF-read and cross-layer routing.
 
 ### Behavioral notes (knowledge base + compass)
 
-- **`ask_compass`** is the router (the L4 "router" tool in `AGENTS.md`'s layer
-  accounting). It routes correctly but can return thin body skeletons when
+- **`ask_compass`** is the router (the cross-layer router; it lives in Layer
+  2). It routes correctly but can return thin body skeletons when
   wiki/compass coverage is thin — **don't treat an empty response as "no info
   exists"**; drill down with the specific layer tool. It explicitly flags when
   every layer came up empty. With `file_path` set and no query, it runs in
@@ -125,6 +130,9 @@ Bundle/OKF-read and cross-layer routing.
 > which the live `mcp` instance enforces via an assertion in `server.py`.
 > `explore` is registered in the graph layer (1 of its 9) but acts as the
 > aggregator/front-door; `ask_compass` is the cross-layer router.
+> Layer numbering runs 1, 2, 4, 5: it follows the router's L1–L5 taxonomy
+> (L1 graph, L2 wiki, L3 compass, L4 memory, L5 knowledge), and wiki (L2) +
+> compass (L3) share one tool group — so there is no Layer 3 section.
 
 ---
 
@@ -186,7 +194,7 @@ procedural workflows.
 ### Behavioral notes (knowledge)
 
 - **`knowledge_search`** is the business-docs layer (different from the
-  Layer 2/3 bundle-level `search_knowledge`). It bridges to the code graph:
+  Layer 2 bundle-level `search_knowledge`). It bridges to the code graph:
   documents tagged with `affects_repos` get `cross_repo_deps` results
   appended. Lexical search works without the semantic extra; semantic adds
   recall. If the corpus isn't embedded, run `cairn knowledge embed`.
@@ -236,9 +244,16 @@ area):
 
 ### Freshness
 
-The server reconciles freshness **once at boot** (diffing the files table
-against disk). Tool calls do **not** re-check freshness per query — edits
-made while a `cairn serve` process is up require a server restart (or `cairn build`)
-to show up in results. Per-query staleness banners surface when a result set
-touches files with unindexed edits pending in `pending_sync`. Use the
-`cairn://status` resource for the aggregate freshness picture.
+Freshness is maintained two ways. At boot, the server runs a one-time
+catch-up (diffing the files table against disk) to absorb edits made while it
+was down. Then — with the `[watch]` extra installed and `CAIRN_WATCH` not
+disabled — it starts a **live file watcher** so source edits made while the
+server runs are reindexed within a ~2s debounce window, without a restart or
+an explicit `cairn update`. Each changed file is first marked in
+`pending_sync`, so concurrent MCP readers immediately see a staleness banner
+on results touching that file until the reindex lands. Without the `[watch]`
+extra (or with `CAIRN_WATCH=0`, or in read-only mode), freshness falls back to
+boot catch-up + explicit `cairn update` — in that degraded mode, edits made
+while the server is up require a server restart (or `cairn build`) to show up
+in results. Use the `cairn://status` resource for the aggregate freshness
+picture.

@@ -47,6 +47,28 @@ def test_init_no_build_renders_rail_open_and_close():
         assert "`cairn config`" in out
 
 
+def test_config_db_flag_prints_bare_path():
+    """`cairn config --db` prints exactly the resolved .kg path (one line,
+    machine-readable) — the form the README self-demo pipes into sqlite3."""
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        ws = _fixture_workspace(tmp_path)
+        result = runner.invoke(
+            main,
+            ["config", "--db"],
+            env={
+                "CAIRN_HOME": str(tmp_path / "cairn_home"),
+                "CAIRN_WORKSPACE": str(ws),
+            },
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        out = result.output.strip()
+        assert out.endswith(".kg")
+        assert "\n" not in out, "must be a single machine-readable line"
+
+
 def test_init_piped_output_has_no_ansi_escapes():
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:

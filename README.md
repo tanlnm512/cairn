@@ -273,7 +273,7 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## MCP Tools
 
-27 tools across five layers — same store as the CLI:
+27 tools across four layers — same store as the CLI:
 
 | Layer | Tools |
 |-------|-------|

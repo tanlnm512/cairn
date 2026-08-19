@@ -345,7 +345,7 @@ def _agents_instructions(transport: str = "stdio", sse_url: str | None = None) -
         "## MCP Server\n"
         "- Name: `cairn` (auto-connected at session start)\n"
         f"{_transport_note(transport, sse_url)}\n"
-        "- 27 tools across 5 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (5)\n"
+        "- 27 tools across 4 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (5)\n"
         "  (`explore` is the recommended first call -- it aggregates the graph layer)\n"
         "\n"
     ) + _INSTRUCTIONS_BODY
