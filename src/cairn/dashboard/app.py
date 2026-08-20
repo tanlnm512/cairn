@@ -326,6 +326,7 @@ def create_app(
     def history(request: Request) -> Response:
         tool = request.query_params.get("tool", "").strip() or None
         session = request.query_params.get("session", "").strip() or None
+        source = request.query_params.get("source", "").strip() or None
         before = request.query_params.get("before", "").strip() or None
         after = request.query_params.get("after", "").strip() or None
         window, since = _resolve_window(request.query_params.get("window"))
@@ -338,6 +339,7 @@ def create_app(
                 conn,
                 tool_name=tool,
                 session_id=session,
+                source=source,
                 before=before,
                 after=after,
                 since=since,
@@ -351,6 +353,7 @@ def create_app(
                 "calls": result["rows"],
                 "tool": tool or "",
                 "session": session or "",
+                "source": source or "",
                 "before": before or "",
                 "after": after or "",
                 "window": window,

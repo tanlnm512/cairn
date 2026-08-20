@@ -2475,3 +2475,210 @@ def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
         >= 3
     )
     assert 'inspectStore ? "&store=" + encodeURIComponent(inspectStore)' in src
+
+
+# ---------------------------------------------------------------------------
+# Mixed-source usage (cli-usage-recording FR-002, TC-003 / TC-004): CLI
+# invocations land in tool_metrics as source='cli' rows named 'cli:<command>'
+# beside source='mcp' tool rows (cli_metrics stamps 'cli'; MCP rows ride the
+# table's DEFAULT 'mcp'). Pinned here at the route level: /history displays
+# each row's source and ?source= narrows to that source's rows, composing
+# with the tool/session filters and riding the Older paging link; /tokens
+# aggregates the cli rows under their cli:* tool_name -- expected aggregates
+# from the data layer (get_tool_tokens) on the same store plus the
+# CHARS_PER_TOKEN arithmetic the view renders.
+# ---------------------------------------------------------------------------
+
+_MIXED_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
+
+
+def _mixed_source_db_file(tmp_path, bulk: bool) -> str:
+    """A graph-schema DB file seeded with BOTH sources' row shapes:
+
+    cli (source='cli', what cli_metrics lands — NULL resp chars, a CLI
+    invocation has no response payload): 'cli:cairn build' / term:shell-B @
+    00:02:00 — ok, 800 req chars; 'cli:cairn config' / term:shell-A @
+    00:01:30 — ok, 1600 req chars. mcp (source='mcp', the table default):
+    'explore' / sess-alpha @ 00:01:00 — ok, 400/800 chars; 'ask_compass' /
+    sess-beta @ 00:00:30 — ok, 200/400 chars. ``bulk=True`` adds
+    HISTORY_PAGE_SIZE + 5 older mcp explore rows so ?source=mcp paginates.
+    """
+    from cairn.dashboard.data import HISTORY_PAGE_SIZE
+    from cairn.graph.schema import _apply_schema
+
+    rows = [
+        # (tool, session, invoked_at, duration_ms, status, req, resp, source)
+        ("ask_compass", "sess-beta", _MIXED_BASE + 30, 70.0, "ok", 200, 400, "mcp"),
+        ("explore", "sess-alpha", _MIXED_BASE + 60, 50.0, "ok", 400, 800, "mcp"),
+        ("cli:cairn config", "term:shell-A", _MIXED_BASE + 90, 100.0, "ok",
+         1600, None, "cli"),
+        ("cli:cairn build", "term:shell-B", _MIXED_BASE + 120, 9000.0, "ok",
+         800, None, "cli"),
+    ]
+    if bulk:
+        rows += [
+            ("explore", "sess-bulk", _MIXED_BASE - 10 - i, 5.0, "ok", 10, 10, "mcp")
+            for i in range(HISTORY_PAGE_SIZE + 5)
+        ]
+
+    db_path = str(tmp_path / "mixed-source.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    conn.executemany(
+        "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+        "duration_ms, status, req_chars, resp_chars, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def _mixed_source_client(tmp_path, bulk: bool):
+    return _panel_client(
+        tmp_path, _mixed_source_db_file(tmp_path, bulk), str(tmp_path / "missing")
+    )
+
+
+def test_history_route_displays_source_column_with_mixed_source_rows(tmp_path):
+    """TC-003 / US1-AC2: with both sources recorded, /history renders the
+    Source column -- 'cli' and 'mcp' both visible -- plus the Source filter
+    input, with rows newest-first across sources."""
+    resp = _mixed_source_client(tmp_path, bulk=False).get("/history")
+    assert resp.status_code == 200
+
+    assert "<th>Source</th>" in resp.text
+    assert "<td>cli</td>" in resp.text and "<td>mcp</td>" in resp.text
+    assert 'name="source"' in resp.text  # the filter input, like tool/session
+
+    # Both sources' identities on one page, newest first across sources.
+    newest_first = [
+        "cli:cairn build",  # 00:02:00
+        "cli:cairn config",  # 00:01:30
+        "explore",  # 00:01:00
+        "ask_compass",  # 00:00:30
+    ]
+    positions = [resp.text.index(tool) for tool in newest_first]
+    assert positions == sorted(positions)
+
+
+def test_history_route_source_filter_narrows_and_composes(tmp_path):
+    """TC-003: ?source= narrows /history to that source's rows only, composes
+    with the tool/session filters, and a no-match source is the empty state
+    (HTTP 200, never an error) -- the same discipline as tool/session."""
+    client = _mixed_source_client(tmp_path, bulk=False)
+
+    cli_only = client.get("/history", params={"source": "cli"})
+    assert cli_only.status_code == 200
+    assert "cli:cairn build" in cli_only.text
+    assert "cli:cairn config" in cli_only.text
+    assert "explore" not in cli_only.text
+    assert "ask_compass" not in cli_only.text
+    assert 'value="cli"' in cli_only.text  # the form keeps the filter
+
+    mcp_only = client.get("/history", params={"source": "mcp"})
+    assert mcp_only.status_code == 200
+    assert "explore" in mcp_only.text
+    assert "ask_compass" in mcp_only.text
+    assert "cli:" not in mcp_only.text  # the cli rows are filtered out
+    assert 'value="mcp"' in mcp_only.text
+
+    # Source AND session: the one cli row in that shell's session.
+    by_session = client.get(
+        "/history", params={"source": "cli", "session": "term:shell-A"}
+    )
+    assert by_session.status_code == 200
+    assert "cli:cairn config" in by_session.text
+    assert "cli:cairn build" not in by_session.text  # term:shell-B's row
+    assert "explore" not in by_session.text
+
+    # Source AND tool: the one mcp row with that tool name.
+    by_tool = client.get("/history", params={"source": "mcp", "tool": "explore"})
+    assert by_tool.status_code == 200
+    assert "explore" in by_tool.text
+    assert "ask_compass" not in by_tool.text
+    assert "cli:" not in by_tool.text
+
+    # A no-match source: the empty state, never an error.
+    empty = client.get("/history", params={"source": "no-such-source"})
+    assert empty.status_code == 200
+    assert "No matching calls" in empty.text
+
+
+def test_history_route_older_link_carries_the_active_source(tmp_path):
+    """FR-002: paging composes with the source filter -- the Older link keeps
+    ?source=mcp so the next page stays in-source instead of resuming
+    unfiltered pagination into the cli rows."""
+    client = _mixed_source_client(tmp_path, bulk=True)
+    resp = client.get("/history", params={"source": "mcp"})
+    assert resp.status_code == 200
+
+    older = re.search(r'<a href="(/history\?before=[^"]*)">Older</a>', resp.text)
+    assert older, "Older link missing from a source-filtered multi-page history"
+    assert "source=mcp" in older.group(1)
+
+    page2 = client.get(older.group(1).replace("&amp;", "&"))
+    assert page2.status_code == 200
+    # Dropping the source here would resume unfiltered pagination and reach
+    # the cli rows; carrying it keeps every older page in-source.
+    assert "cli:" not in page2.text
+    assert "explore" in page2.text  # page 2 still carries the mcp bulk rows
+
+
+def test_tokens_route_aggregates_include_cli_rows_under_cli_tool_name(tmp_path):
+    """TC-004 / US2-AC1: cli rows with payload sizes join the /tokens
+    aggregates under their cli:* tool_name (the source label the view
+    renders), side by side with the mcp tools -- the rendered row matches
+    the data layer's get_tool_tokens on the same store, CHARS_PER_TOKEN
+    arithmetic included, and the cli rows' NULL resp chars contribute zero
+    resp tokens rather than an error."""
+    from cairn.bench.agent_suite import CHARS_PER_TOKEN
+    from cairn.dashboard.data import get_read_only_db, get_tool_tokens
+
+    db_path = _mixed_source_db_file(tmp_path, bulk=False)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    conn = get_read_only_db(db_path)
+    try:
+        aggregates = {e["tool_name"]: e for e in get_tool_tokens(conn)}
+    finally:
+        conn.close()
+
+    # Data layer: the cli rows aggregate under their cli:* names -- no
+    # separate bucketing, no drop -- beside the mcp tools.
+    assert set(aggregates) >= {
+        "cli:cairn config",
+        "cli:cairn build",
+        "explore",
+        "ask_compass",
+    }
+    config = aggregates["cli:cairn config"]
+    assert config["calls"] == 1
+    assert config["est_req_tokens"] == 1600 // CHARS_PER_TOKEN
+    assert config["est_resp_tokens"] == 0  # NULL resp chars -> zero tokens
+    assert config["total_tokens"] == 1600 // CHARS_PER_TOKEN
+
+    # Route: the same row renders under that name (the anchor's visible
+    # label; its href carries the urlencoded tool name), expected cells
+    # beside it.
+    resp = client.get("/tokens")
+    assert resp.status_code == 200
+    assert (
+        '<a href="/history?tool=cli%3Acairn%20config">cli:cairn config</a>'
+        in resp.text
+    )
+    row = _tokens_row(_refresh_region(resp.text), "cli:cairn config")
+    assert f'<td class="num">{config["calls"]}</td>' in row
+    assert f'<td class="num">~{config["est_req_tokens"]}</td>' in row
+    assert f'<td class="num">~{config["est_resp_tokens"]}</td>' in row
+    assert f'<td class="num">~{config["total_tokens"]}</td>' in row
+
+    # The label is functional: following the tool filter lists only the cli
+    # row it names (the space/colon name round-trips through the param).
+    drilled = client.get("/history", params={"tool": "cli:cairn config"})
+    assert drilled.status_code == 200
+    assert "cli:cairn config" in drilled.text
+    assert "cli:cairn build" not in drilled.text
+    assert "explore" not in drilled.text

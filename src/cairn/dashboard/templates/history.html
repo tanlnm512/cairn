@@ -12,6 +12,9 @@
     <label>Session
       <input type="text" name="session" value="{{ session }}">
     </label>
+    <label>Source
+      <input type="text" name="source" value="{{ source }}">
+    </label>
     <input type="hidden" name="window" value="{{ window }}">
     <button type="submit">Apply</button>
   </form>
@@ -25,6 +28,7 @@
         <th>Duration</th>
         <th>Status</th>
         <th>Session</th>
+        <th>Source</th>
         <th>Est. tokens (req/resp)</th>
         <th>Arguments</th>
       </tr>
@@ -37,6 +41,7 @@
         <td class="num">{{ h.duration_ms | duration }}</td>
         <td><span class="badge badge-{{ h.status }}">{{ h.status }}</span></td>
         <td><code>{{ links.view_link('chains', 'session', h.session_id, window) }}</code></td>
+        <td>{{ h.source }}</td>
         <td class="num">{{ h | tokens }}</td>
         <td>{{ h.args_summary or "—" }}</td>
       </tr>
@@ -51,6 +56,7 @@
     {%- set q = {'after': prev_cursor} %}
     {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
     {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
+    {%- if source %}{% set _ = q.update({'source': source}) %}{% endif %}
     {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
     <a href="{{ links.url('/history', q) }}">Newer</a>
     {%- endif %}
@@ -59,13 +65,14 @@
     {%- set q = {'before': next_cursor} %}
     {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
     {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
+    {%- if source %}{% set _ = q.update({'source': source}) %}{% endif %}
     {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
     <a href="{{ links.url('/history', q) }}">Older</a>
     {%- endif %}
   </p>
   {% endif %}
   {% else %}
-  <p class="empty-state">No matching calls{% if not tool and not session %} recorded yet{% endif %}.</p>
+  <p class="empty-state">No matching calls{% if not tool and not session and not source %} recorded yet{% endif %}.</p>
   {% endif %}
   </div>
 </section>

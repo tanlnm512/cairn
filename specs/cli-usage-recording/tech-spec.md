@@ -144,3 +144,58 @@ writes into the same table through the same sink thread and atexit drain.
   per-invocation uuid stamped in the wrapper.
 - **Consequences**: best-effort grouping that can never pollute the legacy
   session; identity is stable within one terminal pane, opaque across.
+
+### D-004: Bare `cairn` records via a parse_args hook
+- **Context**: in click 8.4.2 a bare `cairn` raises NoArgsIsHelpError from
+  parse_args and never reaches Group.invoke (verified empirically), so the
+  invoke wrapper alone cannot record it.
+- **Decision**: a minimal parse_args override mirrors click's own guard
+  (no args + no_args_is_help + not resilient), records status "error"
+  with "no command given", then delegates unchanged.
+- **Consequences**: bare invocations appear in the history; help/exit
+  behavior byte-identical; the hook is the only invoke-adjacent surface.
+
+### D-005: Exit-code semantics and per-subcommand tool_name
+- **Context**: the CLI pervasively signals success via sys.exit(0)
+  (embed, bench, download_reranker — 20+ sites), so "any exception =
+  error" would misrecord successful runs; and at top-group invoke
+  ctx.command_path is only the root name, collapsing all rows into one
+  "cli:cairn" bucket.
+- **Decision**: SystemExit/click Exit with code 0/None records "ok";
+  non-zero records "error" with str(code); all other exceptions follow
+  the error+str(exc) rule. tool_name appends ctx.invoked_subcommand
+  ("cli:cairn memory"), with deeper subcommand identity living in the
+  argv summary.
+- **Consequences**: successful exit(0) commands are not miscounted as
+  errors; tokens aggregates group CLI rows per top-level subcommand;
+  nested paths (memory record) are visible via args_summary.
+
+### D-006: Parse-level exits record no row; subcommand read at record time
+- **Context**: T003's empirical findings — `--help`/`--version` and
+  group-level parse errors exit from parse_args before invoke (only the
+  bare no-args shape is hooked, D-004), and click sets
+  `invoked_subcommand` during resolve INSIDE Group.invoke, so capturing
+  it before super() yields nothing.
+- **Decision**: parse-level exits (`--help`, `--version`) are not
+  recorded (help viewing is not usage); the wrapper reads
+  `ctx.invoked_subcommand` at record time — after resolve — so it is
+  available on success and error paths alike, delivering D-005's
+  per-subcommand tool_name (unknown commands fail resolution first and
+  stay root-only).
+- **Consequences**: every dispatched subcommand aggregates under
+  `cli:<root> <sub>`; bare and help invocations behave as documented;
+  tests pin both facts.
+
+### D-007: source joins the telemetry carry-list
+- **Context**: T005 found the req/resp/args precedent columns register in
+  THREE places (CREATE TABLE, MIGRATIONS, and
+  `_TELEMETRY_TABLE_COLUMNS`); the pinned contract enumerated only the
+  first two. Without the third, `copy_telemetry_tables` (backup_to and
+  the staged build) would re-stamp every carried CLI row to the 'mcp'
+  default on whole-file rebuilds — silently corrupting FR-002's
+  CLI-vs-MCP distinction.
+- **Decision**: `source` joins `_TELEMETRY_TABLE_COLUMNS["tool_metrics"]`
+  alongside the precedent columns.
+- **Consequences**: carried rows keep their source across rebuilds; a
+  genuinely pre-source DB degrades to the documented best-effort
+  per-table skip (same as any schema drift in the carry path).

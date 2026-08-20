@@ -1355,7 +1355,7 @@ def test_list_history_since_excludes_null_invoked_at_rows():
         "session_id TEXT NOT NULL DEFAULT 'unknown', invoked_at TIMESTAMP, "
         "duration_ms REAL, status TEXT NOT NULL DEFAULT 'ok', "
         "error_message TEXT, req_chars INTEGER, resp_chars INTEGER, "
-        "args_summary TEXT)"
+        "args_summary TEXT, source TEXT NOT NULL DEFAULT 'mcp')"
     )
     cutoff = time.time() - 86400
     _seed_metrics(

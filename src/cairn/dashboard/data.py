@@ -347,6 +347,7 @@ def list_history(
     conn: sqlite3.Connection,
     tool_name: Optional[str] = None,
     session_id: Optional[str] = None,
+    source: Optional[str] = None,
     since: Optional[float] = None,
     before: Optional[str] = None,
     after: Optional[str] = None,
@@ -354,8 +355,9 @@ def list_history(
 ) -> Dict:
     """One bounded page of tool-invocation history, newest-first (FR-001).
 
-    ``tool_name`` / ``session_id`` are exact-match filters (None = no
-    filter); a no-match filter is an empty page, never an error.
+    ``tool_name`` / ``session_id`` / ``source`` are exact-match filters
+    (None = no filter); a no-match filter is an empty page, never an
+    error.
     ``since`` (epoch seconds, None = all time) windows the page — and the
     neighbor probes that decide ``next``/``prev`` — to ``invoked_at >=
     since``; rows with NULL ``invoked_at`` predate windowing and never
@@ -389,6 +391,11 @@ def list_history(
     if session_id is not None:
         filter_clauses.append("session_id = ?")
         filter_params.append(session_id)
+    if source is not None:
+        # FR-002: 'cli' vs 'mcp' (the column default) — exact match, no
+        # allow-list, same discipline as tool/session.
+        filter_clauses.append("source = ?")
+        filter_params.append(source)
     if since is not None:
         # NULL invoked_at never satisfies the comparison: pre-windowing
         # rows only ever surface on all-time (since=None) pages.
@@ -410,7 +417,7 @@ def list_history(
     direction = "ASC, id ASC" if backward else "DESC, id DESC"
     fetched = conn.execute(
         f"""
-        SELECT id, tool_name, session_id, invoked_at, duration_ms,
+        SELECT id, tool_name, session_id, source, invoked_at, duration_ms,
                status, error_message, req_chars, resp_chars, args_summary
         FROM tool_metrics{where}
         ORDER BY invoked_at {direction}
@@ -427,6 +434,7 @@ def list_history(
             "id": row["id"],
             "tool_name": row["tool_name"],
             "session_id": row["session_id"],
+            "source": row["source"],
             "invoked_at": row["invoked_at"],
             "duration_ms": row["duration_ms"],
             "status": row["status"],
