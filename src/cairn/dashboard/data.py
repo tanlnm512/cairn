@@ -530,6 +530,7 @@ CHAINS_CALLS_PER_CHAIN = 25
 def get_session_chains(
     conn: sqlite3.Connection,
     since: Optional[float] = None,
+    session_id: Optional[str] = None,
     max_chains: int = CHAINS_MAX_CHAINS,
     calls_per_chain: int = CHAINS_CALLS_PER_CHAIN,
     expand: Optional[str] = None,
@@ -548,7 +549,10 @@ def get_session_chains(
     time) windows the rows before grouping (FR-002): sessions and chains
     with no in-window calls vanish from the output entirely, and NULL
     ``invoked_at`` calls predate windowing and never match a window — an
-    empty window is an empty result, never an error.
+    empty window is an empty result, never an error. ``session_id``
+    (exact value, None = no filter) reads only that session's rows
+    (FR-002): it composes with the window predicate in the same WHERE,
+    and a no-match session is the empty wrapper, never an error.
 
     The flat chain list is capped at ``max_chains`` after flattening
     (newest sessions' chains first); each chain keeps only its newest
@@ -566,14 +570,24 @@ def get_session_chains(
         max_chains = 1
     if calls_per_chain < 1:
         calls_per_chain = 1
-    where = " WHERE invoked_at >= ?" if since is not None else ""
+    clauses: List[str] = []
+    params: List[object] = []
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(session_id)
+    if since is not None:
+        # NULL invoked_at never satisfies the comparison: pre-windowing
+        # rows only ever surface on all-time (since=None) chains.
+        clauses.append("invoked_at >= ?")
+        params.append(since)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = conn.execute(
         f"""
         SELECT id, tool_name, session_id, invoked_at, duration_ms, status
         FROM tool_metrics{where}
         ORDER BY session_id, invoked_at
         """,
-        [since] if since is not None else [],
+        params,
     ).fetchall()
 
     grouped: Dict[object, List[sqlite3.Row]] = {}

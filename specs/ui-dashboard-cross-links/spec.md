@@ -1,6 +1,6 @@
 # Spec: ui-dashboard-cross-links
 
-**Status**: draft
+**Status**: done
 **Created**: 2026-08-20
 **Branch**: `docs/dashboard-v2-specs`
 

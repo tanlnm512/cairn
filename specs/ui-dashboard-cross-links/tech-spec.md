@@ -126,3 +126,18 @@ the active window param when the source view has one.
 - **Consequences**: no duplicated neighborhood implementation; the gesture's
   exact form (double-click vs button) is graph-nav's D-decision to make and
   this spec conforms.
+
+### D-004: Gesture split — doubleClick expands (graph-nav), inspect = select + button
+- **Context**: graph-nav landed and standardized `doubleClick` as
+  expand-in-place (its D-003; the vendored vis-network emits the event as
+  `"doubleClick"`). Binding inspect-navigation to the same gesture would
+  conflict on every node.
+- **Decision**: inspect is a distinct affordance — single click selects the
+  node (vis default), and an "inspect" action near the graph controls
+  navigates to `/graph?scope=symbol&focus=<selected>` (full page load,
+  browser-back returns). Both actions still share one neighborhood data
+  path (`/graph/neighbors` server-side; navigation composes the existing
+  symbol scope).
+- **Consequences**: no gesture conflict; inspect's destination is a
+  shareable URL; D-003's shared-path clause holds — no second neighborhood
+  implementation is created.

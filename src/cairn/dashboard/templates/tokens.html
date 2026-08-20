@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_links.html" as links %}
 {% block title %}Tokens — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -23,7 +24,7 @@
     <tbody>
       {% for t in tools %}
       <tr>
-        <td>{{ t.tool_name }}</td>
+        <td>{{ links.view_link('history', 'tool', t.tool_name, window) }}</td>
         <td class="num">{{ t.calls }}</td>
         <td class="num">~{{ t.est_req_tokens }}</td>
         <td class="num">~{{ t.est_resp_tokens }}</td>

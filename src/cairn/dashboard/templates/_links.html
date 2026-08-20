@@ -1,0 +1,3 @@
+{% macro view_link(view, param, value, window='') -%}
+<a href="/{{ view }}?{{ param }}={{ value | urlencode }}{% if window and window != 'all' %}&amp;window={{ window }}{% endif %}">{{ value }}</a>
+{%- endmacro %}

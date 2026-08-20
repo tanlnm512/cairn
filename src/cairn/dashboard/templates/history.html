@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_links.html" as links %}
 {% block title %}History — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -34,7 +35,7 @@
         <td>{{ h.invoked_at | epoch }}</td>
         <td class="num">{{ h.duration_ms | duration }}</td>
         <td><span class="badge badge-{{ h.status }}">{{ h.status }}</span></td>
-        <td><code>{{ h.session_id }}</code></td>
+        <td><code>{{ links.view_link('chains', 'session', h.session_id, window) }}</code></td>
         <td class="num">{{ h | tokens }}</td>
         <td>{{ h.args_summary or "—" }}</td>
       </tr>

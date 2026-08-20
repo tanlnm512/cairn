@@ -311,9 +311,14 @@ def create_app(
     def chains(request: Request) -> Response:
         window, since = _resolve_window(request.query_params.get("window"))
         expand = request.query_params.get("expand", "").strip() or None
+        # Session filter (FR-002), read like history's tool/session params:
+        # absent or blank means no filter.
+        session = request.query_params.get("session", "").strip() or None
         conn = get_read_only_db(db_path)
         try:
-            result = get_session_chains(conn, since=since, expand=expand)
+            result = get_session_chains(
+                conn, since=since, session_id=session, expand=expand
+            )
         finally:
             conn.close()
         return templates.TemplateResponse(
@@ -325,6 +330,7 @@ def create_app(
                 "total_chains": result["total_chains"],
                 "expand": expand or "",
                 "gap_minutes": SESSION_GAP_S // 60,
+                "session": session or "",
                 "window": window,
             },
         )

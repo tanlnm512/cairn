@@ -43,6 +43,11 @@
     {%- for kind, label in [("force", "force"), ("hier", "hierarchical")] %} {% if not loop.first %} · {% endif %}{% if kind == layout %}<strong>{{ label }}</strong>{% else %}<a href="{{ layout_href(kind) }}" data-layout="{{ kind }}">{{ label }}</a>{% endif %}
     {%- endfor %}
   </p>
+  {#- Node inspect (FR-004, D-004): selecting a node on the canvas swaps
+    this hint for an anchor to that symbol's neighborhood graph
+    (scope=symbol&focus=...); deselecting restores the hint. Distinct from
+    double-click, which expands in place. -#}
+  <p class="muted"><span id="inspect-action" class="muted">select a node to inspect</span></p>
   <p class="muted" id="graph-counts">
     scope <strong>{{ scope }}</strong> —
     {{ graph.metadata.get("node_count", graph.nodes | length) }} nodes,

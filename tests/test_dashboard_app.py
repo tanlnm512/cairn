@@ -25,6 +25,12 @@ def _vis_asset() -> Path:
     )
 
 
+def _templates_dir() -> Path:
+    import cairn.dashboard
+
+    return Path(cairn.dashboard.__file__).resolve().parent / "templates"
+
+
 # Source checkouts without the vendored vis-network build must not red CI.
 requires_vis_network = pytest.mark.skipif(
     not _vis_asset().exists(), reason="vendored vis-network.min.js not present"
@@ -758,13 +764,17 @@ _TC024_SUMMARY = _TC024_PAYLOAD[:200]
 
 
 def _history_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded with three tool_metrics rows when
+    """A graph-schema DB file; seeded with four tool_metrics rows when
     seed=True, written newest-last so rendering order is not insert order:
 
-    ask_compass / sess-alpha @ 00:25 — error, 1750 ms, ~100/~200 tokens
-    explore     / sess-beta  @ 00:20 — ok, 250 ms, ~300/~1200 tokens,
-                                       truncated args summary (TC-024)
-    explore     / sess-alpha @ 00:00 — ok, 60 ms, NULL sizes (pre-migration)
+    ask_compass  / sess-alpha @ 00:25 — error, 1750 ms, ~100/~200 tokens
+    explore      / sess-beta  @ 00:20 — ok, 250 ms, ~300/~1200 tokens,
+                                        truncated args summary (TC-024)
+    explore      / sess-alpha @ 00:00 — ok, 60 ms, NULL sizes (pre-migration)
+    legacy_tool  / unknown    @ 2025-08-19 23:43:20 — ok, 30 ms, NULL sizes;
+                                        the literal 'unknown' session every
+                                        pre-session-id row shares
+                                        (cross-links TC-002's legacy shape)
     """
     from cairn.graph.schema import _apply_schema
 
@@ -778,6 +788,8 @@ def _history_db_file(tmp_path, seed: bool) -> str:
             "duration_ms, status, error_message, req_chars, resp_chars, "
             "args_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                ("legacy_tool", "unknown", 1755647000.0, 30.0, "ok", None,
+                 None, None, None),
                 ("explore", "sess-alpha", 1755648000.0, 60.0, "ok", None,
                  None, None, None),
                 ("explore", "sess-beta", 1755649200.0, 250.25, "ok", None,
@@ -1003,6 +1015,30 @@ def test_chains_route_gap_pair_renders_as_two_chains(tmp_path):
     assert "pair1_a" not in second and "pair1_c" not in second
 
 
+def test_chains_route_session_param_filters_to_one_session(tmp_path):
+    """FR-002: ``session`` narrows /chains to that session's chains only;
+    a no-match session renders the empty state (HTTP 200, never an error);
+    without the param every session renders as before."""
+    client = _tokens_chains_client(tmp_path, seed=True)
+
+    resp = client.get("/chains", params={"session": "sess-gapped"})
+    assert resp.status_code == 200
+    blocks = _chain_blocks(resp.text)
+    assert len(blocks) == 2  # sess-gapped's two chains, nothing else
+    assert all("sess-gapped" in b for b in blocks)
+    assert "seq_alpha" not in resp.text  # sess-multi is filtered out
+
+    # A no-match session: the empty state, never an error.
+    empty = client.get("/chains", params={"session": "no-such-session"})
+    assert empty.status_code == 200
+    assert _chain_blocks(empty.text) == []
+    assert "No tool calls recorded yet." in empty.text
+
+    # Without the param: every session renders (5 chains as above).
+    plain = client.get("/chains")
+    assert len(_chain_blocks(plain.text)) == 5
+
+
 def test_tokens_and_chains_routes_empty_db_render_empty_states(tmp_path):
     """Empty-input boundary: no recorded calls — both views are HTTP 200
     with an empty state, no error."""
@@ -1112,6 +1148,243 @@ def test_history_older_link_carries_the_active_window(tmp_path):
     # Dropping the window here would resume all-time pagination and reach
     # the ancient row; carrying it keeps every older page in-window.
     assert "ancient_tool" not in page2.text
+
+
+# ---------------------------------------------------------------------------
+# Cross-view links (cross-links FR-001/FR-002/FR-003/FR-004/FR-006 /
+# US1-US4): tokens rows anchor to tool-filtered history, history rows
+# anchor to session-focused chains (the literal 'unknown' legacy session
+# included), the shipped projects->graph anchor stays pinned, a graph
+# node's inspect action anchors into its symbol neighborhood, and /graph
+# is reachable from both navs. The session-filter ROUTE half of TC-002
+# lives above in test_chains_route_session_param_filters_to_one_session;
+# TC-004's AUTO halves (the placeholder span the selectNode JS builds on
+# + the inspect target URL) are in the FR-004 tests below, with the live
+# JS half as TC004_MANUAL_PROCEDURE; TC-005's BUILDER half (the
+# view_link macro's window/urlencode edge cases) lives below in
+# test_view_link_macro_carries_window_and_encodes_value.
+# ---------------------------------------------------------------------------
+
+
+def test_tokens_rows_anchor_to_tool_filtered_history(tmp_path):
+    """FR-001 / US1-AC1 / TC-001: each tokens row's tool name anchors to
+    the history route pre-filtered to that tool, and following the anchor
+    lists only that tool's calls. FR-005's carry half: a non-'all' window
+    rides the anchor; default and explicit 'all' omit it."""
+    client = _tokens_chains_client(tmp_path, seed=True)
+    resp = client.get("/tokens")
+    assert resp.status_code == 200
+    assert '<a href="/history?tool=tool_heavy">tool_heavy</a>' in resp.text
+    assert '<a href="/history?tool=tool_light">tool_light</a>' in resp.text
+
+    # Explicit 'all' is the default: the anchor still carries no window.
+    explicit_all = client.get("/tokens", params={"window": "all"})
+    assert '<a href="/history?tool=tool_heavy">tool_heavy</a>' in (
+        explicit_all.text
+    )
+
+    # Following the anchor: history pre-filtered to that tool only
+    # (TC-001's pass condition).
+    drilled = client.get("/history", params={"tool": "tool_heavy"})
+    assert drilled.status_code == 200
+    assert "2025-08-20 00:01:00 UTC" in drilled.text  # heavy's 2 calls
+    assert "2025-08-20 00:00:00 UTC" in drilled.text
+    assert "tool_light" not in drilled.text
+
+    # A 24h window rides the anchor; the aggregate fixture is anchored to
+    # a 2025 epoch (outside any 24h window), so the window client's fresh
+    # timestamps carry this half.
+    wclient = _window_client(tmp_path, bulk=False)
+    windowed = wclient.get("/tokens", params={"window": "24h"})
+    assert windowed.status_code == 200
+    anchor = re.search(
+        r'<a href="(/history\?tool=recent_tool[^"]*)">recent_tool</a>',
+        windowed.text,
+    )
+    assert anchor, "windowed tokens row is missing its tool anchor"
+    assert "window=24h" in anchor.group(1)
+    assert "ancient_tool" not in windowed.text  # outside the window's slice
+
+    followed = wclient.get(anchor.group(1).replace("&amp;", "&"))
+    assert followed.status_code == 200
+    assert "recent_tool" in followed.text
+    assert "ancient_tool" not in followed.text  # destination stays in-window
+
+
+def test_history_rows_anchor_to_session_chains(tmp_path):
+    """FR-002 / US2-AC1 / TC-002: each history row's session id anchors to
+    the chains route focused on that session, and following it lists only
+    that session's chains; the legacy literal ``unknown`` session (every
+    pre-session-id row) anchors too — a functional link, never
+    special-cased away."""
+    client = _history_client(tmp_path, seed=True)
+    resp = client.get("/history")
+    assert resp.status_code == 200
+    assert '<a href="/chains?session=sess-alpha">sess-alpha</a>' in resp.text
+    assert '<a href="/chains?session=sess-beta">sess-beta</a>' in resp.text
+    # The legacy shape: rows recorded before per-boot session ids exist.
+    assert '<a href="/chains?session=unknown">unknown</a>' in resp.text
+
+    # Following an anchor: that session's chain only (00:00 -> 00:25 sits
+    # inside the 30-min chain gap, so one chain).
+    alpha = client.get("/chains", params={"session": "sess-alpha"})
+    assert alpha.status_code == 200
+    assert len(_chain_blocks(alpha.text)) == 1
+    assert "ask_compass" in alpha.text and "explore" in alpha.text
+    assert "sess-beta" not in alpha.text
+
+    # The legacy anchor is equally functional: /chains?session=unknown
+    # renders the unknown session's chain, not an error or empty state.
+    legacy = client.get("/chains", params={"session": "unknown"})
+    assert legacy.status_code == 200
+    assert len(_chain_blocks(legacy.text)) == 1
+    assert 'data-session="unknown"' in legacy.text
+    assert "legacy_tool" in legacy.text
+    assert "sess-alpha" not in legacy.text and "sess-beta" not in (
+        legacy.text
+    )
+
+
+@requires_vis_network
+def test_projects_row_anchor_opens_repo_scoped_graph(tmp_path):
+    """FR-003 / US3-AC1 / TC-003: regression guard on the already-shipped
+    link — the seeded project row anchors to the graph route scoped to
+    that repo, and following it renders that repo's graph (its module
+    buckets under repo metadata), never another scope."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/projects")
+    assert resp.status_code == 200
+    assert '<a href="/graph?scope=repo&amp;repo=demo">demo</a>' in resp.text
+
+    target = client.get("/graph", params={"scope": "repo", "repo": "demo"})
+    assert target.status_code == 200
+    payload = _embedded_graph(target.text)
+    assert payload["metadata"]["scope"] == "repo"
+    assert payload["metadata"]["repo"] == "demo"
+    # demo's graph renders its own files' buckets, symbol counts included.
+    assert {n["id"] for n in payload["nodes"]} == {
+        "src/demo/core.py (2)",
+        "src/demo/util.py (1)",
+    }
+
+
+# TC-004's JS half -- the live selectNode/deselectNode swap of the
+# #inspect-action hint into the inspect anchor and back -- needs a browser
+# (these route tests have no JS runtime); the procedure is the constant
+# beneath, mirroring TC005_MANUAL_PROCEDURE above.
+
+TC004_MANUAL_PROCEDURE = """\
+TC-004 manual half -- node inspect opens its neighborhood (FR-004 /
+US4-AC1). Run against a real store (e.g. this repo's own graph via the
+dev server):
+
+1. Open /graph and let the network settle; pick a node with visible
+   neighbors you can find again.
+2. Single-click the node -- it becomes selected (vis default) and the
+   "select a node to inspect" hint beside the layout control becomes an
+   inspect '<name>' link for that node.
+3. Click the link -- the browser navigates (full page load) to
+   /graph?scope=symbol&focus=<name> and the focused
+   symbol-neighborhood subgraph renders: the symbol plus its callers
+   and callees.
+4. Browser-back returns to the graph with the node still selected (the
+   inspect link still showing, not the placeholder).
+5. Single-click empty canvas -- the node deselects and the hint returns
+   to the "select a node to inspect" placeholder.
+6. Double-click the node -- it still expands in place (graph-nav's
+   expand gesture): no conflict with inspect's single-click select
+   (D-004's gesture split).
+"""
+
+
+@requires_vis_network
+def test_graph_page_renders_the_inspect_placeholder_span(tmp_path):
+    """FR-004 / TC-004 (auto half): /graph renders the inspect hook the
+    selectNode JS builds on -- the placeholder span verbatim (id, class,
+    placeholder text) before any node is selected."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/graph")
+    assert resp.status_code == 200
+    assert (
+        '<span id="inspect-action" class="muted">'
+        "select a node to inspect</span>" in resp.text
+    )
+
+
+@requires_vis_network
+def test_inspect_target_url_renders_symbol_neighborhood(tmp_path):
+    """FR-004 / US4-AC1 / TC-004 (URL-construction half): the URL the
+    selectNode JS builds -- /graph?scope=symbol&focus=<name> -- is a real
+    route: following it renders that symbol's neighborhood (the focal
+    plus its 1-hop caller and callee), never another scope."""
+    client = _client(tmp_path, seed=True)
+
+    # The exact href shape app.js builds: scope=symbol + focus=<node id>.
+    target = client.get("/graph?scope=symbol&focus=demo_helper")
+    assert target.status_code == 200
+    payload = _embedded_graph(target.text)
+    assert payload["metadata"]["scope"] == "symbol"
+    assert payload["metadata"]["symbol"] == "demo_helper"
+    assert {n["id"] for n in payload["nodes"]} == {
+        "demo_helper",  # the focal
+        "demo_main",  # its caller
+        "demo_util",  # its callee
+    }
+    assert {(e["source"], e["target"]) for e in payload["edges"]} == {
+        ("demo_main", "demo_helper"),
+        ("demo_helper", "demo_util"),
+    }
+
+
+def test_nav_and_landing_page_each_link_to_graph(tmp_path):
+    """FR-006 / US3 / TC-006: /graph is no orphan — the shared nav carries
+    it on every page (base.html) and the landing page's link list repeats
+    it (index.html)."""
+    client = _client(tmp_path, seed=False)
+
+    landing = client.get("/")
+    assert landing.status_code == 200
+    assert '<a href="/graph">Graph</a>' in landing.text  # base.html nav
+    assert '<a href="/graph">Graph explorer</a>' in landing.text  # list
+
+    # The nav entry is base.html's, not landing-specific: another page
+    # renders it too, so /graph is one click from anywhere.
+    projects = client.get("/projects")
+    assert projects.status_code == 200
+    assert '<a href="/graph">Graph</a>' in projects.text
+
+
+def test_view_link_macro_carries_window_and_encodes_value():
+    """FR-005 / TC-005 (builder half): the view_link macro appends the
+    window param only when a real window is active -- the empty default and
+    an explicit 'all' omit it, '24h' rides the href -- and a value needing
+    quoting is urlencoded in the href while the anchor label stays the
+    value verbatim. The route-level halves ride the page tests above."""
+    pytest.importorskip("jinja2")
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(
+        loader=FileSystemLoader(_templates_dir()), autoescape=True
+    )
+    view_link = env.get_template("_links.html").module.view_link
+
+    # Window omitted when not present ('' default) and when explicitly 'all'.
+    assert str(view_link("history", "tool", "tool_heavy")) == (
+        '<a href="/history?tool=tool_heavy">tool_heavy</a>'
+    )
+    assert str(view_link("history", "tool", "tool_heavy", window="all")) == (
+        '<a href="/history?tool=tool_heavy">tool_heavy</a>'
+    )
+
+    # A real window is appended as the second query param (HTML-escaped &).
+    assert str(view_link("history", "tool", "tool_heavy", window="24h")) == (
+        '<a href="/history?tool=tool_heavy&amp;window=24h">tool_heavy</a>'
+    )
+
+    # A value needing quoting: urlencoded in the href, verbatim as the label.
+    assert str(view_link("chains", "session", "sess alpha")) == (
+        '<a href="/chains?session=sess%20alpha">sess alpha</a>'
+    )
 
 
 def test_missing_db_renders_friendly_state_not_500(tmp_path):

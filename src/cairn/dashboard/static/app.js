@@ -4,7 +4,9 @@
    /graph/neighbors and merges the reply into the live DataSets (id-keyed
    node updates, triple-deduped edge adds), then refreshes the shown
    counts. The #layout-control anchors toggle force-directed vs
-   hierarchical (top-down) on the live network, camera preserved. No CDN
+   hierarchical (top-down) on the live network, camera preserved.
+   Selecting a node (single click) swaps the #inspect-action hint for a
+   plain anchor into that symbol's neighborhood view. No CDN
    — vis-network is vendored. */
 (function () {
   "use strict";
@@ -155,6 +157,36 @@
           delete pending[id];
         }
       );
+  });
+
+  /* Node inspect (FR-004, D-004): single click selects a node (the vis
+     default) and #inspect-action's hint becomes a plain anchor into the
+     symbol-neighborhood view; deselecting restores the hint. Normal
+     anchor navigation — full page load, browser-back returns. Built
+     with DOM APIs only (no innerHTML with node data). */
+  var inspectAction = document.getElementById("inspect-action");
+
+  function renderInspect(id) {
+    if (!inspectAction) {
+      return;
+    }
+    if (!id) {
+      inspectAction.textContent = "select a node to inspect";
+      return;
+    }
+    var link = document.createElement("a");
+    link.textContent = "inspect '" + id + "'";
+    link.href = "/graph?scope=symbol&focus=" + encodeURIComponent(id);
+    inspectAction.textContent = "";
+    inspectAction.appendChild(link);
+  }
+
+  network.on("selectNode", function (event) {
+    var id = event.nodes && event.nodes.length ? event.nodes[0] : null;
+    renderInspect(id);
+  });
+  network.on("deselectNode", function () {
+    renderInspect(null);
   });
 
   /* Layout toggle (FR-004): clicking an anchor in #layout-control

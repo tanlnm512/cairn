@@ -1427,6 +1427,53 @@ def test_get_session_chains_since_drops_old_sessions_and_old_calls(fresh_db):
     assert (all_time["total_chains"], all_time["truncated"]) == (3, False)
 
 
+def test_get_session_chains_session_id_filters_and_composes_with_window(fresh_db):
+    """FR-002's session filter: ``session_id`` reads only that session's
+    rows, composes with the ``since`` window, and a no-match session is
+    the empty wrapper, never an error."""
+    from cairn.dashboard.data import get_session_chains
+
+    cutoff = time.time() - 86400
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            # sess-a straddles the window edge; sess-b is fully inside.
+            (1, "explore", "sess-a", cutoff - 60, 5.0, "ok", 10, 10),
+            (2, "get_callers", "sess-a", cutoff + 60, 5.0, "ok", 10, 10),
+            (3, "explore", "sess-b", cutoff + 120, 5.0, "ok", 10, 10),
+            (4, "ask_compass", "sess-b", cutoff + 180, 5.0, "ok", 10, 10),
+        ],
+    )
+
+    # Session-only: exactly sess-a's calls, still one chain (small gaps).
+    only_a = get_session_chains(fresh_db, session_id="sess-a")
+    assert [(c["session_id"], c["call_count"]) for c in only_a["chains"]] == [
+        ("sess-a", 2)
+    ]
+    assert (only_a["total_chains"], only_a["truncated"]) == (1, False)
+
+    # Composed with the window: sess-a's pre-edge call drops out and the
+    # chain bounds recompute from what remains.
+    windowed = get_session_chains(fresh_db, since=cutoff, session_id="sess-a")
+    (chain,) = windowed["chains"]
+    assert [call["id"] for call in chain["calls"]] == [2]
+    assert (chain["started_at"], chain["ended_at"]) == (cutoff + 60, cutoff + 60)
+
+    # A session with no recorded calls is the empty wrapper, never an error.
+    assert get_session_chains(fresh_db, session_id="no-such-session") == {
+        "chains": [],
+        "total_chains": 0,
+        "truncated": False,
+    }
+
+    # None keeps the unfiltered behavior: every session,
+    # newest-activity-first.
+    all_sessions = get_session_chains(fresh_db)
+    assert [
+        (c["session_id"], c["call_count"]) for c in all_sessions["chains"]
+    ] == [("sess-b", 2), ("sess-a", 2)]
+
+
 def test_get_tool_tokens_since_recomputes_aggregates_and_ranking(fresh_db):
     """TC-004: a tool with heavy old traffic and light recent traffic —
     windowed totals are the window's sums only, and the ranking flips;
