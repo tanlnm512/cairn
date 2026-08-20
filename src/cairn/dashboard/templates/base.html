@@ -9,15 +9,19 @@
 <body>
   <header class="site-header">
     <nav class="site-nav">
-      <a class="brand" href="{{ url_for('index') }}">cairn</a>
-      <a href="/projects">Projects</a>
-      <a href="/graph">Graph</a>
-      <a href="/history">History</a>
-      <a href="/tokens">Tokens</a>
-      <a href="/chains">Chains</a>
-      <a href="/health">Health</a>
-      <a href="/memory">Memory</a>
-      <a href="/tasks">Tasks</a>
+      {#- FR-003: keep the selected store on every nav hop; empty when the
+          launch store is served (byte-identical plain hrefs). -#}
+      {% set nav_query = '' if not store_key else '?store=' + (store_key | urlencode) %}
+      <a class="brand" href="/{{ nav_query }}">cairn</a>
+      <a href="/workspaces{{ nav_query }}">Workspaces</a>
+      <a href="/projects{{ nav_query }}">Projects</a>
+      <a href="/graph{{ nav_query }}">Graph</a>
+      <a href="/history{{ nav_query }}">History</a>
+      <a href="/tokens{{ nav_query }}">Tokens</a>
+      <a href="/chains{{ nav_query }}">Chains</a>
+      <a href="/health{{ nav_query }}">Health</a>
+      <a href="/memory{{ nav_query }}">Memory</a>
+      <a href="/tasks{{ nav_query }}">Tasks</a>
     </nav>
   </header>
   <main class="site-main">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_links.html" as links %}
+{% import "_links.html" as links with context %}
 {% block title %}History — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -44,10 +44,24 @@
     </tbody>
   </table>
   {% if prev_cursor or next_cursor %}
+  {#- FR-003/FR-006: paging links keep the active filters AND the selected
+      store (links.url); empty selection keeps the bare hrefs. -#}
   <p class="muted">
-    {%- if prev_cursor %}<a href="/history?after={{ prev_cursor | urlencode }}{% if tool %}&amp;tool={{ tool | urlencode }}{% endif %}{% if session %}&amp;session={{ session | urlencode }}{% endif %}{% if window != "all" %}&amp;window={{ window | urlencode }}{% endif %}">Newer</a>{% endif %}
+    {%- if prev_cursor %}
+    {%- set q = {'after': prev_cursor} %}
+    {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
+    {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
+    {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
+    <a href="{{ links.url('/history', q) }}">Newer</a>
+    {%- endif %}
     {%- if prev_cursor and next_cursor %} · {% endif %}
-    {%- if next_cursor %}<a href="/history?before={{ next_cursor | urlencode }}{% if tool %}&amp;tool={{ tool | urlencode }}{% endif %}{% if session %}&amp;session={{ session | urlencode }}{% endif %}{% if window != "all" %}&amp;window={{ window | urlencode }}{% endif %}">Older</a>{% endif %}
+    {%- if next_cursor %}
+    {%- set q = {'before': next_cursor} %}
+    {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
+    {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
+    {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
+    <a href="{{ links.url('/history', q) }}">Older</a>
+    {%- endif %}
   </p>
   {% endif %}
   {% else %}

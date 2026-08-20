@@ -1,10 +1,14 @@
 """Standing guard: a full pass over every dashboard route leaves the
 database file untouched (FR-010 / TC-021), reads stay clean while a
-concurrent writer appends tool_metrics rows (TC-025), and the candidates
-and neighbors JSON endpoints sit inside the same guard (FR-006 / TC-006)."""
+concurrent writer appends tool_metrics rows (TC-025), the candidates
+and neighbors JSON endpoints sit inside the same guard (FR-006 / TC-006),
+and the workspace launcher's overview browsing + store switching leave
+every store under CAIRN_HOME byte-identical, sidecars included
+(workspace-launcher FR-004 / TC-005)."""
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import time
@@ -12,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from cairn.graph.schema import _apply_schema
+from cairn.graph.schema import _apply_schema, get_db
 
 # Every route on the app, including the query variants that hit distinct
 # read paths: graph scope changes (repo / symbol+depth / unknown fallback),
@@ -341,3 +345,227 @@ def test_reads_stay_clean_while_a_writer_appends_tool_metrics(tmp_path):
     assert _metric_rows(db_path) == before_rows + written
     refreshed = _fetch(client, "/history?tool=writer_tool")
     assert "sess-live" in refreshed.text
+
+
+# ---------------------------------------------------------------------------
+# Workspace launcher guard (workspace-launcher FR-004 / TC-005): the
+# overview stats every store under CAIRN_HOME and mode=ro-opens each
+# populated one, and ?store=<key> serves the data views against that
+# store -- none of it may write anything anywhere, visited or merely
+# listed. The fixture seeds five states side by side and the guard
+# tree-hashes ALL of CAIRN_HOME (the registry included) before/after the
+# full interaction set, so a -wal/-shm sidecar, a registry rewrite, or a
+# created directory anywhere fails the test. The handler resolves
+# paths.CAIRN_HOME per request (attribute lookup), so patching the module
+# attribute is the seam -- the app suite's workspaces-fixture convention.
+# ---------------------------------------------------------------------------
+
+# 16-hex store keys (the paths.store_key layout): one per fixture state,
+# each independently addressable via ?store=<key>.
+_WS_KEY_A = "aa00000000000001"  # populated, visited by the sweep
+_WS_KEY_B = "bb00000000000002"  # populated, visited by the sweep
+_WS_KEY_EMPTY = "cc00000000000003"  # key dir with no .kg: empty state
+_WS_KEY_CORRUPT = "dd00000000000004"  # junk-byte .kg: probes unreadable
+_WS_KEY_MISSING = "ee00000000000005"  # registered, dir gone: missing state
+_WS_KEY_UNKNOWN = "ff00000000000006"  # names nothing on disk or registry
+
+
+def _seed_ws_store(
+    home: Path, key: str, repo_id: str, tool_name: str, build_at: str
+) -> Path:
+    """A real schema store at ``<home>/<key>/.kg`` (the launcher layout),
+    get_db-seeded then left in rollback-journal mode -- the suite's own
+    guard-store convention. WAL stores would muddy the sidecar guard:
+    SQLite's FIRST mode=ro visit to a WAL store materializes a 0-byte
+    ``.kg-wal`` plus a zeroed ``.kg-shm`` (the wal-index) and never
+    removes them -- any reader does this, it is not a dashboard write.
+    Rollback-journal stores keep the guard strict: ANY file that appears
+    next to a store is the dashboard's doing. Rows distinguish the store
+    from every other in the fixture: one repo, a file with two symbols
+    plus the edge between them (so /graph has a neighborhood),
+    tool_metrics rows of ``tool_name`` in one session, and a build_run
+    stamped ``build_at``."""
+    kg = home / key / ".kg"
+    kg.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_db(str(kg))
+    try:
+        conn.execute(
+            "INSERT INTO repos (id, name, path, language, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (repo_id, repo_id, f"clients/{repo_id}", "python",
+             "2026-08-20T08:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"{repo_id}-f1", repo_id, f"src/{repo_id}/core.py", "python",
+             "2026-08-20T10:00:00"),
+        )
+        conn.executemany(
+            "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (f"{repo_id}-s1", f"{repo_id}-f1", f"{repo_id}_main",
+                 f"{repo_id}.core.{repo_id}_main", "function"),
+                (f"{repo_id}-s2", f"{repo_id}-f1", f"{repo_id}_helper",
+                 f"{repo_id}.core.{repo_id}_helper", "function"),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, kind) "
+            "VALUES (?, ?, ?, ?)",
+            (f"{repo_id}-e1", f"{repo_id}-s1", f"{repo_id}-s2", "calls"),
+        )
+        conn.executemany(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status) VALUES (?, ?, ?, ?, ?)",
+            [
+                (tool_name, f"sess-{repo_id}", 1755648000.0 + i, 50.0, "ok")
+                for i in range(2)
+            ],
+        )
+        conn.execute(
+            "INSERT INTO build_runs (kind, started_at) VALUES ('full', ?)",
+            (build_at,),
+        )
+        conn.commit()
+        mode = conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+        assert mode == "delete", mode
+    finally:
+        conn.close()
+    return kg
+
+
+def _launcher_home(tmp_path) -> Path:
+    """The multi-store CAIRN_HOME the TC-005 guard runs against: two
+    populated stores with distinct data (the visited ones), an empty key
+    dir, a corrupt-.kg store, and a registered key whose dir is gone (the
+    merely-listed ones), plus the registry itself."""
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    _seed_ws_store(home, _WS_KEY_A, "guard_ws_a", "ws_a_tool",
+                   "2026-08-20T07:00:00Z")
+    _seed_ws_store(home, _WS_KEY_B, "guard_ws_b", "ws_b_tool",
+                   "2026-08-20T09:00:00Z")
+    (home / _WS_KEY_EMPTY).mkdir()
+    (home / _WS_KEY_CORRUPT / ".kg").parent.mkdir(parents=True)
+    (home / _WS_KEY_CORRUPT / ".kg").write_bytes(
+        b"definitely not a sqlite database\n" * 8
+    )
+    (home / "workspaces.json").write_text(
+        json.dumps(
+            {
+                str(tmp_path / "ws" / "alpha"): _WS_KEY_A,
+                str(tmp_path / "ws" / "beta"): _WS_KEY_B,
+                str(tmp_path / "ws" / "gone"): _WS_KEY_MISSING,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return home
+
+
+def _tree_digest(root: Path) -> tuple:
+    """``(files, dirs)`` under ``root``: every file's relative path ->
+    sha256 of its bytes, plus every directory's relative path. The
+    before/after pair catches content changes, added or removed files
+    (-wal/-shm sidecars, registry rewrites), and created directories
+    alike -- _digest's convention applied to the whole tree."""
+    files = {}
+    dirs = []
+    for path in sorted(root.rglob("*")):
+        rel = str(path.relative_to(root))
+        if path.is_dir():
+            dirs.append(rel)
+        else:
+            files[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return files, frozenset(dirs)
+
+
+def test_launcher_interactions_leave_every_store_byte_identical(
+    tmp_path, monkeypatch
+):
+    """TC-005 / FR-004: the overview (which stats every store and
+    mode=ro-opens each populated one) plus a full selected-store sweep
+    across the data views leave EVERY file under CAIRN_HOME
+    byte-identical -- the two visited stores, the merely-listed
+    empty/corrupt/missing entries, and the registry -- with no new files
+    (no sidecars, no registry writes) and no created directories. The
+    sweep is non-vacuous: the selected store's own data renders on its
+    views, so stores were really served, not just 200ed."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn import paths
+    from cairn.dashboard.app import create_app
+
+    home = _launcher_home(tmp_path)
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    # The launch db lives OUTSIDE home (this interaction set never opens
+    # it) so the tree hash covers launcher state only.
+    client = TestClient(create_app(db_path=str(tmp_path / "dash.db")))
+
+    before_files, before_dirs = _tree_digest(home)
+    # Fixture sanity: the hashed tree really covers both stores, the
+    # corrupt .kg, and the registry; seeding left no sidecars behind.
+    assert "workspaces.json" in before_files
+    assert f"{_WS_KEY_A}/.kg" in before_files
+    assert f"{_WS_KEY_B}/.kg" in before_files
+    assert f"{_WS_KEY_CORRUPT}/.kg" in before_files
+    assert not [p for p in before_files if p.endswith(("-wal", "-shm"))]
+
+    # Overview browsing: the plain overview, then its store-echo variant
+    # for every key -- populated, empty, corrupt, and missing alike.
+    _fetch(client, "/workspaces")
+    for key in (
+        _WS_KEY_A,
+        _WS_KEY_B,
+        _WS_KEY_EMPTY,
+        _WS_KEY_CORRUPT,
+        _WS_KEY_MISSING,
+    ):
+        _fetch(client, f"/workspaces?store={key}")
+
+    # Non-vacuous serving: each populated store's own data renders on the
+    # views and the other store's does not (the selection is real).
+    projects_a = _fetch(client, f"/projects?store={_WS_KEY_A}")
+    assert "guard_ws_a" in projects_a.text
+    assert "guard_ws_b" not in projects_a.text
+    history_b = _fetch(client, f"/history?store={_WS_KEY_B}")
+    assert "ws_b_tool" in history_b.text
+    assert "ws_a_tool" not in history_b.text
+    health_a = _fetch(client, f"/health?store={_WS_KEY_A}")
+    assert str(home / _WS_KEY_A / ".kg") in health_a.text
+    assert "2026-08-20T07:00:00Z" in health_a.text
+
+    # The selected-store sweep: every data view against each populated
+    # store.
+    for key in (_WS_KEY_A, _WS_KEY_B):
+        for view in (
+            "/projects",
+            "/history",
+            "/tokens",
+            "/chains",
+            "/health",
+            "/graph",
+        ):
+            _fetch(client, f"{view}?store={key}")
+
+    # Unknown and non-populated keys render the friendly missing page
+    # (200, naming the key) -- never an error, never a store "repaired"
+    # into existence.
+    for key in (_WS_KEY_UNKNOWN, _WS_KEY_EMPTY, _WS_KEY_MISSING):
+        missing = _fetch(client, f"/projects?store={key}")
+        assert "No graph database found" in missing.text, key
+        assert key in missing.text, key
+
+    # The guard itself: byte-identical files (no touched store, no
+    # registry rewrite), no new files (no -wal/-shm sidecars), no new
+    # directories.
+    after_files, after_dirs = _tree_digest(home)
+    assert after_files == before_files
+    assert after_dirs == before_dirs
+    sidecars = sorted(
+        p for p in after_files if p.endswith(("-wal", "-shm"))
+    )
+    assert sidecars == []

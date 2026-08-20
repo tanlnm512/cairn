@@ -2,14 +2,18 @@
   Shared time-window control (FR-002): 24h / 7d / 30d / all presets.
   Links carry the view's current params (tool/session/before/after where
   present) so switching windows preserves them; the active preset is
-  plain text.
+  plain text. FR-003: the selected store rides every preset link too
+  (links.url reads store_key from the INCLUDING page's context; empty
+  selection keeps the bare hrefs).
 -#}
+{% import "_links.html" as links with context %}
 {% macro window_href(preset) -%}
-{{ request.url.path }}?window={{ preset }}
-{%- if tool %}&amp;tool={{ tool | urlencode }}{% endif %}
-{%- if session %}&amp;session={{ session | urlencode }}{% endif %}
-{%- if before %}&amp;before={{ before | urlencode }}{% endif %}
-{%- if after %}&amp;after={{ after | urlencode }}{% endif %}
+{%- set q = {'window': preset} %}
+{%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
+{%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
+{%- if before %}{% set _ = q.update({'before': before}) %}{% endif %}
+{%- if after %}{% set _ = q.update({'after': after}) %}{% endif %}
+{{- links.url(request.url.path, q) }}
 {%- endmacro %}
 <p class="muted">
   Window:

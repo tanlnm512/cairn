@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Workspaces — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Workspaces</h1>
+  {% if stores %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Workspace</th>
+        <th>Store</th>
+        <th>State</th>
+        <th>Size</th>
+        <th>Last modified</th>
+        <th>Recorded calls</th>
+        <th>Open</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in stores %}
+      <tr>
+        <td>{% if s.path %}<code>{{ s.path }}</code>{% else %}— (unregistered){% endif %}</td>
+        <td><code>{{ s.key }}</code></td>
+        <td>{{ s.state }}</td>
+        <td>{{ (s.size_bytes | filesize) if s.size_bytes is not none else "—" }}</td>
+        <td>{{ (s.last_modified | epoch) if s.last_modified is not none else "—" }}</td>
+        <td class="num">{{ s.call_count if s.call_count is not none else "—" }}</td>
+        <td><a href="/projects?store={{ s.key | urlencode }}">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if stores | selectattr("counts_capped") | list %}
+  <p class="muted">counts unavailable for some stores (probe cap)</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">No cairn stores found — run <code>cairn init</code> in a workspace to register one.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -66,6 +66,12 @@
      top-down. Toggling later swaps the option on the live instance. */
   var layout = canvas.getAttribute("data-layout") === "hier" ? "hier" : "force";
 
+  /* Store selection (FR-003): a selected store's graph page carries the
+     selection as #graph-data's data-store attribute; expansion fetches
+     must stay on that store. Empty/absent attribute = the launch store:
+     no param appended, the URL unchanged. */
+  var storeKey = (block.getAttribute("data-store") || "").trim();
+
   function layoutOptions(kind) {
     return {
       hierarchical: { enabled: kind === "hier", direction: "UD" }
@@ -139,7 +145,11 @@
       return;
     }
     pending[id] = true;
-    fetch("/graph/neighbors?name=" + encodeURIComponent(id))
+    fetch(
+      "/graph/neighbors?name=" +
+        encodeURIComponent(id) +
+        (storeKey ? "&store=" + encodeURIComponent(storeKey) : "")
+    )
       .then(function (resp) {
         if (!resp.ok) {
           throw new Error("neighbors request failed");
@@ -163,8 +173,10 @@
      default) and #inspect-action's hint becomes a plain anchor into the
      symbol-neighborhood view; deselecting restores the hint. Normal
      anchor navigation — full page load, browser-back returns. Built
-     with DOM APIs only (no innerHTML with node data). */
+     with DOM APIs only (no innerHTML with node data). The selection
+     rides #graph-data's data-store attribute, mirroring focusUrl. */
   var inspectAction = document.getElementById("inspect-action");
+  var inspectStore = (block.getAttribute("data-store") || "").trim();
 
   function renderInspect(id) {
     if (!inspectAction) {
@@ -176,7 +188,10 @@
     }
     var link = document.createElement("a");
     link.textContent = "inspect '" + id + "'";
-    link.href = "/graph?scope=symbol&focus=" + encodeURIComponent(id);
+    link.href =
+      "/graph?scope=symbol&focus=" +
+      encodeURIComponent(id) +
+      (inspectStore ? "&store=" + encodeURIComponent(inspectStore) : "");
     inspectAction.textContent = "";
     inspectAction.appendChild(link);
   }
@@ -268,8 +283,21 @@
     return;
   }
 
+  /* Store selection (FR-003): search fetches stay on the store the page
+     serves — the selection rides #graph-data's data-store attribute. An
+     absent block (never on /graph) or empty value is the launch store:
+     no param appended, the URL unchanged. */
+  var graphData = document.getElementById("graph-data");
+  var storeKey = graphData
+    ? (graphData.getAttribute("data-store") || "").trim()
+    : "";
+
   function focusUrl(name) {
-    return "/graph?scope=symbol&focus=" + encodeURIComponent(name);
+    return (
+      "/graph?scope=symbol&focus=" +
+      encodeURIComponent(name) +
+      (storeKey ? "&store=" + encodeURIComponent(storeKey) : "")
+    );
   }
 
   function note(text) {
@@ -322,7 +350,11 @@
     if (!name) {
       return;
     }
-    fetch("/graph/candidates?name=" + encodeURIComponent(name))
+    fetch(
+      "/graph/candidates?name=" +
+        encodeURIComponent(name) +
+        (storeKey ? "&store=" + encodeURIComponent(storeKey) : "")
+    )
       .then(function (resp) {
         if (!resp.ok) {
           throw new Error("candidates request failed");

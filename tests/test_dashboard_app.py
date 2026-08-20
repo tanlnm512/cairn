@@ -1,6 +1,6 @@
 """Dashboard app spine: lazy server-stack imports, read-only connection
-factory, landing/projects/graph/history/tokens/chains/health/memory/tasks
-routes + static assets."""
+factory, landing/workspaces/projects/graph/history/tokens/chains/health/
+memory/tasks routes + static assets."""
 from __future__ import annotations
 
 import json
@@ -1992,3 +1992,486 @@ def test_missing_db_renders_friendly_state_not_500(tmp_path):
         assert resp.status_code == 200, path
         assert "No graph database found" in resp.text, path
         assert "cairn build" in resp.text, path
+
+
+# ---------------------------------------------------------------------------
+# Workspaces overview (workspace-launcher FR-001 / FR-002, TC-001 / TC-002):
+# /workspaces lists every local store (registry ∪ store dirs under
+# CAIRN_HOME) with size, last-modified, and recorded call count; the four
+# divergent states render with their state, never an error. The handler
+# reads paths.CAIRN_HOME at request time (attribute lookup), so tests patch
+# the module attribute -- the autouse env scrub never reaches it. The probe
+# cap (FR-005's visibility half) rides probe_stores' module attribute
+# patched BEFORE create_app binds it into the handler: the route's default
+# cap is frozen into the def-time parameter, so this is the one seam.
+# ---------------------------------------------------------------------------
+
+# Store keys are 16 hex chars by layout (paths.store_key); literal keys keep
+# the four states independently addressable and the capped pair ordered.
+_WSK_POPULATED = "0123456789abcdef"
+_WSK_ORPHAN = "2468ace02468ace0"
+_WSK_UNREADABLE = "deadbeefdeadbeef"
+_WSK_MISSING = "ffffffffffffffff"
+
+
+def _seed_store_db(home: Path, key: str, calls: int) -> Path:
+    """A real schema store at ``<home>/<key>/.kg`` with ``calls``
+    tool_metrics rows -- the seeded-call-count convention of the history
+    fixtures, applied to a store-dir layout the probe can open read-only."""
+    from cairn.graph.schema import get_db
+
+    kg = home / key / ".kg"
+    kg.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_db(str(kg))
+    try:
+        conn.executemany(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status) VALUES (?, ?, ?, ?, ?)",
+            [
+                ("explore", "ws-sess", 1755648000.0 + i, 50.0, "ok")
+                for i in range(calls)
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return kg
+
+
+def _four_state_home(tmp_path) -> dict:
+    """A CAIRN_HOME fixture covering TC-002's four states:
+
+    populated -- real schema .kg, 2 recorded calls, registered workspace
+    empty     -- orphan key dir with no .kg (unregistered marker expected)
+    missing   -- registered key whose store dir does not exist
+    unreadable -- junk-byte .kg: enumerates populated, probes unreadable
+    """
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    kg = _seed_store_db(home, _WSK_POPULATED, calls=2)
+    (home / _WSK_ORPHAN).mkdir()
+    junk = home / _WSK_UNREADABLE / ".kg"
+    junk.parent.mkdir(parents=True)
+    junk.write_bytes(b"definitely not a sqlite database\n" * 8)
+    (home / "workspaces.json").write_text(
+        json.dumps(
+            {
+                str(tmp_path / "ws" / "alpha"): _WSK_POPULATED,
+                str(tmp_path / "ws" / "gone"): _WSK_MISSING,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"home": home, "kg": kg}
+
+
+def _workspaces_client(tmp_path, monkeypatch, home: Path):
+    """A TestClient whose /workspaces probes ``home``: the handler resolves
+    paths.CAIRN_HOME per request, so patching the attribute is the seam
+    (the launch db_path is never opened by this route)."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn import paths
+    from cairn.dashboard.app import create_app
+
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    return TestClient(create_app(db_path=str(tmp_path / "dash.db")))
+
+
+def _store_row(html: str, key: str) -> str:
+    """The rendered <tr> of the store keyed ``key`` -- assertions scoped to
+    the one store they are about."""
+    for row in html.split("<tr>")[1:]:
+        if f"<code>{key}</code>" in row:
+            return row
+    raise AssertionError(f"workspaces row for key {key!r} missing from page")
+
+
+def test_workspaces_route_lists_store_stats_columns(tmp_path, monkeypatch):
+    """FR-001 / TC-001: the populated store's row carries workspace identity,
+    a nonzero store size, a last-modified timestamp, and the recorded
+    tool-call count -- every overview column renders per store."""
+    from cairn.dashboard.app import _human_size, _human_ts
+
+    fixture = _four_state_home(tmp_path)
+    resp = _workspaces_client(
+        tmp_path, monkeypatch, fixture["home"]
+    ).get("/workspaces")
+    assert resp.status_code == 200
+
+    for header in (
+        "Workspace",
+        "Store",
+        "State",
+        "Size",
+        "Last modified",
+        "Recorded calls",
+    ):
+        assert header in resp.text
+
+    row = _store_row(resp.text, _WSK_POPULATED)
+    assert str(tmp_path / "ws" / "alpha") in row  # identity verbatim
+    assert _human_size(os.stat(fixture["kg"]).st_size) in row  # nonzero size
+    assert _human_ts(os.stat(fixture["kg"]).st_mtime) in row  # last modified
+    assert '<td class="num">2</td>' in row  # the 2 seeded tool_metrics rows
+
+
+def test_workspaces_route_renders_all_four_states_without_error(
+    tmp_path, monkeypatch
+):
+    """FR-002 / TC-002: populated, empty, missing, and unreadable stores each
+    render with their state; the missing row keeps its registered path, the
+    orphan carries the unregistered marker, the unreadable probe degrades
+    the count to an em-dash -- and the page completes (200, no error)."""
+    fixture = _four_state_home(tmp_path)
+    resp = _workspaces_client(
+        tmp_path, monkeypatch, fixture["home"]
+    ).get("/workspaces")
+    assert resp.status_code == 200
+
+    for key, state in (
+        (_WSK_POPULATED, "populated"),
+        (_WSK_ORPHAN, "empty"),
+        (_WSK_MISSING, "missing"),
+        (_WSK_UNREADABLE, "unreadable"),
+    ):
+        assert f"<td>{state}</td>" in _store_row(resp.text, key), state
+
+    # The registered-but-gone store still shows its workspace path verbatim.
+    assert str(tmp_path / "ws" / "gone") in _store_row(resp.text, _WSK_MISSING)
+    # The orphan dir shows the unregistered marker, never a fabricated path.
+    assert "— (unregistered)" in _store_row(resp.text, _WSK_ORPHAN)
+    # The corrupt .kg: count unknown (em-dash), not zero and not a 500.
+    assert '<td class="num">—</td>' in _store_row(resp.text, _WSK_UNREADABLE)
+
+
+def test_base_nav_leads_with_the_workspaces_link(tmp_path, monkeypatch):
+    """FR-001: the shared base nav (base.html) carries the overview as its
+    first entry, one click from every page."""
+    fixture = _four_state_home(tmp_path)
+    resp = _workspaces_client(
+        tmp_path, monkeypatch, fixture["home"]
+    ).get("/workspaces")
+    assert resp.status_code == 200
+    assert '<a href="/workspaces">Workspaces</a>' in resp.text
+    # First entry: the overview anchor precedes every other nav view.
+    assert resp.text.index('<a href="/workspaces">Workspaces</a>') < (
+        resp.text.index('<a href="/projects">Projects</a>')
+    )
+
+
+def test_probe_cap_degrades_counts_visibly(tmp_path, monkeypatch):
+    """FR-005's visibility half: past the probe-open budget a populated store
+    renders the em-dash call count and the page carries the muted cap note --
+    the degradation stays visible, never a hang or a silent zero. The route
+    freezes probe_stores' default cap into its def-time parameter, so the
+    module attribute is swapped BEFORE create_app binds it, forcing the
+    two-store fixture down to one budgeted open."""
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    _seed_store_db(home, "1111111111111111", calls=1)
+    _seed_store_db(home, "2222222222222222", calls=3)
+
+    from cairn.dashboard import workspaces as ws_module
+
+    real_probe_stores = ws_module.probe_stores
+    monkeypatch.setattr(
+        ws_module,
+        "probe_stores",
+        lambda home_dir, entries: real_probe_stores(
+            home_dir, entries, max_opens=1
+        ),
+    )
+    resp = _workspaces_client(tmp_path, monkeypatch, home).get("/workspaces")
+    assert resp.status_code == 200
+
+    # Populated-first, then by key: the 1-store still gets its budgeted open;
+    # the 2-store lands past the cap.
+    first = _store_row(resp.text, "1111111111111111")
+    second = _store_row(resp.text, "2222222222222222")
+    assert '<td class="num">1</td>' in first
+    assert '<td class="num">3</td>' not in second
+    assert '<td class="num">—</td>' in second  # unknown, not zero
+    assert "counts unavailable for some stores (probe cap)" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Workspace switching (workspace-launcher FR-003, TC-003 / TC-004): two
+# seeded stores with distinct repos/tool calls/build stamps under a patched
+# CAIRN_HOME plus a distinct launch store, all served by ONE TestClient --
+# ?store=<key> serves that store's projects/history/health, no param serves
+# the launch store, the three-way A -> overview -> B sequence tracks the
+# selection without a restart, and the selection rides every inter-view
+# link (deep-link carry). The missing-state keys (unknown, empty-state dir)
+# render the friendly page. GAP-1's halves: a selected store's /graph page
+# carries the selection to app.js (data-store hook) and the two fetch
+# builders append it guarded -- the fetch itself is browser-side, so the
+# app.js contract is pinned at the source level, like the loop tests above.
+# ---------------------------------------------------------------------------
+
+# 16-hex store keys (the layout convention the workspaces tests use).
+_SW_KEY_A = "aaaaaaaaaaaaaaaa"
+_SW_KEY_B = "bbbbbbbbbbbbbbbb"
+_SW_KEY_EMPTY = "cccccccccccccccc"  # store dir with no .kg: the empty state
+_SW_KEY_UNKNOWN = "dddddddddddddddd"  # names nothing on disk
+
+
+def _seed_switch_store(
+    path: Path, repo_id: str, tool_name: str, build_at: str, calls: int = 1
+) -> Path:
+    """A schema store at ``path`` distinguishable from every other store in
+    the switching fixtures: one repo (``repo_id``), ``calls`` tool_metrics
+    rows of ``tool_name``, and a build_run stamped ``build_at`` -- each of
+    projects/history/health has its own per-store marker to assert on."""
+    from cairn.graph.schema import get_db
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_db(str(path))
+    try:
+        conn.execute(
+            "INSERT INTO repos (id, name, path, language, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (repo_id, repo_id, f"clients/{repo_id}", "python",
+             "2026-08-20T08:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"{repo_id}-f1", repo_id, f"src/{repo_id}/core.py", "python",
+             "2026-08-20T10:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"{repo_id}-s1", f"{repo_id}-f1", f"{repo_id}_fn",
+             f"{repo_id}.core.{repo_id}_fn", "function"),
+        )
+        conn.executemany(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status) VALUES (?, ?, ?, ?, ?)",
+            [
+                (tool_name, f"sess-{repo_id}", 1755648000.0 + i, 50.0, "ok")
+                for i in range(calls)
+            ],
+        )
+        conn.execute(
+            "INSERT INTO build_runs (kind, started_at) VALUES ('full', ?)",
+            (build_at,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return path
+
+
+def _switch_client(tmp_path, monkeypatch) -> tuple:
+    """ONE TestClient over the launch store with paths.CAIRN_HOME pointed at
+    the fixture home (the workspaces tests' attribute-lookup seam) -- the
+    same app instance serves every store, FR-003's no-restart seam. Store A
+    seeds enough calls (a page plus overflow) that its history paginates."""
+    from cairn.dashboard.data import HISTORY_PAGE_SIZE
+
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn import paths
+    from cairn.dashboard.app import create_app
+
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    _seed_switch_store(
+        home / _SW_KEY_A / ".kg", "storeA", "store_a_tool",
+        "2026-08-20T07:00:00Z", calls=HISTORY_PAGE_SIZE + 5,
+    )
+    _seed_switch_store(
+        home / _SW_KEY_B / ".kg", "storeB", "store_b_tool",
+        "2026-08-20T09:00:00Z", calls=3,
+    )
+    (home / _SW_KEY_EMPTY).mkdir()  # empty state: a key dir with no .kg
+    launch_db = _seed_switch_store(
+        tmp_path / "launch" / "dash.db", "launchproj", "launch_tool",
+        "2026-08-20T08:00:00Z", calls=2,
+    )
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    return TestClient(create_app(db_path=str(launch_db))), home
+
+
+def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
+    """FR-003 / US2-AC1 / TC-003: two seeded stores with distinct repos and
+    tool calls; ?store=<keyA> serves A's projects/history/health and
+    ?store=<keyB> serves B's, while no param serves the launch store -- one
+    app instance, no restart."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+
+    # Projects: the selected store's repo, none of the others'.
+    projects_a = client.get("/projects", params={"store": _SW_KEY_A})
+    projects_b = client.get("/projects", params={"store": _SW_KEY_B})
+    assert projects_a.status_code == 200 and projects_b.status_code == 200
+    assert "storeA" in projects_a.text
+    assert "storeB" not in projects_a.text and "launchproj" not in (
+        projects_a.text
+    )
+    assert "storeB" in projects_b.text
+    assert "storeA" not in projects_b.text and "launchproj" not in (
+        projects_b.text
+    )
+
+    # History: the selected store's tool calls only.
+    history_a = client.get("/history", params={"store": _SW_KEY_A})
+    history_b = client.get("/history", params={"store": _SW_KEY_B})
+    assert "store_a_tool" in history_a.text and "store_b_tool" not in (
+        history_a.text
+    ) and "launch_tool" not in history_a.text
+    assert "store_b_tool" in history_b.text and "store_a_tool" not in (
+        history_b.text
+    )
+
+    # Health: the served store IS the selected one (its .kg path + build).
+    health_a = client.get("/health", params={"store": _SW_KEY_A})
+    health_b = client.get("/health", params={"store": _SW_KEY_B})
+    assert str(home / _SW_KEY_A / ".kg") in health_a.text
+    assert "2026-08-20T07:00:00Z" in health_a.text
+    assert str(home / _SW_KEY_B / ".kg") in health_b.text
+    assert "2026-08-20T09:00:00Z" in health_b.text
+
+    # No param: the launch store, exactly as before the seam existed.
+    plain = client.get("/projects")
+    assert "launchproj" in plain.text
+    assert "storeA" not in plain.text and "storeB" not in plain.text
+    assert "launch_tool" in client.get("/history").text
+
+
+def test_three_way_switch_sequence_tracks_selection(tmp_path, monkeypatch):
+    """FR-003 / US2-AC2 / TC-004: A -> overview -> B on one TestClient (no
+    server restart) -- each leg serves exactly the selected store's data and
+    the overview leg between them still completes."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    # Leg 1: select A.
+    leg_a = client.get("/projects", params={"store": _SW_KEY_A})
+    assert leg_a.status_code == 200
+    assert "storeA" in leg_a.text and "storeB" not in leg_a.text
+
+    # Leg 2: return to the overview -- it lists both stores, still one app.
+    overview = client.get("/workspaces")
+    assert overview.status_code == 200
+    assert _SW_KEY_A in overview.text and _SW_KEY_B in overview.text
+
+    # Leg 3: pick B -- the views switch with the selection.
+    leg_b = client.get("/projects", params={"store": _SW_KEY_B})
+    assert "storeB" in leg_b.text and "storeA" not in leg_b.text
+    history_b = client.get("/history", params={"store": _SW_KEY_B})
+    assert "store_b_tool" in history_b.text and "store_a_tool" not in (
+        history_b.text
+    )
+
+
+def test_selected_store_rides_the_inter_view_links(tmp_path, monkeypatch):
+    """FR-003 carry (GAP-2): on a selected store's pages every inter-view
+    href keeps the selection -- history's session anchor, the Newer/Older
+    paging links (followed Older page included), the window presets, the
+    tokens tool anchor, and the graph layout link."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    # History (store A paginates: a page plus overflow of seeded calls).
+    history = client.get("/history", params={"store": _SW_KEY_A})
+    assert history.status_code == 200
+    assert (
+        f'<a href="/chains?session=sess-storeA&amp;store={_SW_KEY_A}">'
+        "sess-storeA</a>" in history.text
+    )
+    older = re.search(r'<a href="(/history\?before=[^"]*)">Older</a>', history.text)
+    assert older, "Older link missing from the paginated selected store"
+    assert f"store={_SW_KEY_A}" in older.group(1)
+    # Following the link keeps the selection: the Older page's Newer link.
+    page2 = client.get(older.group(1).replace("&amp;", "&"))
+    assert page2.status_code == 200
+    newer = re.search(r'<a href="(/history\?after=[^"]*)">Newer</a>', page2.text)
+    assert newer, "Newer link missing from the Older page"
+    assert f"store={_SW_KEY_A}" in newer.group(1)
+    # The shared window presets carry it too (window_control partial).
+    assert f"/history?window=24h&amp;store={_SW_KEY_A}" in history.text
+
+    # Tokens: the tool anchor into filtered history carries the store.
+    tokens = client.get("/tokens", params={"store": _SW_KEY_A})
+    assert tokens.status_code == 200
+    assert (
+        f'<a href="/history?tool=store_a_tool&amp;store={_SW_KEY_A}">'
+        "store_a_tool</a>" in tokens.text
+    )
+
+    # Graph: the layout link keeps scope AND store.
+    graph = client.get("/graph", params={"store": _SW_KEY_A})
+    assert graph.status_code == 200
+    layout = re.search(r'<a href="([^"]*)" data-layout="hier">', graph.text)
+    assert layout, "layout link missing from the selected store's graph"
+    assert "scope=module" in layout.group(1)
+    assert f"store={_SW_KEY_A}" in layout.group(1)
+
+
+def test_unknown_and_empty_state_store_keys_render_missing_page(
+    tmp_path, monkeypatch
+):
+    """FR-003's never-an-error edge: an unknown key (nothing on disk) and an
+    empty-state key (store dir, no .kg) each render the friendly missing-DB
+    page (200) -- never a 500, and never the launch store's data."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+    for key in (_SW_KEY_UNKNOWN, _SW_KEY_EMPTY):
+        resp = client.get("/projects", params={"store": key})
+        assert resp.status_code == 200, key
+        assert "No graph database found" in resp.text, key
+        assert "launchproj" not in resp.text, key
+
+
+def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
+    """GAP-1 (FR-003): on a selected store's /graph the page carries the
+    selection to the JS (the data-store hook on the graph-data block) and
+    app.js's two fetch builders append it only when non-empty; the endpoints
+    they hit honor the same param, so browser-side search/expand stays on
+    the selected store. The launch-store page renders the tag byte-identical
+    (no attribute)."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    selected = client.get("/graph", params={"store": _SW_KEY_A})
+    assert selected.status_code == 200
+    assert (
+        '<script id="graph-data" type="application/json" '
+        f'data-store="{_SW_KEY_A}">' in selected.text
+    )
+    # No selection: the tag renders exactly as before the seam.
+    plain = client.get("/graph")
+    assert '<script id="graph-data" type="application/json">' in plain.text
+
+    # The endpoints the builders hit serve the selected store's symbols.
+    hit = client.get(
+        "/graph/candidates", params={"store": _SW_KEY_A, "name": "storeA_fn"}
+    )
+    assert hit.status_code == 200
+    assert [m["name"] for m in hit.json()["matches"]] == ["storeA_fn"]
+    miss = client.get(
+        "/graph/candidates", params={"store": _SW_KEY_A, "name": "storeB_fn"}
+    )
+    assert miss.json()["matches"] == []  # B's symbol is not in A's store
+
+    # app.js source contract (no JS runtime here): both fetch builders
+    # append the store param, read from the data-store hook, guarded.
+    src = _app_js_source()
+    for endpoint in ("/graph/neighbors?name=", "/graph/candidates?name="):
+        builder = re.search(re.escape(endpoint) + r".{0,160}", src, re.S)
+        assert builder, f"app.js lost the {endpoint!r} fetch builder"
+        assert "storeKey" in builder.group(0), endpoint
+    assert src.count('getElementById("graph-data")') >= 2
+    assert src.count('getAttribute("data-store")') >= 2
+    # The guard: an empty or absent selection appends nothing — every
+    # store-appending site (fetch builders, focusUrl, inspect anchor)
+    # follows the same guarded pattern.
+    assert (
+        len(
+            re.findall(
+                r'\? "&store=" \+ encodeURIComponent\(\w+\) : ""', src
+            )
+        )
+        >= 3
+    )
+    assert 'inspectStore ? "&store=" + encodeURIComponent(inspectStore)' in src

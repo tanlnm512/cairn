@@ -129,3 +129,29 @@ single launch path (survey Q4).
   fails.
 - **Consequences**: probe cost is dominated by count opens and is capped;
   degraded columns are visible rather than silently stale.
+
+### D-005: tokens.html imports the link macro with context
+- **Context**: T006's store-carry routes every inter-view anchor through
+  `_links.html`'s `url` macro, which reads `store_key` from the render
+  context; tokens.html's plain `{% import %}` cannot see it.
+- **Decision**: tokens.html (the one file outside T006's pinned set) gains
+  the `with context` import — one line, no other change.
+- **Consequences**: the tokens page's tool anchors carry the selected
+  store like every other view; plain imports remain fine for macros that
+  take all inputs as arguments.
+
+### D-006: First read-only visit to a WAL store may materialize empty sidecars
+- **Context**: T007's guard found that SQLite's FIRST `mode=ro` open of a
+  WAL-mode store creates a 0-byte `.kg-wal` and a 32KB zeroed `.kg-shm`
+  (wal-index setup) that persist after close — any reader does this,
+  including the dashboard's pre-existing views; the `.kg` bytes never
+  change and revisits are byte-stable.
+- **Decision**: accept and document. FR-004's byte-identical guarantee
+  covers store CONTENT (the `.kg`); the guard tests seed rollback-journal
+  stores (the readonly suite's own convention) to assert the strict
+  no-new-files property, while real WAL stores' first-visit sidecar
+  materialization is recorded here as SQLite-inherent reader behavior,
+  not a dashboard write.
+- **Consequences**: no change to the open strategy (mode=ro stays); a
+  steady-state WAL guard could be added later if the sidecars ever prove
+  problematic; the distinction is visible in the guard's docstring.

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Graph — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -31,12 +32,15 @@
   {#- Layout toggle (FR-004): links swap only the layout param, keeping
     scope/focus/repo/depth (window_control link conventions); the active
     layout renders as <strong>. app.js intercepts clicks on the anchors
-    to toggle the live network without a reload. -#}
+    to toggle the live network without a reload. FR-003: links.url keeps
+    the selected store riding the href; empty selection keeps the bare
+    hrefs, byte-identical. -#}
   {% macro layout_href(kind) -%}
-  {{ request.url.path }}?layout={{ kind }}&amp;scope={{ scope | urlencode }}
-  {%- if focus %}&amp;focus={{ focus | urlencode }}{% endif %}
-  {%- if repo %}&amp;repo={{ repo | urlencode }}{% endif %}
-  {%- if depth %}&amp;depth={{ depth | urlencode }}{% endif %}
+  {% set q = {"layout": kind, "scope": scope} %}
+  {%- if focus %}{% set _ = q.update({"focus": focus}) %}{% endif %}
+  {%- if repo %}{% set _ = q.update({"repo": repo}) %}{% endif %}
+  {%- if depth %}{% set _ = q.update({"depth": depth}) %}{% endif %}
+  {{- links.url(request.url.path, q) }}
   {%- endmacro %}
   <p class="muted" id="layout-control">
     Layout:
@@ -62,7 +66,10 @@
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
   {% endif %}
-  <script id="graph-data" type="application/json">{{ graph | tojson }}</script>
+  {#- FR-003: a selected store rides the page for app.js (search and
+      expansion fetches stay on that store); no selection renders the tag
+      byte-identical to the pre-seam page. -#}
+  <script id="graph-data" type="application/json"{% if store_key %} data-store="{{ store_key }}"{% endif %}>{{ graph | tojson }}</script>
 </section>
 {% endblock %}
 {% block scripts %}

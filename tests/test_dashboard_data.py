@@ -2,6 +2,7 @@
 the task queue, and the tool-use history."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -1738,3 +1739,206 @@ def test_get_session_chains_since_windows_before_the_caps(fresh_db):
     assert chain["session_id"] == "sess-now"
     assert [c["id"] for c in chain["calls"]] == [101, 102]
     assert (chain["started_at"], chain["ended_at"]) == (cutoff + 10, cutoff + 20)
+
+
+# ---------------------------------------------------------------------------
+# Workspaces probe degradation (workspace-launcher FR-005 / T009, tech-spec
+# D-003): probe_stores bounds the SQL opens; rows past the cap must surface
+# a VISIBLE counts-unavailable state (call_count None + counts_capped True,
+# the row the route renders as the em-dash under the cap line) while
+# keeping the free os.stat fields — never a silent zero, never a hang.
+# Data-layer calls over a synthesized CAIRN_HOME; the rendering of the same
+# degradation is the app/workspaces suites' half.
+# ---------------------------------------------------------------------------
+
+
+def _ws_home(tmp_path):
+    """An empty CAIRN_HOME the test populates store by store."""
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    return home
+
+
+def _ws_store(home, key, calls):
+    """A real schema store at ``<home>/<key>/.kg`` with ``calls``
+    tool_metrics rows — the app suite's _seed_store_db convention,
+    duplicated because test modules are separately owned."""
+    from cairn.graph.schema import get_db
+
+    kg = home / key / ".kg"
+    kg.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_db(str(kg))
+    try:
+        conn.executemany(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status) VALUES (?, ?, ?, ?, ?)",
+            [
+                ("explore", "ws-degrade", 1755648000.0 + i, 50.0, "ok")
+                for i in range(calls)
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return kg
+
+
+def test_probe_stores_past_cap_degrades_counts_visibly_keeps_stats(tmp_path):
+    """T009 / FR-005: more populated stores than the open budget → exactly
+    max_opens rows carry a call count and they are the FIRST stores in
+    list order; every past-cap row degrades visibly (call_count None +
+    counts_capped True, state still populated) while size/freshness —
+    D-003's free stat-first half — survive for every row."""
+    from cairn.dashboard.workspaces import enumerate_stores, probe_stores
+
+    home = _ws_home(tmp_path)
+    # Four stores, keys sorting by construction, call counts identifying
+    # each store (i calls for key i) so the probed pair is checkable
+    # per-key, not just by count of non-None values.
+    for i in range(4):
+        _ws_store(home, f"{i:016x}", calls=i + 1)
+
+    entries = enumerate_stores(home)
+    assert [e["key"] for e in entries] == [f"{i:016x}" for i in range(4)]
+
+    rows = probe_stores(home, entries, max_opens=2)
+
+    # One row per entry, list order preserved (the list-order contract).
+    assert [r["key"] for r in rows] == [e["key"] for e in entries]
+    # Exactly the budget's worth of counts, on the FIRST two stores.
+    assert [(r["key"], r["call_count"]) for r in rows[:2]] == [
+        (f"{i:016x}", i + 1) for i in range(2)
+    ]
+    assert all(r["counts_capped"] is False for r in rows[:2])
+    # Past the cap: counts unknown — None, never a silent 0 — flagged.
+    for row in rows[2:]:
+        assert row["state"] == "populated"  # budgeted, not broken
+        assert row["call_count"] is None
+        assert row["counts_capped"] is True
+    # The free half never degrades: stats present on every row, capped too.
+    for row in rows:
+        assert row["size_bytes"] > 0
+        assert row["last_modified"] is not None
+
+
+def test_probe_stores_zero_opens_degrades_populated_only(tmp_path):
+    """T009 / FR-005's floor: max_opens=0 degrades EVERY populated row
+    (counts None + flagged, stats kept) while empty and missing rows are
+    exactly what they were — those states never open a DB, so they are
+    not capped, just count-less by nature (no .kg to stat either)."""
+    from cairn.dashboard.workspaces import enumerate_stores, probe_stores
+
+    home = _ws_home(tmp_path)
+    _ws_store(home, "a000000000000001", calls=3)
+    _ws_store(home, "b000000000000002", calls=1)
+    (home / "c000000000000003").mkdir()  # empty: key dir, no .kg
+    (home / "workspaces.json").write_text(
+        json.dumps({str(tmp_path / "gone"): "d000000000000004"}),
+        encoding="utf-8",
+    )  # registered key, dir gone: missing
+
+    rows = probe_stores(home, enumerate_stores(home), max_opens=0)
+
+    by_key = {r["key"]: r for r in rows}
+    for key in ("a000000000000001", "b000000000000002"):
+        row = by_key[key]
+        assert row["state"] == "populated"
+        assert row["call_count"] is None
+        assert row["counts_capped"] is True
+        assert row["size_bytes"] > 0  # degradation costs counts, not stats
+        assert row["last_modified"] is not None
+
+    empty = by_key["c000000000000003"]
+    assert empty["state"] == "empty"
+    assert empty["call_count"] is None
+    assert empty["counts_capped"] is False  # never opened, not capped
+    assert empty["size_bytes"] is None  # no .kg to stat
+
+    missing = by_key["d000000000000004"]
+    assert missing["state"] == "missing"
+    assert missing["call_count"] is None
+    assert missing["counts_capped"] is False
+    assert missing["size_bytes"] is None
+
+
+def test_probe_stores_corrupt_first_store_fails_fast_batch_completes(tmp_path):
+    """T009's no-hang half: a corrupt .kg at list position 1 fails its
+    open fast — reclassified unreadable, stats kept — and CONSUMES one
+    budget slot, yet the batch continues: the next store still gets its
+    real count, the last degrades past the cap, and the call returns one
+    row per entry in order. The corrupt open's sqlite3.Error is absorbed,
+    never propagated; completing under the suite's own timeout is the
+    bounded-work proof (no flaky timing assertion, per the scale suite's
+    convention)."""
+    from cairn.dashboard.workspaces import enumerate_stores, probe_stores
+
+    home = _ws_home(tmp_path)
+    # The junk store's key sorts first, so enumerate puts it at position 1.
+    junk = home / "0000000000000001" / ".kg"
+    junk.parent.mkdir(parents=True)
+    junk.write_bytes(b"definitely not a sqlite database\n" * 8)
+    _ws_store(home, "0000000000000002", calls=7)
+    _ws_store(home, "0000000000000003", calls=5)
+
+    entries = enumerate_stores(home)
+    # The enumerator is filesystem-only: junk .kg is a file → populated.
+    assert [e["state"] for e in entries] == ["populated"] * 3
+
+    rows = probe_stores(home, entries, max_opens=2)
+
+    # The whole batch returned, one row per entry, order preserved.
+    assert [r["key"] for r in rows] == [e["key"] for e in entries]
+
+    corrupt, probed, capped = rows
+    assert corrupt["state"] == "unreadable"  # the probe's refinement
+    assert corrupt["call_count"] is None
+    assert corrupt["counts_capped"] is False  # it WAS allowed; the open failed
+    assert corrupt["size_bytes"] == junk.stat().st_size  # stats survive
+    assert corrupt["last_modified"] is not None
+    # Budget accounting: corrupt (1) + this store (2) == max_opens, and
+    # the middle store still got its real count — failing the first open
+    # aborted nothing.
+    assert probed["state"] == "populated"
+    assert probed["call_count"] == 7
+    assert probed["counts_capped"] is False
+    # ...so the third store lands past the cap, visibly degraded.
+    assert capped["state"] == "populated"
+    assert capped["call_count"] is None
+    assert capped["counts_capped"] is True
+
+
+def test_probe_stores_empty_and_missing_consume_no_open_budget(tmp_path):
+    """T009's accounting half: only populated rows draw from the open
+    budget. Three empty dirs and a registered-missing key walk the list
+    FIRST (entries reordered — probe_stores probes in the list order it is
+    handed), and both populated stores behind them still get their counts
+    under max_opens=2. Had the no-open states consumed slots, both
+    populated rows would have come back capped."""
+    from cairn.dashboard.workspaces import enumerate_stores, probe_stores
+
+    home = _ws_home(tmp_path)
+    _ws_store(home, "a000000000000001", calls=2)
+    _ws_store(home, "b000000000000002", calls=4)
+    for i in range(3):
+        (home / f"c{i:015x}").mkdir()
+    (home / "workspaces.json").write_text(
+        json.dumps({str(tmp_path / "gone"): "d000000000000004"}),
+        encoding="utf-8",
+    )
+
+    # enumerate's own order is populated-first (the budget would never be
+    # contested); reorder so the four no-open states precede the populated
+    # pair and the accounting is actually exercised.
+    entries = enumerate_stores(home)
+    entries = [e for e in entries if e["state"] != "populated"] + [
+        e for e in entries if e["state"] == "populated"
+    ]
+    assert len(entries) == 6
+    assert [e["state"] for e in entries[:4]] == ["empty"] * 3 + ["missing"]
+
+    rows = probe_stores(home, entries, max_opens=2)
+
+    assert [(r["key"], r["call_count"], r["counts_capped"]) for r in rows[-2:]] == [
+        ("a000000000000001", 2, False),
+        ("b000000000000002", 4, False),
+    ]

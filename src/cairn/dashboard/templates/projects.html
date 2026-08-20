@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Projects — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -19,8 +20,10 @@
     </thead>
     <tbody>
       {% for p in projects %}
+      {#- FR-003: the repo-scoped graph anchor keeps the selected store
+          (links.url); empty selection keeps the bare href. -#}
       <tr>
-        <td><a href="/graph?scope=repo&amp;repo={{ p.id | urlencode }}">{{ p.name }}</a></td>
+        <td><a href="{{ links.url('/graph', {'scope': 'repo', 'repo': p.id}) }}">{{ p.name }}</a></td>
         <td>{{ p.language or "—" }}</td>
         <td><code>{{ p.path }}</code></td>
         <td class="num">{{ p.file_count }}</td>

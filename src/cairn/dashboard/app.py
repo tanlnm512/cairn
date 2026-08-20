@@ -1,8 +1,8 @@
 """Starlette app factory for the read-only dashboard (FR-001, FR-010).
 
-Routes: landing, projects, graph (plus its /graph/candidates symbol-search
-and /graph/neighbors node-expansion JSON), history, tokens, chains, health,
-memory, tasks.
+Routes: landing, workspaces overview, projects, graph (plus its
+/graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
+history, tokens, chains, health, memory, tasks.
 
 starlette / jinja2 arrive only as transitive deps of mcp, so they are
 imported inside :func:`create_app`: importing this module (or the package)
@@ -155,23 +155,71 @@ def create_app(
         list_projects,
         symbol_candidates,
     )
+    from .workspaces import enumerate_stores, probe_stores
+    from .. import paths
     from ..paths import default_knowledge_path
     from ..viz import query as viz_query
 
-    def knowledge_root() -> str:
-        return knowledge_dir or str(default_knowledge_path())
+    def resolve_selection(
+        request: Request, db_path: str | None, knowledge_dir: str | None
+    ) -> tuple[str | None, str, str]:
+        """This request's ``(db, knowledge_root, store_key)`` (FR-003, D-001).
+
+        No ``store`` param keeps the launch store — today's behavior,
+        byte-identical (``db`` may stay None for the data layer to resolve).
+        A present param must name a populated key from
+        :func:`enumerate_stores` — the param is a registry key, never a raw
+        path (no arbitrary-file-open vector). An unknown, empty, or missing
+        key raises MissingDatabaseError so the app-level handler renders
+        the missing-DB page: the friendly missing state, never an error.
+        """
+        store_key = request.query_params.get("store", "").strip()
+        if not store_key:
+            return db_path, knowledge_dir or str(default_knowledge_path()), ""
+        home = Path(paths.CAIRN_HOME)
+        state = next(
+            (
+                row["state"]
+                for row in enumerate_stores(home)
+                if row["key"] == store_key
+            ),
+            None,
+        )
+        if state != "populated":
+            raise MissingDatabaseError(store_key)
+        # Layout constants mirroring paths.StorePaths (db/.knowledge names).
+        store_dir = home / store_key
+        return str(store_dir / ".kg"), str(store_dir / ".knowledge"), store_key
 
     async def landing(request: Request) -> Response:
+        _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"db_path": db_path or "central store"},
+            {"db_path": db_path or "central store", "store_key": store_key},
         )
 
     # Plain-def handlers on purpose: Starlette runs them in a threadpool, so
     # the blocking read-only SQL below never stalls the event loop.
+
+    # Machine-wide by design: reads the process-wide CAIRN_HOME, not the
+    # launch db; the store param is echoed for the nav only — the overview
+    # itself never switches (FR-003's seam is the data views).
+    def workspaces_overview(request: Request) -> Response:
+        _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
+        home = Path(paths.CAIRN_HOME)
+        rows = probe_stores(home, enumerate_stores(home))
+        return templates.TemplateResponse(
+            request,
+            "workspaces.html",
+            {"stores": rows, "launch_db": db_path or "", "store_key": store_key},
+        )
+
     def projects(request: Request) -> Response:
-        conn = get_read_only_db(db_path)
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
         try:
             rows = list_projects(conn)
         finally:
@@ -179,7 +227,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "projects.html",
-            {"projects": rows},
+            {"projects": rows, "store_key": store_key},
         )
 
     def graph(request: Request) -> Response:
@@ -195,7 +243,10 @@ def create_app(
         layout = request.query_params.get("layout", "force")
         if layout not in ("force", "hier"):
             layout = "force"
-        conn = get_read_only_db(db_path)
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
         try:
             graph_data = get_graph(
                 conn, scope=scope, focus=focus, repo=repo, depth=depth
@@ -213,12 +264,14 @@ def create_app(
                 "repo": repo or "",
                 "depth": depth_raw if depth is not None else "",
                 "layout": layout,
+                "store_key": store_key,
             },
         )
 
     def graph_candidates(request: Request) -> Response:
         name = request.query_params.get("name", "").strip()
-        conn = get_read_only_db(db_path)
+        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        conn = get_read_only_db(selected_db)
         try:
             result = symbol_candidates(conn, name)
         finally:
@@ -243,7 +296,8 @@ def create_app(
         depth_kwargs = (
             {"depth": max(1, int(depth_raw))} if depth_raw.isdigit() else {}
         )
-        conn = get_read_only_db(db_path)
+        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        conn = get_read_only_db(selected_db)
         try:
             result = viz_query.get_symbol_neighbors(conn, names, **depth_kwargs)
         finally:
@@ -251,15 +305,22 @@ def create_app(
         return JSONResponse(result)
 
     def health(request: Request) -> Response:
-        conn = get_read_only_db(db_path)
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
         try:
-            health_data = get_health(conn, db_path)
+            health_data = get_health(conn, selected_db)
         finally:
             conn.close()
         return templates.TemplateResponse(
             request,
             "health.html",
-            {"health": health_data, "db_path": db_path or "central store"},
+            {
+                "health": health_data,
+                "db_path": selected_db or "central store",
+                "store_key": store_key,
+            },
         )
 
     def history(request: Request) -> Response:
@@ -268,7 +329,10 @@ def create_app(
         before = request.query_params.get("before", "").strip() or None
         after = request.query_params.get("after", "").strip() or None
         window, since = _resolve_window(request.query_params.get("window"))
-        conn = get_read_only_db(db_path)
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
         try:
             result = list_history(
                 conn,
@@ -292,12 +356,16 @@ def create_app(
                 "window": window,
                 "next_cursor": result["next"],
                 "prev_cursor": result["prev"],
+                "store_key": store_key,
             },
         )
 
     def tokens(request: Request) -> Response:
         window, since = _resolve_window(request.query_params.get("window"))
-        conn = get_read_only_db(db_path)
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
         try:
             rows = get_tool_tokens(conn, since=since)
         finally:
@@ -305,7 +373,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "tokens.html",
-            {"tools": rows, "window": window},
+            {"tools": rows, "window": window, "store_key": store_key},
         )
 
     def chains(request: Request) -> Response:
@@ -314,7 +382,10 @@ def create_app(
         # Session filter (FR-002), read like history's tool/session params:
         # absent or blank means no filter.
         session = request.query_params.get("session", "").strip() or None
-        conn = get_read_only_db(db_path)
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
         try:
             result = get_session_chains(
                 conn, since=since, session_id=session, expand=expand
@@ -332,32 +403,45 @@ def create_app(
                 "gap_minutes": SESSION_GAP_S // 60,
                 "session": session or "",
                 "window": window,
+                "store_key": store_key,
             },
         )
 
     def memory(request: Request) -> Response:
-        entries = get_recent_memories(knowledge_root())
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        entries = get_recent_memories(selected_knowledge)
         return templates.TemplateResponse(
             request,
             "memory.html",
-            {"memories": entries},
+            {"memories": entries, "store_key": store_key},
         )
 
     def tasks(request: Request) -> Response:
         status = request.query_params.get("status", "all").strip() or "all"
         if status not in TASK_STATUSES:
             status = "all"
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
         entries = get_task_queue(
-            knowledge_root(), status=None if status == "all" else status
+            selected_knowledge, status=None if status == "all" else status
         )
         return templates.TemplateResponse(
             request,
             "tasks.html",
-            {"tasks": entries, "statuses": TASK_STATUSES, "status": status},
+            {
+                "tasks": entries,
+                "statuses": TASK_STATUSES,
+                "status": status,
+                "store_key": store_key,
+            },
         )
 
     routes = [
         Route("/", landing, name="index"),
+        Route("/workspaces", workspaces_overview, name="workspaces"),
         Route("/projects", projects, name="projects"),
         Route("/graph", graph, name="graph"),
         Route("/graph/candidates", graph_candidates, name="graph_candidates"),
