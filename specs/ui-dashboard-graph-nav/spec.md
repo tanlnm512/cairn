@@ -13,9 +13,10 @@ symbol name, the graph focuses on it and its neighborhood), click-to-expand
 ## Why
 The graph view today navigates only through its scope/focus/depth form:
 finding one symbol means scrolling a rendered graph or knowing the form's
-vocabulary in advance. For a 3,600-symbol project that's friction at
-exactly the moment of curiosity. Search-focus and incremental expansion
-match how people actually explore: start at a name, pull threads.
+vocabulary in advance. For a project of cairn's own size (~2,700 indexed
+symbols) that's friction at exactly the moment of curiosity. Search-focus
+and incremental expansion match how people actually explore: start at a
+name, pull threads.
 
 ## Business value
 - Symbol-level questions ("what surrounds X?") get answered in seconds
@@ -75,13 +76,16 @@ accuracy; read-only guard extension.
 state; additional layout algorithms; graph diffing between commits.
 
 ## Assumptions & risks
-- Assumption: the existing graph data layer can serve a symbol's
-  neighborhood and incremental expansions (its symbol scope and depth
-  controls already do) — this spec composes those, not new traversal
-  semantics.
+- Assumption: search-to-focus is pure composition — the symbol scope
+  already serves a symbol plus its 1-hop callers and callees (capped at
+  30 each). Multi-hop expansion is NOT already there: the symbol scope
+  accepts a depth parameter but never uses it (fixed 1-hop), and only the
+  impact scope walks depth — FR-003's expansion reuses that walk or adds
+  one; this spec names the new traversal instead of assuming it exists.
 - Risk: repeated expansions can grow the view past comfortable browser
   limits — mitigation: FR-005 count accuracy plus a visible bound; the
   underlying scope truncation still applies.
-- Risk: name ambiguity is the norm in large projects (the resolver's
-  resolution labels exist for a reason) — FR-002 makes disambiguation a
+- Risk: name ambiguity is the norm in large projects — today the symbol
+  scope resolves it by silently taking the first match (LIMIT 1), which
+  is exactly the arbitrary pick FR-002 forbids; disambiguation becomes a
   first-class interaction, not an error.

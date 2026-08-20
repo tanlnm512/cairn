@@ -13,9 +13,12 @@ subgraph. The views stop being dead ends and become one navigable surface.
 ## Why
 The views answer questions in isolation, but real questions cross views:
 "this tool is expensive — show me the calls", "this call — show me the rest
-of its session", "this project — show me its structure". Today each of
-those means re-typing filters in another view. Cross-links make the
-dashboard a tool rather than a stack of reports.
+of its session", "this project — show me its structure". Today the tokens
+and history views are dead ends — their templates carry no links at all —
+and the graph view is an orphan absent from both navs (only
+projects→graph is already wired: each project row links to
+`/graph?scope=repo&repo=<id>`). Cross-links make the dashboard a tool
+rather than a stack of reports.
 
 ## Business value
 - Time-to-answer for cross-view questions drops from "re-type the filter"
@@ -47,7 +50,8 @@ graph, so that structure inspection is one click from the overview.
 
 **Acceptance criteria**:
 - AC1: Given a project row, When I activate its graph link, Then the graph
-  view opens scoped to that project.
+  view opens scoped to that project. (Already satisfied by the shipped
+  row link — this spec guards it as a regression, it does not rebuild it.)
 
 ### US4 — From node to neighborhood (P2)
 As a developer exploring a graph, I want to open a node's focused
@@ -63,14 +67,19 @@ symbol's surroundings without form-fiddling.
   pre-filtered to that tool.
 - **FR-002**: Each row in the history view SHALL link to the chains view
   focused on that row's session.
-- **FR-003**: Each row in the projects view SHALL link to the graph view
-  scoped to that project.
+- **FR-003**: The projects view's existing row link to the graph view
+  scoped to that project (already shipped) SHALL be preserved — a
+  standing regression guard, no new behavior required.
 - **FR-004**: Each rendered graph node SHALL expose an inspect action that
   opens a symbol-neighborhood subgraph for it.
 - **FR-005**: Cross-links SHALL carry the active time-window filter (where
-  one exists) so the destination view shows the same slice.
-- **FR-006**: The landing view SHALL provide navigation to every other
-  view (no orphan views).
+  one exists) so the destination view shows the same slice. The window
+  itself comes from ui-dashboard-traffic-scale — until that lands, the
+  parameter is simply omitted.
+- **FR-006**: The landing view and shared nav SHALL provide navigation to
+  every other view (no orphan views). Today `/graph` is the orphan: it is
+  missing from both the site nav and the landing page's link list,
+  reachable only via a projects row or a typed URL.
 
 ## Scope
 **In**: link wiring across existing views; context preservation; the
@@ -80,8 +89,18 @@ source excerpts) beyond the focused subgraph; breadcrumb trails beyond the
 browser's native back.
 
 ## Assumptions & risks
-- Assumption: all destinations are expressible as today's URL parameters
-  (tool/session filters, graph scope/focus/repo) — no new query surfaces.
+- Assumption: all destinations are expressible as today's URL parameters —
+  `tool` / `session` on /history, `scope` / `focus` / `repo` / `depth` on
+  /graph — no new query surfaces.
+- Assumption: FR-004's inspect action (navigate to a focused subgraph) and
+  ui-dashboard-graph-nav's expand action (grow the current view) are
+  counterparts that SHALL share one neighborhood data path rather than
+  two implementations.
 - Risk: link proliferation cluttering dense tables — mitigation: link each
   row's primary entity (tool name, session id, project name), not every
   cell.
+- Risk: history rows recorded before per-boot session ids exist all share
+  session `unknown` (every row in the current store does) — a session
+  link on those rows targets the giant legacy chain set that
+  ui-dashboard-traffic-scale FR-004 bounds; the link must stay functional
+  for that shape, not assume small chains.

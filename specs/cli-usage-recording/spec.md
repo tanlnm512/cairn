@@ -84,13 +84,25 @@ retention policy (ui-dashboard-polish owns it); per-flag argument
 redaction beyond the existing redaction pipeline.
 
 ## Assumptions & risks
-- Assumption: the existing recording pipeline (buffering, redaction,
-  flush-on-exit) can be reused rather than duplicated — extend, not replace
-  (the dashboard spec's own hard-won rule).
+- Assumption: the existing recording pipeline is reused rather than
+  duplicated — the shared telemetry sink (one 30s flush thread + atexit
+  drain), the `strip_private_data` redaction chokepoint, and the
+  200-char args-summary truncation all apply as-is (extend, not replace
+  — the dashboard spec's own hard-won rule).
+- Assumption: FR-004's opt-out extends the existing master switch —
+  `CAIRN_TELEMETRY=off` already gates tool_metrics — rather than
+  inventing a parallel one; "discoverable" means visible where that
+  switch is documented today.
 - Assumption: one top-level record per invocation (not per subcommand
   hop) is the right granularity for usage analysis.
 - Risk: very short-lived CLI processes may exit before a periodic flush —
-  the flush-on-exit path must cover them (exit-time drain is the SC-2
-  proof).
+  confirmed real: the shared sink's only drains are the 30s tick and the
+  atexit handler, so the flush-on-exit path must cover them (exit-time
+  drain is the SC-2 proof).
 - Risk: argument summaries of CLI commands can embed user paths/code —
   same redaction chokepoint as tool calls applies (FR-001 bakes it in).
+- Risk: CLI records stamped with the default session would land in the
+  giant legacy `unknown` session that ui-dashboard-traffic-scale bounds —
+  FR-006 must set an explicit session identity (the MCP side stamps a
+  per-boot CAIRN_SESSION; the CLI side derives shell-session identity or
+  falls back to per-invocation, never to the default).

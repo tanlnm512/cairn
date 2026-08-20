@@ -12,11 +12,13 @@ selected window, and views stay fast at ten-thousand-plus recorded calls.
 
 ## Why
 The recording introduced with the dashboard has no volume ceiling in the
-views: history currently renders every row (a workspace store already holds
-2,000+ calls and grows with every session), aggregates are all-time only —
-so one bad afternoon last week still dominates today's ranking — and a
-single giant session can swallow the chains view. Without scale handling
-the dashboard degrades exactly as it becomes valuable.
+views: history currently renders every row (no LIMIT anywhere in its
+query path), aggregates are all-time only — so one bad afternoon last
+week still dominates today's ranking — and a single giant session can
+swallow the chains view. The largest local store already holds hundreds
+of recorded calls after days of use (251 at the time of writing) and only
+grows with every session. Without scale handling the dashboard degrades
+exactly as it becomes valuable.
 
 ## Business value
 - The dashboard stays useful from day one of recording to years in.
@@ -79,9 +81,12 @@ sorting controls beyond the default newest-first.
 ## Assumptions & risks
 - Assumption: preset windows cover the analysis need; custom ranges are a
   later refinement.
-- Risk: window filters on unindexed timestamps could scan the whole table —
-  mitigation: render-budget requirement (FR-005) forces the index or plan
-  that keeps it.
-- Risk: chains of legacy sessions recorded before per-session ids exist
-  (single "unknown" session) can be huge — FR-004's bound must hold for
-  that shape specifically.
+- Risk: window filters on unindexed timestamps scan the whole table —
+  confirmed against the schema: tool_metrics is indexed on tool_name and
+  session_id only; invoked_at has no index. Mitigation: FR-005's render
+  budget forces the index or plan that keeps it.
+- Risk: chains of legacy sessions recorded before per-boot session ids
+  exist (single "unknown" session) can be huge — not hypothetical: every
+  row in the current store (251/251) carries session `unknown` (the MCP
+  server began stamping CAIRN_SESSION per boot only recently). FR-004's
+  bound must hold for that shape specifically and first.

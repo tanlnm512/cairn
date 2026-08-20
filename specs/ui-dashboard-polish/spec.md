@@ -14,12 +14,16 @@ forever), data export (CSV/JSON of the filtered views), and a dark theme.
 
 ## Why
 These are individually small but each removes a daily irritant: the first
-health hit pays a multi-second probe warm-up; token estimates are a flat
-chars÷4 approximation with no indication of confidence; the single most
-actionable stat for tool cost — how much value is being thrown away by
-result truncation — isn't recorded anywhere; the usage store grows without
-bound; analysis beyond the screen requires re-deriving the SQL; and the
-audience for this tool lives in dark terminals.
+health hit pays a multi-second probe warm-up (the health handler's
+reranker probe imports sentence-transformers inside the first request);
+token estimates are a flat chars÷4 approximation with no indication of
+confidence; truncation is recorded only as a coarse bucketed event that
+no view surfaces — the exact magnitude thrown away, and the events
+table's row cap prunes even the occurrences; the usage store grows
+without bound (events and build_runs are pruned to fixed caps by the
+recording pipeline, tool_metrics never); analysis beyond the screen
+requires re-deriving the SQL; and the audience for this tool lives in
+dark terminals.
 
 ## Business value
 - The dashboard's numbers become trustworthy (token mode labeled,
@@ -85,12 +89,18 @@ the dashboard doesn't flash white at 2am.
 - **FR-002**: Token estimation SHALL support an exact tokenizer mode when
   one is locally available, fall back to the documented heuristic
   otherwise, and display the active mode wherever estimates are shown.
-- **FR-003**: The system SHALL record whether a tool result was truncated
-  and by how much, and the tokens view SHALL surface per-tool truncation
-  counts.
+- **FR-003**: Truncation observability SHALL extend the existing
+  `truncate_result` recording (already emitted at the truncation
+  chokepoint, with a coarse chars bucket) rather than duplicate it:
+  record the truncation magnitude per call, durably (not subject to the
+  events table's row cap), and the tokens view SHALL surface per-tool
+  truncation counts.
 - **FR-004**: Recorded usage SHALL age out under a configurable retention
   policy (time- and/or row-bounded), applied without manual intervention,
   and the health panel SHALL show the policy and current store size.
+  This extends the recording pipeline's existing prune — which already
+  caps events and build_runs at fixed row counts inside the flush
+  transaction — to tool_metrics with a configurable bound.
 - **FR-005**: The history and tokens views SHALL export the current
   filtered contents as CSV and JSON.
 - **FR-006**: The dashboard SHALL offer light and dark themes with the
@@ -111,9 +121,16 @@ reports.
 - Assumption: an exact tokenizer (if used) must remain an optional
   dependency — the heuristic stays the zero-dependency default, so the
   installed footprint doesn't grow for everyone.
+- Assumption: the chars÷4 constant is shared with the bench suite so
+  dashboard and bench numbers stay comparable; once an exact-tokenizer
+  mode exists, the active-mode labeling (FR-002) is what keeps
+  bench-derived and exact numbers interpretable side by side.
 - Assumption: retention runs inside the recording pipeline (which already
-  owns writes), not the dashboard — hence FR-007's split of duties.
-- Risk: truncation stats only exist for recordings made after this change
-  (pre-existing rows have none) — views must render unknown cleanly.
+  owns writes and already prunes two tables), not the dashboard — hence
+  FR-007's split of duties.
+- Risk: exact per-call truncation magnitude only exists for recordings
+  made after this change (past truncations live only as bucketed events
+  competing for the events retention cap) — views must render unknown
+  cleanly.
 - Risk: aggressive default retention could surprise users who want full
   history — default should be generous, with the policy visible (FR-004).

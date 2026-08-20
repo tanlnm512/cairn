@@ -12,11 +12,14 @@ the server. The dashboard becomes the front door to all local cairn data,
 not one workspace's.
 
 ## Why
-cairn keeps one store per workspace, and a single machine accumulates many
-(the dev machine behind this spec has ~200 workspace directories). The
-dashboard binds to exactly one store per launch; seeing another workspace
-means relaunching with a different path. A launcher turns that into a
-click and gives a machine-wide overview nothing else provides today.
+cairn keeps one store per workspace — hash-keyed directories under
+CAIRN_HOME, registered in `workspaces.json` — and the registry grows by
+one every time `cairn init` runs anywhere on the machine. The dashboard
+binds to exactly one store per launch (`cairn dashboard --db ...`); seeing
+another workspace means relaunching with a different path. `cairn config
+--list` can name every registered workspace, but only as path + key — no
+size, freshness, or usage. A launcher turns switching into a click and
+gives a machine-wide overview with stats that doesn't exist today.
 
 ## Business value
 - One URL answers "what cairn knows across everything on this machine":
@@ -71,7 +74,11 @@ browsing workspaces has zero side effects.
 - **FR-004**: The launcher SHALL open every store read-only — no writes to
   any store, visited or listed (standing guard).
 - **FR-005**: The overview SHALL render completely within 2 seconds on a
-  machine with 200+ stores.
+  machine with 200+ stores. 200+ is a headroom scenario grounded in
+  observed reality — a test-suite leak once accumulated 227 bogus
+  registrations in ~8 days before a manual cleanup left 2 real
+  workspaces — so the budget is proven against synthesized stores in
+  tests, not against the current registry.
 
 ## Scope
 **In**: overview discovery and listing; in-server workspace switching;
@@ -82,12 +89,22 @@ workspaces; per-workspace drill-down beyond opening its dashboard.
 
 ## Assumptions & risks
 - Assumption: "every local store" is enumerable from cairn's existing
-  workspace/store layout; no new registry is invented.
+  layout — the `workspaces.json` registry maps workspace path → store
+  key, and stores are hash-keyed directories under CAIRN_HOME; no new
+  registry is invented. The two sources are reconciled: a store directory
+  without a registry entry, or a registered path whose store is gone, is
+  exactly the FR-002 "listed with its state" case.
 - Assumption: workspace identity can be shown as the workspace's path or
-  name as cairn already records it.
-- Risk: 200+ store probes (size + last-index + count) could exceed the
+  name as cairn already records it (the registry keys on the absolute
+  workspace path).
+- Risk: many store probes (size + last-index + count) could exceed the
   render budget if done naively per store — mitigation: FR-005 forces a
   budgeted probe strategy (batched or cached with explicit refresh).
 - Risk: concurrent writes to a listed store while probing — read-only
   opens must not lock or complain (the existing read-only discipline
   covers this; the guard test extends to listed stores).
+- Risk: stale registry entries are a proven shape, not hypothetical (the
+  dev machine's registry accumulated 227 test-leaked registrations before
+  a manual cleanup) — the overview treats registered-but-gone paths and
+  orphan store dirs as normal FR-002 states, and listing them never
+  writes or re-registers anything (FR-004).

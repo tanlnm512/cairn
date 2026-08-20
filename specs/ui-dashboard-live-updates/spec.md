@@ -83,10 +83,15 @@ polling is acceptable first; live-updating graph, projects, and health
 views; per-view intervals; notifications/toasts on new calls.
 
 ## Assumptions & risks
-- Assumption: a 5s poll against a read-only store is negligible load
-  (renders measure in single-digit milliseconds today).
+- Assumption: a 5s poll against a read-only store is negligible load.
+  Render cost is unmeasured in-repo (no render-timing test or benchmark
+  exists), but views are server-rendered Jinja over read-only SQL at
+  current row counts in the hundreds — the poll budget gets measured at
+  test time, not assumed from today's numbers.
 - Assumption: new-record detection keys on the recording's monotonic row
-  identity; no wall-clock comparison needed.
+  identity (`tool_metrics.id` is INTEGER PRIMARY KEY AUTOINCREMENT); no
+  wall-clock comparison needed.
 - Risk: rapid DOM replacement can flicker or lose scroll position on long
-  lists — mitigation: FR-003 plus scroll preservation; composes with the
-  pagination that ui-dashboard-traffic-scale introduces.
+  lists — mitigation: FR-003 plus scroll preservation; sequencing: land
+  after (or with) ui-dashboard-traffic-scale, whose pagination this spec's
+  filter-preservation AC must also hold across.
