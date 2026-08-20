@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dashboard operational polish — warm health: probe results (reranker/ANN
+  checks) prewarm on a background thread at server start and serve from a
+  stale-while-revalidate cache, so the first `/health` never pays the
+  sentence-transformers import; the health panel gains a Retention card
+  showing the policy in force and current store size. Token estimates
+  become mode-aware: an exact tokenizer (via the optional `[semantic]`
+  extra, no new deps) calibrates the chars-per-token divisor per window
+  from the store's own summaries, with the active mode always labeled and
+  `heuristic (chars/4)` as the zero-dependency fallback. Truncation
+  observability: `tool_metrics` gains `truncated_from_chars`/
+  `truncated_to_chars` recorded per truncated call (durable past the
+  events-table cap), and the tokens view surfaces per-tool truncation
+  counts (unknown rendered distinctly from zero). Usage retention:
+  `tool_metrics` now ages out under `CAIRN_TOOL_METRICS_MAX_ROWS`
+  (default 50000) and optional `CAIRN_TOOL_METRICS_MAX_AGE_SECONDS`,
+  applied by the recording pipeline's flush transaction — never by the
+  read-only dashboard. Export: `/history.csv|.json` and `/tokens.csv|.json`
+  export the current filtered view (window/tool/session/source filters,
+  RFC-4180-correct CSV). Dark theme: `[data-theme=dark]` palette with a
+  pre-paint, localStorage-persisted toggle defaulting to
+  `prefers-color-scheme`.
 - `cairn dashboard` — a local, read-only web dashboard (127.0.0.1:8765,
   zero new runtime deps): projects overview with index/embedding status,
   interactive project graph (vendored vis-network, scope/depth controls),
