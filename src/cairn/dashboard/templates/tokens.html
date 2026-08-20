@@ -3,6 +3,7 @@
 {% block title %}Tokens — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
+  <div id="refresh-region">
   <h1>Token usage</h1>
   <p class="muted">
     Estimated context tokens per tool, ranked by total — the most
@@ -37,5 +38,7 @@
   {% else %}
   <p class="empty-state">No tool calls recorded yet.</p>
   {% endif %}
+  </div>
 </section>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}

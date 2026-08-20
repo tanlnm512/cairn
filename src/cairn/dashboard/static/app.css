@@ -85,3 +85,23 @@ body {
 a {
   color: var(--accent);
 }
+
+#live-controls {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+#live-banner:not(:empty) {
+  margin-left: 0.5rem;
+}
+
+#live-controls[data-state="disconnected"] {
+  color: var(--text);
+  border-top: 1px solid var(--border);
+  padding-top: 0.35rem;
+}
+
+#live-controls[data-state="paused"] {
+  opacity: 0.6;
+}

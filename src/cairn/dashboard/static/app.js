@@ -338,3 +338,230 @@
       });
   });
 })();
+
+/* Live refresh (FR-001): on traffic views a #refresh-region element
+   marks the swappable body. This loop re-fetches the current URL on a
+   re-arming setTimeout — never setInterval, so background-tab
+   throttling cannot stack timers (D-001) — and swaps the region's
+   children for the fetched document's, built with importNode (never
+   innerHTML on the fetched text). The swap is atomic full-region
+   replacement: ordering is the server's ORDER BY, so re-fetching the
+   same data renders the same rows and idempotency holds by
+   construction (D-002). Hidden tabs skip fetches entirely (D-003).
+   FR-003: the filter form lives inside the region, so the wholesale
+   swap would wipe in-progress input and reset scroll — field values
+   and window scroll are captured immediately before the swap and
+   restored immediately after (a field-count mismatch skips field
+   restoration: the server changed the form shape). The interval is
+   LIVE_REFRESH_MS unless <body data-refresh-ms> (numeric, > 500)
+   overrides it.
+   Pages without #refresh-region are untouched. FR-004: #live-pause
+   toggles the loop — pause clears the pending timer and the state word
+   holds "paused" until the user resumes (pause is explicit user intent
+   and wins over visibility, D-003); a failed poll raises the
+   disconnected banner (FR-005), which clears on the next successful
+   one. */
+(function () {
+  "use strict";
+  var LIVE_REFRESH_MS = 5000;
+  /* FR-001 "configurable interval": a numeric <body data-refresh-ms>
+     greater than 500 overrides the default; an absent, non-numeric,
+     or out-of-range value falls back. Read once, before the first
+     arm — history.html does not set the attribute, so the default
+     applies there. */
+  var configuredMs = document.body
+    ? parseInt(document.body.getAttribute("data-refresh-ms"), 10)
+    : NaN;
+  var refreshMs = configuredMs > 500 ? configuredMs : LIVE_REFRESH_MS;
+  var region = document.getElementById("refresh-region");
+  var controls = document.getElementById("live-controls");
+  if (!region) {
+    return;
+  }
+  if (controls) {
+    controls.removeAttribute("hidden");
+  }
+  var stateText = document.getElementById("live-state");
+  /* FR-005: the disconnected banner (US3-AC2). Created once here —
+     after the state word, before the pause button — so ticks only
+     ever write its text: "connection lost — retrying" on a failure
+     while running, "" on the next successful poll (the self-heal).
+     Paused ticks fetch nothing, so the banner is untouched while
+     paused. */
+  var banner = null;
+  if (controls) {
+    banner = document.createElement("span");
+    banner.id = "live-banner";
+    controls.insertBefore(
+      banner,
+      document.getElementById("live-pause")
+    );
+  }
+  var timer = null;
+
+  var STATE_WORDS = {
+    running: "live",
+    disconnected: "disconnected",
+    paused: "paused"
+  };
+
+  function setState(state) {
+    if (controls) {
+      controls.dataset.state = state;
+    }
+    if (stateText) {
+      stateText.textContent = STATE_WORDS[state] || state;
+    }
+  }
+
+  function arm() {
+    timer = setTimeout(tick, refreshMs);
+  }
+
+  /* Pause/resume (FR-004, D-003): the #live-pause click is explicit
+     user intent and wins over visibility — while paused the loop is
+     fully stopped (pending timer cleared, ticks no-op), so no fetch
+     happens regardless of tab state, and the state word stays
+     "paused" until the user resumes (US3-AC1). Resume re-arms at
+     once, so the next tick arrives on the normal schedule rather
+     than never. */
+  var pauseButton = document.getElementById("live-pause");
+  var paused = false;
+
+  if (pauseButton) {
+    pauseButton.addEventListener("click", function () {
+      paused = !paused;
+      if (paused) {
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        setState("paused");
+        pauseButton.textContent = "Resume";
+      } else {
+        setState("running");
+        pauseButton.textContent = "Pause";
+        arm();
+      }
+    });
+  }
+
+  /* FR-003: the swap replaces the region's children wholesale, which
+     would destroy whatever the user has typed into the filter form
+     (the fields live INSIDE the region) and drop the page scroll (the
+     region has no internal scroll container — window scroll is the
+     honest anchor). Harvest field state in DOM order immediately
+     before the swap; re-apply by DOM order immediately after. */
+  function harvestFields() {
+    var fields = region.querySelectorAll("input, select, textarea");
+    var state = [];
+    var i;
+    for (i = 0; i < fields.length; i += 1) {
+      state.push({
+        type: fields[i].type || fields[i].tagName.toLowerCase(),
+        checked: fields[i].checked,
+        value: fields[i].value
+      });
+    }
+    return state;
+  }
+
+  function restoreFields(state) {
+    var fields = region.querySelectorAll("input, select, textarea");
+    var i;
+    if (fields.length !== state.length) {
+      /* The fresh fragment's field count differs from what was
+         harvested — the server changed the form shape; skip rather
+         than misapply stale values. */
+      return;
+    }
+    for (i = 0; i < fields.length; i += 1) {
+      if (state[i].type === "checkbox" || state[i].type === "radio") {
+        fields[i].checked = state[i].checked;
+      }
+      fields[i].value = state[i].value;
+    }
+  }
+
+  /* D-002: replace the region's children wholesale with the fetched
+     document's #refresh-region children (imported copies, so the
+     parsed document's iteration is never disturbed mid-loop). */
+  function swap(fetchedDoc) {
+    var fresh = fetchedDoc.getElementById("refresh-region");
+    if (!fresh) {
+      return;
+    }
+    var fieldState = harvestFields();
+    var scrollX = window.scrollX;
+    var scrollY = window.scrollY;
+    while (region.firstChild) {
+      region.removeChild(region.firstChild);
+    }
+    var child = fresh.firstChild;
+    while (child) {
+      region.appendChild(document.importNode(child, true));
+      child = child.nextSibling;
+    }
+    restoreFields(fieldState);
+    window.scrollTo(scrollX, scrollY);
+  }
+
+  function tick() {
+    timer = null;
+    if (paused) {
+      /* D-003: pause is explicit user intent and wins over visibility
+         — no fetch while paused regardless of tab state, and no
+         re-arm either: the resume handler restarts the loop. */
+      return;
+    }
+    if (document.hidden) {
+      /* D-003: a hidden tab fetches nothing this tick; the re-arm
+         keeps the loop alive so a visible tab refreshes again on a
+         later tick. */
+      arm();
+      return;
+    }
+    fetch(window.location.href)
+      .then(function (resp) {
+        if (!resp.ok) {
+          throw new Error("refresh request failed");
+        }
+        return resp.text();
+      })
+      .then(function (html) {
+        if (paused) {
+          /* Paused mid-flight: the response is dropped — no swap, no
+             state flip, no re-arm; resume's own cycle brings fresher
+             data. */
+          return;
+        }
+        swap(new DOMParser().parseFromString(html, "text/html"));
+        /* FR-005: a successful poll is the recovery — the banner
+           clears as the state word returns to "live". */
+        if (banner) {
+          banner.textContent = "";
+        }
+        setState("running");
+        arm();
+      })
+      .catch(function () {
+        if (paused) {
+          /* Disconnected is only for failures while running (D-003):
+             a pause that landed mid-request must not overwrite the
+             paused word. */
+          return;
+        }
+        /* A failed cycle while running flips the state word and
+           raises the banner; the loop re-arms and both recover on
+           the first successful poll (FR-005, US3-AC2). */
+        if (banner) {
+          banner.textContent = "connection lost — retrying";
+        }
+        setState("disconnected");
+        arm();
+      });
+  }
+
+  setState("running");
+  arm();
+})();

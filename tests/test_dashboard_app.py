@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -1148,6 +1149,596 @@ def test_history_older_link_carries_the_active_window(tmp_path):
     # Dropping the window here would resume all-time pagination and reach
     # the ancient row; carrying it keeps every older page in-window.
     assert "ancient_tool" not in page2.text
+
+
+# ---------------------------------------------------------------------------
+# Live refresh, server half (live-updates FR-001 / FR-006, TC-001 / TC-007):
+# the poll loop re-fetches the same URL and swaps #refresh-region, so the
+# server contract beneath the client is pinned here -- the region + chrome
+# render on /history, a row landed after one fetch is served by the next
+# (TC-001's auto half), and consecutive fetches of the same filtered URL
+# re-render the region byte-identically with each row exactly once
+# (TC-007's server half: idempotent refresh, never duplicate rows). A
+# non-traffic page carries no region, so the loop stays inert there. The
+# DOMParser swap itself is app.js's half and has no JS runtime here.
+# ---------------------------------------------------------------------------
+
+
+class _RegionExtractor(HTMLParser):
+    """Collects the verbatim inner HTML of the first div carrying the
+    wanted id, balancing nested divs -- the exact content a poll cycle's
+    fragment swap would replace. Entities are reassembled raw
+    (convert_charrefs=False) so extraction is byte-faithful for equality
+    checks."""
+
+    def __init__(self, element_id: str):
+        super().__init__(convert_charrefs=False)
+        self._wanted = element_id
+        self._depth = 0
+        self.found = False
+        self.chunks: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if self._depth == 0:
+            if tag == "div" and dict(attrs).get("id") == self._wanted:
+                self._depth = 1
+                self.found = True
+            return  # outside the region: not collected
+        self.chunks.append(self.get_starttag_text())
+        if tag == "div":
+            self._depth += 1
+
+    def handle_endtag(self, tag):
+        if self._depth == 0:
+            return
+        if tag == "div":
+            self._depth -= 1
+            if self._depth == 0:
+                return  # the region's own closing tag: never inner HTML
+        self.chunks.append(f"</{tag}>")
+
+    def handle_startendtag(self, tag, attrs):
+        if self._depth > 0:
+            self.chunks.append(self.get_starttag_text())
+
+    def handle_data(self, data):
+        if self._depth > 0:
+            self.chunks.append(data)
+
+    def handle_entityref(self, name):
+        if self._depth > 0:
+            self.chunks.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if self._depth > 0:
+            self.chunks.append(f"&#{name};")
+
+
+def _refresh_region(html: str) -> str | None:
+    """Inner HTML of the page's #refresh-region, or None when the page
+    carries none (the poll loop's guard-skip case)."""
+    extractor = _RegionExtractor("refresh-region")
+    extractor.feed(html)
+    extractor.close()
+    return "".join(extractor.chunks) if extractor.found else None
+
+
+def test_history_wraps_table_in_refresh_region_with_live_chrome(tmp_path):
+    """FR-001: /history renders exactly one #refresh-region wrapping the
+    table -- the element the poll loop swaps -- and the shared
+    #live-controls chrome server-renders its initial state (data-state
+    "running", hidden until the loop takes over, with the state slot and
+    pause control)."""
+    resp = _history_client(tmp_path, seed=True).get("/history")
+    assert resp.status_code == 200
+
+    assert resp.text.count('id="refresh-region"') == 1
+    region = _refresh_region(resp.text)
+    assert region is not None
+    assert '<table class="data-table">' in region  # rows live in the swap target
+    assert "ask_compass" in region  # a seeded row, not just any table
+
+    assert (
+        '<div id="live-controls" class="muted" data-state="running" hidden>'
+        in resp.text
+    )
+    assert 'id="live-state"' in resp.text
+    assert 'id="live-pause"' in resp.text
+
+
+def test_history_refetch_serves_row_landed_after_first_fetch(tmp_path):
+    """TC-001 auto half (FR-001 / US1-AC1): a call that lands in the store
+    after one fetch is served by the very next fetch of the same URL -- so
+    the poll cycle's next tick renders it, newest-first at the top."""
+    db_path = _history_db_file(tmp_path, seed=True)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    first = client.get("/history")
+    assert first.status_code == 200
+    region = _refresh_region(first.text)
+    assert region is not None
+    assert "live_new_call" not in region
+
+    # The newer call lands in the store (the sink's flush made it visible).
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status, req_chars, resp_chars) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("live_new_call", "sess-alpha", 1755650400.0, 90.0, "ok", 200, 400),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    second = client.get("/history")  # the poll's next cycle re-fetches
+    assert second.status_code == 200
+    refetched = _refresh_region(second.text)
+    assert refetched is not None
+    assert "live_new_call" in refetched  # the new row is served
+    assert "2025-08-20 00:40:00 UTC" in refetched  # its rendered identity
+    # US1-AC1's top: newest-first places it above the previously-newest row.
+    assert refetched.index("live_new_call") < refetched.index(
+        "2025-08-20 00:25:00 UTC"
+    )
+
+
+def test_history_refetch_of_same_filtered_url_is_idempotent(tmp_path):
+    """TC-007 server half (FR-006 / SC-2): two consecutive fetches of the
+    same filtered URL re-render #refresh-region byte-identically -- the
+    same rows, each exactly once (no duplicates, no ordering drift) -- so
+    a swap-per-cycle can never accumulate repeated rows."""
+    client = _history_client(tmp_path, seed=True)
+
+    first = client.get("/history", params={"tool": "explore"})
+    second = client.get("/history", params={"tool": "explore"})
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    region_a = _refresh_region(first.text)
+    region_b = _refresh_region(second.text)
+    assert region_a is not None
+    assert region_b is not None
+
+    # Byte-identical re-render of the same slice: idempotent refresh.
+    assert region_a == region_b
+
+    # The same rows, each rendered exactly once -- never duplicated.
+    for ts in ("2025-08-20 00:20:00 UTC", "2025-08-20 00:00:00 UTC"):
+        assert region_a.count(ts) == 1
+    assert "ask_compass" not in region_a  # the filter held across fetches
+
+
+def test_projects_page_carries_no_refresh_region(tmp_path):
+    """FR-001's guard-skip half: /projects is not a traffic view -- no
+    #refresh-region renders there, so the poll loop stays inert on it."""
+    resp = _client(tmp_path, seed=True).get("/projects")
+    assert resp.status_code == 200
+    assert _refresh_region(resp.text) is None
+
+
+# ---------------------------------------------------------------------------
+# Chains + tokens fragment growth, server half (live-updates FR-002 / US2,
+# TC-003 / TC-004 auto halves): T008 wrapped both views' content in
+# #refresh-region, so the existing poll loop re-fetches them too -- pinned
+# here is what the poll's next cycle would render: the region wraps each
+# view's content, a call landing in an open session grows that session's
+# rendered chain by exactly one with no duplicate identities (TC-003), a
+# new session's first call adds its chain at the top of the fragment, and
+# a call with real payload sizes shifts the tokens aggregates the next
+# fetch serves (TC-004) -- expected totals from the data layer on the same
+# store plus the CHARS_PER_TOKEN arithmetic the view renders.
+# ---------------------------------------------------------------------------
+
+
+def _tokens_row(region: str, tool: str) -> str:
+    """The rendered <tr> of ``tool`` inside a tokens region -- growth
+    assertions scoped to the one tool they are about."""
+    for row in region.split("<tr>")[1:]:
+        if f">{tool}</a>" in row:  # the tool cell anchors to /history
+            return row
+    raise AssertionError(f"tokens row for {tool!r} missing from region")
+
+
+def test_tokens_and_chains_wrap_their_content_in_refresh_region(tmp_path):
+    """FR-002's region half: /tokens and /chains each render exactly one
+    #refresh-region wrapping the content the poll loop swaps -- the tokens
+    table and the chain list with seeded content inside the swap target,
+    and app.js loaded exactly once so the loop is armed on these views."""
+    client = _tokens_chains_client(tmp_path, seed=True)
+    for path, structure, seeded in (
+        ("/tokens", '<table class="data-table">', "tool_heavy"),
+        ("/chains", '<div class="chain-list">', "sess-multi"),
+    ):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert resp.text.count('id="refresh-region"') == 1, path
+        region = _refresh_region(resp.text)
+        assert region is not None, path
+        assert structure in region, path  # the view lives in the swap target
+        assert seeded in region, path  # seeded content, not empty markup
+        assert (
+            len(re.findall(r'<script[^>]*\ssrc="[^"]*app\.js"', resp.text))
+            == 1
+        ), path  # the loop module loads once, never twice
+
+
+def test_chains_refetch_grows_open_session_chain_by_exactly_one(tmp_path):
+    """TC-003 auto half (FR-002 / US2-AC1): a call that lands in an open
+    session after one fetch is served by the next -- that session's chain
+    grows by exactly one call inside the swapped region, every rendered
+    call identity exactly once, and still one chain for the session."""
+    db_path = _tokens_chains_db_file(tmp_path, seed=True)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    first = client.get("/chains")
+    assert first.status_code == 200
+    region = _refresh_region(first.text)
+    assert region is not None
+    assert len(_chain_blocks(region)) == 5  # the seeded page, unchanged
+    multi = next(b for b in _chain_blocks(region) if "sess-multi" in b)
+    assert "3 calls" in multi
+    assert "seq_delta" not in region
+
+    # The newer call lands in the SAME session, a minute after its last
+    # one -- well inside the 30-min chain gap, so the chain grows.
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status, req_chars, resp_chars) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("seq_delta", "sess-multi", _TC_BASE + 780, 40.0, "ok", 10, 10),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    second = client.get("/chains")  # the poll's next cycle re-fetches
+    refetched = _refresh_region(second.text)
+    assert refetched is not None
+    assert len(_chain_blocks(refetched)) == 5  # grew a chain, split none
+    grown = next(b for b in _chain_blocks(refetched) if "sess-multi" in b)
+    assert "4 calls" in grown  # exactly one more than the first fetch
+    assert grown.index("seq_delta") > grown.index("seq_gamma")  # appended
+    # No duplicate identities: each of the session's calls renders once.
+    for tool in ("seq_alpha", "seq_beta", "seq_gamma", "seq_delta"):
+        assert grown.count(tool) == 1, tool
+
+
+def test_chains_refetch_new_session_chain_lands_at_fragment_top(tmp_path):
+    """FR-002 / US2-AC1: the first call of a NEW session that lands after
+    one fetch is served by the next as its own chain at the top of the
+    fragment -- newest activity leads the chains page, so the swapped
+    region gains a leading chain instead of disturbing the old ones."""
+    db_path = _tokens_chains_db_file(tmp_path, seed=True)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    first = client.get("/chains")
+    assert first.status_code == 200
+    region = _refresh_region(first.text)
+    assert region is not None
+    assert len(_chain_blocks(region)) == 5
+    assert "sess-fresh" not in region
+
+    # A new session's first call, newer than every seeded activity.
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status, req_chars, resp_chars) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "fresh_call",
+                "sess-fresh",
+                _TC_BASE + 6 * 3600 + 3600.0,
+                70.0,
+                "ok",
+                10,
+                10,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    second = client.get("/chains")  # the poll's next cycle re-fetches
+    refetched = _refresh_region(second.text)
+    assert refetched is not None
+    blocks = _chain_blocks(refetched)
+    assert len(blocks) == 6  # the new chain, nothing merged away
+    assert "sess-fresh" in blocks[0]  # the new chain leads the fragment
+    assert "fresh_call" in blocks[0]
+    assert "1 call" in blocks[0]  # singular: its only call so far
+    # The seeded chains follow intact, the previous leader one slot down.
+    assert "sess-gapped" in blocks[1] and "pair1_a" in blocks[1]
+    assert "sess-gapped" in blocks[2] and "pair2_b" in blocks[2]
+
+
+def test_tokens_refetch_shifts_call_count_and_displayed_totals(tmp_path):
+    """TC-004 auto half (FR-002 / US2-AC2): a call with real payload sizes
+    that lands for an existing tool after one fetch is served by the next
+    -- the tool's calls count grows by one and its displayed token totals
+    shift by exactly the new call's contribution, the expected aggregates
+    from the data layer on the same store plus the CHARS_PER_TOKEN
+    arithmetic the view renders."""
+    from cairn.bench.agent_suite import CHARS_PER_TOKEN
+    from cairn.dashboard.data import get_read_only_db, get_tool_tokens
+
+    db_path = _tokens_chains_db_file(tmp_path, seed=True)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    def store_row() -> dict:
+        conn = get_read_only_db(db_path)
+        try:
+            return {
+                e["tool_name"]: e for e in get_tool_tokens(conn)
+            }["tool_heavy"]
+        finally:
+            conn.close()
+
+    first = client.get("/tokens")
+    assert first.status_code == 200
+    region = _refresh_region(first.text)
+    assert region is not None
+    before = store_row()
+    served = _tokens_row(region, "tool_heavy")
+    assert f'<td class="num">{before["calls"]}</td>' in served
+    assert f'<td class="num">~{before["total_tokens"]}</td>' in served
+
+    # The new call lands for the existing tool with non-null sizes; the
+    # fixture's heavy sums are whole tokens, so the per-total deltas are
+    # exact under the SUM // CHARS_PER_TOKEN floor.
+    new_req_chars, new_resp_chars = 800, 1600
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+            "duration_ms, status, req_chars, resp_chars) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "tool_heavy",
+                "sess-tok",
+                _TC_BASE + 240,
+                140.0,
+                "ok",
+                new_req_chars,
+                new_resp_chars,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    second = client.get("/tokens")  # the poll's next cycle re-fetches
+    refetched = _refresh_region(second.text)
+    assert refetched is not None
+
+    # The aggregate the next cycle must render: calls +1, each displayed
+    # total shifted by the new call's CHARS_PER_TOKEN contribution.
+    after = store_row()
+    req_gain = new_req_chars // CHARS_PER_TOKEN
+    resp_gain = new_resp_chars // CHARS_PER_TOKEN
+    assert after["calls"] == before["calls"] + 1
+    assert after["est_req_tokens"] == before["est_req_tokens"] + req_gain
+    assert after["est_resp_tokens"] == before["est_resp_tokens"] + resp_gain
+    assert after["total_tokens"] == before["total_tokens"] + req_gain + resp_gain
+
+    grown = _tokens_row(refetched, "tool_heavy")
+    assert f'<td class="num">{after["calls"]}</td>' in grown
+    assert f'<td class="num">~{after["est_req_tokens"]}</td>' in grown
+    assert f'<td class="num">~{after["est_resp_tokens"]}</td>' in grown
+    assert f'<td class="num">~{after["total_tokens"]}</td>' in grown
+    # The displayed total shifted, not accumulated beside the old one.
+    assert f'<td class="num">~{before["total_tokens"]}</td>' not in grown
+
+
+# ---------------------------------------------------------------------------
+# Loop-module state machine (live-updates FR-004 / FR-005, TC-005 /
+# TC-006): this repo has no JS test harness -- pytest only, and app.js is
+# browser-global IIFEs, not importable modules -- so the loop's state
+# behavior is pinned in its server-visible and structural halves: the
+# chrome contract the loop reads and writes (the rendered state hooks plus
+# exactly one app.js load, so the loop can never double-arm), and static
+# analysis of the live-refresh IIFE's source asserting the control-flow
+# ordering that makes paused-issues-no-fetch and rejected-then-resolved
+# hold (the paused guard ahead of the visibility guard and the fetch, the
+# setState words, the arm pattern). Every assertion anchors on those
+# stable tokens only -- never exact surrounding strings -- so concurrent
+# banner/styling work inside app.js cannot break them. The interactive
+# halves (a real click, a really-dead server) are the LIVE_TC005 /
+# LIVE_TC006 manual procedures at the section's end; those constants carry
+# a LIVE_ prefix because this file already defines graph-nav's
+# TC005_MANUAL_PROCEDURE -- each spec numbers its test cases
+# independently, and ruff's F811 forbids the bare redefinition.
+# ---------------------------------------------------------------------------
+
+
+def _app_js_source() -> str:
+    """app.js source, read from the installed dashboard package -- the
+    file the /static route serves."""
+    import cairn.dashboard
+
+    return (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "app.js"
+    ).read_text(encoding="utf-8")
+
+
+_IIFE_OPEN_RE = re.compile(r"(?<![.\w])\(\s*function\s*\(\s*\)\s*\{")
+_LIVE_REGION_RE = re.compile(r'getElementById\(\s*["\']refresh-region["\']')
+
+
+def _live_loop_js() -> str:
+    """The source following the live-refresh IIFE's opener -- the poll
+    loop's home. The opener pattern excludes zero-arg promise handlers
+    (.catch(function () {...})), which are not IIFEs; the segment is then
+    identified by its getElementById("refresh-region") CODE call, not the
+    region name in prose -- a neighboring IIFE's comments mention the
+    region too."""
+    for segment in _IIFE_OPEN_RE.split(_app_js_source())[1:]:
+        if _LIVE_REGION_RE.search(segment):
+            return segment
+    raise AssertionError("app.js carries no #refresh-region poll loop")
+
+
+def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
+    """TC-005/TC-006 chrome contract (FR-004 / FR-005): /history renders
+    the three stable hooks the loop's state machine reads and writes --
+    #live-controls server-rendering its initial data-state="running", the
+    #live-state word slot, the #live-pause toggle -- and loads app.js
+    exactly once: a second copy of the loop would arm a second timer and
+    double every fetch."""
+    resp = _history_client(tmp_path, seed=True).get("/history")
+    assert resp.status_code == 200
+
+    controls = re.search(r'<div id="live-controls"[^>]*>', resp.text)
+    assert controls, "#live-controls chrome missing from /history"
+    assert 'data-state="running"' in controls.group(0)  # initial state
+    assert 'id="live-state"' in resp.text  # the visible state-word slot
+    assert 'id="live-pause"' in resp.text  # the pause/resume toggle
+
+    loads = re.findall(r'<script[^>]*\ssrc="[^"]*app\.js"', resp.text)
+    assert len(loads) == 1  # the loop module loads once, never twice
+
+
+def test_loop_tick_paused_guard_precedes_hidden_guard_and_fetch():
+    """TC-005 auto half (FR-004 / US3-AC1): inside tick the paused guard
+    leads -- ahead of the document.hidden guard and ahead of the fetch --
+    so a paused loop issues no fetch regardless of tab state; and unlike
+    a hidden tab it does not re-arm, so only the user's resume restarts
+    the loop (no arm() between the paused guard and the hidden one)."""
+    loop = _live_loop_js()
+    tick = re.search(r"function\s+tick\s*\(\s*\)\s*\{", loop)
+    assert tick, "tick function missing from the poll loop"
+    body = loop[tick.end():]
+
+    paused_guard = re.search(r"if\s*\(\s*paused\s*\)", body)
+    hidden_guard = re.search(r"if\s*\(\s*document\.hidden\s*\)", body)
+    fetch_call = re.search(r"\bfetch\s*\(", body)
+    assert paused_guard, "tick lacks the paused guard"
+    assert hidden_guard, "tick lacks the document.hidden guard"
+    assert fetch_call, "tick never fetches"
+    assert paused_guard.start() < hidden_guard.start() < fetch_call.start()
+
+    # A paused tick must not re-arm -- that is what distinguishes it from
+    # the hidden-tab skip just below it, which re-arms and stays alive.
+    between = body[paused_guard.end():hidden_guard.start()]
+    assert not re.search(r"\barm\s*\(", between)
+
+
+def test_loop_pause_clears_timer_resume_restores_running_and_rearms():
+    """TC-005 auto half (FR-004 / US3-AC1): the pause toggle's click
+    handler is the state machine's pause half -- pausing clears the
+    pending timer (so no already-armed tick can fetch) and lands the
+    'paused' state word; the resume half restores 'running' and re-arms,
+    so the loop returns on the normal schedule rather than never."""
+    loop = _live_loop_js()
+
+    toggle = re.search(r"addEventListener\(\s*[\"']click[\"']\s*,", loop)
+    assert toggle, "the pause control's click handler is missing"
+
+    set_paused = re.search(r"setState\(\s*[\"']paused[\"']\s*\)", loop)
+    assert set_paused, "the loop never sets the 'paused' state"
+
+    clear = re.search(r"clearTimeout\s*\(", loop[: set_paused.start()])
+    assert clear, "pausing without clearing the timer -- a tick could fetch"
+    assert toggle.start() < clear.start() < set_paused.start()
+
+    after = loop[set_paused.end():]
+    set_running = re.search(r"setState\(\s*[\"']running[\"']\s*\)", after)
+    assert set_running, "the resume path never restores the 'running' state"
+    running_at = set_paused.end() + set_running.start()
+    assert re.search(r"\barm\s*\(", loop[running_at:]), (
+        "the resume path does not re-arm -- the loop would never resume"
+    )
+
+
+def test_loop_failure_sets_disconnected_success_restores_running_live():
+    """TC-006 auto half (FR-005 / US3-AC2): the loop's rejected-then-
+    resolved transitions -- the fetch chain's rejection handler sets the
+    distinct 'disconnected' state and still re-arms (self-healing: the
+    next cycle retries), while the success handler restores 'running',
+    whose visible word is 'live' per the STATE_WORDS table the state slot
+    renders from."""
+    loop = _live_loop_js()
+
+    # The visible vocabulary: running shows as "live"; the disconnected
+    # and paused words are their own states.
+    words = re.search(r"STATE_WORDS\s*=\s*\{(.*?)\}", loop, re.S)
+    assert words, "the loop's STATE_WORDS table is missing"
+    for key, word in (
+        ("running", "live"),
+        ("disconnected", "disconnected"),
+        ("paused", "paused"),
+    ):
+        assert re.search(rf"{key}\s*:\s*[\"']{word}[\"']", words.group(1)), (
+            f"STATE_WORDS lost the {key} -> {word!r} mapping"
+        )
+
+    # Rejected: downstream of the fetch, the catch handler sets
+    # 'disconnected' -- and re-arms, so recovery needs no reload.
+    fetch = re.search(r"\bfetch\s*\(", loop)
+    assert fetch, "the loop never fetches"
+    catch = re.search(r"\.catch\s*\(", loop)
+    assert catch, "the fetch chain has no rejection handler"
+    set_disconnected = re.search(
+        r"setState\(\s*[\"']disconnected[\"']\s*\)", loop
+    )
+    assert set_disconnected, "a failed cycle never sets 'disconnected'"
+    assert fetch.start() < catch.start() < set_disconnected.start()
+    assert re.search(r"\barm\s*\(", loop[set_disconnected.end():]), (
+        "the disconnected path does not re-arm -- no self-healing recovery"
+    )
+
+    # Resolved: the success handler restores 'running' (the 'live' word),
+    # ahead of the rejection handler in the chain's source order.
+    set_running = re.search(
+        r"setState\(\s*[\"']running[\"']\s*\)", loop[fetch.end():]
+    )
+    assert set_running, "a successful cycle never restores 'running'"
+    running_at = fetch.end() + set_running.start()
+    assert running_at < catch.start()
+
+
+# TC-005/TC-006 interactive halves -- a real click on a live page, and a
+# server that is really dead -- cannot run here (these route tests have no
+# JS runtime); the procedures below mirror TC004_MANUAL_PROCEDURE and
+# graph-nav's TC005_MANUAL_PROCEDURE above.
+
+LIVE_TC005_MANUAL_PROCEDURE = """\
+TC-005 manual half -- pause stops updates and is indicated (FR-004 /
+US3-AC1). Run against a live dashboard (cairn serve) with traffic landing
+(an agent session querying cairn, or any store that keeps growing):
+
+1. Open /history with calls landing; rows appear on their own each
+   refresh cycle (~5s) and the state word beside Pause reads "live".
+2. Click Pause -- the state word flips to "paused" and the button label
+   becomes Resume.
+3. Leave the page open past at least two refresh cycles while traffic
+   keeps landing -- the table must NOT change (no swap happens) and the
+   "paused" word stays indicated the whole time.
+4. Click Resume -- the label returns to Pause, the word returns to
+   "live", and within one cycle every row that landed while paused
+   appears (the loop resumed on its normal schedule, not never).
+"""
+
+LIVE_TC006_MANUAL_PROCEDURE = """\
+TC-006 manual half -- disconnected state on an unreachable server,
+self-healing on return (FR-005 / US3-AC2). Run against a live dashboard:
+
+1. Start the dashboard (cairn serve) and open /history; the state word
+   reads "live".
+2. Stop the dashboard server process while keeping the page open.
+3. Within one refresh cycle (~5s) the state word flips to "disconnected"
+   and the disconnected indication appears (state/banner styling); the
+   page itself stays rendered and usable -- no blank region, no crash.
+4. Leave the page open across several cycles -- it stays disconnected
+   and visibly so, never silently failing.
+5. Restart the server -- on the first cycle after it is reachable again
+   the disconnected indication clears, the word returns to "live", and
+   fresh content resumes with no manual reload.
+"""
 
 
 # ---------------------------------------------------------------------------

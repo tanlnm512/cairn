@@ -124,3 +124,13 @@ to chains/tokens.
   pause control is separate user intent (FR-004) and wins over visibility.
 - **Consequences**: hidden tabs do not accumulate work; returning to the tab
   refreshes immediately once visible.
+
+### D-004: Manual-procedure constants carry a LIVE_ prefix in the shared test file
+- **Context**: T007 landed TC-005/TC-006 manual procedures as module
+  constants in tests/test_dashboard_app.py, where graph-nav's spec already
+  defines TC005_MANUAL_PROCEDURE — specs number their TCs independently, so
+  the bare names collide and a redefinition is F811-forbidden.
+- **Decision**: this spec's procedure constants are
+  LIVE_TC005_MANUAL_PROCEDURE and LIVE_TC006_MANUAL_PROCEDURE.
+- **Consequences**: both specs' procedures coexist in one test module; the
+  prefix convention applies to any later spec adding TC procedures there.

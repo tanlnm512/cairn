@@ -2,6 +2,7 @@
 {% block title %}Chains — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
+  <div id="refresh-region">
   <h1>Session chains</h1>
   <p class="muted">
     Tool calls grouped per session, in call order; a new chain starts after
@@ -45,9 +46,11 @@
   {% else %}
   <p class="empty-state">No tool calls recorded yet.</p>
   {% endif %}
+  </div>
 </section>
 <style>
-  /* CSS-only chain connection — this view adds no JavaScript. */
+  /* CSS-only chain connection — the view itself stays JS-free; app.js
+     only drives the shared live-refresh region swap. */
   .chain {
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -86,3 +89,4 @@
   }
 </style>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}

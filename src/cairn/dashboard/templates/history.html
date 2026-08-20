@@ -3,6 +3,7 @@
 {% block title %}History — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
+  <div id="refresh-region">
   <h1>History</h1>
   <form class="graph-controls" method="get" action="/history">
     <label>Tool
@@ -52,5 +53,7 @@
   {% else %}
   <p class="empty-state">No matching calls{% if not tool and not session %} recorded yet{% endif %}.</p>
   {% endif %}
+  </div>
 </section>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}

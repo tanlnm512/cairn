@@ -1,6 +1,6 @@
 # Spec: ui-dashboard-live-updates
 
-**Status**: draft
+**Status**: done
 **Created**: 2026-08-20
 **Branch**: `docs/dashboard-v2-specs`
 
