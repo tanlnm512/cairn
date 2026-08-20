@@ -126,6 +126,57 @@ def get_graph(
     raise ValueError(f"unknown graph scope: {scope!r}")
 
 
+CANDIDATES_LIMIT = 10
+
+
+def symbol_candidates(
+    conn: sqlite3.Connection, name: str, limit: int = CANDIDATES_LIMIT
+) -> Dict:
+    """Every exact-name symbol match with disambiguating context (FR-002).
+
+    Each match carries ``name``, ``kind``, the defining ``file`` path and
+    its ``repo_id`` — the context that lets a caller disambiguate instead
+    of taking the viz layer's silent LIMIT-1 pick
+    (``get_symbol_graph``'s focal lookup). The match is exact
+    (``symbols.name = ?``, parameterized — a name is data, never SQL) and
+    ordered by file path then repo_id (symbol id as the final tiebreaker)
+    so identical queries return identical lists. A dangling ``file_id``
+    yields ``file``/``repo_id`` None rather than dropping the symbol.
+    Rows are capped at ``limit`` (bounds below 1 clamp to 1); the
+    limit+1 over-fetch decides ``truncated`` so the cap stays visible in
+    the response (FR-005 honesty). An empty or whitespace-only ``name``
+    short-circuits to ``{"matches": [], "truncated": False}`` without
+    touching the database.
+    """
+    if not name or not name.strip():
+        return {"matches": [], "truncated": False}
+    if limit < 1:
+        limit = 1
+    fetched = conn.execute(
+        """
+        SELECT s.name AS name, s.kind AS kind, f.path AS file, f.repo_id AS repo_id
+        FROM symbols s
+        LEFT JOIN files f ON s.file_id = f.id
+        WHERE s.name = ?
+        ORDER BY f.path ASC, f.repo_id ASC, s.id ASC
+        LIMIT ?
+        """,
+        [name, limit + 1],
+    ).fetchall()
+    matches = [
+        {
+            "name": row["name"],
+            "kind": row["kind"],
+            "file": row["file"],
+            "repo_id": row["repo_id"],
+        }
+        for row in fetched[:limit]
+    ]
+    # The over-fetched (limit + 1)-th row proves more same-name symbols
+    # exist; the matches list itself stays at the cap.
+    return {"matches": matches, "truncated": len(fetched) > limit}
+
+
 def _parse_ts(value) -> Optional[datetime]:
     """Parse an ISO-8601 timestamp (concept or ``build_runs``) to an aware
     UTC datetime, or None when missing/unparseable."""

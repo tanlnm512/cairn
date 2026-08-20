@@ -1,12 +1,12 @@
 """Visualization query layer: gather nodes/edges by scope.
 
-Scopes: symbol, module, impact, repo, deps. Returns a uniform {nodes, edges,
-metadata} dict consumed by the mermaid/dot/json generators.
+Scopes: symbol, neighbors, module, impact, repo, deps. Returns a uniform
+{nodes, edges, metadata} dict consumed by the mermaid/dot/json generators.
 """
 from __future__ import annotations
 
 import sqlite3
-from typing import Dict
+from typing import Dict, Sequence
 
 
 def get_symbol_graph(conn: sqlite3.Connection, name: str, depth: int = 1) -> Dict:
@@ -50,6 +50,72 @@ def get_symbol_graph(conn: sqlite3.Connection, name: str, depth: int = 1) -> Dic
 
     return {"nodes": list(nodes.values()), "edges": edges,
             "metadata": {"scope": "symbol", "symbol": name, "node_count": len(nodes), "edge_count": len(edges)}}
+
+
+# Per focal row per direction, mirroring get_symbol_graph's scope caps.
+_NEIGHBOR_CAP = 30
+
+
+def get_symbol_neighbors(conn: sqlite3.Connection,
+                         names: Sequence[str],
+                         depth: int = 1) -> Dict:
+    """Each requested symbol (all its same-name rows) + 1-hop callers/callees.
+
+    Generalizes get_symbol_graph's callers/callees blocks to a name set:
+    every resolved same-name symbol row contributes its own neighborhood,
+    capped at _NEIGHBOR_CAP per row per direction; metadata.truncated is
+    True iff any direction hit its cap. ``depth`` is accepted but clamped
+    to 1 — the signature is depth-ready (D-002), the behavior is 1-hop
+    per action. Empty or blank ``names`` yield an empty graph, never an
+    error; names with no symbol rows appear only in metadata.requested.
+    """
+    requested = list(dict.fromkeys(n for n in names if n and n.strip()))
+    cur = conn.cursor()
+    nodes = {}
+    edges = []
+    truncated = False
+    if requested:
+        placeholders = ",".join("?" * len(requested))
+        focal_rows = cur.execute(
+            f"SELECT s.id AS sid, s.name, s.kind, f.path, f.repo_id FROM symbols s "
+            f"JOIN files f ON s.file_id = f.id WHERE s.name IN ({placeholders})",
+            requested,
+        ).fetchall()
+        for focal in focal_rows:
+            _add_node(nodes, focal["name"], focal["kind"], focal["path"], focal["repo_id"])
+            # Callers (1-hop), keyed to this focal row; fetch cap+1 to flag truncation.
+            callers = cur.execute(
+                "SELECT s.name AS caller, s.kind AS ckind, f.path, f.repo_id "
+                "FROM edges e JOIN symbols s ON e.source_id = s.id "
+                "JOIN files f ON s.file_id = f.id "
+                f"WHERE e.target_id = ? LIMIT {_NEIGHBOR_CAP + 1}",
+                (focal["sid"],),
+            ).fetchall()
+            if len(callers) > _NEIGHBOR_CAP:
+                truncated = True
+                callers = callers[:_NEIGHBOR_CAP]
+            for r in callers:
+                _add_node(nodes, r["caller"], r["ckind"], r["path"], r["repo_id"])
+                edges.append({"source": r["caller"], "target": focal["name"], "kind": "calls"})
+            # Callees (1-hop); unresolved targets fall back to kind "external".
+            callees = cur.execute(
+                "SELECT COALESCE(t.name, e.target_name) AS callee, t.kind, f.path, f.repo_id "
+                "FROM edges e LEFT JOIN symbols t ON e.target_id = t.id "
+                "LEFT JOIN files f ON t.file_id = f.id "
+                f"WHERE e.source_id = ? LIMIT {_NEIGHBOR_CAP + 1}",
+                (focal["sid"],),
+            ).fetchall()
+            if len(callees) > _NEIGHBOR_CAP:
+                truncated = True
+                callees = callees[:_NEIGHBOR_CAP]
+            for r in callees:
+                if r["callee"]:
+                    _add_node(nodes, r["callee"], r["kind"] or "external", r["path"], r["repo_id"])
+                    edges.append({"source": focal["name"], "target": r["callee"], "kind": "calls"})
+    return {"nodes": list(nodes.values()), "edges": edges,
+            "metadata": {"scope": "neighbors", "requested": requested,
+                         "node_count": len(nodes), "edge_count": len(edges),
+                         "truncated": truncated}}
 
 
 def get_impact_graph(conn: sqlite3.Connection, name: str, max_depth: int = 3) -> Dict:

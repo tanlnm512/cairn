@@ -11,7 +11,7 @@
 - [ui-dashboard-traffic-scale](ui-dashboard-traffic-scale/spec.md) — done (11/11 tasks 2026-08-20; keyset pagination + (invoked_at, id) index, 24h/7d/30d/all windows across history/tokens/chains, bounded chains w/ expand, 10.5k-call render-budget proof; 2021 tests green)
 - [ui-dashboard-workspace-launcher](ui-dashboard-workspace-launcher/spec.md) — draft (overview of every local store — size/freshness/call count; restart-free switching; read-only guard; pipeline docs filled 2026-08-20, implementation not started)
 - [cli-usage-recording](cli-usage-recording/spec.md) — draft (record CLI invocations beside MCP tool calls, source-labeled, buffered flush-on-exit, opt-out; pipeline docs filled 2026-08-20, implementation not started)
-- [ui-dashboard-graph-nav](ui-dashboard-graph-nav/spec.md) — draft (symbol search-to-focus with disambiguation, node expand, layout toggle; pipeline docs filled 2026-08-20, implementation not started)
+- [ui-dashboard-graph-nav](ui-dashboard-graph-nav/spec.md) — done (11/11 tasks 2026-08-20; symbol search-to-focus w/ disambiguation candidates endpoint, doubleClick node expansion via /graph/neighbors, force/hier layout toggle w/ camera preservation + URL persistence; 2038 tests green)
 - [ui-dashboard-polish](ui-dashboard-polish/spec.md) — draft (warm health, tokenizer mode + labeling, truncation stats, retention, CSV/JSON export, dark theme; pipeline docs filled 2026-08-20, implementation not started)
 
 ## Archive

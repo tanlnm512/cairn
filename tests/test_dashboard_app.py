@@ -236,6 +236,340 @@ def test_graph_route_unknown_scope_falls_back_to_module(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Layout persistence + option application (graph-nav FR-004 / US3 / TC-005):
+# /graph reads ``layout`` ∈ {force, hier} -- default force, bogus → force;
+# the control's anchors swap only that param (window-control link
+# conventions) and the canvas data-layout attribute is app.js's
+# initial-layout hook. TC-005's server-visible halves are automated below;
+# the live camera-preserving toggle is not automatable here -- the manual
+# procedure is the section docstring beneath this comment.
+# ---------------------------------------------------------------------------
+
+TC005_MANUAL_PROCEDURE = """\
+TC-005 manual half -- layout toggle re-renders in the chosen style, focus
+kept (FR-004 / US3-AC1). Run against a real store (e.g. this repo's own
+graph via the dev server):
+
+1. Open /graph and let the force-directed network settle; pan/zoom to a
+   recognizable focus point (a node cluster you can find again).
+2. Click "hierarchical" in the layout control -- the page must NOT
+   reload: the same node/edge set re-renders top-down and the camera
+   stays at the panned/zoomed focus point (no reset to the origin).
+3. Click "force" back -- the same node/edge set re-renders force-directed,
+   camera still preserved.
+4. After each click the URL's layout param follows the choice via
+   history.replaceState (no navigation): ?layout=hier, then ?layout=force.
+   Refresh the page: the graph renders in the layout the URL carries --
+   the persistence choice survives a reload.
+"""
+
+
+@requires_vis_network
+def test_graph_layout_defaults_to_force_with_hier_anchor(tmp_path):
+    """TC-005 auto half: default /graph renders the layout control with
+    force active and hierarchical as the anchor; the canvas carries
+    data-layout="force" -- the attribute app.js applies as the initial
+    layout."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/graph")
+    assert resp.status_code == 200
+    assert 'id="layout-control"' in resp.text
+    assert "Layout:" in resp.text
+    assert "<strong>force</strong>" in resp.text
+    assert "<strong>hierarchical</strong>" not in resp.text
+    # The inactive entry is an anchor swapping only the layout param.
+    assert (
+        '<a href="/graph?layout=hier&amp;scope=module" data-layout="hier">'
+        "hierarchical</a>" in resp.text
+    )
+    assert '<div id="graph-canvas" data-layout="force"' in resp.text
+
+
+@requires_vis_network
+def test_graph_layout_hier_activates_and_link_preserves_graph_params(tmp_path):
+    """TC-005 auto half: ?layout=hier marks hierarchical active and the
+    canvas hook carries data-layout="hier"; the control's force link is
+    one full href that swaps layout and keeps every other graph param
+    (scope/focus/repo/depth), so a reload round-trips the whole view."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get(
+        "/graph",
+        params={
+            "layout": "hier",
+            "scope": "symbol",
+            "focus": "demo_main",
+            "repo": "demo",
+            "depth": "2",
+        },
+    )
+    assert resp.status_code == 200
+    assert "<strong>hierarchical</strong>" in resp.text
+    assert "<strong>force</strong>" not in resp.text
+    assert '<div id="graph-canvas" data-layout="hier"' in resp.text
+    # One full href: layout swapped to force, scope/focus/repo/depth kept.
+    assert (
+        '<a href="/graph?layout=force&amp;scope=symbol&amp;focus=demo_main'
+        '&amp;repo=demo&amp;depth=2" data-layout="force">force</a>'
+        in resp.text
+    )
+
+
+@requires_vis_network
+def test_graph_layout_bogus_value_falls_back_to_force(tmp_path):
+    """TC-005 auto half: an unknown layout value degrades to force,
+    matching the graph handler's scope fallback -- control and canvas both
+    show force and the graph still renders; never an error."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/graph", params={"layout": "circular"})
+    assert resp.status_code == 200
+    assert 'id="layout-control"' in resp.text
+    assert "<strong>force</strong>" in resp.text
+    assert "<strong>hierarchical</strong>" not in resp.text
+    assert '<div id="graph-canvas" data-layout="force"' in resp.text
+    # The seeded graph still rendered -- a fallback, not an error page.
+    assert _embedded_graph(resp.text)["metadata"]["node_count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Symbol-search candidates endpoint (graph-nav FR-001/FR-002 / US1): the
+# JSON the graph view's search box consumes -- the data-layer contract,
+# verbatim.
+# ---------------------------------------------------------------------------
+
+
+def _candidates_db_file(tmp_path, seed: bool) -> str:
+    """A graph-schema DB file; seeded when seed=True with TC-002's
+    ambiguity: ``dup_name`` defined in two files across two repos (two
+    kinds, so each match's context is distinguishable), inserted in the
+    reverse of the deterministic result order, plus the unique
+    ``solo_name``."""
+    from cairn.graph.schema import _apply_schema
+
+    db_path = str(tmp_path / "candidates.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    if seed:
+        conn.executemany(
+            "INSERT INTO repos (id, name, path, language) VALUES (?, ?, ?, ?)",
+            [
+                ("left", "left", "clients/left", "python"),
+                ("right", "right", "clients/right", "kotlin"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+            [
+                ("cf1", "left", "src/shared.py", "python"),
+                ("cf2", "right", "lib/shared.kt", "kotlin"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("cs_kt", "cf2", "dup_name", "right.dup_name", "class"),
+                ("cs_py", "cf1", "dup_name", "left.dup_name", "function"),
+                ("cs_solo", "cf1", "solo_name", "left.solo_name", "function"),
+            ],
+        )
+        conn.commit()
+    conn.close()
+    return db_path
+
+
+def test_candidates_route_returns_the_data_layer_contract(tmp_path):
+    """FR-001/FR-002: /graph/candidates is application/json carrying the
+    data-layer result verbatim -- the ambiguous name lists both matches
+    with file and kind (TC-002), the unique name exactly one (TC-001's
+    auto half)."""
+    db_path = _candidates_db_file(tmp_path, seed=True)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    resp = client.get("/graph/candidates", params={"name": "dup_name"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json() == {
+        "matches": [
+            {
+                "name": "dup_name",
+                "kind": "class",
+                "file": "lib/shared.kt",
+                "repo_id": "right",
+            },
+            {
+                "name": "dup_name",
+                "kind": "function",
+                "file": "src/shared.py",
+                "repo_id": "left",
+            },
+        ],
+        "truncated": False,
+    }
+
+    # Verbatim passthrough: the same store through the data layer equals the
+    # route body, key for key.
+    from cairn.dashboard.data import get_read_only_db, symbol_candidates
+
+    conn = get_read_only_db(db_path)
+    try:
+        assert resp.json() == symbol_candidates(conn, "dup_name")
+    finally:
+        conn.close()
+
+    exact = client.get("/graph/candidates", params={"name": "solo_name"})
+    assert exact.status_code == 200
+    assert exact.json() == {
+        "matches": [
+            {
+                "name": "solo_name",
+                "kind": "function",
+                "file": "src/shared.py",
+                "repo_id": "left",
+            }
+        ],
+        "truncated": False,
+    }
+
+
+def test_candidates_route_whitespace_and_absent_name_are_empty_json(tmp_path):
+    """A whitespace-only or absent name is the empty-matches contract as
+    JSON -- HTTP 200, never an error (the search box's blank-submit
+    boundary)."""
+    client = _panel_client(
+        tmp_path, _candidates_db_file(tmp_path, seed=True), str(tmp_path / "missing")
+    )
+    empty = {"matches": [], "truncated": False}
+
+    for url in ("/graph/candidates?name=%20%20", "/graph/candidates"):
+        resp = client.get(url)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/json")
+        assert resp.json() == empty
+
+
+# ---------------------------------------------------------------------------
+# Node-expansion neighbors endpoint (graph-nav FR-003/FR-005 / US2): the
+# node/edge JSON the graph view's expand action fetches and merges.
+# ---------------------------------------------------------------------------
+
+
+def _neighbors_db_file(tmp_path, seed: bool) -> str:
+    """A graph-schema DB file; seeded when seed=True with TC-003's hub:
+    ``expand_main`` with one caller (``expand_caller``) and one callee
+    (``expand_helper``) -- the exact node/edge set an expansion fetches."""
+    from cairn.graph.schema import _apply_schema
+
+    db_path = str(tmp_path / "neighbors.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    if seed:
+        conn.executemany(
+            "INSERT INTO repos (id, name, path, language) VALUES (?, ?, ?, ?)",
+            [("demo", "demo", "clients/demo", "python")],
+        )
+        conn.executemany(
+            "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+            [
+                ("nf1", "demo", "src/demo/core.py", "python"),
+                ("nf2", "demo", "src/demo/util.py", "python"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("ns_main", "nf1", "expand_main", "demo.expand_main", "function"),
+                ("ns_helper", "nf1", "expand_helper", "demo.expand_helper", "function"),
+                ("ns_caller", "nf2", "expand_caller", "demo.expand_caller", "function"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+            [
+                ("ne1", "ns_main", "ns_helper", "calls"),
+                ("ne2", "ns_caller", "ns_main", "calls"),
+            ],
+        )
+        conn.commit()
+    conn.close()
+    return db_path
+
+
+def test_neighbors_route_serves_the_expansion_contract(tmp_path):
+    """FR-003/FR-005: /graph/neighbors is application/json carrying the
+    viz-layer result verbatim for the requested name -- TC-003's expected
+    node/edge set (focal + caller + callee, both edges) -- and repeat/blank
+    ``name`` params collapse to the single-name call's JSON."""
+    db_path = _neighbors_db_file(tmp_path, seed=True)
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+
+    resp = client.get("/graph/neighbors", params={"name": "expand_main"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    body = resp.json()
+    assert body["metadata"]["scope"] == "neighbors"
+    assert body["metadata"]["requested"] == ["expand_main"]
+    assert {n["id"] for n in body["nodes"]} == {
+        "expand_main",
+        "expand_helper",  # the focal's callee
+        "expand_caller",  # the focal's caller
+    }
+    assert {(e["source"], e["target"], e["kind"]) for e in body["edges"]} == {
+        ("expand_main", "expand_helper", "calls"),
+        ("expand_caller", "expand_main", "calls"),
+    }
+
+    # Verbatim passthrough: the same store through the viz layer equals the
+    # route body, key for key.
+    from cairn.dashboard.data import get_read_only_db
+    from cairn.viz.query import get_symbol_neighbors
+
+    conn = get_read_only_db(db_path)
+    try:
+        assert body == get_symbol_neighbors(conn, ["expand_main"])
+    finally:
+        conn.close()
+
+    # Repeat + blank params dedupe/clean to the same JSON as the one call.
+    noisy = client.get("/graph/neighbors?name=expand_main&name=expand_main&name=")
+    assert noisy.status_code == 200
+    assert noisy.json() == body
+
+
+def test_neighbors_route_absent_name_and_bogus_depth_never_error(tmp_path):
+    """An absent name is the empty neighbors contract as JSON (HTTP 200),
+    and a bogus depth falls back to the default behavior -- the route's
+    cleaning boundaries never surface an error."""
+    client = _panel_client(
+        tmp_path, _neighbors_db_file(tmp_path, seed=True), str(tmp_path / "missing")
+    )
+
+    absent = client.get("/graph/neighbors")
+    assert absent.status_code == 200
+    assert absent.headers["content-type"].startswith("application/json")
+    assert absent.json() == {
+        "nodes": [],
+        "edges": [],
+        "metadata": {
+            "scope": "neighbors",
+            "requested": [],
+            "node_count": 0,
+            "edge_count": 0,
+            "truncated": False,
+        },
+    }
+
+    single = client.get("/graph/neighbors", params={"name": "expand_main"})
+    bogus = client.get(
+        "/graph/neighbors", params=[("name", "expand_main"), ("depth", "bogus")]
+    )
+    assert bogus.status_code == 200
+    assert bogus.json() == single.json()
+
+
+# ---------------------------------------------------------------------------
 # Health / memory / task-queue panels (FR-008, FR-009)
 # ---------------------------------------------------------------------------
 

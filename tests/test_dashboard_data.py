@@ -166,6 +166,366 @@ def test_get_graph_rejects_unknown_scope(fresh_db):
         get_graph(fresh_db, scope="galaxy")
 
 
+# ---------------------------------------------------------------------------
+# Symbol-search candidates (graph-nav FR-001/FR-002 / US1): exact-name
+# matches with disambiguating context, capped with an honest truncated flag.
+# ---------------------------------------------------------------------------
+
+
+def _seed_dup_name(conn):
+    """TC-002's seed: one symbol name defined in two files (two repos, two
+    kinds, so each match's context is distinguishable), inserted in the
+    reverse of the deterministic result order -- only the query's ORDER BY
+    can produce a stable list."""
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            ("s_dup_b", "f_b1", "dup_name", "beta.dup_name", "class"),
+            ("s_dup_a", "f_a1", "dup_name", "alpha.dup_name", "function"),
+        ],
+    )
+    conn.commit()
+
+
+def test_symbol_candidates_exact_unique_name_single_match(fresh_db):
+    """TC-001's one-interaction precondition (FR-001): a unique name
+    resolves to exactly one candidate carrying its kind, file, and repo."""
+    from cairn.dashboard.data import symbol_candidates
+
+    _seed(fresh_db)
+
+    assert symbol_candidates(fresh_db, "alpha_main") == {
+        "matches": [
+            {
+                "name": "alpha_main",
+                "kind": "function",
+                "file": "src/alpha/core.py",
+                "repo_id": "alpha",
+            }
+        ],
+        "truncated": False,
+    }
+
+
+def test_symbol_candidates_ambiguous_name_lists_both_in_file_order(fresh_db):
+    """TC-002 (FR-002): a name defined in two files lists both matches with
+    their file/kind context instead of an arbitrary pick, in the
+    deterministic file-ASC order."""
+    from cairn.dashboard.data import symbol_candidates
+
+    _seed(fresh_db)
+    _seed_dup_name(fresh_db)
+
+    result = symbol_candidates(fresh_db, "dup_name")
+
+    assert result["truncated"] is False
+    assert result["matches"] == [
+        {
+            "name": "dup_name",
+            "kind": "class",
+            "file": "beta/lib/b1.kt",
+            "repo_id": "beta",
+        },
+        {
+            "name": "dup_name",
+            "kind": "function",
+            "file": "src/alpha/core.py",
+            "repo_id": "alpha",
+        },
+    ]
+
+
+def test_symbol_candidates_caps_at_limit_with_honest_truncation(fresh_db):
+    """The cap: more same-name symbols than CANDIDATES_LIMIT return exactly
+    the cap with truncated True; exactly-at-the-cap is not truncation (the
+    limit+1 over-fetch boundary)."""
+    from cairn.dashboard.data import CANDIDATES_LIMIT, symbol_candidates
+
+    _seed(fresh_db)
+    over = CANDIDATES_LIMIT + 5
+    # One file per same-name symbol: file m00..m04 < m05.. so the kept cap
+    # is known by construction. Files 0..limit-1 also carry a second name
+    # seeded at exactly the cap.
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+        [
+            (f"c_f{i:02d}", "alpha", f"src/caps/m{i:02d}.py", "python")
+            for i in range(over)
+        ],
+    )
+    rows = [
+        (f"c_s{i:02d}", f"c_f{i:02d}", "capped_name", f"caps.capped.{i}", "function")
+        for i in range(over)
+    ] + [
+        (f"t_s{i:02d}", f"c_f{i:02d}", "at_cap_name", f"caps.at_cap.{i}", "class")
+        for i in range(CANDIDATES_LIMIT)
+    ]
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    fresh_db.commit()
+
+    capped = symbol_candidates(fresh_db, "capped_name")
+
+    assert len(capped["matches"]) == CANDIDATES_LIMIT
+    assert capped["truncated"] is True
+    # The kept cap is the deterministic head, not an arbitrary slice.
+    assert [m["file"] for m in capped["matches"]] == [
+        f"src/caps/m{i:02d}.py" for i in range(CANDIDATES_LIMIT)
+    ]
+
+    at_cap = symbol_candidates(fresh_db, "at_cap_name")
+
+    assert len(at_cap["matches"]) == CANDIDATES_LIMIT
+    assert at_cap["truncated"] is False
+
+
+def test_symbol_candidates_miss_and_blank_are_empty_never_errors(fresh_db):
+    """A name with no matches -- and the blank or whitespace-only names --
+    are well-formed empty results, never errors."""
+    from cairn.dashboard.data import symbol_candidates
+
+    _seed(fresh_db)
+    empty = {"matches": [], "truncated": False}
+
+    assert symbol_candidates(fresh_db, "no_such_symbol") == empty
+    for blank in ("", "   "):
+        assert symbol_candidates(fresh_db, blank) == empty
+
+
+# ---------------------------------------------------------------------------
+# Node expansion (graph-nav FR-003/FR-005 / US2): the viz-layer neighbors
+# query, called directly -- the node/edge shape the dashboard's DataSet
+# merge consumes, duplicate-free, with honest counts at the per-direction
+# caps.
+# ---------------------------------------------------------------------------
+
+
+def _seed_expand(conn):
+    """TC-003's seed: close alpha's chain into a hub -- alpha_util now calls
+    alpha_main, so alpha_main has one caller (alpha_util) and one callee
+    (alpha_helper) by construction."""
+    conn.execute(
+        "INSERT INTO edges (id, source_id, target_id, kind) "
+        "VALUES ('e_expand', 's_a3', 's_a1', 'calls')"
+    )
+    conn.commit()
+
+
+def test_get_symbol_neighbors_returns_the_merge_shape(fresh_db):
+    """TC-003's data half (FR-003): one requested name yields exactly that
+    symbol plus its caller and callee, with both call edges connected to
+    it -- the shape the client's DataSet merge consumes -- and metadata
+    counts equal to the returned lists (FR-005)."""
+    from cairn.viz.query import get_symbol_neighbors
+
+    _seed(fresh_db)
+    _seed_expand(fresh_db)
+
+    result = get_symbol_neighbors(fresh_db, ["alpha_main"])
+
+    assert result["metadata"]["scope"] == "neighbors"
+    assert result["metadata"]["requested"] == ["alpha_main"]
+    assert {n["id"] for n in result["nodes"]} == {
+        "alpha_main",
+        "alpha_helper",  # alpha_main's callee (e1)
+        "alpha_util",  # alpha_main's caller (e_expand)
+    }
+    assert {(e["source"], e["target"], e["kind"]) for e in result["edges"]} == {
+        ("alpha_main", "alpha_helper", "calls"),
+        ("alpha_util", "alpha_main", "calls"),
+    }
+    assert result["metadata"]["truncated"] is False
+    # FR-005: the counts are the returned lists, never a silent overdraw.
+    assert result["metadata"]["node_count"] == len(result["nodes"]) == 3
+    assert result["metadata"]["edge_count"] == len(result["edges"]) == 2
+
+
+def _seed_neighbors_dups(conn):
+    """TC-004's duplicate half: ``hub`` defined in two files, both rows
+    called by the one ``feeder``; plus two distinct names ``pair_a`` /
+    ``pair_b`` whose neighborhoods share the one callee ``shared_sink``."""
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            ("s_hub_a", "f_a1", "hub", "alpha.hub.a", "function"),
+            ("s_hub_b", "f_a2", "hub", "alpha.hub.b", "class"),
+            ("s_feeder", "f_b1", "feeder", "beta.feeder", "function"),
+            ("s_pair_a", "f_a1", "pair_a", "alpha.pair_a", "function"),
+            ("s_pair_b", "f_b1", "pair_b", "beta.pair_b", "function"),
+            ("s_sink", "f_a2", "shared_sink", "alpha.shared_sink", "function"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            ("dup_e1", "s_feeder", "s_hub_a", "calls"),
+            ("dup_e2", "s_feeder", "s_hub_b", "calls"),
+            ("dup_e3", "s_pair_a", "s_sink", "calls"),
+            ("dup_e4", "s_pair_b", "s_sink", "calls"),
+        ],
+    )
+    conn.commit()
+
+
+def test_get_symbol_neighbors_yields_no_duplicates(fresh_db):
+    """TC-004 (FR-005): expansion merges by node id -- a name defined in
+    two files contributes each row's neighborhood without duplicating node
+    ids, and two requested names with overlapping neighborhoods keep both
+    node ids and edge triples unique."""
+    from cairn.viz.query import get_symbol_neighbors
+
+    _seed(fresh_db)
+    _seed_neighbors_dups(fresh_db)
+
+    # Same name, two symbol rows, one shared caller: each row contributes
+    # its own caller edge (the client's id-keyed DataSet merge collapses
+    # the visual duplicate), but every node id appears exactly once.
+    hub = get_symbol_neighbors(fresh_db, ["hub"])
+
+    ids = [n["id"] for n in hub["nodes"]]
+    assert len(ids) == len(set(ids))
+    assert set(ids) == {"hub", "feeder"}
+    assert hub["metadata"]["node_count"] == len(hub["nodes"]) == 2
+    assert hub["metadata"]["edge_count"] == len(hub["edges"]) == 2
+
+    # Two names sharing one callee: unique node ids AND unique edge triples.
+    pair = get_symbol_neighbors(fresh_db, ["pair_a", "pair_b"])
+
+    ids = [n["id"] for n in pair["nodes"]]
+    assert len(ids) == len(set(ids))
+    assert set(ids) == {"pair_a", "pair_b", "shared_sink"}
+    triples = {(e["source"], e["target"], e["kind"]) for e in pair["edges"]}
+    assert len(triples) == len(pair["edges"])
+    assert triples == {
+        ("pair_a", "shared_sink", "calls"),
+        ("pair_b", "shared_sink", "calls"),
+    }
+    assert pair["metadata"]["requested"] == ["pair_a", "pair_b"]
+    assert pair["metadata"]["node_count"] == len(pair["nodes"]) == 3
+    assert pair["metadata"]["edge_count"] == len(pair["edges"]) == 2
+
+
+def test_get_symbol_neighbors_caps_per_direction_with_honest_counts(fresh_db):
+    """TC-004's cap half (FR-005): past the per-direction cap exactly the
+    cap renders with truncated True; exactly-at-the-cap is not truncation
+    (the cap+1 over-fetch boundary); either way the counts equal the
+    returned lists, never the uncapped totals still in the store."""
+    from cairn.viz.query import _NEIGHBOR_CAP, get_symbol_neighbors
+
+    _seed(fresh_db)
+    over = _NEIGHBOR_CAP + 5
+    # One file per caller, so every caller's node is known by construction:
+    # popular gathers 35 callers, edge_popular exactly the cap of 30.
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+        [
+            (f"cap_f{i:02d}", "alpha", f"src/caps/c{i:02d}.py", "python")
+            for i in range(over)
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                f"cap_s{i:02d}",
+                f"cap_f{i:02d}",
+                f"cap_caller_{i:02d}",
+                f"caps.caller.{i}",
+                "function",
+            )
+            for i in range(over)
+        ]
+        + [
+            ("cap_popular", "f_a1", "popular", "caps.popular", "function"),
+            ("cap_edge", "f_a1", "edge_popular", "caps.edge_popular", "function"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            (f"cap_e{i:02d}", f"cap_s{i:02d}", "cap_popular", "calls")
+            for i in range(over)
+        ]
+        + [
+            (f"cape_e{i:02d}", f"cap_s{i:02d}", "cap_edge", "calls")
+            for i in range(_NEIGHBOR_CAP)
+        ],
+    )
+    fresh_db.commit()
+
+    popular = get_symbol_neighbors(fresh_db, ["popular"])
+
+    assert popular["metadata"]["truncated"] is True
+    # The per-direction cap yields exactly 30 of the 35 callers, never all.
+    callers = {n["id"] for n in popular["nodes"]} - {"popular"}
+    assert len(callers) == _NEIGHBOR_CAP
+    # Count honesty (FR-005): the metadata counts equal the returned lists
+    # -- never the uncapped 36 nodes / 35 edges that exist in the store.
+    assert (
+        popular["metadata"]["node_count"]
+        == len(popular["nodes"])
+        == _NEIGHBOR_CAP + 1
+    )
+    assert popular["metadata"]["edge_count"] == len(popular["edges"]) == _NEIGHBOR_CAP
+
+    edge = get_symbol_neighbors(fresh_db, ["edge_popular"])
+
+    assert edge["metadata"]["truncated"] is False
+    assert edge["metadata"]["node_count"] == len(edge["nodes"]) == _NEIGHBOR_CAP + 1
+    assert edge["metadata"]["edge_count"] == len(edge["edges"]) == _NEIGHBOR_CAP
+
+
+def test_get_symbol_neighbors_empty_blank_and_miss_never_error(fresh_db):
+    """The blank-submit boundaries: empty or whitespace-only names are the
+    well-formed empty neighbors shape with requested [], and a name with no
+    symbol rows appears only in metadata.requested -- never an error."""
+    from cairn.viz.query import get_symbol_neighbors
+
+    _seed(fresh_db)
+    empty = {
+        "nodes": [],
+        "edges": [],
+        "metadata": {
+            "scope": "neighbors",
+            "requested": [],
+            "node_count": 0,
+            "edge_count": 0,
+            "truncated": False,
+        },
+    }
+
+    assert get_symbol_neighbors(fresh_db, []) == empty
+    for blanks in ([""], ["", "   "]):
+        assert get_symbol_neighbors(fresh_db, blanks) == empty
+
+    miss = get_symbol_neighbors(fresh_db, ["no_such_symbol"])
+    assert miss["nodes"] == []
+    assert miss["edges"] == []
+    assert miss["metadata"]["requested"] == ["no_such_symbol"]
+    assert miss["metadata"]["truncated"] is False
+
+
+def test_get_symbol_neighbors_depth_past_one_is_clamped(fresh_db):
+    """D-002's boundary: the signature accepts depth, the behavior is
+    1-hop per action -- depth=5 returns exactly the depth=1 (and default)
+    result over a seeded neighborhood."""
+    from cairn.viz.query import get_symbol_neighbors
+
+    _seed(fresh_db)
+    _seed_expand(fresh_db)
+
+    one_hop = get_symbol_neighbors(fresh_db, ["alpha_main"], depth=1)
+
+    assert get_symbol_neighbors(fresh_db, ["alpha_main"], depth=5) == one_hop
+    assert get_symbol_neighbors(fresh_db, ["alpha_main"]) == one_hop
+
+
 def test_projects_data_flows_through_the_read_only_factory(tmp_path):
     """The dashboard's own connection factory serves the view data, and that
     connection can never write (FR-010)."""

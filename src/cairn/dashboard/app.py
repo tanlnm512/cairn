@@ -1,7 +1,8 @@
 """Starlette app factory for the read-only dashboard (FR-001, FR-010).
 
-Routes: landing, projects, graph, history, tokens, chains, health, memory,
-tasks.
+Routes: landing, projects, graph (plus its /graph/candidates symbol-search
+and /graph/neighbors node-expansion JSON), history, tokens, chains, health,
+memory, tasks.
 
 starlette / jinja2 arrive only as transitive deps of mcp, so they are
 imported inside :func:`create_app`: importing this module (or the package)
@@ -124,6 +125,7 @@ def create_app(
     and static assets.
     """
     from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
     from starlette.templating import Jinja2Templates
@@ -151,8 +153,10 @@ def create_app(
         get_tool_tokens,
         list_history,
         list_projects,
+        symbol_candidates,
     )
     from ..paths import default_knowledge_path
+    from ..viz import query as viz_query
 
     def knowledge_root() -> str:
         return knowledge_dir or str(default_knowledge_path())
@@ -186,6 +190,11 @@ def create_app(
         repo = request.query_params.get("repo", "").strip() or None
         depth_raw = request.query_params.get("depth", "").strip()
         depth = int(depth_raw) or None if depth_raw.isdigit() else None
+        # Layout choice (FR-004): only "force" | "hier" are meaningful;
+        # absent/bogus falls back to force, matching the scope fallback.
+        layout = request.query_params.get("layout", "force")
+        if layout not in ("force", "hier"):
+            layout = "force"
         conn = get_read_only_db(db_path)
         try:
             graph_data = get_graph(
@@ -203,8 +212,43 @@ def create_app(
                 "focus": focus or "",
                 "repo": repo or "",
                 "depth": depth_raw if depth is not None else "",
+                "layout": layout,
             },
         )
+
+    def graph_candidates(request: Request) -> Response:
+        name = request.query_params.get("name", "").strip()
+        conn = get_read_only_db(db_path)
+        try:
+            result = symbol_candidates(conn, name)
+        finally:
+            conn.close()
+        return JSONResponse(result)
+
+    def graph_neighbors(request: Request) -> Response:
+        # Repeatable ``name`` param (FR-003): strip each, drop empties,
+        # dedupe preserving first-seen order (dict.fromkeys is ordered).
+        # An empty list after cleaning hits the function's empty contract
+        # (200 with empty nodes), never an error.
+        names = [
+            name
+            for name in dict.fromkeys(
+                raw.strip() for raw in request.query_params.getlist("name")
+            )
+            if name
+        ]
+        # Absent/bogus depth -> function default (silent fallback, matching
+        # the graph handler); a valid one is clamped to >= 1.
+        depth_raw = request.query_params.get("depth", "").strip()
+        depth_kwargs = (
+            {"depth": max(1, int(depth_raw))} if depth_raw.isdigit() else {}
+        )
+        conn = get_read_only_db(db_path)
+        try:
+            result = viz_query.get_symbol_neighbors(conn, names, **depth_kwargs)
+        finally:
+            conn.close()
+        return JSONResponse(result)
 
     def health(request: Request) -> Response:
         conn = get_read_only_db(db_path)
@@ -310,6 +354,8 @@ def create_app(
         Route("/", landing, name="index"),
         Route("/projects", projects, name="projects"),
         Route("/graph", graph, name="graph"),
+        Route("/graph/candidates", graph_candidates, name="graph_candidates"),
+        Route("/graph/neighbors", graph_neighbors, name="graph_neighbors"),
         Route("/history", history, name="history"),
         Route("/tokens", tokens, name="tokens"),
         Route("/chains", chains, name="chains"),

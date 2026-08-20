@@ -1,6 +1,7 @@
 """Standing guard: a full pass over every dashboard route leaves the
-database file untouched (FR-010 / TC-021), and reads stay clean while a
-concurrent writer appends tool_metrics rows (TC-025)."""
+database file untouched (FR-010 / TC-021), reads stay clean while a
+concurrent writer appends tool_metrics rows (TC-025), and the candidates
+and neighbors JSON endpoints sit inside the same guard (FR-006 / TC-006)."""
 from __future__ import annotations
 
 import hashlib
@@ -15,8 +16,10 @@ from cairn.graph.schema import _apply_schema
 
 # Every route on the app, including the query variants that hit distinct
 # read paths: graph scope changes (repo / symbol+depth / unknown fallback),
-# history tool+session filters (separate and combined), tasks status filter,
-# and the static assets.
+# the graph JSON endpoints (candidates: exact / absent-from-store / absent
+# / whitespace name; neighbors: repeatable names + depth, whitespace-only,
+# absent, unknown name + bogus depth), history tool+session filters
+# (separate and combined), tasks status filter, and the static assets.
 ROUTES = [
     "/",
     "/projects",
@@ -25,6 +28,14 @@ ROUTES = [
     "/graph?scope=repo&repo=alpha",
     "/graph?scope=symbol&focus=alpha_main&depth=1",
     "/graph?scope=bogus",
+    "/graph/candidates?name=alpha_main",
+    "/graph/candidates?name=no_such_symbol",
+    "/graph/candidates",
+    "/graph/candidates?name=%20%20",
+    "/graph/neighbors?name=alpha_main&name=beta_main&depth=2",
+    "/graph/neighbors?name=%20%20",
+    "/graph/neighbors",
+    "/graph/neighbors?name=no_such_symbol&depth=bogus",
     "/health",
     "/memory",
     "/tasks",
@@ -215,6 +226,71 @@ def test_full_route_pass_leaves_db_byte_identical(tmp_path):
 
     assert _digest(db_path) == before_digest
     assert _metric_rows(db_path) == before_rows
+    sidecars = sorted(
+        p.name
+        for p in Path(db_path).parent.iterdir()
+        if p.name.endswith(("-wal", "-shm"))
+    )
+    assert sidecars == []
+
+
+def test_graph_json_endpoints_stay_read_only(tmp_path):
+    """TC-006 / FR-006: the candidates and neighbors JSON endpoints --
+    happy paths and every edge path (repeatable name params, whitespace
+    name, absent name, name absent from the store, bogus depth) -- leave
+    the DB byte-identical with no sidecars, and both return real content
+    on the seeded store so the guard is non-vacuous."""
+    client, db_path = _guard_world(tmp_path, name="graph-json.db")
+    before_digest = _digest(db_path)
+
+    # Candidates: the seeded alpha_main is unique, so an exact hit returns
+    # its one disambiguating match.
+    found = _fetch(client, "/graph/candidates?name=alpha_main").json()
+    assert found == {
+        "matches": [
+            {
+                "name": "alpha_main",
+                "kind": "function",
+                "file": "src/alpha/core.py",
+                "repo_id": "alpha",
+            }
+        ],
+        "truncated": False,
+    }
+    # A whitespace-padded name resolves to the same hit after stripping.
+    assert _fetch(client, "/graph/candidates?name=%20alpha_main%20").json() == found
+    # Edge paths: a name absent from the store, the param absent, and a
+    # whitespace-only name all return the empty contract, never an error.
+    for path in (
+        "/graph/candidates?name=no_such_symbol",
+        "/graph/candidates",
+        "/graph/candidates?name=%20%20",
+    ):
+        assert _fetch(client, path).json() == {"matches": [], "truncated": False}
+
+    # Neighbors: repeatable name params (with a depth) merge both focal
+    # neighborhoods -- alpha_main's callee and beta_main's callee.
+    neighbors = _fetch(
+        client, "/graph/neighbors?name=alpha_main&name=beta_main&depth=2"
+    ).json()
+    node_names = {node["id"] for node in neighbors["nodes"]}
+    assert {"alpha_main", "alpha_helper", "beta_main", "beta_aux"} <= node_names
+    alpha_edge = {"source": "alpha_main", "target": "alpha_helper", "kind": "calls"}
+    assert alpha_edge in neighbors["edges"]
+    assert neighbors["metadata"]["requested"] == ["alpha_main", "beta_main"]
+    # Edge paths: whitespace-only and absent names hit the empty contract
+    # (200, empty graph); an unknown name resolves no nodes while a bogus
+    # depth silently falls back to the default.
+    for path in ("/graph/neighbors?name=%20%20", "/graph/neighbors"):
+        empty = _fetch(client, path).json()
+        assert empty["nodes"] == []
+        assert empty["metadata"]["requested"] == []
+    unknown = _fetch(client, "/graph/neighbors?name=no_such_symbol&depth=bogus").json()
+    assert unknown["nodes"] == []
+    assert unknown["metadata"]["requested"] == ["no_such_symbol"]
+
+    # The guard itself: byte-identical DB, no -wal/-shm sidecars.
+    assert _digest(db_path) == before_digest
     sidecars = sorted(
         p.name
         for p in Path(db_path).parent.iterdir()
