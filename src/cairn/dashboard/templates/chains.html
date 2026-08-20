@@ -1,12 +1,18 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Chains — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
+  <div id="refresh-region">
   <h1>Session chains</h1>
   <p class="muted">
     Tool calls grouped per session, in call order; a new chain starts after
     {{ gap_minutes }} minutes of inactivity.
   </p>
+  {% if chains_truncated %}
+  <p class="muted">showing {{ chains | length }} of {{ total_chains }} chains</p>
+  {% endif %}
+  {% include "window_control.html" %}
   {% if chains %}
   <div class="chain-list">
     {% for chain in chains %}
@@ -29,15 +35,27 @@
         </li>
         {% endfor %}
       </ol>
+      {% if chain.truncated_calls %}
+      {#- FR-003: the expand anchor keeps the window AND the selected store
+          (links.url); empty selection keeps the bare href. -#}
+      {% set q = {'expand': chain.session_id} %}
+      {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
+      <p class="muted">
+        showing {{ chain.shown_calls }} of {{ chain.call_count }} calls ·
+        <a href="{{ links.url('/chains', q) }}">expand</a>
+      </p>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
   {% else %}
   <p class="empty-state">No tool calls recorded yet.</p>
   {% endif %}
+  </div>
 </section>
 <style>
-  /* CSS-only chain connection — this view adds no JavaScript. */
+  /* CSS-only chain connection — the view itself stays JS-free; app.js
+     only drives the shared live-refresh region swap. */
   .chain {
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -76,3 +94,4 @@
   }
 </style>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}

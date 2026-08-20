@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -8,13 +9,16 @@
     <code>{{ db_path }}</code>
   </p>
   <ul class="link-list">
-    <li><a href="/projects">Projects &amp; index status</a></li>
-    <li><a href="/history">Tool-call history</a></li>
-    <li><a href="/tokens">Token usage</a></li>
-    <li><a href="/chains">Session chains</a></li>
-    <li><a href="/health">Health</a></li>
-    <li><a href="/memory">Memory</a></li>
-    <li><a href="/tasks">Task queue</a></li>
+    {#- FR-003: a selected store rides every landing-list link (links.url);
+        empty selection keeps the bare hrefs, byte-identical. -#}
+    <li><a href="{{ links.url('/projects') }}">Projects &amp; index status</a></li>
+    <li><a href="{{ links.url('/graph') }}">Graph explorer</a></li>
+    <li><a href="{{ links.url('/history') }}">Tool-call history</a></li>
+    <li><a href="{{ links.url('/tokens') }}">Token usage</a></li>
+    <li><a href="{{ links.url('/chains') }}">Session chains</a></li>
+    <li><a href="{{ links.url('/health') }}">Health</a></li>
+    <li><a href="{{ links.url('/memory') }}">Memory</a></li>
+    <li><a href="{{ links.url('/tasks') }}">Task queue</a></li>
   </ul>
 </section>
 {% endblock %}

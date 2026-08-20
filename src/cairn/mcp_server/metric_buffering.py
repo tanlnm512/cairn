@@ -165,11 +165,17 @@ def _flush_metrics():
     conn = None
     try:
         conn = _conn_factory()
+        # Rows buffered from non-truncated calls omit the two trailing
+        # truncation columns; pad them so one INSERT serves both shapes.
+        params = [
+            row if len(row) > 9 else row + (None, None) for row in batch
+        ]
         conn.executemany(
             "INSERT INTO tool_metrics "
             "(tool_name, session_id, invoked_at, duration_ms, status, error_message, "
-            "req_chars, resp_chars, args_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            batch,
+            "req_chars, resp_chars, args_summary, truncated_from_chars, "
+            "truncated_to_chars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params,
         )
         conn.commit()
     except Exception:
@@ -229,6 +235,8 @@ def _log_metric(
     req_chars: Optional[int] = None,
     resp_chars: Optional[int] = None,
     args_summary: Optional[str] = None,
+    truncated_from_chars: Optional[int] = None,
+    truncated_to_chars: Optional[int] = None,
 ):
     """Record a tool invocation (buffered; flushes on a background thread).
 
@@ -268,7 +276,7 @@ def _log_metric(
         from cairn.memory.privacy import strip_private_data
 
         args_summary = strip_private_data(args_summary)
-    row = (
+    row: tuple = (
         tool_name,
         os.environ.get("CAIRN_SESSION", "unknown"),
         time.time(),
@@ -279,6 +287,10 @@ def _log_metric(
         resp_chars,
         args_summary[:MAX_ARGS_SUMMARY_CHARS] if args_summary else None,
     )
+    if truncated_from_chars is not None:
+        # The truncation columns ride the row only when the call was actually
+        # capped; _flush_metrics pads shorter rows with NULLs.
+        row = row + (truncated_from_chars, truncated_to_chars)
     with _METRIC_LOCK:
         _METRIC_BUFFER.append(row)
     _start_metric_flusher()
@@ -306,8 +318,13 @@ def instrument(fn):
         t0 = time.time()
         try:
             result = fn(*args, **kwargs)
+            truncated_from = truncated_to = None
             if isinstance(result, str):
+                original_chars = len(result)
                 result = _truncate_result(name, result)
+                if original_chars > MAX_RESULT_CHARS:
+                    truncated_from = original_chars
+                    truncated_to = len(result)
             # resp_chars is measured post-truncation: the capped payload is
             # what the client's context actually receives.
             _log_metric(
@@ -317,6 +334,8 @@ def instrument(fn):
                 req_chars=req_chars,
                 resp_chars=_result_chars(result),
                 args_summary=args_summary,
+                truncated_from_chars=truncated_from,
+                truncated_to_chars=truncated_to,
             )
             return result
         except Exception as exc:

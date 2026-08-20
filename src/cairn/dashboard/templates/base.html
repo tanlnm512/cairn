@@ -5,23 +5,80 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Cairn Dashboard{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+  <script>
+    (function () {
+      "use strict";
+      var STORAGE_KEY = "cairn-theme";
+      function applyTheme() {
+        var stored = null;
+        try {
+          stored = window.localStorage.getItem(STORAGE_KEY);
+        } catch (err) {
+          stored = null;
+        }
+        var prefersDark = window.matchMedia
+          ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          : false;
+        var dark = stored === "dark" || (stored === null && prefersDark);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        var toggle = document.getElementById("theme-toggle");
+        if (toggle) {
+          toggle.textContent = dark ? "Light" : "Dark";
+        }
+      }
+      window.__cairnApplyTheme = applyTheme;
+      applyTheme();
+      document.addEventListener("DOMContentLoaded", function () {
+        applyTheme();
+      });
+      document.addEventListener("click", function (event) {
+        var toggle =
+          event.target && event.target.closest
+            ? event.target.closest("#theme-toggle")
+            : null;
+        if (!toggle) {
+          return;
+        }
+        var next =
+          document.documentElement.dataset.theme === "dark"
+            ? "light"
+            : "dark";
+        try {
+          window.localStorage.setItem(STORAGE_KEY, next);
+        } catch (err) {
+          /* storage unavailable: the choice lasts only for this page */
+        }
+        applyTheme();
+      });
+    })();
+  </script>
 </head>
 <body>
   <header class="site-header">
     <nav class="site-nav">
-      <a class="brand" href="{{ url_for('index') }}">cairn</a>
-      <a href="/projects">Projects</a>
-      <a href="/history">History</a>
-      <a href="/tokens">Tokens</a>
-      <a href="/chains">Chains</a>
-      <a href="/health">Health</a>
-      <a href="/memory">Memory</a>
-      <a href="/tasks">Tasks</a>
+      {#- FR-003: keep the selected store on every nav hop; empty when the
+          launch store is served (byte-identical plain hrefs). -#}
+      {% set nav_query = '' if not store_key else '?store=' + (store_key | urlencode) %}
+      <a class="brand" href="/{{ nav_query }}">cairn</a>
+      <a href="/workspaces{{ nav_query }}">Workspaces</a>
+      <a href="/projects{{ nav_query }}">Projects</a>
+      <a href="/graph{{ nav_query }}">Graph</a>
+      <a href="/history{{ nav_query }}">History</a>
+      <a href="/tokens{{ nav_query }}">Tokens</a>
+      <a href="/chains{{ nav_query }}">Chains</a>
+      <a href="/health{{ nav_query }}">Health</a>
+      <a href="/memory{{ nav_query }}">Memory</a>
+      <a href="/tasks{{ nav_query }}">Tasks</a>
+      <button type="button" id="theme-toggle" class="theme-toggle">Theme</button>
     </nav>
   </header>
   <main class="site-main">
     {% block content %}{% endblock %}
   </main>
+  <div id="live-controls" class="muted" data-state="running" hidden>
+    <span id="live-state"></span>
+    <button type="button" id="live-pause">Pause</button>
+  </div>
   {% block scripts %}{% endblock %}
 </body>
 </html>

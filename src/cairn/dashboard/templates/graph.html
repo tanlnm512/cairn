@@ -1,8 +1,15 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Graph — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Graph</h1>
+  <form class="graph-controls">
+    <label>Symbol
+      <input type="text" id="symbol-search" placeholder="symbol name" autocomplete="off">
+    </label>
+  </form>
+  <div id="symbol-candidates"></div>
   <form class="graph-controls" method="get" action="/graph">
     <label>Scope
       <select name="scope">
@@ -22,7 +29,30 @@
     </label>
     <button type="submit">Apply</button>
   </form>
-  <p class="muted">
+  {#- Layout toggle (FR-004): links swap only the layout param, keeping
+    scope/focus/repo/depth (window_control link conventions); the active
+    layout renders as <strong>. app.js intercepts clicks on the anchors
+    to toggle the live network without a reload. FR-003: links.url keeps
+    the selected store riding the href; empty selection keeps the bare
+    hrefs, byte-identical. -#}
+  {% macro layout_href(kind) -%}
+  {% set q = {"layout": kind, "scope": scope} %}
+  {%- if focus %}{% set _ = q.update({"focus": focus}) %}{% endif %}
+  {%- if repo %}{% set _ = q.update({"repo": repo}) %}{% endif %}
+  {%- if depth %}{% set _ = q.update({"depth": depth}) %}{% endif %}
+  {{- links.url(request.url.path, q) }}
+  {%- endmacro %}
+  <p class="muted" id="layout-control">
+    Layout:
+    {%- for kind, label in [("force", "force"), ("hier", "hierarchical")] %} {% if not loop.first %} · {% endif %}{% if kind == layout %}<strong>{{ label }}</strong>{% else %}<a href="{{ layout_href(kind) }}" data-layout="{{ kind }}">{{ label }}</a>{% endif %}
+    {%- endfor %}
+  </p>
+  {#- Node inspect (FR-004, D-004): selecting a node on the canvas swaps
+    this hint for an anchor to that symbol's neighborhood graph
+    (scope=symbol&focus=...); deselecting restores the hint. Distinct from
+    double-click, which expands in place. -#}
+  <p class="muted"><span id="inspect-action" class="muted">select a node to inspect</span></p>
+  <p class="muted" id="graph-counts">
     scope <strong>{{ scope }}</strong> —
     {{ graph.metadata.get("node_count", graph.nodes | length) }} nodes,
     {{ graph.metadata.get("edge_count", graph.edges | length) }} edges shown
@@ -32,11 +62,14 @@
     scope queries are capped, so a count at the cap means the graph was truncated.
   </p>
   {% if graph.nodes %}
-  <div id="graph-canvas" style="height: 480px; border: 1px solid #d9dde3; border-radius: 8px; background: #ffffff;"></div>
+  <div id="graph-canvas" data-layout="{{ layout }}" style="height: 480px; border: 1px solid #d9dde3; border-radius: 8px; background: #ffffff;"></div>
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
   {% endif %}
-  <script id="graph-data" type="application/json">{{ graph | tojson }}</script>
+  {#- FR-003: a selected store rides the page for app.js (search and
+      expansion fetches stay on that store); no selection renders the tag
+      byte-identical to the pre-seam page. -#}
+  <script id="graph-data" type="application/json"{% if store_key %} data-store="{{ store_key }}"{% endif %}>{{ graph | tojson }}</script>
 </section>
 {% endblock %}
 {% block scripts %}

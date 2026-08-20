@@ -280,10 +280,14 @@ CREATE TABLE IF NOT EXISTS tool_metrics (
     error_message TEXT,
     req_chars INTEGER,          -- request payload size in chars; NULL on pre-migration rows
     resp_chars INTEGER,         -- response payload size in chars; NULL on pre-migration rows
-    args_summary TEXT           -- redacted, truncated JSON summary of the call's kwargs
+    args_summary TEXT,          -- redacted, truncated JSON summary of the call's kwargs
+    source TEXT NOT NULL DEFAULT 'mcp',  -- 'mcp' | 'cli' (spec cli-usage-recording FR-002)
+    truncated_from_chars INTEGER,  -- original chars, set only when the result was capped; NULL = not truncated
+    truncated_to_chars INTEGER     -- delivered chars (capped, incl. the notice); NULL = not truncated
 );
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_tool ON tool_metrics(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_session ON tool_metrics(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_metrics_invoked ON tool_metrics(invoked_at, id);
 
 -- One row per indexing pass (full build / incremental sync / embed) so build
 -- history, phase timings, and resolution quality survive the process that
@@ -398,6 +402,26 @@ TOOL_METRICS_REQ_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN req_char
 TOOL_METRICS_RESP_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN resp_chars INTEGER"
 TOOL_METRICS_ARGS_SUMMARY_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN args_summary TEXT"
 
+# Origin stamp on tool_metrics rows (spec cli-usage-recording FR-002/D-002):
+# 'mcp' (the default -- the MCP INSERT in mcp_server/metric_buffering.py names
+# no source column and rides this default, byte-identical per FR-005) or 'cli'
+# (stated explicitly by telemetry/cli_metrics). NOT NULL + DEFAULT makes the
+# ALTER legal on old DBs and backfills pre-migration rows as 'mcp' -- honest
+# for this table's history, so NULL never appears in the views.
+TOOL_METRICS_SOURCE_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN source TEXT NOT NULL DEFAULT 'mcp'"
+
+# Truncation-magnitude columns on tool_metrics (spec ui-dashboard-polish
+# FR-003/D-002): original vs delivered chars, set only on calls whose result
+# was actually capped. Nullable by design -- NULL means no-evidence (a
+# non-truncated call or a pre-migration row), never zero, and the CLI writer
+# (which truncates nothing) needs no change.
+TOOL_METRICS_TRUNCATED_FROM_CHARS_MIGRATION = (
+    "ALTER TABLE tool_metrics ADD COLUMN truncated_from_chars INTEGER"
+)
+TOOL_METRICS_TRUNCATED_TO_CHARS_MIGRATION = (
+    "ALTER TABLE tool_metrics ADD COLUMN truncated_to_chars INTEGER"
+)
+
 # All additive migrations applied at connect time. Each is attempted in a
 # try/except so re-running on an already-migrated DB is a no-op.
 MIGRATIONS = [
@@ -416,6 +440,9 @@ MIGRATIONS = [
     TOOL_METRICS_REQ_CHARS_MIGRATION,
     TOOL_METRICS_RESP_CHARS_MIGRATION,
     TOOL_METRICS_ARGS_SUMMARY_MIGRATION,
+    TOOL_METRICS_SOURCE_MIGRATION,
+    TOOL_METRICS_TRUNCATED_FROM_CHARS_MIGRATION,
+    TOOL_METRICS_TRUNCATED_TO_CHARS_MIGRATION,
 ]
 
 # Default DB location: resolved from the central store for the current workspace.
@@ -831,7 +858,8 @@ _TELEMETRY_TABLE_COLUMNS = {
     "events": "ts, name, session_id, attrs",
     "tool_metrics": (
         "tool_name, session_id, invoked_at, duration_ms, status, error_message, "
-        "req_chars, resp_chars, args_summary"
+        "req_chars, resp_chars, args_summary, source, "
+        "truncated_from_chars, truncated_to_chars"
     ),
 }
 

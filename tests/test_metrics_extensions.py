@@ -543,3 +543,192 @@ def test_multiple_flags_json_is_keyed_object(tmp_path):
     assert isinstance(data["quality"], dict)
     assert data["builds"][0]["kind"] == "build"
     assert data["quality"]["semantic_total"] == 6
+
+
+# ---------------------------------------------------------------------------
+# Truncation magnitude recorded per call (ui-dashboard-polish FR-003 /
+# TC-004): a tool call capped at the truncation chokepoint carries its
+# original-vs-delivered char counts as tool_metrics columns, which survive
+# the events table's row cap (the truncate_result event keeps firing for
+# occurrence analytics but is itself pruned at the 5000-row events cap).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def metric_state(monkeypatch):
+    """Reset metric_buffering's process-global state around each truncation
+    test (tests/test_metrics.py's convention) and clear the shared sink's
+    buffer/factory on exit so this file's emitted events cannot leak into a
+    later test's flush."""
+    from cairn.mcp_server import metric_buffering as mb
+    from cairn.telemetry import sink
+
+    with mb._METRIC_LOCK:
+        mb._METRIC_BUFFER.clear()
+    mb._conn_factory = None
+    mb._METRIC_FLUSHER_STARTED = False
+    monkeypatch.delenv("CAIRN_READ_ONLY", raising=False)
+    monkeypatch.delenv("CAIRN_TELEMETRY", raising=False)
+    monkeypatch.delenv("CAIRN_SESSION", raising=False)
+    yield mb
+    with mb._METRIC_LOCK:
+        mb._METRIC_BUFFER.clear()
+    mb._conn_factory = None
+    with sink._LOCK:
+        sink._BUFFER.clear()
+    sink._conn_factory = None
+
+
+class _UnclosableMetricConn:
+    """Wraps a sqlite connection so metric_buffering's post-flush ``close()``
+    leaves the file DB readable for assertions."""
+
+    def __init__(self, real: sqlite3.Connection):
+        self._real = real
+
+    def executemany(self, sql, params):
+        return self._real.executemany(sql, params)
+
+    def execute(self, sql, params=()):
+        return self._real.execute(sql, params)
+
+    def commit(self):
+        return self._real.commit()
+
+    def close(self):
+        pass
+
+
+def _wire_metric_flush(mb, db) -> sqlite3.Connection:
+    """A schema'd file DB wired to metric_buffering (and, via its mirror,
+    the shared telemetry sink) through an unclosable wrapper."""
+    _make_db(db)
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    mb.configure_conn(lambda: _UnclosableMetricConn(conn))
+    return conn
+
+
+def test_truncating_invocation_records_magnitude_columns(
+    tmp_path, metric_state, monkeypatch
+):
+    """TC-004: a call whose result exceeds the cap lands a tool_metrics row
+    carrying the original and delivered char counts, and the delivered count
+    equals the resp_chars the row recorded (both measured post-cap)."""
+    mb = metric_state
+    monkeypatch.setattr(mb, "MAX_RESULT_CHARS", 100)
+    conn = _wire_metric_flush(mb, tmp_path / "magnitude.db")
+
+    @mb.instrument
+    def explore_huge(query: str) -> str:
+        return "y" * 5000
+
+    delivered = explore_huge(query="big")
+    assert len(delivered) < 5000  # the call was genuinely capped
+    mb._flush_metrics()
+
+    row = conn.execute(
+        "SELECT truncated_from_chars, truncated_to_chars, resp_chars "
+        "FROM tool_metrics"
+    ).fetchone()
+    assert row is not None, "flushing landed the truncating call's row"
+    assert row["truncated_from_chars"] == 5000
+    assert row["truncated_to_chars"] == len(delivered)
+    assert row["truncated_to_chars"] == row["resp_chars"]
+    assert row["truncated_to_chars"] < row["truncated_from_chars"]
+
+
+def test_non_truncated_invocations_leave_magnitude_columns_null(
+    tmp_path, metric_state
+):
+    """TC-004: rows from calls that were never capped (under-cap result, and
+    the error path where no result exists) read as no evidence -- NULL
+    columns, not zeros."""
+    mb = metric_state
+    conn = _wire_metric_flush(mb, tmp_path / "no-magnitude.db")
+
+    @mb.instrument
+    def small_tool(query: str) -> str:
+        return "ok"
+
+    @mb.instrument
+    def boom_tool(query: str) -> str:
+        raise ValueError("kaboom")
+
+    small_tool(query="hi")
+    with pytest.raises(ValueError, match="kaboom"):
+        boom_tool(query="hi")
+    mb._flush_metrics()
+
+    rows = conn.execute(
+        "SELECT truncated_from_chars, truncated_to_chars FROM tool_metrics "
+        "ORDER BY id"
+    ).fetchall()
+    assert [(r["truncated_from_chars"], r["truncated_to_chars"]) for r in rows] == [
+        (None, None),
+        (None, None),
+    ]
+
+
+def test_truncation_magnitude_survives_events_rollover(
+    tmp_path, metric_state, monkeypatch
+):
+    """TC-004's durable half: seed the events table past its 5000-row cap
+    with truncate_result occurrences, land a fresh truncating call, and
+    force the sink's flush -- the rollover prunes the OLDEST occurrences
+    while the per-call magnitude columns on the tool_metrics row stay
+    intact."""
+    from cairn.telemetry import flush
+
+    mb = metric_state
+    monkeypatch.setattr(mb, "MAX_RESULT_CHARS", 100)
+    db = tmp_path / "rollover.db"
+    conn = _wire_metric_flush(mb, db)
+
+    # Low-level seed past the events cap: 5005 old truncate_result rows,
+    # oldest first, all older than anything the live call emits.
+    old_ts = 1_700_000_000.0
+    conn.executemany(
+        "INSERT INTO events (ts, name, session_id, attrs) "
+        "VALUES (?, 'truncate_result', 's', ?)",
+        [
+            (old_ts + i, '{"tool":"explore","chars_bucket":">10k"}')
+            for i in range(5005)
+        ],
+    )
+    conn.commit()
+
+    @mb.instrument
+    def explore_huge(query: str) -> str:
+        return "y" * 5000
+
+    delivered = explore_huge(query="big")
+    mb._flush_metrics()
+
+    before = conn.execute(
+        "SELECT truncated_from_chars, truncated_to_chars, resp_chars "
+        "FROM tool_metrics"
+    ).fetchone()
+    assert before["truncated_from_chars"] == 5000
+    assert before["truncated_to_chars"] == len(delivered)
+
+    # The forced flush rides the call's own truncate_result event through
+    # the sink, pruning events to the newest 5000 inside the transaction.
+    flush()
+
+    events_n = conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
+    assert events_n == 5000, "the events table rolled over at its cap"
+    # The oldest seeded occurrences were the ones pruned; the live call's
+    # occurrence (newest) survived.
+    pruned = conn.execute(
+        "SELECT COUNT(*) AS c FROM events WHERE ts <= ?", (old_ts + 5,)
+    ).fetchone()["c"]
+    assert pruned == 0, "oldest occurrences rolled out"
+
+    after = conn.execute(
+        "SELECT truncated_from_chars, truncated_to_chars, resp_chars "
+        "FROM tool_metrics"
+    ).fetchone()
+    assert dict(after) == dict(before), (
+        "magnitude survives the events rollover untouched"
+    )

@@ -1,11 +1,33 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Tokens — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
+  <div id="refresh-region">
   <h1>Token usage</h1>
   <p class="muted">
     Estimated context tokens per tool, ranked by total — the most
     context-expensive tool first.
+  </p>
+  {#- FR-002: the label names the mode that produced these numbers;
+      uncalibrated means the window had no usable stored-summary sample,
+      so the chars/token heuristic divisor stood in. -#}
+  <p class="muted">
+    Estimation mode: {{ tools.token_mode }}{% if tools.calibrated %} —
+    calibrated at ~{{ tools.chars_per_token }} chars/token from this
+    window's stored summaries{% elif 'heuristic' not in tools.token_mode %}
+    — uncalibrated for this window; estimates use the
+    {{ tools.chars_per_token }} chars/token heuristic divisor{% endif %}.
+  </p>
+  {% include "window_control.html" %}
+  {#- FR-005: exports ride the view's current filters (the selected store
+      rides links.url). -#}
+  {%- set export_q = {} %}
+  {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
+  <p class="muted">
+    Export:
+    <a href="{{ links.url('/tokens.csv', export_q) }}">CSV</a> ·
+    <a href="{{ links.url('/tokens.json', export_q) }}">JSON</a>
   </p>
   {% if tools %}
   <table class="data-table">
@@ -17,17 +39,22 @@
         <th>Est. resp tokens</th>
         <th>Total est. tokens</th>
         <th>Mean est. tokens</th>
+        <th>Truncated calls</th>
+        <th>Chars cut</th>
       </tr>
     </thead>
     <tbody>
       {% for t in tools %}
       <tr>
-        <td>{{ t.tool_name }}</td>
+        <td>{{ links.view_link('history', 'tool', t.tool_name, window) }}</td>
         <td class="num">{{ t.calls }}</td>
         <td class="num">~{{ t.est_req_tokens }}</td>
         <td class="num">~{{ t.est_resp_tokens }}</td>
         <td class="num">~{{ t.total_tokens }}</td>
         <td class="num">~{{ t.mean_tokens | mean }}</td>
+        {#- FR-003: unknown (no recorded truncation evidence) is not zero. -#}
+        <td class="num">{% if t.truncated_calls is none %}unknown{% else %}{{ t.truncated_calls }}{% endif %}</td>
+        <td class="num">{% if t.truncated_chars is none %}—{% else %}{{ t.truncated_chars }}{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -35,5 +62,7 @@
   {% else %}
   <p class="empty-state">No tool calls recorded yet.</p>
   {% endif %}
+  </div>
 </section>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}

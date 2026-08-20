@@ -1,0 +1,27 @@
+{#-
+  FR-003 link composition: every inter-view href goes through url() so the
+  selected store rides it (store_key non-empty). store_key is a render
+  context variable — importing templates must
+  `{% import "_links.html" as links with context %}` for it to resolve
+  (a plain import renders as if no store were selected, and a direct
+  render with no context at all is unchanged: undefined is falsy).
+  Empty store_key emits no store param, byte-identical to the pre-seam
+  hrefs. params values that are None are dropped; the store param is
+  always appended last.
+-#}
+{% macro url(base, params={}) -%}
+{%- set parts = [] -%}
+{%- for key, val in params.items() if val is not none -%}
+{%- set _ = parts.append(key ~ "=" ~ (val | urlencode)) -%}
+{%- endfor -%}
+{%- if store_key -%}
+{%- set _ = parts.append("store=" ~ (store_key | urlencode)) -%}
+{%- endif -%}
+{{ base }}{% if parts %}?{{ parts | join("&") }}{% endif %}
+{%- endmacro %}
+
+{% macro view_link(view, param, value, window='') -%}
+{% set q = {param: value} %}
+{%- if window and window != 'all' %}{% set _ = q.update({'window': window}) %}{% endif -%}
+<a href="{{ url('/' ~ view, q) }}">{{ value }}</a>
+{%- endmacro %}

@@ -16,7 +16,9 @@ Doctrine (mirrors ``mcp_server/metric_buffering.py``):
     dropping them silently. The deque ``maxlen`` caps unbounded growth during a
     long outage.
   * Retention pruning keeps the shared DB file bounded (spec §6.2): newest
-    ~5000 ``events`` / ~500 ``build_runs`` rows, inside the flush transaction.
+    ~5000 ``events`` / ~500 ``build_runs`` rows, plus ``tool_metrics`` under
+    an env-configurable row cap with an optional age bound
+    (:func:`retention_policy`), inside the flush transaction.
 
 Thread model: one daemon thread per process, started idempotently by
 :func:`start_flusher`. Each tick it drains this module's own event buffer via
@@ -79,6 +81,49 @@ _conn_factory: Optional[Callable[[], "object"]] = None
 _MAX_EVENTS_ROWS = 5000
 _MAX_BUILD_RUNS_ROWS = 500
 
+# tool_metrics retention default (spec ui-dashboard-polish FR-004): tens of
+# thousands so a store that accreted for months is not pruned on upgrade --
+# the cap exists to bound growth, not to rewrite history.
+_DEFAULT_TOOL_METRICS_ROWS = 50_000
+
+
+def _tool_metrics_max_rows() -> int:
+    """Row cap for ``tool_metrics`` pruning (CAIRN_TOOL_METRICS_MAX_ROWS).
+
+    Read per flush so a pinned env takes effect without a reload (same
+    posture as CAIRN_TELEMETRY). Unset, unparseable, or negative values fall
+    back to the default rather than raising -- a retention knob must never
+    take down the flush. The cap counts rows from both writers (mcp + cli).
+    """
+    raw = os.environ.get("CAIRN_TOOL_METRICS_MAX_ROWS", "")
+    if raw:
+        try:
+            val = int(raw)
+        except ValueError:
+            val = -1
+        if val >= 0:
+            return val
+        logger.debug("unparseable CAIRN_TOOL_METRICS_MAX_ROWS=%r, using default", raw)
+    return _DEFAULT_TOOL_METRICS_ROWS
+
+
+def _tool_metrics_max_age() -> Optional[float]:
+    """Optional age bound (seconds) for ``tool_metrics`` pruning.
+
+    CAIRN_TOOL_METRICS_MAX_AGE_SECONDS; unset (the default) disables
+    age-based pruning -- only the row cap applies. Unparseable or negative
+    values disable it too rather than raising.
+    """
+    raw = os.environ.get("CAIRN_TOOL_METRICS_MAX_AGE_SECONDS", "")
+    if not raw:
+        return None
+    try:
+        val = float(raw)
+    except ValueError:
+        logger.debug("unparseable CAIRN_TOOL_METRICS_MAX_AGE_SECONDS=%r, ignoring", raw)
+        return None
+    return val if val >= 0 else None
+
 
 def is_telemetry_off() -> bool:
     """True when CAIRN_TELEMETRY=off -- the master kill switch (spec §5.1).
@@ -105,6 +150,23 @@ def is_read_only() -> bool:
         "true",
         "yes",
     )
+
+
+def retention_policy() -> dict:
+    """The retention policy in force, as a plain dict (read fresh per call).
+
+    Keys: ``events_max_rows`` / ``build_runs_max_rows`` (fixed caps) and
+    ``tool_metrics_max_rows`` / ``tool_metrics_max_age_seconds`` (env-resolved;
+    age is ``None`` when disabled). The health panel renders this dict as the
+    aging policy alongside the current store size -- display only; pruning
+    itself runs solely in :func:`_prune` on the recording side.
+    """
+    return {
+        "events_max_rows": _MAX_EVENTS_ROWS,
+        "build_runs_max_rows": _MAX_BUILD_RUNS_ROWS,
+        "tool_metrics_max_rows": _tool_metrics_max_rows(),
+        "tool_metrics_max_age_seconds": _tool_metrics_max_age(),
+    }
 
 
 def configure_conn(conn_factory: Callable[[], "object"]) -> None:
@@ -149,14 +211,17 @@ def enqueue(ts: float, name: str, session_id: str, attrs_json: Optional[str]) ->
 def _prune(conn):
     """Bounded growth: keep the newest N rows per table (spec §6.2).
 
-    Runs inside the flush transaction so the prune + the insert are atomic.
-    "Newest" is TIME-ordered (ts / started_at), not id-ordered: rows carried
-    across a whole-file rebuild swap (schema.copy_telemetry_tables) are
-    appended with fresh ids AFTER the current build's row, so id order stops
-    being a proxy for recency there. Guarded so a missing ``build_runs``
-    table (pre-T08 DB) or a read-only connection doesn't raise -- prune is
-    best-effort, and a failure here must not abort the insert (the rows are
-    already committed-worthy on their own).
+    ``events`` / ``build_runs`` use fixed caps; ``tool_metrics`` uses the
+    env-resolved bounds from :func:`retention_policy` (row cap always, age
+    bound when set). Runs inside the flush transaction so the prune + the
+    insert are atomic. "Newest" is TIME-ordered (ts / started_at /
+    invoked_at), not id-ordered: rows carried across a whole-file rebuild
+    swap (schema.copy_telemetry_tables) are appended with fresh ids AFTER
+    the current build's row, so id order stops being a proxy for recency
+    there. Guarded per table so a missing table (pre-T08 DB) or a read-only
+    connection doesn't raise -- prune is best-effort, and a failure here
+    must not abort the insert (the rows are already committed-worthy on
+    their own).
 
     Untyped (no annotations) deliberately, mirroring
     ``metric_buffering._flush_metrics``: the injected connection is an opaque
@@ -179,6 +244,20 @@ def _prune(conn):
             "(SELECT id FROM build_runs ORDER BY started_at DESC, id DESC LIMIT ?)",
             (_MAX_BUILD_RUNS_ROWS,),
         )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            "DELETE FROM tool_metrics WHERE id NOT IN "
+            "(SELECT id FROM tool_metrics ORDER BY invoked_at DESC, id DESC LIMIT ?)",
+            (_tool_metrics_max_rows(),),
+        )
+        max_age = _tool_metrics_max_age()
+        if max_age is not None:
+            conn.execute(
+                "DELETE FROM tool_metrics WHERE invoked_at < ?",
+                (time.time() - max_age,),
+            )
     except Exception:
         pass
 

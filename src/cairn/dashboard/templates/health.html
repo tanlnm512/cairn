@@ -13,6 +13,28 @@
       <p class="card-value">{{ health.db_size_bytes | filesize }}</p>
     </div>
     <div class="card">
+      <h2>Retention</h2>
+      {% if health.tool_metrics_rows is none %}
+      <p class="card-value">unknown</p>
+      <p class="muted">no tool_metrics table</p>
+      {% else %}
+      <p class="card-value">{{ health.tool_metrics_rows }} rows</p>
+      {% if health.tool_metrics_rows > health.tool_metrics_max_rows %}
+      <span class="badge badge-warn">over cap</span>
+      {% endif %}
+      {% endif %}
+      <p class="muted">
+        tool_metrics cap {{ health.tool_metrics_max_rows }} rows ·
+        events ≤ {{ health.events_max_rows }} ·
+        build_runs ≤ {{ health.build_runs_max_rows }}
+      </p>
+      {% if health.tool_metrics_max_age_seconds is none %}
+      <p class="muted">no age bound</p>
+      {% else %}
+      <p class="muted">age bound {{ health.tool_metrics_max_age_seconds }}s</p>
+      {% endif %}
+    </div>
+    <div class="card">
       <h2>Index freshness</h2>
       {% if health.last_build_age %}
       <p class="card-value">{{ health.last_build_age }}</p>
