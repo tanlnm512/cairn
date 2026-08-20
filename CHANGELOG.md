@@ -12,7 +12,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-20
+
+> **Focus:** the dashboard-v2 train — `cairn dashboard` grows from a
+> read-only window into the graph into a complete operational console for
+> months of recorded agent traffic: scale, liveness, navigation, machine-wide
+> store switching, CLI-side usage recording, and an operational-polish pass.
+
 ### Added
+- `cairn dashboard` — a local, read-only web dashboard (127.0.0.1:8765,
+  zero new runtime deps): projects overview with index/embedding status,
+  interactive project graph (vendored vis-network, scope/depth controls),
+  tool-call history with filters, per-tool estimated token usage ranked by
+  cost, session-grouped tool call chains split at inactivity gaps, plus
+  health / memory / task-queue panels. A missing DB renders guidance
+  ("run `cairn build`"), never an error page.
+- MCP tool-call recording — `tool_metrics` gains `req_chars`, `resp_chars`,
+  and a redacted `args_summary` (additive migration; buffered off the hot
+  path, flushed on clean shutdown), and the server stamps a per-process
+  `CAIRN_SESSION` id so history and chains group per session.
+- Traffic views at months of scale — history/tokens/chains gain time
+  windows (24h / 7d / 30d / all) and keyset pagination over a new
+  `(invoked_at, id)` index, so a store with 10.5k+ recorded calls renders
+  within its budget; chains are bounded with per-session expand.
+- Live traffic views — poll-based auto-refresh on history/chains/tokens
+  (a re-arming loop gated on tab visibility) with pause/resume, a
+  disconnected banner, and filter/scroll preservation across refreshes;
+  proven by a 30-cycle soak asserting row-set equality.
+- Cross-view links — every entity drills down in one click: tokens→history
+  and history→chains row links that carry the active window, a chains
+  session filter, `/graph` linked from both navs, and node inspection via
+  select (single click) with doubleClick reserved for expansion.
+- Graph navigation — symbol search-to-focus with a disambiguation
+  candidates endpoint, doubleClick node expansion via `/graph/neighbors`,
+  and a force/hierarchical layout toggle that preserves the camera and
+  persists in the URL.
+- Workspaces launcher — `/workspaces` gives a machine-wide overview of
+  every known store (registry ∪ directories, four-state enumeration,
+  stat-first budgeted probes) and `?store=` switches every view to another
+  workspace without a server restart, with full filter/link carry.
+- CLI usage recording — `cli:*` command invocations are recorded beside
+  MCP tool calls into `tool_metrics` with a `source` column (`mcp`/`cli`,
+  additive migration, buffered like the MCP path): the history view
+  displays and filters by source, the tokens view includes CLI usage under
+  `cli:*` names, and terminal/tmux/CLI session ids never render as
+  "unknown".
 - Dashboard operational polish — warm health: probe results (reranker/ANN
   checks) prewarm on a background thread at server start and serve from a
   stale-while-revalidate cache, so the first `/health` never pays the
@@ -20,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   showing the policy in force and current store size. Token estimates
   become mode-aware: an exact tokenizer (via the optional `[semantic]`
   extra, no new deps) calibrates the chars-per-token divisor per window
-  from the store's own summaries, with the active mode always labeled and
+  from the store's summaries, with the active mode always labeled and
   `heuristic (chars/4)` as the zero-dependency fallback. Truncation
   observability: `tool_metrics` gains `truncated_from_chars`/
   `truncated_to_chars` recorded per truncated call (durable past the
@@ -34,24 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RFC-4180-correct CSV). Dark theme: `[data-theme=dark]` palette with a
   pre-paint, localStorage-persisted toggle defaulting to
   `prefers-color-scheme`.
-- `cairn dashboard` — a local, read-only web dashboard (127.0.0.1:8765,
-  zero new runtime deps): projects overview with index/embedding status,
-  interactive project graph (vendored vis-network, scope/depth controls),
-  tool-call history with filters, per-tool estimated token usage ranked by
-  cost, session-grouped tool call chains split at inactivity gaps, plus
-  health / memory / task-queue panels. A missing DB renders guidance
-  ("run `cairn build`"), never an error page.
-- MCP tool-call recording — `tool_metrics` gains `req_chars`, `resp_chars`,
-  and a redacted `args_summary` (additive migration; buffered off the hot
-  path, flushed on clean shutdown), and the server stamps a per-process
-  `CAIRN_SESSION` id so history and chains group per session.
 
 ### Changed
 - `cairn config --db` — prints only the resolved graph DB path (machine-readable,
   for scripting). The README self-demo already piped this into `sqlite3`; the
   flag now exists to match.
-
-### Changed
 - Code-vs-docs drift fixes from a full docs audit. `docs/mcp-tools.md`: the
   freshness section now describes the live file watcher (`[watch]` extra, ~2s
   debounce, `pending_sync` staleness banners) instead of the pre-watcher
