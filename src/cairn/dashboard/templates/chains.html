@@ -7,6 +7,10 @@
     Tool calls grouped per session, in call order; a new chain starts after
     {{ gap_minutes }} minutes of inactivity.
   </p>
+  {% if chains_truncated %}
+  <p class="muted">showing {{ chains | length }} of {{ total_chains }} chains</p>
+  {% endif %}
+  {% include "window_control.html" %}
   {% if chains %}
   <div class="chain-list">
     {% for chain in chains %}
@@ -29,6 +33,12 @@
         </li>
         {% endfor %}
       </ol>
+      {% if chain.truncated_calls %}
+      <p class="muted">
+        showing {{ chain.shown_calls }} of {{ chain.call_count }} calls ·
+        <a href="/chains?expand={{ chain.session_id | urlencode }}{% if window != "all" %}&amp;window={{ window | urlencode }}{% endif %}">expand</a>
+      </p>
+      {% endif %}
     </div>
     {% endfor %}
   </div>

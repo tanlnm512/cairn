@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import time
 
 import pytest
 
@@ -466,12 +467,47 @@ def _seed_metrics(conn, rows=None):
     return [row[0] for row in rows]
 
 
+def _history_rows(
+    count, base_ts=1755500000.25, tool="explore", session="sess-a", id_start=1
+):
+    """``count`` bulk rows, one per second: id ``id_start + i`` invoked at
+    ``base_ts + i``, so id order and time order agree and either key's
+    newest-first walk is the reverse id sequence. The ``.25`` base keeps
+    every timestamp non-integral: like production ``time.time()`` values,
+    they stay REAL through sqlite's NUMERIC-affinity ``TIMESTAMP`` column,
+    so cursor strings carry the float verbatim."""
+    return [
+        (id_start + i, tool, session, base_ts + i, 5.0, "ok", 10, 10)
+        for i in range(count)
+    ]
+
+
+def _walk_forward(conn, cursor=None, **kwargs):
+    """Walk pages via ``next`` from ``cursor`` (None = first page) until a
+    page comes back without one.
+
+    Returns ``(rows in walk order, per-page sizes)``. The 64-page hard bound
+    is far beyond anything seeded here and turns a cursor bug into a fast
+    failure instead of a hang."""
+    from cairn.dashboard.data import list_history
+
+    rows, sizes = [], []
+    for _ in range(64):
+        page = list_history(conn, before=cursor, **kwargs)
+        rows.extend(page["rows"])
+        sizes.append(len(page["rows"]))
+        cursor = page["next"]
+        if cursor is None:
+            return rows, sizes
+    raise AssertionError("history walk never reached a nextless page")
+
+
 def test_list_history_newest_first_with_full_columns(fresh_db):
     from cairn.dashboard.data import list_history
 
     _seed_metrics(fresh_db)
 
-    history = list_history(fresh_db)
+    history = list_history(fresh_db)["rows"]
 
     # invoked_at descending; not id order ([1, 2, 3, 4]) nor its reverse.
     assert [h["id"] for h in history] == [3, 1, 4, 2]
@@ -493,19 +529,20 @@ def test_list_history_filters_tool_session_combined_and_nonsense(fresh_db):
 
     _seed_metrics(fresh_db)
 
-    by_tool = list_history(fresh_db, tool_name="explore")
+    by_tool = list_history(fresh_db, tool_name="explore")["rows"]
     assert [h["id"] for h in by_tool] == [1, 2]
 
-    by_session = list_history(fresh_db, session_id="sess-b")
+    by_session = list_history(fresh_db, session_id="sess-b")["rows"]
     assert [h["id"] for h in by_session] == [1, 4]
 
-    combined = list_history(fresh_db, tool_name="explore", session_id="sess-b")
+    combined = list_history(fresh_db, tool_name="explore", session_id="sess-b")["rows"]
     assert [h["id"] for h in combined] == [1]
 
-    # Nonsense filters are empty lists, never errors.
-    assert list_history(fresh_db, tool_name="no_such_tool") == []
-    assert list_history(fresh_db, session_id="no-such-session") == []
-    assert list_history(fresh_db, tool_name="no_such_tool", session_id="x") == []
+    # Nonsense filters are empty pages, never errors.
+    empty_page = {"rows": [], "next": None, "prev": None}
+    assert list_history(fresh_db, tool_name="no_such_tool") == empty_page
+    assert list_history(fresh_db, session_id="no-such-session") == empty_page
+    assert list_history(fresh_db, tool_name="no_such_tool", session_id="x") == empty_page
 
 
 def test_list_history_pre_migration_null_sizes_stay_unknown(fresh_db):
@@ -518,7 +555,7 @@ def test_list_history_pre_migration_null_sizes_stay_unknown(fresh_db):
     )
     fresh_db.commit()
 
-    (row,) = list_history(fresh_db)
+    (row,) = list_history(fresh_db)["rows"]
 
     assert row["req_chars"] is None
     assert row["resp_chars"] is None
@@ -530,8 +567,10 @@ def test_list_history_pre_migration_null_sizes_stay_unknown(fresh_db):
 def test_list_history_fresh_db_returns_empty_list(fresh_db):
     from cairn.dashboard.data import list_history
 
-    assert list_history(fresh_db) == []
-    assert list_history(fresh_db, tool_name="explore") == []
+    # An empty store is a well-formed empty page, never an error.
+    empty_page = {"rows": [], "next": None, "prev": None}
+    assert list_history(fresh_db) == empty_page
+    assert list_history(fresh_db, tool_name="explore") == empty_page
 
 
 def test_list_history_args_summary_truncated_never_expanded(fresh_db):
@@ -553,13 +592,165 @@ def test_list_history_args_summary_truncated_never_expanded(fresh_db):
     )
     fresh_db.commit()
 
-    (row,) = list_history(fresh_db)
+    (row,) = list_history(fresh_db)["rows"]
 
     assert row["args_summary"] == payload[:MAX_ARGS_SUMMARY_CHARS]
     assert len(row["args_summary"]) <= 200
     assert "DISTINCTIVE_TAIL_" not in row["args_summary"]  # TC-024
     # The full-payload size still drives the token estimate.
     assert row["est_req_tokens"] == len(payload) // 4
+
+
+# ---------------------------------------------------------------------------
+# History pagination (traffic-scale FR-001/FR-006, US1-AC1/AC2): keyset
+# cursors on (invoked_at DESC, id DESC) per tech-spec D-001. These call the
+# data layer directly over a seeded connection.
+# ---------------------------------------------------------------------------
+
+
+def test_list_history_first_page_is_bounded_with_older_page_cursor(fresh_db):
+    """TC-001's data half: however large the store, the default fetch is one
+    bounded page plus the cursor of what lies older."""
+    from cairn.dashboard.data import HISTORY_PAGE_SIZE, list_history
+
+    total = HISTORY_PAGE_SIZE + 70  # deliberately past one full page
+    _seed_metrics(fresh_db, rows=_history_rows(total))
+
+    page = list_history(fresh_db)
+
+    assert len(page["rows"]) == HISTORY_PAGE_SIZE
+    assert [h["id"] for h in page["rows"]] == list(
+        range(total, total - HISTORY_PAGE_SIZE, -1)
+    )
+    # The older-page cursor is the page's oldest row: "<invoked_at>,<id>"
+    # (row id N was seeded at base_ts + N - 1).
+    oldest_id = total - HISTORY_PAGE_SIZE + 1
+    assert page["next"] == f"{1755500000.25 + (oldest_id - 1)},{oldest_id}"
+    assert page["prev"] is None  # a cursorless fetch starts at the newest
+
+
+def test_list_history_cursor_stable_under_mid_paging_insert(fresh_db):
+    """TC-002: pages stay stable and repeat-free while rows land mid-walk."""
+    from cairn.dashboard.data import list_history
+
+    _seed_metrics(fresh_db, rows=_history_rows(120))
+
+    first = list_history(fresh_db)  # ids 120..71, fetched pre-insert
+
+    # A new call lands between page fetches, newer than every walked cursor.
+    _seed_metrics(
+        fresh_db,
+        rows=[(121, "explore", "sess-late", 1755500500.25, 5.0, "ok", 10, 10)],
+    )
+
+    rows, _sizes = _walk_forward(fresh_db, cursor=first["next"])
+
+    walked = [h["id"] for h in first["rows"]] + [r["id"] for r in rows]
+    # The walk stays strictly descending with no row on two pages and covers
+    # exactly the pre-insert history -- the late row is never injected past
+    # its (newest) position into the older pages being walked.
+    assert walked == list(range(120, 0, -1))
+    assert 121 not in {r["id"] for r in rows}
+    # It appears only where its position puts it: the refreshed first page.
+    refreshed = list_history(fresh_db)
+    assert refreshed["rows"][0]["id"] == 121
+
+
+def test_list_history_full_walk_covers_every_row_exactly_once(fresh_db):
+    from cairn.dashboard.data import HISTORY_PAGE_SIZE
+
+    total = 3 * HISTORY_PAGE_SIZE + 37  # final page is partial
+    _seed_metrics(fresh_db, rows=_history_rows(total))
+
+    rows, sizes = _walk_forward(fresh_db)
+
+    assert sizes == [HISTORY_PAGE_SIZE] * 3 + [37]
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids))  # no row appears on two pages
+    assert ids == list(range(total, 0, -1))  # every seeded row, exactly once
+
+
+def test_list_history_backward_walk_retraces_to_first_page(fresh_db):
+    """TC-002's other half: paging forward and back lands on the same pages."""
+    from cairn.dashboard.data import list_history
+
+    _seed_metrics(fresh_db, rows=_history_rows(120))
+
+    first = list_history(fresh_db)
+    second = list_history(fresh_db, before=first["next"])
+
+    assert [h["id"] for h in second["rows"]] == list(range(70, 20, -1))
+    # prev points at the page's newest row; following it flips the keyset
+    # comparison without flipping the newest-first presentation.
+    assert second["prev"] == f"{1755500000.25 + 69},70"
+
+    back = list_history(fresh_db, after=second["prev"])
+
+    assert [h["id"] for h in back["rows"]] == [h["id"] for h in first["rows"]]
+    assert back["next"] == first["next"]
+    assert back["prev"] is None  # retraced all the way to the first page
+
+
+def test_list_history_equal_invoked_at_tie_breaks_on_higher_id(fresh_db):
+    from cairn.dashboard.data import list_history
+
+    ts = 1755500000.25
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (1, "explore", "sess-a", ts, 5.0, "ok", 10, 10),
+            (2, "get_callers", "sess-a", ts, 5.0, "ok", 10, 10),
+            (3, "ask_compass", "sess-a", ts, 5.0, "ok", 10, 10),
+        ],
+    )
+
+    # Same instant: id DESC decides, deterministically highest-first.
+    first = list_history(fresh_db, limit=2)
+    assert [h["id"] for h in first["rows"]] == [3, 2]
+
+    # The cursor is (invoked_at, id): the remaining same-instant row comes
+    # next without the tie re-serving row 2.
+    second = list_history(fresh_db, before=first["next"], limit=2)
+    assert [h["id"] for h in second["rows"]] == [1]
+    assert second["next"] is None
+
+
+def test_list_history_unparseable_cursor_is_no_filter_never_an_error(fresh_db):
+    from cairn.dashboard.data import list_history
+
+    _seed_metrics(fresh_db)
+
+    plain = list_history(fresh_db)
+
+    # A cursor is a hint, never an error: every unparseable shape (no comma,
+    # non-numeric fields) degrades to the plain first page.
+    for bad in ("garbage", "abc,def", "1755500000.0,late"):
+        assert list_history(fresh_db, before=bad) == plain
+        assert list_history(fresh_db, after=bad) == plain
+
+
+def test_list_history_filters_compose_with_paging_cursors(fresh_db):
+    from cairn.dashboard.data import HISTORY_PAGE_SIZE
+
+    _seed_metrics(
+        fresh_db,
+        rows=(
+            _history_rows(60, session="sess-a")  # ids 1-60
+            + _history_rows(40, session="sess-b", id_start=61)  # ids 61-100
+            + _history_rows(30, tool="get_callers", id_start=101)  # ids 101-130
+        ),
+    )
+
+    # sess-b and get_callers timestamps interleave sess-a's, so only the
+    # composed WHERE (filter AND keyset comparison) keeps every walked page
+    # inside the filter.
+    rows, sizes = _walk_forward(fresh_db, tool_name="explore", session_id="sess-a")
+
+    assert sizes == [HISTORY_PAGE_SIZE, 10]
+    assert all(
+        r["tool_name"] == "explore" and r["session_id"] == "sess-a" for r in rows
+    )
+    assert [r["id"] for r in rows] == list(range(60, 0, -1))
 
 
 # ---------------------------------------------------------------------------
@@ -658,8 +849,12 @@ def test_get_session_chains_gap_splits_bursts_keeps_order(fresh_db):
         ],
     )
 
-    chains = get_session_chains(fresh_db)
+    result = get_session_chains(fresh_db)
+    chains = result["chains"]
 
+    # Three chains, under both render bounds: the wrapper is the flat list
+    # plus honest totals (nothing hidden, FR-004's no-op half).
+    assert (result["total_chains"], result["truncated"]) == (3, False)
     # Sessions newest-activity-first (sess-a ends at later+60, sess-b at
     # base+30); chains within a session chronological.
     assert [(c["session_id"], c["call_count"]) for c in chains] == [
@@ -702,7 +897,7 @@ def test_get_session_chains_splits_only_beyond_the_gap(fresh_db):
         ],
     )
 
-    chains = get_session_chains(fresh_db)
+    chains = get_session_chains(fresh_db)["chains"]
 
     assert [c["call_count"] for c in chains] == [2, 1]
 
@@ -721,9 +916,8 @@ def test_get_session_chains_equal_timestamps_stay_one_chain(fresh_db):
         ],
     )
 
-    chains = get_session_chains(fresh_db)
+    (chain,) = get_session_chains(fresh_db)["chains"]
 
-    (chain,) = chains
     assert chain["call_count"] == 3
     assert [c["id"] for c in chain["calls"]] == [1, 2, 3]
     assert (chain["started_at"], chain["ended_at"]) == (1755500000.0, 1755500000.0)
@@ -732,4 +926,408 @@ def test_get_session_chains_equal_timestamps_stay_one_chain(fresh_db):
 def test_get_session_chains_empty_db_returns_empty_list(fresh_db):
     from cairn.dashboard.data import get_session_chains
 
-    assert get_session_chains(fresh_db) == []
+    # An empty store is the well-formed empty wrapper, never an error.
+    assert get_session_chains(fresh_db) == {
+        "chains": [],
+        "total_chains": 0,
+        "truncated": False,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Time windows (FR-002/FR-003 / US2): the shared ``since`` predicate across
+# history, tokens, and chains. Seeded timestamps anchor to ``time.time()``
+# at seeding time with fixed offsets, so every cutoff is deterministic —
+# never a sleep, never wall-clock dependence.
+# ---------------------------------------------------------------------------
+
+
+def test_list_history_since_excludes_outside_rows_keeps_cursors_in_window(fresh_db):
+    """TC-003's history half: only in-window rows render, and the paging
+    cursors stay in-window too (FR-002 + FR-006)."""
+    from cairn.dashboard.data import list_history
+
+    cutoff = time.time() - 86400  # a 24h-style window edge
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            # Outside the window, ids interleaved with the inside rows:
+            # exclusion must key on invoked_at, never on id order.
+            (1, "explore", "sess-a", cutoff - 7200, 5.0, "ok", 40, 40),
+            (2, "explore", "sess-a", cutoff - 60, 5.0, "ok", 80, 80),
+            # Inside, spanning the edge: exactly-at-cutoff counts (>=).
+            (3, "explore", "sess-a", cutoff, 5.0, "ok", 100, 100),
+            (4, "get_callers", "sess-a", cutoff + 60, 5.0, "ok", 200, 200),
+            (5, "ask_compass", "sess-a", cutoff + 120, 5.0, "ok", 400, 400),
+        ],
+    )
+
+    # All time (since=None): everything, newest first.
+    assert [h["id"] for h in list_history(fresh_db)["rows"]] == [5, 4, 3, 2, 1]
+
+    first = list_history(fresh_db, since=cutoff, limit=2)
+    assert [h["id"] for h in first["rows"]] == [5, 4]
+    second = list_history(fresh_db, since=cutoff, limit=2, before=first["next"])
+    assert [h["id"] for h in second["rows"]] == [3]  # boundary row is inside
+    # Two older rows exist in the store, but both are outside the window:
+    # no next cursor may point at them.
+    assert second["next"] is None
+    # prev stays in-window as well: retracing returns only in-window rows.
+    back = list_history(fresh_db, since=cutoff, limit=2, after=second["prev"])
+    assert [h["id"] for h in back["rows"]] == [5, 4]
+    assert back["next"] == first["next"]
+
+
+def test_list_history_since_excludes_null_invoked_at_rows():
+    """The shipped schema declares invoked_at NOT NULL, so NULL rows cannot
+    occur in production; this pins the window predicate's SQL contract on a
+    legacy-shape table without the constraint — NULL never satisfies
+    ``invoked_at >= ?`` (FR-002), so such rows surface only on all-time
+    pages."""
+    from cairn.dashboard.data import list_history
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE tool_metrics ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, tool_name TEXT NOT NULL, "
+        "session_id TEXT NOT NULL DEFAULT 'unknown', invoked_at TIMESTAMP, "
+        "duration_ms REAL, status TEXT NOT NULL DEFAULT 'ok', "
+        "error_message TEXT, req_chars INTEGER, resp_chars INTEGER, "
+        "args_summary TEXT)"
+    )
+    cutoff = time.time() - 86400
+    _seed_metrics(
+        conn,
+        rows=[
+            (1, "explore", "sess-a", None, 5.0, "ok", 40, 40),
+            (2, "explore", "sess-a", cutoff + 60, 5.0, "ok", 80, 80),
+        ],
+    )
+
+    # Windowed: only the dated row; the NULL row never matches.
+    assert [h["id"] for h in list_history(conn, since=cutoff)["rows"]] == [2]
+    # All time: the NULL row is still there, not silently dropped.
+    assert {h["id"] for h in list_history(conn)["rows"]} == {1, 2}
+
+
+def test_get_session_chains_since_drops_old_sessions_and_old_calls(fresh_db):
+    """TC-003's chains half: a session with no in-window calls vanishes
+    entirely; a mixed session keeps only its in-window calls with chain
+    bounds recomputed from them; an empty window is an empty list."""
+    from cairn.dashboard.data import get_session_chains
+
+    cutoff = time.time() - 86400
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            # sess-old: every call predates the window — the session vanishes.
+            (1, "explore", "sess-old", cutoff - 7200, 5.0, "ok", 10, 10),
+            (2, "get_callers", "sess-old", cutoff - 7140, 5.0, "ok", 10, 10),
+            # sess-mixed: one call before the edge, two after — only the two
+            # in-window calls survive, still one chain (gaps stay small).
+            (3, "explore", "sess-mixed", cutoff - 60, 5.0, "ok", 10, 10),
+            (4, "explore", "sess-mixed", cutoff + 60, 5.0, "ok", 10, 10),
+            (5, "get_callers", "sess-mixed", cutoff + 120, 5.0, "ok", 10, 10),
+            # sess-recent: born inside the window.
+            (6, "ask_compass", "sess-recent", cutoff + 180, 5.0, "ok", 10, 10),
+        ],
+    )
+
+    # Sessions newest-activity-first: sess-recent ends at cutoff+180,
+    # sess-mixed (windowed) at cutoff+120. One tuple per chain: sess-mixed
+    # keeps exactly its two in-window calls, sess-old is gone entirely.
+    windowed = get_session_chains(fresh_db, since=cutoff)
+    chains = windowed["chains"]
+    assert [(c["session_id"], c["call_count"]) for c in chains] == [
+        ("sess-recent", 1),
+        ("sess-mixed", 2),
+    ]
+    mixed = chains[1]
+    # The pre-edge call 3 is gone; chain bounds recompute from what remains.
+    assert [call["id"] for call in mixed["calls"]] == [4, 5]
+    assert (mixed["started_at"], mixed["ended_at"]) == (cutoff + 60, cutoff + 120)
+
+    # A window no call falls in is the empty wrapper, never an error.
+    assert get_session_chains(fresh_db, since=time.time() + 3600) == {
+        "chains": [],
+        "total_chains": 0,
+        "truncated": False,
+    }
+
+    # All time: all three sessions, sess-mixed whole again, totals honest.
+    all_time = get_session_chains(fresh_db)
+    assert [
+        (c["session_id"], c["call_count"]) for c in all_time["chains"]
+    ] == [
+        ("sess-recent", 1),
+        ("sess-mixed", 3),
+        ("sess-old", 2),
+    ]
+    assert (all_time["total_chains"], all_time["truncated"]) == (3, False)
+
+
+def test_get_tool_tokens_since_recomputes_aggregates_and_ranking(fresh_db):
+    """TC-004: a tool with heavy old traffic and light recent traffic —
+    windowed totals are the window's sums only, and the ranking flips;
+    NULL-size rows inside the window still count as calls, zero tokens."""
+    from cairn.dashboard.data import get_tool_tokens
+
+    cutoff = time.time() - 86400
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            # tool_old_heavy: three big calls days ago...
+            (1, "tool_old_heavy", "sess-a", cutoff - 30 * 86400, 5.0, "ok", 1600, 3200),
+            (2, "tool_old_heavy", "sess-a", cutoff - 29 * 86400, 5.0, "ok", 1600, 3200),
+            (3, "tool_old_heavy", "sess-a", cutoff - 28 * 86400, 5.0, "ok", 1600, 3200),
+            # ...and one small call inside the window.
+            (4, "tool_old_heavy", "sess-a", cutoff + 60, 5.0, "ok", 400, 800),
+            # tool_steady: one large call inside — the window's leader.
+            (5, "tool_steady", "sess-b", cutoff + 120, 5.0, "ok", 2400, 4800),
+        ],
+    )
+    # A pre-migration (NULL-size) row inside the window, for a third tool.
+    fresh_db.execute(
+        "INSERT INTO tool_metrics (id, tool_name, session_id, invoked_at, "
+        "duration_ms, status) VALUES (6, 'tool_nulls', 'sess-c', ?, 5.0, 'ok')",
+        (cutoff + 180,),
+    )
+    fresh_db.commit()
+
+    # All time: tool_old_heavy leads, 3x(400+800) = 3600 vs steady's 1800.
+    assert [t["tool_name"] for t in get_tool_tokens(fresh_db)] == [
+        "tool_old_heavy",
+        "tool_steady",
+        "tool_nulls",
+    ]
+
+    # Windowed: only in-window calls count and the ranking flips (AC2).
+    windowed = get_tool_tokens(fresh_db, since=cutoff)
+    assert [t["tool_name"] for t in windowed] == [
+        "tool_steady",
+        "tool_old_heavy",
+        "tool_nulls",
+    ]
+    by_tool = {t["tool_name"]: t for t in windowed}
+    heavy = by_tool["tool_old_heavy"]
+    assert heavy["calls"] == 1  # only the light recent call
+    assert heavy["total_tokens"] == 300  # 400//4 + 800//4, not 3600+300
+    assert heavy["mean_tokens"] == 300.0
+    steady = by_tool["tool_steady"]
+    assert (steady["calls"], steady["total_tokens"]) == (1, 1800)
+    # The NULL-size in-window row is still a call, contributing zero tokens.
+    nulls = by_tool["tool_nulls"]
+    assert nulls["calls"] == 1
+    assert (nulls["est_req_tokens"], nulls["est_resp_tokens"]) == (0, 0)
+    assert nulls["total_tokens"] == 0
+
+
+def test_list_history_window_composes_with_tool_and_session_filters(fresh_db):
+    """FR-006: the window is one more WHERE term — tool and session filters
+    each narrow it, and it narrows them."""
+    from cairn.dashboard.data import list_history
+
+    cutoff = time.time() - 86400
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (1, "explore", "sess-a", cutoff - 60, 5.0, "ok", 10, 10),  # old, matches
+            (2, "explore", "sess-a", cutoff + 60, 5.0, "ok", 10, 10),  # the one hit
+            (3, "explore", "sess-b", cutoff + 120, 5.0, "ok", 10, 10),  # wrong session
+            (4, "get_callers", "sess-a", cutoff + 180, 5.0, "ok", 10, 10),  # wrong tool
+            (5, "get_callers", "sess-b", cutoff - 60, 5.0, "ok", 10, 10),  # matches nothing
+        ],
+    )
+
+    page = list_history(fresh_db, tool_name="explore", session_id="sess-a", since=cutoff)
+    assert [h["id"] for h in page["rows"]] == [2]
+    assert (page["next"], page["prev"]) == (None, None)
+    # Without the window the same filter also finds the old call: the two
+    # filter kinds compose, neither replacing the other.
+    unwindowed = list_history(fresh_db, tool_name="explore", session_id="sess-a")
+    assert [h["id"] for h in unwindowed["rows"]] == [2, 1]
+
+
+# ---------------------------------------------------------------------------
+# Chains bounds (traffic-scale FR-004 / US3-AC1, TC-005): the render caps —
+# chains at once (CHAINS_MAX_CHAINS) and calls kept per chain
+# (CHAINS_CALLS_PER_CHAIN, overridable via expand) — over the legacy
+# all-'unknown'-session store shape, composing with the ``since`` window.
+# ---------------------------------------------------------------------------
+
+
+def test_get_session_chains_legacy_unknown_session_capped_per_chain(fresh_db):
+    """TC-005, the spec's first case: a legacy store where every call sits
+    under one session id 'unknown' — hundreds of calls, one chain. The
+    rendered chain keeps only its newest CHAINS_CALLS_PER_CHAIN calls with
+    honest shown/total accounting and recomputed bounds; expand exempts
+    that session from the per-chain cap."""
+    from cairn.dashboard.data import CHAINS_CALLS_PER_CHAIN, get_session_chains
+
+    # 200 calls a second apart: far inside SESSION_GAP_S, so one chain.
+    base = 1755500000.25  # _history_rows' default anchor
+    _seed_metrics(fresh_db, rows=_history_rows(200, session="unknown"))
+
+    result = get_session_chains(fresh_db)
+
+    assert (result["total_chains"], result["truncated"]) == (1, False)
+    (chain,) = result["chains"]
+    assert chain["session_id"] == "unknown"
+    # The rendered chain is exactly the cap of calls: the newest tail.
+    assert len(chain["calls"]) == CHAINS_CALLS_PER_CHAIN
+    first_shown = 200 - CHAINS_CALLS_PER_CHAIN + 1
+    assert [c["id"] for c in chain["calls"]] == list(range(first_shown, 201))
+    # Honest accounting: what renders vs what exists.
+    assert chain["shown_calls"] == CHAINS_CALLS_PER_CHAIN
+    assert chain["call_count"] == 200
+    assert chain["truncated_calls"] is True
+    # started_at recomputes to the first INCLUDED call; ended_at keeps the
+    # full chain's truth.
+    assert chain["started_at"] == base + (first_shown - 1)
+    assert chain["ended_at"] == base + 199
+
+    # expand='unknown' lifts the per-chain cap for that session only:
+    # every call returns, untruncated, bounds whole again.
+    (full,) = get_session_chains(fresh_db, expand="unknown")["chains"]
+    assert full["shown_calls"] == full["call_count"] == 200
+    assert [c["id"] for c in full["calls"]] == list(range(1, 201))
+    assert full["truncated_calls"] is False
+    assert (full["started_at"], full["ended_at"]) == (base, base + 199)
+
+
+def test_get_session_chains_chain_list_cap_keeps_newest_activity(fresh_db):
+    """FR-004's list bound: more chains than CHAINS_MAX_CHAINS render —
+    exactly the cap is kept, the kept ones are the newest-activity chains,
+    and total_chains/truncated tell the truth about the rest."""
+    from cairn.dashboard.data import CHAINS_MAX_CHAINS, get_session_chains
+
+    total = CHAINS_MAX_CHAINS + 4  # deliberately past the cap
+    base = 1755500000.0
+    # One call per session: session sess-00..sess-23, sess-i's call at
+    # base + i, so newest activity is strictly the highest id.
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (i + 1, "explore", f"sess-{i:02d}", base + i, 5.0, "ok", 10, 10)
+            for i in range(total)
+        ],
+    )
+
+    result = get_session_chains(fresh_db)
+
+    assert len(result["chains"]) == CHAINS_MAX_CHAINS
+    assert result["total_chains"] == total
+    assert result["truncated"] is True
+    # The cap applies after the newest-activity-first sort: the newest
+    # sessions survive, the oldest four vanish from the rendered list.
+    assert [c["session_id"] for c in result["chains"]] == [
+        f"sess-{i:02d}" for i in range(total - 1, total - 1 - CHAINS_MAX_CHAINS, -1)
+    ]
+    # Each kept chain is whole: the list cap never truncates calls.
+    for chain in result["chains"]:
+        assert (chain["call_count"], chain["shown_calls"]) == (1, 1)
+        assert chain["truncated_calls"] is False
+
+
+def test_get_session_chains_below_caps_results_unchanged_with_new_keys(fresh_db):
+    """FR-004's no-op half: below both bounds the wrapper changes nothing
+    about which chains render, their order, or their calls — it only adds
+    the honest keys."""
+    from cairn.dashboard.data import (
+        CHAINS_CALLS_PER_CHAIN,
+        CHAINS_MAX_CHAINS,
+        get_session_chains,
+    )
+
+    base = 1755500000.0
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (1, "explore", "sess-a", base, 5.0, "ok", 10, 10),
+            (2, "get_callers", "sess-a", base + 60, 5.0, "ok", 10, 10),
+            (3, "ask_compass", "sess-b", base + 120, 5.0, "ok", 10, 10),
+            (4, "explore", "sess-c", base + 6 * 3600, 5.0, "ok", 10, 10),
+            (5, "impact_analysis", "sess-c", base + 6 * 3600 + 60, 5.0, "ok", 10, 10),
+        ],
+    )
+
+    result = get_session_chains(fresh_db)
+    chains = result["chains"]
+
+    # Well under both bounds by construction.
+    assert len(chains) < CHAINS_MAX_CHAINS
+    assert all(c["call_count"] < CHAINS_CALLS_PER_CHAIN for c in chains)
+    # Same order and content semantics the gap tests assert: sessions
+    # newest-activity-first (sess-c ends at base+6h+60, sess-b at base+120,
+    # sess-a at base+60), calls chronological within each chain.
+    assert [(c["session_id"], c["call_count"]) for c in chains] == [
+        ("sess-c", 2),
+        ("sess-b", 1),
+        ("sess-a", 2),
+    ]
+    assert [c["id"] for c in chains[2]["calls"]] == [1, 2]
+    for chain in chains:
+        # Nothing truncated: shown == all, bounds the full chain's truth.
+        assert chain["shown_calls"] == chain["call_count"] == len(chain["calls"])
+        assert chain["truncated_calls"] is False
+        timestamps = [call["invoked_at"] for call in chain["calls"]]
+        assert timestamps == sorted(timestamps)
+        assert (chain["started_at"], chain["ended_at"]) == (
+            timestamps[0],
+            timestamps[-1],
+        )
+    assert (result["total_chains"], result["truncated"]) == (3, False)
+
+
+def test_get_session_chains_since_windows_before_the_caps(fresh_db):
+    """FR-002 + FR-004: the window filters rows before grouping and before
+    either cap — an old giant session that would flood the capped list
+    vanishes under a recent window, and the windowed totals count only
+    in-window chains."""
+    from cairn.dashboard.data import CHAINS_MAX_CHAINS, SESSION_GAP_S, get_session_chains
+
+    cutoff = time.time() - 86400
+    # A legacy-shape giant: 22 calls each > SESSION_GAP_S apart — 22 chains,
+    # more than the chain-list cap — every one recorded before the edge.
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (
+                i + 1,
+                "explore",
+                "unknown",
+                cutoff - 60 - (22 - i) * (SESSION_GAP_S + 100),
+                5.0,
+                "ok",
+                10,
+                10,
+            )
+            for i in range(22)
+        ],
+    )
+    # A small recent session, born inside the window.
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (101, "explore", "sess-now", cutoff + 10, 5.0, "ok", 10, 10),
+            (102, "get_callers", "sess-now", cutoff + 20, 5.0, "ok", 10, 10),
+        ],
+    )
+
+    # All time: the giant floods the list — sess-now's chain plus 19 of the
+    # giant's 22 fit the cap, newest-activity-first, and the wrapper says so.
+    all_time = get_session_chains(fresh_db)
+    assert all_time["total_chains"] == 23
+    assert all_time["truncated"] is True
+    assert len(all_time["chains"]) == CHAINS_MAX_CHAINS
+    assert all_time["chains"][0]["session_id"] == "sess-now"
+
+    # Windowed: the giant has no in-window calls and vanishes before any
+    # cap applies — the recent session is the entire result, untruncated.
+    windowed = get_session_chains(fresh_db, since=cutoff)
+    assert (windowed["total_chains"], windowed["truncated"]) == (1, False)
+    (chain,) = windowed["chains"]
+    assert chain["session_id"] == "sess-now"
+    assert [c["id"] for c in chain["calls"]] == [101, 102]
+    assert (chain["started_at"], chain["ended_at"]) == (cutoff + 10, cutoff + 20)

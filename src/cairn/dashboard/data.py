@@ -274,42 +274,104 @@ def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dic
     ]
 
 
+HISTORY_PAGE_SIZE = 50
+
+
+def _parse_history_cursor(cursor: Optional[str]) -> Optional[tuple]:
+    """Decode a page cursor ``"<invoked_at>,<id>"`` into ``(float, int)``;
+    None when absent or unparseable — a caller's cursor is a hint, never
+    an error."""
+    if not cursor:
+        return None
+    ts, sep, row_id = cursor.partition(",")
+    if not sep:
+        return None
+    try:
+        return float(ts), int(row_id)
+    except ValueError:
+        return None
+
+
 def list_history(
     conn: sqlite3.Connection,
     tool_name: Optional[str] = None,
     session_id: Optional[str] = None,
-) -> List[dict]:
-    """Tool-invocation history, newest-first (FR-005).
+    since: Optional[float] = None,
+    before: Optional[str] = None,
+    after: Optional[str] = None,
+    limit: int = HISTORY_PAGE_SIZE,
+) -> Dict:
+    """One bounded page of tool-invocation history, newest-first (FR-001).
 
     ``tool_name`` / ``session_id`` are exact-match filters (None = no
-    filter); a no-match filter is an empty list, never an error.
-    ``invoked_at`` is a raw ``time.time()`` epoch float — the MCP sink
-    writes it directly, so ordering is numeric and the value is returned
-    verbatim, never parsed as ISO. Pre-migration rows carry NULL sizes;
-    their token estimates are None (unknown), not 0. ``args_summary`` is
-    returned as stored — already redacted and truncated at the write
-    chokepoint (``MAX_ARGS_SUMMARY_CHARS``); this layer never expands it.
+    filter); a no-match filter is an empty page, never an error.
+    ``since`` (epoch seconds, None = all time) windows the page — and the
+    neighbor probes that decide ``next``/``prev`` — to ``invoked_at >=
+    since``; rows with NULL ``invoked_at`` predate windowing and never
+    match a window (FR-002, FR-006). Paging is
+    keyset on ``(invoked_at, id)``: ``before`` yields the page strictly
+    older than that cursor, ``after`` the page strictly newer, presented in
+    the same newest-first order. A cursor is the opaque
+    ``"<invoked_at>,<id>"`` string a prior result's ``next``/``prev``
+    carried; an unparseable cursor is ignored (no filter), never an error.
+    The result carries ``rows`` (at most ``limit`` row dicts), ``next``
+    (cursor of the older page, None when exhausted) and ``prev`` (cursor
+    of the newer page, None when none). ``invoked_at`` is a raw
+    ``time.time()`` epoch float — the MCP sink writes it directly, so
+    ordering is numeric and the value is returned verbatim, never parsed
+    as ISO. Pre-migration rows carry NULL sizes; their token estimates are
+    None (unknown), not 0. ``args_summary`` is returned as stored —
+    already redacted and truncated at the write chokepoint
+    (``MAX_ARGS_SUMMARY_CHARS``); this layer never expands it.
     """
-    clauses: List[str] = []
-    params: List[object] = []
+    if limit < 1:
+        limit = 1
+    before_key = _parse_history_cursor(before)
+    after_key = _parse_history_cursor(after)
+    backward = after_key is not None
+
+    filter_clauses: List[str] = []
+    filter_params: List[object] = []
     if tool_name is not None:
-        clauses.append("tool_name = ?")
-        params.append(tool_name)
+        filter_clauses.append("tool_name = ?")
+        filter_params.append(tool_name)
     if session_id is not None:
-        clauses.append("session_id = ?")
-        params.append(session_id)
+        filter_clauses.append("session_id = ?")
+        filter_params.append(session_id)
+    if since is not None:
+        # NULL invoked_at never satisfies the comparison: pre-windowing
+        # rows only ever surface on all-time (since=None) pages.
+        filter_clauses.append("invoked_at >= ?")
+        filter_params.append(since)
+
+    clauses = list(filter_clauses)
+    params = list(filter_params)
+    if before_key is not None:
+        clauses.append("(invoked_at, id) < (?, ?)")
+        params.extend(before_key)
+    if after_key is not None:
+        clauses.append("(invoked_at, id) > (?, ?)")
+        params.extend(after_key)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(
+    # The over-fetched (limit + 1)-th row proves a further page exists in
+    # the fetch direction; NULL invoked_at never satisfies either row-value
+    # comparison, so such rows only ever appear on a cursorless first page.
+    direction = "ASC, id ASC" if backward else "DESC, id DESC"
+    fetched = conn.execute(
         f"""
         SELECT id, tool_name, session_id, invoked_at, duration_ms,
                status, error_message, req_chars, resp_chars, args_summary
         FROM tool_metrics{where}
-        ORDER BY invoked_at DESC
+        ORDER BY invoked_at {direction}
+        LIMIT ?
         """,
-        params,
+        [*params, limit + 1],
     ).fetchall()
+    page = fetched[:limit]
+    if backward:
+        page = list(reversed(page))
 
-    return [
+    rows = [
         {
             "id": row["id"],
             "tool_name": row["tool_name"],
@@ -328,11 +390,38 @@ def list_history(
             ),
             "args_summary": row["args_summary"],
         }
-        for row in rows
+        for row in page
     ]
 
+    def has_neighbor(edge: dict, comparison: str) -> bool:
+        probe_clauses = filter_clauses + [f"(invoked_at, id) {comparison} (?, ?)"]
+        probe_where = f" WHERE {' AND '.join(probe_clauses)}"
+        return (
+            conn.execute(
+                f"SELECT 1 FROM tool_metrics{probe_where} LIMIT 1",
+                [*filter_params, edge["invoked_at"], edge["id"]],
+            ).fetchone()
+            is not None
+        )
 
-def get_tool_tokens(conn: sqlite3.Connection) -> List[dict]:
+    next_cursor = None
+    prev_cursor = None
+    if rows:
+        newest, oldest = rows[0], rows[-1]
+        # Forward fetches learn "more older rows exist" from the over-fetch;
+        # a backward fetch only proves newer rows, so it probes instead.
+        more_older = len(fetched) > limit if not backward else has_neighbor(oldest, "<")
+        if more_older:
+            next_cursor = f"{oldest['invoked_at']},{oldest['id']}"
+        if has_neighbor(newest, ">"):
+            prev_cursor = f"{newest['invoked_at']},{newest['id']}"
+
+    return {"rows": rows, "next": next_cursor, "prev": prev_cursor}
+
+
+def get_tool_tokens(
+    conn: sqlite3.Connection, since: Optional[float] = None
+) -> List[dict]:
     """Per-tool estimated context-token aggregates, ranked by total desc
     (FR-006).
 
@@ -341,16 +430,22 @@ def get_tool_tokens(conn: sqlite3.Connection) -> List[dict]:
     suite uses, so dashboard and bench numbers stay comparable. Rows with
     NULL sizes (recorded before the size columns existed) contribute zero
     tokens but still count as calls; ``mean_tokens`` is ``total / calls``.
+    ``since`` (epoch seconds, None = all time) computes calls, sums — and
+    therefore aggregates and ranking — within the window only (FR-003);
+    rows with NULL ``invoked_at`` predate windowing and never match a
+    window.
     """
+    where = " WHERE invoked_at >= ?" if since is not None else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT tool_name,
                COUNT(*) AS calls,
                SUM(req_chars) AS total_req_chars,
                SUM(resp_chars) AS total_resp_chars
-        FROM tool_metrics
+        FROM tool_metrics{where}
         GROUP BY tool_name
-        """
+        """,
+        [since] if since is not None else [],
     ).fetchall()
 
     entries: List[dict] = []
@@ -375,25 +470,59 @@ def get_tool_tokens(conn: sqlite3.Connection) -> List[dict]:
 # Seconds of inactivity that split a session into separate chains.
 SESSION_GAP_S = 1800
 
+# Bounds for the chains view (FR-004): chains rendered at once, and calls
+# kept per chain before the expand affordance takes over.
+CHAINS_MAX_CHAINS = 20
+CHAINS_CALLS_PER_CHAIN = 25
 
-def get_session_chains(conn: sqlite3.Connection) -> List[dict]:
-    """Tool calls grouped per session as ordered chains (FR-007).
+
+def get_session_chains(
+    conn: sqlite3.Connection,
+    since: Optional[float] = None,
+    max_chains: int = CHAINS_MAX_CHAINS,
+    calls_per_chain: int = CHAINS_CALLS_PER_CHAIN,
+    expand: Optional[str] = None,
+) -> Dict:
+    """Tool calls grouped per session as ordered chains, bounded for
+    rendering (FR-004, FR-007).
 
     A session's calls are ordered by ``invoked_at`` (a raw ``time.time()``
     epoch float — gaps are computed numerically, never parsed as ISO) and
     a new chain starts wherever consecutive calls are more than
     :data:`SESSION_GAP_S` seconds apart. Calls with NULL ``invoked_at``
     never split a chain — their distance is unknowable — and stay in the
-    current one. The flat chain list orders sessions newest-activity-first
-    (all-NULL sessions last) and chains within a session chronologically;
-    a single-call session is still one chain.
+    current one. Sessions order newest-activity-first (all-NULL sessions
+    last) and chains within a session chronologically; a single-call
+    session is still one chain. ``since`` (epoch seconds, None = all
+    time) windows the rows before grouping (FR-002): sessions and chains
+    with no in-window calls vanish from the output entirely, and NULL
+    ``invoked_at`` calls predate windowing and never match a window — an
+    empty window is an empty result, never an error.
+
+    The flat chain list is capped at ``max_chains`` after flattening
+    (newest sessions' chains first); each chain keeps only its newest
+    ``calls_per_chain`` calls — ``started_at`` then reflects the first
+    included call while ``ended_at`` and ``call_count`` keep the full
+    chain's truth. Every chain carries ``shown_calls`` and
+    ``truncated_calls`` (call_count > shown_calls); the returned wrapper
+    carries ``chains``, ``total_chains`` (chains in the windowed result
+    before the cap) and ``truncated`` (total_chains > len(chains)). The
+    chains of the session whose id equals ``expand`` (exact value match)
+    are exempt from the per-chain cap — the chain-list cap still applies.
+    Bounds below 1 are clamped to 1, never an error.
     """
+    if max_chains < 1:
+        max_chains = 1
+    if calls_per_chain < 1:
+        calls_per_chain = 1
+    where = " WHERE invoked_at >= ?" if since is not None else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT id, tool_name, session_id, invoked_at, duration_ms, status
-        FROM tool_metrics
+        FROM tool_metrics{where}
         ORDER BY session_id, invoked_at
-        """
+        """,
+        [since] if since is not None else [],
     ).fetchall()
 
     grouped: Dict[object, List[sqlite3.Row]] = {}
@@ -439,10 +568,30 @@ def get_session_chains(conn: sqlite3.Connection) -> List[dict]:
         key=lambda s: (s["last_activity"] is not None, s["last_activity"] or 0.0),
         reverse=True,
     )
-    chains_out: List[dict] = []
+    all_chains: List[dict] = []
     for session in sessions:
-        chains_out.extend(session["chains"])
-    return chains_out
+        all_chains.extend(session["chains"])
+
+    chains_out: List[dict] = all_chains[:max_chains]
+    for chain in chains_out:
+        calls = chain["calls"]
+        expanded = expand is not None and chain["session_id"] == expand
+        if not expanded and len(calls) > calls_per_chain:
+            # Chains are chronological: the newest tail is what renders.
+            calls = calls[-calls_per_chain:]
+        chain["calls"] = calls
+        chain["shown_calls"] = len(calls)
+        chain["truncated_calls"] = chain["call_count"] > len(calls)
+        if chain["truncated_calls"]:
+            timestamps = [
+                c["invoked_at"] for c in calls if c["invoked_at"] is not None
+            ]
+            chain["started_at"] = timestamps[0] if timestamps else None
+    return {
+        "chains": chains_out,
+        "total_chains": len(all_chains),
+        "truncated": len(all_chains) > len(chains_out),
+    }
 
 
 class MissingDatabaseError(FileNotFoundError):

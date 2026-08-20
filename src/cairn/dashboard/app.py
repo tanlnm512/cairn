@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +29,13 @@ DEFAULT_PORT = 8765
 
 # llm.tasks Task.status vocabulary — the /tasks filter's allowed values.
 TASK_STATUSES = ("pending", "in-progress", "done", "failed")
+
+# Traffic-view time-window presets (FR-002) — the ``window`` param's
+# allowed values; "all" is the unbounded default.
+WINDOW_PRESETS = ("24h", "7d", "30d", "all")
+
+# Preset -> seconds back from now; "all" is absent (unbounded).
+_WINDOW_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 
 
 def _human_size(num_bytes) -> str:
@@ -91,6 +99,17 @@ def _fmt_mean(value) -> str:
     """Mean tokens as a whole number when exact, one decimal otherwise."""
     num = float(value or 0)
     return f"{int(num)}" if num == int(num) else f"{num:.1f}"
+
+
+def _resolve_window(window: str | None) -> tuple[str, float | None]:
+    """Validated ``window`` param plus its ``since`` epoch cutoff (FR-002).
+
+    Unknown values silently fall back to ``"all"``, matching the graph
+    handler's scope fallback; ``since`` is None (unbounded) for ``"all"``.
+    """
+    preset = window if window in WINDOW_PRESETS else "all"
+    seconds = _WINDOW_SECONDS.get(preset)
+    return preset, time.time() - seconds if seconds is not None else None
 
 
 def create_app(
@@ -202,39 +221,68 @@ def create_app(
     def history(request: Request) -> Response:
         tool = request.query_params.get("tool", "").strip() or None
         session = request.query_params.get("session", "").strip() or None
+        before = request.query_params.get("before", "").strip() or None
+        after = request.query_params.get("after", "").strip() or None
+        window, since = _resolve_window(request.query_params.get("window"))
         conn = get_read_only_db(db_path)
         try:
-            calls = list_history(conn, tool_name=tool, session_id=session)
+            result = list_history(
+                conn,
+                tool_name=tool,
+                session_id=session,
+                before=before,
+                after=after,
+                since=since,
+            )
         finally:
             conn.close()
         return templates.TemplateResponse(
             request,
             "history.html",
-            {"calls": calls, "tool": tool or "", "session": session or ""},
+            {
+                "calls": result["rows"],
+                "tool": tool or "",
+                "session": session or "",
+                "before": before or "",
+                "after": after or "",
+                "window": window,
+                "next_cursor": result["next"],
+                "prev_cursor": result["prev"],
+            },
         )
 
     def tokens(request: Request) -> Response:
+        window, since = _resolve_window(request.query_params.get("window"))
         conn = get_read_only_db(db_path)
         try:
-            rows = get_tool_tokens(conn)
+            rows = get_tool_tokens(conn, since=since)
         finally:
             conn.close()
         return templates.TemplateResponse(
             request,
             "tokens.html",
-            {"tools": rows},
+            {"tools": rows, "window": window},
         )
 
     def chains(request: Request) -> Response:
+        window, since = _resolve_window(request.query_params.get("window"))
+        expand = request.query_params.get("expand", "").strip() or None
         conn = get_read_only_db(db_path)
         try:
-            rows = get_session_chains(conn)
+            result = get_session_chains(conn, since=since, expand=expand)
         finally:
             conn.close()
         return templates.TemplateResponse(
             request,
             "chains.html",
-            {"chains": rows, "gap_minutes": SESSION_GAP_S // 60},
+            {
+                "chains": result["chains"],
+                "chains_truncated": result["truncated"],
+                "total_chains": result["total_chains"],
+                "expand": expand or "",
+                "gap_minutes": SESSION_GAP_S // 60,
+                "window": window,
+            },
         )
 
     def memory(request: Request) -> Response:

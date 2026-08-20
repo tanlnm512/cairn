@@ -9,6 +9,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -677,6 +678,106 @@ def test_tokens_and_chains_routes_empty_db_render_empty_states(tmp_path):
         assert resp.status_code == 200
         assert "No tool calls recorded yet" in resp.text
         assert '<table class="data-table">' not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Time-window control on the traffic routes (FR-002): the data layer owns
+# the semantics (tests/test_dashboard_data.py); these pin only what is
+# route-visible — the control, the bogus-value fallback, and the Older
+# link carrying the window. Seeded timestamps anchor to time.time() with
+# fixed offsets because the cutoff is computed at request time.
+# ---------------------------------------------------------------------------
+
+
+def _window_db_file(tmp_path, bulk: bool) -> str:
+    """A graph-schema DB file; ``recent_tool`` ran a minute ago (inside any
+    24h window), ``ancient_tool`` three days ago (outside 24h, inside 30d).
+    ``bulk=True`` adds one page plus ten more recent explore rows so a 24h
+    window still paginates."""
+    from cairn.dashboard.data import HISTORY_PAGE_SIZE
+    from cairn.graph.schema import _apply_schema
+
+    now = time.time()
+    rows = [
+        ("recent_tool", "sess-recent", now - 60, 10.0, "ok", 40, 80),
+        ("ancient_tool", "sess-ancient", now - 3 * 86400, 20.0, "ok", 400, 800),
+    ]
+    if bulk:
+        rows += [
+            ("explore", "sess-bulk", now - 120 - i, 5.0, "ok", 10, 10)
+            for i in range(HISTORY_PAGE_SIZE + 10)
+        ]
+
+    db_path = str(tmp_path / "window.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    conn.executemany(
+        "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+        "duration_ms, status, req_chars, resp_chars) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def _window_client(tmp_path, bulk: bool):
+    return _panel_client(
+        tmp_path, _window_db_file(tmp_path, bulk), str(tmp_path / "missing")
+    )
+
+
+def test_window_control_renders_on_history_tokens_and_chains(tmp_path):
+    """FR-002: all three traffic views carry the shared window control with
+    the 24h/7d/30d/all presets, 'all' active by default."""
+    client = _window_client(tmp_path, bulk=False)
+    for path in ("/history", "/tokens", "/chains"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert "Window:" in resp.text, path
+        for preset in ("24h", "7d", "30d", "all"):
+            assert preset in resp.text, path
+        assert "<strong>all</strong>" in resp.text, path
+
+
+def test_window_bogus_value_falls_back_to_all(tmp_path):
+    """An unknown window value degrades to all-time, matching the graph
+    handler's scope fallback: never an error, 'all' marked active, and the
+    out-of-24h rows stay on the page."""
+    client = _window_client(tmp_path, bulk=False)
+
+    windowed = client.get("/history", params={"window": "24h"})
+    assert windowed.status_code == 200
+    assert "<strong>24h</strong>" in windowed.text
+    assert "recent_tool" in windowed.text
+    assert "ancient_tool" not in windowed.text  # outside rows excluded
+
+    bogus = client.get("/history", params={"window": "bogus"})
+    assert bogus.status_code == 200
+    assert "<strong>all</strong>" in bogus.text
+    assert "recent_tool" in bogus.text
+    assert "ancient_tool" in bogus.text  # same rows as all-time
+
+
+def test_history_older_link_carries_the_active_window(tmp_path):
+    """FR-006: paging composes with the window — the Older link keeps the
+    24h param so the next page stays in-window instead of resuming all-time
+    pagination past the window's edge."""
+    client = _window_client(tmp_path, bulk=True)
+    resp = client.get("/history", params={"window": "24h"})
+    assert resp.status_code == 200
+
+    older = re.search(r'<a href="(/history\?before=[^"]*)">Older</a>', resp.text)
+    assert older, "Older link missing from a windowed multi-page history"
+    assert "window=24h" in older.group(1)
+
+    page2 = client.get(older.group(1).replace("&amp;", "&"))
+    assert page2.status_code == 200
+    # Dropping the window here would resume all-time pagination and reach
+    # the ancient row; carrying it keeps every older page in-window.
+    assert "ancient_tool" not in page2.text
 
 
 def test_missing_db_renders_friendly_state_not_500(tmp_path):

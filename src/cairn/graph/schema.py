@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS tool_metrics (
 );
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_tool ON tool_metrics(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_metrics_session ON tool_metrics(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_metrics_invoked ON tool_metrics(invoked_at, id);
 
 -- One row per indexing pass (full build / incremental sync / embed) so build
 -- history, phase timings, and resolution quality survive the process that

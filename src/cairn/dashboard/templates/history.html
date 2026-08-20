@@ -10,8 +10,10 @@
     <label>Session
       <input type="text" name="session" value="{{ session }}">
     </label>
+    <input type="hidden" name="window" value="{{ window }}">
     <button type="submit">Apply</button>
   </form>
+  {% include "window_control.html" %}
   {% if calls %}
   <table class="data-table">
     <thead>
@@ -39,6 +41,13 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if prev_cursor or next_cursor %}
+  <p class="muted">
+    {%- if prev_cursor %}<a href="/history?after={{ prev_cursor | urlencode }}{% if tool %}&amp;tool={{ tool | urlencode }}{% endif %}{% if session %}&amp;session={{ session | urlencode }}{% endif %}{% if window != "all" %}&amp;window={{ window | urlencode }}{% endif %}">Newer</a>{% endif %}
+    {%- if prev_cursor and next_cursor %} · {% endif %}
+    {%- if next_cursor %}<a href="/history?before={{ next_cursor | urlencode }}{% if tool %}&amp;tool={{ tool | urlencode }}{% endif %}{% if session %}&amp;session={{ session | urlencode }}{% endif %}{% if window != "all" %}&amp;window={{ window | urlencode }}{% endif %}">Older</a>{% endif %}
+  </p>
+  {% endif %}
   {% else %}
   <p class="empty-state">No matching calls{% if not tool and not session %} recorded yet{% endif %}.</p>
   {% endif %}
