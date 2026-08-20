@@ -569,3 +569,72 @@ def test_launcher_interactions_leave_every_store_byte_identical(
         p for p in after_files if p.endswith(("-wal", "-shm"))
     )
     assert sidecars == []
+
+
+# ---------------------------------------------------------------------------
+# Retention display guard (ui-dashboard-polish FR-007 / TC-009): the health
+# panel now renders the retention policy and the current store size, and
+# the dashboard serves traffic views over stores that are OVER those
+# bounds. Aging runs solely in the recording sink's flush -- the dashboard
+# process must still never age anything, no matter how far past the bounds
+# the store it reads sits or which bounds its env pins.
+# ---------------------------------------------------------------------------
+
+
+def test_views_over_an_over_cap_store_never_age_it(tmp_path, monkeypatch):
+    """TC-009: a store past BOTH bounds -- row count over the pinned cap and
+    every bulk row older than the pinned age window -- serves the full route
+    sweep (health displaying the policy in force and the over-cap size
+    included) with row counts and the file digest unchanged and no sidecars:
+    no route, /health included, deletes a single row."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", "5000")
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_AGE_SECONDS", "60")
+
+    db_path = _seed_populated_db(tmp_path, name="over-cap.db")
+    over_cap = 5200
+    ancient = 1_700_000_000.0  # far older than the 60s age window
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+        "duration_ms, status, req_chars, resp_chars) "
+        "VALUES ('bulk_tool', 'sess-bulk', ?, 5.0, 'ok', 10, 20)",
+        [(ancient + i,) for i in range(over_cap)],
+    )
+    conn.commit()
+    conn.close()
+    total_rows = 4 + over_cap
+
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+
+    client = TestClient(
+        create_app(db_path=db_path, knowledge_dir=_seed_knowledge(tmp_path))
+    )
+
+    before_digest = _digest(db_path)
+    assert _metric_rows(db_path) == total_rows
+
+    for path in ROUTES:
+        _fetch(client, path)
+
+    # Non-vacuous: /health really served the over-cap store WITH the
+    # pinned policy visible -- the display half of the retention seam.
+    health = _fetch(client, "/health")
+    assert "tool_metrics cap 5000 rows" in health.text
+    assert f"{total_rows} rows" in health.text
+    assert "over cap" in health.text
+    # The age knob parses as a float, so the card renders "60.0s".
+    assert "age bound 60.0s" in health.text
+    assert "events ≤ 5000" in health.text
+
+    # The guard itself: nothing aged, nothing written.
+    assert _metric_rows(db_path) == total_rows
+    assert _digest(db_path) == before_digest
+    sidecars = sorted(
+        p.name
+        for p in Path(db_path).parent.iterdir()
+        if p.name.endswith(("-wal", "-shm"))
+    )
+    assert sidecars == []

@@ -2,7 +2,8 @@
 
 Routes: landing, workspaces overview, projects, graph (plus its
 /graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
-history, tokens, chains, health, memory, tasks.
+history, tokens (plus their .csv/.json exports), chains, health, memory,
+tasks.
 
 starlette / jinja2 arrive only as transitive deps of mcp, so they are
 imported inside :func:`create_app`: importing this module (or the package)
@@ -11,9 +12,12 @@ parameter — the CLI command constructs the app, never the other way round.
 """
 from __future__ import annotations
 
+import csv
+import io
+import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -113,6 +117,36 @@ def _resolve_window(window: str | None) -> tuple[str, float | None]:
     return preset, time.time() - seconds if seconds is not None else None
 
 
+# Exports fetch the filtered set in one unpaginated call (FR-005): a single
+# list_history page large enough to cover it — never a cursor-following
+# duplicate of the view's paging.
+_EXPORT_ROW_LIMIT = 1_000_000
+
+# Content-Disposition filename alphabet: anything else collapses to ``_``.
+_FILENAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _export_filename(view: str, ext: str, hints) -> str:
+    """Attachment filename: view name plus the active filter hints
+    (``history-tool-x-window-7d.csv``), header-safe by construction."""
+    parts = [view, *(f"{key}-{value}" for key, value in hints if value)]
+    return _FILENAME_UNSAFE.sub("_", "-".join(parts))[:120] + f".{ext}"
+
+
+def _csv_text(rows) -> str:
+    """Row dicts as RFC 4180 CSV text (the csv module quotes as needed);
+    None renders as an empty field, the CSV reading of JSON's null."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    if rows:
+        writer.writerow(rows[0].keys())
+        writer.writerows(
+            ["" if value is None else value for value in row.values()]
+            for row in rows
+        )
+    return buf.getvalue()
+
+
 def create_app(
     db_path: str | None = None, knowledge_dir: str | None = None
 ) -> Starlette:
@@ -125,7 +159,7 @@ def create_app(
     and static assets.
     """
     from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, Response
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
     from starlette.templating import Jinja2Templates
@@ -153,6 +187,7 @@ def create_app(
         get_tool_tokens,
         list_history,
         list_projects,
+        prewarm_probes,
         symbol_candidates,
     )
     from .workspaces import enumerate_stores, probe_stores
@@ -379,6 +414,79 @@ def create_app(
             {"tools": rows, "window": window, "store_key": store_key},
         )
 
+    # FR-005 exports ride the same seams the views ride: resolve_selection
+    # for the store, _resolve_window for the window, the view's filter
+    # params, and the very data functions the views render from — parity
+    # by construction. The cursor params (before/after) page the HTML view
+    # and are not filters, so the unpaginated export drops them.
+
+    def _history_export_rows(request: Request):
+        tool = request.query_params.get("tool", "").strip() or None
+        session = request.query_params.get("session", "").strip() or None
+        source = request.query_params.get("source", "").strip() or None
+        window, since = _resolve_window(request.query_params.get("window"))
+        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        conn = get_read_only_db(selected_db)
+        try:
+            result = list_history(
+                conn,
+                tool_name=tool,
+                session_id=session,
+                source=source,
+                since=since,
+                limit=_EXPORT_ROW_LIMIT,
+            )
+        finally:
+            conn.close()
+        return result["rows"], [
+            ("tool", tool),
+            ("session", session),
+            ("source", source),
+            ("window", None if window == "all" else window),
+        ]
+
+    def _tokens_export_rows(request: Request):
+        window, since = _resolve_window(request.query_params.get("window"))
+        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        conn = get_read_only_db(selected_db)
+        try:
+            rows = get_tool_tokens(conn, since=since)
+        finally:
+            conn.close()
+        return rows, [("window", None if window == "all" else window)]
+
+    def _attached(response: Response, filename: str) -> Response:
+        response.headers["Content-Disposition"] = (
+            f'attachment; filename="{filename}"'
+        )
+        return response
+
+    def history_csv(request: Request) -> Response:
+        rows, hints = _history_export_rows(request)
+        return _attached(
+            Response(_csv_text(rows), media_type="text/csv"),
+            _export_filename("history", "csv", hints),
+        )
+
+    def history_json(request: Request) -> Response:
+        rows, hints = _history_export_rows(request)
+        return _attached(
+            JSONResponse(rows), _export_filename("history", "json", hints)
+        )
+
+    def tokens_csv(request: Request) -> Response:
+        rows, hints = _tokens_export_rows(request)
+        return _attached(
+            Response(_csv_text(rows), media_type="text/csv"),
+            _export_filename("tokens", "csv", hints),
+        )
+
+    def tokens_json(request: Request) -> Response:
+        rows, hints = _tokens_export_rows(request)
+        return _attached(
+            JSONResponse(rows), _export_filename("tokens", "json", hints)
+        )
+
     def chains(request: Request) -> Response:
         window, since = _resolve_window(request.query_params.get("window"))
         expand = request.query_params.get("expand", "").strip() or None
@@ -450,7 +558,11 @@ def create_app(
         Route("/graph/candidates", graph_candidates, name="graph_candidates"),
         Route("/graph/neighbors", graph_neighbors, name="graph_neighbors"),
         Route("/history", history, name="history"),
+        Route("/history.csv", history_csv, name="history_csv"),
+        Route("/history.json", history_json, name="history_json"),
         Route("/tokens", tokens, name="tokens"),
+        Route("/tokens.csv", tokens_csv, name="tokens_csv"),
+        Route("/tokens.json", tokens_json, name="tokens_json"),
         Route("/chains", chains, name="chains"),
         Route("/health", health, name="health"),
         Route("/memory", memory, name="memory"),
@@ -475,6 +587,10 @@ def create_app(
             "then refresh.</p>"
             "</body></html>"
         )
+
+    # Prewarm the health probes off the request path (FR-001); the flag set
+    # must be synchronous, so create_app never blocks on the probe import.
+    prewarm_probes()
 
     return Starlette(
         routes=routes,

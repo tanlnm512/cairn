@@ -608,11 +608,73 @@ def _panel_client(tmp_path, db_file: str, knowledge_dir: str):
     return TestClient(create_app(db_path=db_file, knowledge_dir=knowledge_dir))
 
 
+def _await_prewarmed_probes(timeout_s: float = 30.0) -> dict:
+    """Block until the probe cache's first population lands, then return it.
+
+    A /health request that overlaps the probes' one-time imports is
+    delivery-delayed far past FR-001's budget by GIL contention alone -- the
+    handler's own work is bounded by the warm window, the wall clock is not
+    -- so timing and verdict assertions wait for the prewarm to publish
+    first. The cache is process-global; callers reset it
+    (``reset_probe_cache``) before building the app so the wait covers this
+    environment's own probes, not a previous test's.
+    """
+    import cairn.dashboard.data as dashboard_data
+
+    deadline = time.monotonic() + timeout_s
+    with dashboard_data._probe_cond:
+        while dashboard_data._probe_cache is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                pytest.fail("health probe prewarm never populated the cache")
+            dashboard_data._probe_cond.wait(min(remaining, 0.01))
+        return dashboard_data._probe_cache
+
+
+def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
+    """TC-001 / FR-001 / SC-1: on a fresh app instance (probe cache reset,
+    startup prewarm armed) the first /health the app serves renders in under
+    200ms server-side -- the request reads the warmed cache and pays neither
+    the probe imports nor the warm-window wait."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+    from cairn.dashboard.data import reset_probe_cache
+
+    reset_probe_cache()
+    db_path = _health_db_file(tmp_path, seed=True)
+    client = TestClient(
+        create_app(db_path=db_path, knowledge_dir=str(tmp_path / "knowledge"))
+    )
+    _await_prewarmed_probes()
+
+    t0 = time.perf_counter()
+    resp = client.get("/health")
+    elapsed = time.perf_counter() - t0
+
+    assert resp.status_code == 200
+    assert "Database" in resp.text  # a real render, not an error page
+    assert elapsed < 0.2, f"first /health took {elapsed:.3f}s (budget 0.2s)"
+
+
 def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
     """FR-008: one-glance panel carrying the DB size (human-readable), index
-    freshness, backend mode, and reranker status from the seeded DB."""
+    freshness, backend mode, and reranker status from the seeded DB.
+
+    The probe verdicts are asserted against the cache the request served,
+    never against freshly recomputed live probes: with the prewarm design a
+    /health request serves cached probe values, so live recomputation can
+    legitimately disagree with what rendered (machines with the semantic
+    extra installed report a different reranker verdict mid-warmup than the
+    one the request served)."""
+    from cairn.dashboard.data import reset_probe_cache
+
+    reset_probe_cache()
     db_path = _health_db_file(tmp_path, seed=True)
     client = _panel_client(tmp_path, db_path, str(tmp_path / "knowledge"))
+    _await_prewarmed_probes()
+
     resp = client.get("/health")
     assert resp.status_code == 200
 
@@ -622,6 +684,7 @@ def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
         "Embedding backend",
         "Vector index",
         "Reranker",
+        "Retention",
     ):
         assert label in resp.text
 
@@ -633,11 +696,20 @@ def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
 
     # conftest clears CAIRN_EMBED_BACKEND, so the local default is active.
     assert ">local<" in resp.text
-    from cairn.graph.embeddings import is_hash_fallback
-    from cairn.graph.reranker import reranker_available
+    # The retention card renders the default policy (conftest clears the
+    # CAIRN_TOOL_METRICS_* knobs, so both render from the documented
+    # defaults, independent of the machine's probe verdicts).
+    assert "tool_metrics cap 50000 rows" in resp.text
+    assert "no age bound" in resp.text
 
-    assert ("hash fallback" in resp.text) == is_hash_fallback()
-    expected_rerank = "available" if reranker_available() else "unavailable"
+    # What the request served is the published cache; the rendered verdicts
+    # must match it on every machine class.
+    import cairn.dashboard.data as dashboard_data
+
+    served = dashboard_data._probe_cache
+    assert served is not None
+    assert ("hash fallback" in resp.text) == bool(served["hash_fallback"])
+    expected_rerank = "available" if served["reranker_available"] else "unavailable"
     assert f">{expected_rerank}<" in resp.text
 
 

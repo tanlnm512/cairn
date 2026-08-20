@@ -12,7 +12,7 @@
 - [ui-dashboard-workspace-launcher](ui-dashboard-workspace-launcher/spec.md) — done (9/9 tasks 2026-08-20; /workspaces overview w/ registry∪dirs four-state enumeration + stat-first budgeted probes, restart-free ?store= switching across all views w/ full link carry, 220-store render budget <2s, byte-identical guard; 2078 tests green)
 - [cli-usage-recording](cli-usage-recording/spec.md) — done (10/10 tasks 2026-08-20; cli_metrics buffered sink + _RecordingGroup wrapper (D-004..D-007), tool_metrics.source column default mcp, history source display/filter, tokens inclusion under cli:* names, term:/tmux:/cli: session identity never 'unknown', CAIRN_TELEMETRY docs; 2091 tests green)
 - [ui-dashboard-graph-nav](ui-dashboard-graph-nav/spec.md) — done (11/11 tasks 2026-08-20; symbol search-to-focus w/ disambiguation candidates endpoint, doubleClick node expansion via /graph/neighbors, force/hier layout toggle w/ camera preservation + URL persistence; 2038 tests green)
-- [ui-dashboard-polish](ui-dashboard-polish/spec.md) — draft (warm health, tokenizer mode + labeling, truncation stats, retention, CSV/JSON export, dark theme; pipeline docs filled 2026-08-20, implementation not started)
+- [ui-dashboard-polish](ui-dashboard-polish/spec.md) — done (11/11 tasks 2026-08-20; startup probe prewarm w/ stale-while-revalidate cache (D-005), tool_metrics truncation-magnitude columns (D-002), configurable retention CAIRN_TOOL_METRICS_MAX_ROWS/_AGE in sink._prune (D-004) + health Retention card, tokenizer-mode helper w/ per-window calibration (D-006), tokens-view mode label + per-tool truncation counts (unknown≠zero), /history|tokens .csv/.json export riding resolve_selection+filters, dark theme w/ localStorage persistence; 2123 tests green)
 
 ## Archive
 

@@ -165,3 +165,70 @@ the sink, the dashboard only displays.
   health displays policy and size.
 - **Consequences**: one transactional seam; the read-only guard holds by
   construction; generous default documented beside CAIRN_TELEMETRY.
+
+### D-004: tool_metrics prune keys on (invoked_at, id) time-order, not id alone
+- **Context**: This spec's Code-guide pitfall said "pruning key is id
+  (monotonic)"; T003's implementation (2026-08-20) followed the code's
+  established `_prune` pattern instead — time-ordered with id tiebreak —
+  and the survey's own supporting evidence backs it ("_prune is
+  time-ordered (ts/started_at) not id-ordered").
+- **Decision**: `DELETE FROM tool_metrics WHERE id NOT IN (SELECT id ...
+  ORDER BY invoked_at DESC, id DESC LIMIT ?)`; the pitfall's id-monotonic
+  assumption is wrong for this table because `schema.copy_telemetry_tables`
+  carries tool_metrics rows across whole-file rebuild swaps with fresh ids
+  (id order stops being recency there), and the existing
+  `idx_tool_metrics_invoked(invoked_at, id)` index directly backs the
+  time-ordered DELETE.
+- **Consequences**: recency survives rebuild swaps; the DELETE rides an
+  existing index; events/build_runs pruning is untouched.
+
+### D-005: warm-window /health serves cached-or-None probes; existing live-probe test adapts in T005
+- **Context**: T001's implementation (2026-08-20) exposed an irreconcilable
+  in the pre-existing `tests/test_dashboard_app.py::
+  test_health_route_shows_size_freshness_backend_and_reranker`: it asserts
+  the first /health (~20ms after create_app, mid-prewarm) renders
+  live-computed probe verdicts, but FR-001 forbids the request from running
+  the probes — no non-blocking design can put 2.55s-import probe values
+  into a 20ms-old request.
+- **Decision**: requests inside the warm window (≤`PROBE_WARM_WAIT_S` wait,
+  in-flight prewarm) serve cached values or `None` probe keys (rendered
+  "unavailable"); the test is adapted in T005 to assert against the served
+  cache (or join the prewarm before asserting). Known failure on
+  semantic-extra machines between T001 and T005; green on clean CI envs
+  (no sentence_transformers → probes finish in ms → 50ms warm-wait serves
+  the cache).
+- **Consequences**: SC-1 holds (probes never land in a request; post-warm
+  renders ~5ms); torch's C-level import holds the GIL ~2.5s, so requests
+  overlapping the prewarm import are delivery-delayed regardless of
+  caching — bounded to the warm window by design; T005 owns the test
+  adaptation.
+
+### D-006: exact-mode reaches chars-only rows via per-window calibration on stored summaries
+- **Context**: FR-002/TC-002 require that counts "use" the exact tokenizer
+  when available, but tool_metrics rows store char counts (req_chars/
+  resp_chars), not text — an exact tokenizer cannot re-tokenize stored
+  rows, and US2's AC scopes the label to the tokens view.
+- **Decision** (T007, 2026-08-20): in heuristic mode estimates stay
+  `chars // CHARS_PER_TOKEN` (bench comparability preserved). In exact
+  mode the divisor is calibrated per render from the window's own data:
+  sample ≤200 non-empty `args_summary` strings under the caller's exact
+  WHERE terms, tokenize them via T006's helper, and use
+  `round(total_chars / total_tokens)` (floored at 1). Samples under
+  `CALIBRATION_MIN_CHARS = 1000` are treated as noise → divisor stays
+  CHARS_PER_TOKEN and the rendered label says uncalibrated. The label
+  always names the mode that produced the numbers, with the calibration
+  basis stated ("calibrated at ~N chars/token from this window's stored
+  summaries" / "uncalibrated ... heuristic divisor").
+- **Consequences**: TC-002's "counts use it" holds literally (numbers
+  follow the tokenizer-derived divisor); existing pinned chars//4 test
+  assertions stay deterministic (their corpora sit under the noise floor);
+  `list_history` rows share the same divisor; `get_tool_tokens` returns a
+  `TokenEstimates(list)` subclass carrying `token_mode`/`calibrated`/
+  `chars_per_token` so the landed export routes (which iterate the return
+  as a list) keep working byte-identically. The history VIEW renders
+  mode-aware numbers without its own label — US2's AC and TC-002/TC-003
+  scope the label to the tokens view; a history-view label is a cosmetic
+  follow-up, out of contract.
+
+
+

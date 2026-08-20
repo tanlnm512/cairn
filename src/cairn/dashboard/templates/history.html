@@ -19,6 +19,18 @@
     <button type="submit">Apply</button>
   </form>
   {% include "window_control.html" %}
+  {#- FR-005: exports ride the view's current filters (the selected store
+      rides links.url); before/after are page cursors, not filters. -#}
+  {%- set export_q = {} %}
+  {%- if tool %}{% set _ = export_q.update({'tool': tool}) %}{% endif %}
+  {%- if session %}{% set _ = export_q.update({'session': session}) %}{% endif %}
+  {%- if source %}{% set _ = export_q.update({'source': source}) %}{% endif %}
+  {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
+  <p class="muted">
+    Export:
+    <a href="{{ links.url('/history.csv', export_q) }}">CSV</a> ·
+    <a href="{{ links.url('/history.json', export_q) }}">JSON</a>
+  </p>
   {% if calls %}
   <table class="data-table">
     <thead>

@@ -6,7 +6,9 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import time
+import types
 
 import pytest
 
@@ -1942,3 +1944,305 @@ def test_probe_stores_empty_and_missing_consume_no_open_budget(tmp_path):
         ("a000000000000001", 2, False),
         ("b000000000000002", 4, False),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer mode selection (ui-dashboard-polish FR-002 / TC-002, TC-003) and
+# per-tool truncation surfacing (FR-003 / TC-005). The active mode is a
+# process-wide singleton, so every mode test pins sys.modules["transformers"]
+# itself (a deterministic stub for present, None for absent) and resets the
+# singleton on entry AND exit -- a leaked exact-mode resolution would
+# re-tokenize later tests' calibration samples on semantic-extra machines.
+# ---------------------------------------------------------------------------
+
+_STUB_MODEL = "stub/deterministic-tokenizer"
+_STUB_CHARS_PER_TOKEN = 2
+
+
+class _StubAutoTokenizer:
+    """The exact-mode probe's tokenizer contract, deterministic on every
+    machine: ``from_pretrained`` succeeds for any locally-available model
+    and ``encode`` counts one token per 2 characters."""
+
+    @staticmethod
+    def from_pretrained(model, local_files_only=False):
+        return _StubAutoTokenizer
+
+    @staticmethod
+    def encode(text, add_special_tokens=False):
+        return [0] * (len(text) // _STUB_CHARS_PER_TOKEN)
+
+
+@pytest.fixture
+def exact_tokenizer_present(monkeypatch):
+    """TC-002's precondition: the exact tokenizer importable and its model
+    cached. sys.modules carries the deterministic stub, so the probe
+    resolves exact mode without the semantic extra ever being installed."""
+    from cairn.dashboard.tokenizer import reset_tokenizer_mode
+
+    stub = types.ModuleType("transformers")
+    stub.AutoTokenizer = _StubAutoTokenizer
+    monkeypatch.setitem(sys.modules, "transformers", stub)
+    monkeypatch.setenv("CAIRN_EMBED_LOCAL_MODEL", _STUB_MODEL)
+    reset_tokenizer_mode()
+    yield
+    reset_tokenizer_mode()
+
+
+@pytest.fixture
+def tokenizer_import_absent(monkeypatch):
+    """TC-003's precondition: the import absent. A None in sys.modules makes
+    ``from transformers import AutoTokenizer`` raise ImportError -- the
+    probe's absent-import path, not a failing tokenizer."""
+    from cairn.dashboard.tokenizer import reset_tokenizer_mode
+
+    monkeypatch.setitem(sys.modules, "transformers", None)
+    reset_tokenizer_mode()
+    yield
+    reset_tokenizer_mode()
+
+
+def _seed_calibratable_rows(conn, rows=6, summary_chars=200):
+    """Uniform tool_metrics rows whose stored summaries total past the
+    calibration floor (each length a multiple of the stub's chars/token, so
+    the calibrated divisor lands exactly on 2), with equal sizes per row so
+    every row's estimates agree under either mode's divisor."""
+    conn.executemany(
+        "INSERT INTO tool_metrics (id, tool_name, session_id, invoked_at, "
+        "duration_ms, status, req_chars, resp_chars, args_summary) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                i + 1,
+                "explore",
+                "sess-a",
+                1755500000.0 + i,
+                5.0,
+                "ok",
+                400,
+                800,
+                "s" * summary_chars,
+            )
+            for i in range(rows)
+        ],
+    )
+    conn.commit()
+
+
+def _render_tokens_html(tools, window="all"):
+    """Render the real tokens.html with the /tokens route's own context
+    shape and template machinery (same directory, same mean filter); the
+    request is a stub exposing only ``url.path``, which the window control
+    reads."""
+    from starlette.templating import Jinja2Templates
+
+    from cairn.dashboard.app import _PACKAGE_DIR, _fmt_mean
+
+    templates = Jinja2Templates(directory=str(_PACKAGE_DIR / "templates"))
+    templates.env.filters["mean"] = _fmt_mean
+    request = types.SimpleNamespace(url=types.SimpleNamespace(path="/tokens"))
+    return templates.env.get_template("tokens.html").render(
+        {
+            "request": request,
+            "tools": tools,
+            "window": window,
+            "store_key": "",
+            "url_for": lambda name, path="": "#",
+        }
+    )
+
+
+def _rendered_tool_row(html, tool):
+    """The rendered ``<tr>`` chunk of one tool's tokens row, identified by
+    the tool cell's link text."""
+    for chunk in html.split("<tr>"):
+        if f">{tool}</a>" in chunk:
+            return chunk
+    raise AssertionError(f"no rendered tokens row for {tool!r}")
+
+
+def test_tokenizer_exact_mode_used_and_labeled_when_import_present(
+    fresh_db, exact_tokenizer_present
+):
+    """TC-002 (FR-002): with an exact tokenizer available, the resolved mode
+    names it, direct estimates count through it, and the window's estimates
+    divide by its calibrated ratio -- in get_tool_tokens, in list_history,
+    and in the rendered /tokens label."""
+    from cairn.dashboard.data import get_tool_tokens, list_history
+    from cairn.dashboard.tokenizer import active_tokenizer_mode, estimate_tokens
+
+    assert active_tokenizer_mode() == f"exact ({_STUB_MODEL})"
+
+    # The estimate path runs through the tokenizer, not chars // 4: 10 chars
+    # are 5 stub tokens where the heuristic would say 2.
+    assert estimate_tokens("x" * 10) == 5
+
+    _seed_calibratable_rows(fresh_db)
+
+    tokens = get_tool_tokens(fresh_db)
+    assert tokens.token_mode == f"exact ({_STUB_MODEL})"
+    assert (tokens.calibrated, tokens.chars_per_token) == (True, 2)
+    (entry,) = tokens
+    # 6 x (400 + 800) chars through the calibrated ~2 chars/token ratio.
+    assert (entry["est_req_tokens"], entry["est_resp_tokens"]) == (1200, 2400)
+    assert entry["total_tokens"] == 3600
+
+    history = list_history(fresh_db)["rows"]
+    assert len(history) == 6
+    for row in history:
+        assert (row["est_req_tokens"], row["est_resp_tokens"]) == (200, 400)
+
+    html = _render_tokens_html(tokens)
+    assert f"Estimation mode: exact ({_STUB_MODEL})" in html
+    assert "calibrated at ~2 chars/token" in html
+
+
+def test_tokenizer_heuristic_fallback_used_and_labeled_when_import_absent(
+    fresh_db, tokenizer_import_absent
+):
+    """TC-003 (FR-002): import absent -> the heuristic mode resolves,
+    estimates are the documented chars // 4 (the same corpus as the exact
+    test, different numbers -- the estimates follow the mode), and the
+    rendered label says heuristic with no calibration claim."""
+    from cairn.dashboard.data import get_tool_tokens, list_history
+    from cairn.dashboard.tokenizer import HEURISTIC_MODE, active_tokenizer_mode, estimate_tokens
+
+    assert active_tokenizer_mode() == HEURISTIC_MODE == "heuristic (chars/4)"
+    assert estimate_tokens("x" * 10) == 2
+
+    _seed_calibratable_rows(fresh_db)
+
+    tokens = get_tool_tokens(fresh_db)
+    assert tokens.token_mode == "heuristic (chars/4)"
+    assert (tokens.calibrated, tokens.chars_per_token) == (False, 4)
+    (entry,) = tokens
+    assert (entry["est_req_tokens"], entry["est_resp_tokens"]) == (600, 1200)
+    assert entry["total_tokens"] == 1800
+
+    history = list_history(fresh_db)["rows"]
+    assert len(history) == 6
+    for row in history:
+        assert (row["est_req_tokens"], row["est_resp_tokens"]) == (100, 200)
+
+    html = _render_tokens_html(tokens)
+    # The trailing period closes the label with no calibration suffix.
+    assert "Estimation mode: heuristic (chars/4)." in html
+
+
+def test_exact_mode_below_calibration_floor_stays_uncalibrated(
+    fresh_db, exact_tokenizer_present
+):
+    """The exact mode's honesty marker: no usable summary sample (under
+    CALIBRATION_MIN_CHARS) keeps the heuristic divisor, and the rendered
+    label says uncalibrated -- also why small corpora stay deterministic
+    on tokenizer-equipped machines."""
+    from cairn.dashboard.data import CALIBRATION_MIN_CHARS, get_tool_tokens
+
+    _seed_calibratable_rows(fresh_db, rows=3, summary_chars=40)
+    assert 3 * 40 < CALIBRATION_MIN_CHARS
+
+    tokens = get_tool_tokens(fresh_db)
+    assert tokens.token_mode == f"exact ({_STUB_MODEL})"
+    assert (tokens.calibrated, tokens.chars_per_token) == (False, 4)
+    (entry,) = tokens
+    assert (entry["est_req_tokens"], entry["est_resp_tokens"]) == (300, 600)
+
+    html = _render_tokens_html(tokens)
+    assert "uncalibrated for this window" in html
+    assert re.search(r"estimates use the\s+4 chars/token heuristic divisor", html)
+
+
+# TC-005's mixed store: (id, tool, req_chars, resp_chars,
+# truncated_from_chars, truncated_to_chars) -- every truncation-evidence
+# shape at once.
+_TRUNCATION_ROWS = [
+    # search: two truncated calls carrying magnitudes, one untruncated.
+    (1, "search", 400, 800, 2000, 500),
+    (2, "search", 400, 800, 1000, 400),
+    (3, "search", 400, 800, None, None),
+    # summarize: truncated but nothing cut -- evidence with zero magnitude.
+    (4, "summarize", 100, 600, 600, 600),
+    # read_file: recorded by the current writer, never truncated.
+    (5, "read_file", 200, 50, None, None),
+    (6, "read_file", 200, 50, None, None),
+]
+
+
+def _seed_truncation_mixed(conn):
+    """The mixed rows plus one legacy row recorded before the truncation
+    columns existed. Summaries stay far under the calibration floor so the
+    divisor is 4 in either mode -- the assertions hold with and without
+    the semantic extra."""
+    conn.executemany(
+        "INSERT INTO tool_metrics (id, tool_name, session_id, invoked_at, "
+        "duration_ms, status, req_chars, resp_chars, args_summary, "
+        "truncated_from_chars, truncated_to_chars) "
+        "VALUES (?, ?, 'sess-a', ?, 5.0, 'ok', ?, ?, '{\"q\": \"x\"}', ?, ?)",
+        [
+            (rid, tool, 1755500000.0 + rid, req, resp, frm, to)
+            for rid, tool, req, resp, frm, to in _TRUNCATION_ROWS
+        ],
+    )
+    conn.execute(
+        "INSERT INTO tool_metrics (id, tool_name, session_id, invoked_at, "
+        "duration_ms, status, req_chars, resp_chars, args_summary) "
+        "VALUES (7, 'legacy_probe', 'sess-a', 1755500007.0, 5.0, 'ok', "
+        "40, 80, '{\"q\": \"y\"}')"
+    )
+    conn.commit()
+
+
+def test_get_tool_tokens_surfaces_per_tool_truncation_counts(fresh_db):
+    """TC-005's data half (FR-003): truncated_calls/truncated_chars ride the
+    per-tool entries from the durable columns -- magnitudes aggregate across
+    the truncated calls only, absent evidence reads unknown (None, never
+    0), and a zero-magnitude truncation reads 0, never unknown."""
+    from cairn.dashboard.data import get_tool_tokens
+
+    _seed_truncation_mixed(fresh_db)
+    by_tool = {t["tool_name"]: t for t in get_tool_tokens(fresh_db)}
+
+    search = by_tool["search"]
+    assert (search["calls"], search["truncated_calls"], search["truncated_chars"]) == (
+        3,
+        2,
+        2100,  # (2000 - 500) + (1000 - 400), the untruncated call adds nothing
+    )
+    # Usage renders alongside: 3 x (400 + 800) chars // 4.
+    assert search["total_tokens"] == 900
+
+    summarize = by_tool["summarize"]
+    assert (summarize["truncated_calls"], summarize["truncated_chars"]) == (1, 0)
+
+    for no_evidence in ("read_file", "legacy_probe"):
+        tool = by_tool[no_evidence]
+        assert tool["truncated_calls"] is None
+        assert tool["truncated_chars"] is None
+
+
+def test_tokens_render_distinguishes_truncation_unknown_from_zero(fresh_db):
+    """TC-005's view half (FR-003): the rendered surface shows per-tool
+    truncation counts alongside usage, renders no-evidence rows as
+    unknown/-- and zero-magnitude evidence as 0, and the mode label names a
+    real mode regardless of the machine's semantic extra."""
+    from cairn.dashboard.data import get_tool_tokens
+
+    _seed_truncation_mixed(fresh_db)
+    html = _render_tokens_html(get_tool_tokens(fresh_db))
+
+    assert re.search(r"Estimation mode: (exact \(|heuristic \(chars/4\))", html)
+
+    search = _rendered_tool_row(html, "search")
+    assert ">~900</td>" in search  # usage alongside the truncation counts
+    assert ">2</td>" in search
+    assert ">2100</td>" in search
+
+    summarize = _rendered_tool_row(html, "summarize")
+    assert ">1</td>" in summarize
+    assert ">0</td>" in summarize  # zero magnitude is a number, not unknown
+    assert "unknown" not in summarize
+
+    for no_evidence in ("read_file", "legacy_probe"):
+        row = _rendered_tool_row(html, no_evidence)
+        assert ">unknown</td>" in row
+        assert ">—</td>" in row

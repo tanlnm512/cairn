@@ -7,6 +7,16 @@
   --accent: #2563eb;
 }
 
+[data-theme="dark"] {
+  --bg: #12151c;
+  --surface: #1b202a;
+  --text: #e5e9f0;
+  --muted: #96a0af;
+  --border: #2d3542;
+  --accent: #7aa2f7;
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -49,6 +59,23 @@ body {
   font-weight: 700;
   color: var(--accent);
   font-size: 1.05rem;
+}
+
+.theme-toggle {
+  margin-left: auto;
+  padding: 0.1rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus {
+  color: var(--text);
 }
 
 .site-main {

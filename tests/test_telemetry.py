@@ -38,6 +38,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 
 import pytest
 
@@ -588,6 +589,207 @@ def test_prune_tolerates_missing_build_runs_table(events_db, monkeypatch):
     assert len(sink._BUFFER) == 0
     count = events_db.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
     assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# 4b. tool_metrics retention (ui-dashboard-polish FR-004 / TC-006): the
+# flush-transaction prune extends to tool_metrics under
+# CAIRN_TOOL_METRICS_MAX_ROWS (default 50000) and the optional
+# CAIRN_TOOL_METRICS_MAX_AGE_SECONDS. The prune runs inside the flush
+# transaction and _flush_events returns before it on an EMPTY buffer, so
+# every forced-flush cycle below rides one event row through to reach it.
+# ---------------------------------------------------------------------------
+
+_TOOL_METRICS_DDL = """
+CREATE TABLE IF NOT EXISTS tool_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_name TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT 'unknown',
+    invoked_at TIMESTAMP NOT NULL,
+    duration_ms REAL,
+    status TEXT NOT NULL DEFAULT 'ok',
+    source TEXT NOT NULL DEFAULT 'mcp'
+);
+CREATE INDEX IF NOT EXISTS idx_tool_metrics_invoked ON tool_metrics(invoked_at, id);
+"""
+
+
+@pytest.fixture
+def store_db():
+    """A fresh in-memory DB with events + build_runs + tool_metrics, wired to
+    the sink via the ``_UnclosableConn`` convention (the flush's ``close()``
+    must not destroy the ``:memory:`` DB before readback assertions)."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_EVENTS_DDL + _TOOL_METRICS_DDL)
+    conn.commit()
+    configure_conn(lambda: _UnclosableConn(conn))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _force_flush_cycle():
+    """Drive one full flush cycle so the prune inside it runs."""
+    emit(ANN_FALLBACK, reason="forced-flush")
+    flush()
+
+
+def _seed_metric_rows(conn, times, source="mcp", tool="t"):
+    """Insert tool_metrics rows at the given ``invoked_at`` epochs (ascending
+    id order), returning the inserted timestamps."""
+    conn.executemany(
+        "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+        "duration_ms, status, source) VALUES (?, 's', ?, 5.0, 'ok', ?)",
+        [(tool, t, source) for t in times],
+    )
+    conn.commit()
+    return list(times)
+
+
+def _surviving_times(conn) -> list:
+    return [
+        r["invoked_at"]
+        for r in conn.execute(
+            "SELECT invoked_at FROM tool_metrics ORDER BY invoked_at, id"
+        )
+    ]
+
+
+def test_flush_prunes_tool_metrics_over_cap_keeping_newest_by_time(
+    store_db, monkeypatch
+):
+    """TC-006: an over-cap store is trimmed to the cap with the OLDEST rows
+    gone, and "oldest" is time-ordered: the seeded epochs are deliberately
+    out of id order, so an id-ordered prune would keep a different set than
+    the time-ordered one the invoked_at index backs."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", "5")
+    _seed_metric_rows(
+        store_db, [500.0, 400.0, 300.0, 450.0, 350.0, 250.0, 200.0, 100.0]
+    )
+
+    _force_flush_cycle()
+
+    surviving = _surviving_times(store_db)
+    assert len(surviving) == 5, "row count lands at the cap"
+    assert sorted(surviving) == [300.0, 350.0, 400.0, 450.0, 500.0], (
+        "the five newest by invoked_at survive; ids 6/7/8's rows do not "
+        "despite being the newest ids"
+    )
+
+
+def test_flush_prune_zero_cap_keeps_no_tool_metrics_rows(store_db, monkeypatch):
+    """CAIRN_TOOL_METRICS_MAX_ROWS=0 disables retention entirely (keeps
+    nothing) rather than being treated as unset."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", "0")
+    _seed_metric_rows(store_db, [100.0, 200.0, 300.0])
+
+    _force_flush_cycle()
+
+    assert _surviving_times(store_db) == []
+
+
+def test_flush_prune_leaves_under_cap_store_untouched(store_db, monkeypatch):
+    """A store under the cap keeps every row -- however old -- byte for
+    byte: the cap bounds growth, it does not rewrite history."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", "10")
+    seeded = _seed_metric_rows(store_db, [100.0, 200.0, 300.0, 400.0])
+
+    _force_flush_cycle()
+
+    assert _surviving_times(store_db) == seeded
+
+
+def test_flush_prune_age_bound_removes_only_older_rows(store_db, monkeypatch):
+    """CAIRN_TOOL_METRICS_MAX_AGE_SECONDS bounds rows by age (the row cap
+    stays at its default): only rows older than the window go."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_AGE_SECONDS", "3600")
+    now = time.time()
+    _seed_metric_rows(
+        store_db, [now - 7200, now - 5000, now - 1800, now - 60]
+    )
+
+    _force_flush_cycle()
+
+    assert _surviving_times(store_db) == [now - 1800, now - 60]
+
+
+@pytest.mark.parametrize("raw", ["bogus", "-1"])
+def test_flush_prune_invalid_age_env_disables_age_bound(
+    store_db, monkeypatch, raw
+):
+    """An unparseable or negative CAIRN_TOOL_METRICS_MAX_AGE_SECONDS disables
+    age pruning (never raises, never prunes by age): ancient rows stay and
+    the reported policy carries no age bound."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_AGE_SECONDS", raw)
+    ancient = 1_000_000.0
+    _seed_metric_rows(store_db, [ancient, ancient + 1])
+
+    _force_flush_cycle()
+
+    assert len(_surviving_times(store_db)) == 2, "age bound off -> nothing aged"
+    assert sink.retention_policy()["tool_metrics_max_age_seconds"] is None
+
+
+@pytest.mark.parametrize("raw", ["", "bogus", "-3"])
+def test_flush_prune_invalid_rows_env_falls_back_to_default_cap(
+    store_db, monkeypatch, raw
+):
+    """An unset, unparseable, or negative CAIRN_TOOL_METRICS_MAX_ROWS falls
+    back to the documented 50000 default: a small store is never pruned by a
+    bogus knob, and the reported policy shows the default."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", raw)
+    seeded = _seed_metric_rows(store_db, [float(i) for i in range(1, 9)])
+
+    _force_flush_cycle()
+
+    assert _surviving_times(store_db) == seeded, "8 rows sit far under 50000"
+    assert sink.retention_policy()["tool_metrics_max_rows"] == 50000
+
+
+def test_tool_metrics_cap_counts_rows_from_both_writers(store_db, monkeypatch):
+    """The bound is one cap over the whole table: rows from BOTH writers
+    ('mcp' and 'cli') count against it, so an over-cap mixed store is trimmed
+    by recency across sources, never per-source."""
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", "4")
+    _seed_metric_rows(store_db, [100.0, 300.0, 500.0], source="mcp")
+    _seed_metric_rows(store_db, [200.0, 400.0, 600.0], source="cli")
+
+    _force_flush_cycle()
+
+    rows = store_db.execute(
+        "SELECT invoked_at, source FROM tool_metrics ORDER BY invoked_at"
+    ).fetchall()
+    assert [r["invoked_at"] for r in rows] == [300.0, 400.0, 500.0, 600.0]
+    assert {r["source"] for r in rows} == {"mcp", "cli"}, (
+        "survivors span both sources -- 7 rows over a 4-row cap, not 3+3"
+    )
+
+
+def test_retention_policy_reports_the_four_bounds(monkeypatch):
+    """The policy dict carries the four bounds, env-resolved fresh per call:
+    defaults when the knobs are unset, the pinned values when they are set."""
+    for var in (
+        "CAIRN_TOOL_METRICS_MAX_ROWS",
+        "CAIRN_TOOL_METRICS_MAX_AGE_SECONDS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    assert sink.retention_policy() == {
+        "events_max_rows": 5000,
+        "build_runs_max_rows": 500,
+        "tool_metrics_max_rows": 50000,
+        "tool_metrics_max_age_seconds": None,
+    }
+
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_ROWS", "1234")
+    monkeypatch.setenv("CAIRN_TOOL_METRICS_MAX_AGE_SECONDS", "90")
+    assert sink.retention_policy() == {
+        "events_max_rows": 5000,
+        "build_runs_max_rows": 500,
+        "tool_metrics_max_rows": 1234,
+        "tool_metrics_max_age_seconds": 90.0,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -10,11 +10,18 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from cairn.bench.agent_suite import CHARS_PER_TOKEN
+from cairn.dashboard.tokenizer import (
+    HEURISTIC_MODE,
+    active_tokenizer_mode,
+    estimate_tokens,
+)
 from cairn.graph.ann_index import ann_backend_enabled, index_exists, index_row_count
 from cairn.graph.embeddings import current_model, embed_count, is_hash_fallback
 from cairn.graph.reranker import reranker_available
@@ -22,6 +29,7 @@ from cairn.graph.schema import get_db
 from cairn.llm.tasks import list_tasks
 from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
+from cairn.telemetry.sink import retention_policy
 from cairn.viz import query as viz_query
 
 GRAPH_SCOPES = ("symbol", "module", "impact", "deps", "repo")
@@ -213,15 +221,133 @@ def _age_str(started_at) -> Optional[str]:
     return f"{secs}s old"
 
 
+# The health probes pay one-time imports (sentence-transformers above all),
+# so their results are cached process-wide, prewarmed from a daemon thread
+# at app startup, and revalidated in the background no more often than this.
+PROBE_TTL_S = 300.0
+
+# How long a request that beats the prewarm waits for the first population
+# before serving unknown probe values -- well under FR-001's 200ms budget,
+# and never enough to pay a slow import inside the request.
+PROBE_WARM_WAIT_S = 0.05
+
+_probe_cond = threading.Condition()
+_probe_cache: Optional[Dict[str, object]] = None
+_probe_cached_at: float = 0.0
+_probe_refreshing = False
+
+
+def _run_probes() -> Dict[str, object]:
+    """The import-paying health probes, keyed as get_health reports them."""
+    return {
+        "hash_fallback": is_hash_fallback(),
+        "ann_backend_enabled": ann_backend_enabled(),
+        "ann_model": current_model(),
+        "reranker_available": reranker_available(),
+    }
+
+
+def _publish_probes(values: Optional[Dict[str, object]]) -> None:
+    """Publish probe results (None: end the in-flight refresh, keep the
+    previous cache) and wake requests waiting on the first population."""
+    global _probe_cache, _probe_cached_at, _probe_refreshing
+    with _probe_cond:
+        if values is not None:
+            _probe_cache = values
+            _probe_cached_at = time.monotonic()
+        _probe_refreshing = False
+        _probe_cond.notify_all()
+
+
+def _revalidate_probes() -> None:
+    """Compute the probes in the background (startup prewarm or refresh of a
+    stale cache); on failure the previous values keep serving and the next
+    request past the TTL retries."""
+    try:
+        _publish_probes(_run_probes())
+    except Exception:
+        _publish_probes(None)
+
+
+def _serve_probes(
+    max_wait_s: float = PROBE_WARM_WAIT_S,
+) -> Optional[Dict[str, object]]:
+    """Probe values for get_health: the cache when populated -- fresh values
+    as-is, stale ones while a background thread revalidates
+    (stale-while-revalidate at :data:`PROBE_TTL_S`) -- and None while the
+    first population is still running after waiting at most ``max_wait_s``.
+    A cold cache with nothing running is computed right here, preserving
+    direct-call behavior for callers that never prewarm."""
+    global _probe_refreshing
+    with _probe_cond:
+        if _probe_cache is not None:
+            if (
+                not _probe_refreshing
+                and time.monotonic() - _probe_cached_at > PROBE_TTL_S
+            ):
+                _probe_refreshing = True
+                threading.Thread(
+                    target=_revalidate_probes,
+                    name="cairn-probe-revalidate",
+                    daemon=True,
+                ).start()
+            return _probe_cache
+        if _probe_refreshing:
+            _probe_cond.wait(max_wait_s)
+            return _probe_cache
+        _probe_refreshing = True
+    try:
+        values = _run_probes()
+    except Exception:
+        _publish_probes(None)
+        raise
+    _publish_probes(values)
+    return values
+
+
+def prewarm_probes() -> None:
+    """Populate the probe cache via a daemon thread; app startup calls this
+    at create_app time so no /health request pays the probe imports
+    (FR-001). The in-flight flag is set synchronously here -- a thread
+    merely being started is no guarantee it runs before the first request,
+    which must never take the synchronous compute path itself."""
+    global _probe_refreshing
+    with _probe_cond:
+        if _probe_cache is not None or _probe_refreshing:
+            return
+        _probe_refreshing = True
+    threading.Thread(
+        target=_revalidate_probes,
+        name="cairn-probe-prewarm",
+        daemon=True,
+    ).start()
+
+
+def reset_probe_cache() -> None:
+    """Drop cached probe values (e.g. after a probe-relevant env change);
+    the next get_health recomputes them."""
+    global _probe_cache, _probe_cached_at, _probe_refreshing
+    with _probe_cond:
+        _probe_cache = None
+        _probe_cached_at = 0.0
+        _probe_refreshing = False
+        _probe_cond.notify_all()
+
+
 def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     """Health panel data (FR-008): DB size, index freshness, vector backend
-    mode, reranker status.
+    mode, reranker status, plus the retention policy in force and the current
+    tool_metrics row count (FR-004) -- display only; aging runs in the
+    recording sink's flush prune, never here (FR-007).
 
     The backend probes call the same graph-layer helpers ``cairn doctor``
     uses, so the panel's conclusions agree with doctor's on the same
-    database. DB reads degrade to null/0 on a missing table rather than
-    raising. ``db_path`` falls back to the connection's own file (empty for
-    an in-memory DB, hence size 0).
+    database. Probe results are cached process-wide and revalidated in the
+    background (FR-001); while the first population is still running the
+    probe keys read as None rather than blocking the request. DB reads
+    degrade to null/0 on a missing table rather than raising. ``db_path``
+    falls back to the connection's own file (empty for an in-memory DB,
+    hence size 0).
     """
     if db_path is None:
         row = conn.execute("PRAGMA database_list").fetchone()
@@ -243,7 +369,8 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     except sqlite3.Error:
         pass
 
-    model = current_model()
+    probes = _serve_probes() or {}
+    model = probes.get("ann_model")
     try:
         embedding_rows = embed_count(conn)
     except sqlite3.Error:
@@ -252,12 +379,21 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         # The index probes are moot with no embeddings: a fresh store has no
         # vec0 table by design, which is doctor's "no embeddings to index
         # yet", not a missing index -- reported as None rather than False.
+        # An unknown model (probes still warming) is moot the same way.
         index_present: Optional[bool] = (
-            index_exists(conn, model) if embedding_rows else None
+            index_exists(conn, model) if embedding_rows and model else None
         )
         index_rows = index_row_count(conn, model) if index_present else None
     except sqlite3.Error:
         index_present, index_rows = None, None
+
+    tool_metrics_rows: Optional[int] = None
+    try:
+        tool_metrics_rows = conn.execute(
+            "SELECT COUNT(*) AS n FROM tool_metrics"
+        ).fetchone()["n"]
+    except sqlite3.Error:
+        pass
 
     return {
         "db_size_bytes": db_size_bytes,
@@ -267,17 +403,19 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
             os.environ.get("CAIRN_EMBED_BACKEND", "local").strip().lower()
             or "local"
         ),
-        "hash_fallback": is_hash_fallback(),
+        "hash_fallback": probes.get("hash_fallback"),
         "ann_configured": (
             os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
             or "sqlite-vec"
         ),
-        "ann_backend_enabled": ann_backend_enabled(),
+        "ann_backend_enabled": probes.get("ann_backend_enabled"),
         "ann_model": model,
         "ann_embedding_rows": embedding_rows,
         "ann_index_exists": index_present,
         "ann_index_rows": index_rows,
-        "reranker_available": reranker_available(),
+        "reranker_available": probes.get("reranker_available"),
+        **retention_policy(),
+        "tool_metrics_rows": tool_metrics_rows,
     }
 
 
@@ -373,7 +511,9 @@ def list_history(
     ``time.time()`` epoch float — the MCP sink writes it directly, so
     ordering is numeric and the value is returned verbatim, never parsed
     as ISO. Pre-migration rows carry NULL sizes; their token estimates are
-    None (unknown), not 0. ``args_summary`` is returned as stored —
+    None (unknown), not 0. Estimates divide chars by the mode-aware
+    divisor of :func:`_estimate_divisor`, calibrated over the same filters
+    and window (FR-002). ``args_summary`` is returned as stored —
     already redacted and truncated at the write chokepoint
     (``MAX_ARGS_SUMMARY_CHARS``); this layer never expands it.
     """
@@ -429,6 +569,7 @@ def list_history(
     if backward:
         page = list(reversed(page))
 
+    divisor, _ = _estimate_divisor(conn, filter_clauses, filter_params)
     rows = [
         {
             "id": row["id"],
@@ -442,10 +583,10 @@ def list_history(
             "req_chars": row["req_chars"],
             "resp_chars": row["resp_chars"],
             "est_req_tokens": (
-                None if row["req_chars"] is None else row["req_chars"] // CHARS_PER_TOKEN
+                None if row["req_chars"] is None else row["req_chars"] // divisor
             ),
             "est_resp_tokens": (
-                None if row["resp_chars"] is None else row["resp_chars"] // CHARS_PER_TOKEN
+                None if row["resp_chars"] is None else row["resp_chars"] // divisor
             ),
             "args_summary": row["args_summary"],
         }
@@ -478,40 +619,122 @@ def list_history(
     return {"rows": rows, "next": next_cursor, "prev": prev_cursor}
 
 
+# Exact mode cannot re-tokenize the char counts already stored in rows,
+# so its divisor is calibrated instead from the queried window's own
+# stored summaries — a bounded sample, trusted only once it is large
+# enough for a stable chars-per-token ratio. Below that (and always in
+# heuristic mode) estimates stay on CHARS_PER_TOKEN, keeping dashboard
+# and bench numbers comparable (FR-002).
+CALIBRATION_SAMPLE_LIMIT = 200
+CALIBRATION_MIN_CHARS = 1000
+
+
+def _estimate_divisor(
+    conn: sqlite3.Connection, clauses: List[str], params: List[object]
+) -> Tuple[int, bool]:
+    """The chars-per-token divisor for a windowed ``tool_metrics`` query,
+    and whether exact mode calibrated it from the window's own summaries.
+
+    ``clauses``/``params`` are the caller's WHERE terms (same filters and
+    window the estimates describe). Heuristic mode, or a window whose
+    non-empty summaries total under :data:`CALIBRATION_MIN_CHARS`, keeps
+    the divisor at ``CHARS_PER_TOKEN`` uncalibrated.
+    """
+    if active_tokenizer_mode() == HEURISTIC_MODE:
+        return CHARS_PER_TOKEN, False
+    sample = conn.execute(
+        "SELECT args_summary FROM tool_metrics WHERE "
+        + " AND ".join(
+            [*clauses, "args_summary IS NOT NULL", "args_summary != ''"]
+        )
+        + " LIMIT ?",
+        [*params, CALIBRATION_SAMPLE_LIMIT],
+    ).fetchall()
+    total_chars = sum(len(row["args_summary"]) for row in sample)
+    if total_chars < CALIBRATION_MIN_CHARS:
+        return CHARS_PER_TOKEN, False
+    total_tokens = sum(estimate_tokens(row["args_summary"]) for row in sample)
+    return max(round(total_chars / total_tokens), 1), True
+
+
+class TokenEstimates(list):
+    """``get_tool_tokens``' per-tool entries plus the estimation context
+    that produced them: ``token_mode`` (the active mode's display name),
+    ``calibrated`` (exact mode derived its divisor from this window) and
+    ``chars_per_token`` (the divisor in force, FR-002). Stays a list so
+    iteration, equality and the CSV/JSON exports see exactly the per-tool
+    rows; the attributes ride the tokens view's ``tools`` context.
+    """
+
+    token_mode: str
+    calibrated: bool
+    chars_per_token: int
+
+    def __init__(
+        self,
+        entries: List[dict],
+        token_mode: str,
+        calibrated: bool,
+        chars_per_token: int,
+    ) -> None:
+        super().__init__(entries)
+        self.token_mode = token_mode
+        self.calibrated = calibrated
+        self.chars_per_token = chars_per_token
+
+
 def get_tool_tokens(
     conn: sqlite3.Connection, since: Optional[float] = None
-) -> List[dict]:
+) -> TokenEstimates:
     """Per-tool estimated context-token aggregates, ranked by total desc
-    (FR-006).
+    (FR-006), with per-tool truncation counts (FR-003) and the estimation
+    context for the view's mode label (FR-002).
 
-    The estimate is ``SUM(req_chars) // CHARS_PER_TOKEN`` plus
-    ``SUM(resp_chars) // CHARS_PER_TOKEN`` — the same constant the bench
-    suite uses, so dashboard and bench numbers stay comparable. Rows with
-    NULL sizes (recorded before the size columns existed) contribute zero
-    tokens but still count as calls; ``mean_tokens`` is ``total / calls``.
-    ``since`` (epoch seconds, None = all time) computes calls, sums — and
-    therefore aggregates and ranking — within the window only (FR-003);
-    rows with NULL ``invoked_at`` predate windowing and never match a
-    window.
+    Estimates divide summed chars by the divisor :func:`_estimate_divisor`
+    picks for the window — ``CHARS_PER_TOKEN`` (the bench constant) in
+    heuristic mode or without a usable calibration sample, a
+    tokenizer-calibrated ratio otherwise. Rows with NULL sizes (recorded
+    before the size columns existed) contribute zero tokens but still
+    count as calls; ``mean_tokens`` is ``total / calls``.
+    ``truncated_calls``/``truncated_chars`` aggregate the durable
+    ``truncated_from_chars``/``truncated_to_chars`` columns (never the
+    row-capped events table): a tool with no evidence row at all reads
+    None — unknown, not zero truncation. ``since`` (epoch seconds, None =
+    all time) computes calls, sums, calibration sample and truncation
+    counts — and therefore aggregates and ranking — within the window
+    only (FR-003); rows with NULL ``invoked_at`` predate windowing and
+    never match a window.
     """
-    where = " WHERE invoked_at >= ?" if since is not None else ""
+    clauses: List[str] = []
+    params: List[object] = []
+    if since is not None:
+        clauses.append("invoked_at >= ?")
+        params.append(since)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    divisor, calibrated = _estimate_divisor(conn, clauses, params)
     rows = conn.execute(
         f"""
         SELECT tool_name,
                COUNT(*) AS calls,
                SUM(req_chars) AS total_req_chars,
-               SUM(resp_chars) AS total_resp_chars
+               SUM(resp_chars) AS total_resp_chars,
+               COUNT(truncated_from_chars) AS truncated_calls,
+               SUM(CASE WHEN truncated_from_chars IS NOT NULL
+                        THEN truncated_from_chars
+                             - COALESCE(truncated_to_chars, truncated_from_chars)
+                   END) AS truncated_chars
         FROM tool_metrics{where}
         GROUP BY tool_name
         """,
-        [since] if since is not None else [],
+        params,
     ).fetchall()
 
     entries: List[dict] = []
     for row in rows:
-        est_req = (row["total_req_chars"] or 0) // CHARS_PER_TOKEN
-        est_resp = (row["total_resp_chars"] or 0) // CHARS_PER_TOKEN
+        est_req = (row["total_req_chars"] or 0) // divisor
+        est_resp = (row["total_resp_chars"] or 0) // divisor
         total = est_req + est_resp
+        has_evidence = bool(row["truncated_calls"])
         entries.append(
             {
                 "tool_name": row["tool_name"],
@@ -520,10 +743,17 @@ def get_tool_tokens(
                 "est_resp_tokens": est_resp,
                 "total_tokens": total,
                 "mean_tokens": total / row["calls"],
+                "truncated_calls": row["truncated_calls"] if has_evidence else None,
+                "truncated_chars": row["truncated_chars"] if has_evidence else None,
             }
         )
     entries.sort(key=lambda e: (-e["total_tokens"], e["tool_name"]))
-    return entries
+    return TokenEstimates(
+        entries,
+        token_mode=active_tokenizer_mode(),
+        calibrated=calibrated,
+        chars_per_token=divisor,
+    )
 
 
 # Seconds of inactivity that split a session into separate chains.
