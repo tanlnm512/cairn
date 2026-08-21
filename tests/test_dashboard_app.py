@@ -2015,7 +2015,13 @@ def test_nav_and_landing_page_each_link_to_graph(tmp_path):
     landing = client.get("/")
     assert landing.status_code == 200
     assert nav_anchor(landing.text)
-    assert '<a href="/graph">Graph explorer</a>' in landing.text  # list
+    # Landing launcher card: the anchor carries an svg + spanned title.
+    assert re.search(
+        r'<a class="launcher-card" href="/graph"[^>]*>.*?>Graph explorer'
+        r"</span>",
+        landing.text,
+        re.S,
+    )
 
     # The nav entry is base.html's, not landing-specific: another page
     # renders it too, so /graph is one click from anywhere.

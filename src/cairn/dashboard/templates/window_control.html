@@ -15,7 +15,7 @@
 {%- if after %}{% set _ = q.update({'after': after}) %}{% endif %}
 {{- links.url(request.url.path, q) }}
 {%- endmacro %}
-<p class="muted">
+<p class="muted window-control">
   Window:
   {%- for preset in ["24h", "7d", "30d", "all"] %} {% if not loop.first %} · {% endif %}{% if preset == window %}<strong>{{ preset }}</strong>{% else %}<a href="{{ window_href(preset) }}">{{ preset }}</a>{% endif %}
   {%- endfor %}

@@ -5,6 +5,24 @@
 <section class="panel">
   <h1>Projects</h1>
   {% if projects %}
+  <div class="stat-row">
+    <div class="stat-tile">
+      <div class="stat-value">{{ projects | length }}</div>
+      <div class="stat-label">projects</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ projects | sum(attribute='file_count') }}</div>
+      <div class="stat-label">files</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ projects | sum(attribute='symbol_count') }}</div>
+      <div class="stat-label">symbols</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ projects | sum(attribute='edge_count') }}</div>
+      <div class="stat-label">edges</div>
+    </div>
+  </div>
   <table class="data-table">
     <thead>
       <tr>
