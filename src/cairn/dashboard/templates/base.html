@@ -18,8 +18,12 @@
         }
         var prefersDark = window.matchMedia
           ? window.matchMedia("(prefers-color-scheme: dark)").matches
-          : false;
-        var dark = stored === "dark" || (stored === null && prefersDark);
+          : null;
+        /* Resolution order: stored choice, then system preference, then
+           dark — dark is the dashboard's default look. */
+        var dark =
+          stored === "dark" ||
+          (stored === null && (prefersDark === null || prefersDark));
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         var toggle = document.getElementById("theme-toggle");
         if (toggle) {
@@ -53,31 +57,71 @@
     })();
   </script>
 </head>
-<body>
-  <header class="site-header">
-    <nav class="site-nav">
-      {#- FR-003: keep the selected store on every nav hop; empty when the
-          launch store is served (byte-identical plain hrefs). -#}
-      {% set nav_query = '' if not store_key else '?store=' + (store_key | urlencode) %}
-      <a class="brand" href="/{{ nav_query }}">cairn</a>
-      <a href="/workspaces{{ nav_query }}">Workspaces</a>
-      <a href="/projects{{ nav_query }}">Projects</a>
-      <a href="/graph{{ nav_query }}">Graph</a>
-      <a href="/history{{ nav_query }}">History</a>
-      <a href="/tokens{{ nav_query }}">Tokens</a>
-      <a href="/chains{{ nav_query }}">Chains</a>
-      <a href="/health{{ nav_query }}">Health</a>
-      <a href="/memory{{ nav_query }}">Memory</a>
-      <a href="/tasks{{ nav_query }}">Tasks</a>
-      <button type="button" id="theme-toggle" class="theme-toggle">Theme</button>
+<body class="app-shell">
+  <aside class="sidebar">
+    {#- FR-003: keep the selected store on every nav hop; empty when the
+        launch store is served (byte-identical plain hrefs). -#}
+    {% set nav_query = '' if not store_key else '?store=' + (store_key | urlencode) %}
+    {% set path = request.url.path %}
+    <a class="brand" href="/{{ nav_query }}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.5 4.5 5.5h-9L12 3.5z"/><path d="m12 12 4.5 5.5h-9L12 12z"/><path d="M12 21.5v-1"/></svg>
+      <span>cairn</span>
+    </a>
+    <nav class="side-nav">
+      <a href="/workspaces{{ nav_query }}"{% if path.startswith('/workspaces') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+        <span>Workspaces</span>
+      </a>
+      <a href="/projects{{ nav_query }}"{% if path.startswith('/projects') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>Projects</span>
+      </a>
+      <a href="/graph{{ nav_query }}"{% if path.startswith('/graph') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+        <span>Graph</span>
+      </a>
+      <a href="/history{{ nav_query }}"{% if path.startswith('/history') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        <span>History</span>
+      </a>
+      <a href="/tokens{{ nav_query }}"{% if path.startswith('/tokens') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+        <span>Tokens</span>
+      </a>
+      <a href="/chains{{ nav_query }}"{% if path.startswith('/chains') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+        <span>Chains</span>
+      </a>
+      <a href="/health{{ nav_query }}"{% if path.startswith('/health') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>Health</span>
+      </a>
+      <a href="/memory{{ nav_query }}"{% if path.startswith('/memory') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.7-4 3-9 3s-9-1.3-9-3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg>
+        <span>Memory</span>
+      </a>
+      <a href="/tasks{{ nav_query }}"{% if path.startswith('/tasks') %} class="active" aria-current="page"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span>Tasks</span>
+      </a>
     </nav>
-  </header>
-  <main class="site-main">
-    {% block content %}{% endblock %}
-  </main>
-  <div id="live-controls" class="muted" data-state="running" hidden>
-    <span id="live-state"></span>
-    <button type="button" id="live-pause">Pause</button>
+    <div class="sidebar-foot">
+      <button type="button" id="theme-toggle" class="theme-toggle">Theme</button>
+    </div>
+  </aside>
+  <div class="app-body">
+    <header class="topbar">
+      {#- The topbar label derives from the path segment ("/" -> Overview);
+          views may override via the view_title block. -#}
+      <div class="topbar-title">{% block view_title %}{{ 'Overview' if path == '/' else (path.strip('/').split('/')[0] | capitalize) }}{% endblock %}</div>
+      <div id="live-controls" class="muted" data-state="running" hidden>
+        <span id="live-state"></span>
+        <button type="button" id="live-pause">Pause</button>
+      </div>
+    </header>
+    <main class="site-main">
+      {% block content %}{% endblock %}
+    </main>
   </div>
   {% block scripts %}{% endblock %}
 </body>

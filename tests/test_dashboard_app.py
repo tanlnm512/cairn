@@ -2002,19 +2002,26 @@ def test_inspect_target_url_renders_symbol_neighborhood(tmp_path):
 def test_nav_and_landing_page_each_link_to_graph(tmp_path):
     """FR-006 / US3 / TC-006: /graph is no orphan — the shared nav carries
     it on every page (base.html) and the landing page's link list repeats
-    it (index.html)."""
+    it (index.html). The sidebar nav anchors carry an inline svg icon, so
+    the label rides a <span> inside the anchor."""
     client = _client(tmp_path, seed=False)
+
+    def nav_anchor(html):
+        # base.html nav: the /graph anchor with its spanned label
+        return re.search(
+            r'<a href="/graph"[^>]*>.*?>Graph</span>', html, re.S
+        )
 
     landing = client.get("/")
     assert landing.status_code == 200
-    assert '<a href="/graph">Graph</a>' in landing.text  # base.html nav
+    assert nav_anchor(landing.text)
     assert '<a href="/graph">Graph explorer</a>' in landing.text  # list
 
     # The nav entry is base.html's, not landing-specific: another page
     # renders it too, so /graph is one click from anywhere.
     projects = client.get("/projects")
     assert projects.status_code == 200
-    assert '<a href="/graph">Graph</a>' in projects.text
+    assert nav_anchor(projects.text)
 
 
 def test_view_link_macro_carries_window_and_encodes_value():
@@ -2220,17 +2227,26 @@ def test_workspaces_route_renders_all_four_states_without_error(
 
 def test_base_nav_leads_with_the_workspaces_link(tmp_path, monkeypatch):
     """FR-001: the shared base nav (base.html) carries the overview as its
-    first entry, one click from every page."""
+    first entry, one click from every page. Sidebar nav anchors carry an
+    inline svg icon, so the label rides a <span> inside the anchor."""
     fixture = _four_state_home(tmp_path)
     resp = _workspaces_client(
         tmp_path, monkeypatch, fixture["home"]
     ).get("/workspaces")
     assert resp.status_code == 200
-    assert '<a href="/workspaces">Workspaces</a>' in resp.text
+
+    def anchor_pos(href, label):
+        return re.search(
+            r'<a href="' + href + r'"[^>]*>.*?>' + label + r"</span>",
+            resp.text,
+            re.S,
+        )
+
+    workspaces = anchor_pos("/workspaces", "Workspaces")
+    projects = anchor_pos("/projects", "Projects")
+    assert workspaces and projects
     # First entry: the overview anchor precedes every other nav view.
-    assert resp.text.index('<a href="/workspaces">Workspaces</a>') < (
-        resp.text.index('<a href="/projects">Projects</a>')
-    )
+    assert workspaces.start() < projects.start()
 
 
 def test_probe_cap_degrades_counts_visibly(tmp_path, monkeypatch):
