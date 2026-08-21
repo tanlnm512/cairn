@@ -53,15 +53,12 @@
       (scope=symbol&focus=...); deselecting restores the hint. Distinct from
       double-click, which expands in place. -#}
   <p class="muted"><span id="inspect-action" class="muted">select a node to inspect</span></p>
-  {#- Kind legend: only the kinds present in the current result set, so
-      the swatch row stays honest for module- or symbol-scoped graphs.
-      The --kind-* tokens are the single color source — app.js reads the
-      same variables when coloring vis groups. -#}
-  {% set kinds = graph.nodes | map(attribute='kind') | reject('none') | unique | list | sort %}
-  {% if kinds %}
-  <p class="graph-legend muted">
-    {% for k in kinds %}<span class="legend-item"><span class="legend-dot" data-kind="{{ k }}"></span>{{ k }}</span>{% endfor %}
-  </p>
+  {#- Community legend: app.js renders it from the same palette it
+      colored the nodes with (top 8 communities + overflow), so the
+      swatches can never drift from the canvas. Hidden until filled;
+      absent when the graph is empty. -#}
+  {% if graph.nodes %}
+  <p class="graph-legend muted" id="graph-legend" hidden></p>
   {% endif %}
   <p class="muted" id="graph-counts">
     scope <strong>{{ scope }}</strong> —

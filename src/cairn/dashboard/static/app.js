@@ -9,12 +9,26 @@
    plain anchor into that symbol's neighborhood view. No CDN
    — vis-network is vendored.
 
-   Theming: node colors come from the stylesheet's --kind-* variables
-   (the same tokens the HTML legend uses), read at network build time;
-   a MutationObserver on <html data-theme> re-applies the color options
-   when the theme toggle flips, without touching layout or physics.
-   Node size scales with degree (vis `value` scaling) so hubs read as
-   hubs, GitNexus-style. */
+   Rendering model (GitNexus-inspired, ported to vis-network):
+   - Communities: nodes are colored by their natural cluster — the
+     file's directory (symbol/module scopes) or the leading path segment
+     of aggregated ids like "src (36)" (repo scope). Largest community
+     takes palette slot 0; new communities from expansions take the next
+     free slot, so existing colors never shift under a merge.
+   - Label discipline: dense graphs (>30 nodes with edges) label only
+     the top quarter by degree; edgeless or small graphs label
+     everything. Zooming out past 0.45 strips labels graph-wide (the
+     sigma labelRenderThreshold equivalent); zooming back in restores.
+   - Edgeless graphs (repo/module overviews) skip physics: nodes take
+     deterministic golden-angle spiral positions — a spread
+     constellation instead of a center clump.
+   - Node size scales with degree (vis `value` scaling) so hubs read as
+     hubs.
+   - Theming: edge/font options derive from the stylesheet's CSS
+     variables; a MutationObserver on <html data-theme> re-applies them
+     and re-colors every node from the active palette (light palettes
+     are the dark hues' saturated-dark counterparts). Layout and physics
+     state are never touched by a theme flip. */
 (function () {
   "use strict";
   var block = document.getElementById("graph-data");
@@ -37,21 +51,143 @@
     );
     return v ? v.trim() : "";
   }
-  /* Node degree over the initial edge set — vis `value` scaling turns
-     it into hub sizing. Fetched-merge nodes later get degree 0 + 1. */
+  function isDark() {
+    return document.documentElement.dataset.theme !== "light";
+  }
+
+  /* ---- Communities ---- */
+
+  var PALETTE_DARK = [
+    "#2dd4bf", "#a78bfa", "#60a5fa", "#f472b6", "#fbbf24",
+    "#4ade80", "#f87171", "#22d3ee", "#fb923c", "#a3e635",
+    "#e879f9", "#38bdf8"
+  ];
+  var PALETTE_LIGHT = [
+    "#0d9488", "#7c3aed", "#2563eb", "#db2777", "#b45309",
+    "#16a34a", "#b91c1c", "#0891b2", "#c2410c", "#4d7c0f",
+    "#c026d3", "#0284c7"
+  ];
+  function palette() {
+    return isDark() ? PALETTE_DARK : PALETTE_LIGHT;
+  }
+
+  function communityKey(n) {
+    if (n.file) {
+      var i = n.file.lastIndexOf("/");
+      return i > 0 ? n.file.slice(0, i) : "(root)";
+    }
+    var id = (n.id || "").replace(/\s+\(\d+\)\s*$/, "");
+    var seg = id.split("/")[0];
+    return seg || "(root)";
+  }
+
+  var communityIndex = {};
+  var communityCounts = {};
+  var communityCursor = 0;
+  var idCommunity = {};
+
+  function communityOf(n) {
+    /* merge() re-runs nodeView over already-known nodes (id-keyed
+       updates); a node's community is assigned and counted once. */
+    if (idCommunity[n.id] !== undefined) {
+      return idCommunity[n.id];
+    }
+    var k = communityKey(n);
+    if (communityIndex[k] === undefined) {
+      communityIndex[k] = communityCursor % PALETTE_DARK.length;
+      communityCursor += 1;
+      communityCounts[k] = communityCounts[k] || 0;
+    }
+    communityCounts[k] += 1;
+    idCommunity[n.id] = k;
+    return k;
+  }
+  function slotColor(slot) {
+    return palette()[slot];
+  }
+  function colorForKey(k) {
+    var c = slotColor(communityIndex[k]);
+    return {
+      background: c,
+      border: c,
+      highlight: { background: c, border: cssVar("--text") },
+      hover: { background: c, border: cssVar("--text") }
+    };
+  }
+
+  /* Initial assignment is largest-community-first so the biggest
+     cluster reads as the primary hue; id order breaks ties. */
+  (function assignInitialCommunities() {
+    var counts = {};
+    data.nodes.forEach(function (n) {
+      var k = communityKey(n);
+      counts[k] = (counts[k] || 0) + 1;
+    });
+    Object.keys(counts)
+      .sort(function (a, b) {
+        return counts[b] - counts[a] || (a < b ? -1 : 1);
+      })
+      .forEach(function (k) {
+        communityIndex[k] = communityCursor % PALETTE_DARK.length;
+        communityCursor += 1;
+        communityCounts[k] = 0;
+      });
+  })();
+
+  /* ---- Degree / labels / positions ---- */
+
   var degree = {};
   data.edges.forEach(function (e) {
     degree[e.source] = (degree[e.source] || 0) + 1;
     degree[e.target] = (degree[e.target] || 0) + 1;
   });
+
+  var labelEligible = {};
+  (function computeEligibility() {
+    var ns = data.nodes;
+    if (!data.edges.length || ns.length <= 30) {
+      ns.forEach(function (n) {
+        labelEligible[n.id] = true;
+      });
+      return;
+    }
+    var sorted = ns.slice().sort(function (a, b) {
+      return (degree[b.id] || 0) - (degree[a.id] || 0);
+    });
+    var take = Math.max(10, Math.floor(ns.length * 0.25));
+    sorted.forEach(function (n, i) {
+      labelEligible[n.id] = i < take && (degree[n.id] || 0) >= 1;
+    });
+  })();
+
+  var labelsShown = true;
+
+  var GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  var spiralCursor = 0;
+  function spiralPosition() {
+    var i = spiralCursor;
+    spiralCursor += 1;
+    var r = 100 * Math.sqrt(i + 0.6);
+    var a = i * GOLDEN;
+    return { x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) };
+  }
+  var edgeless = !data.edges.length;
+
   function nodeView(n) {
-    return {
+    communityOf(n);
+    var view = {
       id: n.id,
-      label: n.id,
+      label: labelEligible[n.id] ? n.id : "",
       title: [n.kind, n.file].filter(Boolean).join("\n"),
-      group: n.kind || "other",
-      value: (degree[n.id] || 0) + 1
+      value: (degree[n.id] || 0) + 1,
+      color: colorForKey(idCommunity[n.id])
     };
+    if (edgeless) {
+      var p = spiralPosition();
+      view.x = p.x;
+      view.y = p.y;
+    }
+    return view;
   }
   function edgeKey(source, target, kind) {
     return source + "\u0000" + target + "\u0000" + (kind || "");
@@ -101,39 +237,24 @@
 
   /* Color/typography options derived from the active theme's CSS
      variables — safe to re-apply on a theme flip because they carry no
-     layout or physics state. */
+     layout or physics state. Node colors live on the nodes themselves
+     (community palette), not here. */
   function themeOptions() {
-    var groups = {};
-    ["function", "method", "class", "interface", "enum", "module",
-      "external"].forEach(function (kind) {
-      var c = cssVar("--kind-" + kind);
-      if (!c) {
-        return;
-      }
-      groups[kind] = {
-        color: {
-          background: c,
-          border: c,
-          highlight: { background: c, border: cssVar("--text") },
-          hover: { background: c, border: cssVar("--text") }
-        }
-      };
-    });
+    var accent = cssVar("--accent");
     return {
-      groups: groups,
       nodes: {
         shape: "dot",
         size: 9,
         borderWidth: 2,
-        scaling: { min: 7, max: 22 },
+        scaling: { min: 7, max: 24 },
         color: {
-          background: cssVar("--muted"),
-          border: cssVar("--muted"),
+          background: accent,
+          border: accent,
           highlight: {
-            background: cssVar("--accent"),
+            background: accent,
             border: cssVar("--text")
           },
-          hover: { background: cssVar("--accent"), border: cssVar("--text") }
+          hover: { background: accent, border: cssVar("--text") }
         },
         font: {
           face: cssVar("--font-sans"),
@@ -178,16 +299,20 @@
     if (kind === "hier") {
       options.layout = layoutOptions(kind);
       options.physics = { enabled: false };
+    } else if (edgeless) {
+      /* Spiral positions are final; physics would only drag the
+         constellation back into a clump. */
+      options.physics = { enabled: false };
     } else {
       options.physics = {
         enabled: true,
         solver: "barnesHut",
         barnesHut: {
           gravitationalConstant: -6000,
-          springLength: 140,
+          springLength: 160,
           springConstant: 0.04,
           damping: 0.45,
-          avoidOverlap: 0.35
+          avoidOverlap: 0.4
         },
         stabilization: { enabled: true, iterations: 350, fit: true }
       };
@@ -201,11 +326,84 @@
     optionsFor(layout)
   );
 
-  /* Theme toggle re-colors the live network: only the theme-derived
-     options are re-applied, so layout/physics/camera state survives. */
+  /* Zoom label discipline (sigma's labelRenderThreshold equivalent):
+     crossing the scale threshold flips the graph-wide label state once,
+     never per-zoom-tick. */
+  function applyLabels() {
+    var updates = [];
+    nodes.get().forEach(function (n) {
+      updates.push({
+        id: n.id,
+        label: labelsShown && labelEligible[n.id] ? n.id : ""
+      });
+    });
+    if (updates.length) {
+      nodes.update(updates);
+    }
+  }
+  network.on("zoom", function () {
+    var want = network.getScale() >= 0.45;
+    if (want !== labelsShown) {
+      labelsShown = want;
+      applyLabels();
+    }
+  });
+
+  /* ---- Legend (communities, rendered from the same palette) ---- */
+
+  function renderLegend() {
+    var el = document.getElementById("graph-legend");
+    if (!el) {
+      return;
+    }
+    el.textContent = "";
+    var keys = Object.keys(communityCounts).sort(function (a, b) {
+      return communityCounts[b] - communityCounts[a] || (a < b ? -1 : 1);
+    });
+    keys.slice(0, 8).forEach(function (k) {
+      var item = document.createElement("span");
+      item.className = "legend-item";
+      var dot = document.createElement("span");
+      dot.className = "legend-dot";
+      dot.style.background = slotColor(communityIndex[k]);
+      var name = document.createElement("span");
+      name.className = "legend-name";
+      name.textContent = k;
+      item.appendChild(dot);
+      item.appendChild(name);
+      el.appendChild(item);
+    });
+    if (keys.length > 8) {
+      var more = document.createElement("span");
+      more.className = "legend-item";
+      more.textContent = "+" + (keys.length - 8) + " more";
+      el.appendChild(more);
+    }
+    el.hidden = false;
+  }
+  renderLegend();
+
+  /* Theme toggle re-colors the live network: theme-derived options via
+     setOptions, node colors via a single batched update, then the
+     legend re-renders from the new palette. Layout/physics/camera
+     state survives untouched. */
+  function applyTheme() {
+    network.setOptions(themeOptions());
+    var updates = [];
+    nodes.get().forEach(function (n) {
+      var k = idCommunity[n.id];
+      if (k !== undefined) {
+        updates.push({ id: n.id, color: colorForKey(k) });
+      }
+    });
+    if (updates.length) {
+      nodes.update(updates);
+    }
+    renderLegend();
+  }
   if (typeof MutationObserver !== "undefined") {
     new MutationObserver(function () {
-      network.setOptions(themeOptions());
+      applyTheme();
     }).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"]
@@ -257,6 +455,7 @@
     if (added.length) {
       edges.add(added);
     }
+    renderLegend();
     refreshCounts(!!(result && result.metadata && result.metadata.truncated));
   }
 
@@ -383,7 +582,8 @@
       var scale = network.getScale();
       /* Full option swap: the layout change rides the physics change it
          implies (hier disables physics, force re-enables barnesHut with
-         a fresh stabilization). */
+         a fresh stabilization — unless the graph is edgeless, where
+         force stays physics-off on spiral positions). */
       network.setOptions(optionsFor(kind));
       network.once("afterDrawing", function () {
         network.moveTo({ position: position, scale: scale });

@@ -26,13 +26,6 @@
   --warn: #b45309;
   --err: #b91c1c;
   --shadow: rgba(23, 31, 46, 0.1);
-  --kind-function: #0d9488;
-  --kind-method: #16a34a;
-  --kind-class: #7c3aed;
-  --kind-interface: #2563eb;
-  --kind-enum: #db2777;
-  --kind-module: #b45309;
-  --kind-external: #6b7280;
 }
 
 [data-theme="dark"] {
@@ -52,13 +45,6 @@
   --warn: #fbbf24;
   --err: #f87171;
   --shadow: rgba(0, 0, 0, 0.45);
-  --kind-function: #2dd4bf;
-  --kind-method: #4ade80;
-  --kind-class: #a78bfa;
-  --kind-interface: #60a5fa;
-  --kind-enum: #f472b6;
-  --kind-module: #fbbf24;
-  --kind-external: #8b9bb4;
   color-scheme: dark;
 }
 
@@ -437,6 +423,14 @@ body.app-shell {
   display: inline-flex;
   align-items: center;
   gap: 0.42rem;
+  min-width: 0;
+}
+
+.legend-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .legend-dot {
@@ -444,34 +438,6 @@ body.app-shell {
   height: 10px;
   border-radius: 999px;
   flex: none;
-}
-
-.legend-dot[data-kind="function"] {
-  background: var(--kind-function);
-}
-
-.legend-dot[data-kind="method"] {
-  background: var(--kind-method);
-}
-
-.legend-dot[data-kind="class"] {
-  background: var(--kind-class);
-}
-
-.legend-dot[data-kind="interface"] {
-  background: var(--kind-interface);
-}
-
-.legend-dot[data-kind="enum"] {
-  background: var(--kind-enum);
-}
-
-.legend-dot[data-kind="module"] {
-  background: var(--kind-module);
-}
-
-.legend-dot[data-kind="external"] {
-  background: var(--kind-external);
 }
 
 #graph-counts strong {
