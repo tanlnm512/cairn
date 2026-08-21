@@ -1431,7 +1431,7 @@ def test_tokens_and_chains_wrap_their_content_in_refresh_region(tmp_path):
         assert structure in region, path  # the view lives in the swap target
         assert seeded in region, path  # seeded content, not empty markup
         assert (
-            len(re.findall(r'<script[^>]*\ssrc="[^"]*app\.js"', resp.text))
+            len(re.findall(r'<script[^>]*\ssrc="[^"]*app\.js[?"]', resp.text))
             == 1
         ), path  # the loop module loads once, never twice
 
@@ -1670,7 +1670,7 @@ def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
     assert 'id="live-state"' in resp.text  # the visible state-word slot
     assert 'id="live-pause"' in resp.text  # the pause/resume toggle
 
-    loads = re.findall(r'<script[^>]*\ssrc="[^"]*app\.js"', resp.text)
+    loads = re.findall(r'<script[^>]*\ssrc="[^"]*app\.js[?"]', resp.text)
     assert len(loads) == 1  # the loop module loads once, never twice
 
 

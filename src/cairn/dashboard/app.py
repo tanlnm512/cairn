@@ -164,7 +164,16 @@ def create_app(
     from starlette.staticfiles import StaticFiles
     from starlette.templating import Jinja2Templates
 
+    static_dir = _PACKAGE_DIR / "static"
     templates = Jinja2Templates(directory=str(_PACKAGE_DIR / "templates"))
+    # Asset version = newest static-file mtime, so template URLs carry
+    # ?v=<version> and any browser holding a stale cached app.js/app.css
+    # (heuristic caching predating the no-cache header, or an old
+    # install) fetches fresh the moment the files change.
+    templates.env.globals["asset_version"] = max(
+        (p.stat().st_mtime_ns for p in static_dir.rglob("*") if p.is_file()),
+        default=0,
+    )
     templates.env.filters["filesize"] = _human_size
     templates.env.filters["epoch"] = _human_ts
     templates.env.filters["duration"] = _human_duration
@@ -172,7 +181,17 @@ def create_app(
     templates.env.filters["span"] = _human_span
     templates.env.filters["offset"] = _rel_offset
     templates.env.filters["mean"] = _fmt_mean
-    static_dir = _PACKAGE_DIR / "static"
+
+    class _RevalidatingStaticFiles(StaticFiles):
+        """Browsers heuristic-cache uncontrolled responses for a lazy
+        freshness lifetime, so an upgraded dashboard keeps serving the
+        OLD app.js/app.css (stale UI, new HTML) until the cache evicts.
+        The assets are local and tiny — always revalidate instead."""
+
+        def file_response(self, *args, **kwargs):
+            response = super().file_response(*args, **kwargs)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
 
     from .data import (
         GRAPH_SCOPES,
@@ -569,7 +588,7 @@ def create_app(
         Route("/tasks", tasks, name="tasks"),
         Mount(
             "/static",
-            app=StaticFiles(directory=str(static_dir)),
+            app=_RevalidatingStaticFiles(directory=str(static_dir)),
             name="static",
         ),
     ]
