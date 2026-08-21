@@ -56,6 +56,37 @@
       });
     })();
   </script>
+  <script>
+    /* Workspace stickiness: the store selection rides the URL
+       (?store=<key>, the FR-003 seam), which a typed URL or new tab
+       drops — so, like the theme, the last explicit selection is
+       remembered (localStorage "cairn-store") and a bare visit
+       redirects to it. Until the user picks a workspace, nothing is
+       stored and bare URLs keep the launch store, byte-identical. A
+       remembered-but-since-deleted store lands on the friendly
+       missing-DB page, where Workspaces is one click away. */
+    (function () {
+      "use strict";
+      var STORAGE_KEY = "cairn-store";
+      var url = new URL(window.location.href);
+      var selected = (url.searchParams.get("store") || "").trim();
+      try {
+        if (selected) {
+          window.localStorage.setItem(STORAGE_KEY, selected);
+        } else {
+          var remembered = window.localStorage.getItem(STORAGE_KEY);
+          if (remembered) {
+            url.searchParams.set("store", remembered);
+            window.location.replace(
+              url.pathname + url.search + url.hash
+            );
+          }
+        }
+      } catch (err) {
+        /* storage unavailable: the selection stays URL-only */
+      }
+    })();
+  </script>
 </head>
 <body class="app-shell">
   <aside class="sidebar">
