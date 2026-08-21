@@ -587,6 +587,17 @@ code {
   background: var(--accent-soft);
 }
 
+/* Memory/knowledge types (decision, pattern, mistake, workaround):
+   purple distinguishes them from operational statuses. */
+.badge-decision,
+.badge-pattern,
+.badge-mistake,
+.badge-workaround {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 32%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+}
+
 /* ---- Cards & stat tiles ---- */
 
 .card-grid {
