@@ -10,11 +10,11 @@
    — vis-network is vendored.
 
    Rendering model (GitNexus-inspired, ported to vis-network):
-   - Communities: nodes are colored by their natural cluster — the
-     file's directory (symbol/module scopes) or the leading path segment
-     of aggregated ids like "src (36)" (repo scope). Largest community
-     takes palette slot 0; new communities from expansions take the next
-     free slot, so existing colors never shift under a merge.
+   - Kind coloring & filters: nodes color by symbol kind (function,
+     method, class, interface, enum, module, external) from the same
+     palette the legend renders; legend items are clickable filters
+     that hide/show every node of that kind — vis hides connected
+     edges with their endpoints.
    - Label discipline: dense graphs (>30 nodes with edges) label only
      the top quarter by degree; edgeless or small graphs label
      everything. Zooming out past 0.45 strips labels graph-wide (the
@@ -55,58 +55,50 @@
     return document.documentElement.dataset.theme !== "light";
   }
 
-  /* ---- Communities ---- */
+  /* ---- Kind coloring & filters ---- */
 
-  var PALETTE_DARK = [
-    "#2dd4bf", "#a78bfa", "#60a5fa", "#f472b6", "#fbbf24",
-    "#4ade80", "#f87171", "#22d3ee", "#fb923c", "#a3e635",
-    "#e879f9", "#38bdf8"
-  ];
-  var PALETTE_LIGHT = [
-    "#0d9488", "#7c3aed", "#2563eb", "#db2777", "#b45309",
-    "#16a34a", "#b91c1c", "#0891b2", "#c2410c", "#4d7c0f",
-    "#c026d3", "#0284c7"
-  ];
-  function palette() {
-    return isDark() ? PALETTE_DARK : PALETTE_LIGHT;
+  var KIND_DARK = {
+    function: "#2dd4bf",
+    method: "#4ade80",
+    class: "#a78bfa",
+    interface: "#60a5fa",
+    enum: "#f472b6",
+    module: "#fbbf24",
+    external: "#8b9bb4"
+  };
+  var KIND_LIGHT = {
+    function: "#0d9488",
+    method: "#16a34a",
+    class: "#7c3aed",
+    interface: "#2563eb",
+    enum: "#db2777",
+    module: "#b45309",
+    external: "#6b7280"
+  };
+  function kindPalette() {
+    return isDark() ? KIND_DARK : KIND_LIGHT;
+  }
+  function kindOf(n) {
+    return n.kind && kindPalette()[n.kind] ? n.kind : "other";
   }
 
-  function communityKey(n) {
-    if (n.file) {
-      var i = n.file.lastIndexOf("/");
-      return i > 0 ? n.file.slice(0, i) : "(root)";
-    }
-    var id = (n.id || "").replace(/\s+\(\d+\)\s*$/, "");
-    var seg = id.split("/")[0];
-    return seg || "(root)";
-  }
+  var idKind = {};
+  var kindCounts = {};
+  var hiddenKinds = {};
 
-  var communityIndex = {};
-  var communityCounts = {};
-  var communityCursor = 0;
-  var idCommunity = {};
-
-  function communityOf(n) {
+  function registerKind(n) {
     /* merge() re-runs nodeView over already-known nodes (id-keyed
-       updates); a node's community is assigned and counted once. */
-    if (idCommunity[n.id] !== undefined) {
-      return idCommunity[n.id];
+       updates); a node's kind is counted once. */
+    if (idKind[n.id] !== undefined) {
+      return idKind[n.id];
     }
-    var k = communityKey(n);
-    if (communityIndex[k] === undefined) {
-      communityIndex[k] = communityCursor % PALETTE_DARK.length;
-      communityCursor += 1;
-      communityCounts[k] = communityCounts[k] || 0;
-    }
-    communityCounts[k] += 1;
-    idCommunity[n.id] = k;
+    var k = kindOf(n);
+    kindCounts[k] = (kindCounts[k] || 0) + 1;
+    idKind[n.id] = k;
     return k;
   }
-  function slotColor(slot) {
-    return palette()[slot];
-  }
   function colorForKey(k) {
-    var c = slotColor(communityIndex[k]);
+    var c = kindPalette()[k] || cssVar("--muted");
     return {
       background: c,
       border: c,
@@ -115,24 +107,20 @@
     };
   }
 
-  /* Initial assignment is largest-community-first so the biggest
-     cluster reads as the primary hue; id order breaks ties. */
-  (function assignInitialCommunities() {
-    var counts = {};
-    data.nodes.forEach(function (n) {
-      var k = communityKey(n);
-      counts[k] = (counts[k] || 0) + 1;
+  /* Legend items double as filters: toggling a kind hides every node
+     of that kind — vis hides the connected edges with them. */
+  function setKindHidden(kind, hidden) {
+    hiddenKinds[kind] = hidden;
+    var updates = [];
+    nodes.get().forEach(function (node) {
+      if (idKind[node.id] === kind) {
+        updates.push({ id: node.id, hidden: hidden });
+      }
     });
-    Object.keys(counts)
-      .sort(function (a, b) {
-        return counts[b] - counts[a] || (a < b ? -1 : 1);
-      })
-      .forEach(function (k) {
-        communityIndex[k] = communityCursor % PALETTE_DARK.length;
-        communityCursor += 1;
-        communityCounts[k] = 0;
-      });
-  })();
+    if (updates.length) {
+      nodes.update(updates);
+    }
+  }
 
   /* ---- Degree / labels / positions ---- */
 
@@ -174,13 +162,15 @@
   var edgeless = !data.edges.length;
 
   function nodeView(n) {
-    communityOf(n);
+    var kind = registerKind(n);
     var view = {
       id: n.id,
       label: labelEligible[n.id] ? n.id : "",
       title: [n.kind, n.file].filter(Boolean).join("\n"),
       value: (degree[n.id] || 0) + 1,
-      color: colorForKey(idCommunity[n.id])
+      color: colorForKey(kind),
+      /* merged nodes of an already-filtered kind arrive hidden */
+      hidden: !!hiddenKinds[kind]
     };
     if (edgeless) {
       var p = spiralPosition();
@@ -349,7 +339,39 @@
     }
   });
 
-  /* ---- Legend (communities, rendered from the same palette) ---- */
+  /* Canvas overlay controls (GitNexus-style zoom/fit cluster at the
+     canvas's bottom-left); the overlay markup lives in graph.html. */
+  var overlay = canvas.parentNode
+    ? canvas.parentNode.querySelector(".graph-overlay")
+    : null;
+  if (overlay) {
+    overlay.addEventListener("click", function (event) {
+      var btn =
+        event.target && event.target.closest
+          ? event.target.closest("button[data-graph-action]")
+          : null;
+      if (!btn || !overlay.contains(btn)) {
+        return;
+      }
+      var action = btn.getAttribute("data-graph-action");
+      var animation = { duration: 250, easingFunction: "easeInOutQuad" };
+      if (action === "zoom-in") {
+        network.moveTo({
+          scale: network.getScale() * 1.35,
+          animation: animation
+        });
+      } else if (action === "zoom-out") {
+        network.moveTo({
+          scale: Math.max(network.getScale() / 1.35, 0.05),
+          animation: animation
+        });
+      } else if (action === "fit") {
+        network.fit({ animation: animation });
+      }
+    });
+  }
+
+  /* ---- Legend: kind swatches with counts, doubling as filters ---- */
 
   function renderLegend() {
     var el = document.getElementById("graph-legend");
@@ -357,29 +379,50 @@
       return;
     }
     el.textContent = "";
-    var keys = Object.keys(communityCounts).sort(function (a, b) {
-      return communityCounts[b] - communityCounts[a] || (a < b ? -1 : 1);
-    });
-    keys.slice(0, 8).forEach(function (k) {
-      var item = document.createElement("span");
-      item.className = "legend-item";
-      var dot = document.createElement("span");
-      dot.className = "legend-dot";
-      dot.style.background = slotColor(communityIndex[k]);
-      var name = document.createElement("span");
-      name.className = "legend-name";
-      name.textContent = k;
-      item.appendChild(dot);
-      item.appendChild(name);
-      el.appendChild(item);
-    });
-    if (keys.length > 8) {
-      var more = document.createElement("span");
-      more.className = "legend-item";
-      more.textContent = "+" + (keys.length - 8) + " more";
-      el.appendChild(more);
-    }
+    Object.keys(kindCounts)
+      .sort(function (a, b) {
+        return kindCounts[b] - kindCounts[a] || (a < b ? -1 : 1);
+      })
+      .forEach(function (k) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "legend-item" + (hiddenKinds[k] ? " off" : "");
+        item.setAttribute("data-kind", k);
+        item.title = "toggle " + k + " nodes";
+        var dot = document.createElement("span");
+        dot.className = "legend-dot";
+        dot.style.background = kindPalette()[k] || cssVar("--muted");
+        var name = document.createElement("span");
+        name.className = "legend-name";
+        name.textContent = k;
+        var count = document.createElement("span");
+        count.className = "legend-count";
+        count.textContent = kindCounts[k];
+        item.appendChild(dot);
+        item.appendChild(name);
+        item.appendChild(count);
+        el.appendChild(item);
+      });
     el.hidden = false;
+  }
+
+  var legendBar = document.getElementById("graph-legend");
+  if (legendBar) {
+    legendBar.addEventListener("click", function (event) {
+      var item =
+        event.target && event.target.closest
+          ? event.target.closest(".legend-item")
+          : null;
+      if (!item || !legendBar.contains(item)) {
+        return;
+      }
+      var kind = item.getAttribute("data-kind");
+      if (!kind || !(kind in kindCounts)) {
+        return;
+      }
+      setKindHidden(kind, !hiddenKinds[kind]);
+      renderLegend();
+    });
   }
   renderLegend();
 
@@ -391,7 +434,7 @@
     network.setOptions(themeOptions());
     var updates = [];
     nodes.get().forEach(function (n) {
-      var k = idCommunity[n.id];
+      var k = idKind[n.id];
       if (k !== undefined) {
         updates.push({ id: n.id, color: colorForKey(k) });
       }

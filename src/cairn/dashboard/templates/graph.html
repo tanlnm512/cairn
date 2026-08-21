@@ -70,7 +70,22 @@
     scope queries are capped, so a count at the cap means the graph was truncated.
   </p>
   {% if graph.nodes %}
-  <div id="graph-canvas" data-layout="{{ layout }}" class="graph-canvas"></div>
+  <div class="graph-stage">
+    <div id="graph-canvas" data-layout="{{ layout }}" class="graph-canvas"></div>
+    {#- Overlay controls float over the canvas's bottom-left; app.js
+        wires the data-graph-action buttons to vis zoom/fit. -#}
+    <div class="graph-overlay">
+      <button type="button" data-graph-action="zoom-in" title="Zoom in" aria-label="Zoom in">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" data-graph-action="zoom-out" title="Zoom out" aria-label="Zoom out">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+      </button>
+      <button type="button" data-graph-action="fit" title="Fit view" aria-label="Fit view">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
+    </div>
+  </div>
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
   {% endif %}
@@ -81,6 +96,6 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', path='/vis-network.min.js') }}"></script>
-<script src="{{ url_for('static', path='/app.js') }}"></script>
+<script src="{{ url_for('static', path='/vis-network.min.js') }}?v={{ asset_version }}"></script>
+<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>
 {% endblock %}
