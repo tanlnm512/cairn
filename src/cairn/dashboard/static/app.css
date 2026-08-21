@@ -235,6 +235,7 @@ body.app-shell {
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
   padding: 1.4rem 1.6rem;
+  overflow-x: auto;
 }
 
 .panel h1 {
@@ -483,6 +484,270 @@ body.app-shell {
   border-radius: var(--radius);
   color: var(--muted);
   text-align: center;
+}
+
+/* ---- Data tables ---- */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.data-table th {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.data-table tbody tr:hover {
+  background: var(--accent-soft);
+}
+
+.data-table .num,
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+code {
+  padding: 0.08rem 0.42rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--canvas);
+  font-size: 0.84em;
+  word-break: break-all;
+}
+
+/* ---- Badges ---- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.08rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+
+.badge-ok,
+.badge-done {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 32%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.badge-warn,
+.badge-partial {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.badge-error,
+.badge-failed {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 32%, transparent);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+.badge-embedded,
+.badge-in-progress {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--accent-soft);
+}
+
+/* ---- Cards & stat tiles ---- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+
+.card h2 {
+  margin: 0 0 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.card-value {
+  margin: 0.1rem 0 0.35rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.card .muted {
+  font-size: 0.84rem;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.9rem;
+  margin: 0.9rem 0 1.2rem;
+}
+
+.stat-tile {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+}
+
+.stat-value {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  margin-top: 0.15rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+/* ---- Secondary button / export chips ---- */
+
+.btn-secondary {
+  display: inline-block;
+  padding: 0.3rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.84rem;
+  text-decoration: none;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.btn-secondary:hover,
+.btn-secondary:focus {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---- Window control (segmented) ---- */
+
+.window-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.window-control strong {
+  padding: 0.16rem 0.72rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+.window-control a {
+  padding: 0.16rem 0.72rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.window-control a:hover,
+.window-control a:focus {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+/* ---- Launcher (landing page) ---- */
+
+.launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 0.9rem;
+  margin-top: 1.2rem;
+}
+
+.launcher-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.launcher-card svg {
+  color: var(--accent);
+}
+
+.launcher-card:hover,
+.launcher-card:focus {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  color: var(--text);
+}
+
+.launcher-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.launcher-blurb {
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 /* ---- Responsive: sidebar collapses to a horizontal bar ---- */
