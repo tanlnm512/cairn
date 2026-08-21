@@ -26,6 +26,13 @@
   --warn: #b45309;
   --err: #b91c1c;
   --shadow: rgba(23, 31, 46, 0.1);
+  --kind-function: #0d9488;
+  --kind-method: #16a34a;
+  --kind-class: #7c3aed;
+  --kind-interface: #2563eb;
+  --kind-enum: #db2777;
+  --kind-module: #b45309;
+  --kind-external: #6b7280;
 }
 
 [data-theme="dark"] {
@@ -45,6 +52,13 @@
   --warn: #fbbf24;
   --err: #f87171;
   --shadow: rgba(0, 0, 0, 0.45);
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
   color-scheme: dark;
 }
 
@@ -328,6 +342,147 @@ body.app-shell {
   50% {
     opacity: 0.35;
   }
+}
+
+/* ---- Graph view ---- */
+
+.graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.9rem;
+}
+
+.graph-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.9rem;
+  margin: 0.6rem 0;
+}
+
+.graph-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.graph-controls input[type="text"],
+.graph-controls input[type="number"],
+.graph-controls select {
+  min-width: 0;
+  padding: 0.42rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  letter-spacing: normal;
+  transition: border-color 120ms ease;
+}
+
+.graph-controls input:focus,
+.graph-controls select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.graph-controls button[type="submit"] {
+  padding: 0.45rem 1rem;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.graph-controls button[type="submit"]:hover {
+  filter: brightness(1.08);
+}
+
+#symbol-search {
+  min-width: 240px;
+}
+
+.graph-canvas {
+  height: min(72vh, 780px);
+  min-height: 480px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.84rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.legend-dot[data-kind="function"] {
+  background: var(--kind-function);
+}
+
+.legend-dot[data-kind="method"] {
+  background: var(--kind-method);
+}
+
+.legend-dot[data-kind="class"] {
+  background: var(--kind-class);
+}
+
+.legend-dot[data-kind="interface"] {
+  background: var(--kind-interface);
+}
+
+.legend-dot[data-kind="enum"] {
+  background: var(--kind-enum);
+}
+
+.legend-dot[data-kind="module"] {
+  background: var(--kind-module);
+}
+
+.legend-dot[data-kind="external"] {
+  background: var(--kind-external);
+}
+
+#graph-counts strong {
+  color: var(--accent);
+}
+
+.empty-state {
+  padding: 2.4rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: center;
 }
 
 /* ---- Responsive: sidebar collapses to a horizontal bar ---- */

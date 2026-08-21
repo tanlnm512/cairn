@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
 {% block title %}Graph — Cairn Dashboard{% endblock %}
+{% block view_title %}Graph{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Graph</h1>
@@ -10,7 +11,7 @@
     </label>
   </form>
   <div id="symbol-candidates"></div>
-  <form class="graph-controls" method="get" action="/graph">
+  <form class="graph-controls graph-toolbar" method="get" action="/graph">
     <label>Scope
       <select name="scope">
         {% for s in scopes %}
@@ -30,11 +31,11 @@
     <button type="submit">Apply</button>
   </form>
   {#- Layout toggle (FR-004): links swap only the layout param, keeping
-    scope/focus/repo/depth (window_control link conventions); the active
-    layout renders as <strong>. app.js intercepts clicks on the anchors
-    to toggle the live network without a reload. FR-003: links.url keeps
-    the selected store riding the href; empty selection keeps the bare
-    hrefs, byte-identical. -#}
+      scope/focus/repo/depth (window_control link conventions); the active
+      layout renders as <strong>. app.js intercepts clicks on the anchors
+      to toggle the live network without a reload. FR-003: links.url keeps
+      the selected store riding the href; empty selection keeps the bare
+      hrefs, byte-identical. -#}
   {% macro layout_href(kind) -%}
   {% set q = {"layout": kind, "scope": scope} %}
   {%- if focus %}{% set _ = q.update({"focus": focus}) %}{% endif %}
@@ -48,10 +49,20 @@
     {%- endfor %}
   </p>
   {#- Node inspect (FR-004, D-004): selecting a node on the canvas swaps
-    this hint for an anchor to that symbol's neighborhood graph
-    (scope=symbol&focus=...); deselecting restores the hint. Distinct from
-    double-click, which expands in place. -#}
+      this hint for an anchor to that symbol's neighborhood graph
+      (scope=symbol&focus=...); deselecting restores the hint. Distinct from
+      double-click, which expands in place. -#}
   <p class="muted"><span id="inspect-action" class="muted">select a node to inspect</span></p>
+  {#- Kind legend: only the kinds present in the current result set, so
+      the swatch row stays honest for module- or symbol-scoped graphs.
+      The --kind-* tokens are the single color source — app.js reads the
+      same variables when coloring vis groups. -#}
+  {% set kinds = graph.nodes | map(attribute='kind') | reject('none') | unique | list | sort %}
+  {% if kinds %}
+  <p class="graph-legend muted">
+    {% for k in kinds %}<span class="legend-item"><span class="legend-dot" data-kind="{{ k }}"></span>{{ k }}</span>{% endfor %}
+  </p>
+  {% endif %}
   <p class="muted" id="graph-counts">
     scope <strong>{{ scope }}</strong> —
     {{ graph.metadata.get("node_count", graph.nodes | length) }} nodes,
@@ -62,7 +73,7 @@
     scope queries are capped, so a count at the cap means the graph was truncated.
   </p>
   {% if graph.nodes %}
-  <div id="graph-canvas" data-layout="{{ layout }}" style="height: 480px; border: 1px solid #d9dde3; border-radius: 8px; background: #ffffff;"></div>
+  <div id="graph-canvas" data-layout="{{ layout }}" class="graph-canvas"></div>
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
   {% endif %}

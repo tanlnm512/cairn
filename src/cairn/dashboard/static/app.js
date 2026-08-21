@@ -7,7 +7,14 @@
    hierarchical (top-down) on the live network, camera preserved.
    Selecting a node (single click) swaps the #inspect-action hint for a
    plain anchor into that symbol's neighborhood view. No CDN
-   — vis-network is vendored. */
+   — vis-network is vendored.
+
+   Theming: node colors come from the stylesheet's --kind-* variables
+   (the same tokens the HTML legend uses), read at network build time;
+   a MutationObserver on <html data-theme> re-applies the color options
+   when the theme toggle flips, without touching layout or physics.
+   Node size scales with degree (vis `value` scaling) so hubs read as
+   hubs, GitNexus-style. */
 (function () {
   "use strict";
   var block = document.getElementById("graph-data");
@@ -24,12 +31,26 @@
   if (!data.nodes || !data.nodes.length) {
     return;
   }
+  function cssVar(name) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(
+      name
+    );
+    return v ? v.trim() : "";
+  }
+  /* Node degree over the initial edge set — vis `value` scaling turns
+     it into hub sizing. Fetched-merge nodes later get degree 0 + 1. */
+  var degree = {};
+  data.edges.forEach(function (e) {
+    degree[e.source] = (degree[e.source] || 0) + 1;
+    degree[e.target] = (degree[e.target] || 0) + 1;
+  });
   function nodeView(n) {
     return {
       id: n.id,
       label: n.id,
       title: [n.kind, n.file].filter(Boolean).join("\n"),
-      group: n.kind || "other"
+      group: n.kind || "other",
+      value: (degree[n.id] || 0) + 1
     };
   }
   function edgeKey(source, target, kind) {
@@ -78,18 +99,118 @@
     };
   }
 
-  var networkOptions = {
-    autoResize: true,
-    interaction: { dragNodes: true, dragView: true, zoomView: true }
-  };
-  if (layout === "hier") {
-    networkOptions.layout = layoutOptions(layout);
+  /* Color/typography options derived from the active theme's CSS
+     variables — safe to re-apply on a theme flip because they carry no
+     layout or physics state. */
+  function themeOptions() {
+    var groups = {};
+    ["function", "method", "class", "interface", "enum", "module",
+      "external"].forEach(function (kind) {
+      var c = cssVar("--kind-" + kind);
+      if (!c) {
+        return;
+      }
+      groups[kind] = {
+        color: {
+          background: c,
+          border: c,
+          highlight: { background: c, border: cssVar("--text") },
+          hover: { background: c, border: cssVar("--text") }
+        }
+      };
+    });
+    return {
+      groups: groups,
+      nodes: {
+        shape: "dot",
+        size: 9,
+        borderWidth: 2,
+        scaling: { min: 7, max: 22 },
+        color: {
+          background: cssVar("--muted"),
+          border: cssVar("--muted"),
+          highlight: {
+            background: cssVar("--accent"),
+            border: cssVar("--text")
+          },
+          hover: { background: cssVar("--accent"), border: cssVar("--text") }
+        },
+        font: {
+          face: cssVar("--font-sans"),
+          size: 12,
+          color: cssVar("--muted"),
+          strokeColor: cssVar("--canvas"),
+          strokeWidth: 3
+        }
+      },
+      edges: {
+        color: {
+          color: cssVar("--border"),
+          highlight: cssVar("--accent"),
+          hover: cssVar("--accent")
+        },
+        width: 0.75,
+        selectionWidth: 1.5,
+        hoverWidth: 1.5,
+        arrows: { to: { enabled: true, scaleFactor: 0.4 } },
+        smooth: { enabled: true, type: "continuous", roundness: 0.35 }
+      }
+    };
   }
+
+  function optionsFor(kind) {
+    var options = {
+      autoResize: true,
+      interaction: {
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+        tooltipDelay: 120,
+        selectConnectedEdges: true,
+        hoverConnectedEdges: true
+      }
+    };
+    var themed = themeOptions();
+    Object.keys(themed).forEach(function (key) {
+      options[key] = themed[key];
+    });
+    if (kind === "hier") {
+      options.layout = layoutOptions(kind);
+      options.physics = { enabled: false };
+    } else {
+      options.physics = {
+        enabled: true,
+        solver: "barnesHut",
+        barnesHut: {
+          gravitationalConstant: -6000,
+          springLength: 140,
+          springConstant: 0.04,
+          damping: 0.45,
+          avoidOverlap: 0.35
+        },
+        stabilization: { enabled: true, iterations: 350, fit: true }
+      };
+    }
+    return options;
+  }
+
   var network = new vis.Network(
     canvas,
     { nodes: nodes, edges: edges },
-    networkOptions
+    optionsFor(layout)
   );
+
+  /* Theme toggle re-colors the live network: only the theme-derived
+     options are re-applied, so layout/physics/camera state survives. */
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(function () {
+      network.setOptions(themeOptions());
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"]
+    });
+  }
   var pending = {};
 
   function refreshCounts(truncated) {
@@ -260,7 +381,10 @@
       layout = kind;
       var position = network.getViewPosition();
       var scale = network.getScale();
-      network.setOptions({ layout: layoutOptions(kind) });
+      /* Full option swap: the layout change rides the physics change it
+         implies (hier disables physics, force re-enables barnesHut with
+         a fresh stabilization). */
+      network.setOptions(optionsFor(kind));
       network.once("afterDrawing", function () {
         network.moveTo({ position: position, scale: scale });
       });
