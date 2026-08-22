@@ -637,16 +637,19 @@
   }
 })();
 
-/* Symbol search (confirm-to-focus): Enter in #symbol-search fetches
-   /graph/candidates. One untruncated hit navigates straight to the
-   symbol-focused graph; several hits render an inline candidate list
-   where each entry focuses its symbol. Truncation, zero matches, and
-   a failed request each leave one muted hint line. */
+/* Symbol search (typeahead): typing fetches /graph/suggest and shows
+   a live dropdown of matching symbols — the options are visible while
+   typing; ArrowUp/Down move, Enter or click picks, Escape closes.
+   Enter with no dropdown open keeps the confirm-to-focus flow (exact
+   /graph/candidates: one untruncated hit navigates straight to the
+   symbol-focused graph; several render the inline disambiguation list
+   below). */
 (function () {
   "use strict";
   var input = document.getElementById("symbol-search");
   var box = document.getElementById("symbol-candidates");
-  if (!input || !box) {
+  var dd = document.getElementById("symbol-suggest");
+  if (!input || !box || !dd) {
     return;
   }
 
@@ -658,6 +661,14 @@
   var storeKey = graphData
     ? (graphData.getAttribute("data-store") || "").trim()
     : "";
+
+  function suggestUrl(prefix) {
+    return (
+      "/graph/suggest?name=" +
+      encodeURIComponent(prefix) +
+      (storeKey ? "&store=" + encodeURIComponent(storeKey) : "")
+    );
+  }
 
   function focusUrl(name) {
     return (
@@ -674,6 +685,7 @@
     box.appendChild(line);
   }
 
+  /* ---- Confirm-to-focus (Enter with no dropdown open) ---- */
   function render(name, result) {
     var matches = result.matches || [];
     if (matches.length === 1 && !result.truncated) {
@@ -707,11 +719,7 @@
     }
   }
 
-  input.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter") {
-      return;
-    }
-    event.preventDefault();
+  function confirmFocus() {
     box.textContent = "";
     var name = input.value.trim();
     if (!name) {
@@ -735,6 +743,168 @@
         box.textContent = "";
         note("search unavailable");
       });
+  }
+
+  /* ---- Typeahead dropdown ---- */
+  var items = [];
+  var active = -1;
+  var timer = null;
+  var seq = 0;
+  var SUGGEST_DEBOUNCE_MS = 160;
+
+  function close() {
+    dd.hidden = true;
+    dd.textContent = "";
+    items = [];
+    active = -1;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+
+  function highlight(i) {
+    var rows = dd.querySelectorAll(".suggest-item");
+    for (var r = 0; r < rows.length; r++) {
+      rows[r].classList.toggle("active", r === i);
+    }
+    active = i;
+    if (i >= 0 && rows[i]) {
+      rows[i].scrollIntoView({ block: "nearest" });
+      input.setAttribute("aria-activedescendant", rows[i].id);
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function entry(m, idx) {
+    var el = document.createElement("div");
+    el.className = "suggest-item";
+    el.id = "suggest-opt-" + idx;
+    el.setAttribute("role", "option");
+    var main = document.createElement("span");
+    main.className = "suggest-name";
+    main.textContent = m.name;
+    el.appendChild(main);
+    var ctx = [];
+    if (m.kind) {
+      ctx.push(m.kind);
+    }
+    if (m.file) {
+      ctx.push(m.file);
+    }
+    if (ctx.length) {
+      var sub = document.createElement("span");
+      sub.className = "suggest-ctx";
+      sub.textContent = ctx.join(" — ");
+      el.appendChild(sub);
+    }
+    /* mousedown beats the document closer and the input blur — the
+       pick runs before anything can dismiss the dropdown. */
+    el.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+      pick(m.name);
+    });
+    return el;
+  }
+
+  function open(result) {
+    var matches = result.matches || [];
+    dd.textContent = "";
+    items = matches;
+    active = -1;
+    if (!matches.length) {
+      var empty = document.createElement("div");
+      empty.className = "suggest-empty";
+      empty.textContent = "no matching symbol";
+      dd.appendChild(empty);
+    } else {
+      matches.forEach(function (m, idx) {
+        dd.appendChild(entry(m, idx));
+      });
+      if (result.truncated) {
+        var more = document.createElement("div");
+        more.className = "suggest-empty";
+        more.textContent =
+          "more than " + matches.length + " — keep typing to refine";
+        dd.appendChild(more);
+      }
+      highlight(0);
+    }
+    dd.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  function pick(name) {
+    close();
+    input.value = name;
+    box.textContent = "";
+    window.location.assign(focusUrl(name));
+  }
+
+  function refresh() {
+    var prefix = input.value.trim();
+    if (!prefix) {
+      close();
+      return;
+    }
+    var my = ++seq;
+    fetch(suggestUrl(prefix))
+      .then(function (resp) {
+        if (!resp.ok) {
+          throw new Error("suggest request failed");
+        }
+        return resp.json();
+      })
+      .then(function (result) {
+        if (my === seq) {
+          open(result);
+        }
+      })
+      .catch(function () {
+        if (my === seq) {
+          close();
+        }
+      });
+  }
+
+  input.addEventListener("input", function () {
+    clearTimeout(timer);
+    timer = setTimeout(refresh, SUGGEST_DEBOUNCE_MS);
+  });
+
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowDown" && !dd.hidden && items.length) {
+      event.preventDefault();
+      highlight((active + 1) % items.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && !dd.hidden && items.length) {
+      event.preventDefault();
+      highlight((active - 1 + items.length) % items.length);
+      return;
+    }
+    if (event.key === "Escape" && !dd.hidden) {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    if (!dd.hidden && items.length) {
+      pick(items[active >= 0 ? active : 0].name);
+      return;
+    }
+    close();
+    confirmFocus();
+  });
+
+  /* A click outside the search wrapper closes the dropdown; a click on
+     the input itself keeps it open. */
+  document.addEventListener("mousedown", function (event) {
+    if (!dd.hidden && !dd.parentNode.contains(event.target)) {
+      close();
+    }
   });
 })();
 

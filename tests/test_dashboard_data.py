@@ -300,6 +300,96 @@ def test_symbol_candidates_miss_and_blank_are_empty_never_errors(fresh_db):
 
 
 # ---------------------------------------------------------------------------
+# Symbol-search typeahead suggestions: prefix matches (case-insensitive,
+# LIKE wildcards escaped), shortest-name-first, capped with the honest
+# truncated flag -- the dropdown's data contract.
+# ---------------------------------------------------------------------------
+
+
+def test_symbol_suggest_prefix_matches_shortest_first_with_context(fresh_db):
+    from cairn.dashboard.data import symbol_suggest
+
+    _seed(fresh_db)
+
+    result = symbol_suggest(fresh_db, "alpha")
+
+    assert result["truncated"] is False
+    # shortest first: alpha_main/alpha_util (10 chars) before
+    # alpha_helper (12), name ASC within a length tie
+    assert [m["name"] for m in result["matches"]] == [
+        "alpha_main",
+        "alpha_util",
+        "alpha_helper",
+    ]
+    first = result["matches"][0]
+    assert (first["kind"], first["file"], first["repo_id"]) == (
+        "function",
+        "src/alpha/core.py",
+        "alpha",
+    )
+
+
+def test_symbol_suggest_is_case_insensitive_and_prefix_only(fresh_db):
+    from cairn.dashboard.data import symbol_suggest
+
+    _seed(fresh_db)
+    empty = {"matches": [], "truncated": False}
+
+    assert [
+        m["name"] for m in symbol_suggest(fresh_db, "ALPHA")["matches"]
+    ] == ["alpha_main", "alpha_util", "alpha_helper"]
+    # a mid-string fragment is not a prefix
+    assert symbol_suggest(fresh_db, "lpha") == empty
+    for blank in ("", "   "):
+        assert symbol_suggest(fresh_db, blank) == empty
+
+
+def test_symbol_suggest_escapes_like_wildcards_in_the_query(fresh_db):
+    """% and _ in the typed text match literally -- the query is data,
+    never a pattern (unescaped, 'pct_' would wildcard-match 'pctX')."""
+    from cairn.dashboard.data import symbol_suggest
+
+    fresh_db.execute(
+        "INSERT INTO files (id, repo_id, path, language) "
+        "VALUES ('f_w', 'alpha', 'w.py', 'python')"
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            ("s_w1", "f_w", "pct_100", "w.pct_100", "function"),
+            ("s_w2", "f_w", "pctX100", "w.pctX100", "function"),
+        ],
+    )
+    fresh_db.commit()
+
+    # length tie (7 chars each): name ASC puts 'X' (0x58) before '_'
+    assert [m["name"] for m in symbol_suggest(fresh_db, "pct")["matches"]] == [
+        "pctX100",
+        "pct_100",
+    ]
+    assert [m["name"] for m in symbol_suggest(fresh_db, "pct_1")["matches"]] == [
+        "pct_100"
+    ]
+    assert symbol_suggest(fresh_db, "pct%") == {"matches": [], "truncated": False}
+
+
+def test_symbol_suggest_caps_at_limit_with_honest_truncation(fresh_db):
+    """The cap mirrors the candidates contract: over-cap returns exactly
+    the cap with truncated True; exactly-at-cap is not truncation."""
+    from cairn.dashboard.data import symbol_suggest
+
+    _seed(fresh_db)
+
+    over = symbol_suggest(fresh_db, "alpha", limit=2)
+    assert [m["name"] for m in over["matches"]] == ["alpha_main", "alpha_util"]
+    assert over["truncated"] is True
+
+    at_cap = symbol_suggest(fresh_db, "alpha", limit=3)
+    assert at_cap["truncated"] is False
+
+
+# ---------------------------------------------------------------------------
 # Node expansion (graph-nav FR-003/FR-005 / US2): the viz-layer neighbors
 # query, called directly -- the node/edge shape the dashboard's DataSet
 # merge consumes, duplicate-free, with honest counts at the per-direction

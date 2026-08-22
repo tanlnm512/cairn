@@ -7,7 +7,12 @@
   <h1>Graph</h1>
   <form class="graph-controls">
     <label>Symbol
-      <input type="text" id="symbol-search" placeholder="symbol name" autocomplete="off">
+      <span class="suggest-wrap">
+        <input type="text" id="symbol-search" placeholder="type to search symbols"
+               autocomplete="off" role="combobox" aria-expanded="false"
+               aria-controls="symbol-suggest" aria-autocomplete="list">
+        <div id="symbol-suggest" class="suggest-box" role="listbox" hidden></div>
+      </span>
     </label>
   </form>
   <div id="symbol-candidates"></div>

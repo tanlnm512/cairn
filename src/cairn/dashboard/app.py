@@ -208,6 +208,7 @@ def create_app(
         list_projects,
         prewarm_probes,
         symbol_candidates,
+        symbol_suggest,
     )
     from .workspaces import enumerate_stores, probe_stores
     from .. import paths
@@ -328,6 +329,16 @@ def create_app(
         conn = get_read_only_db(selected_db)
         try:
             result = symbol_candidates(conn, name)
+        finally:
+            conn.close()
+        return JSONResponse(result)
+
+    def graph_suggest(request: Request) -> Response:
+        prefix = request.query_params.get("name", "").strip()
+        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        conn = get_read_only_db(selected_db)
+        try:
+            result = symbol_suggest(conn, prefix)
         finally:
             conn.close()
         return JSONResponse(result)
@@ -575,6 +586,7 @@ def create_app(
         Route("/projects", projects, name="projects"),
         Route("/graph", graph, name="graph"),
         Route("/graph/candidates", graph_candidates, name="graph_candidates"),
+        Route("/graph/suggest", graph_suggest, name="graph_suggest"),
         Route("/graph/neighbors", graph_neighbors, name="graph_neighbors"),
         Route("/history", history, name="history"),
         Route("/history.csv", history_csv, name="history_csv"),

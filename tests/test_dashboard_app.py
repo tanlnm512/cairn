@@ -455,6 +455,53 @@ def test_candidates_route_whitespace_and_absent_name_are_empty_json(tmp_path):
         assert resp.json() == empty
 
 
+def test_suggest_route_returns_prefix_matches_as_json(tmp_path):
+    """/graph/suggest is application/json carrying the typeahead contract:
+    prefix matches (case-insensitive, mid-string fragments excluded),
+    shortest-first with file/kind context, empty-never-error."""
+    client = _panel_client(
+        tmp_path, _candidates_db_file(tmp_path, seed=True), str(tmp_path / "missing")
+    )
+
+    resp = client.get("/graph/suggest", params={"name": "dup"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    body = resp.json()
+    assert [m["name"] for m in body["matches"]] == ["dup_name", "dup_name"]
+    assert body["matches"][0]["kind"] == "class"
+    assert body["truncated"] is False
+
+    upper = client.get("/graph/suggest", params={"name": "SOLO"})
+    assert [m["name"] for m in upper.json()["matches"]] == ["solo_name"]
+
+    # a mid-string fragment and a blank prefix are the empty contract
+    for url in ("/graph/suggest?name=olo", "/graph/suggest?name=%20", "/graph/suggest"):
+        mid = client.get(url)
+        assert mid.status_code == 200
+        assert mid.json() == {"matches": [], "truncated": False}
+
+
+def test_graph_page_carries_typeahead_search_markup(tmp_path):
+    """The symbol search is a combobox wired to a live suggestion listbox
+    (#symbol-suggest) -- options render while typing instead of demanding
+    a full name first."""
+    client = _panel_client(
+        tmp_path, _candidates_db_file(tmp_path, seed=True), str(tmp_path / "missing")
+    )
+
+    resp = client.get("/graph")
+    assert resp.status_code == 200
+    for marker in (
+        'id="symbol-search"',
+        'role="combobox"',
+        'aria-controls="symbol-suggest"',
+        'id="symbol-suggest"',
+        'role="listbox"',
+        "suggest-wrap",
+    ):
+        assert marker in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Node-expansion neighbors endpoint (graph-nav FR-003/FR-005 / US2): the
 # node/edge JSON the graph view's expand action fetches and merges.

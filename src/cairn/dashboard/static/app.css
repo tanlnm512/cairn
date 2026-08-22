@@ -841,3 +841,58 @@ code {
     padding: 1.25rem 1rem 2.5rem;
   }
 }
+
+/* ---- Symbol-search typeahead dropdown ---- */
+.suggest-wrap {
+  position: relative;
+  display: block;
+}
+
+.suggest-box {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin-top: 4px;
+  max-height: 18rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  padding: 4px 0;
+}
+
+.suggest-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.suggest-item:hover,
+.suggest-item.active {
+  background: var(--accent-soft);
+}
+
+.suggest-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.suggest-ctx {
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-empty {
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

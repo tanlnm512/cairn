@@ -185,6 +185,59 @@ def symbol_candidates(
     return {"matches": matches, "truncated": len(fetched) > limit}
 
 
+SUGGEST_LIMIT = 10
+
+
+def symbol_suggest(
+    conn: sqlite3.Connection, prefix: str, limit: int = SUGGEST_LIMIT
+) -> Dict:
+    """Symbols whose name starts with ``prefix``, for search typeahead.
+
+    Complements :func:`symbol_candidates` (exact-name disambiguation)
+    with a prefix scan so the search box can show matching options
+    while typing instead of demanding a full name first. The pattern is
+    ``prefix%`` with LIKE wildcards in the typed text escaped (a name
+    is data, never SQL), matched ASCII-case-insensitively as LIKE is.
+    Matches carry the same context (``kind``, ``file``, ``repo_id``)
+    and are ordered shortest-name-first — the closest completions
+    surface before longer names — then name/file/repo for stable
+    lists. Capping and the ``truncated`` flag follow the candidates
+    contract; an empty or whitespace-only ``prefix`` short-circuits
+    empty without touching the database.
+    """
+    if not prefix or not prefix.strip():
+        return {"matches": [], "truncated": False}
+    if limit < 1:
+        limit = 1
+    escaped = (
+        prefix.strip()
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    fetched = conn.execute(
+        """
+        SELECT s.name AS name, s.kind AS kind, f.path AS file, f.repo_id AS repo_id
+        FROM symbols s
+        LEFT JOIN files f ON s.file_id = f.id
+        WHERE s.name LIKE ? ESCAPE '\\'
+        ORDER BY LENGTH(s.name) ASC, s.name ASC, f.path ASC, f.repo_id ASC, s.id ASC
+        LIMIT ?
+        """,
+        [escaped + "%", limit + 1],
+    ).fetchall()
+    matches = [
+        {
+            "name": row["name"],
+            "kind": row["kind"],
+            "file": row["file"],
+            "repo_id": row["repo_id"],
+        }
+        for row in fetched[:limit]
+    ]
+    return {"matches": matches, "truncated": len(fetched) > limit}
+
+
 def _parse_ts(value) -> Optional[datetime]:
     """Parse an ISO-8601 timestamp (concept or ``build_runs``) to an aware
     UTC datetime, or None when missing/unparseable."""
