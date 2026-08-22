@@ -348,7 +348,14 @@ and wiring them into `cairn.json` for build-time hybrid indexing.
 | `cairn status` | System status and health across all layers. |
 | `cairn eval` | Run retrieval evaluation harness across L1/L5 corpora (`--corpus`, `--json`; `--sweep`/`--kfold` for lever sweeps). |
 | `cairn bench` | Run performance, scalability, or agent-effort benchmarks. |
+| `cairn dashboard` | Launch the local read-only web dashboard (127.0.0.1:8765): projects, interactive graph (symbol typeahead search, node expansion, layouts), tool-call history with filters, per-tool token estimates with truncation stats, session chains, health/memory/task panels, machine-wide `/workspaces` launcher with restart-free `?store=` switching, and CSV/JSON export of the filtered history/tokens views. Loopback-only; every connection is read-only — retention ages rows in the recording pipeline, never here. |
 
+`dashboard` options: `--db PATH` (serve a specific store; default: the
+central store for this workspace), `--host` (loopback only — non-loopback
+binds are refused), `--port` (default 8765). Heavy probes (reranker/ANN)
+prewarm in a background thread at startup, so the first `/health` render
+doesn't pay the import. See [configuration.md](configuration.md) for the
+retention policy env vars surfaced on the health panel.
 `metrics` options: `--db`, `--tool NAME` (default aggregation only), `--json`,
 plus the telemetry-trend flags `--builds`, `--quality`, `--contention`, `--tasks`.
 `doctor` options: `--db`, `--json`.
