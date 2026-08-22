@@ -12,6 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Dashboard visual overhaul — a sidebar app shell with GitNexus-inspired
+  design tokens across every view: restyled tables, badges, cards, window
+  controls, and chain pills; stat tiles, export chips, and segmented
+  window controls; a landing launcher; a reworked graph view (kind colors,
+  communities, label discipline, spiral layout, kind filters, counts
+  legend, canvas controls). The graph's symbol search becomes a live
+  typeahead: matching symbols appear in a dropdown while typing
+  (prefix-match `/graph/suggest` endpoint, case-insensitive, shortest
+  first, kind/file context), navigable by arrow keys, Enter, or click —
+  the old type-blind confirm flow remains as the Enter fallback.
+
+### Fixed
+- Stale dashboard assets across upgrades — static responses now send
+  `Cache-Control: no-cache` and asset URLs carry a mtime version, so a
+  browser holding an old cached `app.js` never renders it against new
+  HTML. The last selected workspace is remembered per browser
+  (localStorage), so bare visits return to it instead of the launch
+  store.
+
+### Changed
+- The dashboard subsystem is now documented: `cairn dashboard` entry in
+  the CLI reference, a Local dashboard section in the architecture guide
+  (read-only and loopback-only invariants, store selection, estimate
+  provenance), and README coverage.
+
 ## [0.13.0] - 2026-08-20
 
 > **Focus:** the dashboard-v2 train — `cairn dashboard` grows from a
