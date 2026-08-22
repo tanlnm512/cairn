@@ -5,6 +5,20 @@
 <section class="panel">
   <div id="refresh-region">
   <h1>History</h1>
+  <div class="stat-row">
+    <div class="stat-tile">
+      <div class="stat-value">{{ calls | length }}</div>
+      <div class="stat-label">calls shown</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ window }}</div>
+      <div class="stat-label">time window</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ calls | selectattr('status', 'equalto', 'error') | list | length }}</div>
+      <div class="stat-label">error calls</div>
+    </div>
+  </div>
   <form class="graph-controls" method="get" action="/history">
     <label>Tool
       <input type="text" name="tool" value="{{ tool }}">
@@ -28,8 +42,8 @@
   {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
   <p class="muted">
     Export:
-    <a href="{{ links.url('/history.csv', export_q) }}">CSV</a> ·
-    <a href="{{ links.url('/history.json', export_q) }}">JSON</a>
+    <a class="btn-secondary" href="{{ links.url('/history.csv', export_q) }}">CSV</a>
+    <a class="btn-secondary" href="{{ links.url('/history.json', export_q) }}">JSON</a>
   </p>
   {% if calls %}
   <table class="data-table">
@@ -89,4 +103,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}

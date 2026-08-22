@@ -7,7 +7,28 @@
    hierarchical (top-down) on the live network, camera preserved.
    Selecting a node (single click) swaps the #inspect-action hint for a
    plain anchor into that symbol's neighborhood view. No CDN
-   — vis-network is vendored. */
+   — vis-network is vendored.
+
+   Rendering model (GitNexus-inspired, ported to vis-network):
+   - Kind coloring & filters: nodes color by symbol kind (function,
+     method, class, interface, enum, module, external) from the same
+     palette the legend renders; legend items are clickable filters
+     that hide/show every node of that kind — vis hides connected
+     edges with their endpoints.
+   - Label discipline: dense graphs (>30 nodes with edges) label only
+     the top quarter by degree; edgeless or small graphs label
+     everything. Zooming out past 0.45 strips labels graph-wide (the
+     sigma labelRenderThreshold equivalent); zooming back in restores.
+   - Edgeless graphs (repo/module overviews) skip physics: nodes take
+     deterministic golden-angle spiral positions — a spread
+     constellation instead of a center clump.
+   - Node size scales with degree (vis `value` scaling) so hubs read as
+     hubs.
+   - Theming: edge/font options derive from the stylesheet's CSS
+     variables; a MutationObserver on <html data-theme> re-applies them
+     and re-colors every node from the active palette (light palettes
+     are the dark hues' saturated-dark counterparts). Layout and physics
+     state are never touched by a theme flip. */
 (function () {
   "use strict";
   var block = document.getElementById("graph-data");
@@ -24,13 +45,139 @@
   if (!data.nodes || !data.nodes.length) {
     return;
   }
-  function nodeView(n) {
+  function cssVar(name) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(
+      name
+    );
+    return v ? v.trim() : "";
+  }
+  function isDark() {
+    return document.documentElement.dataset.theme !== "light";
+  }
+
+  /* ---- Kind coloring & filters ---- */
+
+  var KIND_DARK = {
+    function: "#2dd4bf",
+    method: "#4ade80",
+    class: "#a78bfa",
+    interface: "#60a5fa",
+    enum: "#f472b6",
+    module: "#fbbf24",
+    external: "#8b9bb4"
+  };
+  var KIND_LIGHT = {
+    function: "#0d9488",
+    method: "#16a34a",
+    class: "#7c3aed",
+    interface: "#2563eb",
+    enum: "#db2777",
+    module: "#b45309",
+    external: "#6b7280"
+  };
+  function kindPalette() {
+    return isDark() ? KIND_DARK : KIND_LIGHT;
+  }
+  function kindOf(n) {
+    return n.kind && kindPalette()[n.kind] ? n.kind : "other";
+  }
+
+  var idKind = {};
+  var kindCounts = {};
+  var hiddenKinds = {};
+
+  function registerKind(n) {
+    /* merge() re-runs nodeView over already-known nodes (id-keyed
+       updates); a node's kind is counted once. */
+    if (idKind[n.id] !== undefined) {
+      return idKind[n.id];
+    }
+    var k = kindOf(n);
+    kindCounts[k] = (kindCounts[k] || 0) + 1;
+    idKind[n.id] = k;
+    return k;
+  }
+  function colorForKey(k) {
+    var c = kindPalette()[k] || cssVar("--muted");
     return {
-      id: n.id,
-      label: n.id,
-      title: [n.kind, n.file].filter(Boolean).join("\n"),
-      group: n.kind || "other"
+      background: c,
+      border: c,
+      highlight: { background: c, border: cssVar("--text") },
+      hover: { background: c, border: cssVar("--text") }
     };
+  }
+
+  /* Legend items double as filters: toggling a kind hides every node
+     of that kind — vis hides the connected edges with them. */
+  function setKindHidden(kind, hidden) {
+    hiddenKinds[kind] = hidden;
+    var updates = [];
+    nodes.get().forEach(function (node) {
+      if (idKind[node.id] === kind) {
+        updates.push({ id: node.id, hidden: hidden });
+      }
+    });
+    if (updates.length) {
+      nodes.update(updates);
+    }
+  }
+
+  /* ---- Degree / labels / positions ---- */
+
+  var degree = {};
+  data.edges.forEach(function (e) {
+    degree[e.source] = (degree[e.source] || 0) + 1;
+    degree[e.target] = (degree[e.target] || 0) + 1;
+  });
+
+  var labelEligible = {};
+  (function computeEligibility() {
+    var ns = data.nodes;
+    if (!data.edges.length || ns.length <= 30) {
+      ns.forEach(function (n) {
+        labelEligible[n.id] = true;
+      });
+      return;
+    }
+    var sorted = ns.slice().sort(function (a, b) {
+      return (degree[b.id] || 0) - (degree[a.id] || 0);
+    });
+    var take = Math.max(10, Math.floor(ns.length * 0.25));
+    sorted.forEach(function (n, i) {
+      labelEligible[n.id] = i < take && (degree[n.id] || 0) >= 1;
+    });
+  })();
+
+  var labelsShown = true;
+
+  var GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  var spiralCursor = 0;
+  function spiralPosition() {
+    var i = spiralCursor;
+    spiralCursor += 1;
+    var r = 100 * Math.sqrt(i + 0.6);
+    var a = i * GOLDEN;
+    return { x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) };
+  }
+  var edgeless = !data.edges.length;
+
+  function nodeView(n) {
+    var kind = registerKind(n);
+    var view = {
+      id: n.id,
+      label: labelEligible[n.id] ? n.id : "",
+      title: [n.kind, n.file].filter(Boolean).join("\n"),
+      value: (degree[n.id] || 0) + 1,
+      color: colorForKey(kind),
+      /* merged nodes of an already-filtered kind arrive hidden */
+      hidden: !!hiddenKinds[kind]
+    };
+    if (edgeless) {
+      var p = spiralPosition();
+      view.x = p.x;
+      view.y = p.y;
+    }
+    return view;
   }
   function edgeKey(source, target, kind) {
     return source + "\u0000" + target + "\u0000" + (kind || "");
@@ -78,18 +225,233 @@
     };
   }
 
-  var networkOptions = {
-    autoResize: true,
-    interaction: { dragNodes: true, dragView: true, zoomView: true }
-  };
-  if (layout === "hier") {
-    networkOptions.layout = layoutOptions(layout);
+  /* Color/typography options derived from the active theme's CSS
+     variables — safe to re-apply on a theme flip because they carry no
+     layout or physics state. Node colors live on the nodes themselves
+     (community palette), not here. */
+  function themeOptions() {
+    var accent = cssVar("--accent");
+    return {
+      nodes: {
+        shape: "dot",
+        size: 9,
+        borderWidth: 2,
+        scaling: { min: 7, max: 24 },
+        color: {
+          background: accent,
+          border: accent,
+          highlight: {
+            background: accent,
+            border: cssVar("--text")
+          },
+          hover: { background: accent, border: cssVar("--text") }
+        },
+        font: {
+          face: cssVar("--font-sans"),
+          size: 12,
+          color: cssVar("--muted"),
+          strokeColor: cssVar("--canvas"),
+          strokeWidth: 3
+        }
+      },
+      edges: {
+        color: {
+          color: cssVar("--border"),
+          highlight: cssVar("--accent"),
+          hover: cssVar("--accent")
+        },
+        width: 0.75,
+        selectionWidth: 1.5,
+        hoverWidth: 1.5,
+        arrows: { to: { enabled: true, scaleFactor: 0.4 } },
+        smooth: { enabled: true, type: "continuous", roundness: 0.35 }
+      }
+    };
   }
+
+  function optionsFor(kind) {
+    var options = {
+      autoResize: true,
+      interaction: {
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+        tooltipDelay: 120,
+        selectConnectedEdges: true,
+        hoverConnectedEdges: true
+      }
+    };
+    var themed = themeOptions();
+    Object.keys(themed).forEach(function (key) {
+      options[key] = themed[key];
+    });
+    if (kind === "hier") {
+      options.layout = layoutOptions(kind);
+      options.physics = { enabled: false };
+    } else if (edgeless) {
+      /* Spiral positions are final; physics would only drag the
+         constellation back into a clump. */
+      options.physics = { enabled: false };
+    } else {
+      options.physics = {
+        enabled: true,
+        solver: "barnesHut",
+        barnesHut: {
+          gravitationalConstant: -6000,
+          springLength: 160,
+          springConstant: 0.04,
+          damping: 0.45,
+          avoidOverlap: 0.4
+        },
+        stabilization: { enabled: true, iterations: 350, fit: true }
+      };
+    }
+    return options;
+  }
+
   var network = new vis.Network(
     canvas,
     { nodes: nodes, edges: edges },
-    networkOptions
+    optionsFor(layout)
   );
+
+  /* Zoom label discipline (sigma's labelRenderThreshold equivalent):
+     crossing the scale threshold flips the graph-wide label state once,
+     never per-zoom-tick. */
+  function applyLabels() {
+    var updates = [];
+    nodes.get().forEach(function (n) {
+      updates.push({
+        id: n.id,
+        label: labelsShown && labelEligible[n.id] ? n.id : ""
+      });
+    });
+    if (updates.length) {
+      nodes.update(updates);
+    }
+  }
+  network.on("zoom", function () {
+    var want = network.getScale() >= 0.45;
+    if (want !== labelsShown) {
+      labelsShown = want;
+      applyLabels();
+    }
+  });
+
+  /* Canvas overlay controls (GitNexus-style zoom/fit cluster at the
+     canvas's bottom-left); the overlay markup lives in graph.html. */
+  var overlay = canvas.parentNode
+    ? canvas.parentNode.querySelector(".graph-overlay")
+    : null;
+  if (overlay) {
+    overlay.addEventListener("click", function (event) {
+      var btn =
+        event.target && event.target.closest
+          ? event.target.closest("button[data-graph-action]")
+          : null;
+      if (!btn || !overlay.contains(btn)) {
+        return;
+      }
+      var action = btn.getAttribute("data-graph-action");
+      var animation = { duration: 250, easingFunction: "easeInOutQuad" };
+      if (action === "zoom-in") {
+        network.moveTo({
+          scale: network.getScale() * 1.35,
+          animation: animation
+        });
+      } else if (action === "zoom-out") {
+        network.moveTo({
+          scale: Math.max(network.getScale() / 1.35, 0.05),
+          animation: animation
+        });
+      } else if (action === "fit") {
+        network.fit({ animation: animation });
+      }
+    });
+  }
+
+  /* ---- Legend: kind swatches with counts, doubling as filters ---- */
+
+  function renderLegend() {
+    var el = document.getElementById("graph-legend");
+    if (!el) {
+      return;
+    }
+    el.textContent = "";
+    Object.keys(kindCounts)
+      .sort(function (a, b) {
+        return kindCounts[b] - kindCounts[a] || (a < b ? -1 : 1);
+      })
+      .forEach(function (k) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "legend-item" + (hiddenKinds[k] ? " off" : "");
+        item.setAttribute("data-kind", k);
+        item.title = "toggle " + k + " nodes";
+        var dot = document.createElement("span");
+        dot.className = "legend-dot";
+        dot.style.background = kindPalette()[k] || cssVar("--muted");
+        var name = document.createElement("span");
+        name.className = "legend-name";
+        name.textContent = k;
+        var count = document.createElement("span");
+        count.className = "legend-count";
+        count.textContent = kindCounts[k];
+        item.appendChild(dot);
+        item.appendChild(name);
+        item.appendChild(count);
+        el.appendChild(item);
+      });
+    el.hidden = false;
+  }
+
+  var legendBar = document.getElementById("graph-legend");
+  if (legendBar) {
+    legendBar.addEventListener("click", function (event) {
+      var item =
+        event.target && event.target.closest
+          ? event.target.closest(".legend-item")
+          : null;
+      if (!item || !legendBar.contains(item)) {
+        return;
+      }
+      var kind = item.getAttribute("data-kind");
+      if (!kind || !(kind in kindCounts)) {
+        return;
+      }
+      setKindHidden(kind, !hiddenKinds[kind]);
+      renderLegend();
+    });
+  }
+  renderLegend();
+
+  /* Theme toggle re-colors the live network: theme-derived options via
+     setOptions, node colors via a single batched update, then the
+     legend re-renders from the new palette. Layout/physics/camera
+     state survives untouched. */
+  function applyTheme() {
+    network.setOptions(themeOptions());
+    var updates = [];
+    nodes.get().forEach(function (n) {
+      var k = idKind[n.id];
+      if (k !== undefined) {
+        updates.push({ id: n.id, color: colorForKey(k) });
+      }
+    });
+    if (updates.length) {
+      nodes.update(updates);
+    }
+    renderLegend();
+  }
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(function () {
+      applyTheme();
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"]
+    });
+  }
   var pending = {};
 
   function refreshCounts(truncated) {
@@ -136,6 +498,7 @@
     if (added.length) {
       edges.add(added);
     }
+    renderLegend();
     refreshCounts(!!(result && result.metadata && result.metadata.truncated));
   }
 
@@ -260,7 +623,11 @@
       layout = kind;
       var position = network.getViewPosition();
       var scale = network.getScale();
-      network.setOptions({ layout: layoutOptions(kind) });
+      /* Full option swap: the layout change rides the physics change it
+         implies (hier disables physics, force re-enables barnesHut with
+         a fresh stabilization — unless the graph is edgeless, where
+         force stays physics-off on spiral positions). */
+      network.setOptions(optionsFor(kind));
       network.once("afterDrawing", function () {
         network.moveTo({ position: position, scale: scale });
       });
@@ -270,16 +637,19 @@
   }
 })();
 
-/* Symbol search (confirm-to-focus): Enter in #symbol-search fetches
-   /graph/candidates. One untruncated hit navigates straight to the
-   symbol-focused graph; several hits render an inline candidate list
-   where each entry focuses its symbol. Truncation, zero matches, and
-   a failed request each leave one muted hint line. */
+/* Symbol search (typeahead): typing fetches /graph/suggest and shows
+   a live dropdown of matching symbols — the options are visible while
+   typing; ArrowUp/Down move, Enter or click picks, Escape closes.
+   Enter with no dropdown open keeps the confirm-to-focus flow (exact
+   /graph/candidates: one untruncated hit navigates straight to the
+   symbol-focused graph; several render the inline disambiguation list
+   below). */
 (function () {
   "use strict";
   var input = document.getElementById("symbol-search");
   var box = document.getElementById("symbol-candidates");
-  if (!input || !box) {
+  var dd = document.getElementById("symbol-suggest");
+  if (!input || !box || !dd) {
     return;
   }
 
@@ -291,6 +661,14 @@
   var storeKey = graphData
     ? (graphData.getAttribute("data-store") || "").trim()
     : "";
+
+  function suggestUrl(prefix) {
+    return (
+      "/graph/suggest?name=" +
+      encodeURIComponent(prefix) +
+      (storeKey ? "&store=" + encodeURIComponent(storeKey) : "")
+    );
+  }
 
   function focusUrl(name) {
     return (
@@ -307,6 +685,7 @@
     box.appendChild(line);
   }
 
+  /* ---- Confirm-to-focus (Enter with no dropdown open) ---- */
   function render(name, result) {
     var matches = result.matches || [];
     if (matches.length === 1 && !result.truncated) {
@@ -340,11 +719,7 @@
     }
   }
 
-  input.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter") {
-      return;
-    }
-    event.preventDefault();
+  function confirmFocus() {
     box.textContent = "";
     var name = input.value.trim();
     if (!name) {
@@ -368,6 +743,168 @@
         box.textContent = "";
         note("search unavailable");
       });
+  }
+
+  /* ---- Typeahead dropdown ---- */
+  var items = [];
+  var active = -1;
+  var timer = null;
+  var seq = 0;
+  var SUGGEST_DEBOUNCE_MS = 160;
+
+  function close() {
+    dd.hidden = true;
+    dd.textContent = "";
+    items = [];
+    active = -1;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+
+  function highlight(i) {
+    var rows = dd.querySelectorAll(".suggest-item");
+    for (var r = 0; r < rows.length; r++) {
+      rows[r].classList.toggle("active", r === i);
+    }
+    active = i;
+    if (i >= 0 && rows[i]) {
+      rows[i].scrollIntoView({ block: "nearest" });
+      input.setAttribute("aria-activedescendant", rows[i].id);
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function entry(m, idx) {
+    var el = document.createElement("div");
+    el.className = "suggest-item";
+    el.id = "suggest-opt-" + idx;
+    el.setAttribute("role", "option");
+    var main = document.createElement("span");
+    main.className = "suggest-name";
+    main.textContent = m.name;
+    el.appendChild(main);
+    var ctx = [];
+    if (m.kind) {
+      ctx.push(m.kind);
+    }
+    if (m.file) {
+      ctx.push(m.file);
+    }
+    if (ctx.length) {
+      var sub = document.createElement("span");
+      sub.className = "suggest-ctx";
+      sub.textContent = ctx.join(" — ");
+      el.appendChild(sub);
+    }
+    /* mousedown beats the document closer and the input blur — the
+       pick runs before anything can dismiss the dropdown. */
+    el.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+      pick(m.name);
+    });
+    return el;
+  }
+
+  function open(result) {
+    var matches = result.matches || [];
+    dd.textContent = "";
+    items = matches;
+    active = -1;
+    if (!matches.length) {
+      var empty = document.createElement("div");
+      empty.className = "suggest-empty";
+      empty.textContent = "no matching symbol";
+      dd.appendChild(empty);
+    } else {
+      matches.forEach(function (m, idx) {
+        dd.appendChild(entry(m, idx));
+      });
+      if (result.truncated) {
+        var more = document.createElement("div");
+        more.className = "suggest-empty";
+        more.textContent =
+          "more than " + matches.length + " — keep typing to refine";
+        dd.appendChild(more);
+      }
+      highlight(0);
+    }
+    dd.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  function pick(name) {
+    close();
+    input.value = name;
+    box.textContent = "";
+    window.location.assign(focusUrl(name));
+  }
+
+  function refresh() {
+    var prefix = input.value.trim();
+    if (!prefix) {
+      close();
+      return;
+    }
+    var my = ++seq;
+    fetch(suggestUrl(prefix))
+      .then(function (resp) {
+        if (!resp.ok) {
+          throw new Error("suggest request failed");
+        }
+        return resp.json();
+      })
+      .then(function (result) {
+        if (my === seq) {
+          open(result);
+        }
+      })
+      .catch(function () {
+        if (my === seq) {
+          close();
+        }
+      });
+  }
+
+  input.addEventListener("input", function () {
+    clearTimeout(timer);
+    timer = setTimeout(refresh, SUGGEST_DEBOUNCE_MS);
+  });
+
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowDown" && !dd.hidden && items.length) {
+      event.preventDefault();
+      highlight((active + 1) % items.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && !dd.hidden && items.length) {
+      event.preventDefault();
+      highlight((active - 1 + items.length) % items.length);
+      return;
+    }
+    if (event.key === "Escape" && !dd.hidden) {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    if (!dd.hidden && items.length) {
+      pick(items[active >= 0 ? active : 0].name);
+      return;
+    }
+    close();
+    confirmFocus();
+  });
+
+  /* A click outside the search wrapper closes the dropdown; a click on
+     the input itself keeps it open. */
+  document.addEventListener("mousedown", function (event) {
+    if (!dd.hidden && !dd.parentNode.contains(event.target)) {
+      close();
+    }
   });
 })();
 

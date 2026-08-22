@@ -17,6 +17,7 @@ the per-topic pages, or when deciding which layer a question belongs to.
 | [`## Resolution model`](#resolution-model) | The `exact` / `ambiguous` / `unresolved` edge labels, precise vs fuzzy query modes, and when to use which. |
 | [`## The LLM boundary`](#the-llm-boundary) | How synthesis work is queued for an external agent and fact-checked by the deterministic critic. |
 | [`## Storage`](#storage) | What lives in the SQLite store vs the `.knowledge/` markdown bundle, and how the store root is resolved. |
+| [`## Local dashboard`](#local-dashboard) | The read-only web console over the same store — its invariants (read-only, loopback-only) and where its numbers come from. |
 
 ## What cairn is
 
@@ -274,3 +275,31 @@ The store root resolves to `~/.cairn/<workspace-key>/` by default, where
 finds the right store by walking up from cwd (like git), with `CAIRN_WORKSPACE`
 as an explicit override. See [configuration.md](configuration.md) for the full
 set of path variables and `cairn config --list` to print the resolved locations.
+
+## Local dashboard
+
+`cairn dashboard` is the human-facing read surface over the same store: a
+Starlette app (vendored vis-network for the graph; zero new runtime
+dependencies) bound to `127.0.0.1:8765`. It sits **beside** the layer map,
+not inside it — every view reads through plain SQL over the graph DB and
+`.knowledge/` bundle, never through the MCP tools.
+
+Two invariants hold by construction:
+
+1. **Read-only.** Every handler opens the store with a read-only SQLite
+   connection. Retention (`CAIRN_TOOL_METRICS_MAX_ROWS`/`_MAX_AGE_SECONDS`)
+   ages `tool_metrics` rows in the recording pipeline's flush transaction —
+   the dashboard only displays the policy and current size on its health
+   panel.
+2. **Loopback-only.** Non-loopback bind hosts are refused at startup; the
+   dashboard is a local operator console, not a service.
+
+Store selection is per-request (`?store=` names a registry key from the
+`/workspaces` launcher), so one server process can view every store on the
+machine without restarts. Traffic views (history/tokens/chains) read the
+`tool_metrics`/`events` telemetry the MCP server and CLI record; token
+estimates are mode-labeled (exact tokenizer via the `[semantic]` extra when
+importable, else the documented chars÷4 heuristic) and truncation stats
+come from the durable per-call magnitude columns. Asset URLs carry a
+mtime version and static responses send `Cache-Control: no-cache`, so a
+dashboard upgrade never serves stale JS against new HTML.

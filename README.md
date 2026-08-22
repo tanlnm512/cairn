@@ -183,6 +183,11 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   telemetry egress (OTLP export is opt-in and best-effort).
 - **Agent-first surfaces** — the same store backs 27 MCP tools and the CLI;
   `cairn install-agents` wires every detected client in one command.
+- **Local dashboard** — `cairn dashboard` opens a read-only web console at
+  `127.0.0.1:8765`: interactive graph with symbol search, recorded
+  tool-call history and token usage (MCP + CLI, mode-labeled estimates),
+  session chains, health/memory panels, machine-wide workspace switching,
+  and CSV/JSON export of any filtered view.
 
 ## How It Works
 
@@ -257,6 +262,7 @@ Full harness, scaling runs, and the k-fold retrieval-quality campaign:
 | Command | What it does |
 |---------|--------------|
 | `cairn serve` | Run the stdio MCP server |
+| `cairn dashboard` | Local read-only web console (127.0.0.1:8765) |
 | `cairn build` / `cairn update` | Full build (first run) / incremental reindex |
 | `cairn def <symbol>` | Find a symbol's definition |
 | `cairn impact <symbol>` | Within-repo blast radius (precise default; `--fuzzy` to audit) |

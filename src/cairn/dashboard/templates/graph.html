@@ -1,16 +1,22 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
 {% block title %}Graph — Cairn Dashboard{% endblock %}
+{% block view_title %}Graph{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Graph</h1>
   <form class="graph-controls">
     <label>Symbol
-      <input type="text" id="symbol-search" placeholder="symbol name" autocomplete="off">
+      <span class="suggest-wrap">
+        <input type="text" id="symbol-search" placeholder="type to search symbols"
+               autocomplete="off" role="combobox" aria-expanded="false"
+               aria-controls="symbol-suggest" aria-autocomplete="list">
+        <div id="symbol-suggest" class="suggest-box" role="listbox" hidden></div>
+      </span>
     </label>
   </form>
   <div id="symbol-candidates"></div>
-  <form class="graph-controls" method="get" action="/graph">
+  <form class="graph-controls graph-toolbar" method="get" action="/graph">
     <label>Scope
       <select name="scope">
         {% for s in scopes %}
@@ -30,11 +36,11 @@
     <button type="submit">Apply</button>
   </form>
   {#- Layout toggle (FR-004): links swap only the layout param, keeping
-    scope/focus/repo/depth (window_control link conventions); the active
-    layout renders as <strong>. app.js intercepts clicks on the anchors
-    to toggle the live network without a reload. FR-003: links.url keeps
-    the selected store riding the href; empty selection keeps the bare
-    hrefs, byte-identical. -#}
+      scope/focus/repo/depth (window_control link conventions); the active
+      layout renders as <strong>. app.js intercepts clicks on the anchors
+      to toggle the live network without a reload. FR-003: links.url keeps
+      the selected store riding the href; empty selection keeps the bare
+      hrefs, byte-identical. -#}
   {% macro layout_href(kind) -%}
   {% set q = {"layout": kind, "scope": scope} %}
   {%- if focus %}{% set _ = q.update({"focus": focus}) %}{% endif %}
@@ -48,10 +54,17 @@
     {%- endfor %}
   </p>
   {#- Node inspect (FR-004, D-004): selecting a node on the canvas swaps
-    this hint for an anchor to that symbol's neighborhood graph
-    (scope=symbol&focus=...); deselecting restores the hint. Distinct from
-    double-click, which expands in place. -#}
+      this hint for an anchor to that symbol's neighborhood graph
+      (scope=symbol&focus=...); deselecting restores the hint. Distinct from
+      double-click, which expands in place. -#}
   <p class="muted"><span id="inspect-action" class="muted">select a node to inspect</span></p>
+  {#- Community legend: app.js renders it from the same palette it
+      colored the nodes with (top 8 communities + overflow), so the
+      swatches can never drift from the canvas. Hidden until filled;
+      absent when the graph is empty. -#}
+  {% if graph.nodes %}
+  <p class="graph-legend muted" id="graph-legend" hidden></p>
+  {% endif %}
   <p class="muted" id="graph-counts">
     scope <strong>{{ scope }}</strong> —
     {{ graph.metadata.get("node_count", graph.nodes | length) }} nodes,
@@ -62,7 +75,22 @@
     scope queries are capped, so a count at the cap means the graph was truncated.
   </p>
   {% if graph.nodes %}
-  <div id="graph-canvas" data-layout="{{ layout }}" style="height: 480px; border: 1px solid #d9dde3; border-radius: 8px; background: #ffffff;"></div>
+  <div class="graph-stage">
+    <div id="graph-canvas" data-layout="{{ layout }}" class="graph-canvas"></div>
+    {#- Overlay controls float over the canvas's bottom-left; app.js
+        wires the data-graph-action buttons to vis zoom/fit. -#}
+    <div class="graph-overlay">
+      <button type="button" data-graph-action="zoom-in" title="Zoom in" aria-label="Zoom in">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" data-graph-action="zoom-out" title="Zoom out" aria-label="Zoom out">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+      </button>
+      <button type="button" data-graph-action="fit" title="Fit view" aria-label="Fit view">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
+    </div>
+  </div>
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
   {% endif %}
@@ -73,6 +101,6 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', path='/vis-network.min.js') }}"></script>
-<script src="{{ url_for('static', path='/app.js') }}"></script>
+<script src="{{ url_for('static', path='/vis-network.min.js') }}?v={{ asset_version }}"></script>
+<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>
 {% endblock %}

@@ -320,3 +320,39 @@ def test_overview_first_render_budget(tmp_path, monkeypatch, scale_home):
 
     # Structural bounds hold regardless of the gate (CI-safe).
     _assert_overview_structure(resp.text, home)
+
+
+# ---------------------------------------------------------------------------
+# Workspace stickiness (store selection remembered across visits)
+# ---------------------------------------------------------------------------
+
+
+def test_base_template_carries_store_stickiness_script(tmp_path):
+    """A URL-carried ?store selection is remembered (localStorage
+    "cairn-store") and a bare visit redirects to the remembered store;
+    until the user picks a workspace nothing is stored, so bare URLs
+    keep the launch store. Pins the script's contract markers, mirroring
+    the theme-script tests: the storage key, both directions of the
+    localStorage round-trip, the param echo, and the restoring
+    redirect."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+
+    client = TestClient(
+        create_app(
+            db_path=str(tmp_path / "dash.db"),
+            knowledge_dir=str(tmp_path / "missing"),
+        )
+    )
+    resp = client.get("/")
+    assert resp.status_code == 200
+
+    script_start = resp.text.index("cairn-store")
+    block = resp.text[script_start : resp.text.index("</script>", script_start)]
+    assert '"cairn-store"' in block  # the storage key
+    assert "searchParams.get" in block  # a present selection...
+    assert "localStorage.setItem" in block  # ...is remembered
+    assert "localStorage.getItem" in block  # a bare visit...
+    assert "location.replace" in block  # ...restores it

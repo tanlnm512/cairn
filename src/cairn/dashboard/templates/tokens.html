@@ -26,10 +26,24 @@
   {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
   <p class="muted">
     Export:
-    <a href="{{ links.url('/tokens.csv', export_q) }}">CSV</a> ·
-    <a href="{{ links.url('/tokens.json', export_q) }}">JSON</a>
+    <a class="btn-secondary" href="{{ links.url('/tokens.csv', export_q) }}">CSV</a>
+    <a class="btn-secondary" href="{{ links.url('/tokens.json', export_q) }}">JSON</a>
   </p>
   {% if tools %}
+  <div class="stat-row">
+    <div class="stat-tile">
+      <div class="stat-value">{{ tools | length }}</div>
+      <div class="stat-label">tools</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">{{ tools | sum(attribute='calls') }}</div>
+      <div class="stat-label">calls</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">~{{ tools | sum(attribute='total_tokens') }}</div>
+      <div class="stat-label">est. tokens total</div>
+    </div>
+  </div>
   <table class="data-table">
     <thead>
       <tr>
@@ -65,4 +79,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}
