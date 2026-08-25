@@ -157,28 +157,47 @@ def download_reranker_model(model_name: Optional[str] = None) -> bool:
     so ``cairn download-reranker`` and ``cairn embed --download-model`` share
     a shape. Does not require ``CAIRN_RERANK=1`` — pre-fetching the weights
     should not depend on the feature being enabled at download time.
+
+    The fetch runs in a child interpreter behind the quiet progress helper,
+    like ``embeddings.download_model``: constructing the CrossEncoder
+    in-process let HuggingFace print one tqdm bar per repo file straight
+    into the terminal. The child shares the parent's HF cache.
     """
+    import subprocess
+    import sys
+
     m_name = model_name or current_rerank_model()
     if reranker_model_is_cached(m_name):
         print(f"Reranker model '{m_name}' is already cached — skipping download.")
         return True
+
+    print(f"Downloading reranker '{m_name}' weights into local cache...")
+    # Constructing the CrossEncoder IS the download (weights land in the HF
+    # cache). max_length is a runtime-only knob (_get_reranker pins it) and
+    # does not change what gets fetched.
+    code = (
+        "from sentence_transformers import CrossEncoder; "
+        f"CrossEncoder({m_name!r})"
+    )
     try:
-        from sentence_transformers import CrossEncoder  # noqa: F401
-    except ImportError:
+        from .embeddings import _lib_pythonpath, _run_subprocess_with_progress
+
+        _run_subprocess_with_progress(
+            [sys.executable, "-c", code],
+            f"Downloading {m_name}",
+            env={**os.environ, "PYTHONPATH": _lib_pythonpath()},
+        )
+    except subprocess.CalledProcessError:
+        # The helper already printed the child's captured output above (the
+        # HF error -- or a ModuleNotFoundError when sentence-transformers
+        # isn't importable anywhere the child can see).
         print(
-            f"Cannot download reranker '{m_name}': sentence-transformers is not "
-            f"installed. {install_hint()}"
+            f"Failed to download reranker model '{m_name}' (see the output "
+            "above)"
         )
         return False
-    try:
-        print(f"Downloading reranker '{m_name}' weights into local cache...")
-        # Constructing a CrossEncoder fetches the weights into the HF cache.
-        CrossEncoder(m_name)
-        print(f"Reranker model '{m_name}' downloaded successfully.")
-        return True
-    except Exception as exc:
-        print(f"Failed to download reranker model '{m_name}': {exc}")
-        return False
+    print(f"Reranker model '{m_name}' downloaded successfully.")
+    return True
 
 
 def _get_reranker():

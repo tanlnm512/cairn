@@ -656,3 +656,74 @@ class TestSemanticSearchPassesEnrichedQuery:
 
         semantic_search(conn, "safeApiCall", limit=5, threshold=0.0)
         assert recorded["query"] == "safeApiCall"
+
+
+# --- download_reranker_model fetches in a quiet child interpreter ----------
+#
+# Regression guard, mirroring the embeddings.download_model tests: the fetch
+# used to construct CrossEncoder in-process, so HuggingFace printed one tqdm
+# bar per repo file (plus transformers warnings) into the terminal for a
+# ~1.1 GB model. The fetch now runs in a child interpreter behind the shared
+# quiet progress helper, sharing the parent's HF cache. Faked at the
+# _run_subprocess_with_progress seam (never patch subprocess.Popen globally).
+
+def test_download_reranker_model_fetches_in_quiet_subprocess(monkeypatch, capsys):
+    import sys
+
+    from cairn.graph import embeddings as emb_mod
+    from cairn.graph import reranker as rrk
+
+    seen = {}
+
+    def fake_run(cmd, description, env=None):
+        seen["cmd"] = cmd
+        seen["env"] = env
+        return ""
+
+    monkeypatch.setattr(emb_mod, "_run_subprocess_with_progress", fake_run)
+    monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda m=None: False)
+
+    assert rrk.download_reranker_model("BAAI/bge-reranker-base") is True
+
+    # A child interpreter constructs the CrossEncoder (which is what
+    # downloads the weights into the shared HF cache).
+    assert seen["cmd"][:2] == [sys.executable, "-c"]
+    assert "CrossEncoder" in seen["cmd"][2]
+    assert "BAAI/bge-reranker-base" in seen["cmd"][2]
+    out = capsys.readouterr().out
+    assert "Downloading reranker 'BAAI/bge-reranker-base'" in out
+    assert "downloaded successfully" in out
+
+
+def test_download_reranker_model_cached_skips_subprocess(monkeypatch):
+    from cairn.graph import embeddings as emb_mod
+    from cairn.graph import reranker as rrk
+
+    calls = []
+    monkeypatch.setattr(
+        emb_mod, "_run_subprocess_with_progress", lambda *a, **k: calls.append(a)
+    )
+    monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda m=None: True)
+
+    assert rrk.download_reranker_model("BAAI/bge-reranker-base") is True
+    assert calls == []
+
+
+def test_download_reranker_model_failure_surfaces_child_output(monkeypatch, capsys):
+    import subprocess as sp
+
+    from cairn.graph import embeddings as emb_mod
+    from cairn.graph import reranker as rrk
+
+    def fake_run(cmd, description, env=None):
+        print("Connection error: couldn't reach huggingface.co")
+        raise sp.CalledProcessError(1, cmd, "conn")
+
+    monkeypatch.setattr(emb_mod, "_run_subprocess_with_progress", fake_run)
+    monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda m=None: False)
+
+    assert rrk.download_reranker_model("BAAI/bge-reranker-base") is False
+
+    out = capsys.readouterr().out
+    assert "huggingface.co" in out
+    assert "Failed to download reranker" in out

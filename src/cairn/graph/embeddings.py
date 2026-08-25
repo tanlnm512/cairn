@@ -395,20 +395,49 @@ def model_is_cached(model_name: Optional[str] = None) -> bool:
 
 
 def download_model(model_name: Optional[str] = None) -> bool:
-    """Download model weights into the local HuggingFace cache if not present."""
+    """Download model weights into the local HuggingFace cache if not present.
+
+    The fetch runs in a child interpreter behind the quiet progress helper:
+    constructing the model in-process let HuggingFace print one tqdm bar
+    per repo file (plus transformers warnings) straight into the terminal
+    -- a wall of lines for an ~836 MB multi-file model. The child shares
+    the parent's HF cache, so afterwards any process (this one included)
+    loads the weights from cache.
+    """
+    import subprocess
+    import sys
+
     m_name = model_name or current_model()
     if model_is_cached(m_name):
         print(f"Model '{m_name}' is already cached — skipping download.")
         return True
 
+    print(f"Downloading '{m_name}' model weights into local cache...")
+    # Constructing the model IS the download (weights land in the HF cache).
+    # trust_remote_code mirrors _get_local_model so what gets cached matches
+    # what the runtime path loads.
+    trust = os.environ.get("CAIRN_EMBED_TRUST_REMOTE_CODE") == "1"
+    code = (
+        "from sentence_transformers import SentenceTransformer; "
+        f"SentenceTransformer({m_name!r}, trust_remote_code={trust!r})"
+    )
     try:
-        print(f"Downloading '{m_name}' model weights into local cache...")
-        _get_local_model(m_name)
-        print(f"Model '{m_name}' downloaded successfully.")
-        return True
-    except Exception as exc:
-        print(f"Failed to download model '{m_name}': {exc}")
+        _run_subprocess_with_progress(
+            [sys.executable, "-c", code],
+            f"Downloading {m_name}",
+            env={**os.environ, "PYTHONPATH": _lib_pythonpath()},
+        )
+    except subprocess.CalledProcessError:
+        # The helper already printed the child's captured output above (the
+        # HF error -- or a ModuleNotFoundError when the [semantic] extra
+        # isn't importable anywhere the child can see).
+        print(
+            f"Failed to download model '{m_name}' (see the output above; if "
+            "it is an import error, run `cairn embed --install-deps` first)"
+        )
         return False
+    print(f"Model '{m_name}' downloaded successfully.")
+    return True
 
 
 def _run_subprocess_with_progress(
@@ -496,6 +525,26 @@ def _install_cmd(packages: list[str], lib_dir) -> Optional[list[str]]:
     ]
 
 
+def _lib_pythonpath() -> str:
+    """PYTHONPATH for child interpreters: shared lib dirs first, then existing.
+
+    Mirrors the in-process sys.path order paths._inject_shared_libs
+    establishes (ABI dir, then the legacy flat dir under the default
+    layout), so a child interpreter resolves the semantic stack from the
+    same places the parent would -- the venv's site-packages still apply
+    via the child's own interpreter.
+    """
+    from ..paths import SHARED_LIB, shared_lib_path
+
+    dirs = [shared_lib_path()]
+    if not os.environ.get("CAIRN_LIB"):
+        dirs.append(SHARED_LIB)
+    parts = [str(d) for d in dirs]
+    if os.environ.get("PYTHONPATH"):
+        parts.append(os.environ["PYTHONPATH"])
+    return os.pathsep.join(parts)
+
+
 def _verify_install(lib_dir) -> None:
     """Import the fresh stack in a FRESH subprocess, under a progress bar.
 
@@ -510,10 +559,6 @@ def _verify_install(lib_dir) -> None:
     """
     import sys
 
-    pythonpath = os.pathsep.join(
-        [str(lib_dir)]
-        + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])
-    )
     print(
         "Verifying install (first import loads hundreds of native "
         "libraries; this can take a minute)..."
@@ -525,7 +570,7 @@ def _verify_install(lib_dir) -> None:
             "import sentence_transformers, numpy, sqlite_vec",
         ],
         "Verifying install",
-        env={**os.environ, "PYTHONPATH": pythonpath},
+        env={**os.environ, "PYTHONPATH": _lib_pythonpath()},
     )
 
 

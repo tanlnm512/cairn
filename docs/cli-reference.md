@@ -303,12 +303,18 @@ sentence-transformers) into the shared `~/.cairn/lib/cp<version>/` directory
 survives reinstalls, then exits without building the index. This is the
 recommended one-time way to get the default `BAAI/bge-m3` model — run
 `cairn embed --install-deps`, then `cairn embed` to build the index.
+`--download-model` pre-fetches the embedder weights into the local
+HuggingFace cache behind a single live progress line (the downloader's
+per-file output is captured and shown only on failure, like `cairn upgrade`
+and `cairn download-reranker`).
 
 `download-reranker` options: `--model` (default `BAAI/bge-reranker-base`, the
 natural pair for the bge-m3 embedder; honors `$CAIRN_RERANK_MODEL` if set).
-Fetches the weights into the local HuggingFace cache and writes a
-`~/.cairn/rerank_enabled` marker so reranking is on for subsequent queries —
-no `CAIRN_RERANK=1` needed. Set `CAIRN_RERANK=0` to turn it back off. If the
+Fetches the weights into the local HuggingFace cache (behind a single live
+progress line — the downloader's own per-file output is captured and shown
+only on failure, like `cairn upgrade` and `cairn embed --download-model`)
+and writes a `~/.cairn/rerank_enabled` marker so reranking is on for
+subsequent queries — no `CAIRN_RERANK=1` needed. Set `CAIRN_RERANK=0` to turn it back off. If the
 configured model is later missing/evicted from the cache, queries fall back to
 the hybrid (vector + BM25 + RRF) order rather than failing.
 
