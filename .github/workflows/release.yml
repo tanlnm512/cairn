@@ -36,8 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Linux aarch64 + musllinux legs build under QEMU emulation inside
-      # cibuildwheel's docker containers (D-008).
+      # Linux aarch64 legs build under QEMU emulation inside cibuildwheel's
+      # docker containers (D-008).
       - name: Set up QEMU
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v3
@@ -61,18 +61,23 @@ jobs:
         run: uv build --sdist
 
       # cp310-* + setup.py's py_limited_api -> one cp310-abi3 wheel per
-      # platform (cibuildwheel auto-runs abi3audit on it). Linux x86_64 +
-      # aarch64 covers manylinux AND musllinux for both arches. Pinned
-      # exactly: cibuildwheel minor releases add/remove platforms (their
-      # FAQ mandates exact pins).
+      # platform (cibuildwheel auto-runs abi3audit on it). Supported: macOS
+      # Apple Silicon, manylinux x86_64 + aarch64, Windows AMD64. musllinux
+      # is skipped: sqlite-vec (core dep) ships no musl wheels, so an Alpine
+      # install can never resolve. Intel macOS is skipped: cryptography
+      # (transitive via mcp -> pyjwt[crypto]) dropped Intel-macOS wheels and
+      # fresh resolution there falls to a Rust sdist build. Pinned exactly:
+      # cibuildwheel minor releases add/remove platforms (their FAQ mandates
+      # exact pins).
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.0
         with:
           output-dir: wheelhouse
         env:
           CIBW_BUILD: "cp310-*"
+          CIBW_SKIP: "*musllinux*"
           CIBW_ARCHS_LINUX: "x86_64 aarch64"
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          CIBW_ARCHS_MACOS: "arm64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_TEST_REQUIRES: tree_sitter
           # Smoke-test the compiled grammar in every wheel (supersedes the

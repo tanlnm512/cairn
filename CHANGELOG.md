@@ -56,9 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inheritance, imports, the `operator fun invoke` rewrite) is unchanged:
   the golden corpus stays byte-identical and the scip-java hybrid merge
   joins against the new parses unchanged. With the in-tree extension,
-  `cairn-intel` wheels are now per-platform (cp310-abi3; macOS arm64/x64,
-  manylinux x86_64/aarch64, musllinux, Windows) built by a pinned
-  cibuildwheel matrix — `pip install cairn-intel` stays toolchain-free.
+  `cairn-intel` wheels are now per-platform (cp310-abi3; macOS Apple
+  Silicon, manylinux x86_64/aarch64, Windows) built by a pinned
+  cibuildwheel matrix, with every wheel smoke-testing its own grammar at
+  build time — `pip install cairn-intel` stays toolchain-free. Two
+  platforms are deliberately not shipped: musllinux (sqlite-vec, a core
+  dependency, publishes no musl wheels, so an Alpine install can never
+  resolve) and Intel macOS (cryptography — pulled transitively via
+  mcp's `pyjwt[crypto]` — has dropped Intel-macOS wheels; the first
+  per-wheel install test is what surfaced both limits).
 - The dashboard subsystem is now documented: `cairn dashboard` entry in
   the CLI reference, a Local dashboard section in the architecture guide
   (read-only and loopback-only invariants, store selection, estimate
