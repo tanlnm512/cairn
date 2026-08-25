@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `cairn upgrade` no longer dumps the installer's raw output into the
+  terminal (50+ lines of pipx/uv/pip venv-creation and
+  Collecting/Downloading/already-satisfied noise from a single upgrade).
+  The reinstall now runs behind the same single live progress line as
+  `cairn embed --install-deps`; the installer's output is captured and
+  shown only when the upgrade fails, followed by the exact manual retry
+  command, and a failed upgrade now exits non-zero instead of silently
+  returning 0.
+- `cairn embed --download-model` and `cairn download-reranker` get the same
+  treatment: the model fetch runs in a child interpreter behind one live
+  progress line instead of constructing the model in-process, which let
+  HuggingFace print one tqdm bar per repo file (plus transformers warnings)
+  straight into the terminal for an ~836 MB / ~1.1 GB multi-file download.
+  The child shares the parent's HuggingFace cache, so the weights are
+  immediately available to every process; the downloader's captured output
+  is shown only when the fetch fails.
 - `cairn embed --install-deps` no longer breaks — and becomes unrepairable —
   when two Python interpreters share one machine. The semantic-dependency
   directory is now scoped per interpreter ABI (`~/.cairn/lib/cp311/`,
