@@ -86,19 +86,20 @@ jobs:
             python -c "import cairn._tree_sitter_kotlin as m; from tree_sitter import Language, Parser;
             assert not Parser(Language(m.language())).parse(b'class Foo').root_node.has_error"
 
-      # Same artifact name across legs -- upload-artifact merges same-named
-      # artifacts, so publish-pypi / github-release below download the full
-      # set (all wheels + sdist) unchanged.
+      # Unique artifact name per upload -- upload-artifact rejects a
+      # duplicate name within one job (409), and same-name merging across
+      # jobs is not a v4+ guarantee. Both consumers below pattern-download
+      # dist-* with merge-multiple.
       - uses: actions/upload-artifact@v6
         with:
-          name: dist
+          name: dist-wheels-${{ matrix.os }}
           path: wheelhouse/
 
       - name: Upload sdist
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v6
         with:
-          name: dist
+          name: dist-sdist
           path: dist/
 
   publish-pypi:
@@ -113,7 +114,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist/
 
       # PyPA's official action. With Trusted Publishing it exchanges the
@@ -135,7 +137,8 @@ jobs:
 
       - uses: actions/download-artifact@v6
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist/
 
       - name: Extract version from tag
