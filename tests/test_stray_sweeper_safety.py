@@ -31,6 +31,21 @@ from cairn.mcp_server import lifecycle as lc
 DB = "/repos/acme/.cairn/graph.db"
 
 
+def _fake_pid(offset: int) -> int:
+    """A fake pid guaranteed outside find_strays' protected set.
+
+    find_strays never treats the sweeping process itself as a stray
+    (protected = {daemon, os.getpid(), daemon children}). Hardcoded fake
+    pids (4101, 4200, ...) intermittently EQUALED the real pytest pid on
+    CI runners (pid namespaces there reach the thousands -- observed twice
+    on 2026-08-25), silently filtering the fake orphan as "self" and
+    failing these tests with e.g. ``assert [] == [4101]``. Anchoring every
+    fake pid to ``os.getpid() + offset`` keeps it out of the protected set
+    on every host, deterministically.
+    """
+    return os.getpid() + offset
+
+
 def _fake_subprocess(processes=None, pgrep_pids=None, child_pids=None,
                      lsof_pids=None, lsof_fail=False):
     """Build a subprocess.run stub simulating a process table for lifecycle.
@@ -93,7 +108,7 @@ class TestOrphanedStdioServerCaught:
     def test_editor_shape_cairn_serve_is_caught(self, monkeypatch):
         """The argv shape editors spawn (`cairn serve`, db via env) is a stray
         when it holds the db and isn't the daemon/self."""
-        orphan = 4101
+        orphan = _fake_pid(4101)
         _setup(
             monkeypatch,
             processes={orphan: "/usr/local/bin/cairn serve"},
@@ -105,7 +120,7 @@ class TestOrphanedStdioServerCaught:
     def test_foreground_server_on_this_db_is_caught(self, monkeypatch):
         """A `cairn serve run` foreground server that holds THIS db (and is
         not the launchd daemon) is a stray."""
-        fg = 4200
+        fg = _fake_pid(4200)
         _setup(
             monkeypatch,
             processes={fg: "/usr/local/bin/cairn serve run --port 9999"},
@@ -123,7 +138,7 @@ class TestProtectedSet:
     def test_daemon_and_children_protected_even_when_holding_db(self, monkeypatch):
         """The launchd daemon + its children are excluded even though their
         cmdline is a server shape AND they hold the db."""
-        daemon, child = 5000, 5001
+        daemon, child = _fake_pid(5000), _fake_pid(5001)
         _setup(
             monkeypatch,
             processes={
@@ -159,12 +174,13 @@ class TestNonServersIgnored:
         """`cairn build`, `grep cairn serve`, editor buffers, and the transient
         `cairn serve status` lifecycle command are all ignored -- even when
         pgrep lists them AND (perversely) lsof claims they hold the db."""
+        base = _fake_pid(4100)
         procs = {
-            4101: "/usr/local/bin/cairn build",
-            4102: "grep cairn serve",
-            4103: "vi src/cairn/server.py",
-            4104: "/usr/local/bin/cairn serve status",
-            4105: "/usr/local/bin/cairncafe serve",
+            base + 1: "/usr/local/bin/cairn build",
+            base + 2: "grep cairn serve",
+            base + 3: "vi src/cairn/server.py",
+            base + 4: "/usr/local/bin/cairn serve status",
+            base + 5: "/usr/local/bin/cairncafe serve",
         }
         _setup(
             monkeypatch,
@@ -183,8 +199,8 @@ class TestDbVerification:
     def test_foreground_server_on_different_db_not_killed(self, monkeypatch):
         """A server-shaped process that does NOT hold this db (it serves a
         different workspace) is not a stray for THIS db."""
-        other = 4300
-        daemon = 5000
+        other = _fake_pid(4300)
+        daemon = _fake_pid(5000)
         _setup(
             monkeypatch,
             processes={
@@ -201,7 +217,7 @@ class TestDbVerification:
         """lsof failing means verification is impossible: nothing is killed
         and the skip is logged (an unverifiable kill is worse than a missed
         sweep)."""
-        orphan = 4101
+        orphan = _fake_pid(4101)
         killed = []
         _setup(
             monkeypatch,
@@ -220,7 +236,7 @@ class TestDbVerification:
     def test_unheld_db_is_a_valid_empty_answer(self, monkeypatch, capsys):
         """lsof exit 1 with no stderr = 'nobody holds this file' (verified
         empty), not a failure: no strays, and no skip warning."""
-        orphan = 4101
+        orphan = _fake_pid(4101)
         _setup(
             monkeypatch,
             processes={orphan: "/usr/local/bin/cairn serve"},
@@ -233,7 +249,7 @@ class TestDbVerification:
     def test_sweep_passes_cmdline_recheck_to_terminate(self, monkeypatch):
         """sweep_strays arms terminate_pid with the anchored cmdline check so
         a pid reused between find and kill is never SIGKILLed (F4 wiring)."""
-        orphan = 4101
+        orphan = _fake_pid(4101)
         _setup(
             monkeypatch,
             processes={orphan: "/usr/local/bin/cairn serve"},
