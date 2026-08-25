@@ -1,7 +1,9 @@
 .PHONY: dist evals ci-local ci-local-all verify-no-code-change release help
 
-# Build the wheel + sdist into dist/. Produces:
-#   dist/cairn_intel-<version>-py3-none-any.whl
+# Build the wheel + sdist into dist/ for the HOST platform only (the
+# release workflow's cibuildwheel matrix builds the full platform set).
+# Produces:
+#   dist/cairn_intel-<version>-cp310-abi3-<platform>.whl
 #   dist/cairn_intel-<version>.tar.gz
 dist:
 	rm -rf dist build *.egg-info

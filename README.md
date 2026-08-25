@@ -330,6 +330,7 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
 
 ```bash
 pip install -e ".[dev]"   # pytest + watchdog + build + ruff
+                            # (compiles the vendored Kotlin grammar — needs a C toolchain)
 pytest -m core            # fast <3s smoke subset (one test per core function)
 pytest                    # full suite (the CI path)
 make ci-local             # clean-room CI replication in a Linux container

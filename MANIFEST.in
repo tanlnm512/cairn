@@ -1,0 +1,1 @@
+recursive-include vendor *.c *.h *.json LICENSE

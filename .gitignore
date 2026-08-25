@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+# Compiled extension modules built in-place by editable installs (setup.py)
+*.so
 *.egg-info/
 *.egg
 build/

@@ -27,31 +27,71 @@ concurrency:
 
 jobs:
   build:
-    name: Build wheel + sdist
-    runs-on: ubuntu-latest
+    name: Build wheel + sdist (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
 
+      # Linux aarch64 + musllinux legs build under QEMU emulation inside
+      # cibuildwheel's docker containers (D-008).
+      - name: Set up QEMU
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      # The sdist is built once, on the linux leg; every leg adds its
+      # platform wheels below.
       - name: Set up Python
+        if: runner.os == 'Linux'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up uv
+        if: runner.os == 'Linux'
         uses: astral-sh/setup-uv@v6
 
-      # Matches `make dist`. uv build respects the setuptools backend in
-      # pyproject.toml and produces a pure-python py3-none-any wheel.
-      - name: Build distributions
-        run: uv build
+      - name: Build sdist
+        if: runner.os == 'Linux'
+        run: uv build --sdist
 
-      - name: Verify the wheel imports
-        run: |
-          python -m pip install --upgrade pip
-          pip install dist/*.whl
-          python -c "import cairn; print('wheel ok')"
+      # cp310-* + setup.py's py_limited_api -> one cp310-abi3 wheel per
+      # platform (cibuildwheel auto-runs abi3audit on it). Linux x86_64 +
+      # aarch64 covers manylinux AND musllinux for both arches. Pinned
+      # exactly: cibuildwheel minor releases add/remove platforms (their
+      # FAQ mandates exact pins).
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.0
+        with:
+          output-dir: wheelhouse
+        env:
+          CIBW_BUILD: "cp310-*"
+          CIBW_ARCHS_LINUX: "x86_64 aarch64"
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          CIBW_ARCHS_WINDOWS: "AMD64"
+          CIBW_TEST_REQUIRES: tree_sitter
+          # Smoke-test the compiled grammar in every wheel (supersedes the
+          # old post-build "Verify the wheel imports" step).
+          CIBW_TEST_COMMAND: >-
+            python -c "import cairn._tree_sitter_kotlin as m; from tree_sitter import Language, Parser;
+            assert not Parser(Language(m.language())).parse(b'class Foo').root_node.has_error"
 
+      # Same artifact name across legs -- upload-artifact merges same-named
+      # artifacts, so publish-pypi / github-release below download the full
+      # set (all wheels + sdist) unchanged.
       - uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: wheelhouse/
+
+      - name: Upload sdist
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v6
         with:
           name: dist
           path: dist/

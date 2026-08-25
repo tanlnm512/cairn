@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Modern Kotlin parses cleanly — files using recent Kotlin syntax (KEEP-0438
+  destructuring in all four forms, `when` guard conditions, multi-dollar
+  string interpolation, trailing commas in parameters/arguments/indexing/
+  lambda and destructuring positions) now index without error nodes. A new
+  scan test parses every fixture under `tests/fixtures/kotlin/modern/` and
+  fails on any ERROR/MISSING node, so grammar regressions surface
+  mechanically instead of silently degrading graph extraction.
 - Dashboard visual overhaul — a sidebar app shell with GitNexus-inspired
   design tokens across every view: restyled tables, badges, cards, window
   controls, and chain pills; stat tiles, export chips, and segmented
@@ -33,6 +40,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   store.
 
 ### Changed
+- Kotlin grammar swapped to the vendored fwcd grammar — the dormant
+  `tree-sitter-kotlin` PyPI dependency (last upstream change January 2025)
+  is replaced by fwcd's actively-maintained grammar, vendored in-tree at a
+  pinned commit (`vendor/tree-sitter-kotlin/`, NOTICE records the pin) and
+  compiled into cairn's own wheels as the `cairn._tree_sitter_kotlin`
+  abi3 extension. The dependency is removed outright — no fallback loader,
+  a single Kotlin grammar path. Kotlin extraction (symbols, call edges,
+  inheritance, imports, the `operator fun invoke` rewrite) is unchanged:
+  the golden corpus stays byte-identical and the scip-java hybrid merge
+  joins against the new parses unchanged. With the in-tree extension,
+  `cairn-intel` wheels are now per-platform (cp310-abi3; macOS arm64/x64,
+  manylinux x86_64/aarch64, musllinux, Windows) built by a pinned
+  cibuildwheel matrix — `pip install cairn-intel` stays toolchain-free.
 - The dashboard subsystem is now documented: `cairn dashboard` entry in
   the CLI reference, a Local dashboard section in the architecture guide
   (read-only and loopback-only invariants, store selection, estimate
