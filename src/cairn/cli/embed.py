@@ -55,6 +55,22 @@ def embed(
         display.dim("Run `cairn embed` to build the embedding index.")
         sys.exit(0)
 
+    if download_model:
+        # The availability check imports the semantic stack in-process; on a
+        # first run (or right after --install-deps) that import alone takes
+        # 30s+. Say something BEFORE it so the window isn't dead silence.
+        display.dim("Loading the semantic backend (first import can take a minute)...")
+        if not emb.embeddings_available():
+            display.error("Semantic dependencies unavailable")
+            display.dim(emb.install_hint())
+            display.dim("Run `cairn embed --install-deps` to auto-install.")
+            sys.exit(1)
+        if not emb.download_model():
+            display.error("Model download failed")
+            sys.exit(1)
+        display.success("Model download complete.")
+        sys.exit(0)
+
     if not emb.embeddings_available():
         display.error("Semantic dependencies unavailable")
         display.dim(emb.install_hint())
@@ -82,13 +98,6 @@ def embed(
         display.dim(
             "Or set CAIRN_EMBED_BACKEND=hash explicitly to silence this warning."
         )
-
-    if download_model:
-        if not emb.download_model():
-            display.error("Model download failed")
-            sys.exit(1)
-        display.success("Model download complete.")
-        sys.exit(0)
 
     conn = get_db(db)
     try:
