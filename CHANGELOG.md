@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
-## [Unreleased]
+## [0.14.3] - 2026-08-26
 
 ### Changed
 - `install-agents` now defaults to **SSE** transport for every supported
