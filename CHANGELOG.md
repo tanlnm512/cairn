@@ -10,7 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
-## [Unreleased]
+## [0.14.0] - 2026-08-25
+
+> **Focus:** a two-train release — Kotlin support moves to the
+> actively-maintained fwcd tree-sitter grammar (vendored in-tree as a compiled
+> extension, modern syntax parses clean, per-platform wheels), and the
+> dashboard gets its GitNexus-inspired visual overhaul with live typeahead
+> graph search.
 
 ### Added
 - Modern Kotlin parses cleanly — files using recent Kotlin syntax (KEEP-0438
