@@ -18,9 +18,9 @@ from .main import main
 @click.option("--dry-run", is_flag=True, help="Show what would be written; change nothing.")
 @click.option("--git-hooks", is_flag=True, help="Also install git post-commit hooks in repos.")
 @click.option("--sse", "sse", is_flag=True,
-              help="Force SSE configs (shared daemon). Run `cairn serve start` first.")
+              help="Use SSE configs (shared daemon) — this is the default; the flag is kept for explicitness. Run `cairn serve start` first.")
 @click.option("--stdio", "stdio", is_flag=True,
-              help="Force stdio configs (one process per client). Overrides auto-detection.")
+              help="Use stdio configs (one process per client) instead of the SSE default. Claude Desktop is always stdio either way.")
 @click.option("--sse-url", "sse_url", default=None,
               help="SSE URL (default http://127.0.0.1:9876/sse).")
 @click.option("--yes", "-y", is_flag=True,
@@ -166,6 +166,11 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
         else "stdio (one process per client)"
     )
     click.echo(f"MCP transport: {tp_note}")
+    if report.transport == "sse":
+        from ..agent_install import sse_daemon_reachable
+        if not sse_daemon_reachable(sse_url):
+            click.echo("  note: SSE daemon not reachable — run `cairn serve start` "
+                       "(installs a launchd agent), or pass --stdio for one process per client.")
     click.echo("")
 
     targeted = {r.client for r in report.results}
