@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
-## [Unreleased]
+## [0.14.1] - 2026-08-25
+
+> **Focus:** one bugfix — `cairn embed --install-deps` (and
+> `--download-model`) no longer sit dead-silent and look hung while the
+> freshly installed semantic stack loads for the first time.
 
 ### Fixed
 - `cairn embed --install-deps` no longer looks hung after the dependency
