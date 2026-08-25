@@ -10,7 +10,10 @@ a progress bar, so these tests pin that contract:
 * the verification import happens in a CHILD interpreter (never in-process),
   with the shared lib dir first on its PYTHONPATH;
 * a failing child import surfaces the child's error and returns False;
-* the user sees a "Verifying install" line before the silent window starts.
+* the user sees a "Verifying install" line before the silent window starts;
+* a failed verification wipes the lib dir and reinstalls ONCE from empty
+  (pip --target cannot repair a broken dir in place -- see
+  test_verify_failure_wipes_lib_dir_and_reinstalls_once).
 
 sentence_transformers is absent from the test venv by design, which is what
 drives ensure_semantic_deps into the install path at all. The subprocess is
@@ -122,3 +125,100 @@ def test_verification_failure_returns_false_with_child_error(
     assert "Failed to auto-install" in out
     # The child interpreter's actual error is surfaced, not swallowed.
     assert "No module named 'sentence_transformers'" in out
+
+
+def test_verify_failure_wipes_lib_dir_and_reinstalls_once(
+    isolated_lib, fake_install, monkeypatch, capsys
+):
+    """A failed verification wipes the lib dir and retries the install once.
+
+    pip install --target skips packages already present at a satisfying
+    version, so an install interrupted mid-unpack (or written by a different
+    interpreter ABI before lib dirs were ABI-scoped) is unrepairable by
+    re-running pip over it -- pip reports success while the dir stays
+    broken. The only sound repair is wipe + reinstall from empty, which is
+    exactly what this test pins (a stale sentinel file must not survive).
+    """
+    sentinel = isolated_lib / "leftover-from-broken-install"
+    sentinel.write_text("stale")
+    verify_count = {"n": 0}
+
+    def fake_run(cmd, description, env=None):
+        verify_count["n"] += 1
+        if verify_count["n"] == 1:
+            raise subprocess.CalledProcessError(1, cmd, "child import failed")
+        return ""
+
+    monkeypatch.setattr(embeddings, "_run_subprocess_with_progress", fake_run)
+
+    assert embeddings.ensure_semantic_deps(auto_install=True) is True
+
+    # Exactly two installs (initial + repair) and two verifies, never more.
+    assert len(fake_install) == 2
+    assert verify_count["n"] == 2
+    # The wipe really happened: the stale sentinel from the broken install
+    # is gone, while the dir itself was recreated for the repair install.
+    assert not sentinel.exists()
+    assert isolated_lib.is_dir()
+    assert "wiping" in capsys.readouterr().out.lower()
+
+
+def test_gives_up_after_exactly_one_repair_attempt(
+    isolated_lib, fake_install, monkeypatch
+):
+    """Both verifies failing is terminal: one repair retry, then False."""
+
+    def fake_run(cmd, description, env=None):
+        raise subprocess.CalledProcessError(1, cmd, "child import failed")
+
+    monkeypatch.setattr(embeddings, "_run_subprocess_with_progress", fake_run)
+
+    assert embeddings.ensure_semantic_deps(auto_install=True) is False
+    # Initial install + the single repair install -- no retry loop.
+    assert len(fake_install) == 2
+
+
+def test_install_cmd_pip_branch_uses_current_interpreter(isolated_lib):
+    cmd = embeddings._install_cmd(["sentence-transformers"], isolated_lib)
+    # The test venv has pip, so the pip branch runs. The install MUST target
+    # the running interpreter (sys.executable), whose ABI the verify
+    # subprocess and the in-process imports both depend on.
+    assert cmd[:3] == [sys.executable, "-m", "pip"]
+    assert "--target" in cmd
+    assert str(isolated_lib) in cmd
+
+
+def test_install_cmd_uv_branch_pins_current_interpreter(isolated_lib, monkeypatch):
+    """Without pip, uv runs -- but pinned to sys.executable.
+
+    Left unpinned, `uv pip install` resolves wheels for whichever interpreter
+    uv itself discovers (an active venv, a managed default), which can be a
+    different ABI than the interpreter running cairn -- same corruption as
+    the flat shared lib dir, just via a different door.
+    """
+    import importlib.util
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/uv")
+
+    cmd = embeddings._install_cmd(["sentence-transformers"], isolated_lib)
+
+    assert cmd == [
+        "/usr/local/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "--target",
+        str(isolated_lib),
+        "sentence-transformers",
+    ]
+
+
+def test_install_cmd_returns_none_without_pip_or_uv(isolated_lib, monkeypatch):
+    import importlib.util
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+    assert embeddings._install_cmd(["sentence-transformers"], isolated_lib) is None

@@ -35,25 +35,60 @@ REGISTRY_FILE = CAIRN_HOME / "workspaces.json"
 # Shared library directory for the heavy semantic deps (torch,
 # sentence-transformers, numpy). Installed via `cairn embed --install-deps`
 # with `pip install --target` so they survive `uv tool install --force`
-# reinstalls. Prepended to sys.path at import time below.
+# reinstalls. Scoped per interpreter ABI (lib/cp311, lib/cp314, ...) because
+# these packages ship ABI-specific wheels: a single flat dir corrupted
+# silently once two interpreters installed into it (e.g. a 3.11 dev venv
+# and a 3.14 pipx install), and pip's --target skip-if-satisfied semantics
+# made the mixed dir unrepairable by re-running the install. Legacy
+# pre-scope installs live directly in lib/ and stay usable via
+# _inject_shared_libs.
 SHARED_LIB = CAIRN_HOME / "lib"
 
 
-def shared_lib_path() -> Path:
-    """The shared-deps directory (~/.cairn/lib by default)."""
-    return Path(os.environ.get("CAIRN_LIB", str(SHARED_LIB)))
-
-
-# Inject the shared lib dir into sys.path EARLY (at import time of this module,
-# which every cairn entry point loads). This must happen before any code tries to
-# `import sentence_transformers` / `import torch`. If the dir doesn't exist yet
-# (deps not installed), this is a no-op.
-_lib = shared_lib_path()
-if _lib.is_dir():
+def _abi_tag() -> str:
     import sys as _sys
-    _p = str(_lib)
-    if _p not in _sys.path:
-        _sys.path.insert(0, _p)
+
+    return f"cp{_sys.version_info[0]}{_sys.version_info[1]}"
+
+
+def shared_lib_path() -> Path:
+    """The shared-deps directory for the RUNNING interpreter's ABI.
+
+    Default: ``<CAIRN_HOME>/lib/cp<major><minor>``. ``CAIRN_LIB`` overrides
+    verbatim (no ABI suffix) for tests and explicit user pinning.
+    """
+    override = os.environ.get("CAIRN_LIB")
+    if override:
+        return Path(override)
+    return SHARED_LIB / _abi_tag()
+
+
+def _inject_shared_libs() -> None:
+    """Prepend the shared lib dirs to sys.path (idempotent, existing dirs only).
+
+    Order (first match wins): the ABI-scoped dir, then the legacy flat
+    ``<CAIRN_HOME>/lib`` from pre-scope installs -- an existing
+    single-interpreter install keeps working unchanged, while every package
+    present in the ABI dir shadows its legacy copy. With ``CAIRN_LIB`` set,
+    only that directory is injected (the override is explicit and exact).
+    """
+    import sys as _sys
+
+    if os.environ.get("CAIRN_LIB"):
+        dirs = [shared_lib_path()]
+    else:
+        dirs = [shared_lib_path(), SHARED_LIB]
+    # reversed so the first dir in `dirs` ends up FIRST on sys.path.
+    for d in reversed(dirs):
+        if d.is_dir() and str(d) not in _sys.path:
+            _sys.path.insert(0, str(d))
+
+
+# Inject the shared lib dirs into sys.path EARLY (at import time of this
+# module, which every cairn entry point loads). This must happen before any
+# code tries to `import sentence_transformers` / `import torch`. If the dirs
+# don't exist yet (deps not installed), this is a no-op.
+_inject_shared_libs()
 
 
 @dataclass(frozen=True)

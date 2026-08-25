@@ -298,7 +298,8 @@ embed pass — flag or not — also refreshes the persisted `term_df` table, so
 enrichment's IDF signal stays current with the embedded corpus.
 
 `--install-deps` installs the semantic dependencies (torch +
-sentence-transformers) into the shared `~/.cairn/lib/` directory, which
+sentence-transformers) into the shared `~/.cairn/lib/cp<version>/` directory
+(scoped per Python ABI so different interpreters don't corrupt one wheel set), which
 survives reinstalls, then exits without building the index. This is the
 recommended one-time way to get the default `BAAI/bge-m3` model — run
 `cairn embed --install-deps`, then `cairn embed` to build the index.
