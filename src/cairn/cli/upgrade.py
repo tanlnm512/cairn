@@ -79,9 +79,18 @@ def _detect_install_method() -> str:
     return "unknown"
 
 
-def _reinstall(method: str, version: str):
-    """Re-install cairn-intel using the detected method."""
+def _reinstall(method: str, version: str) -> bool:
+    """Re-install cairn-intel using the detected method. True on success.
+
+    The installer runs behind the shared quiet progress helper (the same
+    seam `embed --install-deps` uses): one live progress line, with the
+    installer's output drained silently and shown only on failure. Raw
+    `subprocess.run` with inherited stdout used to dump 50+ lines of
+    pipx/uv/pip noise (venv creation, every Collecting/Downloading/
+    already-satisfied line) straight into the terminal.
+    """
     from . import display
+    from ..graph.embeddings import _run_subprocess_with_progress
 
     spec = f"cairn-intel=={version}"
     if method == "uv":
@@ -95,9 +104,19 @@ def _reinstall(method: str, version: str):
             f"Cannot auto-upgrade (unknown install method). "
             f"Run manually: pip install --upgrade {spec}"
         )
-        return
-    display.info(f"Running: {' '.join(cmd)}")
-    subprocess.run(cmd, check=False)
+        return False
+    display.dim(f"Running: {' '.join(cmd)}")
+    try:
+        _run_subprocess_with_progress(cmd, f"Upgrading cairn-intel to {version}")
+    except subprocess.CalledProcessError:
+        # The helper already printed the installer's captured output above.
+        display.warning(
+            f"Upgrade failed. The full installer output is above; "
+            f"to retry manually: {' '.join(cmd)}"
+        )
+        return False
+    display.success(f"Upgraded cairn-intel -> {version}")
+    return True
 
 
 # --- Commands --------------------------------------------------------------
@@ -143,4 +162,5 @@ def upgrade(check):
 
     method = _detect_install_method()
     display.info(f"Upgrading cairn-intel {current} -> {latest} (via {method})")
-    _reinstall(method, latest)
+    if not _reinstall(method, latest):
+        sys.exit(1)

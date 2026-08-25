@@ -8,7 +8,9 @@ and `subprocess.run` for the install-method sniff.
 from __future__ import annotations
 
 import subprocess
+import sys
 
+import pytest
 from click.testing import CliRunner
 
 from cairn.cli import main
@@ -34,7 +36,9 @@ def _set_versions(monkeypatch, installed=None, latest=None, reinstall=None):
     if latest is not _UNSET:
         monkeypatch.setattr(upgrade_mod, "_pypi_latest", lambda: latest)
     if reinstall is None:
-        reinstall = lambda method, version: calls.append((method, version))
+        def reinstall(method, version):
+            calls.append((method, version))
+            return True
     monkeypatch.setattr(upgrade_mod, "_reinstall", reinstall)
     return calls
 
@@ -138,6 +142,114 @@ def test_upgrade_when_pypi_unreachable(monkeypatch):
     # rather than the exact "pip install --upgrade" substring.
     assert "pip install" in result.output
     assert "--upgrade" in result.output
+
+
+# --- reinstall output (quiet progress, no installer spam) ------------------
+#
+# Regression guard: _reinstall used to hand the terminal straight to
+# pipx/uv/pip (`subprocess.run` with inherited stdout), so an upgrade dumped
+# 50+ lines of installer noise -- venv creation, every "Collecting /
+# Downloading / Requirement already satisfied" line, install progress bars.
+# The reinstall now runs under the same single-line progress helper the
+# `embed --install-deps` path uses (graph.embeddings._run_subprocess_with_
+# progress): output is drained silently behind one progress line and shown
+# only on failure. The subprocess is faked at that same seam (never by
+# patching subprocess.Popen globally -- the mcp package evaluates
+# `subprocess.Popen[...]` annotations at import time and explodes under a
+# patched Popen).
+
+@pytest.fixture
+def fake_quiet_run(monkeypatch):
+    """Replace the shared quiet-subprocess helper; record calls."""
+    from cairn.graph import embeddings
+
+    calls = []
+
+    def _run(cmd, description, env=None):
+        calls.append({"cmd": cmd, "description": description})
+        return ""
+
+    monkeypatch.setattr(embeddings, "_run_subprocess_with_progress", _run)
+    return calls
+
+
+def test_reinstall_runs_quiet_with_one_progress_line(fake_quiet_run, capsys):
+    """The installer runs behind the quiet helper, not raw subprocess.run."""
+    assert upgrade_mod._reinstall("pipx", "9.9.9") is True
+
+    assert len(fake_quiet_run) == 1
+    assert fake_quiet_run[0]["cmd"] == [
+        "pipx", "install", "--force", "cairn-intel==9.9.9",
+    ]
+    # The user still sees WHAT is about to run and a final result line --
+    # silence about intent would be its own regression (see the 0.14.1
+    # dead-silent-import fixes).
+    out = capsys.readouterr().out
+    assert "pipx install --force cairn-intel==9.9.9" in out
+    assert "Upgraded cairn-intel -> 9.9.9" in out
+
+
+@pytest.mark.parametrize(
+    "method, prefix",
+    [
+        ("uv", ["uv", "tool", "install", "--force"]),
+        ("pipx", ["pipx", "install", "--force"]),
+        ("pip", [sys.executable, "-m", "pip", "install", "--upgrade"]),
+    ],
+)
+def test_reinstall_method_commands(fake_quiet_run, method, prefix):
+    """Every install method goes through the quiet helper with its own cmd."""
+    assert upgrade_mod._reinstall(method, "9.9.9") is True
+    cmd = fake_quiet_run[0]["cmd"]
+    assert cmd[: len(prefix)] == prefix
+    assert cmd[-1] == "cairn-intel==9.9.9"
+
+
+def test_reinstall_failure_surfaces_child_output_and_manual_hint(monkeypatch, capsys):
+    """A failed upgrade shows the captured installer output + manual command.
+
+    Quiet must never mean opaque: the helper prints the child's captured
+    output before raising, and _reinstall converts that into a warning with
+    the exact manual re-run command instead of raising past the user.
+    """
+    from cairn.graph import embeddings
+
+    def _failing_run(cmd, description, env=None):
+        child = "ERROR: no matching distribution for cairn-intel==9.9.9\n"
+        print(child)
+        raise subprocess.CalledProcessError(1, cmd, child)
+
+    monkeypatch.setattr(embeddings, "_run_subprocess_with_progress", _failing_run)
+
+    assert upgrade_mod._reinstall("pipx", "9.9.9") is False
+
+    out = capsys.readouterr().out
+    assert "no matching distribution" in out
+    assert "pipx install --force cairn-intel==9.9.9" in out
+
+
+def test_reinstall_unknown_method_warns_without_subprocess(fake_quiet_run, capsys):
+    assert upgrade_mod._reinstall("unknown", "9.9.9") is False
+    assert fake_quiet_run == []
+    assert "Cannot auto-upgrade" in capsys.readouterr().out
+
+
+def test_upgrade_command_exits_nonzero_when_reinstall_fails(monkeypatch):
+    """End-to-end: a failed reinstall makes `cairn upgrade` exit 1."""
+    _set_versions(
+        monkeypatch,
+        installed="0.1.0",
+        latest="9.9.9",
+        reinstall=lambda method, version: False,
+    )
+    monkeypatch.setattr(upgrade_mod, "_detect_install_method", lambda: "pipx")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["upgrade"])
+
+    assert result.exit_code == 1
+    # The command-level intent line is still shown before the reinstall.
+    assert "Upgrading cairn-intel 0.1.0 -> 9.9.9 (via pipx)" in result.output
 
 
 # --- install-method detection ---------------------------------------------

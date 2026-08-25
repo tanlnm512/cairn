@@ -498,8 +498,12 @@ state, and prompts for which to install plus the config scope.
 installed version under PEP 440, and re-installs via whichever package
 manager cairn was installed with — `uv tool`, `pipx`, or `pip` (the install
 method is auto-detected by inspecting `uv tool list` / `pipx list` / the
-current interpreter path). `--check` prints both versions without changing
-anything. If PyPI is unreachable, it prints the manual command instead
+current interpreter path). The reinstall runs behind a single live progress
+line — the installer's own output (venv creation, dependency resolution,
+per-package downloads) is captured and shown only if the upgrade fails,
+followed by the exact manual retry command; a failed upgrade exits 1.
+`--check` prints both versions without changing anything. If PyPI is
+unreachable, it prints the manual command instead
 (`pip install --upgrade cairn-intel`).
 
 `cairn version` prints the installed version from package metadata, falling
