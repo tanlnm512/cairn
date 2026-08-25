@@ -21,6 +21,11 @@ uv sync --extra dev
 pip install -e ".[dev]"
 ```
 
+The editable install compiles the vendored Kotlin grammar extension
+(`vendor/tree-sitter-kotlin/`) in-place, so a C toolchain (clang, gcc, or
+MSVC) is required for development installs; released wheels ship the
+extension prebuilt, so end-user installs stay toolchain-free.
+
 Optional extras (see `pyproject.toml`): `[watch]` (file watching),
 `[semantic]` (sentence-transformers + numpy; pulls torch, large),
 `[ann]` (sqlite-vec native ANN index).
