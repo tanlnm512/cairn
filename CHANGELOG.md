@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
+## [Unreleased]
+
+### Fixed
+- `cairn embed --install-deps` no longer breaks — and becomes unrepairable —
+  when two Python interpreters share one machine. The semantic-dependency
+  directory is now scoped per interpreter ABI (`~/.cairn/lib/cp311/`,
+  `~/.cairn/lib/cp314/`, …): the stack ships ABI-specific wheels, so a single
+  flat `~/.cairn/lib` silently corrupted when e.g. a 3.11 dev venv and a 3.14
+  install both ran `--install-deps` into it. The mixed dir then failed every
+  install verification (`ImportError: cannot import name '_regex'` …) and
+  pip's `--target` skip-if-satisfied semantics meant re-running the install
+  could never repair it — pip reported success while the broken cp311
+  binaries stayed in place. Existing flat installs keep working without a
+  reinstall (the legacy dir stays on `sys.path`, shadowed by the ABI dir),
+  and an explicit `CAIRN_LIB` is honored verbatim. A failed post-install
+  verification now wipes the lib dir and reinstalls once from scratch — the
+  only sound repair for an interrupted or foreign-ABI install — and the
+  no-pip uv fallback pins `--python` to the running interpreter so uv can no
+  longer resolve wheels for a different ABI than the one running cairn.
+
 ## [0.14.1] - 2026-08-25
 
 > **Focus:** one bugfix — `cairn embed --install-deps` (and

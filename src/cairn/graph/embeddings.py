@@ -466,12 +466,79 @@ def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
     _run_subprocess_with_progress(cmd, "Installing semantic deps")
 
 
+def _install_cmd(packages: list[str], lib_dir) -> Optional[list[str]]:
+    """Build the pip/uv install command targeting the RUNNING interpreter.
+
+    Returns None when neither installer is available. The uv branch pins
+    ``--python sys.executable``: unpinned, uv resolves wheels for whichever
+    interpreter IT discovers (an active venv, a managed default), which can
+    be a different ABI than the one running cairn -- the install would
+    "succeed" while every import in this process keeps failing.
+    """
+    import importlib.util
+    import shutil
+    import sys
+
+    if importlib.util.find_spec("pip") is not None:
+        # pip install --target writes into the shared lib dir, which is
+        # prepended to sys.path at import time (paths.py).
+        return [
+            sys.executable, "-m", "pip", "install",
+            "--target", str(lib_dir), *packages,
+        ]
+    # No pip in this interpreter (uv tool env); use uv pip install.
+    uv = shutil.which("uv")
+    if uv is None:
+        return None
+    return [
+        uv, "pip", "install", "--python", sys.executable,
+        "--target", str(lib_dir), *packages,
+    ]
+
+
+def _verify_install(lib_dir) -> None:
+    """Import the fresh stack in a FRESH subprocess, under a progress bar.
+
+    The first import of a freshly installed stack is slow (30s+ on macOS:
+    dyld validates ~150 new .so files before any of them load). Importing
+    in-process left the CLI completely silent for that window after the
+    install spinner had exited -- users read it as a hang and killed the
+    command. The subprocess pays the same one-time cost but shows live
+    progress, and warms the dyld/file caches so the next `cairn embed`
+    imports at full speed. Raises CalledProcessError (after the helper has
+    printed the child's captured output) when the import fails.
+    """
+    import sys
+
+    pythonpath = os.pathsep.join(
+        [str(lib_dir)]
+        + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])
+    )
+    print(
+        "Verifying install (first import loads hundreds of native "
+        "libraries; this can take a minute)..."
+    )
+    _run_subprocess_with_progress(
+        [
+            sys.executable,
+            "-c",
+            "import sentence_transformers, numpy, sqlite_vec",
+        ],
+        "Verifying install",
+        env={**os.environ, "PYTHONPATH": pythonpath},
+    )
+
+
 def ensure_semantic_deps(auto_install: bool = True) -> bool:
     """Ensure sentence-transformers is installed.
 
     If missing and ``auto_install=True``, installs the dependency into the
-    shared lib directory (``~/.cairn/lib``), which survives reinstalls.
-    Model-weight downloading is handled separately by ``download_model``.
+    shared lib directory (``~/.cairn/lib/cp<major><minor>``, one dir per
+    interpreter ABI -- see paths.shared_lib_path), which survives
+    reinstalls. A verification failure triggers one wipe-and-reinstall of
+    the dir: pip's --target skip-if-satisfied semantics cannot repair an
+    interrupted or foreign-ABI install in place. Model-weight downloading
+    is handled separately by ``download_model``.
     """
     try:
         import sentence_transformers  # noqa: F401
@@ -480,8 +547,8 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
         if not auto_install:
             return False
 
-    import importlib.util
     import shutil
+    import subprocess
     import sys
 
     from ..paths import shared_lib_path
@@ -489,71 +556,46 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
     lib_dir = shared_lib_path()
     packages = ["sentence-transformers", "numpy", "sqlite-vec"]
     try:
-        if importlib.util.find_spec("pip") is not None:
-            # pip install --target writes into the shared lib dir, which is
-            # prepended to sys.path at import time (paths.py).
+        cmd = _install_cmd(packages, lib_dir)
+        if cmd is None:
+            raise RuntimeError(
+                "no 'pip' module in this interpreter and 'uv' not found on PATH -- "
+                "install pip or run: uv pip install --python "
+                f"{sys.executable} --target {lib_dir} sentence-transformers numpy "
+                "sqlite-vec"
+            )
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        _run_install_with_progress(cmd, lib_dir)
+        try:
+            _verify_install(lib_dir)
+        except subprocess.CalledProcessError:
+            # pip install --target skips any package already present at a
+            # satisfying version, so an install interrupted mid-unpack (or
+            # written by a different interpreter ABI) can NEVER be repaired
+            # by running pip over it again -- pip reports success while the
+            # dir stays broken. Wipe and reinstall once from empty.
+            print(
+                f"Install verification failed; wiping {lib_dir} and "
+                "reinstalling once from scratch..."
+            )
+            shutil.rmtree(lib_dir, ignore_errors=True)
             lib_dir.mkdir(parents=True, exist_ok=True)
-            _run_install_with_progress(
-                [sys.executable, "-m", "pip", "install", "--target", str(lib_dir), *packages],
-                lib_dir,
-            )
-        else:
-            # No pip in this interpreter (uv tool env); use uv pip install.
-            uv = shutil.which("uv")
-            if not uv:
-                raise RuntimeError(
-                    "no 'pip' module in this interpreter and 'uv' not found on PATH -- "
-                    "install pip or run: uv pip install --target "
-                    f"{lib_dir} sentence-transformers numpy sqlite-vec"
-                )
-            _run_install_with_progress(
-                [uv, "pip", "install", "--target", str(lib_dir), *packages],
-                lib_dir,
-            )
-        # Verify the install in a FRESH subprocess, under a progress bar.
-        # The first import of a freshly installed stack is slow (30s+ on
-        # macOS: dyld validates ~150 new .so files before any of them load).
-        # Importing in-process here left the CLI completely silent for that
-        # window after the install spinner had exited -- users read it as a
-        # hang and killed the command. The subprocess pays the same one-time
-        # cost but shows live progress, and warms the dyld/file caches so the
-        # next `cairn embed` imports at full speed. Deliberately no
-        # in-process import bookkeeping around it: evicting e.g. numpy from
-        # sys.modules here would force a numpy re-import later in this
-        # process, and numpy's C core does not survive a second init.
+            _run_install_with_progress(cmd, lib_dir)
+            _verify_install(lib_dir)  # a second failure is terminal
+        reset_backend_cache()
+        _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
         # Re-add the lib dir to sys.path in case paths.py ran before it
         # existed, so a later lazy in-process import finds the new install.
         if str(lib_dir) not in sys.path:
             sys.path.insert(0, str(lib_dir))
-        import subprocess
-
-        pythonpath = os.pathsep.join(
-            [str(lib_dir)]
-            + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])
-        )
-        print(
-            "Verifying install (first import loads hundreds of native "
-            "libraries; this can take a minute)..."
-        )
-        try:
-            _run_subprocess_with_progress(
-                [
-                    sys.executable,
-                    "-c",
-                    "import sentence_transformers, numpy, sqlite_vec",
-                ],
-                "Verifying install",
-                env={**os.environ, "PYTHONPATH": pythonpath},
-            )
-        except subprocess.CalledProcessError as exc:
-            # The helper already printed the child's captured output above.
-            raise RuntimeError(
-                "install reported success but importing in a fresh "
-                "interpreter failed (see the error above)"
-            ) from exc
-        reset_backend_cache()
-        _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
         return True
+    except subprocess.CalledProcessError:
+        # The helper already printed the child's captured output above.
+        print(
+            "Failed to auto-install dependencies: install reported success "
+            "but importing in a fresh interpreter failed (see the error above)"
+        )
+        return False
     except Exception as exc:
         print(f"Failed to auto-install dependencies: {exc}")
         return False

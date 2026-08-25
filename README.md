@@ -158,7 +158,8 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   [docs/benchmarks.md](docs/benchmarks.md).
 - **The `[semantic]` extra is heavy.** Real embeddings pull
   sentence-transformers (+ torch on Linux); a one-time ~836 MB model download
-  lives in `~/.cairn/lib/`. The default install is torch-free and network-free.
+  lives in `~/.cairn/lib/` (scoped per Python version). The default install is
+  torch-free and network-free.
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
   won't happen purely locally without any model access.
@@ -349,7 +350,7 @@ MIT-licensed; dependencies are all permissive (MIT, BSD, Apache-2.0, MPL-2.0,
 PSF) — see [NOTICE](NOTICE). The optional `[semantic]` extra resolves `torch`
 (+ NVIDIA CUDA components on Linux, under their own licenses) at install
 time; the `BAAI/bge-m3` embedding model (MIT) downloads on demand to
-`~/.cairn/lib/` and is not redistributed with cairn.
+`~/.cairn/lib/cp<version>/` and is not redistributed with cairn.
 
 ## Status
 

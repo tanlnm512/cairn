@@ -92,8 +92,9 @@ def embed(
         )
         display.dim("  cairn embed --install-deps")
         display.dim(
-            "This downloads torch + sentence-transformers into ~/.cairn/lib "
-            "(survives reinstalls). Then re-run: cairn embed"
+            "This downloads torch + sentence-transformers into "
+            "~/.cairn/lib/cp<version> (survives reinstalls). "
+            "Then re-run: cairn embed"
         )
         display.dim(
             "Or set CAIRN_EMBED_BACKEND=hash explicitly to silence this warning."
