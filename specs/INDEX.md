@@ -4,7 +4,7 @@
 
 ## Active
 
-- [kotlin-grammar-fwcd](kotlin-grammar-fwcd/spec.md) — done (12/12 tasks 2026-08-25; fwcd grammar vendored in-tree as cairn._tree_sitter_kotlin abi3 ext, KotlinParser ported (fix round 1: navigation_suffix receiver), ERROR-scan + modern fixtures, cibuildwheel matrix, tree-sitter-kotlin dep removed; 2137 tests green, golden byte-identical)
+- [kotlin-grammar-fwcd](archive/2026-08-25-kotlin-grammar-fwcd/spec.md) — done (12/12 tasks 2026-08-25; fwcd grammar vendored in-tree as cairn._tree_sitter_kotlin abi3 ext, KotlinParser ported (fix round 1: navigation_suffix receiver), ERROR-scan + modern fixtures, cibuildwheel matrix, tree-sitter-kotlin dep removed; 2137 tests green, golden byte-identical)
 
 ## Archive
 
