@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
+## [Unreleased]
+
+### Fixed
+- `cairn embed --install-deps` no longer looks hung after the dependency
+  download finishes. The post-install verification import now runs in a
+  fresh subprocess under a live progress bar ("Verifying install …")
+  instead of silently importing torch/sentence-transformers in-process —
+  30s+ of dead-quiet terminal on a first install while macOS validates
+  ~150 freshly installed native libraries, which users understandably read
+  as a hang. The subprocess pays the same one-time cost, shows live
+  progress, and warms the OS caches so the next `cairn embed` imports at
+  full speed. The old in-process path also evicted numpy from
+  `sys.modules`; numpy's C core cannot survive a second initialization in
+  one process, so any later numpy import in that process would have
+  failed.
+
 ## [0.14.0] - 2026-08-25
 
 > **Focus:** a two-train release — Kotlin support moves to the

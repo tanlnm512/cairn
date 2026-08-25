@@ -411,42 +411,31 @@ def download_model(model_name: Optional[str] = None) -> bool:
         return False
 
 
-def _clear_import_cache(package_names: list[str]) -> None:
-    """Remove cached import failures from sys.modules after a subprocess install.
+def _run_subprocess_with_progress(
+    cmd: list[str], description: str, env: Optional[dict] = None
+) -> str:
+    """Run a subprocess under a progress bar, draining its output.
 
-    ``package_names`` should be the top-level package names (e.g.
-    ``["sentence_transformers", "sqlite_vec"]``), **not** pip specifiers.
+    Returns the combined stdout+stderr. Raises CalledProcessError (with the
+    captured output) when the subprocess exits non-zero.
     """
-    import sys
-
-    for name in package_names:
-        # Normalise pip specifier "sentence-transformers" -> import name.
-        key = name.replace("-", "_")
-        sys.modules.pop(key, None)
-        to_drop = [k for k in sys.modules if k == key or k.startswith(key + ".")]
-        for k in to_drop:
-            sys.modules.pop(k, None)
-
-
-def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
-    """Run a pip/uv install subprocess with a single-line progress indicator."""
     import subprocess
     import time
 
     from ..cli.display import progress_bar
 
-    print(f"Installing semantic deps into {lib_dir} (one-time, ~hundreds of MB via torch)...")
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        env=env,
     )
 
     # Drain stdout in the loop: pip writes progress to the combined pipe, and
     # if output exceeds the OS pipe buffer (~64 KB) pip blocks on write.
     output_lines = []
-    with progress_bar("Installing semantic deps", total=None, unit="") as bar:
+    with progress_bar(description, total=None, unit="") as bar:
         while proc.poll() is None:
             bar.advance(0)
             # Drain any pending output so the pipe never fills.
@@ -468,6 +457,13 @@ def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
         if output:
             print(output)
         raise subprocess.CalledProcessError(proc.returncode, cmd, output)
+    return output
+
+
+def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
+    """Run a pip/uv install subprocess with a single-line progress indicator."""
+    print(f"Installing semantic deps into {lib_dir} (one-time, ~hundreds of MB via torch)...")
+    _run_subprocess_with_progress(cmd, "Installing semantic deps")
 
 
 def ensure_semantic_deps(auto_install: bool = True) -> bool:
@@ -514,18 +510,47 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
                 [uv, "pip", "install", "--target", str(lib_dir), *packages],
                 lib_dir,
             )
-        # Verify the import resolves now from the shared lib dir.
-        _clear_import_cache(packages)
-        # Re-add the lib dir to sys.path in case paths.py ran before it existed.
+        # Verify the install in a FRESH subprocess, under a progress bar.
+        # The first import of a freshly installed stack is slow (30s+ on
+        # macOS: dyld validates ~150 new .so files before any of them load).
+        # Importing in-process here left the CLI completely silent for that
+        # window after the install spinner had exited -- users read it as a
+        # hang and killed the command. The subprocess pays the same one-time
+        # cost but shows live progress, and warms the dyld/file caches so the
+        # next `cairn embed` imports at full speed. Deliberately no
+        # in-process import bookkeeping around it: evicting e.g. numpy from
+        # sys.modules here would force a numpy re-import later in this
+        # process, and numpy's C core does not survive a second init.
+        # Re-add the lib dir to sys.path in case paths.py ran before it
+        # existed, so a later lazy in-process import finds the new install.
         if str(lib_dir) not in sys.path:
             sys.path.insert(0, str(lib_dir))
+        import subprocess
+
+        pythonpath = os.pathsep.join(
+            [str(lib_dir)]
+            + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])
+        )
+        print(
+            "Verifying install (first import loads hundreds of native "
+            "libraries; this can take a minute)..."
+        )
         try:
-            import sentence_transformers  # noqa: F401
-        except ImportError as imp:
+            _run_subprocess_with_progress(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sentence_transformers, numpy, sqlite_vec",
+                ],
+                "Verifying install",
+                env={**os.environ, "PYTHONPATH": pythonpath},
+            )
+        except subprocess.CalledProcessError as exc:
+            # The helper already printed the child's captured output above.
             raise RuntimeError(
-                "install reported success but `sentence_transformers` still won't import "
-                f"({imp}). The shared lib dir is {lib_dir}; ensure it's on sys.path."
-            ) from imp
+                "install reported success but importing in a fresh "
+                "interpreter failed (see the error above)"
+            ) from exc
         reset_backend_cache()
         _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
         return True
