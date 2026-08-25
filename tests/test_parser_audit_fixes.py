@@ -15,10 +15,10 @@ Fixes covered:
   symbol name (the resolver keys on symbols.name; its import tier splits
   ``/`` and ``.`` but never ``\\``). Same class of fix for qualified ``new``
   (edge was dropped entirely) and qualified scoped-call receivers.
-- F3 Kotlin class-body properties: tree-sitter-kotlin 1.1.0 emits
-  ``identifier`` (not ``simple_identifier``) for the name inside
-  ``variable_declaration``, so every class-body ``val``/``var`` produced no
-  Symbol.
+- F3 Kotlin class-body properties: the name inside ``variable_declaration``
+  is ``simple_identifier`` in the vendored fwcd grammar (cairn._tree_sitter_kotlin)
+  but ``identifier`` in older tree-sitter-kotlin wheels; matching a single
+  spelling left every class-body ``val``/``var`` without a Symbol.
 - F4 SCIP merge: the name-only fallback folded a definition into an arbitrary
   same-named tree-sitter row (overloads), re-pointing exact edges. Now the
   nearest-line row wins and ties are left un-merged.
@@ -233,9 +233,10 @@ class TestPhpQualifiedNames:
 
 class TestKotlinClassBodyProperties:
     def test_class_body_properties_emit_symbols(self):
-        """tree-sitter-kotlin 1.1.0 emits ``identifier`` (not
-        ``simple_identifier``) for the property name; every class-body
-        ``val``/``var`` shape must produce a property Symbol."""
+        """The ``variable_declaration`` name is ``simple_identifier`` in the
+        vendored fwcd grammar (``identifier`` in older tree-sitter-kotlin
+        wheels); every class-body ``val``/``var`` shape must produce a
+        property Symbol."""
         pf = _parse(
             KotlinParser,
             b"interface I { val id: String }\n"

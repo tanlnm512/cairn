@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -27,7 +27,6 @@ classifiers = [
 ]
 dependencies = [
     "tree-sitter==0.26.0",
-    "tree-sitter-kotlin==1.1.0",
     "tree-sitter-java==0.23.5",
     "tree-sitter-python==0.23.6",
     "tree-sitter-swift==0.7.3",

@@ -93,13 +93,11 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
                     for cc in child.children:
                         if cc.type == "primary_constructor":
                             for pc in cc.children:
-                                if pc.type == "class_parameters":
-                                    for cp in pc.children:
-                                        if cp.type == "class_parameter":
-                                            pname, ptype = self._class_param_name_and_type(cp, source)
-                                            if pname and ptype:
-                                                fields[pname] = ptype
-                        elif cc.type == "class_body":
+                                if pc.type == "class_parameter":
+                                    pname, ptype = self._class_param_name_and_type(pc, source)
+                                    if pname and ptype:
+                                        fields[pname] = ptype
+                        elif cc.type in ("class_body", "enum_class_body"):
                             for member in cc.children:
                                 if member.type == "property_declaration":
                                     pname, ptype = self._var_name_and_type(member, source)
@@ -119,8 +117,8 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _visit(self, node: Node, source: bytes, pf: ParsedFile):
         t = node.type
 
-        # Accept both `import` (tree-sitter-kotlin 1.x) and `import_header`
-        # (newer grammars) so imports aren't silently dropped across versions.
+        # Accept both `import` and `import_header` so imports aren't
+        # silently dropped across grammar updates.
         if t in ("import", "import_header"):
             imp = self._parse_import(node, source)
             if imp:
@@ -192,7 +190,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _classify_type_decl(self, node: Node, source: bytes) -> str:
         """Classify a type declaration node into a symbol kind.
 
-        tree-sitter-kotlin folds `interface` and `enum class` into
+        The vendored fwcd grammar folds `interface` and `enum class` into
         class_declaration/object_declaration with a leading keyword child.
         """
         if node.type == "class_declaration":
@@ -219,9 +217,13 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         for child in node.children:
             if child.type == "modifiers":
                 for m in child.children:
-                    txt = self._node_text(m, source).strip()
-                    if txt in KOTLIN_MODIFIERS:
-                        mods.append(txt)
+                    # open/sealed/abstract sit in an inheritance_modifier
+                    # wrapper's anonymous keyword children.
+                    kws = m.children if m.type == "inheritance_modifier" else (m,)
+                    for kw in kws:
+                        txt = self._node_text(kw, source).strip()
+                        if txt in KOTLIN_MODIFIERS:
+                            mods.append(txt)
             elif child.type in KOTLIN_MODIFIERS:
                 txt = self._node_text(child, source).strip()
                 if txt:
@@ -242,8 +244,8 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         if not name:
             return None
 
-        # tree-sitter-kotlin represents `interface Foo {}` as a class_declaration
-        # whose first keyword child is `interface`. Same for object/enum.
+        # `interface Foo {}` parses as a class_declaration whose first
+        # keyword child is `interface`. Same for object/enum.
         kind = self._classify_type_decl(node, source)
 
         mods = self._collect_modifiers(node, source)
@@ -292,9 +294,9 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
 
     def _parse_property(self, node: Node, source: bytes) -> Optional[Symbol]:
         # property_declaration: [modifiers] (val|var) variable_declaration ...
-        # The name lives inside variable_declaration. tree-sitter-kotlin 1.1.0
-        # emits `identifier` there (newer grammars emit `simple_identifier`);
-        # accept both -- the sibling extractors (_var_name_and_type,
+        # The name lives inside variable_declaration; accept both
+        # `simple_identifier` and `identifier` spellings -- the sibling
+        # extractors (_var_name_and_type,
         # _parse_function, _parse_type_identifier) already do. Without the
         # `identifier` spelling every class-body val/var produced no Symbol.
         name = None
@@ -350,15 +352,15 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
-        # `import` node. Extract the imported path from the qualified_identifier
+        # `import` node. Extract the imported path from the identifier
         # child if present, else from the node text. Drop trailing 'as Alias'.
         text = self._node_text(node, source).strip()
         if text.startswith("import "):
             text = text[len("import "):].strip()
         text = text.split(" as ")[0].strip()
-        # Prefer the qualified_identifier child text when available (cleaner).
+        # Prefer the identifier child text when available (cleaner).
         for child in node.children:
-            if child.type == "qualified_identifier":
+            if child.type == "identifier":
                 text = self._node_text(child, source).strip()
                 break
         if not text:
@@ -375,17 +377,12 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         type: a superclass (extends) is a `constructor_invocation` `Base(...)`;
         interfaces (implements) are plain `user_type` targets.
         """
-        # Find the specifiers container; it may be a direct child or nested.
-        spec_nodes = []
-        for child in node.children:
-            if child.type in ("delegation_specifiers", "inheritance_specifier"):
-                spec_nodes.append(child)
-        # Recurse one or two levels: specifiers -> specifier -> user_type.
-        # Each target is (name, is_extends).
+        # Each supertype is a direct `delegation_specifier` child (the plural
+        # container is hidden). Targets are (name, is_extends).
         targets: List[tuple] = []
-        for spec_container in spec_nodes:
-            for spec in spec_container.children:
-                self._collect_inheritance_targets(spec, source, targets)
+        for child in node.children:
+            if child.type == "delegation_specifier":
+                self._collect_inheritance_targets(child, source, targets)
         for name, is_extends in targets:
             self._pending_edges.append(
                 Edge(
@@ -568,15 +565,13 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             return None
         if node.type == "navigation_expression":
             # `a.b` (as a value, not a call): type is the type of field `b`
-            # on the type of `a`.
-            if len(node.children) < 3:
-                return None
-            receiver_expr = node.children[0]
-            member_node = node.children[-1]
-            if member_node.type not in ("simple_identifier", "identifier"):
+            # on the type of `a`. The receiver is the first child; the member
+            # sits inside the trailing navigation_suffix.
+            member_node = self._nav_member_identifier(node)
+            if member_node is None:
                 return None
             member_name = self._node_text(member_node, source).strip()
-            recv_type = self._infer_node_type(receiver_expr, source)
+            recv_type = self._infer_node_type(node.children[0], source)
             if not recv_type:
                 return None
             return self._field_types.get(recv_type, {}).get(member_name)
@@ -599,6 +594,19 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             return name
         return None
 
+    def _nav_member_identifier(self, nav: Node) -> Optional[Node]:
+        """Final member identifier of a navigation_expression: the
+        simple_identifier inside the trailing navigation_suffix (the receiver
+        is the first child)."""
+        for c in reversed(nav.children):
+            if c.type in ("simple_identifier", "identifier"):
+                return c
+            if c.type == "navigation_suffix":
+                for sc in reversed(c.children):
+                    if sc.type in ("simple_identifier", "identifier"):
+                        return sc
+        return None
+
     def _infer_call_receiver_type(self, node: Node, source: bytes) -> Optional[str]:
         """Receiver type for a call_expression, if the call is `X.method()`.
 
@@ -615,11 +623,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         if nav is None or not nav.children:
             return None
         # Identify the final identifier segment of the nav (the callee name).
-        member_node = None
-        for c in reversed(nav.children):
-            if c.type in ("simple_identifier", "identifier"):
-                member_node = c
-                break
+        member_node = self._nav_member_identifier(nav)
         member_name = self._node_text(member_node, source).strip() if member_node else ""
 
         # Property-invoke shape: the final segment is the property being

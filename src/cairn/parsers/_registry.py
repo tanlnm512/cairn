@@ -1,10 +1,12 @@
 """Parser registry: builds tree-sitter Parsers from per-language wheels.
 
 Centralizes tree-sitter runtime setup so each language parser only deals with
-AST traversal. Uses tree-sitter 0.26 + per-language wheels (tree-sitter-kotlin,
-tree-sitter-java, tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
+AST traversal. Uses tree-sitter 0.26 + per-language wheels (tree-sitter-java,
+tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
 tree-sitter-javascript, tree-sitter-dart, tree-sitter-objc, tree-sitter-php,
-tree-sitter-ruby, tree-sitter-c-sharp, tree-sitter-c, tree-sitter-cpp).
+tree-sitter-ruby, tree-sitter-c-sharp, tree-sitter-c, tree-sitter-cpp); the
+Kotlin grammar is vendored in-tree as the cairn._tree_sitter_kotlin
+extension.
 
 Most language modules expose a bare language() function returning a PyCapsule.
 tree-sitter-typescript is the exception: one wheel ships two grammars via
@@ -118,7 +120,7 @@ _PLUGIN_ENTRY_POINT_GROUP = "cairn.parsers.v1"
 
 def _load_language_module(language: str):
     mapping = {
-        "kotlin": "tree_sitter_kotlin",
+        "kotlin": "cairn._tree_sitter_kotlin",
         "java": "tree_sitter_java",
         "python": "tree_sitter_python",
         "swift": "tree_sitter_swift",

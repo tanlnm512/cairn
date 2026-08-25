@@ -1,11 +1,8 @@
 # Spec: kotlin-grammar-fwcd
 
-**Status**: approved      <!-- approved 2026-08-25 — the user's instruction
-                                "implement it in a branch as minor update" is
-                                the recorded go-ahead; clarify-pass defaults
-                                were asked and left unanswered → recommended
-                                defaults taken, vetoable at review. First task
-                                spawned → active; all ticked + TCs green → done -->
+**Status**: done           <!-- all 12 tasks ticked 2026-08-25, closing
+                                audit green (2137 passed, 1 skipped; golden
+                                byte-identical; scope/clean/proofs pass) -->
 **Created**: 2026-08-25
 **Branch**: `feat/kotlin-grammar-fwcd`
 

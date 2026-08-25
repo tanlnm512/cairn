@@ -23,8 +23,8 @@ MIT License
   jsonschema-specifications, markdown-it-py, mcp, mdurl, pluggy, pydantic,
   pydantic-settings, pydantic_core, PyJWT, pyproject_hooks, pytest,
   referencing, rich, rpds-py, ruff, PyYAML, tree-sitter, tree-sitter-dart,
-  tree-sitter-go, tree-sitter-java, tree-sitter-javascript, tree-sitter-kotlin,
-  tree-sitter-objc, tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
+  tree-sitter-go, tree-sitter-java, tree-sitter-javascript, tree-sitter-objc,
+  tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
   typing-inspection, cffi (MIT-0)
 
 ----------------------------------------
@@ -115,3 +115,21 @@ sha256 39b9a36f17b4ca2e27d1e4327216860b042077b3307402ae315402ac826f878b) at
 src/cairn/dashboard/static/vis-network.min.js, and is dual licensed under the
 Apache License 2.0 OR MIT License. The upstream copyright and license notice
 are retained unmodified in the file's leading banner comment.
+
+================================================================================
+Vendored content (Kotlin grammar)
+================================================================================
+
+The Kotlin tree-sitter grammar is vendored in-tree as build input for cairn's
+own compiled extension. Only the upstream generated parser output and LICENSE
+are carried in-tree; the upstream packaging (setup.py, pyproject.toml,
+bindings/, Cargo.toml, package.json) is not vendored.
+
+fwcd/tree-sitter-kotlin (https://github.com/fwcd/tree-sitter-kotlin),
+Copyright (c) 2019 fwcd. The generated sources are vendored at pinned commit
+1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1 (upstream main HEAD, committed
+2026-08-02, vendored 2026-08-25) under vendor/tree-sitter-kotlin/
+(src/parser.c, src/scanner.c, src/grammar.json, src/node-types.json, and the
+src/tree_sitter/ headers), and are licensed under the MIT License. The full
+license text is retained in-tree, unmodified, at
+vendor/tree-sitter-kotlin/LICENSE.

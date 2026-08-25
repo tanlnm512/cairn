@@ -528,3 +528,33 @@ cairn impact/callers ...`; graph built via `uv run cairn build --staging`:
 - **Consequences**: MIT notice obligations satisfied the same way the yarl
   benchmark snapshot satisfies Apache-2.0; the pin recorded in NOTICE is
   the reference point for D-004 regeneration steps.
+
+## Post-plan decisions (implementation rulings, appended during execution)
+
+### D-010: Grammar pin = upstream main HEAD 1852ea1, not the latest tag
+- **Context**: T001's rule said "latest release TAG if one exists, else
+  main-HEAD sha". fwcd's latest tag 0.3.8 (commit e1a2d5a, 2024-08-03) is
+  129 commits behind main and predates every FR-004 modern-syntax commit
+  (KEEP-0438 #251, when-guards #256/#263, multi-dollar #260, trailing
+  commas #252/#264) plus the NUL-byte hang fix #279 — vendoring the tag
+  would defeat FR-004.
+- **Decision** (orchestrator ratification of T001's deviation): pin main
+  HEAD `1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1` (committed 2026-08-02,
+  vendored 2026-08-25), recorded in NOTICE as "upstream main HEAD".
+- **Consequences**: FR-004 syntax support ships; the pin is a commit sha
+  rather than a release tag, so future bumps re-verify the sha exists on
+  main (NOTICE is the reference). Cost if wrong: none functional — the
+  vendored bytes are what build and test against; the tag would have been
+  the wrong bytes.
+
+### D-011: .gitignore gains *.so (editable-build artifact hygiene)
+- **Context**: D-003's in-tree extension means PEP 660 editable installs
+  compile `src/cairn/_tree_sitter_kotlin.abi3.so` in-place next to the
+  package sources (T002 verified the import works off it). The artifact
+  cannot be deleted (it IS the dev install) and would otherwise pollute
+  `git status` on every dev machine.
+- **Decision** (orchestrator ratification of T002's deviation): ignore
+  `*.so` at repo root (one rule, one comment line). Rides D-003's
+  in-tree-extension decision.
+- **Consequences**: clean `git status` for developers; no effect on
+  wheels (the extension ships compiled inside them, not as a stray .so).
