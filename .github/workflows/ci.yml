@@ -163,10 +163,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install (with dev extras)
+      - name: Install (with dev + ingest extras)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,ingest]"
 
       - name: Validate skill eval specs
         run: python scripts/run_skill_evals.py
