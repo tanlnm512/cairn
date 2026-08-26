@@ -54,7 +54,9 @@ Detects which AI clients you have (Claude Code, Cursor, ZCode, Droid, Claude
 Desktop, opencode, agy, kilo), shows what's already wired, and prompts for scope:
 `workspace` (per-project `./.claude/`, `./.cursor/` …) or `global`
 (`~/.claude/` — every project inherits it). Non-interactive:
-`cairn install-agents --yes --scope global`. Manual wiring is one JSON block:
+`cairn install-agents --yes --scope global`. Manual wiring is one JSON block
+(stdio — or point clients that support SSE at `http://127.0.0.1:9876/sse`
+after `cairn serve start`, which is what install-agents does by default):
 
 ```json
 { "mcpServers": { "cairn": { "command": "cairn", "args": ["serve"] } } }
