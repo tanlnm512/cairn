@@ -30,7 +30,7 @@ from cairn.graph.schema import _apply_schema
 # Names agent-client detection probes via shutil.which (agent_install/detect.py
 # + clients/*). Blocked suite-wide so a developer machine with real CLIs
 # installed behaves like a clean CI runner.
-_AGENT_CLIS = ("claude", "cursor", "droid", "agy", "opencode")
+_AGENT_CLIS = ("claude", "cursor", "droid", "agy", "opencode", "kilo")
 
 
 @pytest.fixture(autouse=True)

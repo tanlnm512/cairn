@@ -486,7 +486,7 @@ stdout.
 | `cairn upgrade` | Upgrade cairn in place (detects install method). |
 
 `install-agents` options: `--client` (repeatable:
-`claude|claude-desktop|cursor|droid|zcode|agy|opencode|all`), `--workspace`,
+`claude|claude-desktop|cursor|droid|zcode|agy|opencode|kilo|all`), `--workspace`,
 `--scope workspace|global` (where to write configs; if omitted, prompts),
 `--yes`/`-y` (skip the prompt; install for detected-not-installed clients),
 `--force`, `--dry-run`, `--git-hooks`, `--sse`, `--stdio`, `--sse-url`.

@@ -228,10 +228,10 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         cur_cmd = cur.get("command", "") + " " + " ".join(cur.get("args", []))
         new_cmd = new.get("command", "") + " " + " ".join(new.get("args", []))
         return cur_cmd.strip() == new_cmd.strip()
-    if config_key == "opencode" and "mcp" in merger:
-        # opencode: mcp.<name> = {type, command:[...], enabled}. The command is
-        # a single array (no separate args), so compare it joined. Remote
-        # servers carry `url` instead; compare that.
+    if config_key in ("opencode", "kilo") and "mcp" in merger:
+        # opencode/kilo: mcp.<name> = {type, command:[...], enabled}. The
+        # command is a single array (no separate args), so compare it joined.
+        # Remote servers carry `url` instead; compare that.
         mcp = existing.get("mcp")
         cur = mcp.get("cairn") if isinstance(mcp, dict) else None
         if not isinstance(cur, dict):
@@ -324,9 +324,9 @@ def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers
             out["mcp"] = mcp_out
             # Remove stale mcpServers key if present (ZCode doesn't use it).
             out.pop("mcpServers", None)
-        elif key == "mcp" and config_key == "opencode" and isinstance(val, dict):
-            # opencode: mcp.<name> = {...}; replace the named server in place.
-            # Unlike ZCode there is no nested "servers" sub-key.
+        elif key == "mcp" and config_key in ("opencode", "kilo") and isinstance(val, dict):
+            # opencode/kilo: mcp.<name> = {...}; replace the named server in
+            # place. Unlike ZCode there is no nested "servers" sub-key.
             prev = out.get("mcp")
             mcp_out = dict(prev) if isinstance(prev, dict) else {}
             mcp_out.update(val)
@@ -487,6 +487,21 @@ def _strip_mcp_opencode(path: Path, res) -> None:
         if isinstance(stray_data, dict) and "cairn" in (stray_data.get("mcpServers") or {}):
             stray.unlink()
             res.written.append(f"removed stray {stray}")
+
+
+def _strip_mcp_kilo(path: Path, res) -> None:
+    """Remove the cairn server from a kilo.json (opencode-format mcp key)."""
+    data = _load_json_or_none(path)
+    if isinstance(data, dict):
+        mcp = data.get("mcp", {})
+        if "cairn" in mcp:
+            del mcp["cairn"]
+            if mcp:
+                data["mcp"] = mcp
+            else:
+                data.pop("mcp", None)
+            _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+            res.written.append(f"stripped cairn from {path}")
 
 
 def _strip_hooks(path: Path, res: InstallResult) -> None:

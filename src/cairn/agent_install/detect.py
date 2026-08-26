@@ -98,6 +98,16 @@ def detect_clients(workspace: str) -> list[Detection]:
                              else "~/.config/opencode exists" if (home / ".config" / "opencode").is_dir()
                              else "not found"))
 
+    # Kilo Code CLI: CLI, ~/.config/kilo, or a kilo.json/.kilo in the workspace
+    kilo = (bool(shutil.which("kilo")) or (ws / "kilo.json").exists()
+            or (ws / ".kilo").is_dir() or (home / ".config" / "kilo").is_dir())
+    results.append(Detection("kilo", kilo,
+                             "kilo CLI on PATH" if shutil.which("kilo")
+                             else "kilo.json in workspace" if (ws / "kilo.json").exists()
+                             else ".kilo/ in workspace" if (ws / ".kilo").is_dir()
+                             else "~/.config/kilo exists" if (home / ".config" / "kilo").is_dir()
+                             else "not found"))
+
     return results
 
 
@@ -175,6 +185,12 @@ def check_installed(workspace: str) -> dict[str, bool]:
     result["opencode"] = (
         _json_has_cairn(ws / "opencode.json")
         or _json_has_cairn(home / ".config" / "opencode" / "opencode.json")
+    )
+
+    # kilo: kilo.json (workspace or global) has cairn MCP entry
+    result["kilo"] = (
+        _json_has_cairn(ws / "kilo.json")
+        or _json_has_cairn(home / ".config" / "kilo" / "kilo.json")
     )
 
     return result
