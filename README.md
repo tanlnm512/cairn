@@ -28,6 +28,7 @@ deterministic critic, and the LLM never sits in the query path.
 - [MCP Tools](#mcp-tools)
 - [Configuration](#configuration)
 - [Supported Platforms & Agents](#supported-platforms--agents)
+- [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Dependency Licenses](#dependency-licenses)
@@ -175,6 +176,10 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 - **Code-grounded memory** — decisions / patterns / mistakes / workarounds,
   symbol-keyed, recalled alongside graph results; promotion and decay
   lifecycles keep it honest.
+- **Docs as first-class knowledge** — `cairn knowledge ingest` stages
+  markdown / PDF / DOCX (repo doc-trees or fed files) through a reviewable
+  dry-run manifest before anything lands in the store; classification,
+  redaction, and collision-safe identities included.
 - **Always fresh** — incremental `cairn update` (git-diff-driven), optional
   live watch with staleness banners, and `cairn doctor`'s 8 health checks
   gating CI.
@@ -211,9 +216,14 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 ```
 
 The query path is deterministic: tree-sitter parsing → SQLite graph →
-FTS5/BM25 (+ optional vector fusion and rerank) → labeled results. The LLM
+FTS5/BM25 fused with vectors (RRF, always on when embeddings exist) and a
+confidence-gated optional rerank → labeled results. The LLM
 only ever runs off-path, generating compass/wiki/memory candidates that the
 deterministic critic verifies symbol-by-symbol against the graph.
+
+Deep dives with diagrams: [architecture](docs/architecture.md) ·
+[indexing](docs/indexing.md) · [retrieval](docs/retrieval.md) ·
+[knowledge & memory](docs/knowledge-and-memory.md).
 
 ## Measured Results
 
@@ -283,7 +293,7 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 | **graph** (9) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `explore` (the aggregator — recommended first call), `visualize_graph` |
 | **compass + knowledge base** (5) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
 | **memory** (8) | tribal memory: recall / record / lifecycle (promote, demote, evolve, decay, delete, digest) |
-| **knowledge** (5) | OKF business docs / workflows: add / search / status |
+| **knowledge** (5) | OKF business docs / workflows: add / search / status / delete / `trace_workflow` |
 
 Per-tool shapes and examples: [docs/mcp-tools.md](docs/mcp-tools.md).
 
@@ -295,6 +305,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 |-------|------|-------------|
 | `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — native ANN index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
+| `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion for `cairn knowledge ingest` | `cairn.json` `ingest` key (classification rules) |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/indexing.md) indexes for compiler-grade exact edges | declare indexes in `cairn.json` |
 | `[watch]` | `watchdog` — live rebuilds while `cairn serve` runs | `CAIRN_WATCH=0` disables |
 | `[otlp]` | OpenTelemetry export of local telemetry events | `CAIRN_OTEL_ENDPOINT` (unset = off) |
@@ -311,6 +322,25 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
   agy, kilo, omp — wired by `cairn install-agents`, or any MCP client via the
   manual JSON block above.
 
+## Documentation
+
+Full index: [docs/README.md](docs/README.md). The short map:
+
+| Read | For |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | system shape, storage layout, module map |
+| [docs/indexing.md](docs/indexing.md) | how `cairn build` / `update` work, resolver tiers, SCIP |
+| [docs/retrieval.md](docs/retrieval.md) | the hybrid query pipeline and its knobs |
+| [docs/knowledge-and-memory.md](docs/knowledge-and-memory.md) | doc ingestion, memory tiers, task queue, critic |
+| [docs/mcp-tools.md](docs/mcp-tools.md) · [docs/cli-reference.md](docs/cli-reference.md) | the two tool surfaces |
+| [docs/configuration.md](docs/configuration.md) | `cairn.json`, env vars, install extras |
+
+Visual overviews (standalone HTML) live in
+[docs/diagrams/](docs/diagrams): system architecture, indexing, retrieval,
+and doc-ingestion pipelines. Contribution and release procedures:
+[docs/review-checklist.md](docs/review-checklist.md) ·
+[docs/release-checklist.md](docs/release-checklist.md).
+
 ## Troubleshooting
 
 - `cairn doctor` — 8 health checks with PASS/WARN/FAIL each; non-zero exit
@@ -321,7 +351,6 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
   mode: retry `--fuzzy` / `fuzzy=True`; the name-matches list is labelled.
 - `cairn update` did nothing on a fresh clone → that's correct (clean tree,
   no diff); run `cairn build` first.
-- Full docs index: [docs/README.md](docs/README.md).
 
 ## Development
 
