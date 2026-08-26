@@ -12,7 +12,7 @@ All AI coding agents working in this workspace should use these tools.
 
 ## Shipping a change — MANDATORY workflow (agent trigger)
 TRIGGER: the moment you finish editing and are about to commit, push, or open a
-PR — STOP and follow `docs/contribution-workflow.md` end to end:
+PR — STOP and follow the shipping procedure end to end:
 `branch → pre-commit run --all-files → conventional commit → push feature branch
 → PR (fill the audit checklist) → watch CI → fix on the same branch → post-merge
 cairn update + record_memory`.
@@ -24,7 +24,8 @@ Hard rules (do not violate):
 - Do not skip the PR template's audit checklist — it is the Layer 2-3 review gate.
 
 The explore-first / before-editing / after-task sections below are the *how*;
-`docs/contribution-workflow.md` is the *procedure* for landing a change. CI
+the procedure above is the path for landing a change, and
+`docs/review-checklist.md` is the review gate. CI
 (Layers 0-1) enforces the automatable parts; this workflow covers the rest.
 
 ## Workflow: explore-first

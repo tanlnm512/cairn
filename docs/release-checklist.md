@@ -144,7 +144,7 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
   Publisher on pypi.org before the first tag push (Account settings →
   Publishing → add a pending publisher with owner/repo/workflow/`pypi`
   environment). The first successful publish converts it to a normal publisher
-  and creates the project. See `docs/pypi-trusted-publishing.md`.
+  and creates the project.
 - **Manual CHANGELOG section for a release**: `awk` extracts a version's
   section (the release workflow uses this to build GitHub Release notes):
   ```sh

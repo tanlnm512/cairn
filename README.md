@@ -93,7 +93,7 @@ grammar carries them. `.h` headers are sniffed to Objective-C / C++ / C.
 |----------|------------|--------|
 | Kotlin | `.kt` | Full (tree-sitter) · **SCIP merge** via `scip-java` adds compiler-grade exact call edges |
 | Java | `.java` | Full · **SCIP merge** via `scip-java` |
-| Swift | `.swift` | Full · **SCIP coexistence** (opaque-USR quirk falls back to pure-SCIP cleanly — see [docs/scip.md](docs/scip.md)) |
+| Swift | `.swift` | Full · **SCIP coexistence** (opaque-USR quirk falls back to pure-SCIP cleanly — see [docs/indexing.md](docs/indexing.md)) |
 | TypeScript | `.ts` `.tsx` `.mts` `.cts` | Full · SCIP merge via `scip-typescript` (auto-index capable) · JSX component refs tracked |
 | JavaScript | `.js` `.jsx` `.mjs` `.cjs` | Full · React `<Comp/>` JSX refs tracked as references edges |
 | Python | `.py` | Full · SCIP consume via `scip-python` |
@@ -108,7 +108,7 @@ grammar carries them. `.h` headers are sniffed to Objective-C / C++ / C.
 
 Not indexed (yet): Vue / Svelte single-file components, CSS, HTML. SCIP
 coexistence is opt-in per language via `cairn.json` — without an index,
-tree-sitter alone carries the language. Details: [docs/scip.md](docs/scip.md).
+tree-sitter alone carries the language. Details: [docs/indexing.md](docs/indexing.md).
 
 ## Why cairn?
 
@@ -143,8 +143,7 @@ cairn impact invoke --fuzzy      # candidate list (name matches), each labelled 
 ```
 
 Measured on this repo: **82% of fuzzy results for common names are
-name-collision noise that precise mode excludes**
-([methodology](docs/methodology-precise-vs-fuzzy.md)). An empty precise
+name-collision noise that precise mode excludes**. An empty precise
 result means "no *resolvable* callers," not "unused" — retry with `--fuzzy`
 before concluding a symbol is dead. And `explore` surfaces `ambiguous`
 dispatch hops — polymorphism that grep fundamentally cannot see.
@@ -154,9 +153,7 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 - **Semantic retrieval is opt-in and mid-band.** On the hand-verified ground
   truth, pooled recall/MRR sit at 0.4174 / 0.2862 — below the 0.50 / 0.33
   shipping targets, which is exactly why the semantic stack is an extra, not
-  the default path; the structural tools carry the precision story, and the
-  full sweep/k-fold evidence is published in
-  [docs/benchmarks.md](docs/benchmarks.md).
+  the default path; the structural tools carry the precision story.
 - **The `[semantic]` extra is heavy.** Real embeddings pull
   sentence-transformers (+ torch on Linux); a one-time ~836 MB model download
   lives in `~/.cairn/lib/` (scoped per Python version). The default install is
@@ -238,8 +235,7 @@ edges don't.
 0.03 ms · `get_callers` 0.06 ms · `impact_analysis` 0.11 ms ·
 `search_symbols` 6.25 ms · `semantic_search` 201.67 ms (with embeddings) ·
 `explore` 513.73 ms. First-`semantic_search` latency after boot warm-up:
-**15.5 s cold → 232.6 ms warm** (committed
-[warm-time artifact](docs/benchmarks.md#warm-time--first-query-latency-after-boot-warm-up)).
+**15.5 s cold → 232.6 ms warm**.
 
 **Self-demo** — cairn indexes its own source in ~4s (~1,900 symbols /
 ~11,500 edges), and CI re-runs the build + resolution invariant on every push
@@ -254,8 +250,7 @@ sqlite3 "$(cairn config --db)" \
   "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
 ```
 
-Full harness, scaling runs, and the k-fold retrieval-quality campaign:
-[docs/benchmarks.md](docs/benchmarks.md).
+Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 
 ## CLI Reference
 
@@ -300,7 +295,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 |-------|------|-------------|
 | `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — native ANN index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
-| `[scip]` | `protobuf` — consume pre-built [SCIP](docs/scip.md) indexes for compiler-grade exact edges | declare indexes in `cairn.json` |
+| `[scip]` | `protobuf` — consume pre-built [SCIP](docs/indexing.md) indexes for compiler-grade exact edges | declare indexes in `cairn.json` |
 | `[watch]` | `watchdog` — live rebuilds while `cairn serve` runs | `CAIRN_WATCH=0` disables |
 | `[otlp]` | OpenTelemetry export of local telemetry events | `CAIRN_OTEL_ENDPOINT` (unset = off) |
 
@@ -326,7 +321,7 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
   mode: retry `--fuzzy` / `fuzzy=True`; the name-matches list is labelled.
 - `cairn update` did nothing on a fresh clone → that's correct (clean tree,
   no diff); run `cairn build` first.
-- Known issues registry: [docs/BUGS.md](docs/BUGS.md).
+- Full docs index: [docs/README.md](docs/README.md).
 
 ## Development
 
@@ -343,7 +338,7 @@ own source in an isolated temp DB and asserts the core queries return correct
 results for known symbols — and that the resolution invariant holds on the
 verifier's own code. Releases are cut by tagging `vX.Y.Z` (tag-triggered
 workflow; see [docs/release-checklist.md](docs/release-checklist.md)).
-Contributions follow [docs/contribution-workflow.md](docs/contribution-workflow.md).
+Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 
 ## Dependency Licenses
 
