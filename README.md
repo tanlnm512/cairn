@@ -51,7 +51,7 @@ cairn install-agents
 ```
 
 Detects which AI clients you have (Claude Code, Cursor, ZCode, Droid, Claude
-Desktop, opencode, agy, kilo), shows what's already wired, and prompts for scope:
+Desktop, opencode, agy, kilo, omp), shows what's already wired, and prompts for scope:
 `workspace` (per-project `./.claude/`, `./.cursor/` …) or `global`
 (`~/.claude/` — every project inherits it). Non-interactive:
 `cairn install-agents --yes --scope global`. Manual wiring is one JSON block
@@ -314,8 +314,8 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
 - **Platforms** — anywhere Python ≥ 3.10 runs; CI tests 3.10–3.14 (macOS +
   Linux; `make ci-local` replicates CI in a clean Linux container).
 - **Agents** — Claude Code, Cursor, ZCode, Droid, Claude Desktop, opencode,
-  agy, kilo — wired by `cairn install-agents`, or any MCP client via the manual
-  JSON block above.
+  agy, kilo, omp — wired by `cairn install-agents`, or any MCP client via the
+  manual JSON block above.
 
 ## Troubleshooting
 

@@ -479,14 +479,14 @@ stdout.
 
 | Command | Description |
 |---------|-------------|
-| `cairn install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode/opencode/agy/kilo). |
+| `cairn install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode/opencode/agy/kilo/omp). |
 | `cairn uninstall-agents` | Remove cairn entries from AI client configs (idempotent). |
 | `cairn uninstall` | Full teardown: agent wiring, hooks, graph store, and the `cairn` binary. |
 | `cairn version` | Print the installed cairn version. |
 | `cairn upgrade` | Upgrade cairn in place (detects install method). |
 
 `install-agents` options: `--client` (repeatable:
-`claude|claude-desktop|cursor|droid|zcode|agy|opencode|kilo|all`), `--workspace`,
+`claude|claude-desktop|cursor|droid|zcode|agy|opencode|kilo|omp|all`), `--workspace`,
 `--scope workspace|global` (where to write configs; if omitted, prompts),
 `--yes`/`-y` (skip the prompt; install for detected-not-installed clients),
 `--force`, `--dry-run`, `--git-hooks`, `--sse`, `--stdio`, `--sse-url`.

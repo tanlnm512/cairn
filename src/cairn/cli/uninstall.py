@@ -298,7 +298,7 @@ def _dir_size(path: Path) -> int:
 @click.option("--graph-only", is_flag=True, help="Remove graph + knowledge data only.")
 @click.option("--package-only", is_flag=True, help="Remove the cairn binary only.")
 @click.option("--client", "clients", multiple=True,
-              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo", "all"]),
+              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo", "omp", "all"]),
               help="Limit agent removal to these clients (repeatable).")
 @click.option("--scope", "scope", type=click.Choice(["workspace", "global", "all"]), default="workspace",
               show_default=True,

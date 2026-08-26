@@ -108,6 +108,14 @@ def detect_clients(workspace: str) -> list[Detection]:
                              else "~/.config/kilo exists" if (home / ".config" / "kilo").is_dir()
                              else "not found"))
 
+    # omp (oh-my-pi CLI): CLI on PATH, ~/.omp, or a workspace .omp/
+    omp = bool(shutil.which("omp")) or (ws / ".omp").is_dir() or (home / ".omp").is_dir()
+    results.append(Detection("omp", omp,
+                             "omp CLI on PATH" if shutil.which("omp")
+                             else ".omp/ in workspace" if (ws / ".omp").is_dir()
+                             else "~/.omp exists" if (home / ".omp").is_dir()
+                             else "not found"))
+
     return results
 
 
@@ -191,6 +199,13 @@ def check_installed(workspace: str) -> dict[str, bool]:
     result["kilo"] = (
         _json_has_cairn(ws / "kilo.json")
         or _json_has_cairn(home / ".config" / "kilo" / "kilo.json")
+    )
+
+    # omp: .omp/mcp.json (workspace) or ~/.omp/agent/mcp.json (global) has
+    # cairn MCP entry
+    result["omp"] = (
+        _json_has_cairn(ws / ".omp" / "mcp.json")
+        or _json_has_cairn(home / ".omp" / "agent" / "mcp.json")
     )
 
     return result

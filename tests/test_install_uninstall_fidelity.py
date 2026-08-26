@@ -843,3 +843,94 @@ class TestKiloClient:
         after = json.loads(p.read_text(encoding="utf-8"))
         assert "cairn" not in after.get("mcp", {})
         assert after["mcp"]["other-server"] == {"type": "local", "command": ["echo"]}
+
+
+# --------------------------------------------------------------------------
+# omp (oh-my-pi CLI): native mcpServers config + native .omp/agents/*.md subagents
+# --------------------------------------------------------------------------
+
+class TestOmpClient:
+    def test_sse_default_writes_mcpservers_entry(self, fake_home, tmp_path, monkeypatch):
+        """Default transport: .omp/mcp.json gets mcpServers.cairn = {type: sse, url}
+        (omp's schema matches the shared shape used by claude/cursor/droid)."""
+        from cairn.mcp_server import lifecycle as lc
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["omp"])
+
+        cfg = json.loads((ws / ".omp" / "mcp.json").read_text(encoding="utf-8"))
+        entry = cfg["mcpServers"]["cairn"]
+        assert entry["type"] == "sse"
+        assert entry["url"] == f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+
+    def test_stdio_writes_command_args_shape(self, fake_home, tmp_path, monkeypatch):
+        """stdio: mcpServers.cairn = {command, args: [..., "serve"]}."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["omp"], transport="stdio")
+
+        cfg = json.loads((ws / ".omp" / "mcp.json").read_text(encoding="utf-8"))
+        entry = cfg["mcpServers"]["cairn"]
+        assert "command" in entry
+        assert entry["args"][-1] == "serve"
+
+    def test_writes_native_subagent_files(self, fake_home, tmp_path, monkeypatch):
+        """Subagents are written as omp's native .omp/agents/<name>.md task-agent
+        files (not just the cross-tool .agents/ fallback), with name/description
+        frontmatter and MCP tools referenced as mcp__cairn_<tool> (single
+        underscore, per omp's tool-registry naming)."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["omp"])
+
+        explorer = (ws / ".omp" / "agents" / "cairn-explorer.md").read_text(encoding="utf-8")
+        assert explorer.startswith("---\nname: cairn-explorer\n")
+        assert "description:" in explorer
+        assert "mcp__cairn_explore" in explorer
+        assert "mcp__cairn__explore" not in explorer, "omp uses single underscore, not Claude's double"
+
+        steward = (ws / ".omp" / "agents" / "knowledge-steward.md").read_text(encoding="utf-8")
+        assert steward.startswith("---\nname: knowledge-steward\n")
+
+    def test_global_scope_writes_global_config_and_agents(self, fake_home, tmp_path, monkeypatch):
+        """scope=global lands in ~/.omp/agent/mcp.json + ~/.omp/agent/agents/
+        (omp's documented user-level paths) and is detected by check_installed."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["omp"], scope="global")
+
+        global_cfg = fake_home / ".omp" / "agent" / "mcp.json"
+        assert global_cfg.exists(), "scope=global must write ~/.omp/agent/mcp.json"
+        assert not (ws / ".omp" / "mcp.json").exists(), "scope=global must not write the workspace"
+        assert (fake_home / ".omp" / "agent" / "agents" / "cairn-explorer.md").exists()
+        assert check_installed(str(ws))["omp"], \
+            "a global install must be detected by check_installed (it probes the global path)"
+
+    def test_workspace_install_detected(self, fake_home, tmp_path, monkeypatch):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["omp"])
+        assert check_installed(str(ws))["omp"]
+
+    def test_uninstall_strips_cairn_preserves_others_and_removes_agents(self, fake_home, tmp_path, monkeypatch):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["omp"])
+
+        p = ws / ".omp" / "mcp.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        data["mcpServers"]["other-server"] = {"command": "echo"}
+        p.write_text(json.dumps(data))
+
+        uninstall(str(ws), clients=["omp"])
+
+        after = json.loads(p.read_text(encoding="utf-8"))
+        assert "cairn" not in after.get("mcpServers", {})
+        assert after["mcpServers"]["other-server"] == {"command": "echo"}
+        assert not (ws / ".omp" / "agents" / "cairn-explorer.md").exists()
+        assert not (ws / ".omp" / "agents" / "knowledge-steward.md").exists()
