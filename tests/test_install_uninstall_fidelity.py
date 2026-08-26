@@ -666,3 +666,77 @@ class TestTransportDefault:
         cd = json.loads(claude_desktop_config_path().read_text(encoding="utf-8"))
         assert "command" in cd["mcpServers"]["cairn"]
         assert "url" not in cd["mcpServers"]["cairn"]
+
+    def test_claude_global_sse_registers_sse_transport(self, fake_home, tmp_path, monkeypatch):
+        """Global-scope claude install must honor the SSE default: the
+        `claude mcp add --scope user` registration uses --transport sse with
+        the daemon URL, not a stdio command spawn."""
+        _cli_at(monkeypatch, "claude")
+        calls = _spy_subprocess(monkeypatch)
+        from cairn.mcp_server import lifecycle as lc
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["claude"], scope="global")
+
+        expected_url = f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        assert ["claude", "mcp", "add", "--transport", "sse", "--scope", "user",
+                "cairn", expected_url] in calls
+
+    def test_claude_global_sse_custom_url(self, fake_home, tmp_path, monkeypatch):
+        """--sse-url propagates to the global claude registration."""
+        _cli_at(monkeypatch, "claude")
+        calls = _spy_subprocess(monkeypatch)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["claude"], scope="global",
+                sse_url="http://localhost:9999/sse")
+
+        assert ["claude", "mcp", "add", "--transport", "sse", "--scope", "user",
+                "cairn", "http://localhost:9999/sse"] in calls
+
+    def test_claude_global_stdio_keeps_stdio_registration(self, fake_home, tmp_path, monkeypatch):
+        """transport=stdio global install registers the command spawn, with
+        no --transport flag (regression pin for the pre-SSE behavior)."""
+        _cli_at(monkeypatch, "claude")
+        calls = _spy_subprocess(monkeypatch)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+
+        add = [c for c in calls if c[:3] == ["claude", "mcp", "add"]]
+        assert len(add) == 1
+        assert "--transport" not in add[0]
+        assert add[0][3] == "cairn"  # name positional, then --scope user
+        assert "serve" in add[0]
+
+    def test_droid_cli_sse_registers_sse_type(self, tmp_path, monkeypatch):
+        """With the droid CLI present, the default SSE transport must
+        register the daemon URL via `--type sse`, not a stdio command spawn."""
+        _cli_at(monkeypatch, "droid")
+        calls = _spy_subprocess(monkeypatch)
+        from cairn.mcp_server import lifecycle as lc
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["droid"])
+
+        expected_url = f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        assert ["droid", "mcp", "add", "cairn", expected_url, "--type", "sse"] in calls
+
+    def test_droid_cli_stdio_keeps_stdio_registration(self, tmp_path, monkeypatch):
+        """transport=stdio droid install registers the command spawn, with
+        no --type flag (regression pin)."""
+        _cli_at(monkeypatch, "droid")
+        calls = _spy_subprocess(monkeypatch)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["droid"], transport="stdio")
+
+        add = [c for c in calls if c[:3] == ["droid", "mcp", "add"]]
+        assert len(add) == 1
+        assert "--type" not in add[0]
+        assert "serve" in add[0]

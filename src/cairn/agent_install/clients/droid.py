@@ -15,9 +15,10 @@ from .._common import (
     _TEMPLATE_DIR,
     _SLASH_COMMANDS,
     _claude_agent_md,
+    _read_template,
+    default_sse_url,
     mcp_config_json,
     resolve_cg_command,
-    _read_template,
 )
 from ..merge import (
     _merge_json_file,
@@ -50,12 +51,14 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
 
     # MCP: prefer `droid mcp add` if the CLI is available; else write a config file.
     if shutil.which("droid") and not dry_run:
-        cmd = resolve_cg_command()
+        if transport == "sse":
+            url = default_sse_url(sse_url)
+            argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
+        else:
+            cmd = resolve_cg_command()
+            argv = ["droid", "mcp", "add", "cairn", *cmd, "serve"]
         try:
-            subprocess.run(
-                ["droid", "mcp", "add", "cairn", *cmd, "serve"],
-                capture_output=True, timeout=10, check=False,
-            )
+            subprocess.run(argv, capture_output=True, timeout=10, check=False)
             res.notes.append("Registered MCP via `droid mcp add`.")
         except (subprocess.SubprocessError, OSError):
             res.notes.append("`droid mcp add` failed; no config file written for MCP.")

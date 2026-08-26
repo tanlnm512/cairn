@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .._common import InstallResult, resolve_cg_command
+from .._common import InstallResult, default_sse_url, resolve_cg_command
 from ..merge import _merge_json_file, _strip_mcp_opencode
 
 
@@ -46,13 +46,10 @@ def opencode_mcp_config_json(transport: str = "stdio", sse_url: str | None = Non
 
     Args:
         transport: "stdio" (default) or "sse" (shared daemon).
-        sse_url: when transport="sse", the URL clients connect to.
+        sse_url: when transport="sse", the URL clients should connect to.
     """
-    from ...mcp_server import lifecycle as lc
-
     if transport == "sse":
-        url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-        return {"mcp": {"cairn": {"type": "remote", "url": url, "enabled": True}}}
+        return {"mcp": {"cairn": {"type": "remote", "url": default_sse_url(sse_url), "enabled": True}}}
     cmd = resolve_cg_command() + ["serve"]
     return {"mcp": {"cairn": {"type": "local", "command": cmd, "enabled": True}}}
 
