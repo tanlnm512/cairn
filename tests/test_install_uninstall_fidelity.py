@@ -740,3 +740,33 @@ class TestTransportDefault:
         assert len(add) == 1
         assert "--type" not in add[0]
         assert "serve" in add[0]
+
+    def test_agy_sse_uses_serverurl_shape(self, fake_home, tmp_path, monkeypatch):
+        """agy (Antigravity) remote servers use the `serverUrl` field; the
+        official docs state legacy `url`/`httpUrl` fields are NOT supported
+        and there is no `type` field — transport is implied by the field."""
+        from cairn.mcp_server import lifecycle as lc
+        from cairn.agent_install.clients.agy import agy_config_path
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["agy"])
+
+        cfg = json.loads(agy_config_path().read_text(encoding="utf-8"))
+        entry = cfg["mcpServers"]["cairn"]
+        assert entry["serverUrl"] == f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        assert "url" not in entry
+        assert "type" not in entry
+
+    def test_agy_stdio_keeps_command_args_shape(self, fake_home, tmp_path, monkeypatch):
+        """stdio pin: command/args shape (agy's documented stdio form)."""
+        from cairn.agent_install.clients.agy import agy_config_path
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["agy"], transport="stdio")
+
+        cfg = json.loads(agy_config_path().read_text(encoding="utf-8"))
+        entry = cfg["mcpServers"]["cairn"]
+        assert "command" in entry
+        assert "serverUrl" not in entry
