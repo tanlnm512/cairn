@@ -48,7 +48,9 @@ def run_ingest(
     docs, scan_skips = _sourced(files, dirs, repos, overrides)
     seen_slugs: set[str] = set()
     entries: list[StagedEntry] = []
-    for repo, relpath, text, origin in sorted(docs):
+    # Key on (repo, relpath) only: sorting whole tuples would compare
+    # document bodies as a tiebreak (costly and never intended).
+    for repo, relpath, text, origin in sorted(docs, key=lambda d: (d[0], d[1])):
         parsed = parse_source_doc(text)
         classification = classify_doc(
             parsed, relpath, include_drafts, rules=overrides.classification
@@ -82,8 +84,11 @@ def _sourced(
     binary = [p for p in fed if p.suffix.lower() in CONVERT_SUFFIXES]
     markdown = [p for p in fed if p.suffix.lower() not in CONVERT_SUFFIXES]
 
-    docs = list(FedMarkdownAdapter([*markdown, *dirs]).iter_docs())
-    skips: list[tuple[str, str, str]] = []
+    md_adapter = FedMarkdownAdapter([*markdown, *dirs])
+    docs = list(md_adapter.iter_docs())
+    skips: list[tuple[str, str, str]] = [
+        (FED_REPO, relpath, reason) for relpath, reason in md_adapter.skipped
+    ]
     if binary:
         converter = FedBinaryAdapter(binary)
         docs.extend(converter.iter_docs())

@@ -21,8 +21,24 @@ FED_ORIGIN = "fed"
 #: Fed documents have no originating repo; the workspace is their scope.
 FED_REPO = "workspace"
 
+#: Maximum source file size read by ingest adapters (10MB), mirroring the
+#: store's IMPORT_MAX_FILE_SIZE cap on import_directory. Larger files skip
+#: with a reason instead of being loaded whole into memory.
+INGEST_MAX_FILE_SIZE = 10 * 1024 * 1024
+
 #: The adapter yield contract: (repo, relpath, text, origin).
 SourcedDoc = Tuple[str, str, str, str]
+
+
+def _size_skip_reason(path: Path) -> str | None:
+    """Skip reason when a source file exceeds INGEST_MAX_FILE_SIZE."""
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        return f"unreadable: {e}"
+    if size > INGEST_MAX_FILE_SIZE:
+        return f"file too large ({size} > {INGEST_MAX_FILE_SIZE} bytes)"
+    return None
 
 
 class SourceAdapter(Protocol):
@@ -43,37 +59,61 @@ class SourceAdapter(Protocol):
 class FedMarkdownAdapter:
     """Feeds explicitly-given markdown files and/or directories.
 
-    Directories are walked recursively for ``*.md`` in sorted order; a fed
-    file yields only when its suffix is ``.md``. Every yield carries
-    repo=FED_REPO and origin=FED_ORIGIN.
+    Directories are walked recursively for markdown files in sorted order
+    (the suffix compares case-insensitively, so ``README.MD`` is fed just
+    like ``readme.md``); a fed file yields only when its suffix is
+    ``.md``/``.MD``. Every yield carries repo=FED_REPO and origin=FED_ORIGIN.
+
+    Files that cannot enter the pipeline -- non-markdown feeds, oversize or
+    unreadable files -- are recorded in :attr:`skipped` as ``(relpath,
+    reason)`` pairs so the manifest accounts for every fed document
+    instead of silently dropping it.
     """
 
     def __init__(self, paths: Iterable[Union[str, Path]]) -> None:
         self._paths: List[Path] = [Path(p) for p in paths]
+        #: Every skip as a ``(relpath, reason)`` pair, in feed order.
+        self.skipped: List[Tuple[str, str]] = []
 
     def iter_docs(self) -> Iterator[SourcedDoc]:
+        self.skipped = []
         for path in self._paths:
             if not path.exists():
                 raise FileNotFoundError(f"Fed path does not exist: {path}")
             if path.is_dir():
                 yield from self._iter_directory(path)
-            elif path.suffix == ".md":
+            elif path.suffix.lower() == ".md":
                 yield from self._yield_document(path, path.as_posix())
             else:
+                self._skip(
+                    path.as_posix(),
+                    f"unsupported type: {path.suffix or 'no suffix'}",
+                )
                 logger.warning("Skipping non-markdown fed file %s", path)
 
     def _iter_directory(self, root: Path) -> Iterator[SourcedDoc]:
-        for md_file in sorted(root.rglob("*.md")):
+        md_files = sorted(
+            p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".md"
+        )
+        for md_file in md_files:
             relpath = md_file.relative_to(root).as_posix()
             yield from self._yield_document(md_file, relpath)
 
     def _yield_document(self, path: Path, relpath: str) -> Iterator[SourcedDoc]:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except Exception as e:
-            logger.warning("Skipping unreadable fed document %s: %s", path, e)
+        reason = _size_skip_reason(path)
+        if reason is None:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception as e:
+                reason = f"unreadable: {e}"
+        if reason is not None:
+            self._skip(relpath, reason)
             return
         yield (FED_REPO, relpath, text, FED_ORIGIN)
+
+    def _skip(self, relpath: str, reason: str) -> None:
+        self.skipped.append((relpath, reason))
+        logger.warning("Skipping fed document %s: %s", relpath, reason)
 
 #: Allowlist of repository doc directories walked by RepoScanAdapter (FR-001).
 DEFAULT_DOC_DIRS: Tuple[str, ...] = ("docs", "decisions", "adr", "adrs")
@@ -135,11 +175,29 @@ def _skip_reason(
     parts = rel.parts
     for rule in rules:
         if rule.kind == "dir":
-            if any(fnmatch(part.lower(), rule.pattern) for part in parts[:-1]):
+            if _dir_rule_matches(parts, rule.pattern):
                 return rule.reason
         elif fnmatch(parts[-1].lower(), rule.pattern):
             return rule.reason
     return None
+
+
+def _dir_rule_matches(parts: Tuple[str, ...], pattern: str) -> bool:
+    """Dir rules match any single directory segment, or any joined
+    parent-path prefix of the relpath.
+
+    Single-segment patterns ("drafts") keep matching per segment. A
+    multi-segment workspace pattern ("docs/notes") additionally matches
+    the joined directory prefixes, so it catches "docs/notes/x.md"
+    instead of silently never firing against any single segment.
+    """
+    segments = [part.lower() for part in parts[:-1]]
+    if any(fnmatch(segment, pattern) for segment in segments):
+        return True
+    return any(
+        fnmatch("/".join(segments[:i]), pattern)
+        for i in range(2, len(segments) + 1)
+    )
 
 
 class RepoScanAdapter:
@@ -176,6 +234,8 @@ class RepoScanAdapter:
             for md_file in sorted(root.rglob("*.md")):
                 rel = md_file.relative_to(self._repo_root)
                 reason = _skip_reason(rel, self._rules)
+                if reason is None:
+                    reason = _size_skip_reason(md_file)
                 if reason is not None:
                     self.skipped.append((rel.as_posix(), reason))
                     logger.info("Skipping %s: %s", rel.as_posix(), reason)

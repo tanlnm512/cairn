@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from cairn.knowledge.ingest import run_ingest
-from cairn.knowledge.ingest.adapters import RepoScanAdapter
+from cairn.knowledge.ingest.adapters import (
+    INGEST_MAX_FILE_SIZE,
+    RepoScanAdapter,
+)
 
 
 @pytest.fixture
@@ -81,6 +84,123 @@ class TestRepoScanAdapter:
         adapter = RepoScanAdapter(repo_root)
         assert list(adapter.iter_docs()) == []
         assert adapter.skipped == []
+
+    def test_multi_segment_dir_rule_matches(self, repo_root):
+        """A workspace dir pattern like "docs/notes/" catches docs/notes/x.md."""
+        _write(repo_root, "docs/notes/secret.md", "# Secret notes")
+        _write(repo_root, "docs/adr/0001-public.md", ADR)
+
+        adapter = RepoScanAdapter(repo_root, skip_add=("docs/notes/",))
+        docs = list(adapter.iter_docs())
+
+        assert [relpath for _r, relpath, _t, _o in docs] == [
+            "docs/adr/0001-public.md"
+        ]
+        assert adapter.skipped == [
+            ("docs/notes/secret.md", "skip-list: docs/notes/ (workspace)")
+        ]
+
+    def test_single_segment_dir_rule_matching_is_unchanged(self, repo_root):
+        """A one-segment pattern still matches per directory segment."""
+        _write(repo_root, "docs/internal/wip.md", "Internal notes.")
+        _write(repo_root, "docs/adr/0001-public.md", ADR)
+
+        adapter = RepoScanAdapter(repo_root, skip_add=("internal/",))
+        docs = list(adapter.iter_docs())
+
+        assert [relpath for _r, relpath, _t, _o in docs] == [
+            "docs/adr/0001-public.md"
+        ]
+        assert adapter.skipped == [
+            ("docs/internal/wip.md", "skip-list: internal/ (workspace)")
+        ]
+
+    def test_oversize_file_gets_skip_row(self, repo_root):
+        """Files over INGEST_MAX_FILE_SIZE skip with a reason, not a read."""
+        _write(repo_root, "docs/runbook.md", RUNBOOK)
+        huge = repo_root / "docs" / "huge.md"
+        huge.write_text("x" * (INGEST_MAX_FILE_SIZE + 1), encoding="utf-8")
+
+        adapter = RepoScanAdapter(repo_root)
+        docs = list(adapter.iter_docs())
+
+        assert [relpath for _r, relpath, _t, _o in docs] == ["docs/runbook.md"]
+        assert adapter.skipped == [
+            (
+                "docs/huge.md",
+                "file too large "
+                f"({INGEST_MAX_FILE_SIZE + 1} > {INGEST_MAX_FILE_SIZE} bytes)",
+            )
+        ]
+
+
+class TestFedAccounting:
+    """Fed markdown feeds: every doc yields or gets a manifest skip row.
+
+    Fed files keep their path as given, so these tests chdir into the
+    feed dir and feed bare file names.
+    """
+
+    def test_fed_non_markdown_file_gets_skip_row(self, tmp_path, monkeypatch):
+        _write(tmp_path, "runbook.md", RUNBOOK)
+        _write(tmp_path, "notes.txt", "not markdown")
+        monkeypatch.chdir(tmp_path)
+
+        manifest = run_ingest(
+            files=["runbook.md", "notes.txt"], dirs=[], outbox=tmp_path / "outbox"
+        )
+
+        rows = {row.get("source_path"): row for row in manifest["rows"]}
+        assert "skip" not in rows["workspace/runbook.md"]
+        assert rows["workspace/notes.txt"]["skip"] == "unsupported type: .txt"
+        assert manifest["counts"] == {
+            "accepted": 1,
+            "skipped": 1,
+            "by_type": {"workflow": 1},
+            "by_repo": {"workspace": 1},
+        }
+
+    def test_fed_uppercase_md_suffix_is_accepted(self, tmp_path, monkeypatch):
+        _write(tmp_path, "README.MD", RUNBOOK)
+        monkeypatch.chdir(tmp_path)
+
+        manifest = run_ingest(
+            files=["README.MD"], dirs=[], outbox=tmp_path / "outbox"
+        )
+
+        assert manifest["counts"]["accepted"] == 1
+        assert manifest["counts"]["skipped"] == 0
+        assert manifest["rows"][0]["source_path"] == "workspace/README.MD"
+
+    def test_fed_directory_walk_picks_up_uppercase_md(self, tmp_path):
+        feed = tmp_path / "feed"
+        _write(feed, "README.MD", RUNBOOK)
+        _write(feed, "guide.md", RUNBOOK)
+
+        manifest = run_ingest(files=[], dirs=[feed], outbox=tmp_path / "outbox")
+
+        paths = sorted(row["source_path"] for row in manifest["rows"])
+        assert paths == ["workspace/README.MD", "workspace/guide.md"]
+
+    def test_fed_oversize_file_gets_skip_row(self, tmp_path, monkeypatch):
+        _write(tmp_path, "runbook.md", RUNBOOK)
+        (tmp_path / "huge.md").write_text(
+            "x" * (INGEST_MAX_FILE_SIZE + 1), encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+
+        manifest = run_ingest(
+            files=["runbook.md", "huge.md"], dirs=[], outbox=tmp_path / "outbox"
+        )
+
+        rows = {row.get("source_path"): row for row in manifest["rows"]}
+        assert rows["workspace/huge.md"]["skip"] == (
+            f"file too large ({INGEST_MAX_FILE_SIZE + 1} > "
+            f"{INGEST_MAX_FILE_SIZE} bytes)"
+        )
+        assert "skip" not in rows["workspace/runbook.md"]
+        assert manifest["counts"]["accepted"] == 1
+        assert manifest["counts"]["skipped"] == 1
 
 
 class TestScanPipeline:

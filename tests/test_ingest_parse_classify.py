@@ -294,14 +294,14 @@ def test_classify_unmatched_defaults_to_spec():
         ("draft", False),
         ("Draft", False),  # mixed case
         ("DRAFT", False),
-        ("proposed", True),
-        ("review", True),
-        ("superseded", True),
-        ("deprecated", True),
+        ("proposed", False),
+        ("review", False),
+        ("superseded", False),
+        ("deprecated", False),
     ],
 )
 def test_classify_status_gate_skips(status, include_drafts):
-    """Skip status not draft, or draft but not included."""
+    """Every skip status blocks ingestion when include_drafts is off."""
 
     doc = ParsedDoc(status=status)
     result = classify_doc(doc, "", include_drafts=include_drafts)
@@ -330,29 +330,58 @@ def test_classify_ingestible_statuses_pass(status, include_drafts):
     assert result.extra_tags == []
 
 
-def test_classify_include_drafts_readmits_draft_only():
-    """include_drafts=True only re-admits draft (not other skip statuses)."""
+def test_classify_include_drafts_readmits_whole_skip_family():
+    """include_drafts=True re-admits every skip status, tagged `draft` (FR-005/TC-009)."""
 
-    cases = [
-        ("draft", True, "Vision statement", "combined"),  # reference + draft
-        ("draft", True, None, "plain"),
-        ("proposed", True, None, None),  # still skip, no tag
-        ("review", True, None, None),
-        ("superseded", True, None, None),
-        ("deprecated", True, None, None),
-    ]
-    for status, include_drafts, title, expected_draft_tag in cases:
-        doc = ParsedDoc(status=status, title=title)
-        result = classify_doc(doc, "", include_drafts=include_drafts)
-        if status == "draft" and include_drafts:
-            assert result.skip_reason is None
-            if expected_draft_tag == "combined":
-                assert set(result.extra_tags) == {"reference", "draft"}
-            else:
-                assert result.extra_tags == ["draft"]
-        else:
-            assert result.skip_reason == f"status: {status.lower()}"
-            assert result.extra_tags == []
+    for status in ("draft", "proposed", "review", "superseded", "deprecated"):
+        doc = ParsedDoc(status=status)
+        result = classify_doc(doc, "", include_drafts=True)
+        assert result.skip_reason is None
+        assert result.doc_type == "spec"  # classification still runs
+        assert result.extra_tags == ["draft"]
+
+    # The draft tag merges with classifier tags: reference + draft.
+    vision = ParsedDoc(status="proposed", title="Vision statement")
+    result = classify_doc(vision, "", include_drafts=True)
+    assert result.skip_reason is None
+    assert set(result.extra_tags) == {"reference", "draft"}
+
+    # Without the flag the whole family still skips, untagged.
+    for status in ("draft", "proposed", "review", "superseded", "deprecated"):
+        result = classify_doc(ParsedDoc(status=status), "", include_drafts=False)
+        assert result.skip_reason == f"status: {status}"
+        assert result.extra_tags == []
+
+
+def test_workspace_rule_keyword_matches_whole_token_not_substring():
+    """Keyword "arch" must not classify a doc titled "search overview"."""
+
+    rules = {"arch": "decision"}
+    miss = classify_doc(
+        ParsedDoc(title="Search overview"), "", include_drafts=True, rules=rules
+    )
+    assert miss.doc_type == "spec"  # substring inside "search" does not match
+    assert miss.skip_reason is None
+
+    hit = classify_doc(
+        ParsedDoc(title="System arch overview"), "", include_drafts=True, rules=rules
+    )
+    assert hit.doc_type == "decision"  # whole token "arch" matches
+
+
+def test_workspace_rule_multi_word_keyword_matches_normalized_phrase():
+    """Multi-word keywords match the whole phrase, hyphens normalized."""
+
+    rules = {"prior art": "decision"}
+    hit = classify_doc(
+        ParsedDoc(title="Prior-art survey"), "", include_drafts=True, rules=rules
+    )
+    assert hit.doc_type == "decision"  # normalized phrase "prior art" matches
+
+    partial = classify_doc(
+        ParsedDoc(title="Prior article"), "", include_drafts=True, rules=rules
+    )
+    assert partial.doc_type == "spec"  # "prior art" is not a whole phrase here
 
 
 def test_classify_from_parsed_source_doc():

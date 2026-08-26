@@ -9,8 +9,9 @@ from cairn.knowledge.ingest.parser import ParsedDoc
 
 DEFAULT_DOC_TYPE = "spec"
 
-# FR-005: statuses that block ingestion; only `draft` is re-admitted by
-# --include-drafts. Orthogonal to the store's DOC_STATUSES lifecycle.
+# FR-005: statuses that block ingestion; --include-drafts re-admits the
+# whole family (TC-009), tagging each readmitted doc `draft`. Orthogonal
+# to the store's DOC_STATUSES lifecycle.
 _SKIP_STATUSES = frozenset(
     {"draft", "proposed", "review", "superseded", "deprecated"}
 )
@@ -110,7 +111,7 @@ def classify_doc(
     skip_reason = None
     status = (parsed.status or "").strip().lower()
     if status in _SKIP_STATUSES:
-        if status == _DRAFT_STATUS and include_drafts:
+        if include_drafts:
             extra_tags.append(_DRAFT_STATUS)
         else:
             skip_reason = f"status: {status}"
@@ -137,14 +138,20 @@ def _classify_title(
 
 
 def _workspace_rule(title: str | None, rules: Mapping[str, str] | None) -> str | None:
-    """First workspace title-keyword rule that matches, if any (FR-010)."""
+    """First workspace title-keyword rule that matches, if any (FR-010).
+
+    Mirrors the built-in rules' discipline: a single keyword matches whole
+    tokens only, and a multi-word keyword matches the whole phrase in the
+    hyphen/slash-normalized title -- never a substring inside a word
+    ("arch" must not match "search").
+    """
     if not title or not rules:
         return None
     tokens = set(_tokens(title))
-    text = _normalized(title)
+    text = f" {_normalized(title)} "
     for keyword, doc_type in rules.items():
-        key = keyword.strip().lower()
-        if key and (key in tokens or key in text):
+        key = _normalized(keyword)
+        if key and (key in tokens or f" {key} " in text):
             return doc_type
     return None
 
