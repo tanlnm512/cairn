@@ -1,5 +1,15 @@
 # Polaris workspace document-ingestion pipeline
 
+← [Docs index](README.md)
+
+> **Shipped in core.** This design was upstreamed into cairn itself as
+> `cairn knowledge ingest` (see the knowledge section of
+> [cli-reference.md](cli-reference.md)); this page is kept as the original
+> design rationale. Deliverable 2's subprocess-per-row execution was
+> superseded — an approved run (`--ingest`) writes each manifest row
+> in-process via `add_document`. Rendered pipeline diagram:
+> [diagrams/doc-ingestion-pipeline.html](diagrams/doc-ingestion-pipeline.html).
+>
 > Status: approved (workspace-side) · Date: 2026-08-26
 > Target workspace: `/Users/lnmtan/Projects/polaris` (15 sibling repos, store key
 > `435aeb8f7ab91a0d`, bundle `~/.cairn/435aeb8f7ab91a0d/.knowledge` — currently

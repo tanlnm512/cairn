@@ -14,7 +14,6 @@ pain is fresh.
 1. **Scan the index table** below for the symptom, area, or date you need.
 2. **Jump to the entry** (same slug) under `## Entries` for the full
    symptom → root cause → fix → prevention → related detail.
-3. For a deeper architecture writeup, follow the postmortem link if present.
 
 ## Format
 
@@ -24,16 +23,15 @@ tests, commits).
 
 Keep entries to one paragraph per field. If a bug needs a deeper writeup
 (architecture-level root cause, multi-file analysis, decision rationale
-worth re-reading), put the long form in `docs/postmortems/<date>-<slug>.md`
-and leave a one-line pointer here — `[→ postmortem](postmortems/...)`. This
-keeps the registry scannable; detail lives separately.
+worth re-reading), expand the affected fields in place — every detail lives
+in this one file, so the registry stays self-contained.
 
 ## Index
 
 | Date | Slug | Area | Symptom (one line) |
 |------|------|------|--------------------|
 | 2026-08-06 | comments-only-code-drift | agent-safety | Sub-agents silently altered code during a "comments-only" trim task. |
-| 2026-08-06 | portable-path-stale-comments | graph | Comments claimed relative paths; builder stored absolute. [→ postmortem](postmortems/2026-08-06-portable-paths.md) |
+| 2026-08-06 | portable-path-stale-comments | graph | Comments claimed relative paths; builder stored absolute. |
 | 2026-08-06 | scip-pypi-package-misidentification | deps | Plan specified a `scip` pip package that's an unrelated bioimaging lib. |
 | 2026-08-06 | repo-id-empty-string-myth | graph | Comments claimed `repo_id=''`; builder stored the directory basename. |
 | 2026-08-06 | scip-importer-fake-resolution | parser | SCIP importer labeled edges `'exact'` with `target_id` always NULL. |
@@ -76,7 +74,7 @@ keeps the registry scannable; detail lives separately.
 ---
 
 ### 2026-08-06 / portable-path-stale-comments
-**TL;DR:** Comments claimed relative paths; the builder stored absolute — half-finished design made the comments lie. [→ postmortem](postmortems/2026-08-06-portable-paths.md)
+**TL;DR:** Comments claimed relative paths; the builder stored absolute — half-finished design made the comments lie.
 
 **Symptom:** The watcher (`graph/watcher.py`) and incremental reindexer (`graph/incremental.py`) contained comments and fallback logic claiming "build stores relative paths" and "repo_id='' for single-repo workspaces." Neither was true: the builder (`graph/builder.py`) stored absolute paths, and repo_id was the directory basename, not empty string. The code was half-finished — designed for relative paths but never completed.
 

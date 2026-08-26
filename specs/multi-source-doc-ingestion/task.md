@@ -5,8 +5,6 @@ Status reflects code state per [survey.md](survey.md), not intent.
 **Before-audit**: passed @ 841f480 (2026-08-26 — baseline 2184 passed/1 skipped;
 tree clean for plan scope; user WIP in agent_install/conftest adjudicated out)
 
-**Paused**: 2026-08-26 mid-Phase-3/4. Done+green: T001-T010, T012, T014 (104 ingest tests + regression trio green at last full run). Open: T011 (verify-step, 2 red tests — see entry), T013 (converter), T015 (overrides). Implementation is on disk, UNTICKED and UNCOMMITTED by design (single end-of-plan commit after closing audit). Resume: /spec-to-code resume multi-source-doc-ingestion — read this file, run check.py, finish T011 fix, then T013, T015, closing audit.
-
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
@@ -114,7 +112,7 @@ tree clean for plan scope; user WIP in agent_install/conftest adjudicated out)
   - Survey FR-008 (PARTIAL — gap): "No dry-run default / approve gate. No verify step" — the chained orchestration is exactly this task plus T011.
   - Tests: `tests/test_ingest_execute.py` — approval gate (no `--ingest` leaves the store untouched, US2-AC2); approved run writes every row and embeds (US5-AC1).
   - Verify: `.venv/bin/pytest tests/ -k 'ingest and execute' -q`.
-- [x] T011 ; 9/9 executor tests green (was PAUSED: verify_manifest + TestVerifyStep written; 2 failures open, both verify-path: sqlite3.OperationalError 'unable to open database file' from get_db() before store.ensure() in verify_manifest; resume by fixing that + rerun) (after T010) Add the verify step and idempotency proof — extend `src/cairn/knowledge/ingest/executor.py`: after write+embed, verify via `list_documents` count vs manifest accepted count (`src/cairn/knowledge/store.py:162-183`), `cairn validate` (`src/cairn/cli/validate.py:11-25`), and smoke `search_knowledge` calls; report counts, skips, verify result to the operator; a second identical run leaves concept counts unchanged (FR-008, FR-009)
+- [x] T011 (after T010) Add the verify step and idempotency proof — extend `src/cairn/knowledge/ingest/executor.py`: after write+embed, verify via `list_documents` count vs manifest accepted count (`src/cairn/knowledge/store.py:162-183`), `cairn validate` (`src/cairn/cli/validate.py:11-25`), and smoke `search_knowledge` calls; report counts, skips, verify result to the operator; a second identical run leaves concept counts unchanged (FR-008, FR-009)
   done 2026-08-26 — .venv/bin/pytest tests/test_ingest_execute.py -q (verify+idempotency, 9 passed)
   - Consumes from T010: the executor's write-path entry point and its manifest handle.
   - Survey FR-009 (PARTIAL — gap): "no explicit dedup check at the ingest pipeline level … idempotency is only proven for the underlying primitives, not for the pipeline as a whole" — slug determinism (`slugify` → `concept_id` at `src/cairn/knowledge/store.py:131-133`) and atomic overwrite (`os.replace`, `src/cairn/okf/concept.py:159`) already exist; embeddings are keyed by (doc_id, model) so re-embed after overwrite skips by design — do not assert re-embedding happened.
@@ -164,7 +162,7 @@ tree clean for plan scope; user WIP in agent_install/conftest adjudicated out)
   - Verify: `grep -rn 'polaris' src/cairn/knowledge/ --include='*.py'` (empty — plan.md Phase-5 checkpoint).
 
 ## Conventions
-- `- [ ]` todo · `` claimed · `- [x]` done + proof note:
+- `- [ ]` todo · `(in-progress)` claimed · `- [x]` done + proof note:
       done `<date>` — `<test/command>` that proves it
 - Dropped: `- [ ] ~~T004~~ dropped <date> (D-###)` — never delete the line;
   dropped tasks stay visible with the decision that killed them

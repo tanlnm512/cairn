@@ -16,9 +16,7 @@ the dispatch, connection, impact, or render stages.
 | [`## Sibling query paths (same skeleton, different engines)`](#sibling-query-paths-same-skeleton-different-engines) | How `find_definition`, `search_symbols`, `semantic_search`, and `explore` ride the same skeleton with different engines. |
 | [`## Storage map`](#storage-map) | Which tables live in the per-workspace SQLite file and what each serves. |
 
-Rendered assets: [SVG](diagrams/query-flow.svg) · [PNG](diagrams/query-flow.png) ·
-[source](diagrams/query-flow.mmd). The same diagram is embedded below
-(GitHub renders fenced mermaid natively).
+The pipeline is diagrammed below (GitHub renders fenced mermaid natively).
 
 ```mermaid
 flowchart TD

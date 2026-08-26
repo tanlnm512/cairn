@@ -18,10 +18,11 @@ measured results. This index maps the doc set by what you're trying to do.
 |-----|----------------|
 | [architecture-overview.md](architecture-overview.md) | The one-page mental model |
 | [architecture.md](architecture.md) | Full design: layers, resolution model, storage |
-| [query-flow.md](query-flow.md) | What happens on a query, end to end (with [diagrams](diagrams/)) |
+| [query-flow.md](query-flow.md) | What happens on a query, end to end (diagram embedded in the page) |
 | [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) | Why precise edges are ground truth; the false-positive measurement |
 | [scip.md](scip.md) | SCIP/tree-sitter coexistence indexing for compiler-grade edges |
-| [examples/resolution-walkthrough.md](examples/resolution-walkthrough.md) | A worked precise-vs-fuzzy example on real code |
+| [polaris-doc-ingestion-pipeline.md](polaris-doc-ingestion-pipeline.md) | Design rationale for multi-source document ingestion (shipped as `cairn knowledge ingest`) |
+| [diagrams/doc-ingestion-pipeline.html](diagrams/doc-ingestion-pipeline.html) | Rendered diagram of the document-ingestion pipeline |
 
 ## Evidence
 
@@ -43,4 +44,3 @@ measured results. This index maps the doc set by what you're trying to do.
 |-----|----------------|
 | [contribution-workflow.md](contribution-workflow.md) | The mandatory branch → pre-commit → PR → CI workflow |
 | [review-checklist.md](review-checklist.md) | The per-PR review gate (blast radius, layering, hygiene) |
-| [postmortems/](postmortems/) | Incident write-ups and their lessons |

@@ -478,6 +478,5 @@ Every concept is a markdown file with YAML frontmatter (OKF v0.2). The
 
 - [architecture.md](architecture.md) — per-layer deep dive, resolution model, LLM boundary.
 - [mcp-tools.md](mcp-tools.md) — all 27 MCP tools with argument schemas.
-- [examples/resolution-walkthrough.md](examples/resolution-walkthrough.md) — precise vs fuzzy worked example.
 - [benchmarks.md](benchmarks.md) — how to measure retrieval quality and performance.
 - [architecture.html](../architecture.html) — interactive HTML version of these diagrams.

@@ -160,7 +160,8 @@ semantic search over docs.
 ## Resolution model
 
 This is the single most important concept for using the graph layer correctly.
-For a concrete worked example, see [examples/resolution-walkthrough.md](examples/resolution-walkthrough.md).
+For the measured false-positive rate of fuzzy mode, see
+[methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md).
 
 Every call edge carries a `resolution` label assigned by the resolver:
 

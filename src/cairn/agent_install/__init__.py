@@ -1,7 +1,7 @@
 """Agent integration installer: wires cairn into AI coding clients.
 
 Detects installed clients (Claude Code, Cursor, Droid/Factory, ZCode, agy,
-opencode, Claude Desktop) and writes their per-client configs — MCP server,
+opencode, kilo, omp, Claude Desktop) and writes their per-client configs — MCP server,
 skills, slash commands, subagents/droids, rules, and hooks — with paths
 resolved at install time. Configs are *generated* (not copied), pointing at
 the installed `cairn` binary, so there are no hardcoded paths and no dependence

@@ -114,6 +114,7 @@ decisions) and is the parent of the `workflow` subgroup.
 |------------|-------------|
 | `cairn knowledge add` | Ingest a business knowledge document (`--title` required). |
 | `cairn knowledge import DIR` | Batch-ingest all `.md` files from a directory. |
+| `cairn knowledge ingest` | Stage multi-source documents (fed markdown, repo doc-tree scans, converted pdf/docx) into an OKF outbox + dry-run manifest; `--ingest` writes them. |
 | `cairn knowledge search QUERY` | Search knowledge docs (lexical + semantic + graph bridge). |
 | `cairn knowledge list` | List documents (`--type`, `--status`, `--tag` filters). |
 | `cairn knowledge embed` | Build the knowledge embedding index. |
@@ -124,7 +125,16 @@ decisions) and is the parent of the `workflow` subgroup.
 
 `add` options: `--file` or `--body` (one required), `--title` (required),
 `--type spec` (`business-rule|spec|decision`), `--tags`, `--affects`,
-`--affects-modules`, `--epic`, `--resource`.
+`--affects-modules`, `--epic`, `--resource` (canonical URI),
+`--description` (one-line summary; defaults to the title).
+
+`ingest` options: `--file` (repeatable, fed markdown file), `--dir`
+(repeatable, fed markdown directory), `--repo` (repeatable, repository
+root to scan for docs), `--ingest` (approve: write staged manifest rows
+into the store, then embed), `--include-drafts` (ingest draft-status docs
+tagged `draft` instead of skipping), `--outbox` (staging directory;
+default `<workspace>/.cairn/ingest-outbox`). One of `--file`, `--dir`, or
+`--repo` is required; without `--ingest` nothing is written to the store.
 
 #### `cairn knowledge workflow` — ordered procedural workflows
 

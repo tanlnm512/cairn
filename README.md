@@ -144,8 +144,7 @@ cairn impact invoke --fuzzy      # candidate list (name matches), each labelled 
 
 Measured on this repo: **82% of fuzzy results for common names are
 name-collision noise that precise mode excludes**
-([methodology](docs/methodology-precise-vs-fuzzy.md) ·
-[worked example](docs/examples/resolution-walkthrough.md)). An empty precise
+([methodology](docs/methodology-precise-vs-fuzzy.md)). An empty precise
 result means "no *resolvable* callers," not "unused" — retry with `--fuzzy`
 before concluding a symbol is dead. And `explore` surfaces `ambiguous`
 dispatch hops — polymorphism that grep fundamentally cannot see.

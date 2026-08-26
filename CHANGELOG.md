@@ -19,14 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   markdown, and fed pdf/docx conversion behind the new `cairn[ingest]`
   extra (pymupdf4llm + mammoth + markdownify, lazy imports — the base
   install degrades to a reasoned skip). One parse/classify/identity/stage
-  path produces an OKF outbox plus a dry-run manifest; `--ingest`
-  approval writes each row in-process via `add_document` (which gained an
-  optional `description` parameter, default behavior unchanged), embeds,
-  and verifies (count vs manifest, smoke search, idempotent re-runs).
-  Per-workspace overrides: `cairn.json` grows an `ingest` key layering
-  classification rules and skip-list entries over built-in defaults.
+  path produces an OKF outbox plus a dry-run manifest (staged output is
+  redacted like the store); `--ingest` approval writes each row
+  in-process via `add_document`, embeds, and verifies (count vs manifest,
+  `cairn validate`, smoke search, idempotent re-runs). `--include-drafts`
+  re-admits the whole draft-status family (tagged `draft`), not only the
+  literal `draft` status. `add_document` gained an optional `description`
+  parameter — surfaced as `--description` on `cairn knowledge add`, whose
+  `--resource` flag is unchanged; with neither flag the default behavior
+  is unchanged. Per-workspace overrides: `cairn.json` grows an `ingest`
+  key layering classification rules and skip-list entries over built-in
+  defaults.
 - `install-agents` now supports the **omp** CLI: detection and MCP wiring
-  alongside the existing clients.
+  alongside the existing clients. omp gets the shared `mcpServers` shape
+  in `.omp/mcp.json` (workspace) or `~/.omp/agent/mcp.json` (global),
+  plus the two native omp subagent files `cairn-explorer.md` and
+  `knowledge-steward.md` under `.omp/agents/` / `~/.omp/agent/agents/`;
+  uninstall strips the MCP entry and both agent files per scope
+  (workspace, global, or all).
 
 ## [0.14.4] - 2026-08-26
 

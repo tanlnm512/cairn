@@ -92,9 +92,9 @@ def default_sse_url(sse_url: str | None = None) -> str:
 def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
     """MCP server config pointing at `cairn serve` (shared mcpServers shape).
 
-    Used by claude, cursor, droid, and (via mcp_config_json_desktop) the
-    Claude Desktop app. Client-specific MCP shapes (zcode, opencode, agy)
-    live in their own client modules.
+    Used by claude, cursor, droid, omp, and (via mcp_config_json_desktop)
+    the Claude Desktop app. Client-specific MCP shapes (zcode, opencode,
+    agy, kilo) live in their own client modules.
 
     Args:
         transport: "stdio" (default, one process per client) or "sse" (one
