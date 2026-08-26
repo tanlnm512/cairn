@@ -1,6 +1,6 @@
 # Spec: multi-source-doc-ingestion
 
-**Status**: approved     <!-- draft while writing → approved at the Stage-4 user gate
+**Status**: done        <!-- draft while writing → approved at the Stage-4 user gate
                                 → active once the first task spawns → done when all
                                 tasks are ticked and `check.py` re-run green -->
 **Created**: 2026-08-26

@@ -102,6 +102,7 @@ def add_document(
     owner: Optional[str] = None,
     epic_link: Optional[str] = None,
     steps: Optional[List[dict]] = None,
+    description: Optional[str] = None,  # one-line summary; defaults to title
     doc_source: str = "manual",    # "manual" or "imported"
 ) -> str:
     """Ingest a document. Returns the concept_id.
@@ -148,7 +149,7 @@ def add_document(
     concept = OKFConcept(
         type=f"Knowledge-{doc_type}",
         title=title,
-        description=title,  # one-line summary; caller can override via body
+        description=description or title,
         resource=resource,
         tags=tags or [],
         concept_id=concept_id,

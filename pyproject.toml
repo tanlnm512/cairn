@@ -136,6 +136,20 @@ otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 
+# Binary-document conversion for `cairn knowledge ingest` (FR-003,
+# multi-source-doc-ingestion D-002): pymupdf4llm for PDF, mammoth +
+# markdownify for docx (mammoth's own Markdown writer is deprecated; the
+# composition goes HTML -> markdown). Pip-installable with prebuilt wheels
+# on supported platforms, no system binaries; converter deps never land in
+# core, so the base distribution is unchanged. Imports are strictly lazy
+# inside src/cairn/knowledge/ingest/convert.py -- base installs (and CI
+# without this extra) import the ingest package cleanly.
+ingest = [
+    "pymupdf4llm>=1.28",
+    "mammoth>=1.11",
+    "markdownify>=0.13",
+]
+
 [project.scripts]
 cairn = "cairn.cli:main"
 

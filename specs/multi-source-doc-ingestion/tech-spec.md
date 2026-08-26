@@ -283,3 +283,23 @@ From research.md (each URL there carries the claim; why it matters here):
 - **Context**: FR-006 (counts by type/repo + skips with reasons) and FR-008 (verify = list count vs manifest) make the manifest the thing humans review and M3 executes; M1 defines the schema (plan.md).
 - **Decision**: `manifest.json` shape — top level: `version`, `generated_at`, `workspace`, `counts {accepted, skipped, by_type, by_repo}`; `rows`: one per doc, accepted rows carry every `add_document` argument (concept_id, title, doc_type, tags, description, resource, affects_repos, affects_modules, origin/repo/source_path, `body` with the `Source:` line, staged-file path), skipped rows carry `source_path` + `skip` reason. Executor consumes only the manifest; staged OKF files are the human/OKF-tool view, cross-checked against rows at staging time (title/type must match).
 - **Consequences**: execution never re-parses reviewed files and depends on no OKF read API (none documented in survey); body duplication between staged file and manifest is accepted (same source dict, same run). Schema versioned from v1 so later milestones evolve it without silent breaks.
+
+### D-010: Execution cadence — one end-of-plan commit; C-05 batched at phase boundaries
+- **Context**: plan.md's Delivery prose says "one conventional commit per task"; the spec-to-code execution mode mandates nothing is committed until the plan-wide closing audit passes, then one commit for the entire implementation.
+- **Decision**: the skill's cadence governs — a single conventional commit (code + docs together, pre-verified by `pre-commit run --all-files`) after the closing audit. C-05's per-task `cairn update` + `record_memory` runs batched at phase boundaries and at closing; a graph rebuild per task on an uncommitted tree indexes churn, not state.
+- **Consequences**: satisfies C-01/C-02/C-03 (branch, pre-commit, tests-traced-to-FRs unchanged). If wrong, cost is a coarser revert unit — the closing audit's scope diff still attributes every file to its task.
+
+### D-011: Orchestrator-inline completion after repeated agent soft-budget kills
+- **Context**: 6 of 8 implementer spawns were force-stopped at the harness's ~300-request soft budget mid-verification (plans complete, artifacts partial); resuming produced zombie sessions that raced the orchestrator's finishing edits.
+- **Decision**: after a spawn's second unproductive cycle, the orchestrator completes the task inline (single-file, zero-unknown finishing work per the skill's inline exception). Affected: T002 tail, T003 tail, T005 tail, T006, T007, T008 tail, T009, T012, T014 tail.
+- **Consequences**: identical acceptance commands gate every task either way; the closing audit re-proves the whole plan. Cost: less parallelism than the wave design intended.
+
+### D-012: pymupdf4llm floor is >=0.0.17, not >=1.28
+- **Context**: task.md T012 pinned `pymupdf4llm>=1.28`; research.md RQ1 shows 1.28.2 is the PyMuPDF ENGINE version — pymupdf4llm (the wrapper this spec depends on) versions at 0.0.x.
+- **Decision**: `ingest = ["pymupdf4llm>=0.0.17", "mammoth>=1.11", "markdownify>=0.13"]` — mammoth aligned to research's markitdown-extra citation (`~=1.11.0`).
+- **Consequences**: installability. If wrong (floor too low), pip resolves the latest anyway; the floor only excludes known-broken olds.
+
+### D-013: Correction to D-012 — pymupdf4llm floor is >=1.28 after all
+- **Context**: D-012 lowered the pin to >=0.0.17 citing research.md's wrapper-at-0.0.x observation; the actual install resolved `pymupdf4llm-1.28.2` — the wrapper's versioning caught up to the engine's, and task.md T012's original `>=1.28` was correct.
+- **Decision**: pin `pymupdf4llm>=1.28`; mammoth>=1.11 and markdownify>=0.13 unchanged from D-012.
+- **Consequences**: none at runtime (the old floor also resolved 1.28.2); the record now matches reality. D-012 stands only for the mammoth alignment.

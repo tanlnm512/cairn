@@ -4,7 +4,7 @@
 
 ## Active
 
-- [multi-source-doc-ingestion](multi-source-doc-ingestion/spec.md) — draft (created 2026-08-26)
+- [multi-source-doc-ingestion](multi-source-doc-ingestion/spec.md) — done (15/15 tasks 2026-08-26; cairn knowledge ingest: staged OKF outbox + dry-run manifest, repo-scan skip-list with reasons, --ingest write path via add_document(D-003/D-004) + embed + verify, cairn[ingest] pdf/docx extra (D-002/D-013), workspace cairn.json ingest overrides (D-005); 2309 tests green; TC-030 reference-corpus run pending as the one manual validation)
 
 ## Archive
 
