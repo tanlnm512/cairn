@@ -4,10 +4,11 @@
 
 ## Active
 
-- [kotlin-grammar-fwcd](archive/2026-08-25-kotlin-grammar-fwcd/spec.md) — done (12/12 tasks 2026-08-25; fwcd grammar vendored in-tree as cairn._tree_sitter_kotlin abi3 ext, KotlinParser ported (fix round 1: navigation_suffix receiver), ERROR-scan + modern fixtures, cibuildwheel matrix, tree-sitter-kotlin dep removed; 2137 tests green, golden byte-identical)
+- [multi-source-doc-ingestion](multi-source-doc-ingestion/spec.md) — draft (created 2026-08-26)
 
 ## Archive
 
+- [kotlin-grammar-fwcd](archive/2026-08-25-kotlin-grammar-fwcd/spec.md) — done (12/12 tasks 2026-08-25; fwcd grammar vendored in-tree as cairn._tree_sitter_kotlin abi3 ext, KotlinParser ported (fix round 1: navigation_suffix receiver), ERROR-scan + modern fixtures, cibuildwheel matrix, tree-sitter-kotlin dep removed; 2137 tests green, golden byte-identical)
 - [docs-human-readable](archive/docs-human-readable/spec.md) — done (10/10 tasks 2026-08-18; orientation blocks ×15 pages, 30-row artifact inventory + gap fills, back-links + scripts/check_doc_links.py; all 12 TCs green, sealed bytes untouched)
 - [ui-dashboard](archive/ui-dashboard/spec.md) — done (17/17 tasks 2026-08-20; `cairn dashboard` read-only Starlette UI — projects/embed status, vis-network graph, tool history/tokens/chains over extended `tool_metrics`, health/memory/tasks panels; 25 TCs, 67 new tests, missing-DB state D-010)
 - [ui-dashboard-live-updates](archive/ui-dashboard-live-updates/spec.md) — done (10/10 tasks 2026-08-20; poll-based auto-refresh on history/chains/tokens — re-arming loop w/ visibility gate, pause/resume + disconnected banner, filter/scroll preservation, 30-cycle soak w/ id-set equality; 2061 tests green)
