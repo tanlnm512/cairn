@@ -166,12 +166,14 @@ class InstallReport:
     transport: str = "stdio"  # the transport actually used (after auto-detect)
 
 
-def _detect_default_transport(sse_url: str | None = None) -> str:
-    """Pick the transport for install when the caller didn't specify.
+def sse_daemon_reachable(sse_url: str | None = None) -> bool:
+    """Probe whether the shared SSE daemon is accepting connections.
 
-    If the SSE daemon is running (probes http://127.0.0.1:{DEFAULT_PORT}/sse), default to
-    "sse" — this is what you almost always want once the daemon is up. Otherwise
-    fall back to "stdio" (safe for fresh installs with no daemon).
+    Connects to the host:port parsed out of the SSE URL (default
+    ``http://127.0.0.1:{DEFAULT_PORT}/sse``). Installs default to SSE
+    transport for every client except Claude Desktop (stdio-only), so this
+    is used only to warn when the daemon is not yet running — not to pick
+    the transport.
     """
     import socket
 
@@ -185,12 +187,12 @@ def _detect_default_transport(sse_url: str | None = None) -> str:
         host, port_s = host_part.rsplit(":", 1)
         port = int(port_s)
     except (IndexError, ValueError):
-        return "stdio"
+        return False
     try:
         with socket.create_connection((host, port), timeout=1.0):
-            return "sse"
+            return True
     except OSError:
-        return "stdio"
+        return False
 
 
 def install_cross_tool(workspace: str, force: bool, dry_run: bool = False) -> InstallResult:
@@ -257,9 +259,14 @@ def install(
     ``"workspace"`` (default) writes to ``./.claude/``, ``./.cursor/`` etc.;
     ``"global"`` writes to ``~/.claude/``, ``~/.cursor/`` etc. Single-scope
     clients (claude-desktop, agy) ignore the parameter.
+
+    ``transport`` defaults to ``"sse"`` — one shared daemon started with
+    ``cairn serve start`` (the SSE URL derives from ``lifecycle.DEFAULT_PORT``).
+    Claude Desktop is stdio-only and always gets a stdio config regardless;
+    pass ``transport="stdio"`` to opt out everywhere.
     """
     if transport is None:
-        transport = _detect_default_transport(sse_url)
+        transport = "sse"
 
     detections = detect_clients(workspace)
     if clients:

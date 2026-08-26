@@ -160,10 +160,12 @@ def check_installed(workspace: str) -> dict[str, bool]:
     # droid: .factory/skills/cairn/ exists
     result["droid"] = (ws / ".factory" / "skills" / "cairn" / "SKILL.md").exists()
 
-    # zcode: .zcode/config.json has cairn entry
+    # zcode: .zcode/config.json (workspace) or ~/.zcode/cli/config.json
+    # (global, current) has cairn entry; ~/.zcode/config.json is legacy global.
     result["zcode"] = (
         _json_has_cairn(ws / ".zcode" / "config.json")
         or _json_has_cairn(home / ".zcode" / "config.json")
+        or _json_has_cairn(home / ".zcode" / "cli" / "config.json")
     )
 
     # agy: ~/.gemini/config/mcp_config.json has cairn

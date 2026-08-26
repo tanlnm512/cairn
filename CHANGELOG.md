@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
+## [0.14.3] - 2026-08-26
+
+### Changed
+- `install-agents` now defaults to **SSE** transport for every supported
+  client, instead of only when the SSE daemon happened to be reachable
+  (falling back to stdio otherwise). Claude Desktop still always gets a
+  stdio config — the app does not support SSE/HTTP MCP transports. If the
+  daemon is not reachable at install time, the CLI prints a note to run
+  `cairn serve start`; `--stdio` opts out globally.
+
+### Fixed
+- `install-agents --scope global` for ZCode now writes the MCP entry to
+  `~/.zcode/cli/config.json` — the file the ZCode CLI actually reads for
+  user-scope MCP servers (skills/commands/agents still go to `~/.zcode/`).
+  It previously wrote `~/.zcode/config.json`, which the CLI does not read
+  for MCP servers, so global installs silently never connected — sessions
+  reported "Required MCP server is not connected: cairn". Re-running the
+  installer migrates an existing legacy entry (strips it from the old
+  path), and uninstall/installed-detection now know both paths.
+
 ## [0.14.2] - 2026-08-25
 
 > **Focus:** two robustness fixes — `cairn embed --install-deps` no longer

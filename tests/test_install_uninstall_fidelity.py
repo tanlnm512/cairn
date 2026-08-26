@@ -203,7 +203,7 @@ class TestGlobalScopeUninstall:
 
         assert (fake_home / ".claude" / "skills" / "cairn").is_dir()
         assert (fake_home / ".cursor" / "hooks.json").exists()
-        assert (fake_home / ".zcode" / "config.json").exists()
+        assert (fake_home / ".zcode" / "cli" / "config.json").exists()
 
         uninstall(str(ws), clients=["claude", "cursor", "zcode"], scope="global")
 
@@ -214,8 +214,30 @@ class TestGlobalScopeUninstall:
         assert "hooks" not in st, "cairn hooks must be stripped from ~/.claude/settings.json"
         cur = json.loads((fake_home / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         assert "hooks" not in cur, "cairn hooks must be stripped from ~/.cursor/hooks.json"
-        zc = json.loads((fake_home / ".zcode" / "config.json").read_text(encoding="utf-8"))
+        zc = json.loads((fake_home / ".zcode" / "cli" / "config.json").read_text(encoding="utf-8"))
         assert "cairn" not in zc.get("mcp", {}).get("servers", {})
+
+    def test_zcode_global_install_migrates_legacy_config(self, fake_home, tmp_path, monkeypatch):
+        """A pre-fix global install left cairn in ~/.zcode/config.json (which the
+        ZCode CLI does not read for MCP). Re-installing must move the entry to
+        ~/.zcode/cli/config.json and strip the legacy one."""
+        _no_cli(monkeypatch, "zcode")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        legacy = fake_home / ".zcode" / "config.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(json.dumps(
+            {"mcp": {"servers": {"cairn": {"type": "stdio", "command": "/old/cairn",
+                                           "args": ["serve"]}}}}), encoding="utf-8")
+
+        install(str(ws), clients=["zcode"], scope="global", transport="sse",
+                sse_url="http://127.0.0.1:9876/sse")
+
+        new = json.loads((fake_home / ".zcode" / "cli" / "config.json").read_text(encoding="utf-8"))
+        assert new["mcp"]["servers"]["cairn"]["type"] == "sse"
+        leg = json.loads(legacy.read_text(encoding="utf-8"))
+        assert "cairn" not in leg.get("mcp", {}).get("servers", {}), \
+            "legacy entry must be stripped so only one source of truth remains"
 
     def test_global_uninstall_preserves_user_entries(self, fake_home, tmp_path, monkeypatch):
         _no_cli(monkeypatch, "claude")
@@ -613,3 +635,34 @@ class TestCliScopeWiring:
         assert (ws / ".cursor" / "hooks.json").read_text(encoding="utf-8") == before
         assert (ws / ".agents" / "skills" / "cairn").exists(), \
             "dry-run must not remove the cross-tool copies either"
+
+
+# --------------------------------------------------------------------------
+# Transport default: SSE everywhere except Claude Desktop (stdio-only)
+# --------------------------------------------------------------------------
+
+class TestTransportDefault:
+    def test_install_defaults_to_sse_except_claude_desktop(self, fake_home, tmp_path, monkeypatch):
+        """No explicit transport: clients get an SSE config pointing at the
+        shared daemon; Claude Desktop stays stdio (the app is stdio-only)."""
+        _no_cli(monkeypatch, "claude", "zcode")
+        from cairn.mcp_server import lifecycle as lc
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["zcode", "claude", "claude-desktop"])
+
+        expected_url = f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        # zcode (workspace scope): nested mcp.servers shape, SSE.
+        zc = json.loads((ws / ".zcode" / "config.json").read_text(encoding="utf-8"))
+        assert zc["mcp"]["servers"]["cairn"]["type"] == "sse"
+        assert zc["mcp"]["servers"]["cairn"]["url"] == expected_url
+        # claude code (workspace scope): flat mcpServers shape, SSE.
+        cl = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+        assert cl["mcpServers"]["cairn"]["type"] == "sse"
+        assert cl["mcpServers"]["cairn"]["url"] == expected_url
+        # claude-desktop: ALWAYS stdio, even under the SSE default.
+        from cairn.agent_install.detect import claude_desktop_config_path
+        cd = json.loads(claude_desktop_config_path().read_text(encoding="utf-8"))
+        assert "command" in cd["mcpServers"]["cairn"]
+        assert "url" not in cd["mcpServers"]["cairn"]
