@@ -362,22 +362,6 @@ jobs:
           pip install -e ".[test]"
           pytest tests/ -q -k t2
 
-      # T018 (FR-005/AC6, TC-027): docs/benchmarks.md tables are generated,
-      # never hand-owned. Regenerate from the committed baselines and require
-      # byte-identity with the checkout -- like the T1/T2 pins above, a
-      # deterministic content check (the deliberate exception to the
-      # continue-on-error rule), not a timing. Catches both stale tables
-      # (baselines changed, docs not regenerated) and hand edits inside the
-      # sentinels: the generator rewrites sentinel content from the artifacts,
-      # so any committed deviation surfaces as a non-empty diff vs the index.
-      # The script is stdlib-only (no cairn import), so the bare
-      # `pip install -e .` above suffices; actions/checkout supplies the git
-      # context the diff needs.
-      - name: Verify docs tables regenerated (T018 hand-edit guard)
-        run: |
-          python scripts/gen_benchmark_tables.py
-          git diff --exit-code docs/benchmarks.md
-
       # Rolling comparison: prefer the restored main-minted baseline
       # (same hosted class, deltas meaningful); cold start falls back to
       # the committed DS-v1 artifact (cross-machine -- the CLI's mismatch

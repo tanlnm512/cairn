@@ -38,6 +38,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uninstall strips the MCP entry and both agent files per scope
   (workspace, global, or all).
 
+### Changed
+- Docs set rewritten from a fresh code survey, agent-first: new
+  `docs/README.md` index, `architecture.md`, `indexing.md`, `retrieval.md`,
+  `knowledge-and-memory.md`, `mcp-tools.md`, `cli-reference.md`, and
+  `configuration.md`, plus four standalone diagrams under `docs/diagrams/`
+  (system architecture, indexing, retrieval, doc ingestion). Every
+  identifier is verbatim from source; no hand-cited line numbers.
+  `README.md` / `AGENTS.md` / `CONTRIBUTING.md` pointers rewired to the new
+  set.
+
+### Removed
+- Legacy doc set (15 files) and the entire `specs/` tree (102 files) —
+  `docs/review-checklist.md` and `docs/release-checklist.md` are the only
+  pre-existing docs kept.
+- Benchmarks-doc machinery retired with its target:
+  `docs/benchmarks.md`, `scripts/gen_benchmark_tables.py`,
+  `tests/test_gen_benchmark_tables.py`, and the CI step that guarded the
+  generated tables (T018). Benchmarks themselves still run via
+  `cairn bench`; only the generated-doc publication path is gone.
+
 ## [0.14.4] - 2026-08-26
 
 ### Added

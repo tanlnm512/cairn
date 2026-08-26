@@ -139,8 +139,7 @@ __all__ = [
 
 
 # --- Per-client install reach (what `cairn install-agents` wires natively) ---
-# Verified against each client's documented discovery paths (see
-# specs/INTEGRATIONBOOK.md "Client support matrix" for sources). The cross-tool
+# Verified against each client's documented discovery paths. The cross-tool
 # `.agents/` fallback (install_cross_tool, always written) fills gaps for the
 # clients whose docs confirm `.agents/` discovery.
 #
