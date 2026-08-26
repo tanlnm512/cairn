@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-27
+
 ### Added
 - `cairn knowledge ingest` — staged multi-source document ingestion: repo
   doc-tree scans (allowlist walk, skip-list with logged reasons), fed
