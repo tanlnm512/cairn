@@ -479,7 +479,7 @@ stdout.
 
 | Command | Description |
 |---------|-------------|
-| `cairn install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode). |
+| `cairn install-agents` | Wire cairn into detected AI coding clients (Claude Code/Claude Desktop/Cursor/Droid/ZCode/opencode/agy/kilo). |
 | `cairn uninstall-agents` | Remove cairn entries from AI client configs (idempotent). |
 | `cairn uninstall` | Full teardown: agent wiring, hooks, graph store, and the `cairn` binary. |
 | `cairn version` | Print the installed cairn version. |
