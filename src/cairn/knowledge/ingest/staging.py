@@ -21,6 +21,16 @@ frontmatter key order; the YAML is never hand-rolled) plus
   carry source_path + skip reason and stage no file
 * each staged file's frontmatter title/type is cross-checked against
   its row at staging time (D-009) -- a mismatch raises
+
+Store parity (audit 2026-08): the doc_type is slugified exactly as
+``knowledge.store.add_document`` does (``slugify(doc_type) or "general"``),
+so a workspace-config doc_type (``cairn.json`` ``ingest.classification``
+only checks non-emptiness) can never traverse out of the outbox; and
+title/body/description are routed through ``strip_private_data`` BEFORE
+the OKFConcept and manifest rows are built, so the dry-run outbox holds
+precisely what an approved run would keep (the store re-redacts
+idempotently). Provenance fields -- resource/source_path, the ``Source:``
+line, tags, affects_* -- stay verbatim.
 """
 from __future__ import annotations
 
@@ -33,8 +43,10 @@ from typing import Iterable
 from cairn.knowledge.ingest.classifier import Classification
 from cairn.knowledge.ingest.identity import DocIdentity
 from cairn.knowledge.ingest.parser import ParsedDoc
+from cairn.memory.privacy import strip_private_data
 from cairn.okf.concept import OKFConcept
 from cairn.okf.provenance import Tier
+from cairn.okf.utils import slugify
 
 #: D-009 manifest schema version.
 MANIFEST_VERSION = 1
@@ -79,7 +91,7 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
             continue
         rows.append(_stage_document(entry, source_path, outbox_dir))
         accepted += 1
-        doc_type = entry.classification.doc_type
+        doc_type = _safe_doc_type(entry.classification.doc_type)
         by_type[doc_type] = by_type.get(doc_type, 0) + 1
         by_repo[entry.repo] = by_repo.get(entry.repo, 0) + 1
 
@@ -107,22 +119,41 @@ def _source_path(entry: StagedEntry) -> str:
     return f"{entry.repo}/{PurePosixPath(entry.relpath).as_posix()}"
 
 
+def _safe_doc_type(doc_type: str) -> str:
+    """Slugified doc_type, mirroring ``knowledge.store.add_document``.
+
+    doc_type can come from workspace config (``cairn.json``
+    ``ingest.classification``), which is only checked for non-emptiness,
+    so an unsanitized value like ``"../../escaped"`` must never reach a
+    staged path. ``slugify`` reduces it to path-safe alphanumerics and
+    the ``or "general"`` fallback matches the store exactly, so the
+    staged path and the stored concept_id always agree.
+    """
+    return slugify(doc_type) or "general"
+
+
 def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> dict:
     """Write one accepted document's OKF file; return its manifest row."""
-    doc_type = entry.classification.doc_type
+    doc_type = _safe_doc_type(entry.classification.doc_type)
     identity = entry.identity
     concept_id = f"knowledge/{doc_type}/{identity.slug}"
     staged_path = f"{concept_id}.md"
+    title = strip_private_data(identity.title)
+    description = strip_private_data(identity.description)
     stripped_body = entry.parsed.body.rstrip()
     if stripped_body:
         body = f"{stripped_body}\n\nSource: {source_path}\n"
     else:
         body = f"Source: {source_path}\n"
+    # Redact the composed body (Source line included) so the staged row
+    # equals what the store would keep -- add_document redacts the full
+    # body it is handed, and strip_private_data is idempotent.
+    body = strip_private_data(body)
     tags = _merged_tags(identity.tags, entry.classification.extra_tags)
     concept = OKFConcept(
         type=f"Knowledge-{doc_type}",
-        title=identity.title,
-        description=identity.description,
+        title=title,
+        description=description,
         resource=source_path,
         tags=tags,
         concept_id=concept_id,
@@ -136,13 +167,13 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
         },
     )
     concept.to_file(str(outbox_dir / staged_path))
-    _cross_check(outbox_dir / staged_path, identity.title, doc_type, staged_path)
+    _cross_check(outbox_dir / staged_path, title, doc_type, staged_path)
     return {
         "concept_id": concept_id,
-        "title": identity.title,
+        "title": title,
         "doc_type": doc_type,
         "tags": tags,
-        "description": identity.description,
+        "description": description,
         "resource": source_path,
         "affects_repos": list(identity.affects_repos),
         "affects_modules": list(identity.affects_modules),

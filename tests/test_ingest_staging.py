@@ -18,7 +18,7 @@ from cairn.knowledge.ingest.adapters import (
     FED_REPO,
     FedMarkdownAdapter,
 )
-from cairn.knowledge.ingest.classifier import classify_doc
+from cairn.knowledge.ingest.classifier import Classification, classify_doc
 from cairn.knowledge.ingest.identity import build_identity
 from cairn.knowledge.ingest.parser import parse_source_doc
 from cairn.knowledge.ingest.staging import StagedEntry, stage_outbox
@@ -213,6 +213,79 @@ class TestStageOutbox:
         on_disk = json.loads((outbox / "manifest.json").read_text(encoding="utf-8"))
         assert manifest == on_disk
 
+    @pytest.mark.parametrize(
+        "raw_doc_type, safe_doc_type",
+        [
+            ("../../escaped", "escaped"),
+            ("run books", "run-books"),
+            ("..\\..\\win", "win"),
+        ],
+    )
+    def test_hostile_doc_type_slugified_into_contained_staged_path(
+        self, feed_root, raw_doc_type, safe_doc_type
+    ):
+        """doc_type from workspace config is untrusted (only a non-empty
+        check): staging must slugify it exactly like store.add_document so
+        "../../escaped" can never write outside the outbox."""
+        parsed = parse_source_doc(ADR_TEXT)
+        entry = StagedEntry(
+            repo="acme",
+            relpath="docs/adr/0007-use-events.md",
+            origin="repo-scan",
+            parsed=parsed,
+            classification=Classification(doc_type=raw_doc_type),
+            identity=build_identity("acme", "docs/adr/0007-use-events.md", parsed),
+        )
+        outbox = feed_root / "outbox"
+        manifest = stage_outbox([entry], outbox)
+
+        row = manifest["rows"][0]
+        assert row["doc_type"] == safe_doc_type
+        assert row["concept_id"] == f"knowledge/{safe_doc_type}/{entry.identity.slug}"
+        staged = outbox / row["staged_path"]
+        assert staged.exists()
+        assert staged.resolve().is_relative_to(outbox.resolve())
+        assert manifest["counts"]["by_type"] == {safe_doc_type: 1}
+        # Exactly one .md, inside the outbox; nothing escaped it.
+        assert list(outbox.rglob("*.md")) == [staged]
+        assert not (feed_root / "escaped").exists()
+
+    def test_secret_shaped_body_redacted_in_outbox_file_and_manifest(self, feed_root):
+        """The dry-run outbox must not persist secrets (store parity): the
+        staged .md and the manifest row -- including the description, which
+        is derived from the body -- carry [REDACTED_SECRET], while the
+        Source: provenance line survives verbatim. Probe copied from
+        tests/test_redaction_chokepoints.py (matches the first pattern in
+        memory/privacy.py's catalog)."""
+        secret = "api_key=sk-1234567890abcdef1234567890abcdef"
+        doc = (
+            "---\n"
+            "title: Deploy runbook\n"
+            "status: accepted\n"
+            "---\n"
+            f"Connect with {secret} before restarting.\n"
+        )
+        entry = _entry("acme", "docs/deploy.md", doc)
+
+        manifest = stage_outbox([entry], feed_root / "outbox")
+
+        row = manifest["rows"][0]
+        assert "sk-1234567890" not in row["body"]
+        assert "REDACTED_SECRET" in row["body"]
+        assert "sk-1234567890" not in row["description"]
+        assert "REDACTED_SECRET" in row["description"]
+        staged_text = (feed_root / "outbox" / row["staged_path"]).read_text(
+            encoding="utf-8"
+        )
+        assert "sk-1234567890" not in staged_text
+        assert "REDACTED_SECRET" in staged_text
+        manifest_text = (feed_root / "outbox" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+        assert "sk-1234567890" not in manifest_text
+        # Provenance is not free text: the Source line stays verbatim.
+        assert "Source: acme/docs/deploy.md" in row["body"]
+
 
 ADR_TEXT = (
     "---\n"
@@ -283,20 +356,39 @@ class TestRunIngest:
         assert "fed" in row["tags"]
         assert (feed_root / "outbox" / row["staged_path"]).exists()
 
-    def test_same_content_same_shape_classifies_identically(self, feed_root):
-        one = _write(feed_root, "one-adr.md", ADR_TEXT)
-        two = _write(feed_root, "two-adr.md", ADR_TEXT)
+    def test_same_document_stages_identically_via_scan_and_feed(
+        self, feed_root, monkeypatch
+    ):
+        """TC-013: one document staged twice -- once through a repo scan
+        (RepoScanAdapter, allowlisted doc dirs) and once through an
+        explicit feed of the same tree (FedMarkdownAdapter) -- yields
+        identical staged rows (slug/stable_id/description/tags). Only the
+        origin label may differ. The repo root is named "workspace" so
+        both adapters report the same repo and thus the same
+        path-derived identity."""
+        monkeypatch.chdir(feed_root)
+        repo_root = feed_root / "workspace"
+        _write(repo_root, "docs/adr/0007-use-events.md", ADR_TEXT)
 
-        manifest = run_ingest(
-            files=[one, two], dirs=[], outbox=feed_root / "outbox"
+        scanned = run_ingest(
+            files=[], dirs=[], repos=[repo_root], outbox=feed_root / "outbox-scan"
+        )
+        fed = run_ingest(
+            files=[], dirs=[repo_root], repos=[], outbox=feed_root / "outbox-fed"
         )
 
-        first, second = manifest["rows"]
-        assert first["doc_type"] == second["doc_type"] == "decision"
-        assert first["body"].split("\n\nSource:")[0] == second["body"].split(
-            "\n\nSource:"
-        )[0]
-        assert first["concept_id"] != second["concept_id"]
+        scan_row = scanned["rows"][0]
+        fed_row = fed["rows"][0]
+        assert scan_row["repo"] == fed_row["repo"] == "workspace"
+        assert scan_row["source_path"] == fed_row["source_path"]
+        # slug (via concept_id), stable_id + display title, description, tags
+        assert scan_row["concept_id"] == fed_row["concept_id"]
+        assert scan_row["title"] == fed_row["title"]
+        assert scan_row["description"] == fed_row["description"]
+        assert scan_row["tags"] == fed_row["tags"]
+        # The one legitimate difference: how the document was sourced.
+        assert scan_row["origin"] == "workspace"
+        assert fed_row["origin"] == "fed"
 
     def test_default_outbox_under_workspace_root(self, feed_root, monkeypatch):
         doc = _write(feed_root, "plain.md", PLAIN_TEXT)
