@@ -27,6 +27,7 @@ from .._common import (
     _claude_hook_command,
     _claude_instructions,
     _uninstall_bases,
+    default_sse_url,
     mcp_config_json,
     resolve_cg_command,
 )
@@ -90,12 +91,15 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
         if dry_run:
             res.notes.append("[dry-run] Would register MCP globally via `claude mcp add --scope user`.")
         elif shutil.which("claude"):
-            cmd = resolve_cg_command()
+            if transport == "sse":
+                url = default_sse_url(sse_url)
+                argv = ["claude", "mcp", "add", "--transport", "sse",
+                        "--scope", "user", "cairn", url]
+            else:
+                cmd = resolve_cg_command()
+                argv = ["claude", "mcp", "add", "cairn", "--scope", "user", *cmd, "serve"]
             try:
-                subprocess.run(
-                    ["claude", "mcp", "add", "cairn", "--scope", "user", *cmd, "serve"],
-                    capture_output=True, timeout=15, check=False,
-                )
+                subprocess.run(argv, capture_output=True, timeout=15, check=False)
                 res.notes.append("Registered MCP globally via `claude mcp add --scope user`.")
             except (subprocess.SubprocessError, OSError) as e:
                 res.notes.append(

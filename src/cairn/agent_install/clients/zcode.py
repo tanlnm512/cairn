@@ -19,6 +19,7 @@ from .._common import (
     _claude_agent_md,
     _claude_command_md,
     _uninstall_bases,
+    default_sse_url,
     resolve_cg_command,
 )
 from ..merge import (
@@ -42,11 +43,8 @@ def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) 
         transport: "stdio" (default) or "sse" (shared daemon).
         sse_url: when transport="sse", the URL clients should connect to.
     """
-    from ...mcp_server import lifecycle as lc
-
     if transport == "sse":
-        url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-        return {"mcp": {"servers": {"cairn": {"type": "sse", "url": url}}}}
+        return {"mcp": {"servers": {"cairn": {"type": "sse", "url": default_sse_url(sse_url)}}}}
     cmd = resolve_cg_command()
     if len(cmd) == 1:
         return {"mcp": {"servers": {"cairn": {"type": "stdio", "command": cmd[0], "args": ["serve"]}}}}

@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
+## [Unreleased]
+
+### Fixed
+- The SSE-by-default transport now also covers the two subprocess MCP
+  registrations: `install-agents --client claude --scope global` registers
+  via `claude mcp add --transport sse --scope user cairn <url>` and a
+  droid install with the `droid` CLI on PATH registers via
+  `droid mcp add cairn <url> --type sse`. Both previously ignored the
+  transport setting and always registered a stdio command spawn, so a
+  global/default install silently ran one process per client while the
+  CLI summary claimed SSE. `--stdio` still opts out; the shared daemon
+  URL resolution is deduplicated in one `default_sse_url` helper.
+- agy (Antigravity) SSE installs now write the documented remote shape —
+  `mcpServers.cairn.serverUrl` — instead of the shared `type`/`url`
+  fields. Antigravity does not support legacy `url`/`httpUrl` fields
+  (per its docs), so the previous entry was silently ignored and cairn
+  never connected. The stdio shape (`command`/`args`) is unchanged.
+
 ## [0.14.3] - 2026-08-26
 
 ### Changed

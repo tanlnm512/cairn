@@ -82,12 +82,19 @@ def resolve_cg_str() -> str:
     return " ".join(cmd)
 
 
+def default_sse_url(sse_url: str | None = None) -> str:
+    """Resolve the SSE daemon URL: explicit --sse-url or the shared default."""
+    from ..mcp_server import lifecycle as lc
+
+    return sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+
+
 def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
     """MCP server config pointing at `cairn serve` (shared mcpServers shape).
 
-    Used by claude, cursor, droid, agy, and (via mcp_config_json_desktop) the
-    Claude Desktop app. Client-specific MCP shapes live in their own client
-    modules.
+    Used by claude, cursor, droid, and (via mcp_config_json_desktop) the
+    Claude Desktop app. Client-specific MCP shapes (zcode, opencode, agy)
+    live in their own client modules.
 
     Args:
         transport: "stdio" (default, one process per client) or "sse" (one
@@ -95,10 +102,8 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
         sse_url: when transport="sse", the URL clients should connect to.
             Defaults to http://127.0.0.1:{lc.DEFAULT_PORT}/sse.
     """
-    from ..mcp_server import lifecycle as lc
-
     if transport == "sse":
-        url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        url = default_sse_url(sse_url)
         # Include "type": "sse" explicitly for maximum cross-client compat.
         # Some clients (Cursor) infer from `url`; others (ZCode, older Claude
         # Desktop builds) want the explicit type. Harmless where it's ignored.
