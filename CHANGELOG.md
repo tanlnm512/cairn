@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `install-agents` now supports the **kilo** CLI (Kilo Code): MCP wired
+  into `kilo.json` (workspace) or `~/.config/kilo/kilo.json` (global)
+  under the `mcp` key — the opencode-format schema kilo documents
+  (`type: remote` + `url` under the SSE default, `type: local` +
+  command-array for `--stdio`). Detection covers the `kilo` CLI on PATH,
+  `~/.config/kilo/`, and a workspace `kilo.json`/`.kilo/`; uninstall
+  strips all scopes.
+
 ### Fixed
 - The SSE-by-default transport now also covers the two subprocess MCP
   registrations: `install-agents --client claude --scope global` registers

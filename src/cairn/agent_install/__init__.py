@@ -58,12 +58,14 @@ from .clients import droid as _droid
 from .clients import zcode as _zcode
 from .clients import agy as _agy
 from .clients import opencode as _opencode
+from .clients import kilo as _kilo
 from .clients import claude_desktop as _claude_desktop
 
 # Per-client config generators (re-exported for backward compat — some callers
 # and tests import them by name from the top-level module).
 from .clients.zcode import zcode_mcp_config_json
 from .clients.opencode import opencode_mcp_config_json
+from .clients.kilo import kilo_mcp_config_json
 from .clients.claude_desktop import mcp_config_json_desktop
 from .clients.claude import claude_hooks_block
 from .clients.cursor import cursor_hooks_json
@@ -76,6 +78,7 @@ from .clients.droid import install_droid
 from .clients.zcode import install_zcode
 from .clients.agy import install_agy
 from .clients.opencode import install_opencode
+from .clients.kilo import install_kilo
 
 # Instruction-file builders (re-exported; test_agent_surface imports
 # _agents_instructions and also parses _INSTRUCTIONS_BODY from source).
@@ -104,6 +107,7 @@ __all__ = [
     "mcp_config_json",
     "zcode_mcp_config_json",
     "opencode_mcp_config_json",
+    "kilo_mcp_config_json",
     "mcp_config_json_desktop",
     # Hooks
     "claude_hooks_block",
@@ -116,6 +120,7 @@ __all__ = [
     "install_zcode",
     "install_agy",
     "install_opencode",
+    "install_kilo",
     # Private helpers re-exported for internal callers / tests
     "_SLASH_COMMANDS",
     "_already_installed",
@@ -148,6 +153,9 @@ __all__ = [
 #   opencode        : MCP YES (opencode.json, `mcp` key) | Skill FALLBACK (.agents/skills/
 #                     discovered) | Cmds/Subs NOT discovered (reads .opencode/commands/ +
 #                     opencode.json agents)  [MCP + skill-via-fallback]
+#   kilo            : MCP YES (kilo.json, opencode format) | Skill/Cmds/Subs/Hooks NOT
+#                     documented for the CLI (config format is opencode-derived; skill
+#                     may reach it via the .agents/ fallback)  [MCP-only]
 #   agy             : MCP YES (~/.gemini/config/mcp_config.json) -- Skill/Cmds/Subs/Hooks NOT
 #                     discovered (agy has no skill/command dirs)  [MCP-only]
 #   claude-desktop  : MCP YES (stdio only) -- no Skill/Cmds/Subs/Hooks (app is MCP-only)  [MCP-only]
@@ -230,6 +238,7 @@ _INSTALLERS = {
     "zcode": _zcode.install_zcode,
     "agy": _agy.install_agy,
     "opencode": _opencode.install_opencode,
+    "kilo": _kilo.install_kilo,
 }
 
 _UNINSTALLERS = {
@@ -240,6 +249,7 @@ _UNINSTALLERS = {
     "zcode": _zcode.uninstall,
     "agy": _agy.uninstall,
     "opencode": _opencode.uninstall,
+    "kilo": _kilo.uninstall,
 }
 
 

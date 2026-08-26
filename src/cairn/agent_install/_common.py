@@ -13,7 +13,7 @@ from pathlib import Path
 # All supported clients. Order matters only for display.
 # "claude" is Claude Code (CLI, workspace-scoped); "claude-desktop" is the
 # Claude Desktop GUI app (global config, MCP-only).
-CLIENTS = ["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode"]
+CLIENTS = ["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo"]
 
 # Slash commands provided by cairn (single source of truth for all client modules).
 _SLASH_COMMANDS = [

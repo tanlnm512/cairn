@@ -770,3 +770,76 @@ class TestTransportDefault:
         entry = cfg["mcpServers"]["cairn"]
         assert "command" in entry
         assert "serverUrl" not in entry
+
+
+# --------------------------------------------------------------------------
+# kilo (Kilo Code CLI): opencode-format config, kilo.json paths
+# --------------------------------------------------------------------------
+
+class TestKiloClient:
+    def test_sse_default_writes_remote_entry(self, fake_home, tmp_path, monkeypatch):
+        """Default transport: kilo.json gets mcp.cairn = {type: remote, url}
+        (kilo's documented remote shape — same schema as opencode)."""
+        from cairn.mcp_server import lifecycle as lc
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["kilo"])
+
+        cfg = json.loads((ws / "kilo.json").read_text(encoding="utf-8"))
+        entry = cfg["mcp"]["cairn"]
+        assert entry["type"] == "remote"
+        assert entry["url"] == f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        assert entry["enabled"] is True
+
+    def test_stdio_writes_local_command_array(self, fake_home, tmp_path, monkeypatch):
+        """stdio: mcp.cairn = {type: local, command: [...]} — command is a
+        single array per kilo's schema, ending in `serve`."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["kilo"], transport="stdio")
+
+        cfg = json.loads((ws / "kilo.json").read_text(encoding="utf-8"))
+        entry = cfg["mcp"]["cairn"]
+        assert entry["type"] == "local"
+        assert isinstance(entry["command"], list)
+        assert entry["command"][-1] == "serve"
+
+    def test_global_scope_writes_global_config(self, fake_home, tmp_path, monkeypatch):
+        """scope=global lands in ~/.config/kilo/kilo.json (kilo's global
+        config path) and is detected by check_installed."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["kilo"], scope="global")
+
+        global_cfg = fake_home / ".config" / "kilo" / "kilo.json"
+        assert global_cfg.exists(), "scope=global must write ~/.config/kilo/kilo.json"
+        assert not (ws / "kilo.json").exists(), "scope=global must not write the workspace"
+        assert "cairn" in json.loads(global_cfg.read_text(encoding="utf-8"))["mcp"]
+        assert check_installed(str(ws))["kilo"], \
+            "a global install must be detected by check_installed (it probes the global path)"
+
+    def test_workspace_install_detected(self, fake_home, tmp_path, monkeypatch):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["kilo"])
+        assert check_installed(str(ws))["kilo"]
+
+    def test_uninstall_strips_cairn_preserves_others(self, fake_home, tmp_path, monkeypatch):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["kilo"])
+
+        p = ws / "kilo.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        data["mcp"]["other-server"] = {"type": "local", "command": ["echo"]}
+        p.write_text(json.dumps(data))
+
+        uninstall(str(ws), clients=["kilo"])
+
+        after = json.loads(p.read_text(encoding="utf-8"))
+        assert "cairn" not in after.get("mcp", {})
+        assert after["mcp"]["other-server"] == {"type": "local", "command": ["echo"]}
