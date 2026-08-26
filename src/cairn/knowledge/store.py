@@ -113,8 +113,9 @@ def add_document(
     ``steps`` extension (intended for ``doc_type="workflow"``; see
     ``src/knowledge/workflow.py``).
 
-    Privacy floor (audit F1): title, body, and step descriptions are routed
-    through :func:`strip_private_data` at this store chokepoint BEFORE the
+    Privacy floor (audit F1): title, body, description, and step
+    descriptions are routed through :func:`strip_private_data` at this
+    store chokepoint BEFORE the
     slug is derived and ``bundle.write_concept`` runs, so a secret pasted
     into any free-text field never reaches the .md file (nor the
     knowledge_embeddings rows, which embed the *stored* body). Redaction
@@ -127,6 +128,9 @@ def add_document(
     """
     title = strip_private_data(title)
     body = strip_private_data(body)
+    # Explicit descriptions are redacted here; an absent one falls back to
+    # the already-redacted title below (no double-redaction needed).
+    description = strip_private_data(description) if description else None
     if steps:
         steps = _redact_step_descriptions(steps)
     slug = slugify(title)
