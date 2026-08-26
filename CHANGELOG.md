@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `0.4.0` entry below is the inaugural documented release; entries from future
 > releases will be appended here incrementally.
 
+
+## [Unreleased]
+
+### Added
+- `cairn knowledge ingest` — staged multi-source document ingestion: repo
+  doc-tree scans (allowlist walk, skip-list with logged reasons), fed
+  markdown, and fed pdf/docx conversion behind the new `cairn[ingest]`
+  extra (pymupdf4llm + mammoth + markdownify, lazy imports — the base
+  install degrades to a reasoned skip). One parse/classify/identity/stage
+  path produces an OKF outbox plus a dry-run manifest; `--ingest`
+  approval writes each row in-process via `add_document` (which gained an
+  optional `description` parameter, default behavior unchanged), embeds,
+  and verifies (count vs manifest, smoke search, idempotent re-runs).
+  Per-workspace overrides: `cairn.json` grows an `ingest` key layering
+  classification rules and skip-list entries over built-in defaults.
+- `install-agents` now supports the **omp** CLI: detection and MCP wiring
+  alongside the existing clients.
+
 ## [0.14.4] - 2026-08-26
 
 ### Added
