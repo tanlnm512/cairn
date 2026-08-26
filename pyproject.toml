@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cairn-intel"
-version = "0.14.4"
+version = "0.15.0"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
@@ -136,6 +136,20 @@ otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 
+# Binary-document conversion for `cairn knowledge ingest` (FR-003,
+# multi-source-doc-ingestion D-002): pymupdf4llm for PDF, mammoth +
+# markdownify for docx (mammoth's own Markdown writer is deprecated; the
+# composition goes HTML -> markdown). Pip-installable with prebuilt wheels
+# on supported platforms, no system binaries; converter deps never land in
+# core, so the base distribution is unchanged. Imports are strictly lazy
+# inside src/cairn/knowledge/ingest/convert.py -- base installs (and CI
+# without this extra) import the ingest package cleanly.
+ingest = [
+    "pymupdf4llm>=1.28",
+    "mammoth>=1.11",
+    "markdownify>=0.13",
+]
+
 [project.scripts]
 cairn = "cairn.cli:main"
 
@@ -211,7 +225,7 @@ select = ["F"]
 # The custom template (.cz_templates/keepachangelog.j2) renders that draft in
 # the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
 # default `## X.Y.Z (YYYY-MM-DD)`.
-version = "0.14.4"
+version = "0.15.0"
 version_scheme = "pep440"
 tag_format = "v$version"
 update_changelog_on_bump = false

@@ -1,46 +1,35 @@
-# cairn documentation
+# Cairn Docs — Index
 
-Start with the [README](../README.md) for the product pitch, install, and
-measured results. This index maps the doc set by what you're trying to do.
+Agent-oriented documentation, grounded in the current codebase. Each page
+states when to read it; every name, command, and env var on these pages is
+verbatim from the source.
 
-## Start here
+| Question you have | Read |
+|---|---|
+| What is this system and how do the pieces fit? | [architecture.md](architecture.md) |
+| How does code get into the graph? (`cairn build` / `update`) | [indexing.md](indexing.md) |
+| How does a query become ranked results? | [retrieval.md](retrieval.md) |
+| How do documents and memories get stored and retrieved? | [knowledge-and-memory.md](knowledge-and-memory.md) |
+| What MCP tools exist and what do they return? | [mcp-tools.md](mcp-tools.md) |
+| What CLI commands exist? | [cli-reference.md](cli-reference.md) |
+| How do I configure cairn (cairn.json, env vars, extras)? | [configuration.md](configuration.md) |
 
-| Doc | What it covers |
-|-----|----------------|
-| [quickstart.md](quickstart.md) | First install to first query, step by step |
-| [configuration.md](configuration.md) | `cairn.json`, env vars, extras, `~/.cairn` layout |
-| [cli-reference.md](cli-reference.md) | Every `cairn` command and flag |
-| [mcp-tools.md](mcp-tools.md) | The 27 MCP tools — shapes, examples, escalation ladder |
+## Procedures (kept from the previous doc set)
 
-## How it works
+- [review-checklist.md](review-checklist.md) — the PR review/audit gate for every change.
+- [release-checklist.md](release-checklist.md) — pre-release verification and the release procedure.
 
-| Doc | What it covers |
-|-----|----------------|
-| [architecture-overview.md](architecture-overview.md) | The one-page mental model |
-| [architecture.md](architecture.md) | Full design: layers, resolution model, storage |
-| [query-flow.md](query-flow.md) | What happens on a query, end to end (with [diagrams](diagrams/)) |
-| [methodology-precise-vs-fuzzy.md](methodology-precise-vs-fuzzy.md) | Why precise edges are ground truth; the false-positive measurement |
-| [scip.md](scip.md) | SCIP/tree-sitter coexistence indexing for compiler-grade edges |
-| [examples/resolution-walkthrough.md](examples/resolution-walkthrough.md) | A worked precise-vs-fuzzy example on real code |
+## Diagrams
 
-## Evidence
+Standalone HTML, open in any browser:
 
-| Doc | What it covers |
-|-----|----------------|
-| [benchmarks.md](benchmarks.md) | Perf, scaling, warm-time, agent-effort, and retrieval-quality tables (generated from committed artifacts between sentinels — don't hand-edit) |
+- [system-architecture.html](diagrams/system-architecture.html) — surfaces → core engines → storage.
+- [indexing-pipeline.html](diagrams/indexing-pipeline.html) — scan to atomic `.kg` swap.
+- [retrieval-pipeline.html](diagrams/retrieval-pipeline.html) — hybrid retrieval and the rerank gate.
+- [doc-ingestion-pipeline.html](diagrams/doc-ingestion-pipeline.html) — staged doc ingestion with dry-run default.
 
-## Operate
+## Conventions used across these docs
 
-| Doc | What it covers |
-|-----|----------------|
-| [BUGS.md](BUGS.md) | Known-issues registry (index table + TL;DR per entry) |
-| [audit-checklist.md](audit-checklist.md) | Periodic area-driven audit procedure |
-| [release-checklist.md](release-checklist.md) | Cutting a release, step by step |
-
-## Contribute
-
-| Doc | What it covers |
-|-----|----------------|
-| [contribution-workflow.md](contribution-workflow.md) | The mandatory branch → pre-commit → PR → CI workflow |
-| [review-checklist.md](review-checklist.md) | The per-PR review gate (blast radius, layering, hygiene) |
-| [postmortems/](postmortems/) | Incident write-ups and their lessons |
+- Identifiers in `backticks` are verbatim module / symbol / command / env-var names.
+- Tables carry enumerable facts; prose carries flow and rationale.
+- No line numbers — use `cairn def <symbol>` or `explore` to jump to current source.

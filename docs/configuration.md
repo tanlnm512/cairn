@@ -1,195 +1,85 @@
 # Configuration
 
-← [Docs index](README.md)
+Read this when you need to change what gets indexed, where state lives, or
+how retrieval behaves.
 
-cairn is configured through environment variables and an optional
-per-workspace `cairn.json` file. All of them are optional: defaults are
-tuned for small and medium repos, and the base install needs nothing set to
-work. The knobs below matter mainly when you relocate the store, scale to a
-large corpus, or enable semantic search.
+## `cairn.json` (workspace root)
 
-This is the complete list of `CAIRN_*` variables, grouped by purpose. Every
-entry reflects current source behavior (verified in `src/`). Workspace-file
-options (`exclude` / `include` / `repo_namespaces`) are documented at the end.
+Parsed by `src/cairn/graph/config.py:load_config`. Unknown keys are ignored;
+malformed files warn and fall back to defaults.
 
-> **A bad config never breaks the build.** Malformed JSON or wrong-typed values
-> in `cairn.json` are ignored with a stderr warning, never raised.
+| Key | Type | Purpose |
+|---|---|---|
+| `exclude` | list of globs | repo-root-relative paths to skip (layer over gitignore) |
+| `include` | list of globs | force-include; overrides skip-dirs, gitignore, and `exclude` — never the 1 MB cap |
+| `repo_namespaces` | map | import-path prefix → owning repo id (cross-repo analysis) |
+| `scip` | map | language → SCIP index path (relative); auto-generates when possible |
+| `ingest` | object | knowledge-ingestion pipeline config (classification rules, dirs) |
 
-> **Defaults are sane for small/medium repos.** The semantic-search and ANN
-> variables only matter at scale or when you have installed the `[semantic]` /
-> `[ann]` extras. Leave them unset for a zero-network, torch-free install.
+## Store resolution
 
-## Contents
+`src/cairn/paths.py:resolve_store` — priority: `CAIRN_DB` / `CAIRN_KNOWLEDGE`
+overrides → `~/.cairn/workspaces.json` registry → cwd auto-register. The
+store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
+(default `~/.cairn`), holding `.kg` (SQLite) and `.knowledge/` (OKF bundle).
+`CAIRN_HOME` binds at process start — in-process env changes do nothing; use
+`--db` / `--workspace` flags instead.
 
-| Section | What it covers |
-|---------|----------------|
-| [`## Storage paths`](#storage-paths) | Where the store resolves from: `CAIRN_HOME`, `CAIRN_DB`, `CAIRN_KNOWLEDGE`, and the workspace/session overrides. |
-| [`## Server and runtime`](#server-and-runtime) | Server behavior knobs — log level, telemetry, read-only mode, live file watching, workers, result-size cap — plus the watching behavior notes. |
-| [`## Semantic search`](#semantic-search) | The embedding/ANN/rerank variables (active only with the `[semantic]` extra), including disabling fusion for real cosine scores. |
-| [`## LLM and task queue`](#llm-and-task-queue) | How LLM-driven commands route their work without cairn ever calling an LLM. |
-| [`## Parsing`](#parsing) | The source-chunking variant selector. |
-| [`` `## Workspace config file (`cairn.json`)` ``](#workspace-config-file-cairnjson) | The optional per-repo JSON keys (`exclude`, `include`, `repo_namespaces`, `scip`) and the namespace-resolution priority order. |
+## Environment variables
 
-## Storage paths
+**Paths & identity**
 
-cairn keeps one store per workspace under `~/.cairn/<key>/`, where
-`<key>` is a short hash of the workspace root. A store contains a `.kg` SQLite
-database and a `.knowledge/` markdown bundle. Resolution order is
-`CAIRN_WORKSPACE` (env) > registered ancestor (walked up from cwd) > cwd.
+| Var | Effect |
+|---|---|
+| `CAIRN_HOME` | central home dir (default `~/.cairn`) |
+| `CAIRN_WORKSPACE` | explicit workspace root |
+| `CAIRN_DB` / `CAIRN_KNOWLEDGE` | hard path overrides |
+| `CAIRN_LIB` | shared dependency library path |
+| `CAIRN_BIN` | path to the `cairn` binary (agent install) |
 
-| Variable | Type / Default | Effect |
-|----------|----------------|--------|
-| `CAIRN_HOME` | path, default `~/.cairn` | Root holding all per-workspace stores and the `workspaces.json` registry. Override for tests, CI, or a shared volume. |
-| `CAIRN_DB` | path, default `<home>/<key>/.kg` | Hard override for the SQLite graph DB path. Used by the MCP server and tests to pin a store explicitly. |
-| `CAIRN_KNOWLEDGE` | path, default `<home>/<key>/.knowledge` | Hard override for the OKF markdown bundle (compass, wiki, memory). |
-| `CAIRN_LIB` | path, default `<CAIRN_HOME>/lib/cp<major><minor>` | Shared library directory for the heavy semantic dependencies (torch, sentence-transformers, numpy), scoped per Python ABI — these ship interpreter-specific binaries, and one flat dir corrupted silently when two interpreters (e.g. a 3.11 dev venv and a 3.14 install) installed into it. Installed once via `cairn embed --install-deps` using `pip install --target`, so they survive `uv tool install --force` reinstalls (which reset the tool's own venv); a failed post-install verification wipes the dir and reinstalls once, because pip's `--target` skip-if-satisfied semantics cannot repair a broken dir in place. Prepended to `sys.path` at import time when it exists (a legacy flat `<CAIRN_HOME>/lib` from older versions stays on `sys.path` after it), so `import torch` / `import sentence_transformers` resolve from here, not the venv. An explicit `CAIRN_LIB` value is used verbatim, with no ABI suffix. |
-| `CAIRN_BIN` | path, default unset | Path to the `cairn` executable; used by the SSE daemon lifecycle so spawned processes find the right binary. |
-| `CAIRN_WORKSPACE` | absolute path, default unset | The workspace root. Highest-priority input to store resolution (overrides the ancestor walk). Set it when running `cairn` from outside the repo tree. |
-| `CAIRN_SESSION` | string, default `"unknown"` | Session label attached to metric/usage telemetry buffers; useful to attribute server traffic to a session. |
+**Build**
 
-## Server and runtime
+| Var | Effect |
+|---|---|
+| `CAIRN_WORKERS` | parse parallelism (default cpu_count, clamped 1–256) |
+| `CAIRN_WATCH` | file watcher gate (`[watch]` extra) |
+| `CAIRN_REPO_NAMESPACES` | env-level cross-repo namespace map (JSON) |
 
-| Variable | Type / Default | Effect |
-|----------|----------------|--------|
-| `CAIRN_LOG_LEVEL` | string, default `WARNING` | Log threshold for the `cairn` namespace logger. One of `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`, matched case-insensitively (`debug`, `Debug`, `DEBUG` all work). An invalid value falls back to `WARNING` with a single notice on stderr — never raised, so a typo can't break `cairn build` or server boot. The `-v`/`--verbose` CLI flag forces `DEBUG` and wins over this env var; it must precede the subcommand (`cairn -v build`, not `cairn build -v`), because click parses it as a group option — for position-independent control, set `CAIRN_LOG_LEVEL=DEBUG`. Records go to **stderr only** (stdout stays clean as the JSON-RPC channel under the stdio MCP transport), and only the `cairn` logger is configured — never the root logger. |
-| `CAIRN_TELEMETRY` | `on`/`off`, default `on` | Master kill switch for cairn's **local-only** telemetry (never networked). When `on` (default), the buffered event sink records low-cardinality `events` rows — ANN/hash fallback, lock-contention, result truncation, empty results, semantic-backend provenance, task-queue lifecycle, stray-process sweeps — plus one `build_runs` row per build/sync/embed/incremental pass, plus usage rows in `tool_metrics` — one per MCP tool call and one per `cli:*` command invocation, each stamped with its `source` (`mcp`/`cli`) — all into the workspace `.kg` store. Set `off` to stop all event, build-run, and usage recording (MCP tool-call and `cli:*` invocation rows included): `emit`/`warn_once`/`note_contention` become near-zero-cost no-ops, and read-only (SSE) daemons skip writes regardless via `CAIRN_READ_ONLY`. **Turning telemetry off stops *recording* but does not silence the one-time operational WARNING logs** — the lock-contention warning (`note_contention`), the ANN brute-force fallback warning, and the hash-embed fallback warning are operational signals, not telemetry data, so each still fires at most once per process (the softer one-time warnings for lexical FTS→LIKE degrade and semantic-unavailable surfaces ARE telemetry-gated and go silent when off). The env var is read fresh on every call, so toggling takes effect without a reload (same posture as `CAIRN_READ_ONLY`). See [cairn doctor](./cli-reference.md) and `cairn metrics --builds/--quality/--contention/--tasks` to consume what it records. |
-| `CAIRN_TOOL_METRICS_MAX_ROWS` | integer, default `50000` | Row cap for the `tool_metrics` usage table: the telemetry flush transaction's prune keeps the newest N rows (time-ordered by `invoked_at`), counting rows from both writers (MCP tool calls and `cli:*` invocations). The default is deliberately generous — months of accumulated usage survive; the cap bounds growth rather than rewriting recent history. `0` keeps no rows; unset or invalid values fall back to the default (logged at DEBUG, never raising). Read fresh on every flush, so pinned env takes effect without a reload. Aging runs only in the recording pipeline — a read-only dashboard process never prunes. The effective policy and current store size are shown on the dashboard health panel. |
-| `CAIRN_TOOL_METRICS_MAX_AGE_SECONDS` | float seconds, default unset (off) | Optional age bound for `tool_metrics`: rows older than N seconds are pruned in the same flush transaction, in addition to (not instead of) the row cap — set both for time- and row-bounded retention. Unset (default) disables age-based pruning; invalid or negative values disable it too. The effective policy is shown on the dashboard health panel. |
-| `CAIRN_OTEL_ENDPOINT` | URL, default unset (off) | Opt-in OTLP export of the local telemetry events as OpenTelemetry LogRecords (`body` = event name, attributes = the event's enum attrs + `session_id`, resource `service.name=cairn` — metadata only, never paths or payloads). **Unset (default) = completely off**: no export, no OpenTelemetry import, zero overhead — telemetry stays local-only in the `.kg` store, byte-identical to a build without this variable. Setting it (e.g. `http://localhost:4318/v1/logs`) requires the optional extra `pip install 'cairn-intel[otlp]'` (OpenTelemetry SDK + OTLP/http exporter); the SDK is imported lazily on the first flush only after this env var is set, and if it is absent cairn logs **one** warning and stays local — never an error, never a required install. Export rides the existing 30s background flush thread (never the tool/build hot path), is best-effort — a failed export retains the rows and retries on the next tick, logging at DEBUG, never raising — and the SQLite `events` table remains the source of truth (OTLP is an additional sink, not a replacement; read-only daemons export nothing, same as they write nothing). `CAIRN_TELEMETRY=off` overrides this variable: no export happens even when the endpoint is set. |
-| `CAIRN_READ_ONLY` | `0`/`1`, default unset (writable) | When `1`/`true`/`yes`, the MCP server opens the DB read-only. Set automatically by the SSE daemon (the safe shared-instance mode) and by `cairn serve` when read-only is requested. A read-only process also records no usage rows — MCP `tool_metrics` and CLI invocation rows are skipped entirely rather than buffered (a mode=ro store could never land them). |
-| `CAIRN_WATCH` | `0`/`1`, default unset (on) | Hard kill switch for the MCP server's **live file watching**. When unset (or `1`), a running `cairn serve` watches the workspace repos with `watchdog` and reindexes source edits within a ~2s debounce window, so the graph stays fresh without restarting the server or running `cairn update`. Set `0`/`false`/`no`/`off` to disable. Requires the optional `[watch]` extra (`pip install cairn-intel[watch]`); without it (and with `CAIRN_WATCH` unset) the watcher degrades to a single info log line and freshness falls back to boot catch-up + explicit `cairn update`. Never runs when `CAIRN_READ_ONLY` is set — a read-only server must never write. |
-| `CAIRN_WORKERS` | int, default = CPU count | Number of parallel parse/build workers. Honored by the builder; clamped to `[1, 256]`, and an unparseable value falls back to the CPU count. |
-| `CAIRN_MAX_RESULT_CHARS` | int, default `60000` | Cap on the character count of MCP tool results. Truncates oversized responses to keep agent context windows bounded. |
-| `CAIRN_CONN_POOL` | `0`/`1`, default `1` (on) | The MCP server pools one thread-local SQLite connection per DB path instead of opening/closing per tool call. Set `0`/`false`/`no` to disable pooling (escape hatch for connection-state debugging); pooled connections are closed on shutdown. |
-| `CAIRN_WARM_MODELS` | `0`/`1`, default unset (on) | Boot-time warm-up pre-loads the embedder/reranker models in a background thread so the first semantic query doesn't pay the cold-model cost. Set `0`/`false`/`no` to skip warm-up entirely. |
+**Retrieval & embeddings** — see [retrieval.md](retrieval.md) for behavior:
+`CAIRN_FUSION`, `CAIRN_RERANK`, `CAIRN_RERANK_MODEL`,
+`CAIRN_RERANK_MIN_MARGIN`, `CAIRN_ANN_BACKEND`, `CAIRN_EMBED_BACKEND`,
+`CAIRN_EMBED_LOCAL_MODEL`, `CAIRN_EMBED_OPENAI_MODEL`,
+`CAIRN_EMBED_KNOWLEDGE_MODEL`, `CAIRN_EMBED_MEMORY_MODEL`,
+`CAIRN_EMBED_FP`, `CAIRN_EMBED_MAX_SEQ_LEN`,
+`CAIRN_EMBED_TRUST_REMOTE_CODE`, `CAIRN_WARM_MODELS`, `CAIRN_CHUNK_VARIANT`.
 
-**Live file watching behavior.** With the `[watch]` extra installed, `cairn serve`
-starts a filesystem observer at boot (after the DB guard and the boot catch-up
-pass, on both stdio and SSE transports). Save events are debounced — events
-within one ~2s quiet window coalesce into a single `incremental_update` pass —
-and each changed file is first marked in the `pending_sync` table, so
-concurrent MCP readers immediately see a staleness banner on results touching
-that file until the reindex lands. Only source extensions are watched (the
-same `EXTENSION_MAP` the scanner uses), gitignored/config-excluded/oversize
-files are skipped, and a `.gitignore` edit invalidates the scanner's ignore
-cache. If a concurrently running `cairn build`/`cairn update` holds the build
-lock, the watcher's update is deferred (logged once) and retried on the next
-batch of events. The watcher never runs in read-only mode, and edits made
-while no server was running are still absorbed by the boot-time catch-up.
+**Operations & telemetry**
 
-## Semantic search
+| Var | Effect |
+|---|---|
+| `CAIRN_TELEMETRY` | `off` disables emission entirely |
+| `CAIRN_OTEL_ENDPOINT` | opt-in synchronous OTLP log export |
+| `CAIRN_SESSION` | session id for tool metrics |
+| `CAIRN_LOG_LEVEL` / `CAIRN_LOGGER_NAME` | logging |
+| `CAIRN_READ_ONLY` | read-only mode |
+| `CAIRN_CONN_POOL` | pooled SQLite connections (default 1) |
+| `CAIRN_MAX_RESULT_CHARS` | response truncation threshold |
+| `CAIRN_TOOL_METRICS_MAX_AGE_SECONDS` / `_MAX_ROWS` | retention |
 
-These only take effect when the `[semantic]` extra is installed
-(`pip install cairn-intel[semantic]`). Without it, semantic_search is unavailable
-and the variables are inert. See also the `CAIRN_FUSION` note below.
+## Install extras (`pip install cairn-intel[…]`)
 
-| Variable | Type / Default | Effect |
-|----------|----------------|--------|
-| `CAIRN_FUSION` | `0`/`1`, default `1` | Reciprocal Rank Fusion of BM25 + vector scores. When on (default), the returned `score` is a fusion rank number (~0.01–0.02), not cosine similarity. Set to `0` to expose raw cosine scores. |
-| `CAIRN_ANN_BACKEND` | string, default `sqlite-vec` | When unset or `sqlite-vec` (and the `sqlite-vec` package is importable), uses a native ANN index. Set to `off` (or any other value) to force the brute-force cosine scan. Any load failure degrades to brute force automatically. |
-| `CAIRN_EMBED_BACKEND` | `local`/`openai`/`hash`, default `local` | Embedding provider. `local` uses sentence-transformers in-process (and silently falls back to `hash` when the package is missing); `openai` calls the OpenAI embeddings API and **requires `OPENAI_API_KEY`** to be set (load fails fast otherwise); `hash` is a deterministic dep-free hash embedder (low quality, for tests/offline smoke checks). |
-| `CAIRN_EMBED_LOCAL_MODEL` | string, default `BAAI/bge-m3` | HuggingFace model id for the `local` backend. |
-| `CAIRN_EMBED_OPENAI_MODEL` | string, default `text-embedding-3-small` | Model name for the `openai` backend. |
-| `CAIRN_EMBED_KNOWLEDGE_MODEL` | string, default unset | Optional separate model for embedding the `.knowledge/` markdown corpus (lets docs use a different model than code). Falls back to the main model. |
-| `CAIRN_EMBED_MEMORY_MODEL` | string, default unset | Optional separate model for embedding the tribal-memory corpus (the `memory recall` pipeline). Falls back to `CAIRN_EMBED_LOCAL_MODEL`. Local backend only. |
-| `CAIRN_EMBED_FP16` | `0`/`1`, default unset | When `1`, loads the local model with `torch_dtype=float16` (halves GPU/CPU memory). |
-| `CAIRN_EMBED_MAX_SEQ_LEN` | int, default `512` | Max sequence length passed to the local model. Raise for long functions; lower to trade recall for speed. |
-| `CAIRN_EMBED_TRUST_REMOTE_CODE` | `0`/`1`, default unset | When `1`, sets `trust_remote_code=True` on model load — required by some custom-architecture models. |
-| `CAIRN_RERANK` | `0`/`1`, default unset | When `1`/`true`/`on`, runs a CrossEncoder reranker over retrieval results. Also auto-enabled by a successful `cairn download-reranker` (writes a `~/.cairn/rerank_enabled` marker). Set to `0`/`false`/`off` to force it OFF (hard kill switch — wins over the marker). Needs the `[semantic]` extra (no separate install); if the configured model isn't cached, falls back to hybrid (vector + BM25 + RRF) order. |
-| `CAIRN_RERANK_MODEL` | string, default `BAAI/bge-reranker-base` | CrossEncoder model used when reranking. The default is the natural pair for the `bge-m3` embedder (same BAAI family). |
-| `CAIRN_RERANK_MIN_MARGIN` | float, default `0.45` | Confidence gate for the rerank stage: when a fused ranking's top-to-edge margin is at or above this (and the top hit is an exact name match), rerank is skipped — the cross-encoder can't change such an answer and costs most of the latency. Clamped to `[0, 1]` (`1.0` effectively never skips, `0.0` skips on every decisive fused ranking); unparseable values fall back to the default. A latency knob, not correctness. The `semantic_search` tool's per-call `rerank` parameter bypasses this gate (`True` forces, `False` never). |
+| Extra | Adds | When you need it |
+|---|---|---|
+| *(core)* | 14 tree-sitter grammars, sqlite-vec, numpy, click, mcp | graph + FTS5 search + dashboard out of the box |
+| `semantic` | sentence-transformers | real embeddings + rerank (torch-based, large) |
+| `ann` | sqlite-vec | explicit ANN install (already core since 0.14) |
+| `ingest` | pymupdf4llm, mammoth, markdownify | PDF/DOCX ingestion |
+| `scip` | protobuf | consuming pre-built SCIP indexes |
+| `watch` | watchdog | live file watcher / MCP watch mode |
+| `otlp` | opentelemetry sdk + OTLP exporter | `CAIRN_OTEL_ENDPOINT` export |
+| `dev` | pytest, ruff, mypy, bandit, pip-audit, pre-commit, commitizen | contributing — CI installs only this extra, so optional deps in tests must use `importorskip` |
 
-### Disabling fusion to read real cosine scores
-
-By default semantic_search returns **Reciprocal Rank Fusion** scores (BM25
-blended with vector similarity). These are small numbers (~0.01–0.02) that
-express **rank order only**, not match strength. They are not cosine similarity,
-regardless of the `threshold` argument you pass.
-
-That is usually what you want — rank order is what matters for "which results to
-show." But when you need the score to reflect how strongly a hit actually matches
-(for example, to decide how confident a hit is, or to threshold a batch),
-set:
-
-```bash
-export CAIRN_FUSION=0
-```
-
-With fusion off, real cosine scores (0.3–0.6+ for genuinely on-topic hits using
-`BAAI/bge-m3`) appear in the `score` field. Rank order stays meaningful either
-way; only the interpretation of the number changes.
-
-## LLM and task queue
-
-cairn never calls an LLM directly. Instead it queues synthesis work
-(compass/wiki generation) on a file-based task queue, which an external agent
-claims and completes. See `cairn task list / show / claim / complete`.
-
-| Variable | Type / Default | Effect |
-|----------|----------------|--------|
-| `CAIRN_LLM_BACKEND` | string, default `file-queue` | How LLM-driven commands route their work. `file-queue` (default) enqueues tasks for an external agent; a deterministic critic fact-checks every completed result before it is committed. Set to `droid`, `opencode`, or `claude` to instead spawn that agent CLI directly as a subprocess (no queue, no waiting for a separate agent to claim). Recognized by the compass and memory commands. |
-
-## Parsing
-
-| Variable | Type / Default | Effect |
-|----------|----------------|--------|
-| `CAIRN_CHUNK_VARIANT` | string, default `B` | How source is chunked before embedding (case-insensitive). The ablation ladder: `A` (legacy: kind + name + first signature line), `B` (default: A + docstring + parameters + return type + full signature), `C` (B + body + context), plus field-dropout variants of B for retrieval-quality ablations — `B_NO_SCOPE` (no enclosing scope/imports), `B_NO_SIG` (no parameters/return type), `B_IDENTITIES` (only the identity floor: qualified name + file path + signature + docstring), `C_TRIM` (B + body truncated to half the chunk budget). Changing this invalidates existing embeddings on the next `cairn embed`. |
-
-## Workspace config file (`cairn.json`)
-
-An optional JSON file at the workspace (or repo) root. Unknown keys are
-ignored (forward-compatible). Recognized keys:
-
-| Key | Type | Effect |
-|-----|------|--------|
-| `exclude` | list of gitignore globs | Patterns to skip during indexing, matched against repo-root-relative paths. Combined with the built-in skip set and `.gitignore`. |
-| `include` | list of gitignore globs | Patterns to force-include, overriding `exclude` and the default skip set. Use to pull a checked-in vendored dir back into the graph. |
-| `repo_namespaces` | object `prefix -> repo id` | Maps import-path prefixes to owning repo ids, used by `cairn deps` / `cross_repo_deps` to detect cross-repo links. When empty, falls back to the built-in default map and `CAIRN_REPO_NAMESPACES`. |
-| `scip` | object `language -> index path` | Maps a language to a pre-built [SCIP](https://github.com/sourcegraph/scip) index file (relative to workspace root). At build time, tree-sitter still parses those files (for modifiers, body, inheritance, parent scope that SCIP can't emit); SCIP's compiler-grade call/reference edges are then **merged** onto the tree-sitter rows (`source='merged'`). When an indexer's symbol names don't line up with tree-sitter's (e.g. scip-swift's opaque USRs, where the merge rate is 0), the build reverts that language to pure-SCIP. A missing index file falls back to tree-sitter alone for that language. Requires the optional `[scip]` extra. Keys must match scanner language names exactly (lowercase: `kotlin`, `typescript`, `java`, `swift`, …) — an unrecognized key is warned about and its data is still imported (as standalone `source='scip'` rows) but won't merge with tree-sitter. If a known indexer (`scip-swift`, `scip-java`, `scip-typescript`) is on `PATH`, a missing index is auto-generated once before the fallback kicks in. See [scip.md](./scip.md). |
-
-Example:
-
-```json
-{
-  "exclude": ["static/", "**/vendor/**"],
-  "include": ["vendor/lib/"],
-  "repo_namespaces": {
-    "com.example.sdk": "sdk",
-    "com.example.core": "core",
-    "com.example.billing": "billing-svc"
-  },
-  "scip": {
-    "kotlin": "build/scip/kotlin.scip",
-    "typescript": "build/scip/ts.scip",
-    "swift": "build/scip/swift.scip"
-  }
-}
-```
-
-### Cross-repo namespaces in detail
-
-`cross_repo_deps` maps an imported namespace to the repo that owns it. The map
-is resolved once per process, in priority order:
-
-1. **`CAIRN_REPO_NAMESPACES`** (env var) — a JSON object of `prefix -> repo
-   id`. Highest priority; overrides everything. Useful for CI or one-off runs.
-2. **`repo_namespaces`** in `cairn.json` — the documented, version-friendly
-   way to configure a workspace.
-3. **Built-in default map** — a small set of prefixes from the reference
-   workspace. Used silently when nothing else is set, so existing setups keep
-   working.
-
-`cairn config` prints the resolved map and which source it came from. A malformed
-env var or config value is ignored with a stderr warning — never raised.
-
----
-
-If you are unsure what is in effect for your workspace, run:
-
-```bash
-cairn config            # shows resolved paths + the active repo_namespaces map
-cairn config --list     # shows the registry of all registered workspaces
-```
-
-It prints the resolved home, db, knowledge paths, and registry entries, so you
-can confirm where data actually lives before changing any of the above.
+The default install is zero-network and torch-free; without `[semantic]`,
+embeddings fall back to a deterministic hash backend and retrieval still
+works (lexically-fused, weaker semantics — see the `HASH_FALLBACK` /
+`SEMANTIC_BACKEND` events in `cairn doctor`).

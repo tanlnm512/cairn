@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cairn Indexing Pipeline</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1200px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Cairn</p>
+    <h1>Indexing Pipeline</h1>
+
+    <svg viewBox="0 0 1000 768" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="idxflow-title idxflow-desc">
+      <title id="idxflow-title">Cairn indexing pipeline</title>
+      <desc id="idxflow-desc">Top-down flow from workspace scan through tree-sitter parsing, row insertion, and tiered edge resolution, with an optional SCIP merge branch, derived index building, and an atomic database swap; a dashed side path shows the incremental update shortcut.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- Arrows first -->
+      <line x1="420" y1="96" x2="420" y2="124" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="420" y1="192" x2="420" y2="220" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="420" y1="288" x2="420" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="420" y1="384" x2="420" y2="396" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="476" y1="444" x2="652" y2="444" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="420" y1="488" x2="420" y2="520" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <path d="M 796,484 V 548 Q 796,556 788,556 H 560" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="420" y1="588" x2="420" y2="616" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="248" y1="360" x2="276" y2="360" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- Arrow labels (masked, clear of strokes) -->
+      <rect x="544" y="426" width="96" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="592" y="435" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">YES · SCIP KEY</text>
+      <rect x="430" y="498" width="28" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="444" y="507" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+      <rect x="232" y="344" width="72" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="268" y="353" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">GIT DIFF</text>
+
+      <!-- Spine nodes -->
+      <rect x="280" y="32" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="420" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Scan workspace</text>
+      <text x="420" y="78" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">4-layer filter · SHA-256 · skip audit</text>
+
+      <rect x="280" y="128" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="420" y="156" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Parse + enrich</text>
+      <text x="420" y="174" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">tree-sitter ×14 · routes · svc calls</text>
+
+      <rect x="280" y="224" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="420" y="252" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Insert rows</text>
+      <text x="420" y="270" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">files · symbols · edges · imports</text>
+
+      <rect x="280" y="320" width="280" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+      <text x="420" y="348" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Resolve edges</text>
+      <text x="420" y="366" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5 tiers → exact / ambiguous / unres.</text>
+
+      <polygon points="420,400 476,444 420,488 364,444" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="420" y="448" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">scip key?</text>
+
+      <rect x="280" y="524" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="420" y="552" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Build derived indexes</text>
+      <text x="420" y="570" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">dataflow · transitive closure</text>
+
+      <rect x="280" y="620" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="420" y="648" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Atomic swap</text>
+      <text x="420" y="666" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">backup_to → swap_db_file (.kg)</text>
+
+      <!-- Side nodes -->
+      <rect x="656" y="420" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="796" y="448" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Merge SCIP defs</text>
+      <text x="796" y="466" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">exact edges · source=merged</text>
+
+      <rect x="32" y="324" width="216" height="72" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="140" y="348" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Incremental update</text>
+      <text x="140" y="366" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">git diff → reindex paths</text>
+      <text x="140" y="382" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">repair incoming edges</text>
+
+      <!-- Legend -->
+      <line x1="32" y1="716" x2="968" y2="716" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="32" y="740" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <rect x="116" y="730" width="20" height="14" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="144" y="740" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">build stage</text>
+      <rect x="248" y="730" width="20" height="14" rx="3" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="276" y="740" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">incremental path</text>
+      <polygon points="416,728 428,736 416,744 404,736" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="436" y="740" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">decision</text>
+      <rect x="524" y="730" width="20" height="14" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="552" y="740" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">resolution (the differentiator)</text>
+    </svg>
+  </div>
+</body>
+</html>

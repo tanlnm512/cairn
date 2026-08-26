@@ -25,8 +25,9 @@ def knowledge():
 @click.option("--affects-modules", default="", help="Comma-separated module paths.")
 @click.option("--epic", default="", help="Jira epic link.")
 @click.option("--resource", default="", help="Canonical URI (Jira/Confluence).")
+@click.option("--description", default=None, help="One-line summary (defaults to title).")
 def knowledge_add(file_path, body_text, title, doc_type, tags, affects,
-                  affects_modules, epic, resource):
+                  affects_modules, epic, resource, description):
     """Ingest a business knowledge document."""
     from cairn.knowledge.store import add_document
     from cairn.okf.bundle import OKFBundle
@@ -52,7 +53,7 @@ def knowledge_add(file_path, body_text, title, doc_type, tags, affects,
         bundle, title=title, body=body, doc_type=doc_type,
         tags=_split(tags), affects_modules=_split(affects_modules),
         affects_repos=_split(affects), resource=resource or None,
-        epic_link=epic or None,
+        epic_link=epic or None, description=description,
     )
     click.echo(f"Stored: {cid}")
 
@@ -82,6 +83,82 @@ def knowledge_import(dir_path, doc_type, tags, affects):
     click.echo(f"Imported {len(imported)} document(s).")
     for cid in imported:
         click.echo(f"  {cid}")
+
+
+# execute_manifest()'s report keys the CLI already renders itself ("Wrote N
+# ... embedded M"); every other report key is a verify leg and is printed
+# verbatim after the write (see knowledge_ingest).
+_EXECUTOR_SUMMARY_KEYS = frozenset({"written", "embedded", "accepted", "skipped"})
+
+
+@knowledge.command("ingest")
+@click.option("--file", "files", multiple=True, help="Fed markdown file (repeatable).")
+@click.option("--dir", "dirs", multiple=True, help="Fed markdown directory (repeatable).")
+@click.option("--repo", "repos", multiple=True, type=click.Path(exists=True, path_type=Path), help="Repository root to scan for docs (repeatable).")
+@click.option("--ingest", "do_ingest", is_flag=True, help="Approve: write staged manifest rows into the store, then embed.")
+@click.option("--include-drafts", is_flag=True, help="Ingest drafts tagged 'draft' instead of skipping.")
+@click.option("--outbox", default=None, help="Staging directory (default: <workspace>/.cairn/ingest-outbox).")
+def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
+    """Stage documents for review (default dry run: nothing is written).
+
+    With --ingest, the staged manifest is approved: rows are written to the
+    knowledge store, embedded, and the post-write verify legs are printed.
+    """
+    from cairn.knowledge.ingest import run_ingest
+
+    if not files and not dirs and not repos:
+        click.echo("Error: --file, --dir, or --repo required.", err=True)
+        sys.exit(1)
+
+    try:
+        manifest = run_ingest(
+            files=list(files), dirs=list(dirs), outbox=outbox,
+            include_drafts=include_drafts, repos=list(repos),
+        )
+    except FileNotFoundError as e:
+        # Fed adapters raise with the offending path in the message
+        # ("Fed path does not exist: ...", "Repo root does not exist: ...").
+        click.echo(f"Error: {e}.", err=True)
+        sys.exit(1)
+    if do_ingest:
+        from cairn.knowledge.ingest.executor import execute_manifest
+        from ..paths import resolve_store
+
+        resolve_store().ensure()
+        conn = get_db()
+        try:
+            report = execute_manifest(manifest, conn)
+        finally:
+            conn.close()
+        embed_note = (
+            f", embedded {report['embedded']}" if report["embedded"] is not None else ""
+        )
+        click.echo(
+            f"Wrote {len(report['written'])} document(s) to the store{embed_note}."
+        )
+        # Verify outcome: everything in the executor report beyond the summary
+        # keys above is a verify leg (store_count, count_ok, smoke_search_hit,
+        # ...). Iterate instead of hardcoding field names so verify legs added
+        # to the executor flow through here unchanged; any leg that is
+        # explicitly False fails the ingest.
+        verify_keys = [k for k in report if k not in _EXECUTOR_SUMMARY_KEYS]
+        for key in verify_keys:
+            click.echo(f"  {key}: {report[key]}")
+        failed = [key for key in verify_keys if report[key] is False]
+        if failed:
+            click.echo(
+                f"Error: post-ingest verification failed ({', '.join(failed)}).",
+                err=True,
+            )
+            sys.exit(1)
+    counts = manifest["counts"]
+    click.echo(
+        f"Staged {counts['accepted']} document(s), skipped {counts['skipped']}."
+    )
+    for row in manifest["rows"]:
+        if "skip" in row:
+            click.echo(f"  skipped: {row['source_path']} ({row['skip']})")
+    click.echo(f"Outbox: {manifest['workspace']}")
 
 
 @knowledge.command("search")

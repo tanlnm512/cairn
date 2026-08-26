@@ -1,7 +1,7 @@
 """Agent integration installer: wires cairn into AI coding clients.
 
 Detects installed clients (Claude Code, Cursor, Droid/Factory, ZCode, agy,
-opencode, Claude Desktop) and writes their per-client configs — MCP server,
+opencode, kilo, omp, Claude Desktop) and writes their per-client configs — MCP server,
 skills, slash commands, subagents/droids, rules, and hooks — with paths
 resolved at install time. Configs are *generated* (not copied), pointing at
 the installed `cairn` binary, so there are no hardcoded paths and no dependence
@@ -59,6 +59,7 @@ from .clients import zcode as _zcode
 from .clients import agy as _agy
 from .clients import opencode as _opencode
 from .clients import kilo as _kilo
+from .clients import omp as _omp
 from .clients import claude_desktop as _claude_desktop
 
 # Per-client config generators (re-exported for backward compat — some callers
@@ -79,6 +80,7 @@ from .clients.zcode import install_zcode
 from .clients.agy import install_agy
 from .clients.opencode import install_opencode
 from .clients.kilo import install_kilo
+from .clients.omp import install_omp
 
 # Instruction-file builders (re-exported; test_agent_surface imports
 # _agents_instructions and also parses _INSTRUCTIONS_BODY from source).
@@ -121,6 +123,7 @@ __all__ = [
     "install_agy",
     "install_opencode",
     "install_kilo",
+    "install_omp",
     # Private helpers re-exported for internal callers / tests
     "_SLASH_COMMANDS",
     "_already_installed",
@@ -136,8 +139,7 @@ __all__ = [
 
 
 # --- Per-client install reach (what `cairn install-agents` wires natively) ---
-# Verified against each client's documented discovery paths (see
-# specs/INTEGRATIONBOOK.md "Client support matrix" for sources). The cross-tool
+# Verified against each client's documented discovery paths. The cross-tool
 # `.agents/` fallback (install_cross_tool, always written) fills gaps for the
 # clients whose docs confirm `.agents/` discovery.
 #
@@ -156,12 +158,17 @@ __all__ = [
 #   kilo            : MCP YES (kilo.json, opencode format) | Skill/Cmds/Subs/Hooks NOT
 #                     documented for the CLI (config format is opencode-derived; skill
 #                     may reach it via the .agents/ fallback)  [MCP-only]
+#   omp             : MCP YES (.omp/mcp.json, native mcpServers schema) | Subs YES
+#                     (.omp/agents/*.md, native task-agent format) | Skill FALLBACK
+#                     (.agents/skills/ discovered via omp's `.agent[s]/skills`) |
+#                     Cmds/Hooks NOT wired (no documented cairn-relevant hook surface)
+#                     [MCP + Subs, skill-via-fallback]
 #   agy             : MCP YES (~/.gemini/config/mcp_config.json) -- Skill/Cmds/Subs/Hooks NOT
 #                     discovered (agy has no skill/command dirs)  [MCP-only]
 #   claude-desktop  : MCP YES (stdio only) -- no Skill/Cmds/Subs/Hooks (app is MCP-only)  [MCP-only]
 #
 # Net: the golden rules + tool-behaviors table reach claude/droid/zcode
-# natively, cursor/opencode via the .agents/ skill fallback, and
+# natively, cursor/opencode/omp via the .agents/ skill fallback, and
 # claude-desktop/agy NOT AT ALL (MCP tools work, but the agent gets no skill).
 
 
@@ -239,6 +246,7 @@ _INSTALLERS = {
     "agy": _agy.install_agy,
     "opencode": _opencode.install_opencode,
     "kilo": _kilo.install_kilo,
+    "omp": _omp.install_omp,
 }
 
 _UNINSTALLERS = {
@@ -250,6 +258,7 @@ _UNINSTALLERS = {
     "agy": _agy.uninstall,
     "opencode": _opencode.uninstall,
     "kilo": _kilo.uninstall,
+    "omp": _omp.uninstall,
 }
 
 

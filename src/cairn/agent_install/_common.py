@@ -13,7 +13,7 @@ from pathlib import Path
 # All supported clients. Order matters only for display.
 # "claude" is Claude Code (CLI, workspace-scoped); "claude-desktop" is the
 # Claude Desktop GUI app (global config, MCP-only).
-CLIENTS = ["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo"]
+CLIENTS = ["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo", "omp"]
 
 # Slash commands provided by cairn (single source of truth for all client modules).
 _SLASH_COMMANDS = [
@@ -92,9 +92,9 @@ def default_sse_url(sse_url: str | None = None) -> str:
 def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
     """MCP server config pointing at `cairn serve` (shared mcpServers shape).
 
-    Used by claude, cursor, droid, and (via mcp_config_json_desktop) the
-    Claude Desktop app. Client-specific MCP shapes (zcode, opencode, agy)
-    live in their own client modules.
+    Used by claude, cursor, droid, omp, and (via mcp_config_json_desktop)
+    the Claude Desktop app. Client-specific MCP shapes (zcode, opencode,
+    agy, kilo) live in their own client modules.
 
     Args:
         transport: "stdio" (default, one process per client) or "sse" (one
@@ -197,6 +197,40 @@ def _claude_agent_md(template_name: str = "cursor/cairn-explorer.json") -> str:
     lines.append("effort: low")
     if sub.get("is_background"):
         lines.append("background: true")
+    lines.append("---")
+    lines.append("")
+    lines.append(sub["prompt"])
+    return "\n".join(lines) + "\n"
+
+
+def _omp_agent_md(template_name: str = "cursor/cairn-explorer.json") -> str:
+    """Translate a Cursor subagent JSON into an omp task-agent .md file.
+
+    omp's frontmatter contract (docs/subagents, task-agent-discovery.md) needs
+    only `name` and `description`; `tools` accepts a CSV list. `model` is left
+    unset so the subagent falls through to the parent session's active model
+    (omp has no "inherit" selector -- an unset frontmatter model is the third
+    step of its model-precedence chain). MCP tools are referenced by the name
+    omp's tool registry actually gives them: `mcp__<server>_<tool>` (single
+    underscore joining server and tool -- distinct from Claude Code's
+    `mcp__<server>__<tool>`).
+    """
+    sub = json.loads(_read_template(template_name))
+
+    mcp_tools = [f"mcp__cairn_{t}" for t in sub.get("tools", [])]
+    if sub.get("readonly"):
+        builtins = ["read", "grep", "glob"]
+    else:
+        builtins = [t.lower() for t in sub.get("extra_tools", [])]
+
+    tools = builtins + mcp_tools
+    lines = [
+        "---",
+        f"name: {sub['name']}",
+        f"description: {sub['description']}",
+    ]
+    if tools:
+        lines.append(f"tools: {', '.join(tools)}")
     lines.append("---")
     lines.append("")
     lines.append(sub["prompt"])
