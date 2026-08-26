@@ -2,11 +2,13 @@
 
 Implements FR-007 / D-006: the path-derived stable ID, the
 ``"{stable ID} — {title}"`` display title, deterministic slugs with a
-``({repo})`` suffix on collisions, the source-tag union, and real
-description extraction (never the title).
+``({repo})`` suffix on collisions (numbered when the suffix itself
+collides), the source-tag union, and real description extraction (never
+the title).
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -17,12 +19,19 @@ from cairn.knowledge.ingest.parser import (
     _HEADING_STATUS_BARE_RE,
     _HEADING_STATUS_RE,
 )
-from cairn.okf.utils import slugify
+# _NON_ALNUM is imported (not re-defined) so the untruncated slug computed
+# in _stable_id always matches slugify's charset by construction.
+from cairn.okf.utils import _NON_ALNUM, slugify
 
 # slugify truncates to 60 chars (src/cairn/okf/utils.py:13-20); every slug
 # built here must keep the stable-id prefix (and any collision suffix)
 # inside that bound.
 _SLUG_MAX = 60
+
+# sha1 fragment (content key, not security -- usedforsecurity=False)
+# appended to stable IDs whose slugified path exceeded the cap; matches the
+# symbol-disambiguation fragment in parsers/scip_importer.py.
+_HASH_LEN = 8
 
 
 @dataclass
@@ -51,12 +60,12 @@ def build_identity(
     final slug is added to it, so collision suffixing stays deterministic.
     Omitted -> no collision resolution (pure function of the inputs).
     """
-    stable_id = slugify(f"{repo}/{relpath}")
+    stable_id = _stable_id(repo, relpath)
     title = _display_title(stable_id, parsed.title)
     slug = slugify(title)
     if seen_slugs is not None:
         if slug in seen_slugs:
-            slug = _collision_slug(slug, repo)
+            slug = _unique_slug(slug, repo, seen_slugs)
         seen_slugs.add(slug)
     tags = list(parsed.tags)
     for extra in (stable_id, repo):
@@ -75,6 +84,25 @@ def build_identity(
     )
 
 
+def _stable_id(repo: str, relpath: str) -> str:
+    """``slugify(repo/relpath)``, made collision-resistant when the 60-char
+    cap bites: truncation silently discards the path tail, so distinct long
+    paths (".../design.md" vs ".../deploy.md") can slugify identically and
+    would merge identities. When the untruncated slug exceeds the cap,
+    re-anchor it with a short sha1 fragment of the full slug: identical
+    paths hash identically, distinct paths stay distinct, and the result
+    still fits the cap. Paths that fit keep the exact plain slug.
+    """
+    full = _NON_ALNUM.sub("-", f"{repo}/{relpath}".lower()).strip("-")
+    if len(full) <= _SLUG_MAX:
+        return full
+    digest = hashlib.sha1(
+        full.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:_HASH_LEN]
+    room = _SLUG_MAX - len(digest) - 1
+    return f"{full[:room].rstrip('-')}-{digest}"
+
+
 def _display_title(stable_id: str, doc_title: str | None) -> str:
     """``"{stable ID} — {title}"`` with the title capped to the slug budget.
 
@@ -89,9 +117,27 @@ def _display_title(stable_id: str, doc_title: str | None) -> str:
     return f"{stable_id} — {doc_title[:budget]}"
 
 
-def _collision_slug(base: str, repo: str) -> str:
-    """Slug with the ``({repo})`` suffix; the suffix survives the 60-char cap."""
-    suffix = slugify(repo)
+def _unique_slug(base: str, repo: str, seen: set[str]) -> str:
+    """First collision slug not already taken: ``-({repo})``, then
+    ``-({repo})-2``, ``-({repo})-3``... The single-suffix form can itself
+    collide (same repo/relpath/title fed three times), and a repeated slug
+    means one staged file silently overwrites another — so keep numbering
+    until the candidate is fresh."""
+    counter = 1
+    candidate = _collision_slug(base, repo)
+    while candidate in seen:
+        counter += 1
+        candidate = _collision_slug(base, repo, counter)
+    return candidate
+
+
+def _collision_slug(base: str, repo: str, counter: int = 1) -> str:
+    """Slug with the ``({repo})`` suffix (plus ``-{n}`` for counter > 1);
+    the suffix survives the 60-char cap."""
+    parts = [slugify(repo)]
+    if counter > 1:
+        parts.append(str(counter))
+    suffix = "-".join(part for part in parts if part)
     room = _SLUG_MAX - len(suffix) - 1
     if room <= 0:
         return suffix

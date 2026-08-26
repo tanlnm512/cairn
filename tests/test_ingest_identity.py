@@ -26,6 +26,31 @@ def test_stable_id_is_deterministic_and_move_sensitive():
     assert moved.stable_id != first.stable_id
 
 
+def test_truncation_identical_paths_keep_distinct_stable_ids():
+    # slugify caps at 60 chars, so "docs/" + 80 a's + "/design.md" and
+    # ".../deploy.md" would truncate to the SAME stable id and merge
+    # identities; the cap must not make distinct paths indistinguishable.
+    design = build_identity("repo", f"docs/{'a' * 80}/design.md", _parsed())
+    deploy = build_identity("repo", f"docs/{'a' * 80}/deploy.md", _parsed())
+    assert design.stable_id != deploy.stable_id
+    assert len(design.stable_id) <= 60
+    again = build_identity("repo", f"docs/{'a' * 80}/design.md", _parsed())
+    assert again.stable_id == design.stable_id
+    # Short paths keep the exact plain slug (no hash fragment).
+    assert build_identity(
+        "polaris", "docs/gateway.md", _parsed()
+    ).stable_id == slugify("polaris/docs/gateway.md")
+
+
+def test_truncated_stable_ids_keep_equal_titles_distinct():
+    # Distinct stable ids must separate slugs even when the doc titles tie,
+    # or one outbox file overwrites the other.
+    parsed = _parsed(title="Same")
+    design = build_identity("repo", f"docs/{'a' * 80}/design.md", parsed)
+    deploy = build_identity("repo", f"docs/{'a' * 80}/deploy.md", parsed)
+    assert design.slug != deploy.slug
+
+
 def test_title_and_slug_carry_stable_prefix():
     parsed = _parsed(title="Gateway Routing")
     identity = build_identity("polaris", "docs/gateway.md", parsed)
@@ -71,6 +96,23 @@ def test_collision_suffix_survives_slug_cap():
     assert first.slug != second.slug
     assert len(second.slug) <= 60
     assert second.slug.endswith("-beta")
+
+
+def test_third_identical_doc_still_gets_distinct_slug():
+    # Docs 2 and 3 share (repo, relpath, title): doc 2 takes the -repo
+    # suffix, doc 3 must not reuse it -- a repeated slug means the third
+    # staged file overwrites the second and the manifest double-points.
+    parsed = _parsed(title="Gateway")
+    seen: set[str] = set()
+    identities = [
+        build_identity("polaris", "docs/gw.md", parsed, seen_slugs=seen)
+        for _ in range(3)
+    ]
+    slugs = [identity.slug for identity in identities]
+    assert len(set(slugs)) == 3
+    assert seen == set(slugs)
+    assert slugs[1].endswith("-polaris")
+    assert slugs[2].endswith("-polaris-2")
 
 
 def test_no_seen_slugs_means_no_suffix():
