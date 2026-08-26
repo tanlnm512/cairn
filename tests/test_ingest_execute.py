@@ -21,6 +21,20 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CAIRN_WORKSPACE", raising=False)
     monkeypatch.delenv("CAIRN_STORE_KEY", raising=False)
+    # Hermeticity: resolve_store() reads CAIRN_DB/CAIRN_KNOWLEDGE at call
+    # time, so pointing both at tmp_path keeps every store write out of the
+    # developer's real ~/.cairn. The module-level CAIRN_HOME is patched too:
+    # StorePaths.ensure() would otherwise mkdir an (empty) per-workspace dir
+    # under the real ~/.cairn even with the two path overrides in place.
+    home = tmp_path / "cairn-home"
+    monkeypatch.setenv("CAIRN_HOME", str(home))
+    monkeypatch.setenv("CAIRN_DB", str(home / ".kg"))
+    monkeypatch.setenv("CAIRN_KNOWLEDGE", str(home / ".knowledge"))
+
+    import cairn.paths as paths_mod
+
+    monkeypatch.setattr(paths_mod, "CAIRN_HOME", home)
+    monkeypatch.setattr(paths_mod, "REGISTRY_FILE", home / "workspaces.json")
     yield tmp_path
 
 
@@ -138,8 +152,13 @@ class TestVerifyStep:
             conn.close()
 
         assert report["store_count"] == report["expected_count"] == 2
+        # TC-024: the count leg requires EQUALITY with the accepted count.
         assert report["count_ok"] is True
         assert report["smoke_search_hit"] is True
+        # TC-024 third leg: the cairn-validate conformance check, in-process.
+        assert report["validate_ok"] is True
+        assert report["validate_errors"] == 0
+        assert report["validate_message"] == ""
 
     def test_verify_manifest_alone_reads_current_store(self, staged):
         from cairn.knowledge.ingest.executor import verify_manifest
@@ -149,9 +168,66 @@ class TestVerifyStep:
         assert result["store_count"] == 0
         assert result["count_ok"] is False
         assert result["smoke_search_hit"] is False
+        # _conn() ensured the bundle dir: it exists but is empty, and an
+        # empty bundle is conformant (0 conformance errors).
+        assert result["validate_ok"] is True
+        assert result["validate_errors"] == 0
         assert set(result) == {
-            "store_count", "expected_count", "count_ok", "smoke_search_hit"
+            "store_count", "expected_count", "count_ok", "smoke_search_hit",
+            "validate_ok", "validate_errors", "validate_message",
         }
+
+    def test_verify_before_any_write_fails_validate_leg(self, workspace):
+        from cairn.knowledge.ingest.executor import verify_manifest
+
+        result = verify_manifest({"rows": [], "counts": {}}, conn=None)
+        assert result["store_count"] == 0
+        assert result["count_ok"] is False
+        assert result["smoke_search_hit"] is False
+        # Absent bundle: check_bundle reports the missing root.
+        assert result["validate_ok"] is False
+        assert result["validate_errors"] == 1
+        assert result["validate_message"]
+
+    def test_count_overage_fails_not_at_least(self, staged):
+        # TC-024/US5-AC1: strict equality. A store holding MORE documents
+        # than the manifest accepted must fail the count leg; a `>=`
+        # comparison would mask it as ok.
+        from cairn.knowledge.ingest.executor import verify_manifest
+        from cairn.knowledge.store import add_document
+
+        conn = _conn()
+        try:
+            bundle = _bundle()
+            for i in range(3):
+                add_document(bundle, title=f"Pre-existing {i}", body="Older.",
+                             doc_type="decision")
+            result = verify_manifest(staged, conn)
+        finally:
+            conn.close()
+
+        assert result["store_count"] == 3
+        assert result["expected_count"] == 2
+        assert result["count_ok"] is False
+
+    def test_validate_leg_degrades_not_crashes(self, staged, monkeypatch):
+        # A raising conformance checker must surface as validate_ok=False
+        # with the message, never crash the run.
+        import cairn.okf.conformance as conformance_mod
+        from cairn.knowledge.ingest.executor import verify_manifest
+
+        def boom(_root):
+            raise RuntimeError("checker exploded")
+
+        monkeypatch.setattr(conformance_mod, "check_bundle", boom)
+        conn = _conn()
+        try:
+            result = verify_manifest(staged, conn)
+        finally:
+            conn.close()
+        assert result["validate_ok"] is False
+        assert result["validate_errors"] is None
+        assert "checker exploded" in result["validate_message"]
 
 
 def test_embed_runs_when_backend_available(staged, workspace):

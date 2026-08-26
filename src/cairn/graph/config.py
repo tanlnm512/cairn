@@ -60,6 +60,7 @@ class CairnConfig:
         return (
             not self.exclude and not self.include
             and not self.repo_namespaces and not self.scip
+            and not self.ingest
         )
 
 
