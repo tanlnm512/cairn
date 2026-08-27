@@ -1,27 +1,225 @@
-# Spec: Embedding Server Backend (oMLX / Ollama / OpenAI-compatible)
+# Spec: Embedding server backend (oMLX / Ollama / OpenAI-compatible)
 
-**Status:** Proposed — research complete, live-verified on this machine (2026-08-27)
-**Scope:** `src/cairn/graph/embeddings.py` and its integration surfaces; no schema changes
-**Default behavior:** unchanged (`CAIRN_EMBED_BACKEND=local` remains the default; everything here is opt-in)
+**Status**: draft
+**Created**: 2026-08-27
+**Branch**: `docs/embedding-server-backend-spec`
+
+## What
+
+Cairn gains the ability to produce embeddings through any OpenAI-compatible
+`/v1/embeddings` server already running on the user's machine — oMLX, Ollama,
+LM Studio, llama.cpp, vLLM — instead of loading the sentence-transformers +
+torch stack into every cairn process. Users configure a backend preset and
+model id; cairn verifies numeric compatibility with stored vectors before
+reusing them, degrades loudly (never silently) when the server or model
+disappears, and can be configured and observed from the dashboard.
+
+## Why
+
+The default `local` backend costs a ~1 GB+ dependency install into
+`~/.cairn/lib` and loads bge-m3 weights into **every** cairn process: the MCP
+server pays ~9.4 s on the first `semantic_search` and holds ~1-2 GB RSS, while
+an already-running local inference server could serve the same model once,
+shared across cairn, editors, and other agents. Cairn's existing `openai`
+backend already speaks the right wire format but hardcodes
+`https://api.openai.com` (`src/cairn/graph/embeddings.py:740`) and requires an
+API key — unusable for local servers.
+
+## Business value
+
+- **SC-1**: An agent runner with oMLX/Ollama installed gets semantic search
+  with zero torch install and no first-query model-load stall (measured warm
+  parity: oMLX 244 ms/query vs 137 ms in-process; batch-64 equal).
+- **SC-2**: Switching producer with the same weights keeps existing vectors
+  (measured parity cosine 1.000000) — no multi-minute corpus re-embed.
+- **SC-3**: Any backend/model disappearance produces a named degradation with
+  a remediation hint and continued BM25/FTS5 hybrid results — never a silent
+  empty result, never mixed vector spaces.
+- **SC-4**: Zero behavior change for `local`/`hash`/`openai` users (CI and
+  existing tests untouched).
+
+## User stories
+
+### US1 — Embed via a local inference server (P1)
+As an agent runner with oMLX or Ollama already running, I want cairn to use
+its `/v1/embeddings` endpoint for all corpora, so that cairn needs no torch
+stack and shares one model load with my other tools.
+
+**Acceptance criteria** (each traces to an FR below):
+- AC1: Given a reachable server with the configured model id listed, When
+  `cairn embed` runs, Then all three corpora embed through the server and
+  rows are stamped `server/{netloc}/{model}` (FR-001, FR-004).
+- AC2: Given the server returns a transient error (connection reset, 5xx,
+  429), When embedding runs, Then requests retry with backoff and bounded
+  chunking, and a non-transient 4xx fails with the server's own error message
+  verbatim (FR-003).
+- AC3: Given the server is down or the model id is missing from
+  `/v1/models`, When any query runs, Then the dense leg is skipped with a
+  named degradation and hash vectors are never used (FR-002).
+
+### US2 — Migrate without re-embedding (P1)
+As a user moving from the local bge-m3 to a server serving the same weights,
+I want cairn to verify compatibility and keep my existing vectors, so that
+the switch costs seconds, not a full corpus re-embed.
+
+**Acceptance criteria**:
+- AC1: Given stored vectors under stamp `BAAI/bge-m3` and a migration alias
+  configured, When the first embed pass runs, Then a parity check (mean
+  cosine over sampled stored chunks, gate 0.98) runs BEFORE any row is
+  written; below the gate it hard-aborts with the measured value (FR-005).
+- AC2: Given the parity gate passes, When embedding completes, Then zero
+  rows were re-embedded and dense search still returns correct results
+  (FR-005, FR-004).
+
+### US3 — Degrade loudly, never silently (P1)
+As an agent relying on `semantic_search`, I want a verified fallback ladder
+when the configured backend fails, so that search keeps working via the
+BM25/FTS5 hybrid and I am told exactly what degraded and why.
+
+**Acceptance criteria**:
+- AC1: Given the configured model is missing but a same-server candidate
+  passes the parity gate, When a query runs, Then the candidate serves the
+  dense leg for that session via the alias mechanism and a notification names
+  the explicit command that makes it permanent (FR-012).
+- AC2: Given no parity-verified replacement exists (server or local), When a
+  query runs, Then results are BM25/FTS5-hybrid with `provenance="bm25"`, a
+  degradation tag, and a remediation hint — and an embed error mid-query does
+  not raise out of `semantic_search` (FR-012).
+- AC3: Given any degraded state, When it first occurs, Then one warn-once
+  log line, one reason-enum telemetry event, an MCP result footnote, a doctor
+  entry, and a dashboard banner appear (FR-013).
+
+### US4 — Configure and observe from the dashboard (P2)
+As a user who prefers UI over env vars, I want a dashboard Settings section
+and Embeddings status view, so that I can switch backends, run parity checks,
+and see fallback state without editing shell profiles.
+
+**Acceptance criteria**:
+- AC1: Given the dashboard, When I save settings, Then values persist to
+  `~/.cairn/config.json` with env vars still taking precedence, and running
+  processes pick up changes without restart (FR-010, FR-011).
+- AC2: Given a base-URL change attempt, When saving without the explicit
+  confirm step, Then the write is refused; the API key is never rendered
+  back (FR-011).
+- AC3: Given any backend state, When I open the status view, Then I see
+  effective backend, resolved stamp, per-corpus counts, probe health, and
+  the active fallback rung (FR-011).
+
+### US5 — Operational safety nets (P2)
+As a maintainer, I want warmup, doctor, and telemetry coverage for the new
+backend, so that failures are diagnosable and first-query cost stays off the
+query path.
+
+**Acceptance criteria**:
+- AC1: Given a server backend at MCP boot, When the warm step runs, Then one
+  tiny probe triggers the server's lazy model load without ever raising into
+  boot (FR-006).
+- AC2: Given doctor with a server backend configured, When run, Then it
+  checks probe, model listing, parity sample, and latency (FR-007).
+- AC3: Given a fresh install, When a user asks how to get semantic search,
+  Then `install_hint()` mentions the server path as the no-torch option
+  (FR-008).
+
+## Requirements
+
+- **FR-001**: The system shall embed all corpora (code, knowledge, memory)
+  through one OpenAI-compatible `/v1/embeddings` client when
+  `CAIRN_EMBED_BACKEND` is `server`, `omlx`, or `ollama`; presets differ only
+  in default base URL (`omlx` → `http://127.0.0.1:8000/v1`, `ollama` →
+  `http://127.0.0.1:11434/v1`; bare `server` requires `CAIRN_EMBED_BASE_URL`).
+- **FR-002**: The system shall gate the server backend on a cached
+  process-level probe — `GET {base}/models` (2 s timeout, optional bearer)
+  returning 200 AND listing the configured model id — and shall never
+  resolve a server backend to the hash backend; `is_hash_fallback()` stays
+  False.
+- **FR-003**: The system shall chunk inputs into
+  `CAIRN_EMBED_SERVER_BATCH`-sized requests (default 32), retry connection
+  errors / timeouts / 5xx / 429 up to 3 times with exponential backoff
+  (0.5/1/2 s, jittered), fail other 4xx immediately with the server's error
+  message verbatim, honor `CAIRN_EMBED_TIMEOUT` (default 30 s), and reject
+  mixed-dimension batches.
+- **FR-004**: The system shall stamp server-produced rows
+  `server/{netloc}/{model}` so all existing stamp-driven machinery
+  (staleness, purge, vec0 table names) works unmodified;
+  `CAIRN_EMBED_MODEL_STAMP` overrides the derived stamp.
+- **FR-005**: The system shall run the migration-alias parity check (sample
+  ≤16 stored chunks, mean cosine gate 0.98, dim match) BEFORE any row is
+  written under an alias stamp, and hard-abort with the measured value on
+  failure. With zero stored rows under the stamp, the check is skipped
+  (vacuous pass — nothing to compare) and embedding proceeds.
+- **FR-006**: The system shall warm a server backend with one tiny
+  `/v1/embeddings` probe in the existing background warmup thread, never
+  raising into boot and respecting the `PYTEST_CURRENT_TEST` guard.
+- **FR-007**: The system shall emit one `EMBED_SERVER_DEGRADED` telemetry
+  event per process per reason and extend `cairn doctor` with probe,
+  model-listing, parity-sample, and latency checks for server backends.
+- **FR-008**: The system shall update `docs/configuration.md`,
+  `docs/retrieval.md`, and `install_hint()` to document the server backend
+  (including the oMLX safetensors conversion and privacy notes).
+- **FR-009**: The system shall keep the `local`, `hash`, and `openai`
+  backends byte-for-byte unchanged (openai keeps its hardcoded URL and key
+  requirement).
+- **FR-010**: The system shall persist configuration in
+  `~/.cairn/config.json` with precedence env > file > default, re-reading on
+  mtime change alongside the existing per-process caches, invalidated by
+  `reset_backend_cache()`.
+- **FR-011**: The system shall expose a dashboard Settings section and
+  Embeddings status view (loopback-only POST routes, write-only API key,
+  confirm-required base-URL changes, live parity-check action, fallback-rung
+  banner).
+- **FR-012**: The system shall implement the availability fallback ladder:
+  (rung 1) same-server candidate adopted session-scoped via alias only on
+  parity ≥ 0.98, otherwise notify re-embed; (rung 2) local model on the same
+  parity gate; (rung 3) the existing BM25/FTS5 hybrid — the query rides
+  today's BM25+RRF fusion path unchanged with zero dense candidates (no new
+  short-circuit), results tagged `provenance="bm25"` plus an additive
+  `degraded` key and hint — including catching dense-leg embed errors inside
+  `semantic_search`, which today propagate uncaught. Permanence of a rung-1
+  adoption (`cairn embed --adopt-server-model` / dashboard button) persists
+  the ALIAS BINDING: the stored corpus keeps its stamp while embeds and
+  queries run through the adopted model, with the FR-005 parity check
+  re-verified once per process; it is not a corpus restamp.
+- **FR-013**: The system shall notify on every degraded/failed state via one
+  warn-once logger line, one `EMBED_SERVER_DEGRADED` event with reason enum
+  (`server_down | model_missing | parity_fail | fallback_session_alias |
+  fallback_local | hybrid_only`), an MCP result footnote, a doctor entry,
+  and a dashboard banner.
+
+## Scope
+
+**In**: server/omlx/ollama backends; parity-verified migration and fallback
+ladder; notifications; config substrate; dashboard Settings + status view;
+warmup/doctor/telemetry/docs.
+
+**Out (deferred)**: `/v1/rerank` for the reranker (oMLX exposes it; separate
+spec); per-corpus server models; HTTP keep-alive/connection pooling; cloud
+providers beyond the existing `openai` backend; a full dashboard visual
+revamp (oMLX's admin is the UX reference for the Settings section only).
+
+## Assumptions & risks
+
+- Assumption: same weights ⇒ near-identical vectors (verified: cosine
+  1.000000, worst-case 0.991 on >512-token inputs from truncation), so the
+  0.98 gate cleanly separates same-weights from different-model regimes.
+- Assumption: config-file precedence env > file keeps CI/tests and the
+  env-driven test doctrine working unchanged.
+- Risk: a server model changed under a stable id mixes vector spaces
+  silently — mitigation: parity gate on alias adoption, doctor parity
+  sample, documented "run doctor after re-pulling models" rule; residual
+  accepted (D-009).
+- Risk: dashboard POST routes end the read-only era — mitigation: loopback
+  binding, base-URL confirm step, write-only API key.
+- Risk: first embedding request pays server-side lazy model load (seconds) —
+  mitigation: warmup probe (FR-006).
 
 ---
 
-## 1. Problem
+# Design annex (verified research + architecture)
 
-Cairn's default embedding path (`local`) requires the sentence-transformers +
-torch stack (~1 GB+ install into `~/.cairn/lib`) and loads bge-m3 weights
-**into every cairn process**: the MCP server pays ~9.4 s on the first
-`semantic_search` (see `model_warmup.py` header) and holds ~1-2 GB RSS for
-weights that an already-running local inference server could serve once,
-shared across cairn, editors, and other agents.
+Research and live verification were completed before this pipeline started;
+the annex below is the evidence base the Stage 2 agents build on.
 
-Users running [oMLX](https://github.com/jundot/omlx), Ollama, LM Studio, or
-llama.cpp servers already have an OpenAI-compatible `/v1/embeddings` endpoint
-on localhost. Cairn has an `openai` backend that speaks exactly this wire
-format — but its base URL is hardcoded to `https://api.openai.com`
-(`src/cairn/graph/embeddings.py:740`) and it requires `OPENAI_API_KEY`.
-
-## 2. Verified evidence (2026-08-27, this Mac)
+## A1. Verified evidence (2026-08-27, this Mac)
 
 Live comparison: sentence-transformers `BAAI/bge-m3` (the exact code path
 `_embed_local` uses, max_seq_length=512, `normalize_embeddings=True`) vs
@@ -36,387 +234,196 @@ oMLX 0.6.2 `/v1/embeddings` serving the same BAAI weights:
 | oMLX vector norm | 1.0 (unit-normalized, like ST's `normalize_embeddings=True`) |
 | Warm single-query latency | 137 ms (ST) vs 244 ms (oMLX incl. HTTP) |
 | Warm batch-64 | 0.38 s (ST) vs 0.42 s (oMLX incl. HTTP) |
-| Process footprint | ST: torch + weights in-process; oMLX: none (server holds model once) |
+| Process footprint | ST: torch + weights in-process; oMLX: none |
 
-Conclusions the spec relies on:
-1. **Vectors from the same weights are interchangeable** (cosine 1.000000;
-   cairn compares with cosine everywhere — `cosine_scan`, vec0 cosine metric —
-   so even norm differences would be tolerated, but there are none).
-2. **Divergence is bounded by truncation only** (512 vs 8192 context). Cairn's
-   `chunk_for_symbol` already caps text at `max_tokens*4` chars client-side,
-   so the window is small and identical in spirit to today's local behavior.
-3. Ollama serves the same model (`ollama pull bge-m3`, id `bge-m3`, 1024 dims)
-   behind the same `/v1/embeddings` shape at `http://localhost:11434/v1`
-   ([library page](https://ollama.com/library/bge-m3)). LM Studio
-   (`:1234/v1`), llama.cpp server, and vLLM expose the same endpoint shape —
-   **one generic client covers all of them.**
+Conclusions:
+1. Vectors from the same weights are interchangeable (cosine 1.000000;
+   cairn compares with cosine everywhere — `cosine_scan`, vec0 cosine metric).
+2. Divergence is bounded by truncation only; `chunk_for_symbol` caps text at
+   `max_tokens*4` chars client-side.
+3. Ollama serves the same model (`ollama pull bge-m3`, id `bge-m3`, 1024
+   dims) behind the same `/v1/embeddings` shape; LM Studio (`:1234/v1`),
+   llama.cpp server, vLLM expose the same endpoint — one generic client
+   covers all.
 
-oMLX quirks found during verification (document, don't code around):
-- oMLX's embedding engine loads **safetensors only**; the `BAAI/bge-m3` HF
-  repo ships only `pytorch_model.bin` → one-time local conversion required
-  (appendix A).
-- oMLX may require an API key (`~/.omlx/settings.json` → `auth.api_key`;
-  this machine uses `1234`). Auth failures return OpenAI-shaped
-  `authentication_error`; unknown model returns `not_found_error` that helpfully
-  lists available model ids.
-- The served model id is the model-directory basename (`bge-m3`), not the HF
-  path (`BAAI/bge-m3`).
+oMLX quirks (document, don't code around):
+- Embedding engine loads safetensors only; the `BAAI/bge-m3` HF repo ships
+  only `pytorch_model.bin` → one-time local conversion (appendix C).
+- May require an API key (`~/.omlx/settings.json` → `auth.api_key`); auth
+  failures return OpenAI-shaped `authentication_error`; unknown model returns
+  `not_found_error` listing available ids.
+- Served model id is the model-directory basename (`bge-m3`), not the HF path.
 
-## 3. Goals / Non-goals
+## A2. Design
 
-**Goals**
-- Embed via any OpenAI-compatible `/v1/embeddings` server (oMLX, Ollama,
-  LM Studio, llama.cpp, vLLM, …) with zero torch footprint in the cairn process.
-- Preserve every existing guarantee: model-stamp invalidation, vec0 ANN table
-  scoping, staleness/re-embed semantics, MCP embed buffering, warmup safety.
-- A verifiable migration path from `local` to `server` that does not force a
-  full corpus re-embed when the server serves the same weights (parity-checked,
-  not assumed).
-- Graceful degradation when the configured backend/model disappears: a
-  parity-verified fallback ladder (§4.7) that never silently mixes vector
-  spaces, ending in the already-shipped BM25/FTS5 hybrid leg.
-- A persistent config substrate (`~/.cairn/config.json`) plus a dashboard
-  Settings + Embeddings-status UI (§4.8); env vars remain the override layer.
-
-**Non-goals (follow-ups, separate specs)**
-- `/v1/rerank` for the reranker (oMLX exposes it; rerank stays CrossEncoder).
-- Per-corpus server models (`CAIRN_EMBED_KNOWLEDGE_MODEL` etc. stay local-only).
-- HTTP keep-alive / connection pooling (measured overhead ~100 ms/query is
-  acceptable; revisit only if bench shows it matters).
-- New cloud providers (the existing `openai` backend covers OpenAI).
-
-## 4. Design
-
-### 4.1 Configuration surface
+### A2.1 Configuration surface
 
 | Env var | Meaning | Default |
 |---|---|---|
 | `CAIRN_EMBED_BACKEND` | `server` \| `omlx` \| `ollama` (new) alongside `local`/`hash`/`openai` | `local` (unchanged) |
-| `CAIRN_EMBED_BASE_URL` | Base URL ending in `/v1` | preset: `omlx` → `http://127.0.0.1:8000/v1`; `ollama` → `http://127.0.0.1:11434/v1`; bare `server` → **required** |
+| `CAIRN_EMBED_BASE_URL` | Base URL ending in `/v1` | preset per backend; required for bare `server` |
 | `CAIRN_EMBED_SERVER_MODEL` | Model id sent in the request | `bge-m3` |
-| `CAIRN_EMBED_API_KEY` | Optional bearer token (oMLX with auth on) | none |
+| `CAIRN_EMBED_API_KEY` | Optional bearer token | none |
 | `CAIRN_EMBED_TIMEOUT` | Per-request timeout (seconds) | `30` |
 | `CAIRN_EMBED_SERVER_BATCH` | Max inputs per HTTP request | `32` |
-| `CAIRN_EMBED_MODEL_STAMP` | Override the derived model stamp (migration alias, §4.4) | derived |
+| `CAIRN_EMBED_MODEL_STAMP` | Override the derived model stamp (migration alias) | derived |
 
-`omlx` / `ollama` are pure presets of `server` (base URL + docs); they add no
-separate code path.
+### A2.2 Backend resolution and availability
 
-### 4.2 Backend resolution and availability
+- `_effective_backend()` (`src/cairn/graph/embeddings.py:323`): the server
+  family resolves to `server` with no import probing and never to `hash`.
+- `embeddings_available()` (`embeddings.py:65`): the FR-002 probe, cached per
+  process.
+- Degradation: probe failure or a mid-query embed error (verified: today
+  such errors propagate out of `semantic_search` uncaught — the dense path
+  has no handler around `embed_query`) runs the A2.7 ladder before anything
+  is returned. `cairn embed` exits 1 with the remediation message.
+- The MCP embed flusher's retry loop (`src/cairn/mcp_server/embed_buffering.py`)
+  already tolerates transient server errors for memory embeds.
 
-- `_effective_backend()` (`embeddings.py:323`): the server family resolves to
-  `server` with no import probing — there is nothing to import. It must
-  **never** resolve to `hash` (that fallback exists only for
-  local-without-sentence-transformers).
-- `embeddings_available()` (`embeddings.py:65`): for `server`, one cached
-  process-level probe — `GET {base}/models` with a 2 s timeout, API key
-  attached if set, that must return 200 **and list the configured model id**.
-  Either check failing → False. No key requirement.
-- **Degradation contract (Trust & Proof):** when the probe fails (server
-  down *or* model missing from the listing), or an embed call errors
-  mid-query — verified: today such an error propagates out of
-  `semantic_search` uncaught — the fallback ladder in §4.7 runs before
-  anything is returned. Its terminal state is the existing BM25/FTS5 hybrid
-  leg with `provenance` tagging: never a silent empty result, never hash
-  vectors. `cairn embed` exits 1 with the remediation message.
-- The MCP embed flusher's existing retry-on-failure loop
-  (`mcp_server/embed_buffering.py`) already tolerates transient server errors
-  for memory embeds; no change needed there beyond the error text.
+### A2.3 `_embed_server` client
 
-### 4.3 `_embed_server` client
+POST `{base}/embeddings`, sort response `data` by `index`, decode via
+`_floats_to_blob`; chunking/retry/timeout per FR-003; bearer auth only when
+`CAIRN_EMBED_API_KEY` is set.
 
-One function, `_embed_server(texts) -> (List[bytes], int)`, wired into
-`_embed()` dispatch (`embeddings.py:806`):
+### A2.4 Model stamping and migration
 
-- POST `{base}/embeddings` with `{"model": …, "input": […]}`; sort response
-  `data` by `index` (same as `_embed_openai`); decode via `_floats_to_blob`.
-- **Chunking:** split inputs into `CAIRN_EMBED_SERVER_BATCH`-sized requests
-  (embed_all's default batch of 64 becomes 2+2 requests). Order preserved.
-- **Retries:** up to 3 attempts with exponential backoff (0.5/1/2 s, jittered)
-  on connection errors, timeouts, HTTP 5xx, and 429. **No retry on other
-  4xx** — raise `RuntimeError` carrying the server's error `message` verbatim
-  (oMLX's "Available models: …" text is the diagnosis a user needs).
-- **Auth:** `Authorization: Bearer {CAIRN_EMBED_API_KEY}` only when set.
-- **Dim guard:** all returned vectors in a response must share one dim;
-  mismatch within a batch → RuntimeError (defensive; oMLX/Ollama never do).
+- Derived stamp `server/{netloc}/{model}`; switching local→server, port
+  changes, or model-id changes re-embed via the existing model-swap
+  machinery (`current_model()` at `embeddings.py:39`, `purge_stale_models`
+  at `embeddings.py:682`).
+- Migration alias = `CAIRN_EMBED_MODEL_STAMP`; first use runs the FR-005
+  parity check against stored rows (zero stored rows ⇒ vacuous pass); pass ⇒
+  rows keep the alias stamp (measured today: 1.000000); fail ⇒ hard abort,
+  zero rows written.
+- The 0.991 truncation worst case sits above the 0.98 gate by design;
+  different models land far below 0.9.
 
-### 4.4 Model stamping and migration
+### A2.5 Warmup
 
-The model stamp (persisted per row, drives re-embed + vec0 table names —
-`current_model()` at `embeddings.py:39`, `purge_stale_models` at
-`embeddings.py:682`):
+`src/cairn/graph/model_warmup.py` warms only `local` today. For `server`,
+the warm step is one tiny POST (triggers server-side lazy load), under the
+module's existing constraints (daemon thread, never raise into boot, one
+warning, `PYTEST_CURRENT_TEST` guard).
 
-- **Derived stamp:** `server/{netloc}/{model}` — e.g.
-  `server/127.0.0.1:8000/bge-m3`. Switching local→server, server→server on a
-  different port, or changing the model id each re-embed naturally through the
-  existing model-swap machinery. This is the safe default: identity of the
-  *producer* is part of the stamp, so a different server behind the same model
-  name can never silently mix vector spaces.
-- **Migration alias (`CAIRN_EMBED_MODEL_STAMP`):** opt-in override for the
-  common case "same bge-m3 weights, now served by oMLX/Ollama". With the alias
-  set, rows are stamped with the alias (e.g. `BAAI/bge-m3`) and existing
-  vectors are kept. Because this *assumes* numeric compatibility, the
-  assumption is **verified at first use, not trusted**:
-  - On the first `embed_all`/`embed_symbols` run under an alias stamp that
-    already has stored rows: sample up to 16 existing `(chunk, vec)` rows
-    under that stamp, embed the chunks via the server, compute mean cosine.
-  - mean ≥ **0.98** → proceed (parity proven; measured today: 1.000000).
-  - mean < 0.98 (or dim mismatch) → **hard abort**, zero rows written, error
-    names the measured mean and instructs removing the alias (which falls
-    back to the derived stamp + full re-embed).
-- The existing truncation divergence (0.991 worst case >512 tokens) sits
-  above the 0.98 gate by design: chunk text is already char-capped
-  client-side, so real-world samples pass; a genuinely different model fails
-  by a wide margin.
+### A2.6 Telemetry, doctor, CLI, docs
 
-### 4.5 Warmup
+- `EMBED_SERVER_DEGRADED` mirrors the `HASH_FALLBACK` pattern
+  (`embeddings.py:369`); payload host+model only, never request bodies.
+- Doctor: probe / model-listing / parity sample / latency; exit semantics
+  unchanged.
+- `cairn embed`: env-driven as today; server-down output carries the
+  remediation hint; CliRunner tests per house rule.
+- Docs per FR-008, including the privacy note (embedding input is code text
+  sent to the configured URL; localhost by default, remote is an explicit
+  user choice — same trust model as the existing `openai` backend).
 
-`model_warmup.py` warms only when the effective backend is `local`. Add: for
-`server`, the warm step is one tiny `POST /v1/embeddings` with a single short
-string (triggers the server's lazy model load — measured seconds on first
-call). Same constraints as today: daemon thread, never raise into boot, one
-warning on failure, `PYTEST_CURRENT_TEST` guard unchanged.
+### A2.7 Availability & fallback ladder
 
-### 4.6 Telemetry, doctor, CLI, docs
+Evaluated on probe failure, model-missing, or embed-call error; each rung
+restores the dense leg with proof or falls through; evaluated at most once
+per process per backend-state (cached; `reset_backend_cache()`, doctor, and
+embed force re-evaluation).
 
-- **Telemetry:** new durable event `EMBED_SERVER_DEGRADED` mirroring the
-  `HASH_FALLBACK` pattern (`embeddings.py:369`) — fired once per process per
-  reason when a server-backend probe/request fails or a ladder rung
-  activates (reason enum per FR-13). Payload: host+model only, never
-  request bodies.
-- **Doctor:** new checks when a server backend is configured —
-  (1) probe `GET /v1/models` (2 s); (2) configured model id present in the
-  listing; (3) quick parity sample as in §4.4 when rows exist; (4) report
-  warm round-trip latency. Exit semantics unchanged.
-- **CLI:** `cairn embed` needs no new flags (env-driven, like today), but its
-  failure output for server-down must carry the remediation hint. CliRunner
-  tests required (house rule: one per subcommand surface touched).
-- **Docs:** `docs/configuration.md` gains the env table + per-server quick
-  starts (oMLX incl. the safetensors conversion note, Ollama `ollama pull
-  bge-m3`, LM Studio/llama.cpp URLs); `install_hint()` gains one line: a
-  server backend needs no torch install at all; `docs/retrieval.md` notes the
-  backend option. Privacy note in configuration.md: embedding input is code
-  text sent to the configured URL — localhost by default; pointing it at a
-  remote host is an explicit user choice (same trust model as the existing
-  `openai` backend).
+1. **Parity-verified replacement on the same server**: scan `/v1/models`
+   for embedding-capable candidates; parity check per candidate; ≥ 0.98 ⇒
+   adopt session-scoped via the alias mechanism (zero re-embed) + notify
+   that `cairn embed --adopt-server-model` or the dashboard button makes it
+   permanent — permanence persists the ALIAS BINDING (the corpus keeps its
+   stamp while embeds and queries run through the adopted model, FR-005
+   parity re-verified once per process; not a corpus restamp); below gate ⇒
+   different vector space, dense leg stays dead, notification says re-embed
+   required, fall through.
+2. **Parity-verified local model**: sentence-transformers importable AND
+   weights cached AND parity ≥ 0.98 ⇒ session fallback to local (the
+   measured 1.000000 case; also the clean return path for local→server
+   migrations); else fall through.
+3. **Terminal — existing BM25/FTS5 hybrid**: the dense leg contributes
+   nothing; the query rides today's BM25+RRF fusion path unchanged with
+   zero dense candidates (verified: `semantic_search` returns
+   `provenance="bm25"` when zero cosine candidates survive — no new
+   short-circuit); results gain `degraded="embedding-backend"` + remediation
+   hint as additive keys.
 
-### 4.7 Availability & fallback ladder
+Hard rules: hash is never a rung; a producer-changing rung is taken only on
+parity proof; everything else notifies and degrades loudly.
 
-Evaluated whenever the configured server backend cannot serve the dense leg:
-probe failure, model missing from the `/v1/models` listing, or an embed-call
-error mid-query. Each rung either restores the dense leg **with proof** or
-falls through. The ladder is evaluated at most once per process per
-backend-state (cached alongside the availability probe; `reset_backend_cache()`,
-`cairn doctor`, and `cairn embed` force re-evaluation).
+### A2.8 Persistent config + dashboard Settings UI
 
-1. **Parity-verified replacement on the same server.** Scan the probe's
-   `/v1/models` listing for other embedding-capable ids. For each candidate,
-   run the §4.4 parity check against stored rows. Mean cosine ≥ 0.98 → the
-   candidate serves the same weights: adopt it **for this session only**
-   via the alias-stamp mechanism (queries embed through the candidate;
-   stored rows keep their stamp; zero re-embed) and notify (FR-13) that
-   `cairn embed --adopt-server-model <id>` or the dashboard button makes it
-   permanent. Below 0.98 → different vector space: the dense leg stays
-   dead, the notification says a re-embed is required to switch to that
-   model, fall through.
-2. **Parity-verified local model.** `sentence_transformers` importable AND
-   model weights cached AND parity ≥ 0.98 vs stored rows → session fallback
-   to the local backend (the measured 1.000000 case: same bge-m3 weights;
-   also the clean return path for local→server migrations). Not installed,
-   not cached, or below threshold → fall through.
-3. **Terminal: existing BM25/FTS5 hybrid.** The dense leg contributes
-   nothing; results come from the BM25 leg + RRF fusion — already shipped,
-   verified behavior (`semantic_search` returns `provenance="bm25"` when
-   zero cosine candidates survive). Results gain `degraded="embedding-backend"`
-   plus the remediation hint naming what was tried.
-
-Hard rules: the hash backend is never a rung; a rung that changes the vector
-producer is taken **only** when the parity gate proves numeric compatibility;
-everything else notifies and degrades loudly.
-
-### 4.8 Persistent config + dashboard Settings UI
-
-Cairn config today is env-only, so no process can change another process's
-backend — a config UI needs a substrate first.
-
-- **`~/.cairn/config.json`** (sibling of the existing `workspaces.json`
-  registry): JSON keys mirroring the §4.1 env vars. Precedence:
-  **env var > config file > default**, so CI, tests, and power users keep
-  today's env-driven semantics untouched. Backend/model resolution re-stats
-  the file (mtime + size) and re-reads on change, alongside the existing
-  per-process caches (`_EFFECTIVE_BACKEND_CACHE` et al.).
-- **Dashboard Settings section** (new POST routes; the dashboard stays
-  loopback-bound as it is today): backend choice (local / server presets /
-  custom URL), server model id, API key, timeout/batch, migration alias —
-  plus a "Run parity check" action that reports the §4.4 verdict live.
-  oMLX's `/admin` panel is the UX reference (settings forms + live model
-  listing + apply-without-restart feel); the visual language stays the
-  dashboard's existing post-0.13.0 style — this adds a section, not a
+- `~/.cairn/config.json` (sibling of `workspaces.json`): keys mirroring the
+  A2.1 env vars; env > file > default; mtime-based re-read.
+- Dashboard Settings section (loopback-only POSTs): backend choice, server
+  model id, API key (write-only), timeout/batch, migration alias, "Run
+  parity check" action. oMLX's `/admin` is the UX reference; visual language
+  stays the dashboard's existing post-0.13.0 style — a section, not a
   revamp.
-- **Embeddings status view**: effective backend, resolved stamp, per-corpus
-  row counts, last-embedded time, probe health, and the active fallback
-  rung as a banner (this doubles as FR-13's notification surface).
-- **Security notes:** the base-URL field is the one exfiltration-relevant
-  setting (embedding input is code text). Loopback-only binding is
-  mandatory (already the dashboard default), a base-URL change requires an
-  explicit confirm step, and the API key is write-only (never rendered
-  back, masked in the UI, value not returned by the API after save).
+- Embeddings status view: effective backend, resolved stamp, per-corpus row
+  counts, last-embedded time, probe health, active fallback rung as banner.
+- Security: loopback binding mandatory; base-URL change requires an explicit
+  confirm step; API key never rendered back.
 
-## 5. Functional requirements
+## A3. Decisions (summaries; tech-spec.md owns the formal D-001..D-010)
 
-- **FR-1** `CAIRN_EMBED_BACKEND=server|omlx|ollama` embeds all corpora (code,
-  knowledge, memory) through one OpenAI-compatible `/v1/embeddings` client;
-  presets differ only in default base URL.
-- **FR-2** Availability probing per §4.2 (reachable server **and** model id
-  present in the listing); server-down/model-missing never degrades to hash;
-  `is_hash_fallback()` stays False for server backends.
-- **FR-3** Batch chunking, bounded retries, timeout, and verbatim server-error
-  propagation per §4.3.
-- **FR-4** Model stamp derivation per §4.4; all existing stamp-driven
-  machinery (staleness, purge, vec0 table names) works unmodified.
-- **FR-5** Migration alias with the 0.98 mean-cosine parity gate and hard
-  abort; the gate runs before any row is written under the alias.
-- **FR-6** Warmup probe step per §4.5 under the module's existing safety rules.
-- **FR-7** `EMBED_SERVER_DEGRADED` telemetry event; doctor checks per §4.6.
-- **FR-8** Docs + `install_hint()` updates per §4.6.
-- **FR-9** The `local`, `hash`, and `openai` backends are byte-for-byte
-  unchanged (openai keeps its hardcoded URL and key requirement).
-- **FR-10** Persistent config substrate per §4.8: `~/.cairn/config.json`,
-  env > file > default precedence, mtime-based re-read, invalidation via
-  `reset_backend_cache()`.
-- **FR-11** Dashboard Settings section + Embeddings status view per §4.8:
-  loopback-only POST routes, API key write-only, base-URL confirm step,
-  parity-check action, fallback-rung banner.
-- **FR-12** The §4.7 fallback ladder, including catching dense-leg embed
-  errors inside `semantic_search` (today they propagate uncaught). Rung 1
-  and 2 activate only on parity ≥ 0.98 and are session-scoped; permanence
-  requires the explicit adopt command/UI action.
-- **FR-13** Notifications for every degraded/failed state: one warn-once
-  logger line, one durable telemetry event (`EMBED_SERVER_DEGRADED` with a
-  reason enum: `server_down | model_missing | parity_fail |
-  fallback_session_alias | fallback_local | hybrid_only`), an MCP result
-  footnote on affected queries (the `unembedded_memory_hint` pattern,
-  `embeddings.py:1478`), a doctor entry, and the dashboard banner.
+- D-001 — new `server` backend, `openai` untouched (zero regression surface).
+- D-002 — stamp includes the server netloc (producer identity is vector
+  identity; alias is the verified exception).
+- D-003 — no silent hash fallback on server errors (loud failure with
+  remediation).
+- D-004 — client-side truncation stays as-is (char cap bounds divergence to
+  the measured 0.991 worst case).
+- D-005 — single server model for all corpora in v1 (like the openai
+  backend today).
+- D-006 — urllib, no new dependency (measured ~100 ms/query overhead
+  acceptable for 1-2 embed_query calls per search).
+- D-007 — parity gate threshold 0.98 (same-weights ~1.000000 with noise to
+  0.991; unrelated models far below 0.9).
+- D-008 — env > config file > default (dashboard changes behavior only
+  through the persistent substrate; env semantics untouched).
+- D-009 — a different model id never silently serves the dense leg (only
+  the parity gate earns a session-scoped switch; permanence is explicit).
+- D-010 — notifications reuse existing patterns (warn-once logger,
+  reason-enum telemetry, MCP footnote à la `unembedded_memory_hint`,
+  doctor, dashboard banner).
 
-## 6. Decisions
+## A4. Risks / notes
 
-- **D-1 — new `server` backend, `openai` untouched.** Zero regression surface
-  for existing users; the openai backend keeps its contract. The two share
-  only the response-parsing idiom.
-- **D-2 — stamp includes the server netloc.** Identity of the producer is part
-  of vector identity; the alias override exists for verified migration only.
-- **D-3 — no silent hash fallback on server errors.** Trust & Proof: a wrong
-  answer silently is worse than a loud failure with a remediation hint.
-- **D-4 — client-side truncation stays as-is.** The char cap in
-  `chunk_for_symbol` already bounds the 512-vs-8192 divergence to the
-  measured 0.991 worst case; parity gate tolerates it, different models don't.
-- **D-5 — single server model for all corpora in v1** (like the openai
-  backend today). Per-corpus server models are a follow-up if asked for.
-- **D-6 — urllib, no new dependency.** Same stdlib approach as `_embed_openai`;
-  measured ~100 ms/query overhead is acceptable for 1-2 embed_query calls per
-  search.
-- **D-7 — parity gate threshold 0.98.** Measured same-weights parity is
-  ~1.000000 with truncation noise down to 0.991; unrelated models land far
-  below 0.9 in practice. 0.98 splits the two regimes with margin both ways.
-- **D-8 — env > config file > default.** The dashboard can only change
-  behavior through a persistent substrate; env stays on top so CI/tests and
-  the env-driven test doctrine keep working unchanged.
-- **D-9 — a different model id never silently serves the dense leg.** Only
-  the runtime parity gate (≥0.98 mean cosine vs stored rows) earns a
-  session-scoped switch via the alias stamp; permanence is always an
-  explicit user action. Silent model substitution would mix vector spaces —
-  the worst failure mode this system can have.
-- **D-10 — notifications reuse existing patterns.** Warn-once logger,
-  reason-enum telemetry event, MCP result footnote (`unembedded_memory_hint`
-  precedent), doctor entry, dashboard banner — no new notification channel.
+- Latency: +~100 ms per embed_query (HTTP + JSON of 1024 floats); bounded,
+  measured; keep-alive is the escape hatch later.
+- Server-side model change under a stable id: covered only by the alias
+  gate and doctor parity sample when no alias is set; residual accepted.
+- oMLX onboarding friction (safetensors conversion, per-install API key):
+  documentation, not code.
+- Dashboard write surface: loopback + confirm + write-only keys bound the
+  risk; residual = any local process on the port (same trust domain oMLX's
+  admin accepts).
+- Session-fallback surprise: FR-013 notifications are the counterweight.
+- Ladder evaluation cost: rung 1 parity embeds ~16 chunks per candidate;
+  bounded by the once-per-process cache.
 
-## 7. Test criteria
-
-- **TC-1** `_embed_server` against a stdlib `http.server` on `127.0.0.1:0`
-  serving canned OpenAI-shaped responses (with shuffled `index` order) →
-  correct, order-preserving float32 blobs. No network, no host literals
-  asserted.
-- **TC-2** Retry ladder: 500,500→200 succeeds after backoff; any other 4xx
-  raises immediately with the server's message embedded.
-- **TC-3** Connection-refused (bind a socket, close it, point the backend at
-  the port): RuntimeError carries base URL + remediation; effective backend
-  remains `server`; `is_hash_fallback()` False; `semantic_search` returns the
-  `server-unavailable` provenance shape.
-- **TC-4** Stamp derivation from URL; `CAIRN_EMBED_MODEL_STAMP` override wins.
-- **TC-5** Parity gate: store vectors from canned server A; alias to canned
-  server B returning orthogonal vectors → `embed_all` aborts, zero rows under
-  the alias; with matching vectors → proceeds and reports skip (no re-embed).
-- **TC-6** CliRunner e2e: `cairn embed` against the canned server writes rows
-  under the derived stamp; server-down path exits 1 with the hint (also the
-  "nonexistent endpoint" e2e, per the fixture-built-DB lesson).
-- **TC-7** Availability probe caching per process; `reset_backend_cache()`
-  clears it (tests toggle the env).
-- **TC-8** Non-regression: full existing embedding/semantic suite green;
-  `_embed_openai` still targets api.openai.com.
-- **TC-9** Warmup: server-backend warm step issues exactly one probe; failure
-  → single warning, no raise; `PYTEST_CURRENT_TEST` guard intact.
-- **TC-10** Config precedence: env beats file, file beats default; file
-  mtime change is picked up without process restart; `reset_backend_cache()`
-  forces re-read.
-- **TC-11** Dashboard settings: POST routes reject non-loopback binds;
-  API-key GET never returns the stored value; base-URL change without the
-  confirm field is a 4xx; writes round-trip into `config.json`.
-- **TC-12** Ladder rung 1: model missing + candidate with matching vectors
-  (canned server) → session alias active, results dense, adopt-notification
-  present; candidate with orthogonal vectors → rung refused, notification
-  says re-embed, falls through. Rung 2: sentence-transformers importable +
-  parity → local session fallback; not installed → falls through. Rung 3:
-  results are BM25-only with `provenance="bm25"`, `degraded` tag, footnote,
-  and one telemetry event per reason.
-- **TC-13** Embed-error containment: a server that 500s *after* the probe
-  (race) mid-`semantic_search` does not raise; the ladder runs and hybrid
-  results return (regression test for the uncaught-error gap).
-- **TC-14** Ladder evaluation caching: one evaluation per process per
-  backend-state; doctor/embed force re-evaluation.
-
-## 8. Risks / notes
-
-- **Latency:** +~100 ms per embed_query (HTTP + JSON of 1024 floats).
-  Bounded, measured, acceptable; keep-alive is the escape hatch later.
-- **Server-side model changes under a stable id** (user re-pulls a different
-  model): the derived stamp does not change (same netloc+id). The §4.4 parity
-  gate covers this only when an alias is set. Residual risk accepted — same
-  class as re-pinning a local model file; doctor's parity check is the
-  detection surface.
-- **oMLX onboarding friction:** safetensors-only + BAAI repo without
-  safetensors (appendix A) + per-install API key. All documentation, not code.
-- **First-call server latency:** the server lazy-loads the model on first
-  embedding request (seconds). Warmup (§4.5) exists to move this off the
-  first query, mirroring today's local behavior.
-- **Dashboard write surface:** adding POST routes ends the dashboard's
-  read-only era. Loopback binding + confirm-on-base-URL + write-only keys
-  (§4.8) bound the risk; the residual is any local process able to reach
-  the port — same trust domain oMLX's admin accepts, documented openly.
-- **Session fallback surprise:** rung 1/2 keep search working silently
-  after e.g. an oMLX model rename. The FR-13 notification (banner, footnote,
-  doctor) is the counterweight; permanence still requires an explicit adopt.
-- **Ladder evaluation cost:** rung 1 parity checks embed ~16 stored chunks
-  per candidate. Bounded by the once-per-process cache (§4.7) and the
-  candidate list being small in practice.
-
-## 9. Rollout
+## A5. Rollout
 
 Two phases, each independently shippable:
 
-- **Phase 1 — server backend + ladder (env-configured):** FR-1..FR-7,
-  FR-12, FR-13 (logger/telemetry/footnote/doctor parts). Default-off, no
+- **Phase 1 — server backend + ladder (env-configured)**: FR-001..FR-007,
+  FR-012, FR-013 (logger/telemetry/footnote/doctor parts). Default-off, no
   schema migration (stamps are strings in existing columns; vec0 tables are
   model-scoped by name and created lazily). This phase alone fixes the
   uncaught-embed-error gap.
-- **Phase 2 — config substrate + dashboard UI:** FR-8, FR-10, FR-11, and
-  the dashboard-banner notification surface of FR-13.
+- **Phase 2 — config substrate + dashboard UI**: FR-008, FR-010, FR-011,
+  and the dashboard-banner notification surface of FR-013.
 
-Post-merge each phase: `cairn update`, `record_memory(type="decision")` for
-the phase's D-items, CHANGELOG entry under `[Unreleased]`.
+## Appendix B — researched surfaces
 
----
+- oMLX: `/v1/embeddings` + `/v1/rerank`, model auto-discovery from
+  `~/.omlx/models`, Apache-2.0, macOS 15+/Apple Silicon —
+  github.com/jundot/omlx, omlx.ai
+- Ollama: official bge-m3 library model (ollama.com/library/bge-m3),
+  OpenAI-compatible `/v1/embeddings` at `:11434/v1`
+- Same endpoint shape: LM Studio `:1234/v1`, llama.cpp server, vLLM,
+  vllm-mlx (github.com/waybarrios/vllm-mlx)
 
-## Appendix A — reproduce the verification (this machine)
+## Appendix C — reproduce the verification (this machine)
 
 ```bash
 # oMLX model setup: BAAI/bge-m3 ships pytorch_model.bin only; oMLX needs safetensors.
@@ -433,18 +440,8 @@ EOF
 omlx restart   # discovers models/BAAI/bge-m3, serves it as id "bge-m3"
 curl -s -H "Authorization: Bearer $(jq -r .auth.api_key ~/.omlx/settings.json)" \
   http://localhost:8000/v1/models
-# parity: /tmp/cairn_omlx_parity.py — ST vs oMLX, cosine/truncation/latency
+# parity probe: embed stored chunks via server, compare cosine vs stored rows
 ```
 
 Ollama equivalent: `ollama pull bge-m3` → base URL `http://localhost:11434/v1`,
 model id `bge-m3`, no auth.
-
-## Appendix B — researched surfaces
-
-- oMLX: `/v1/embeddings` + `/v1/rerank`, model auto-discovery from
-  `~/.omlx/models`, Apache-2.0, macOS 15+/Apple Silicon —
-  [github.com/jundot/omlx](https://github.com/jundot/omlx), [omlx.ai](https://omlx.ai/)
-- Ollama: official [bge-m3 library model](https://ollama.com/library/bge-m3),
-  OpenAI-compatible `/v1/embeddings` at `:11434/v1`
-- Same endpoint shape: LM Studio `:1234/v1`, llama.cpp server, vLLM, vllm-mlx
-  ([waybarrios/vllm-mlx](https://github.com/waybarrios/vllm-mlx))
