@@ -553,3 +553,80 @@ From research.md / spec.md:
 - **Consequences**: 27-test doctor suite stays green unchanged; the "run
   doctor after re-pulling models" documentation rule (D/A4 risk) has a real
   check to point at; exit semantics untouched per FR-007.
+
+### D-013 — Server-family availability is staged: True before the probe, HTTP-gated after
+- **Context**: `embeddings_available()`'s local arm coalesces a missing
+  sentence-transformers import to `hash` and writes the effective-backend
+  cache — in a torch-less env this would poison a `server`/`omlx`/`ollama`
+  config into hash dispatch, violating FR-002's "never hash" invariant
+  (survey S01; tech-spec Area-1 pitfall).
+- **Decision**: T001 adds a family arm returning True ahead of the local
+  import attempt (no HTTP, no new cache); T003 replaces the `True` with the
+  cached `GET {base}/models` probe (200 AND model listed). Availability is
+  thus staged with the invariant enforced from the first task.
+- **Consequences**: No server-family value ever reaches the ImportError
+  branch; `is_hash_fallback()` stays False in torch-less environments
+  (verified by T001's blocked-import subprocess test).
+
+### D-014 — Corrected vec0 table-name example (sanitizer maps `-` to `_`)
+- **Context**: T004 verified against the real `ann_index._table_name`
+  (`[^a-zA-Z0-9_]`→`_`): the stamp `server/127.0.0.1:8000/bge-m3`
+  sanitizes to `vec_server_127_0_0_1_8000_bge_m3` — earlier doc examples
+  wrote `..._8000_bge-m3`, wrongly keeping the hyphen.
+- **Decision**: code and tests assert the real `_table_name` output; this
+  D-### is the authoritative correction for any example string elsewhere
+  in this doc set showing a hyphen in a sanitized table name.
+- **Consequences**: None functional — example-text only; stamp derivation
+  itself is unchanged.
+
+### D-015 — Session overrides: env wins for identity, session wins for routing
+- **Context**: Rung-1 adoption needs the query path to embed through the
+  parity-proven candidate while stored rows keep their stamp (T011).
+- **Decision**: Two session override families in embeddings.py. Identity
+  (stamp): `CAIRN_EMBED_MODEL_STAMP` > session pin > derived — the user's
+  explicit migration alias always wins. Routing (server model id):
+  session adoption > env — the env id names the FAILED producer being
+  replaced; the adopted id is parity-proven (D-009), so env-wins would make
+  rung 1 inert under the common explicit-env setup. Availability follows
+  the effective route: after rung-2 local adoption the server arm of
+  `embeddings_available()` returns True via the backend override (the
+  ladder proved local before adopting).
+- **Consequences**: `reset_backend_cache()` clears all session overrides
+  with the ladder cache; no env var is ever mutated (D-008 doctrine).
+
+### D-016 — Adopt's stamp pin uses the dominant stored stamp (multi-stamp caveat)
+- **Context**: T014 pins the alias binding to the stored stamp with the
+  most rows. In a multi-stamp DB where an older stamp dominates (old rows
+  linger — purge_stale_models is dead code, survey S03), that can diverge
+  from the stamp the ladder's parity scan actually proved.
+- **Decision**: Implemented as designed for Phase 3 (most-rows rule is
+  deterministic and correct for the common single-stamp corpus). Phase 4's
+  config substrate should align the pin with the parity-proven stamp.
+- **Consequences**: Edge-case only; parity still re-verifies per process
+  (FR-005), so a wrong pin surfaces as a parity abort, never silent mixes.
+
+### D-017 — Degraded keys gate on the search that actually lost the dense leg
+- **Context**: FR-012's `degraded`/`hint` keys were specified as "when
+  degradation_active()", but a rung-1/2 session adoption is `active`
+  exactly when it SAVED the search — tagging those results would cry wolf.
+- **Decision**: Keys land only when the ladder is active AND this search's
+  dense leg actually fell (per-search flag). Adoption-carried searches
+  return clean results (T013's reconciliation, test-pinned).
+- **Consequences**: The tag means "these results are lexical-only", not
+  "the backend had a bad day"; footnotes/banner (T016/T017) still report
+  the adoption itself.
+
+### D-018 — The file layer participates fully in gate arming; tests isolate it
+- **Context**: T018's substrate made config.json a first-class source
+  (D-008). Two follow-ons: a stamp set only in the file must arm the
+  FR-005 alias gate (otherwise the dashboard's alias field would persist
+  an UNVERIFIED alias — the exact hole the gate exists to close), and the
+  probe must read a file-persisted API key or availability would flap.
+- **Decision**: `_alias_preflight` and `_run_server_probe` read through
+  `_config_or_env` like every other knob; conftest's hermetic env
+  re-points `paths.CONFIG_FILE` into the sandbox (import-time binding
+  pit, survey S10) so a dev machine's real config.json cannot leak into
+  suites.
+- **Consequences**: File-persisted aliases are parity-gated identically to
+  env aliases (test-pinned in test_alias_gate.py); FR-009 intact (no file
+  ⇒ byte-identical env-only behavior).

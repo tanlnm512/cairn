@@ -51,7 +51,11 @@ store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
 `CAIRN_EMBED_LOCAL_MODEL`, `CAIRN_EMBED_OPENAI_MODEL`,
 `CAIRN_EMBED_KNOWLEDGE_MODEL`, `CAIRN_EMBED_MEMORY_MODEL`,
 `CAIRN_EMBED_FP`, `CAIRN_EMBED_MAX_SEQ_LEN`,
-`CAIRN_EMBED_TRUST_REMOTE_CODE`, `CAIRN_WARM_MODELS`, `CAIRN_CHUNK_VARIANT`.
+`CAIRN_EMBED_TRUST_REMOTE_CODE`, `CAIRN_WARM_MODELS`, `CAIRN_CHUNK_VARIANT`;
+the server-backend knobs (`CAIRN_EMBED_BASE_URL`, `CAIRN_EMBED_SERVER_MODEL`,
+`CAIRN_EMBED_API_KEY`, `CAIRN_EMBED_TIMEOUT`, `CAIRN_EMBED_SERVER_BATCH`,
+`CAIRN_EMBED_MODEL_STAMP`) are tabled in
+[Embedding server backends](#embedding-server-backends) below.
 
 **Operations & telemetry**
 
@@ -65,6 +69,115 @@ store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
 | `CAIRN_CONN_POOL` | pooled SQLite connections (default 1) |
 | `CAIRN_MAX_RESULT_CHARS` | response truncation threshold |
 | `CAIRN_TOOL_METRICS_MAX_AGE_SECONDS` / `_MAX_ROWS` | retention |
+
+## Embedding server backends
+
+`CAIRN_EMBED_BACKEND=server` — or the presets `omlx` / `ollama` — embeds all
+three corpora (code, knowledge, memory) through any OpenAI-compatible
+`/v1/embeddings` server already running on the machine: oMLX, Ollama, LM
+Studio, llama.cpp, vLLM. No torch install and no in-process model: one
+shared server load serves cairn, editors, and other agents. The presets
+differ only in default base URL; bare `server` requires
+`CAIRN_EMBED_BASE_URL`.
+
+| Var | Meaning | Default |
+|---|---|---|
+| `CAIRN_EMBED_BACKEND` | `server` / `omlx` / `ollama` (alongside `local`/`hash`/`openai`) | `local` |
+| `CAIRN_EMBED_BASE_URL` | base URL ending in `/v1` | preset per backend; required for bare `server` |
+| `CAIRN_EMBED_SERVER_MODEL` | model id sent in requests | `bge-m3` |
+| `CAIRN_EMBED_API_KEY` | optional bearer token | none |
+| `CAIRN_EMBED_TIMEOUT` | per-request timeout (seconds) | `30` |
+| `CAIRN_EMBED_SERVER_BATCH` | max inputs per HTTP request | `32` |
+| `CAIRN_EMBED_MODEL_STAMP` | override the derived model stamp (migration alias) | derived |
+
+Presets: `omlx` → `http://127.0.0.1:8000/v1`, `ollama` →
+`http://127.0.0.1:11434/v1`. Any other OpenAI-compatible server works via
+`CAIRN_EMBED_BACKEND=server` plus `CAIRN_EMBED_BASE_URL` (LM Studio serves
+`:1234/v1`; llama.cpp server and vLLM expose the same endpoint shape).
+
+Requests are batched (`CAIRN_EMBED_SERVER_BATCH` inputs per POST) and
+retried on connection errors, timeouts, 5xx, and 429 — up to 3 retries with
+jittered exponential backoff (0.5/1/2 s). Other 4xx fail immediately with
+the server's error message verbatim (oMLX's `not_found_error` lists the ids
+it does serve), and a batch returning mixed dimensions is rejected.
+
+### Availability probe
+
+A server backend is usable only while `GET {base}/models` (2 s timeout,
+bearer header when `CAIRN_EMBED_API_KEY` is set) returns 200 **and** the
+listing includes the configured model id. The verdict is cached per
+process; `cairn doctor` and backend changes force a re-probe. A failing
+probe never silently swaps in another producer — how cairn degrades is the
+fallback ladder documented in [retrieval.md](retrieval.md).
+
+### `~/.cairn/config.json`
+
+Every `CAIRN_EMBED_*` knob can also live in `$CAIRN_HOME/config.json`
+(sibling of `workspaces.json`) as a flat JSON object whose keys mirror the
+env-var names:
+
+```json
+{
+  "CAIRN_EMBED_BACKEND": "omlx",
+  "CAIRN_EMBED_SERVER_MODEL": "bge-m3"
+}
+```
+
+Precedence is env > file > default, and the file is re-read when its mtime
+changes, so edits reach running processes without a restart. The dashboard
+Settings page persists values here — including the API key, which is
+write-only in the UI and never rendered back. Base-URL changes in the UI
+require an explicit confirm step.
+
+### Privacy
+
+Embedding input is code text: with a server backend, the text of your
+symbols is sent to the configured URL. Localhost is the default; pointing
+`CAIRN_EMBED_BASE_URL` at a remote host sends your code there — an explicit
+user choice, under the same trust model as the existing `openai` backend.
+
+### oMLX setup (one-time)
+
+oMLX's embedding engine loads safetensors only, and the `BAAI/bge-m3` HF
+repo ships only `pytorch_model.bin` — one local conversion is needed. Any
+environment with `torch`, `huggingface_hub`, and `safetensors` works (the
+`[semantic]` extra installs all three):
+
+```bash
+python - <<'EOF'
+from pathlib import Path
+import torch
+from huggingface_hub import snapshot_download
+from safetensors.torch import save_file
+d = Path.home() / ".omlx/models/BAAI/bge-m3"
+snapshot_download("BAAI/bge-m3", local_dir=d)
+sd = torch.load(d / "pytorch_model.bin", map_location="cpu", weights_only=True)
+save_file({k: v.contiguous() for k, v in sd.items()},
+          d / "model.safetensors", metadata={"format": "pt"})
+EOF
+
+omlx restart   # discovers ~/.omlx/models/BAAI/bge-m3, serves it as id "bge-m3"
+```
+
+Notes:
+
+- The served model id is the model-directory **basename** (`bge-m3`), not
+  the HF path — that is the id to put in `CAIRN_EMBED_SERVER_MODEL`.
+- oMLX installs may require an API key (`~/.omlx/settings.json` →
+  `auth.api_key`); put the same value in `CAIRN_EMBED_API_KEY`. Auth
+  failures surface as OpenAI-shaped `authentication_error` messages.
+- Verify with `curl -s http://127.0.0.1:8000/v1/models` (add
+  `-H "Authorization: Bearer <key>"` when auth is on): the configured id
+  must appear in the listing — that is exactly what the probe checks.
+
+### Ollama setup
+
+`ollama pull bge-m3` is the whole setup: the `ollama` preset supplies the
+base URL (`http://127.0.0.1:11434/v1`), the model id is `bge-m3`, no auth.
+
+With a server backend configured, `cairn doctor` checks the probe, the
+model listing, a parity sample against stored rows, and latency; without
+one it stays a single informational line.
 
 ## Install extras (`pip install cairn-intel[…]`)
 
@@ -82,4 +195,8 @@ store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
 The default install is zero-network and torch-free; without `[semantic]`,
 embeddings fall back to a deterministic hash backend and retrieval still
 works (lexically-fused, weaker semantics — see the `HASH_FALLBACK` /
-`SEMANTIC_BACKEND` events in `cairn doctor`).
+`SEMANTIC_BACKEND` events in `cairn doctor`). The other torch-free path is
+an embedding server: with a server backend configured
+([Embedding server backends](#embedding-server-backends)), vectors come
+from the configured `/v1/embeddings` endpoint and `[semantic]` stays
+unnecessary.

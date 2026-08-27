@@ -64,6 +64,14 @@ def _hermetic_env(monkeypatch, tmp_path):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("CAIRN_HOME", str(sandbox_cairn))
 
+    # The config-file layer binds its path at import (the CAIRN_HOME
+    # import-time binding pit): re-point it into the sandbox so a real
+    # ~/.cairn/config.json on a dev machine cannot leak into suites.
+    from cairn import paths as _paths
+
+    monkeypatch.setattr(_paths, "CONFIG_FILE", sandbox_cairn / "config.json")
+    _paths.reset_config_cache()
+
     real_which = shutil.which
 
     def _blocked_which(name, *a, **k):

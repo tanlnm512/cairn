@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _bundle, _conn, _rw_conn, mcp
+from ._server_core import _append_embed_degradation_footnote, _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import instrument
 
 
@@ -182,7 +182,7 @@ def ask_compass(query: str, file_path: str = "") -> str:
         elif isinstance(data, list):
             for item in data:
                 out.append(f"  {item}")
-    return "\n".join(out)
+    return _append_embed_degradation_footnote("\n".join(out))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))

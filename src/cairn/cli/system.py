@@ -715,7 +715,9 @@ def sync(workspace, db):
 # --------------------------------------------------------------------------
 # cairn doctor (spec observability-telemetry §6.5)
 # --------------------------------------------------------------------------
-# 8 health checks, each PASS/WARN/FAIL. Read-only -- doctor never writes to
+# 9 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
+# one informational line unless a server backend is configured, D-012).
+# Read-only -- doctor never writes to
 # the store. Exit code is 0 when every check is PASS or WARN, and 1 when any
 # check is FAIL, so agents can gate on it (spec §6.5, success metric §8).
 #
@@ -816,7 +818,7 @@ def _latest_event_reason(conn, name: str) -> str | None:
         return None
 
 
-# --- the 8 checks ----------------------------------------------------------
+# --- the 9 checks ----------------------------------------------------------
 # Each takes the live connection (None only inside _db_unavailable_results,
 # which short-circuits before these run for the DB-dependent checks) and
 # returns a result dict. Every DB read is bounded + defensive: a missing table
@@ -972,8 +974,170 @@ def _check_ann(conn) -> dict:
     return _result("ann", _PASS, f"sqlite-vec available ({emb_n} vector(s) indexed)")
 
 
+def _check_embed_server(conn) -> list[dict]:
+    """4. Embed server: probe / model-listing / parity sample / latency.
+
+    One informational PASS line unless a server-family backend (server, omlx,
+    ollama) is configured -- no network I/O happens and the default-configured
+    output stays byte-stable (D-012). With a server backend, doctor
+    re-evaluates by design: reset_backend_cache() drops the cached probe and
+    stamp resolution (and any session adoptions) before probing. Verdicts: an
+    unreachable server or a missing configured model FAILs with a remediation
+    hint; a failed parity sample WARNs with the measured mean (advice --
+    re-embed, not broken); otherwise PASS naming host, model, and the latency
+    bucket of one tiny embed round-trip. Zero stored rows under the current
+    stamp makes the parity arm vacuous (check_parity's contract), so a fresh
+    install still PASSes. An active ladder degradation (FR-012, recorded
+    earlier in this process) surfaces as an appended WARN entry naming
+    rung/reason/remediation (FR-013) -- sampled before the cache reset so
+    doctor reports it instead of erasing it.
+    """
+    from urllib.parse import urlsplit
+
+    from ..graph.embed_ladder import (
+        _fetch_model_listing,
+        check_parity,
+        degradation_active,
+        degradation_footnote,
+    )
+    from ..graph.embeddings import (
+        _SERVER_FAMILY,
+        _embed_server,
+        _server_base_url,
+        _server_model,
+        current_model,
+        embeddings_available,
+        reset_backend_cache,
+    )
+    from ..graph.semantic import _ms_bucket
+
+    configured = os.environ.get("CAIRN_EMBED_BACKEND", "local").strip().lower() or "local"
+    if configured not in _SERVER_FAMILY:
+        return [
+            _result(
+                "embed_server",
+                _PASS,
+                f"disabled by config (CAIRN_EMBED_BACKEND={configured})",
+            )
+        ]
+
+    results: list[dict] = []
+    if degradation_active():
+        results.append(
+            _result("embed_server_degraded", _WARN, degradation_footnote())
+        )
+
+    reset_backend_cache()
+
+    try:
+        base = _server_base_url().rstrip("/")
+    except RuntimeError as e:
+        results.append(
+            _result(
+                "embed_server",
+                _FAIL,
+                str(e),
+                hint="set CAIRN_EMBED_BASE_URL to an OpenAI-compatible /v1 URL, "
+                "or use the omlx/ollama presets",
+            )
+        )
+        return results
+
+    # Probe and model-listing share one path (FR-002's GET {base}/models,
+    # 200 AND the configured id listed); a failed probe fetches the listing
+    # once more to separate server-down from model-missing.
+    if not embeddings_available():
+        ids = _fetch_model_listing()
+        if ids is None:
+            results.append(
+                _result(
+                    "embed_server",
+                    _FAIL,
+                    f"embedding server unreachable (GET {base}/models failed)",
+                    hint="start the embedding server and verify GET "
+                    f"{base}/models lists the model (presets: omlx "
+                    "http://127.0.0.1:8000/v1, ollama http://127.0.0.1:11434/v1)",
+                )
+            )
+            return results
+        model = _server_model()
+        results.append(
+            _result(
+                "embed_server",
+                _FAIL,
+                f"configured model '{model}' not served; "
+                f"available: {', '.join(ids) if ids else '<none>'}",
+                hint="serve the model or set CAIRN_EMBED_SERVER_MODEL "
+                "to a served id",
+            )
+        )
+        return results
+
+    model = _server_model()
+    parity_note = "parity vacuous (no stored rows under this stamp)"
+    try:
+        stamp = current_model()
+    except RuntimeError:
+        stamp = None
+    if stamp is not None:
+        try:
+            parity = check_parity(conn, stamp)
+        except Exception as e:
+            results.append(
+                _result(
+                    "embed_server",
+                    _WARN,
+                    f"parity sample failed to run: {e}",
+                    hint="re-run `cairn doctor` once the embedding server is stable",
+                )
+            )
+            return results
+        if parity.sampled:
+            if not parity.passed:
+                results.append(
+                    _result(
+                        "embed_server",
+                        _WARN,
+                        f"parity sample failed ({parity.sampled} chunk(s) sampled): "
+                        f"{parity.reason}",
+                        hint="re-embed with `cairn embed` to realign stored vectors",
+                    )
+                )
+                return results
+            parity_note = (
+                f"parity {parity.mean_cosine:.4f} over "
+                f"{parity.sampled} stored chunk(s)"
+            )
+
+    try:
+        t0 = time.perf_counter()
+        _embed_server(["ping"])
+        latency = _ms_bucket((time.perf_counter() - t0) * 1000.0)
+    except Exception as e:
+        results.append(
+            _result(
+                "embed_server",
+                _FAIL,
+                f"embed request failed: {e}",
+                hint=f"verify the server serves POST {base}/embeddings "
+                f"with model '{model}'",
+            )
+        )
+        return results
+
+    results.append(
+        _result(
+            "embed_server",
+            _PASS,
+            f"server ok: {urlsplit(base).netloc} model '{model}', "
+            f"embed latency {latency}, {parity_note}",
+        )
+    )
+    return results
+
+
 def _check_freshness(conn) -> dict:
-    """4. Freshness: pending_sync edits, interrupted rebuilds, last build age.
+    """5. Freshness: pending_sync edits, interrupted rebuilds, last build age.
 
     WARN when ``pending_sync`` has rows (the debounce window holds unindexed
     edits), when ``repo_build_state`` holds a stale 'building' marker (a
@@ -1055,7 +1219,7 @@ def _check_freshness(conn) -> dict:
 
 
 def _check_parse_errors(conn) -> dict:
-    """5. Parse errors: count from parse_errors (newest 5 in detail).
+    """6. Parse errors: count from parse_errors (newest 5 in detail).
 
     WARN when >0 -- a parse error means a file was skipped during indexing, so
     the graph is incomplete for that file. Closes the gap that parse_errors was
@@ -1087,7 +1251,7 @@ def _check_parse_errors(conn) -> dict:
 
 
 def _check_concurrency(conn) -> dict:
-    """6. Concurrency: lock_contention events (last 7d) + stray-sweep total.
+    """7. Concurrency: lock_contention events (last 7d) + stray-sweep total.
 
     WARN when any ``lock_contention`` event was recorded in the last
     ``CONTENTION_WINDOW_DAYS`` (cross-process lock waits absorbed by
@@ -1124,7 +1288,7 @@ def _check_concurrency(conn) -> dict:
 
 
 def _check_tool_health(conn) -> dict:
-    """7. Tool health: per-tool error rate + p95 latency (last 7d).
+    """8. Tool health: per-tool error rate + p95 latency (last 7d).
 
     WARN when ANY tool's error rate exceeds ``TOOL_ERROR_RATE_WARN`` or its p95
     latency exceeds ``TOOL_P95_LATENCY_MS_WARN``. PASS when no metrics are
@@ -1188,38 +1352,77 @@ def _check_tool_health(conn) -> dict:
     return _result("tool_health", _PASS, f"{healthy} tool(s) within thresholds")
 
 
+def _knob_source(name: str, default: str) -> tuple[str, str]:
+    """Effective value and supplying layer for a CAIRN_EMBED_* knob.
+
+    Mirrors embeddings._config_or_env's precedence (D-008: env > config file
+    > default, non-string file values ignored) but also reports which layer
+    supplied the value, so doctor's echo cannot diverge from dashboard
+    truth (FR-010/FR-011).
+    """
+    from ..paths import get_config_value
+
+    env = (os.environ.get(name) or "").strip()
+    if env:
+        return env, "env"
+    file_val = get_config_value(name)
+    if isinstance(file_val, str) and file_val.strip():
+        return file_val.strip(), "file"
+    return default, "default"
+
+
 def _check_config() -> dict:
-    """8. Config echo: the CAIRN_* knobs that alter behavior (informational).
+    """9. Config echo: the CAIRN_* knobs that alter behavior (informational).
 
     Always PASS -- a transparency echo, not a health verdict. Lists the
-    effective runtime knobs so a doctor snapshot is self-describing.
+    effective runtime knobs so a doctor snapshot is self-describing. The
+    embedding knobs (spec A2.1) resolve env > config file > default
+    (D-008, FR-010): each echoes its effective value plus the layer that
+    supplied it. The API key reports presence only -- its value is never
+    echoed.
     """
     knobs = [
         ("workers", os.environ.get("CAIRN_WORKERS", "<unset>")),
         ("read_only", os.environ.get("CAIRN_READ_ONLY", "<unset>")),
         ("fusion", os.environ.get("CAIRN_FUSION", "<unset>")),
         ("ann_backend", os.environ.get("CAIRN_ANN_BACKEND", "<unset (=sqlite-vec)>")),
-        ("embed_backend", os.environ.get("CAIRN_EMBED_BACKEND", "<unset (=local)>")),
         ("telemetry", os.environ.get("CAIRN_TELEMETRY", "<unset (=on)>")),
         ("log_level", os.environ.get("CAIRN_LOG_LEVEL", "<unset (=WARNING)>")),
     ]
+    # Defaults mirror the resolver's own fallbacks (embeddings.py).
+    embed_knobs = [
+        ("embed_backend", "CAIRN_EMBED_BACKEND", "local"),
+        ("embed_base_url", "CAIRN_EMBED_BASE_URL", "<preset>"),
+        ("embed_server_model", "CAIRN_EMBED_SERVER_MODEL", "bge-m3"),
+        ("embed_timeout", "CAIRN_EMBED_TIMEOUT", "30"),
+        ("embed_server_batch", "CAIRN_EMBED_SERVER_BATCH", "32"),
+        ("embed_model_stamp", "CAIRN_EMBED_MODEL_STAMP", "<derived>"),
+    ]
+    for label, env_name, default in embed_knobs:
+        value, source = _knob_source(env_name, default)
+        knobs.append((label, f"{value} ({source})"))
+    # Presence only: the value is not even bound, so it cannot leak out.
+    key_source = _knob_source("CAIRN_EMBED_API_KEY", "")[1]
+    key_echo = "<unset>" if key_source == "default" else f"<set via {key_source}>"
+    knobs.append(("api_key", key_echo))
     return _result("config", _PASS, "; ".join(f"{k}={v}" for k, v in knobs))
 
 
 def _db_unavailable_results(error: Exception | None) -> list[dict]:
     """Result set when the store can't be opened: schema FAILs, the rest WARN.
 
-    Config echo still PASSes (env-only, independent of the store). Embeddings/
-    ANN are reported unavailable too: when the store is broken the backend
-    state is moot until the store is fixed. This is what makes doctor
-    crash-proof against a missing / read-only / corrupt store (spec: degrade
-    to WARN with the reason, never crash).
+    Config echo still PASSes (env/file only, independent of the store). Embeddings/
+    ANN/embed-server are reported unavailable too: when the store is broken
+    the backend state is moot until the store is fixed. This is what makes
+    doctor crash-proof against a missing / read-only / corrupt store (spec:
+    degrade to WARN with the reason, never crash).
     """
     msg = f"cannot open database: {error}"
     return [
         _result("schema", _FAIL, msg),
         _result("embeddings", _WARN, "database unavailable (see schema)"),
         _result("ann", _WARN, "database unavailable (see schema)"),
+        _result("embed_server", _WARN, "database unavailable (see schema)"),
         _result("freshness", _WARN, "database unavailable (see schema)"),
         _result("parse_errors", _WARN, "database unavailable (see schema)"),
         _result("concurrency", _WARN, "database unavailable (see schema)"),
@@ -1229,7 +1432,7 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
 
 
 def _run_doctor(db: str) -> list[dict]:
-    """Execute the 8 checks against ``db``. Never raises.
+    """Execute the 9 checks against ``db``. Never raises.
 
     A store that can't be opened FAILs the schema check and degrades the
     remaining DB-dependent checks to WARN. A store whose path doesn't EXIST
@@ -1258,6 +1461,7 @@ def _run_doctor(db: str) -> list[dict]:
             _check_schema(conn),
             _check_embeddings(conn),
             _check_ann(conn),
+            *_check_embed_server(conn),
             _check_freshness(conn),
             _check_parse_errors(conn),
             _check_concurrency(conn),
@@ -1297,11 +1501,13 @@ def _render_doctor(results: list[dict], display) -> None:
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def doctor(db, as_json):
-    """Run 8 system health checks (PASS/WARN/FAIL each).
+    """Run 9 system health checks (PASS/WARN/FAIL each).
 
     Surfaces silent degradations: schema integrity, embedding/ANN backend
-    fallbacks, graph freshness, parse errors, lock contention, and per-tool
-    error/latency health. Read-only -- never writes to the store. Exit code is
+    fallbacks, embed-server health (probe/model/parity/latency when a server
+    backend is configured), graph freshness, parse errors, lock contention,
+    and per-tool error/latency health. Read-only -- never writes to the
+    store. Exit code is
     0 when every check is PASS or WARN, and 1 when any check FAILs, so agents
     can gate on it (spec observability-telemetry §6.5).
     """
@@ -1596,7 +1802,7 @@ def report(db, as_json, out_path):
     """Print a redacted diagnostic bundle for bug reports / GitHub issues.
 
     Assembles four sections into one bundle: versions (cairn/Python/platform/
-    sqlite/store), the 8 doctor checks, recent error-ish events and
+    sqlite/store), the 9 doctor checks, recent error-ish events and
     ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
 
     PRIVACY GATE (spec observability-telemetry §7): every string field is

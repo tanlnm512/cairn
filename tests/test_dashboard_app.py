@@ -2823,3 +2823,632 @@ def test_tokens_route_aggregates_include_cli_rows_under_cli_tool_name(tmp_path):
     assert "cli:cairn config" in drilled.text
     assert "cli:cairn build" not in drilled.text
     assert "explore" not in drilled.text
+
+
+# ---------------------------------------------------------------------------
+# Embedding degradation banner (FR-013 / US3-AC3's dashboard surface): the
+# banner context is dashboard-process observability — this process's cached
+# ladder verdict plus one once-per-process uncached server probe — carried
+# onto every page through base.html's shared include, which renders zero
+# bytes when healthy so pages stay byte-identical.
+# ---------------------------------------------------------------------------
+
+# The include site in base.html: a healthy banner renders nothing, so the
+# bytes between <main> and each view's first element stay the pre-banner
+# ones (all three target views open their content block with .panel).
+_BANNER_JUNCTION = '<main class="site-main">\n      \n<section class="panel">'
+
+_BANNER_PAGES = ("/graph", "/history", "/memory")
+
+
+@pytest.fixture
+def _isolated_embed_state(monkeypatch):
+    """Swap the embed modules' process-wide caches for throwaway dicts so a
+    banner test can neither read nor leak ladder/backend verdicts (env vars
+    ride monkeypatch; the swapped plain dicts are restored on teardown)."""
+    from cairn.graph import embed_ladder, embeddings
+
+    monkeypatch.setattr(embed_ladder, "_LADDER_CACHE", {"state": None})
+    monkeypatch.setattr(embed_ladder, "_DEGRADATION_NOTIFIED", set())
+    monkeypatch.setattr(embeddings, "_EFFECTIVE_BACKEND_CACHE", {"effective": None})
+    monkeypatch.setattr(embeddings, "_SERVER_PROBE_CACHE", {"available": None})
+
+
+def _server_banner_env(monkeypatch):
+    """Server-family embed config whose real endpoints are never reached."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+    monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://127.0.0.1:1/v1")
+    monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "gone-model")
+
+
+def _probe_stub(monkeypatch, verdict: bool) -> list:
+    """Counting stand-in for the uncached server probe (returns verdict)."""
+    from cairn.graph import embeddings
+
+    calls = []
+
+    def probe():
+        calls.append(True)
+        return verdict
+
+    monkeypatch.setattr(embeddings, "_run_server_probe", probe)
+    return calls
+
+
+def _banner_client(tmp_path):
+    return _panel_client(
+        tmp_path, _graph_db_file(tmp_path, seed=True), str(tmp_path / "missing")
+    )
+
+
+def test_embed_banner_absent_and_byte_identical_for_non_server_backend(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """FR-013's healthy half, non-server backend: the banner machinery never
+    probes and never renders — every main page keeps the pre-banner bytes
+    (the include site emits nothing between <main> and the view)."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "local")
+    probe_calls = _probe_stub(monkeypatch, True)
+    client = _banner_client(tmp_path)
+
+    for path in _BANNER_PAGES:
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert "embed-banner" not in resp.text, path
+        assert _BANNER_JUNCTION in resp.text, path
+    assert probe_calls == []  # the backend gate precedes any probe
+
+
+def test_embed_banner_healthy_server_probe_renders_nothing(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """FR-013's healthy half, server backend: one uncached probe answers for
+    the whole dashboard process (never per request), and its healthy verdict
+    renders no banner on any page."""
+    _server_banner_env(monkeypatch)
+    probe_calls = _probe_stub(monkeypatch, True)
+    client = _banner_client(tmp_path)
+
+    for path in _BANNER_PAGES:
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert "embed-banner" not in resp.text, path
+        assert _BANNER_JUNCTION in resp.text, path
+    assert len(probe_calls) == 1  # once per dashboard process
+
+
+def test_embed_probe_runs_once_and_banner_serves_every_request(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """A failed first probe seeds the ladder once per dashboard process: the
+    banner then serves from the cached verdict — present on every later
+    request with the probe never re-run."""
+    _server_banner_env(monkeypatch)
+    from cairn.graph import embed_ladder
+
+    monkeypatch.setattr(embed_ladder, "_fetch_model_listing", lambda: [])
+    probe_calls = _probe_stub(monkeypatch, False)
+    client = _banner_client(tmp_path)
+
+    for _ in range(2):
+        resp = client.get("/graph")
+        assert resp.status_code == 200
+        assert 'class="embed-banner" role="status"' in resp.text
+    assert len(probe_calls) == 1
+
+
+@pytest.mark.parametrize("path", _BANNER_PAGES)
+def test_embed_banner_names_rung_reason_and_remediation_on_every_page(
+    tmp_path, monkeypatch, _isolated_embed_state, path
+):
+    """FR-013 / US3-AC3: with the server backend degraded (probe fails, no
+    served replacement), every target page carries the banner naming the
+    rung, the reason, and the actionable remediation."""
+    _server_banner_env(monkeypatch)
+    from cairn.graph import embed_ladder
+
+    monkeypatch.setattr(embed_ladder, "_fetch_model_listing", lambda: [])
+    _probe_stub(monkeypatch, False)
+    resp = _banner_client(tmp_path).get(path)
+    assert resp.status_code == 200
+    assert 'class="embed-banner" role="status"' in resp.text
+    assert "Embedding backend degraded" in resp.text
+    assert "rung 3" in resp.text
+    assert "model_missing" in resp.text
+    assert "CAIRN_EMBED_SERVER_MODEL" in resp.text  # the remediation
+
+
+def test_embed_banner_prefers_this_process_ladder_verdict(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """An active ladder verdict in this process answers the banner directly —
+    the probe never runs (the degradation is already established)."""
+    _server_banner_env(monkeypatch)
+    from cairn.graph import embed_ladder
+
+    monkeypatch.setattr(
+        embed_ladder,
+        "_LADDER_CACHE",
+        {
+            "state": embed_ladder.LadderState(
+                1,
+                "fallback_session_alias",
+                "adopted server model 'cand' for this session after parity "
+                "pass; make permanent: cairn embed --adopt-server-model cand",
+                "cand",
+                True,
+            )
+        },
+    )
+    probe_calls = _probe_stub(monkeypatch, True)
+    resp = _banner_client(tmp_path).get("/history")
+    assert resp.status_code == 200
+    assert 'class="embed-banner" role="status"' in resp.text
+    assert "rung 1" in resp.text
+    assert "fallback_session_alias" in resp.text
+    assert "--adopt-server-model cand" in resp.text  # the remediation
+    assert probe_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Dashboard Settings section (FR-011 / US4-AC1, AC2): the app's first POST
+# routes. Save persists through paths.set_config_values into the conftest-
+# sandboxed CONFIG_FILE; the base-URL change needs its explicit confirm step;
+# the API key is write-only (never rendered back); env-pinned keys show the
+# override marker while the file write still lands (D-008); the parity-check
+# action renders the check_parity verdict and never raises into the response.
+# ---------------------------------------------------------------------------
+
+
+def _settings_client(tmp_path):
+    return _panel_client(
+        tmp_path, _graph_db_file(tmp_path, seed=False), str(tmp_path / "missing")
+    )
+
+
+def _saved_config() -> dict:
+    """The sandboxed config file's parsed contents ({} when absent)."""
+    from cairn import paths
+
+    if not paths.CONFIG_FILE.exists():
+        return {}
+    return json.loads(paths.CONFIG_FILE.read_text(encoding="utf-8"))
+
+
+def test_settings_get_renders_effective_values_and_env_markers(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """GET /settings prefills the form with effective values and marks every
+    env-pinned key as overridden: a file value stays in its input while the
+    marker names the env value that actually resolves (D-008)."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+    monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "env-model")
+    _probe_stub(monkeypatch, True)  # the banner's once-per-process probe
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_SERVER_MODEL": "file-model"})
+    client = _settings_client(tmp_path)
+
+    resp = client.get("/settings")
+    assert resp.status_code == 200
+    assert "Settings" in resp.text
+    # Backend pinned by env, nothing in the file: the form prefills the
+    # effective value and the marker names the override.
+    assert "overridden by environment" in resp.text
+    assert '<option value="server" selected>' in resp.text
+    # Model pinned by env with a file value: the input keeps the file value
+    # (the form edits the file layer) and the marker shows the effective one.
+    assert 'value="file-model"' in resp.text
+    assert "env-model" in resp.text
+    # API key is write-only: status only, never a prefilled value.
+    assert ">not set<" in resp.text
+
+
+def test_settings_save_persists_to_config_file_and_reflects_state(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """POST /settings/save writes the submitted knobs as strings into the
+    sandboxed CONFIG_FILE and re-renders the page reflecting the saved
+    state."""
+    _probe_stub(monkeypatch, True)  # saving server-family backend + re-render
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save",
+        data={
+            "CAIRN_EMBED_BACKEND": "omlx",
+            "CAIRN_EMBED_SERVER_MODEL": "bge-m3",
+            "CAIRN_EMBED_TIMEOUT": "45",
+            "CAIRN_EMBED_SERVER_BATCH": "64",
+            "CAIRN_EMBED_MODEL_STAMP": "my-alias",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Settings saved" in resp.text
+
+    saved = _saved_config()
+    assert saved["CAIRN_EMBED_BACKEND"] == "omlx"
+    assert saved["CAIRN_EMBED_SERVER_MODEL"] == "bge-m3"
+    assert saved["CAIRN_EMBED_TIMEOUT"] == "45"  # strings: what D-008 resolves
+    assert saved["CAIRN_EMBED_SERVER_BATCH"] == "64"
+    assert saved["CAIRN_EMBED_MODEL_STAMP"] == "my-alias"
+
+    # The page reflects the saved state: inputs re-render the file values.
+    assert 'value="bge-m3"' in resp.text
+    assert 'value="my-alias"' in resp.text
+    assert '<option value="omlx" selected>' in resp.text
+
+
+def test_settings_base_url_change_without_confirm_is_refused(tmp_path):
+    """US4-AC2: a base-URL change attempt without the explicit confirm step
+    is refused with an error on the page and the config left unchanged."""
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_BASE_URL": "http://before:8000/v1"})
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save",
+        data={"CAIRN_EMBED_BASE_URL": "http://after:9000/v1"},
+    )
+    assert resp.status_code == 400
+    assert "Refused" in resp.text
+    assert "confirm" in resp.text.lower()
+    assert _saved_config()["CAIRN_EMBED_BASE_URL"] == "http://before:8000/v1"
+
+
+def test_settings_base_url_change_with_confirm_is_saved(tmp_path):
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_BASE_URL": "http://before:8000/v1"})
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save",
+        data={
+            "CAIRN_EMBED_BASE_URL": "http://after:9000/v1",
+            "confirm_base_url": "1",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Settings saved" in resp.text
+    assert _saved_config()["CAIRN_EMBED_BASE_URL"] == "http://after:9000/v1"
+
+
+def test_settings_base_url_unchanged_value_saves_without_confirm(tmp_path):
+    """The confirm gate scopes to CHANGES: submitting the base URL it already
+    has (or blank over blank) needs no checkbox, so other fields stay
+    savable without re-confirming a URL nobody touched."""
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_BASE_URL": "http://keep:8000/v1"})
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save",
+        data={
+            "CAIRN_EMBED_SERVER_MODEL": "bge-m3",
+            "CAIRN_EMBED_BASE_URL": "http://keep:8000/v1",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Settings saved" in resp.text
+    saved = _saved_config()
+    assert saved["CAIRN_EMBED_BASE_URL"] == "http://keep:8000/v1"
+    assert saved["CAIRN_EMBED_SERVER_MODEL"] == "bge-m3"
+
+
+def test_settings_api_key_is_write_only(tmp_path):
+    """US4-AC2: a submitted key is stored but never rendered back — not in
+    the save response, not in a later GET; the page shows set/not-set only,
+    and a blank submit leaves the stored key untouched."""
+    client = _settings_client(tmp_path)
+
+    saved_resp = client.post(
+        "/settings/save",
+        data={
+            "CAIRN_EMBED_API_KEY": "sk-supersecret-123",
+            "CAIRN_EMBED_BACKEND": "hash",
+        },
+    )
+    assert saved_resp.status_code == 200
+    assert _saved_config()["CAIRN_EMBED_API_KEY"] == "sk-supersecret-123"
+    assert "sk-supersecret-123" not in saved_resp.text
+
+    page = client.get("/settings")
+    assert page.status_code == 200
+    assert "sk-supersecret-123" not in page.text
+    assert ">set<" in page.text
+    assert ">not set<" not in page.text
+
+    blank = client.post("/settings/save", data={"CAIRN_EMBED_API_KEY": ""})
+    assert blank.status_code == 200
+    assert _saved_config()["CAIRN_EMBED_API_KEY"] == "sk-supersecret-123"
+
+
+def test_settings_env_pin_shows_marker_while_save_persists_file_value(
+    tmp_path, monkeypatch
+):
+    """D-008: an env var pinning a key shows the override marker with the
+    effective value, and saving still persists the file value — env wins at
+    resolution time, not at write time."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")  # keep the banner inert
+    monkeypatch.setenv("CAIRN_EMBED_TIMEOUT", "99")
+    client = _settings_client(tmp_path)
+
+    resp = client.post("/settings/save", data={"CAIRN_EMBED_TIMEOUT": "120"})
+    assert resp.status_code == 200
+    assert _saved_config()["CAIRN_EMBED_TIMEOUT"] == "120"
+
+    page = client.get("/settings")
+    assert "overridden by environment" in page.text
+    assert "<code>99</code>" in page.text  # the effective value, in the marker
+    assert 'value="120"' in page.text  # the persisted file value, in the form
+
+    from cairn.graph import embeddings
+
+    assert embeddings._config_or_env("CAIRN_EMBED_TIMEOUT") == "99"
+
+
+def test_settings_parity_check_renders_pass_and_fail_verdicts(
+    tmp_path, monkeypatch
+):
+    """The parity-check action renders check_parity's verdict — pass/fail
+    badge, measured mean cosine, sampled count, reason — for both verdicts."""
+    from cairn.graph import embed_ladder
+
+    client = _settings_client(tmp_path)
+
+    monkeypatch.setattr(
+        embed_ladder,
+        "check_parity",
+        lambda conn, stamp, embed_fn=None: embed_ladder.ParityResult(
+            16, 0.995, True, True, "parity_ok"
+        ),
+    )
+    passed = client.post("/settings/parity-check")
+    assert passed.status_code == 200
+    assert ">pass<" in passed.text
+    assert "0.9950" in passed.text
+    assert "sampled 16 chunks" in passed.text
+    assert "parity_ok" in passed.text
+
+    monkeypatch.setattr(
+        embed_ladder,
+        "check_parity",
+        lambda conn, stamp, embed_fn=None: embed_ladder.ParityResult(
+            16, 0.42, True, False, "below_gate"
+        ),
+    )
+    failed = client.post("/settings/parity-check")
+    assert failed.status_code == 200
+    assert ">fail<" in failed.text
+    assert "0.4200" in failed.text
+    assert "below_gate" in failed.text
+
+
+def test_settings_parity_check_embed_error_renders_failure_text(
+    tmp_path, monkeypatch
+):
+    """The check never raises into the response: an embed error inside
+    check_parity renders as the check's failure verdict."""
+    from cairn.graph import embed_ladder
+
+    def boom(conn, stamp, embed_fn=None):
+        raise RuntimeError("server down")
+
+    monkeypatch.setattr(embed_ladder, "check_parity", boom)
+    resp = _settings_client(tmp_path).post("/settings/parity-check")
+    assert resp.status_code == 200
+    assert ">fail<" in resp.text
+    assert "RuntimeError: server down" in resp.text
+
+
+def test_settings_refuses_non_numeric_timeout_without_writing(tmp_path):
+    """A non-numeric timeout/batch is refused before any write: the server
+    client casts these unguarded, so the form must never persist garbage."""
+    client = _settings_client(tmp_path)
+
+    resp = client.post("/settings/save", data={"CAIRN_EMBED_TIMEOUT": "soon"})
+    assert resp.status_code == 400
+    assert "Refused" in resp.text
+    assert "CAIRN_EMBED_TIMEOUT" in resp.text
+    assert _saved_config() == {}
+
+
+def test_settings_routes_leave_existing_routes_get_only(tmp_path):
+    """The new POST routes are POST-only and the existing GET views keep
+    their read-only method surface (the suite's read-only assumption)."""
+    client = _settings_client(tmp_path)
+
+    assert client.get("/settings").status_code == 200
+    assert client.post("/settings").status_code == 405
+    assert client.get("/settings/save").status_code == 405
+    assert client.get("/settings/parity-check").status_code == 405
+    landing = client.get("/")
+    assert landing.status_code == 200
+    assert client.post("/").status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# Embeddings status view (FR-011 / US4-AC3): GET /embeddings renders the
+# effective backend, resolved stamp, per-corpus counts + last-embedded
+# times, the dashboard-process probe verdict, and the active fallback rung
+# as structured rows. The rung rows read ladder_state() — the SAME
+# accessor the FR-013 banner text builds from — and the probe rides the
+# banner's once-per-process seam; per-knob effective values carry the
+# D-008 env-override marker.
+# ---------------------------------------------------------------------------
+
+
+def _embeddings_client(tmp_path):
+    """A TestClient over a seeded graph store (3 code embeddings)."""
+    return _panel_client(
+        tmp_path, _graph_db_file(tmp_path, seed=True), str(tmp_path / "missing")
+    )
+
+
+def test_embeddings_status_renders_backend_stamp_counts_and_freshness(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """US4-AC3 data half: the status view renders the effective backend,
+    the resolved stamp, and per-corpus row counts + last-embedded times
+    from the selected store — counts are per current model (a stale-model
+    row does not count), and an empty corpus renders 0 / never, not an
+    error."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "local")
+    from cairn.graph import embeddings
+
+    db_path = _graph_db_file(tmp_path, seed=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        # Current-model rows: the fixture's 3 rows carry a stale stamp, so
+        # only this one counts — the invalidation semantic, pinned.
+        conn.execute(
+            "INSERT INTO embeddings "
+            "(symbol_id, model, dim, vec, chunk, embedded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("s1", embeddings.current_model(), 8, b"", "fresh",
+             "2026-08-21T09:00:00"),
+        )
+        conn.executemany(
+            "INSERT INTO knowledge_embeddings "
+            "(doc_id, chunk_index, model, dim, vec, chunk, embedded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("k1", 0, embeddings.current_model(corpus="knowledge"), 8, b"",
+                 "k", "2026-08-20T12:00:00"),
+                ("k2", 0, embeddings.current_model(corpus="knowledge"), 8, b"",
+                 "k", "2026-08-20T12:30:00"),
+            ],
+        )
+        # memory stays empty: 0 rows / never — the graceful empty corpus.
+        conn.commit()
+    finally:
+        conn.close()
+
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+    resp = client.get("/embeddings")
+    assert resp.status_code == 200
+    assert (
+        '<th scope="row">Effective backend</th><td><code>local</code></td>'
+        in resp.text
+    )
+    assert embeddings.current_model() in resp.text  # resolved stamp
+    assert '<td class="num">1</td>' in resp.text  # code: current model only
+    assert '<td class="num">2</td>' in resp.text  # knowledge rows
+    assert '<td class="num">0</td>' in resp.text  # memory: a zero, not unknown
+    assert "2026-08-21T09:00:00" in resp.text  # MAX(code embedded_at)
+    assert "2026-08-20T12:30:00" in resp.text  # MAX(knowledge embedded_at)
+    assert "never" in resp.text  # memory has never embedded
+
+
+def test_embeddings_status_healthy_server_probe_and_rung(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """US4-AC3 healthy half: a server-family backend with a healthy
+    dashboard-process probe renders the probe-healthy row and the healthy
+    fallback row — one probe per dashboard process, never per request."""
+    _server_banner_env(monkeypatch)
+    probe_calls = _probe_stub(monkeypatch, True)
+    client = _embeddings_client(tmp_path)
+
+    first = client.get("/embeddings")
+    assert first.status_code == 200
+    assert "server/127.0.0.1:1/gone-model" in first.text  # resolved stamp
+    assert '<span class="badge badge-ok">healthy</span>' in first.text
+    assert "no active fallback" in first.text
+    client.get("/embeddings")
+    assert len(probe_calls) == 1  # the shared once-per-process probe
+
+
+def test_embeddings_status_degraded_rung_rows_from_ladder_state(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """US4-AC3 degraded half: an active ladder verdict renders structured
+    rung/reason/detail rows sourced from ladder_state() — the same
+    accessor the FR-013 banner text builds from — while the page carries
+    the one shared banner and introduces no second banner builder."""
+    _server_banner_env(monkeypatch)
+    from cairn.graph import embed_ladder
+
+    monkeypatch.setattr(
+        embed_ladder,
+        "_LADDER_CACHE",
+        {
+            "state": embed_ladder.LadderState(
+                1,
+                "fallback_session_alias",
+                "adopted server model 'cand' for this session after parity "
+                "pass; make permanent: cairn embed --adopt-server-model cand",
+                "cand",
+                True,
+            )
+        },
+    )
+    _probe_stub(monkeypatch, True)
+    resp = _embeddings_client(tmp_path).get("/embeddings")
+    assert resp.status_code == 200
+
+    # The shared banner renders once, from the base-level partial.
+    assert resp.text.count('class="embed-banner"') == 1
+    # The structured rows come from ladder_state(), not a second builder.
+    assert '<th scope="row">Rung detail</th>' in resp.text
+    assert ">fallback_session_alias</code>" in resp.text
+    assert "--adopt-server-model cand" in resp.text  # the detail row
+    assert "<code>cand</code>" in resp.text  # the adopted-model row
+    # No duplicate builder: the view's template never builds banner text.
+    template = (_templates_dir() / "embeddings.html").read_text(encoding="utf-8")
+    assert "degradation_banner" not in template
+
+
+def test_embeddings_status_shows_effective_value_and_env_override_marker(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """D-008 transparency: an env-pinned knob renders its effective value
+    beside the override marker, and the API key never renders a value —
+    set/not-set only."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")  # keeps the probe inert
+    monkeypatch.setenv("CAIRN_EMBED_TIMEOUT", "99")
+    monkeypatch.setenv("CAIRN_EMBED_API_KEY", "sk-status-secret")
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_TIMEOUT": "120"})
+    resp = _embeddings_client(tmp_path).get("/embeddings")
+    assert resp.status_code == 200
+    assert "overridden by environment" in resp.text
+    assert "<code>99</code>" in resp.text  # effective beats the file's 120
+    assert "sk-status-secret" not in resp.text  # key: set/not-set only
+    assert ">set<" in resp.text
+
+
+def test_nav_carries_settings_and_embeddings_entries(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """FR-011: /settings and /embeddings are one click from every page —
+    the base sidebar nav carries both entries (with spanned labels, like
+    every nav anchor)."""
+    client = _client(tmp_path, seed=False)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    for href, label in (("/embeddings", "Embeddings"), ("/settings", "Settings")):
+        assert re.search(
+            r'<a href="' + href + r'"[^>]*>.*?' + label + r"</span>",
+            resp.text,
+            re.S,
+        ), href
+
+
+def test_embeddings_status_non_server_marks_probe_na_without_probe(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """Non-server backends never probe: the probe-health row renders n/a,
+    the shared probe seam is never reached, and the fallback row reads
+    healthy."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "local")
+    probe_calls = _probe_stub(monkeypatch, True)
+    resp = _embeddings_client(tmp_path).get("/embeddings")
+    assert resp.status_code == 200
+    assert probe_calls == []
+    assert "n/a" in resp.text  # probe health: not applicable
+    assert "no active fallback" in resp.text  # the healthy rung row

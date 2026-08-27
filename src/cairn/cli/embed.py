@@ -7,6 +7,122 @@ import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
 
+
+def _exit_backend_unavailable() -> None:
+    """Report an unavailable embedding backend and exit 1 (D-003: loud).
+
+    Server-family backends never fall back to hash (FR-002), so a failed
+    probe exits with a server-specific remediation (base URL, the /v1/models
+    check it must pass, `cairn doctor`) instead of the sentence-transformers
+    install hint every other backend keeps. Exit code is 1 either way.
+    """
+    from . import display
+    from cairn.graph import embeddings as emb
+
+    if emb._backend_name() not in emb._SERVER_FAMILY:
+        display.error("Semantic dependencies unavailable")
+        display.dim(emb.install_hint())
+        display.dim("Run `cairn embed --install-deps` to auto-install.")
+        sys.exit(1)
+    display.error("Embedding server unavailable")
+    try:
+        base = emb._server_base_url().rstrip("/")
+    except RuntimeError as exc:
+        # Bare 'server' without CAIRN_EMBED_BASE_URL: the message names the
+        # missing knob or the presets, which is itself the remediation.
+        display.dim(str(exc))
+        display.dim("Run `cairn doctor` for embedding backend diagnostics.")
+        sys.exit(1)
+    display.dim(
+        f"Availability probe failed: GET {base}/models must return 200 and "
+        f"list model '{emb._server_model()}'."
+    )
+    display.dim(
+        f"Start the embedding server at {base} (verify with "
+        f"`curl {base}/models`), then re-run; `cairn doctor` checks probe, "
+        "parity, and latency."
+    )
+    sys.exit(1)
+
+
+def _exit_not_adoptable(requested, state) -> None:
+    """Exit 1 naming what the ladder found (FR-012/D-003: degrade loudly)."""
+    from . import display
+
+    if requested:
+        display.error(
+            f"Server model '{requested}' is not a parity-verified candidate "
+            "for the stored corpus"
+        )
+    else:
+        display.error("No parity-verified server model candidate to adopt")
+    if state is None:
+        display.dim(
+            "The embedding server is healthy (the configured model is "
+            "served); there is no degraded state to adopt from."
+        )
+    elif state.rung == 1:
+        display.dim(
+            f"The ladder's parity scan adopted '{state.adopted_model}' instead."
+        )
+    elif state.rung == 2:
+        display.dim(
+            "The ladder fell back to the local model, not a server model: "
+            f"{state.detail}"
+        )
+    else:
+        display.dim(f"Ladder verdict: {state.reason}; {state.detail}")
+    sys.exit(1)
+
+
+def _resolve_adopted_model(conn, requested):
+    """Resolve --adopt-server-model into the FR-012 alias binding.
+
+    Returns (adopted_model_id, stored_stamp) with the session pins set so the
+    embed below reads and writes the STORED stamp while requests route to the
+    adopted id — permanence of the alias binding, never a corpus restamp. A
+    bare flag reuses the ladder's active rung-1 adoption, else forces one
+    evaluation against the server; an explicit MODEL_ID is verified the same
+    honest way: it must be the candidate the ladder's parity scan proves
+    (D-009: only a passing parity gate switches producers).
+    """
+    from . import display
+    from cairn.graph import embed_ladder as ladder
+
+    if requested:
+        state = ladder.evaluate_ladder(conn=conn, force=True)
+        if state is None:
+            # Healthy server, or the effective backend left the server arm;
+            # surface any cached verdict for the "why".
+            state = ladder.ladder_state()
+        if state is None or state.rung != 1 or state.adopted_model != requested:
+            _exit_not_adoptable(requested, state)
+        adopted = requested
+    else:
+        state = ladder.ladder_state()
+        if not (state and state.active and state.rung == 1 and state.adopted_model):
+            forced = ladder.evaluate_ladder(conn=conn, force=True)
+            state = forced if forced is not None else ladder.ladder_state()
+        if not (state and state.rung == 1 and state.adopted_model):
+            _exit_not_adoptable(requested, state)
+        adopted = state.adopted_model
+
+    row = conn.execute(
+        "SELECT model FROM embeddings GROUP BY model "
+        "ORDER BY COUNT(*) DESC, model LIMIT 1"
+    ).fetchone()
+    if row is None:
+        display.error(
+            "--adopt-server-model: the database holds no stored embeddings "
+            "to bind the adoption to"
+        )
+        sys.exit(1)
+    stored_stamp = row["model"]
+    ladder.set_session_stamp(stored_stamp)
+    ladder.set_session_server_model(adopted)
+    return adopted, stored_stamp
+
+
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--batch-size", default=64, type=int, help="Embedding batch size.")
@@ -38,8 +154,28 @@ from .main import DEFAULT_DB_PATH, get_db, main, queries
     "Off by default: default builds store one vector per symbol, byte-identical "
     "to before.",
 )
+@click.option(
+    "--adopt-server-model",
+    "adopt_server_model",
+    is_flag=False,
+    flag_value="",
+    default=None,
+    metavar="[MODEL_ID]",
+    help="Adopt a parity-verified server model (FR-012): the stored corpus "
+    "keeps its stamp while this embed runs through the adopted model. "
+    "Omit MODEL_ID to use the ladder's verified rung-1 adoption, "
+    "re-evaluated against the server when none is active.",
+)
 def embed(
-    db, batch_size, limit, no_reap, build_index, install_deps, download_model, multivector
+    db,
+    batch_size,
+    limit,
+    no_reap,
+    build_index,
+    install_deps,
+    download_model,
+    multivector,
+    adopt_server_model,
 ):
     """Build the semantic embedding index over the symbol corpus."""
     from . import display
@@ -61,21 +197,25 @@ def embed(
         # 30s+. Say something BEFORE it so the window isn't dead silence.
         display.dim("Loading the semantic backend (first import can take a minute)...")
         if not emb.embeddings_available():
-            display.error("Semantic dependencies unavailable")
-            display.dim(emb.install_hint())
-            display.dim("Run `cairn embed --install-deps` to auto-install.")
-            sys.exit(1)
+            _exit_backend_unavailable()
         if not emb.download_model():
             display.error("Model download failed")
             sys.exit(1)
         display.success("Model download complete.")
         sys.exit(0)
 
-    if not emb.embeddings_available():
-        display.error("Semantic dependencies unavailable")
-        display.dim(emb.install_hint())
-        display.dim("Run `cairn embed --install-deps` to auto-install.")
-        sys.exit(1)
+    if adopt_server_model is not None:
+        # The ladder, not the availability probe, is the evaluator here: the
+        # configured model is typically already missing from /v1/models (the
+        # case adoption exists for), so a failed probe must not exit early.
+        if emb._backend_name() not in emb._SERVER_FAMILY:
+            display.error(
+                "--adopt-server-model requires a server-family embedding "
+                "backend (server, omlx, or ollama)"
+            )
+            sys.exit(1)
+    elif not emb.embeddings_available():
+        _exit_backend_unavailable()
 
     # Warn when silently falling back to the hash backend. is_hash_fallback()
     # is True only when the backend is the *default* local but
@@ -102,6 +242,10 @@ def embed(
 
     conn = get_db(db)
     try:
+        adopted = stored_stamp = None
+        if adopt_server_model is not None:
+            adopted, stored_stamp = _resolve_adopted_model(conn, adopt_server_model)
+
         sym_count = conn.execute("SELECT COUNT(*) AS c FROM symbols").fetchone()["c"]
         display.info(f"Embedding {sym_count:,} symbols with {emb.current_model()}")
         before = emb.embed_count(conn)
@@ -197,6 +341,24 @@ def embed(
                         f"dim={mv_idx_summary['dim']}, model='{mv_idx_summary['model']}'"
                     )
 
+        if adopted is not None:
+            # FR-012: permanence persists the alias binding — the corpus keeps
+            # its stamp; until the FR-010 config substrate lands, durability
+            # across processes is the explicit env pin of the same stamp.
+            display.success(
+                f"Adopted server model '{adopted}': this corpus keeps its "
+                f"stamp '{stored_stamp}' (no re-embed, no restamp)."
+            )
+            display.dim(
+                "To keep the binding across processes until configuration "
+                "storage lands, export:"
+            )
+            display.dim(f"  export CAIRN_EMBED_MODEL_STAMP={stored_stamp}")
+            display.dim(
+                "Routing to the adopted model id will persist via the config "
+                "file (Phase 4)."
+            )
+
         # Persist an 'embed' build_runs row (best-effort; record_build_run
         # swallows all errors). Only the symbol/skipped counts are meaningful
         # for an embedding pass -- repos/files/edges/resolution/phase_timings
@@ -243,10 +405,7 @@ def semantic(query, db, limit, threshold, as_json, include_callers):
     from cairn.graph import embeddings as emb
 
     if not emb.embeddings_available():
-        from . import display
-        display.error("Semantic backend unavailable")
-        display.dim(emb.install_hint())
-        sys.exit(1)
+        _exit_backend_unavailable()
 
     conn = get_db(db)
     try:

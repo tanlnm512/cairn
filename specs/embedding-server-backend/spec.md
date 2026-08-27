@@ -1,6 +1,6 @@
 # Spec: Embedding server backend (oMLX / Ollama / OpenAI-compatible)
 
-**Status**: draft
+**Status**: done
 **Created**: 2026-08-27
 **Branch**: `docs/embedding-server-backend-spec`
 

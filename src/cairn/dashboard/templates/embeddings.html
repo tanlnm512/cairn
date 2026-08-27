@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Embeddings — Cairn Dashboard{% endblock %}
+{#- FR-011 status view: effective values with D-008 precedence per knob.
+    The degradation banner above comes from the shared FR-013 accessor —
+    the fallback rows here read ladder_state() only (no second builder). -#}
+{% block content %}
+<section class="panel">
+  <h1>Embeddings</h1>
+  <p class="muted">
+    Effective embedding backend and per-corpus state for the selected store.
+    The degradation banner (when present) and the fallback row below resolve
+    from the same ladder state.
+  </p>
+  <table class="data-table">
+    <tbody>
+      <tr><th scope="row">Effective backend</th><td><code>{{ backend }}</code></td></tr>
+      <tr><th scope="row">Resolved stamp</th><td><code>{{ stamp }}</code></td></tr>
+      <tr>
+        <th scope="row">Server probe</th>
+        <td>{% if not is_server %}n/a{% elif probe_ok %}<span class="badge badge-ok">healthy</span>{% else %}<span class="badge badge-error">unreachable</span>{% endif %}</td>
+      </tr>
+      <tr>
+        <th scope="row">Fallback rung</th>
+        <td>{% if rung %}<span class="badge badge-warn">rung {{ rung.rung }}</span> <code>{{ rung.reason }}</code>{% else %}<span class="badge badge-ok">healthy</span> no active fallback{% endif %}</td>
+      </tr>
+      {% if rung %}
+      <tr><th scope="row">Rung detail</th><td>{{ rung.detail }}</td></tr>
+      {% if rung.adopted_model %}
+      <tr><th scope="row">Adopted model</th><td><code>{{ rung.adopted_model }}</code></td></tr>
+      {% endif %}
+      {% endif %}
+    </tbody>
+  </table>
+
+  <h2>Corpora</h2>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Corpus</th>
+        <th>Model</th>
+        <th class="num">Rows</th>
+        <th>Last embedded</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for corpus in corpora %}
+      <tr>
+        <td>{{ corpus.corpus }}</td>
+        <td>{% if corpus.model %}<code>{{ corpus.model }}</code>{% else %}—{% endif %}</td>
+        <td class="num">{% if corpus.count is not none %}{{ corpus.count }}{% else %}—{% endif %}</td>
+        {#- An empty corpus has never embedded; an unreadable one (pre-table
+            store, unresolvable backend) is unknown, not zero. -#}
+        <td>{% if corpus.last %}{{ corpus.last }}{% elif corpus.count is none %}—{% else %}never{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Configuration</h2>
+  <p class="muted">
+    Each knob's effective value (env &gt; config file &gt; default) and
+    where it resolves from — a knob marked as overridden ignores whatever
+    <a href="/settings">Settings</a> saves to the file.
+  </p>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Setting</th>
+        <th>Effective</th>
+        <th>Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for key, field in cfg.items() %}
+      <tr>
+        <td><code>{{ key }}</code></td>
+        <td>{% if key == 'CAIRN_EMBED_API_KEY' %}{% if field.effective %}<span class="badge badge-ok">set</span>{% else %}<span class="badge">not set</span>{% endif %}{% else %}<code>{{ field.effective or "—" }}</code>{% endif %}</td>
+        <td>{% if field.pinned %}<span class="env-pin">overridden by environment</span>{% elif field.effective %}config file{% else %}default{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

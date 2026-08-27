@@ -63,6 +63,7 @@ from cairn.telemetry import sink
 from cairn.telemetry import (
     ANN_FALLBACK,
     EMBED_FLUSH_STALLED,
+    EMBED_SERVER_DEGRADED,
     EMPTY_RESULT,
     HASH_FALLBACK,
     LOCK_CONTENTION,
@@ -204,6 +205,14 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
     RERANK_SKIPPED: {
         "reason": _RERANK_SKIP_REASONS,
     },
+    # Spec embedding-server-backend FR-013: one event per process per reason
+    # when the server backend degrades or a ladder rung adopts. Payload is
+    # host+model only (never request bodies); reason is the catalog enum.
+    EMBED_SERVER_DEGRADED: {
+        "reason": events.EMBED_SERVER_REASONS,
+        "host": _bounded_tag,
+        "model": _bounded_tag,
+    },
 }
 
 # Events that actually emit at a live site today (the dynamic sweep drives each).
@@ -216,6 +225,7 @@ LIVE_EVENTS = frozenset(
         TASK_LIFECYCLE,
         STRAY_SWEPT,
         ANN_FALLBACK,
+        EMBED_SERVER_DEGRADED,
         HASH_FALLBACK,
         SEMANTIC_UNAVAILABLE,
         EMBED_FLUSH_STALLED,
@@ -224,7 +234,8 @@ LIVE_EVENTS = frozenset(
 )
 # All catalog events have a live emitter (ann_fallback / hash_fallback were
 # wired into warn_*_fallback_once; semantic_unavailable / embed_flush_stalled
-# added by the residual-gap fixes).
+# added by the residual-gap fixes; embed_server_degraded wired by the T012
+# notify fan-out in graph/embed_ladder.py), so the partition stays honest.
 NO_EMITTER_EVENTS = frozenset()
 
 
@@ -614,6 +625,19 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
     _eb._STALL_EVENT_SENT = False
     with _eb._LOCK:
         _eb._QUEUE.clear()
+
+    # 10. embed_server_degraded (T012): drive the notify fan-out directly on a
+    # bounded reason with a resolvable base URL so host/model carry real
+    # values. The private once-set is cleared and the backend caches reset
+    # around the drive so it is deterministic regardless of test ordering.
+    from cairn.graph import embed_ladder as _ladder
+
+    _ladder._DEGRADATION_NOTIFIED.clear()
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+    monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://127.0.0.1:1/v1")
+    monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "gone-model")
+    _emb.reset_backend_cache()
+    _ladder.notify_degradation("server_down")
 
     for name, attrs in _buffered_events():
         captured[name].append(attrs)

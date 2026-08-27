@@ -10,7 +10,7 @@ from pathlib import Path
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _bundle, _conn, _rw_conn, mcp
+from ._server_core import _append_embed_degradation_footnote, _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import instrument
 from .tools_graph import _clamp
 
@@ -167,7 +167,7 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
             out.append(hint)
     finally:
         conn.close()
-    return "\n".join(out)
+    return _append_embed_degradation_footnote("\n".join(out))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
