@@ -201,25 +201,7 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 
 ## How It Works
 
-```text
- ┌─────────────────────────── your AI agents ───────────────────────────┐
- │   Claude Code · Cursor · ZCode · Droid · opencode · Claude Desktop   │
- └──────────────┬────────────────────────────────────▲──────────────────┘
-        MCP (stdio) · 27 tools                      │  results: verbatim source,
-                ▼                                   │  call paths, blast radius
-        ┌────────────────────────┐        ┌─────────┴────────┐
-        │    cairn MCP server    │◀──────▶│    cairn CLI     │
-        └───────────┬────────────┘        └──────────────────┘
-                    ▼
- ┌────────────────────── one local SQLite store (~/.cairn) ─────────────┐
- │ graph: symbols + exact/ambiguous/unresolved edges · compass + wiki   │
- │ tribal memory · knowledge (OKF) · embeddings (optional [semantic])   │
- └─────────────────────────────────▲────────────────────────────────────┘
-                                   │ candidate docs only — critic gate
-                     LLM task queue (never in the query path):
-                     every generated doc fact-checked against the graph
-                     before it lands; hallucinated symbols rejected
-```
+![cairn architecture: AI agents query the MCP server and CLI, which read one local SQLite store; an LLM task queue runs off-path, admitted only through a critic gate](docs/diagrams/readme-architecture.svg)
 
 The query path is deterministic: tree-sitter parsing → SQLite graph →
 FTS5/BM25 fused with vectors (RRF, always on when embeddings exist) and a
