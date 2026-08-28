@@ -194,7 +194,7 @@ def test_projects_route_lists_counts_and_embedding_status(tmp_path):
     for header in ("Files", "Symbols", "Edges", "Last indexed", "Embeddings"):
         assert header in resp.text
     assert '<td class="num">3</td>' in resp.text  # symbol count
-    assert "2026-08-20T11:00:00" in resp.text  # MAX(files.indexed_at)
+    assert "2026-08-20 11:00:00 UTC" in resp.text  # MAX(files.indexed_at), humanized
     assert "embedded" in resp.text
     assert "all-MiniLM-L6-v2" in resp.text
     assert "/graph?scope=repo" in resp.text and "repo=demo" in resp.text
@@ -2500,9 +2500,9 @@ def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
     health_a = client.get("/health", params={"store": _SW_KEY_A})
     health_b = client.get("/health", params={"store": _SW_KEY_B})
     assert str(home / _SW_KEY_A / ".kg") in health_a.text
-    assert "2026-08-20T07:00:00Z" in health_a.text
+    assert "2026-08-20 07:00:00 UTC" in health_a.text
     assert str(home / _SW_KEY_B / ".kg") in health_b.text
-    assert "2026-08-20T09:00:00Z" in health_b.text
+    assert "2026-08-20 09:00:00 UTC" in health_b.text
 
     # No param: the launch store, exactly as before the seam existed.
     plain = client.get("/projects")

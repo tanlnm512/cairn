@@ -124,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The topbar's live-refresh Pause control no longer renders (dead) on
   the eight views without a live region: the `display: flex` rule had
   been overriding the `hidden` attribute.
-- Health and Embeddings status views render stored timestamps
+- Health, Embeddings, and Projects views render stored timestamps
   humanized (`2026-08-21 09:00:00 UTC`, not raw ISO) and an
   unreadable vec0 row count as "row count unavailable" instead of the
   literal Python `None`.

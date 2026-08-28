@@ -536,7 +536,7 @@ def test_launcher_interactions_leave_every_store_byte_identical(
     assert "ws_a_tool" not in history_b.text
     health_a = _fetch(client, f"/health?store={_WS_KEY_A}")
     assert str(home / _WS_KEY_A / ".kg") in health_a.text
-    assert "2026-08-20T07:00:00Z" in health_a.text
+    assert "2026-08-20 07:00:00 UTC" in health_a.text
 
     # The selected-store sweep: every data view against each populated
     # store.
