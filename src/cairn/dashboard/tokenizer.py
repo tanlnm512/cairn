@@ -9,7 +9,6 @@ resolved once per process; ``reset_tokenizer_mode()`` forces a re-probe.
 """
 from __future__ import annotations
 
-import os
 import threading
 from typing import Any, Optional
 
@@ -23,9 +22,12 @@ _lock = threading.Lock()
 
 
 def _tokenizer_model() -> str:
-    from cairn.graph.embeddings import DEFAULT_LOCAL_MODEL
+    # Lazy import (kept: the dashboard must not pay the embeddings import at
+    # module load), now via the D-008 config-aware resolver so a config.json
+    # CAIRN_EMBED_LOCAL_MODEL is honored exactly like the env var.
+    from cairn.graph.embeddings import DEFAULT_LOCAL_MODEL, _config_or_env
 
-    return (os.environ.get("CAIRN_EMBED_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL).strip()
+    return (_config_or_env("CAIRN_EMBED_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL).strip()
 
 
 def _probe_tokenizer() -> Optional[Any]:

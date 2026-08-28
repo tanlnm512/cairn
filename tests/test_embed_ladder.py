@@ -15,6 +15,7 @@ import math
 import os
 import struct
 import threading
+import time
 from unittest import mock
 from urllib.parse import urlsplit
 
@@ -275,6 +276,9 @@ class _StubLadderServer:
         self.model_ids = list(model_ids)
         self.vec_for = vec_for
         self.requests = []
+        # (method, Authorization header) per request, so tests can assert
+        # which credentials the listing probe and the parity embed carried.
+        self.auth_seen = []
         outer = self
 
         class _Handler(http.server.BaseHTTPRequestHandler):
@@ -286,6 +290,9 @@ class _StubLadderServer:
                 self.wfile.write(payload)
 
             def do_GET(self):
+                outer.auth_seen.append(
+                    (self.command, self.headers.get("Authorization"))
+                )
                 self._send(
                     json.dumps(
                         {"data": [{"id": mid} for mid in outer.model_ids]}
@@ -293,6 +300,9 @@ class _StubLadderServer:
                 )
 
             def do_POST(self):
+                outer.auth_seen.append(
+                    (self.command, self.headers.get("Authorization"))
+                )
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 outer.requests.append(body)
@@ -810,3 +820,131 @@ def test_reset_backend_cache_rearms_notify_once_set(caplog, monkeypatch):
         embed_ladder.notify_degradation("server_down", "down")
 
     assert len(_cairn_warnings(caplog)) == 2
+
+
+# ---------------------------------------------------------------------------
+# File-persisted config reaches the ladder probes (FR-010 x FR-012): the
+# D-008 choke point (_config_or_env) must feed the listing probe, the parity
+# embed, and the rung-2 local model -- env-only reads there make parity
+# false-fail against authenticated/slow servers or check the wrong model.
+# The hermetic conftest points CONFIG_FILE into the sandbox, so a key set
+# via set_config_values is the file layer by construction.
+# ---------------------------------------------------------------------------
+
+
+def test_file_api_key_reaches_listing_probe_and_parity_embed(fresh_db, monkeypatch):
+    from cairn import paths
+
+    stored = _unit([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    server = _StubLadderServer(["cand-a"], vec_for=lambda t: stored)
+    try:
+        assert paths.set_config_values({"CAIRN_EMBED_API_KEY": "file-key"}) is True
+        _server_env(monkeypatch, server.base_url)
+        stamp = _stamp_for(server.base_url, "gone-model")
+        _seed_corpus(fresh_db, stamp, stored)
+
+        state = embed_ladder.evaluate_ladder(conn=fresh_db)
+
+        # The file key authenticated BOTH probes: the listing (GET) and the
+        # rung-1 parity embed (POST) -- rung 1 adopted, so neither 401'd.
+        assert state is not None and state.rung == 1
+        assert ("GET", "Bearer file-key") in server.auth_seen
+        assert ("POST", "Bearer file-key") in server.auth_seen
+    finally:
+        server.close()
+
+
+def test_file_local_model_is_what_rung2_checks(fresh_db, monkeypatch):
+    from cairn import paths
+
+    stored = _unit([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    dead = _dead_base_url()
+    assert (
+        paths.set_config_values({"CAIRN_EMBED_LOCAL_MODEL": "file-local-model"})
+        is True
+    )
+    _server_env(monkeypatch, dead)
+    _seed_corpus(fresh_db, _stamp_for(dead, "gone-model"), stored)
+    monkeypatch.setattr(embed_ladder, "_sentence_transformers_available", lambda: True)
+    cached_for = []
+
+    def fake_cached(name=None):
+        cached_for.append(name)
+        return True
+
+    monkeypatch.setattr(emb, "model_is_cached", fake_cached)
+    embeds_for = []
+
+    def fake_local(model_name):
+        embeds_for.append(model_name)
+        return lambda texts: ([_blob(stored)] * len(texts), DIM)
+
+    monkeypatch.setattr(embed_ladder, "_local_embed_fn", fake_local)
+
+    state = embed_ladder.evaluate_ladder(conn=fresh_db)
+
+    assert state.rung == 2
+    assert state.adopted_model == "file-local-model"
+    # the FILE model is what gets cache-checked AND parity-embedded
+    assert cached_for == ["file-local-model"]
+    assert embeds_for == ["file-local-model"]
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: evaluate_ladder's check-then-act is atomic (audit WARN) --
+# N racing threads yield exactly one _evaluate pass and one FR-013 notify.
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_evaluation_runs_once_and_notifies_once(fresh_db, monkeypatch, caplog):
+    _server_env(monkeypatch, "http://127.0.0.1:1/v1")
+    monkeypatch.setattr(embed_ladder, "_sentence_transformers_available", lambda: False)
+    monkeypatch.setattr(embed_ladder, "_fetch_model_listing", lambda: [])
+    real_evaluate = embed_ladder._evaluate
+    eval_threads = []
+
+    def slow_evaluate(conn):
+        eval_threads.append(threading.get_ident())
+        time.sleep(0.05)  # hold the critical section open for the racers
+        return real_evaluate(conn)
+
+    monkeypatch.setattr(embed_ladder, "_evaluate", slow_evaluate)
+
+    n = 8
+    barrier = threading.Barrier(n)
+    results = [None] * n
+
+    def run(i):
+        barrier.wait()
+        results[i] = embed_ladder.evaluate_ladder(conn=fresh_db)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+    with caplog.at_level(logging.WARNING, logger="cairn"):
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert len(eval_threads) == 1  # exactly one evaluation, not one per thread
+    assert all(
+        r is results[0] and r.rung == 3 and r.reason == "model_missing"
+        for r in results
+    )
+    # and exactly one FR-013 unit: one warn line + one event for the reason
+    assert len(_cairn_warnings(caplog)) == 1
+    assert [e["reason"] for e in _degraded_events()] == ["model_missing"]
+
+
+# ---------------------------------------------------------------------------
+# Listing dedupe: repeated ids collapse, order preserved (NIT -- duplicates
+# waste parity embeds).
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_model_listing_dedupes_preserving_order(monkeypatch):
+    server = _StubLadderServer(["b", "a", "b", "c", "a"], vec_for=lambda t: [0.0])
+    try:
+        _server_env(monkeypatch, server.base_url)
+        assert embed_ladder._fetch_model_listing() == ["b", "a", "c"]
+    finally:
+        server.close()

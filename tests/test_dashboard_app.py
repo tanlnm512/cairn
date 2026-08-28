@@ -3256,6 +3256,41 @@ def test_settings_refuses_non_numeric_timeout_without_writing(tmp_path):
     assert _saved_config() == {}
 
 
+def test_settings_save_write_failure_renders_error_and_keeps_config(
+    tmp_path, monkeypatch
+):
+    """A failed config write (set_config_values -> False) renders the 500
+    error page naming the file, and the stored config is untouched."""
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_SERVER_MODEL": "keep-me"})
+    client = _settings_client(tmp_path)
+    monkeypatch.setattr(paths, "set_config_values", lambda values: False)
+
+    resp = client.post(
+        "/settings/save", data={"CAIRN_EMBED_SERVER_MODEL": "new-value"}
+    )
+    assert resp.status_code == 500
+    assert "Could not write" in resp.text
+    assert "nothing was saved" in resp.text
+    assert _saved_config()["CAIRN_EMBED_SERVER_MODEL"] == "keep-me"
+
+
+def test_settings_blank_submit_keeps_stored_file_value(tmp_path):
+    """A blank field submit means "no change", never a write of "": the
+    stored SERVER_MODEL survives a blank submit untouched (a knob is
+    cleared by editing config.json, not silently blanked from the form)."""
+    from cairn import paths
+
+    paths.set_config_values({"CAIRN_EMBED_SERVER_MODEL": "file-model"})
+    client = _settings_client(tmp_path)
+
+    resp = client.post("/settings/save", data={"CAIRN_EMBED_SERVER_MODEL": ""})
+    assert resp.status_code == 200
+    assert _saved_config()["CAIRN_EMBED_SERVER_MODEL"] == "file-model"
+    assert 'value="file-model"' in resp.text
+
+
 def test_settings_routes_leave_existing_routes_get_only(tmp_path):
     """The new POST routes are POST-only and the existing GET views keep
     their read-only method surface (the suite's read-only assumption)."""
@@ -3452,3 +3487,32 @@ def test_embeddings_status_non_server_marks_probe_na_without_probe(
     assert probe_calls == []
     assert "n/a" in resp.text  # probe health: not applicable
     assert "no active fallback" in resp.text  # the healthy rung row
+
+
+def test_embeddings_status_core_schema_only_db_renders_unknown_rows(
+    tmp_path, monkeypatch, _isolated_embed_state
+):
+    """A store predating the knowledge/memory embedding tables still renders
+    the status view: those corpora report unknown (em-dash rows), never a
+    500 — the display-degrade contract for schema drift."""
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "local")
+    from cairn.graph import embeddings
+
+    db_path = _graph_db_file(tmp_path, seed=False)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP TABLE knowledge_embeddings")
+        conn.execute("DROP TABLE memory_embeddings")
+        conn.commit()
+    finally:
+        conn.close()
+
+    client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
+    resp = client.get("/embeddings")
+    assert resp.status_code == 200
+    # The core code corpus still renders (empty: 0 rows / never embedded).
+    assert embeddings.current_model() in resp.text
+    assert '<td class="num">0</td>' in resp.text
+    assert "never" in resp.text
+    # The two absent tables degrade to em-dash rows, not an error page.
+    assert resp.text.count('<td class="num">—</td>') == 2

@@ -686,3 +686,76 @@ def test_pass_level_failure_maps_to_rung_instead_of_raising(fresh_db, monkeypatc
     assert calls == [1], "the call-site guard maps the failure to the ladder"
     assert results == [], "the pass yields zero candidates instead of raising"
     assert ladder.degradation_active()
+
+
+def test_embed_failure_with_enrich_on_rides_bm25_with_degraded_keys(
+    fresh_db, monkeypatch
+):
+    """The enrichment path (params.enrich=True) with a dead server: the
+    guarded embed maps the failure onto the ladder exactly as with raw
+    queries -- term-mode bm25 results, no raise, degraded keys + hint."""
+    _seed_symbols(fresh_db)
+    _server_env(monkeypatch)
+    ladder = _rung3_ladder(monkeypatch)
+
+    from cairn.graph import embeddings as emb
+    from cairn.graph.semantic import RetrievalParams, semantic_search
+
+    def _boom(text):
+        raise RuntimeError("simulated server embed failure")
+
+    monkeypatch.setattr(emb, "embed_query", _boom)
+
+    results = semantic_search(
+        fresh_db,
+        "safeApiCall",
+        limit=5,
+        threshold=-1.0,
+        params=RetrievalParams(enrich=True),
+    )
+
+    assert results, "term-mode bm25 results must survive the dense failure"
+    assert all(r["provenance"] == "bm25" for r in results)
+    assert all(r["degraded"] == "embedding-backend" for r in results)
+    hints = {r["hint"] for r in results}
+    assert len(hints) == 1, "one shared remediation hint across the result set"
+    hint = hints.pop()
+    assert hint and "rung 3" in hint
+    assert ladder.degradation_active()
+
+
+def test_embed_failure_with_multivector_on_rides_bm25_with_degraded_keys(
+    fresh_db, monkeypatch
+):
+    """The multivector leg (params.multivector=True) with a dead server: the
+    same degraded contract as the single-vector path -- bm25 results, no
+    raise, degraded keys. The flag widens the dense leg only; a dead embed
+    never turns it into a raise out of the search."""
+    _seed_symbols(fresh_db)
+    _server_env(monkeypatch)
+    ladder = _rung3_ladder(monkeypatch)
+
+    from cairn.graph import embeddings as emb
+    from cairn.graph.semantic import RetrievalParams, semantic_search
+
+    def _boom(text):
+        raise RuntimeError("simulated server embed failure")
+
+    monkeypatch.setattr(emb, "embed_query", _boom)
+
+    results = semantic_search(
+        fresh_db,
+        "safeApiCall",
+        limit=5,
+        threshold=-1.0,
+        params=RetrievalParams(multivector=True),
+    )
+
+    assert results, "bm25 hybrid results must survive the dense failure"
+    assert all(r["provenance"] == "bm25" for r in results)
+    assert all(r["degraded"] == "embedding-backend" for r in results)
+    hints = {r["hint"] for r in results}
+    assert len(hints) == 1, "one shared remediation hint across the result set"
+    hint = hints.pop()
+    assert hint and "rung 3" in hint
+    assert ladder.degradation_active()

@@ -766,10 +766,10 @@ def semantic_search(
 
     def _dense_embed_guarded(
         text: str, conn: Optional[sqlite3.Connection] = None
-    ) -> Tuple[Optional[bytes], Optional[int]]:
+    ) -> Optional[Tuple[bytes, int]]:
         """``emb.embed_query`` with the FR-012 ladder mapped onto failure.
 
-        Returns ``(blob, dim)``, or ``(None, None)`` when the dense leg must
+        Returns ``(blob, dim)``, or ``None`` when the dense leg must
         contribute zero candidates: any embed exception (every backend,
         D-011) evaluates the ladder once per search; an active rung-1/2
         adoption gets one retry, a hard failure rides the existing bm25
@@ -789,7 +789,7 @@ def semantic_search(
                 return emb.embed_query(text)
         except Exception:
             pass
-        return None, None
+        return None
 
     def _run_pass(
         dense_text: str, extra_sparse_terms: Tuple[str, ...]
@@ -812,15 +812,19 @@ def semantic_search(
         """
         nonlocal _ann_used, _fusion_used, _fusion_degraded, _dense_lost
 
-        q_blob, q_dim = _dense_embed_guarded(dense_text, conn)
+        pair = _dense_embed_guarded(dense_text, conn)
 
-        # FR-012 rung 3: a hard embed failure contributes ZERO dense
-        # candidates -- ``[]`` flows into the existing fusion below, which
-        # yields today's bm25-provenanced shape (no new short-circuit).
-        candidates = [] if q_blob is None else None
-        _dense_lost = _dense_lost or q_blob is None
+        # FR-012 rung 3: a hard embed failure (``pair is None``) contributes
+        # ZERO dense candidates -- ``[]`` flows into the existing fusion
+        # below, which yields today's bm25-provenanced shape (no new
+        # short-circuit).
+        candidates: Optional[List[dict]] = [] if pair is None else None
+        _dense_lost = _dense_lost or pair is None
         ann_enabled = ann.ann_backend_enabled()
-        if candidates is None and ann_enabled:
+        if pair is not None and candidates is None and ann_enabled:
+            # Narrowed locals: everything below this line runs only with a
+            # real (blob, dim) pair.
+            q_blob, q_dim = pair
             ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
             if ann_hits is not None:
                 # ANN path available and an index exists for this model.
@@ -840,9 +844,13 @@ def semantic_search(
                             _candidates_from_ann_hits(conn, mv_hits, threshold),
                         )
 
-        if candidates is None:
+        if candidates is None and pair is not None:
             # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
             # fetchall() can't grow unbounded with corpus size.
+            #
+            # ``pair`` is not None here by construction: a hard embed failure
+            # leaves ``candidates == []`` above, never None -- the unpack
+            # below is the type-level statement of that runtime gate.
             #
             # Surface the degradation once when sqlite-vec was *expected* but is
             # unavailable. When ann_enabled is False it's either that or an
@@ -853,6 +861,7 @@ def semantic_search(
             # there is nothing left to warn about here.
             if not ann_enabled:
                 ann.warn_ann_fallback_once(logger, context="semantic_search")
+            q_blob, q_dim = pair
             brute_force_limit = 50000
             if params is not None and params.dense_pool is not None:
                 brute_force_limit = params.dense_pool
@@ -1102,7 +1111,20 @@ def semantic_search(
             # Second pass on the expanded text/terms; its candidates
             # REPLACE the first pass's (D-001), then the confidence
             # gate/slice path below continues on the new list.
-            candidates = _run_pass(expansion.dense_query, expansion.terms)
+            try:
+                candidates = _run_pass(expansion.dense_query, expansion.terms)
+            except Exception:
+                # Same D-011 contract as the first pass's call site above:
+                # a residual hard failure from this pass maps to the
+                # evaluated rung (the once-flag keeps the ladder at one
+                # evaluation per search) and empty candidates, instead of
+                # raising out of the search.
+                try:
+                    _evaluate_dense_ladder_once()
+                except Exception:
+                    pass
+                _dense_lost = True
+                candidates = []
             if candidates is None:
                 return _finish([])
         # Empty expansion (or prf_docs <= 0): prf.expand's contract returns

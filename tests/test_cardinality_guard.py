@@ -67,15 +67,13 @@ from cairn.telemetry import (
     EMPTY_RESULT,
     HASH_FALLBACK,
     LOCK_CONTENTION,
+    RERANK_SKIPPED,
     SEMANTIC_BACKEND,
     SEMANTIC_UNAVAILABLE,
     STRAY_SWEPT,
     TASK_LIFECYCLE,
     TRUNCATE_RESULT,
 )
-# Not re-exported at the cairn.telemetry package root; the catalog constant
-# lives in the events module (imported as `events` above for introspection).
-from cairn.telemetry.events import RERANK_SKIPPED
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +107,21 @@ _SEMANTIC_OFF_REASONS = frozenset({"unavailable", "no_embeddings", "error"})
 _FLUSH_FAILURE_BUCKETS = frozenset({"4-10", "11-100", ">100"})
 # P0-2 rerank confidence gating: the only skip class semantic_search emits.
 _RERANK_SKIP_REASONS = frozenset({"confident_margin"})
+# FR-013 embed_server_degraded reason enum. Deliberately a LOCAL literal, not
+# a reference to the live events.EMBED_SERVER_REASONS: referencing the live
+# frozenset would let a reason added in events.py auto-pass this guard. A new
+# reason must be re-declared here (a cardinality event) or the emit sweep
+# fails -- that friction is the point.
+_EMBED_SERVER_REASONS = frozenset(
+    {
+        "server_down",
+        "model_missing",
+        "parity_fail",
+        "fallback_session_alias",
+        "fallback_local",
+        "hybrid_only",
+    }
+)
 
 
 def _bounded_tag(value) -> bool:
@@ -209,7 +222,7 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
     # when the server backend degrades or a ladder rung adopts. Payload is
     # host+model only (never request bodies); reason is the catalog enum.
     EMBED_SERVER_DEGRADED: {
-        "reason": events.EMBED_SERVER_REASONS,
+        "reason": _EMBED_SERVER_REASONS,
         "host": _bounded_tag,
         "model": _bounded_tag,
     },

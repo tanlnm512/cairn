@@ -182,8 +182,9 @@ def _load_config() -> dict:
     """One uncached read of CONFIG_FILE.
 
     Returns the flat scalar mapping; empty dict when the file is absent,
-    unreadable, corrupt (one warning on invalid JSON), or not an object.
-    Non-scalar values are dropped. Never raises.
+    unreadable, corrupt (one warning on invalid JSON), or not an object
+    (one warning). Non-scalar values are dropped with one summary warning
+    naming the keys. Never raises.
     """
     if not CONFIG_FILE.exists():
         return {}
@@ -200,10 +201,25 @@ def _load_config() -> dict:
         )
         return {}
     if not isinstance(data, dict):
+        _logger.warning(
+            "%s is not a JSON object; ignoring it (env vars still apply)",
+            CONFIG_FILE,
+        )
         return {}
-    return {
+    values = {
         k: v for k, v in data.items() if isinstance(v, (str, int, float, bool))
     }
+    dropped = sorted(set(data) - set(values))
+    if dropped:
+        # Names only, never values: dropped entries can carry secrets
+        # (e.g. a mistakenly nested API key) and must not reach the log.
+        _logger.warning(
+            "%s: ignoring non-scalar keys: %s (values must be strings, "
+            "numbers, or booleans)",
+            CONFIG_FILE,
+            ", ".join(dropped),
+        )
+    return values
 
 
 def get_config_value(key: str, default=None):
@@ -240,6 +256,12 @@ def set_config_values(values: dict) -> bool:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(merged, fh, indent=2, sort_keys=True)
                 fh.write("\n")
+                # flush+fsync BEFORE the replace: os.replace is atomic within
+                # the filesystem but not durable -- without fsync a crash can
+                # persist the directory entry while the tmp file's data blocks
+                # were never written, leaving a zero-length config on recovery.
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(tmp, CONFIG_FILE)
         except BaseException:
             try:

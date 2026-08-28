@@ -19,7 +19,6 @@ import csv
 import io
 import os
 import re
-import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -258,7 +257,10 @@ def create_app(
         """One uncached server probe per dashboard process, shared by the
         banner and the status view. None when the backend is not
         server-family (nothing probes); a failed probe seeds this process's
-        ladder verdict, exactly as the banner always has."""
+        ladder verdict, exactly as the banner always has. The lock is held
+        across the probe AND the verdict assignment: a concurrent first
+        request blocks (worst case the probe's ~2 s timeout — a localhost
+        tool) instead of racing past an unassigned verdict."""
         nonlocal _probed, _probe_ok
         if embeddings._backend_name() not in embeddings._SERVER_FAMILY:
             return None
@@ -266,11 +268,11 @@ def create_app(
             if _probed:
                 return _probe_ok
             _probed = True
-        ok = embeddings._run_server_probe()
-        if not ok:
-            embed_ladder.evaluate_ladder()  # seed this process's verdict
-        _probe_ok = ok
-        return ok
+            ok = embeddings._run_server_probe()
+            if not ok:
+                embed_ladder.evaluate_ladder()  # seed this process's verdict
+            _probe_ok = ok
+            return ok
 
     def embed_banner() -> str:
         """The degradation banner text for this request ("" when healthy)."""
@@ -669,8 +671,13 @@ def create_app(
             env_value = (os.environ.get(key) or "").strip()
             file_raw = paths.get_config_value(key)
             file_value = "" if file_raw is None else str(file_raw).strip()
+            # The API key is write-only: its prefill stays "" unconditionally
+            # (the form's key input never renders a secret back). The
+            # set/not-set badges read ``effective``, so they still work.
             cfg[key] = {
-                "prefill": file_value or env_value,
+                "prefill": (
+                    "" if key == "CAIRN_EMBED_API_KEY" else file_value or env_value
+                ),
                 "effective": env_value or file_value,
                 "pinned": bool(env_value),
             }
@@ -739,7 +746,10 @@ def create_app(
             elif key == "CAIRN_EMBED_BACKEND":
                 if value in SETTINGS_BACKENDS:  # never write an unknown arm
                     values[key] = value
-            else:
+            elif value:
+                # A blank submit means "no change", never a write of "":
+                # treating it as one silently CLEARED the stored value. A
+                # knob is cleared by editing config.json, not from the form.
                 values[key] = value
         if not paths.set_config_values(values):
             return render(
@@ -800,7 +810,8 @@ def create_app(
         view: the code corpus reads the embeddings table directly,
         knowledge/memory ride embed_knowledge_count/embed_memory_count.
         A corpus whose count cannot be read (store predating the table,
-        unresolvable backend) reports unknown instead of failing the page.
+        unresolvable or malformed backend config) reports unknown instead
+        of failing the page.
         """
         rows = []
         for corpus, table in (
@@ -826,8 +837,13 @@ def create_app(
                     f"SELECT MAX(embedded_at) FROM {table} WHERE model = ?",
                     (model,),
                 ).fetchone()[0]
-            except (RuntimeError, sqlite3.Error):
-                pass  # unknown, rendered as an em-dash — never a 500
+            except Exception:
+                # Unknown, rendered as an em-dash — never a 500. Broad on
+                # purpose: this is a status page, and current_model()'s
+                # URL resolution can raise ValueError on a malformed
+                # CAIRN_EMBED_BASE_URL, not just RuntimeError/sqlite3
+                # errors.
+                pass
             rows.append(
                 {"corpus": corpus, "model": model, "count": count, "last": last}
             )

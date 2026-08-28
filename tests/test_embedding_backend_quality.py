@@ -1028,6 +1028,13 @@ class TestCurrentModelServerStamp:
         monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "https://emb.internal:8443/api/v1")
         assert emb.current_model() == "server/emb.internal:8443/bge-m3"
 
+    def test_ipv6_base_url_stamp_drops_brackets(self, monkeypatch):
+        # urlsplit keeps the bracket pair on IPv6 netlocs; the stamp (and the
+        # vec0 table names derived from it) must come out bracket-free.
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://[::1]:8000/v1")
+        assert emb.current_model() == "server/::1:8000/bge-m3"
+
     def test_unresolvable_bare_server_raises_at_stamp_time(self, monkeypatch):
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
         monkeypatch.delenv("CAIRN_EMBED_BASE_URL", raising=False)
@@ -1076,3 +1083,189 @@ class TestCurrentModelServerStamp:
         assert emb.current_model() == stamp
         assert emb.current_model(corpus="knowledge") == stamp
         assert emb.current_model(corpus="memory") == stamp
+
+
+# ---------------------------------------------------------------------------
+# 9. Server knob validation — CAIRN_EMBED_SERVER_BATCH / CAIRN_EMBED_TIMEOUT
+# ---------------------------------------------------------------------------
+
+
+class TestServerKnobValidation:
+    """A malformed knob fails fast, loudly, and names the env var.
+
+    Parsing happens before the first request: a batch of 0 (or negative)
+    must never yield a silent zero-vector embed pass reported as success,
+    and a non-finite timeout must never surface as an OverflowError or
+    ValueError from socket.settimeout outside the retry clause.
+    """
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "abc", "3.5"])
+    def test_invalid_batch_rejected_before_any_request(
+        self, stub_server, monkeypatch, raw
+    ):
+        stub_server.behavior = _echo_behavior(["a"])
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        monkeypatch.setenv("CAIRN_EMBED_SERVER_BATCH", raw)
+
+        with pytest.raises(RuntimeError, match="CAIRN_EMBED_SERVER_BATCH"):
+            emb._embed_server(["a"])
+
+        assert stub_server.requests == [], "no request may precede validation"
+
+    @pytest.mark.parametrize("raw", ["abc", "inf", "nan", "-1", "0"])
+    def test_invalid_timeout_rejected_before_any_request(
+        self, stub_server, monkeypatch, raw
+    ):
+        stub_server.behavior = _echo_behavior(["a"])
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        monkeypatch.setenv("CAIRN_EMBED_TIMEOUT", raw)
+
+        with pytest.raises(RuntimeError, match="CAIRN_EMBED_TIMEOUT"):
+            emb._embed_server(["a"])
+
+        assert stub_server.requests == [], "no request may precede validation"
+
+    def test_error_message_quotes_offending_batch_value(
+        self, stub_server, monkeypatch
+    ):
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        monkeypatch.setenv("CAIRN_EMBED_SERVER_BATCH", "0")
+        with pytest.raises(RuntimeError, match=r"CAIRN_EMBED_SERVER_BATCH: '0'"):
+            emb._embed_server(["a"])
+
+
+# ---------------------------------------------------------------------------
+# 10. Malformed 200 bodies + retryable-error detail surfacing
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedEmbeddingsResponse:
+    """A 200 response violating the OpenAI envelope fails as ONE loud,
+    non-retryable RuntimeError carrying a truncated body excerpt — never a
+    KeyError/TypeError from the middle of the write path."""
+
+    def _serve(self, stub_server, monkeypatch, action):
+        stub_server.behavior = lambda record: action
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+
+    @pytest.mark.parametrize(
+        "action",
+        [
+            ("json", 200, {"object": "list"}),  # data key missing
+            ("json", 200, {"data": {"0": {"index": 0}}}),  # data not a list
+            ("json", 200, {"data": [{"index": 0}]}),  # entry missing embedding
+            ("json", 200, {"data": [{"embedding": [1.0, 2.0]}]}),  # missing index
+            ("json", 200, {"data": ["not-a-dict"]}),  # entry not an object
+            ("raw", 200, "<html>bad gateway</html>"),  # body not JSON
+        ],
+    )
+    def test_malformed_200_body_raises_runtime_error(
+        self, stub_server, monkeypatch, action
+    ):
+        self._serve(stub_server, monkeypatch, action)
+        with pytest.raises(RuntimeError, match="malformed response"):
+            emb._embed_server(["hello"])
+
+    def test_error_carries_body_excerpt_truncated_to_120_chars(
+        self, stub_server, monkeypatch
+    ):
+        self._serve(stub_server, monkeypatch, ("raw", 200, "j" * 500))
+        with pytest.raises(RuntimeError, match="malformed response") as excinfo:
+            emb._embed_server(["hello"])
+        excerpt = str(excinfo.value).split("malformed response: ", 1)[1]
+        assert excerpt == "j" * 120, "excerpt capped at 120 chars, non-empty"
+
+
+class TestRetryableErrorDetail:
+    """Retry-exhaustion reports the server's own body, truncated, so the
+    failure names the actual degradation instead of a bare status code."""
+
+    def test_exhausted_retries_report_status_and_server_detail(
+        self, stub_server, monkeypatch, fast_backoff
+    ):
+        stub_server.behavior = lambda record: (
+            "json",
+            429,
+            {"error": {"message": "quota exceeded"}},
+        )
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+
+        with pytest.raises(RuntimeError, match="quota exceeded") as excinfo:
+            emb._embed_server(["hello"])
+
+        assert "HTTP 429" in str(excinfo.value)
+        assert len(stub_server.requests) == 4
+        assert fast_backoff == [0.5, 1.0, 2.0]
+
+    def test_detail_is_truncated_to_80_chars(
+        self, stub_server, monkeypatch, fast_backoff
+    ):
+        stub_server.behavior = lambda record: ("raw", 503, "d" * 200)
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+
+        with pytest.raises(RuntimeError, match="HTTP 503") as excinfo:
+            emb._embed_server(["hello"])
+
+        message = str(excinfo.value)
+        assert "d" * 80 in message, "first 80 chars of the body kept"
+        assert "d" * 81 not in message, "body excerpt truncated"
+
+
+# ---------------------------------------------------------------------------
+# 11. Concurrent first-call resolution — one consistent verdict
+# ---------------------------------------------------------------------------
+
+
+def _run_pair(fn):
+    """Call fn from two threads released together; return both results."""
+    barrier = threading.Barrier(2, timeout=10)
+    results = [None, None]
+
+    def worker(i):
+        barrier.wait()
+        results[i] = fn()
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    return results
+
+
+class TestConcurrentFirstCallResolution:
+    """Racing first calls on the probe/effective-backend caches settle on a
+    single consistent verdict (functional assert, not timing-based)."""
+
+    def test_racing_probes_agree_on_available(self, stub_server, monkeypatch):
+        stub_server.behavior = _models_behavior(["bge-m3"])
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        emb.reset_backend_cache()
+
+        results = _run_pair(emb.embeddings_available)
+
+        assert results == [True, True]
+        assert emb._SERVER_PROBE_CACHE["available"] is True
+        assert emb._effective_backend() == "server"
+        assert {r["path"] for r in stub_server.requests} == {"/v1/models"}
+
+    def test_racing_probes_agree_on_failure(self, stub_server, monkeypatch):
+        stub_server.behavior = lambda record: ("close",)
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        emb.reset_backend_cache()
+
+        results = _run_pair(emb.embeddings_available)
+
+        assert results == [False, False]
+        assert emb._SERVER_PROBE_CACHE["available"] is False
+
+    def test_racing_backend_resolution_agrees(self, monkeypatch):
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
+        emb.reset_backend_cache()
+
+        results = _run_pair(emb._effective_backend)
+
+        assert results == ["server", "server"]
+        assert emb._EFFECTIVE_BACKEND_CACHE["effective"] == "server"

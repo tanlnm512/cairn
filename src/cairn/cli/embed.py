@@ -89,6 +89,22 @@ def _resolve_adopted_model(conn, requested):
     from . import display
     from cairn.graph import embed_ladder as ladder
 
+    # The binding needs a stored corpus to latch onto, so check that BEFORE
+    # evaluating the ladder: with no rows there is nothing to verify parity
+    # against (the ladder would refuse on its own verdict), and the empty
+    # table deserves its specific remediation, not the ladder's.
+    row = conn.execute(
+        "SELECT model, COUNT(*) AS n FROM embeddings GROUP BY model "
+        "ORDER BY COUNT(*) DESC, model LIMIT 1"
+    ).fetchone()
+    if row is None:
+        display.error(
+            "--adopt-server-model: the database holds no stored embeddings "
+            "to bind the adoption to"
+        )
+        sys.exit(1)
+    stored_stamp = row["model"]
+
     if requested:
         state = ladder.evaluate_ladder(conn=conn, force=True)
         if state is None:
@@ -107,19 +123,13 @@ def _resolve_adopted_model(conn, requested):
             _exit_not_adoptable(requested, state)
         adopted = state.adopted_model
 
-    row = conn.execute(
-        "SELECT model FROM embeddings GROUP BY model "
-        "ORDER BY COUNT(*) DESC, model LIMIT 1"
-    ).fetchone()
-    if row is None:
-        display.error(
-            "--adopt-server-model: the database holds no stored embeddings "
-            "to bind the adoption to"
-        )
-        sys.exit(1)
-    stored_stamp = row["model"]
     ladder.set_session_stamp(stored_stamp)
     ladder.set_session_server_model(adopted)
+    # Make the dominant-stamp choice visible: which stored stamp the alias
+    # binding latched onto (most rows wins) and how many rows back it.
+    display.dim(
+        f"binding alias to stored stamp '{stored_stamp}' ({row['n']} rows)"
+    )
     return adopted, stored_stamp
 
 
@@ -343,21 +353,21 @@ def embed(
 
         if adopted is not None:
             # FR-012: permanence persists the alias binding — the corpus keeps
-            # its stamp; until the FR-010 config substrate lands, durability
-            # across processes is the explicit env pin of the same stamp.
+            # its stamp. ~/.cairn/config.json (the FR-010 substrate, landed) is
+            # the durable home for the pin; the env export remains for
+            # env-only setups.
             display.success(
                 f"Adopted server model '{adopted}': this corpus keeps its "
                 f"stamp '{stored_stamp}' (no re-embed, no restamp)."
             )
             display.dim(
-                "To keep the binding across processes until configuration "
-                "storage lands, export:"
+                "To keep the binding across processes, set it in the config "
+                "file ~/.cairn/config.json (dashboard Settings or a direct "
+                "edit): CAIRN_EMBED_MODEL_STAMP="
+                f"{stored_stamp} alongside CAIRN_EMBED_SERVER_MODEL={adopted}."
             )
+            display.dim("Env-only setups can pin the same stamp by exporting:")
             display.dim(f"  export CAIRN_EMBED_MODEL_STAMP={stored_stamp}")
-            display.dim(
-                "Routing to the adopted model id will persist via the config "
-                "file (Phase 4)."
-            )
 
         # Persist an 'embed' build_runs row (best-effort; record_build_run
         # swallows all errors). Only the symbol/skipped counts are meaningful

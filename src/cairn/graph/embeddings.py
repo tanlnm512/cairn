@@ -69,9 +69,14 @@ def current_model(corpus: str = "code") -> str:
         override = _config_or_env("CAIRN_EMBED_MODEL_STAMP")
         if override:
             return override
-        if _SESSION_STAMP_OVERRIDE:
-            return _SESSION_STAMP_OVERRIDE
+        with _BACKEND_CACHE_LOCK:
+            session_stamp = _SESSION_STAMP_OVERRIDE
+        if session_stamp:
+            return session_stamp
+        # urlsplit keeps the bracket pair on IPv6 netlocs ([::1]:8000); the
+        # stamp -- and every vec0 table name derived from it -- drops them.
         netloc = urlsplit(_server_base_url()).netloc
+        netloc = netloc.replace("[", "").replace("]", "")
         return f"server/{netloc}/{_server_model()}"
     env_name = _CORPUS_MODEL_ENV.get(corpus)
     if env_name:
@@ -107,7 +112,9 @@ def embeddings_available() -> bool:
         # must never reach (FR-002: server never resolves to hash).
         # Rung-2 session adoption (FR-012) already proved local availability
         # before switching, so it answers without the (still failing) probe.
-        if _SESSION_BACKEND_OVERRIDE:
+        with _BACKEND_CACHE_LOCK:
+            session_backend = _SESSION_BACKEND_OVERRIDE
+        if session_backend:
             return True
         return _server_probe_available()
     # local (default) — fall back to hash when sentence_transformers missing
@@ -115,7 +122,8 @@ def embeddings_available() -> bool:
         import sentence_transformers  # noqa: F401
         return True
     except ImportError:
-        _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
+        with _BACKEND_CACHE_LOCK:
+            _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
         return True
 
 
@@ -375,12 +383,20 @@ _MODEL_CACHE: dict = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 # Cache for the effective backend after fallback resolution. Set once per
-# process by embeddings_available().
-_EFFECTIVE_BACKEND_CACHE: dict = {"effective": None}
+# process by embeddings_available(). None until the first resolution stamps
+# it; every later value is a backend name.
+_EFFECTIVE_BACKEND_CACHE: dict[str, Optional[str]] = {"effective": None}
 
 # Cached availability-probe verdict for the server family (FR-002), stamped
-# by _server_probe_available(); invalidated by reset_backend_cache().
-_SERVER_PROBE_CACHE: dict = {"available": None}
+# by _server_probe_available(); invalidated by reset_backend_cache(). None
+# until the first probe answers.
+_SERVER_PROBE_CACHE: dict[str, Optional[bool]] = {"available": None}
+
+# Guards the check-then-act blocks over both caches above -- the resolution
+# is reachable from the embed flusher thread and tool threads alike, so a
+# first stamp wins under the lock and racing first calls settle on a single
+# consistent verdict. Also guards every read of the _SESSION_* overrides.
+_BACKEND_CACHE_LOCK = threading.Lock()
 
 # FR-002 fixes the probe timeout at 2 s: a down server must fail the
 # availability gate fast, independent of CAIRN_EMBED_TIMEOUT (which governs
@@ -397,6 +413,10 @@ _ALIAS_GATE_LOCK = threading.Lock()
 # reads/writes stay on the corpus while requests go through the adopted
 # model id), the adopted request model id, and the rung-2 local fallback.
 # Explicit env vars always win over these; reset_backend_cache() clears all.
+# Writes land via embed_ladder's setters as single attribute assignments
+# (GIL-atomic); every read in this module takes _BACKEND_CACHE_LOCK, so an
+# override can only swap between statements -- never in the middle of a
+# resolution that consults it alongside the caches the same lock guards.
 _SESSION_STAMP_OVERRIDE: Optional[str] = None
 _SESSION_SERVER_MODEL: Optional[str] = None
 _SESSION_BACKEND_OVERRIDE: Optional[str] = None
@@ -410,8 +430,9 @@ def reset_backend_cache() -> None:
     Call this in test setup/teardown whenever CAIRN_EMBED_BACKEND is changed,
     since none of these caches are invalidated mid-process.
     """
-    _EFFECTIVE_BACKEND_CACHE["effective"] = None
-    _SERVER_PROBE_CACHE["available"] = None
+    with _BACKEND_CACHE_LOCK:
+        _EFFECTIVE_BACKEND_CACHE["effective"] = None
+        _SERVER_PROBE_CACHE["available"] = None
     with _ALIAS_GATE_LOCK:
         _ALIAS_GATE_CACHE.clear()
     # Config-file reads are cached in paths (mtime-stamped); drop that cache
@@ -464,22 +485,34 @@ def _effective_backend() -> str:
     adoption (FR-012) switches a server-family config to local for the
     process lifetime; it applies only while the env config stays
     server-family and is never 'hash' (D-003).
+
+    The resolution inputs are process-stable, so the first stamp under
+    _BACKEND_CACHE_LOCK wins: racing first calls compute identical values
+    and the cache settles on one verdict.
     """
-    if _EFFECTIVE_BACKEND_CACHE["effective"] is not None:
-        return _EFFECTIVE_BACKEND_CACHE["effective"]
+    cached: Optional[str] = _EFFECTIVE_BACKEND_CACHE["effective"]
+    if cached is not None:
+        return cached
     backend = _backend_name()
     if backend == "local":
         try:
             import sentence_transformers  # noqa: F401
-            _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
+            resolved = "local"
         except ImportError:
-            _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
+            resolved = "hash"
     else:
         resolved = "server" if backend in _SERVER_FAMILY else backend
-        if resolved == "server" and _SESSION_BACKEND_OVERRIDE:
-            resolved = _SESSION_BACKEND_OVERRIDE
-        _EFFECTIVE_BACKEND_CACHE["effective"] = resolved
-    return _EFFECTIVE_BACKEND_CACHE["effective"]
+        if resolved == "server":
+            with _BACKEND_CACHE_LOCK:
+                session_backend = _SESSION_BACKEND_OVERRIDE
+            if session_backend:
+                resolved = session_backend
+    with _BACKEND_CACHE_LOCK:
+        cached = _EFFECTIVE_BACKEND_CACHE["effective"]
+        if cached is None:
+            cached = resolved
+            _EFFECTIVE_BACKEND_CACHE["effective"] = cached
+    return cached
 
 
 def _server_base_url() -> str:
@@ -511,8 +544,10 @@ def _server_model() -> str:
     the env id is the failed producer the ladder is replacing. Otherwise the
     env-or-config-file value (D-008) wins over the default preset id.
     """
-    if _SESSION_SERVER_MODEL:
-        return _SESSION_SERVER_MODEL
+    with _BACKEND_CACHE_LOCK:
+        adopted = _SESSION_SERVER_MODEL
+    if adopted:
+        return adopted
     env = _config_or_env("CAIRN_EMBED_SERVER_MODEL")
     if env:
         return env
@@ -524,11 +559,20 @@ def _server_probe_available() -> bool:
 
     True only when GET {base}/models returns 200 AND lists the configured
     model id. Both outcomes are cached for the process lifetime;
-    reset_backend_cache() forces the next call to re-probe.
+    reset_backend_cache() forces the next call to re-probe. The probe
+    (network I/O) runs outside _BACKEND_CACHE_LOCK; only the check-then-stamp
+    is serialized, so racing first calls may probe twice but settle on the
+    single verdict the server actually gives.
     """
-    if _SERVER_PROBE_CACHE["available"] is None:
-        _SERVER_PROBE_CACHE["available"] = _run_server_probe()
-    return _SERVER_PROBE_CACHE["available"]
+    verdict: Optional[bool] = _SERVER_PROBE_CACHE["available"]
+    if verdict is None:
+        probed = _run_server_probe()
+        with _BACKEND_CACHE_LOCK:
+            verdict = _SERVER_PROBE_CACHE["available"]
+            if verdict is None:
+                verdict = probed
+                _SERVER_PROBE_CACHE["available"] = verdict
+    return verdict
 
 
 def _run_server_probe() -> bool:
@@ -857,7 +901,8 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
             _run_install_with_progress(cmd, lib_dir)
             _verify_install(lib_dir)  # a second failure is terminal
         reset_backend_cache()
-        _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
+        with _BACKEND_CACHE_LOCK:
+            _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
         # Re-add the lib dir to sys.path in case paths.py ran before it
         # existed, so a later lazy in-process import finds the new install.
         if str(lib_dir) not in sys.path:
@@ -894,7 +939,9 @@ def _get_local_model(model_name: Optional[str] = None):
                 from sentence_transformers import SentenceTransformer
 
                 trust = os.environ.get("CAIRN_EMBED_TRUST_REMOTE_CODE") == "1"
-                kwargs = {"trust_remote_code": trust}
+                # Values stay object-typed: the dict mixes a bool flag with
+                # nested model_kwargs dicts for SentenceTransformer(**kwargs).
+                kwargs: dict[str, object] = {"trust_remote_code": trust}
                 if os.environ.get("CAIRN_EMBED_FP16") == "1":
                     kwargs["model_kwargs"] = {"torch_dtype": "float16"}
                 model = SentenceTransformer(m_name, **kwargs)
@@ -992,7 +1039,9 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
     error message verbatim; honors CAIRN_EMBED_TIMEOUT (default 30 s);
     sends a bearer header only when CAIRN_EMBED_API_KEY is set; rejects
     batches whose embeddings disagree in dimensionality. The three knobs
-    resolve env > config file > default (D-008).
+    resolve env > config file > default (D-008); a CAIRN_EMBED_TIMEOUT or
+    CAIRN_EMBED_SERVER_BATCH value that does not parse to a positive finite
+    number raises RuntimeError naming the knob before any request is sent.
     """
     if not texts:
         return [], 0
@@ -1005,10 +1054,36 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
 
     base = _server_base_url().rstrip("/")
     model = _server_model()
+    # Both knobs are validated before the first request: a non-positive batch
+    # would make range() silently skip every chunk (a zero-vector pass
+    # reported as success) or crash it outright, and a non-finite/negative
+    # timeout would surface as an OverflowError/ValueError from
+    # socket.settimeout -- outside the retry clause -- instead of a
+    # configuration error naming the knob.
     timeout_raw = _config_or_env("CAIRN_EMBED_TIMEOUT")
-    timeout = float(timeout_raw) if timeout_raw else 30.0
+    if timeout_raw:
+        try:
+            timeout = float(timeout_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"invalid CAIRN_EMBED_TIMEOUT: {timeout_raw!r}"
+            ) from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise RuntimeError(f"invalid CAIRN_EMBED_TIMEOUT: {timeout_raw!r}")
+    else:
+        timeout = 30.0
     batch_raw = _config_or_env("CAIRN_EMBED_SERVER_BATCH")
-    batch = int(batch_raw) if batch_raw else 32
+    if batch_raw:
+        try:
+            batch = int(batch_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"invalid CAIRN_EMBED_SERVER_BATCH: {batch_raw!r}"
+            ) from None
+        if batch < 1:
+            raise RuntimeError(f"invalid CAIRN_EMBED_SERVER_BATCH: {batch_raw!r}")
+    else:
+        batch = 32
     headers = {"Content-Type": "application/json"}
     api_key = _config_or_env("CAIRN_EMBED_API_KEY") or ""
     if api_key:
@@ -1033,7 +1108,7 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", errors="replace")
                 if e.code == 429 or e.code >= 500:
-                    last_error = f"HTTP {e.code}"
+                    last_error = f"HTTP {e.code}: {detail[:80]}"
                 else:
                     try:
                         parsed = json.loads(detail)
@@ -1061,7 +1136,26 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
                 f"embedding server unreachable after {max_retries} retries: "
                 f"{last_error}"
             )
-        data = json.loads(raw.decode("utf-8"))["data"]
+        # A 200 body is still untrusted: validate the OpenAI envelope shape
+        # before touching it, so a malformed response fails as one loud,
+        # non-retryable error carrying a body excerpt instead of a
+        # KeyError/TypeError from the middle of the write path.
+        body = raw.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            parsed = None
+        data = parsed.get("data") if isinstance(parsed, dict) else None
+        if not isinstance(data, list) or not all(
+            isinstance(entry, dict)
+            and isinstance(entry.get("index"), int)
+            and isinstance(entry.get("embedding"), list)
+            for entry in data
+        ):
+            raise RuntimeError(
+                "embedding server returned malformed response: "
+                f"{body[:120]}"
+            )
         data.sort(key=lambda d: d["index"])  # preserve input order
         embeddings = [d["embedding"] for d in data]
         if len(embeddings) != len(chunk):

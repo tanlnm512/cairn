@@ -330,3 +330,26 @@ def test_refuses_when_server_is_healthy(monkeypatch, tmp_path):
     assert "not a parity-verified candidate" in out
     assert "healthy" in out
     assert _stamp_counts(db_path) == {stamp: 3}
+
+
+# (g) an EMPTY embeddings table: even a parity-verified candidate has no
+# stored stamp to bind the adoption to -> exit 1 with the specific message;
+# the embed flow never runs.
+
+
+def test_refuses_when_embeddings_table_is_empty(monkeypatch, tmp_path):
+    _server_env(monkeypatch)
+    db_path = str(tmp_path / "db.sqlite")
+    from cairn.graph.schema import get_db as open_graph_db
+
+    open_graph_db(db_path).close()  # schema created; zero embedding rows
+    _forbid_embed_all(monkeypatch)
+    _stub_ladder(monkeypatch)
+
+    result = _invoke("--db", db_path, "--adopt-server-model", "cand-a")
+
+    assert result.exit_code == 1
+    out = _flat(result)
+    assert "--adopt-server-model" in out
+    assert "no stored embeddings" in out
+    assert "binding alias" not in out  # nothing was resolved, nothing bound

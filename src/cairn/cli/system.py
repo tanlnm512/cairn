@@ -853,9 +853,11 @@ def _check_embeddings(conn) -> dict:
     backend is active OR the user explicitly chose ``hash`` (an informed
     choice, never a degradation). Mirrors ``embeddings.is_hash_fallback()``.
     """
-    from ..graph.embeddings import is_hash_fallback
+    from ..graph.embeddings import _backend_name, is_hash_fallback
 
-    configured = os.environ.get("CAIRN_EMBED_BACKEND", "local").strip().lower() or "local"
+    # _backend_name() resolves env > config file > default (D-008), so the
+    # PASS line reports the effective backend, not just the env layer.
+    configured = _backend_name()
     if is_hash_fallback():
         return _result(
             "embeddings",
@@ -1002,6 +1004,7 @@ def _check_embed_server(conn) -> list[dict]:
     )
     from ..graph.embeddings import (
         _SERVER_FAMILY,
+        _backend_name,
         _embed_server,
         _server_base_url,
         _server_model,
@@ -1011,7 +1014,10 @@ def _check_embed_server(conn) -> list[dict]:
     )
     from ..graph.semantic import _ms_bucket
 
-    configured = os.environ.get("CAIRN_EMBED_BACKEND", "local").strip().lower() or "local"
+    # _backend_name() resolves env > config file > default (D-008), so a
+    # file-only server config reaches this probe instead of being reported
+    # as a disabled 'local' backend (env-only reads missed the file layer).
+    configured = _backend_name()
     if configured not in _SERVER_FAMILY:
         return [
             _result(
@@ -1705,7 +1711,9 @@ def _report_config() -> dict:
         "read_only": os.environ.get("CAIRN_READ_ONLY", "<unset>"),
         "fusion": os.environ.get("CAIRN_FUSION", "<unset>"),
         "ann_backend": os.environ.get("CAIRN_ANN_BACKEND", "<unset (=sqlite-vec)>"),
-        "embed_backend": os.environ.get("CAIRN_EMBED_BACKEND", "<unset (=local)>"),
+        # Same D-008 resolution _check_config uses, so report and doctor
+        # agree on the effective embed backend (env > file > default).
+        "embed_backend": _knob_source("CAIRN_EMBED_BACKEND", "<unset (=local)>")[0],
         "telemetry": os.environ.get("CAIRN_TELEMETRY", "<unset (=on)>"),
         "log_level": os.environ.get("CAIRN_LOG_LEVEL", "<unset (=WARNING)>"),
     }

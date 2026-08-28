@@ -139,10 +139,39 @@ class TestCorruptConfig:
         assert len(blob) == dim * 4
         assert emb.current_model() == emb.HASH_MODEL
 
-    def test_non_object_json_is_ignored(self, config_file):
+    def test_non_object_json_is_ignored(self, config_file, caplog):
         config_file.write_text('["CAIRN_EMBED_BACKEND"]', encoding="utf-8")
-        assert paths.get_config_value("CAIRN_EMBED_BACKEND") is None
-        assert emb._backend_name() == "local"
+        with caplog.at_level(logging.WARNING, logger="cairn.paths"):
+            assert paths.get_config_value("CAIRN_EMBED_BACKEND") is None
+            assert emb._backend_name() == "local"
+        # Same degradation surface as the corrupt-JSON path: one warning.
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "not a JSON object" in warnings[0].getMessage()
+
+    def test_non_scalar_keys_dropped_with_warning_naming_keys_only(
+        self, config_file, caplog
+    ):
+        _write(config_file, {
+            "CAIRN_EMBED_BACKEND": "omlx",
+            "NESTED_OBJ": {"CAIRN_EMBED_API_KEY": "s3cret-value"},
+            "NESTED_LIST": [1, 2],
+            "NULL_KEY": None,
+        })
+        with caplog.at_level(logging.WARNING, logger="cairn.paths"):
+            # scalars survive, non-scalars are dropped
+            assert paths.get_config_value("CAIRN_EMBED_BACKEND") == "omlx"
+            assert paths.get_config_value("NESTED_OBJ") is None
+            assert paths.get_config_value("NESTED_LIST") is None
+            assert paths.get_config_value("NULL_KEY") is None
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1  # one summary line, not one per key
+        msg = warnings[0].getMessage()
+        for key in ("NESTED_OBJ", "NESTED_LIST", "NULL_KEY"):
+            assert key in msg
+        # key NAMES only -- dropped values must never reach the log
+        assert "s3cret-value" not in msg
+        assert "[1, 2]" not in msg
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +252,34 @@ class TestSetConfigValues:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert list(config_file.parent.glob("*.tmp")) == []
+        assert json.loads(config_file.read_text(encoding="utf-8")) == {
+            "CAIRN_EMBED_BACKEND": "omlx"
+        }
+
+    def test_fsync_called_on_tmp_fd_before_replace(self, config_file, monkeypatch):
+        order = []
+        opened = {}
+        real_fdopen = os.fdopen
+        real_replace = os.replace
+
+        def fake_fdopen(fd, *args, **kwargs):
+            opened["fd"] = fd
+            return real_fdopen(fd, *args, **kwargs)
+
+        def fake_replace(src, dst):
+            order.append(("replace", src))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "fdopen", fake_fdopen)
+        monkeypatch.setattr(os, "fsync", lambda fd: order.append(("fsync", fd)))
+        monkeypatch.setattr(os, "replace", fake_replace)
+
+        assert paths.set_config_values({"CAIRN_EMBED_BACKEND": "omlx"}) is True
+
+        # fsync ran on the tmp file's fd, BEFORE the atomic replace: without
+        # it a crash after the replace can land a zero-length config.
+        assert order[0] == ("fsync", opened["fd"])
+        assert order[1][0] == "replace"
         assert json.loads(config_file.read_text(encoding="utf-8")) == {
             "CAIRN_EMBED_BACKEND": "omlx"
         }

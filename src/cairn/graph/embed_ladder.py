@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import sqlite3
 import struct
+import threading
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
@@ -158,6 +158,15 @@ class LadderState:
 
 _LADDER_CACHE: dict = {"state": None}
 
+# Serializes the check-then-act on _LADDER_CACHE (double-checked locking: an
+# unlocked fast-path read, then re-check + evaluate under the lock) and the
+# membership-check+add on _DEGRADATION_NOTIFIED below. Without it, concurrent
+# MCP threads each race past the empty-cache check and double-run evaluation
+# (up to 16 embeds per candidate) and double-notify. Mirrors embeddings'
+# _ALIAS_GATE_LOCK discipline. notify_degradation runs OUTSIDE the lock so
+# telemetry emission never holds it.
+_LADDER_LOCK = threading.Lock()
+
 # Rung-3 detail strings: short, machine-actionable, one per trigger reason.
 # Each names the degraded state AND one actionable remediation (FR-013).
 _RUNG3_DETAIL = {
@@ -211,8 +220,9 @@ def reset_cache() -> None:
     Reached through ``embeddings.reset_backend_cache()`` (and directly in
     tests); also the re-evaluation seam for doctor and ``cairn embed``.
     """
-    _LADDER_CACHE["state"] = None
-    _DEGRADATION_NOTIFIED.clear()
+    with _LADDER_LOCK:
+        _LADDER_CACHE["state"] = None
+        _DEGRADATION_NOTIFIED.clear()
     set_session_stamp(None)
     set_session_server_model(None)
     set_session_backend(None)
@@ -270,9 +280,10 @@ def notify_degradation(reason: str, detail: str = "") -> None:
     text (spec A2.6); telemetry-off/read-only suppress the event, never the
     line. Never raises.
     """
-    if reason in _DEGRADATION_NOTIFIED:
-        return
-    _DEGRADATION_NOTIFIED.add(reason)
+    with _LADDER_LOCK:
+        if reason in _DEGRADATION_NOTIFIED:
+            return
+        _DEGRADATION_NOTIFIED.add(reason)
     try:
         from ..telemetry import EMBED_SERVER_DEGRADED
         from ..telemetry import emit as _emit
@@ -339,19 +350,28 @@ def evaluate_ladder(
     (``active=False``, cache back to None). A state-setting evaluation
     notifies once at the end via :func:`notify_degradation` (FR-013), so a
     rung adoption is never silent.
+
+    Thread-safe: the cache check-then-act is double-checked under
+    ``_LADDER_LOCK``, so N concurrent callers produce exactly one
+    ``_evaluate`` pass and one notification per reason.
     """
-    cached = _LADDER_CACHE["state"]
+    cached = _LADDER_CACHE["state"]  # fast path: unlocked read
     if cached is not None and not force:
         return cached
-    if embeddings._effective_backend() != "server":
-        return None
-    state = _evaluate(conn)
-    if state is None:
-        if cached is not None:
-            cached.active = False
-        _LADDER_CACHE["state"] = None
-        return None
-    _LADDER_CACHE["state"] = state
+    with _LADDER_LOCK:
+        cached = _LADDER_CACHE["state"]  # re-check under the lock
+        if cached is not None and not force:
+            return cached
+        if embeddings._effective_backend() != "server":
+            return None
+        state = _evaluate(conn)
+        if state is None:
+            if cached is not None:
+                cached.active = False
+            _LADDER_CACHE["state"] = None
+            return None
+        _LADDER_CACHE["state"] = state
+    # Outside the lock: telemetry emission and logging must not hold it.
     notify_degradation(state.reason, state.detail)
     return state
 
@@ -449,11 +469,24 @@ def _sentence_transformers_available() -> bool:
         return False
 
 
+def _config_value(name: str) -> str:
+    """One CAIRN_EMBED_* knob through the D-008 choke point (env > file),
+    stripped, '' when unset.
+
+    Lazy import: embeddings imports this module at load time, so the
+    reverse ``_config_or_env`` reference can only resolve at call time
+    (module-cycle discipline). File-persisted keys must reach the ladder's
+    probes exactly as they reach the main embed path, else parity checks
+    false-fail against authenticated/slow servers or the wrong local model.
+    """
+    from .embeddings import _config_or_env
+
+    return (_config_or_env(name) or "").strip()
+
+
 def _local_default_model() -> str:
     """The local-backend model rung 2 would fall back to (code corpus)."""
-    return (
-        os.environ.get("CAIRN_EMBED_LOCAL_MODEL") or embeddings.DEFAULT_LOCAL_MODEL
-    ).strip()
+    return _config_value("CAIRN_EMBED_LOCAL_MODEL") or embeddings.DEFAULT_LOCAL_MODEL
 
 
 def _fetch_model_listing() -> Optional[List[str]]:
@@ -471,7 +504,7 @@ def _fetch_model_listing() -> Optional[List[str]]:
     except RuntimeError:
         return None
     headers = {}
-    api_key = (os.environ.get("CAIRN_EMBED_API_KEY") or "").strip()
+    api_key = _config_value("CAIRN_EMBED_API_KEY")
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
@@ -489,11 +522,15 @@ def _fetch_model_listing() -> Optional[List[str]]:
     data = listing.get("data") if isinstance(listing, dict) else None
     if not isinstance(data, list):
         return None
-    return [
+    ids = [
         entry["id"]
         for entry in data
         if isinstance(entry, dict) and isinstance(entry.get("id"), str)
     ]
+    # Servers may list one id several times (e.g. one entry per
+    # quantization); dedupe preserving order so each candidate parity
+    # embed runs exactly once.
+    return list(dict.fromkeys(ids))
 
 
 def _embed_with_model(texts: Sequence[str], model_id: str) -> Tuple[List[bytes], int]:
@@ -505,10 +542,10 @@ def _embed_with_model(texts: Sequence[str], model_id: str) -> Tuple[List[bytes],
     import urllib.request
 
     base = embeddings._server_base_url().rstrip("/")
-    timeout_raw = (os.environ.get("CAIRN_EMBED_TIMEOUT") or "").strip()
+    timeout_raw = _config_value("CAIRN_EMBED_TIMEOUT")
     timeout = float(timeout_raw) if timeout_raw else 30.0
     headers = {"Content-Type": "application/json"}
-    api_key = (os.environ.get("CAIRN_EMBED_API_KEY") or "").strip()
+    api_key = _config_value("CAIRN_EMBED_API_KEY")
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     payload = json.dumps({"model": model_id, "input": list(texts)}).encode("utf-8")

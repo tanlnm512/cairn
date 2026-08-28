@@ -50,9 +50,10 @@ store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
 `CAIRN_RERANK_MIN_MARGIN`, `CAIRN_ANN_BACKEND`, `CAIRN_EMBED_BACKEND`,
 `CAIRN_EMBED_LOCAL_MODEL`, `CAIRN_EMBED_OPENAI_MODEL`,
 `CAIRN_EMBED_KNOWLEDGE_MODEL`, `CAIRN_EMBED_MEMORY_MODEL`,
-`CAIRN_EMBED_FP`, `CAIRN_EMBED_MAX_SEQ_LEN`,
-`CAIRN_EMBED_TRUST_REMOTE_CODE`, `CAIRN_WARM_MODELS`, `CAIRN_CHUNK_VARIANT`;
-the server-backend knobs (`CAIRN_EMBED_BASE_URL`, `CAIRN_EMBED_SERVER_MODEL`,
+`CAIRN_WARM_MODELS`, `CAIRN_CHUNK_VARIANT`. Three local-backend knobs are
+env only — not read from config.json: `CAIRN_EMBED_TRUST_REMOTE_CODE`,
+`CAIRN_EMBED_FP16`, `CAIRN_EMBED_MAX_SEQ_LEN`. The server-backend knobs
+(`CAIRN_EMBED_BASE_URL`, `CAIRN_EMBED_SERVER_MODEL`,
 `CAIRN_EMBED_API_KEY`, `CAIRN_EMBED_TIMEOUT`, `CAIRN_EMBED_SERVER_BATCH`,
 `CAIRN_EMBED_MODEL_STAMP`) are tabled in
 [Embedding server backends](#embedding-server-backends) below.
@@ -123,8 +124,10 @@ env-var names:
 }
 ```
 
-Precedence is env > file > default, and the file is re-read when its mtime
-changes, so edits reach running processes without a restart. The dashboard
+Precedence is env > file > default — a set-but-blank env var falls through
+to the file (env values are stripped, so blanks never shadow it) — and the
+file is re-read when its mtime changes, so edits reach running processes
+without a restart. The dashboard
 Settings page persists values here — including the API key, which is
 write-only in the UI and never rendered back. Base-URL changes in the UI
 require an explicit confirm step.
