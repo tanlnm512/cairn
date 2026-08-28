@@ -266,8 +266,15 @@ body.app-shell {
 
 /* ---- Live refresh chrome (topbar-mounted) ---- */
 
-#live-controls {
+/* display:flex sits behind :not([hidden]) on purpose: an author display
+   rule beats the UA's [hidden] { display: none }, so the unguarded
+   flex rule rendered the Pause button — dead, the loop never arms
+   without a #refresh-region — on every view that has no live region. */
+#live-controls:not([hidden]) {
   display: flex;
+}
+
+#live-controls {
   align-items: center;
   gap: 0.6rem;
   margin-left: auto;
