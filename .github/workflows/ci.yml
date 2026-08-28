@@ -150,9 +150,13 @@ jobs:
       fail-fast: false
       matrix:
         # pyproject declares >=3.10; cover the supported CPython range.
-        # 3.14 is declared in classifiers but very new -- wheel gaps for
-        # tree-sitter/sqlite-vec would fail loudly here, not silently pass.
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # PRs run the floor+ceiling legs only (3.10/3.14 -- where
+        # version-specific and tree-sitter/sqlite-vec wheel-gap breakage
+        # lives); every push to main runs the FULL matrix, so a merge is
+        # always fully covered before a release tag can be cut. 3.14 is
+        # declared in classifiers but very new -- wheel gaps fail loudly
+        # here, not silently pass.
+        python-version: ${{ github.event_name == 'push' && fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') || fromJSON('["3.10", "3.14"]') }}
 
     steps:
       - uses: actions/checkout@v5
@@ -175,7 +179,14 @@ jobs:
         run: pytest -m core -q
 
       - name: Run full test suite
-        run: pytest -q --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
+        run: |
+          # Coverage rides one leg only (3.12, main pushes): collecting it on
+          # every matrix leg is redundant signal at ~real minutes each.
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            pytest -q --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
+          else
+            pytest -q --junitxml=test-results.xml
+          fi
 
       - name: Publish test summary
         if: always()
@@ -207,7 +218,7 @@ jobs:
           EOF
 
       - name: Coverage summary
-        if: always()
+        if: always() && matrix.python-version == '3.12'
         run: |
           python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import xml.etree.ElementTree as ET
@@ -254,8 +265,15 @@ jobs:
       - name: Verify DS-v2 ground-truth seal (558 expectations, both corpora)
         run: python benchmarks/datasource/ds2/verify_dataset.py
 
+  # Packaging canary, MAIN PUSHES ONLY: verifies `python -m build` (sdist +
+  # wheel) stays green on every merge so packaging breakage surfaces between
+  # releases, never at tag time (release.yml builds the real multi-platform
+  # wheels there). PRs skip it deliberately -- their wheel-build cost buys no
+  # signal the test legs don't already give, and the canary still runs on the
+  # merge commit itself.
   build:
     name: Build wheel + sdist
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: test
     steps:
