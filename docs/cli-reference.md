@@ -36,7 +36,7 @@ are read at process start, not per call.
 
 | Command | Purpose |
 |---|---|
-| `cairn embed` | compute/refresh symbol embeddings (`--multivector`, `--build-index`, `--install-deps`, `--download-model`) |
+| `cairn embed` | compute/refresh symbol embeddings (`--multivector`, `--build-index`, `--install-deps`, `--download-model`, `--adopt-server-model [ID]` to make a parity-verified server fallback permanent) |
 | `cairn download-reranker` | fetch the CrossEncoder reranker |
 
 ## Knowledge
@@ -67,7 +67,7 @@ Group: `cairn memory …`
 | Command | Purpose |
 |---|---|
 | `cairn serve run|start|stop|status|restart` | MCP server (stdio foreground / SSE daemon `:9876`) |
-| `cairn dashboard [--db] [--port]` | read-only dashboard, loopback `:8765` |
+| `cairn dashboard [--db] [--port]` | loopback dashboard `:8765` (read-only views + Settings) |
 | `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy, claude-desktop) |
 
 ## Compass / wiki / tasks / dataflow

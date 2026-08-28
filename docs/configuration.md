@@ -130,7 +130,9 @@ file is re-read when its mtime changes, so edits reach running processes
 without a restart. The dashboard
 Settings page persists values here — including the API key, which is
 write-only in the UI and never rendered back. Base-URL changes in the UI
-require an explicit confirm step.
+require an explicit confirm step. The Embeddings status view
+(`/embeddings`) shows each knob's effective value and its source
+(env / file / default) alongside probe health and the active fallback rung.
 
 ### Privacy
 

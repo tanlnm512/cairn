@@ -25,14 +25,14 @@ through a decoupled task queue.
 |---|---|---|
 | MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 27 tools (verified at boot); `cairn://status` resource |
 | CLI | `src/cairn/cli/` | Click; entry point `cairn` → `cairn.cli:main`; see [cli-reference.md](cli-reference.md) |
-| Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; read-only SQLite connection |
+| Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json` |
 
 ### Core engines
 
 | Engine | Modules | Job |
 |---|---|---|
 | Graph engine | `src/cairn/graph/` (`builder.py`, `scanner.py`, `resolver.py`, `schema.py`, `incremental.py`, `dataflow.py`) | scan → parse → resolve → persist the symbol/call graph; see [indexing.md](indexing.md) |
-| Retrieval | `src/cairn/retrieval/`, `src/cairn/graph/` (`semantic.py`, `lexical.py`, `fusion.py`, `reranker.py`, `prf.py`, `query_enrich.py`) | always-on 3-stage hybrid (vectors + BM25 + RRF) with a gated rerank 4th stage; see [retrieval.md](retrieval.md) |
+| Retrieval | `src/cairn/retrieval/`, `src/cairn/graph/` (`semantic.py`, `lexical.py`, `fusion.py`, `reranker.py`, `prf.py`, `query_enrich.py`, `embed_ladder.py`) | always-on 3-stage hybrid (vectors + BM25 + RRF) with a gated rerank 4th stage; `embed_ladder.py` adds the parity-verified embedding-server fallback ladder; see [retrieval.md](retrieval.md) |
 | Knowledge & memory | `src/cairn/knowledge/`, `src/cairn/memory/`, `src/cairn/okf/` | OKF document store, staged doc ingestion, tiered agent memory; see [knowledge-and-memory.md](knowledge-and-memory.md) |
 | Compass & wiki | `src/cairn/compass/`, `src/cairn/wiki/`, `src/cairn/llm/tasks.py` | navigation guides and architecture summaries; LLM work runs via the task queue, fact-checked by a deterministic critic |
 
@@ -74,7 +74,7 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `viz/` | Mermaid / DOT / JSON graph renderers |
 | `wiki/` | deterministic, graph-derived architecture wiki |
 
-Standalone modules: `eval.py`, `paths.py` (store resolution), `refs.py`.
+Standalone modules: `eval.py`, `paths.py` (store resolution + the `~/.cairn/config.json` layer), `refs.py`.
 
 ## Key data model facts
 
