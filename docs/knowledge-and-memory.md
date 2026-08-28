@@ -14,7 +14,10 @@ tiers, compass guides, wiki entries, and task-queue items.
 
 ## Doc ingestion (`cairn knowledge ingest`)
 
-![Doc ingestion pipeline diagram](diagrams/doc-ingestion-pipeline.html)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/doc-ingestion-pipeline-dark.png">
+  <img src="diagrams/doc-ingestion-pipeline.png" alt="Doc ingestion pipeline diagram">
+</picture>
 
 Open [diagrams/doc-ingestion-pipeline.html](diagrams/doc-ingestion-pipeline.html)
 for the full-size version. Pipeline: `src/cairn/knowledge/ingest/__init__.py:run_ingest`.

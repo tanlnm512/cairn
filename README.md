@@ -201,7 +201,10 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 
 ## How It Works
 
-![cairn architecture: AI agents query the MCP server and CLI, which read one local SQLite store; an LLM task queue runs off-path, admitted only through a critic gate](docs/diagrams/readme-architecture.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/readme-architecture-dark.png">
+  <img src="docs/diagrams/readme-architecture.png" alt="cairn architecture: AI agents query the MCP server and CLI, which read one local SQLite store; an LLM task queue runs off-path, admitted only through a critic gate">
+</picture>
 
 The query path is deterministic: tree-sitter parsing → SQLite graph →
 FTS5/BM25 fused with vectors (RRF, always on when embeddings exist) and a

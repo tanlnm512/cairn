@@ -3,7 +3,10 @@
 Read this when you're touching the build path, the resolver, SCIP import, or
 wondering what `cairn build` / `cairn update` actually do.
 
-![Indexing pipeline diagram](diagrams/indexing-pipeline.html)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/indexing-pipeline-dark.png">
+  <img src="diagrams/indexing-pipeline.png" alt="Indexing pipeline diagram">
+</picture>
 
 Open [diagrams/indexing-pipeline.html](diagrams/indexing-pipeline.html) for
 the full-size version.
