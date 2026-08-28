@@ -95,6 +95,12 @@ def test_create_app_serves_landing_and_static(tmp_path):
     assert landing.status_code == 200
     assert "Cairn Dashboard" in landing.text
     assert db_path in landing.text
+    # Every sidebar view is reachable from the launcher grid, including
+    # the two newest sections.
+    for href in ("/workspaces", "/projects", "/graph", "/history", "/tokens",
+                 "/chains", "/health", "/memory", "/tasks", "/embeddings",
+                 "/settings"):
+        assert f'href="{href}"' in landing.text, href
 
     css = client.get("/static/app.css")
     assert css.status_code == 200
