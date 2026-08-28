@@ -25,13 +25,29 @@ store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
 `CAIRN_HOME` binds at process start — in-process env changes do nothing; use
 `--db` / `--workspace` flags instead.
 
+**Custom `CAIRN_HOME` and agent integrations.** Resolution is
+process-relative, so every process spawned on cairn's behalf must agree on
+`CAIRN_HOME`. Generated integrations handle this automatically: with a
+non-default home, `cairn install-agents` embeds `env.CAIRN_HOME` into every
+stdio MCP registration it writes (the Claude global-scope registration uses
+`claude mcp add -e`; droid's CLI path degrades to a warning — use its
+workspace-scope file registration), prefixes generated hook commands with
+the assignment, adds an `export` line to the git post-commit template, and
+`cairn serve start` propagates it into the LaunchAgent plist. With the
+default home nothing is added — generated configs are unchanged. Re-run
+`cairn install-agents` after moving the store. Verify any environment with
+`cairn config --json` (what *this* environment resolves) and
+`cairn doctor` (the `environment` check audits registration consistency,
+platform/transport supportability, and binary coherence; a missing store
+fails naming the resolved path, the env chain, and the remediation).
+
 ## Environment variables
 
 **Paths & identity**
 
 | Var | Effect |
 |---|---|
-| `CAIRN_HOME` | central home dir (default `~/.cairn`) |
+| `CAIRN_HOME` | central home dir (default `~/.cairn`; a custom value is embedded into generated agent registrations — see [Store resolution](#store-resolution)) |
 | `CAIRN_WORKSPACE` | explicit workspace root |
 | `CAIRN_DB` / `CAIRN_KNOWLEDGE` | hard path overrides |
 | `CAIRN_LIB` | shared dependency library path |
