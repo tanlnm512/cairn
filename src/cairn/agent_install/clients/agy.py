@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .._common import InstallResult, default_sse_url, resolve_cg_command
 from ..merge import _merge_json_file, _strip_mcp
+from ...paths import cairn_home_env
 
 
 def agy_config_path() -> Path:
@@ -44,14 +45,22 @@ def agy_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) ->
     (per https://antigravity.google/docs/mcp/, legacy ``url``/``httpUrl``
     fields are NOT supported). stdio servers use ``command``/``args``
     like the shared shape.
+
+    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
+    resolved CAIRN_HOME is non-default; the default home adds no env key.
     """
     if transport == "sse":
         return {"mcpServers": {"cairn": {"serverUrl": default_sse_url(sse_url)}}}
     cmd = resolve_cg_command()
     if len(cmd) == 1:
-        return {"mcpServers": {"cairn": {"command": cmd[0], "args": ["serve"]}}}
-    command, *prefix = cmd
-    return {"mcpServers": {"cairn": {"command": command, "args": [*prefix, "serve"]}}}
+        entry: dict = {"command": cmd[0], "args": ["serve"]}
+    else:
+        command, *prefix = cmd
+        entry = {"command": command, "args": [*prefix, "serve"]}
+    env = cairn_home_env()
+    if env:
+        entry["env"] = env
+    return {"mcpServers": {"cairn": entry}}
 
 
 def install_agy(workspace: str, force: bool, dry_run: bool,

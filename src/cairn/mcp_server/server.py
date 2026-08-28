@@ -26,7 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from cairn.graph.schema import get_db
-from cairn.paths import resolve_store
+from cairn.paths import render_env_resolution_chain, resolve_store
 from cairn.utils.logging import configure_logging
 
 # Wire the metric-buffering conn factory BEFORE importing any tools_*.py:
@@ -226,11 +226,17 @@ def run(transport: str = "stdio", port: int | None = None):
             sys.exit(1)
         check_conn.close()
     except Exception as e:
-        # If we can't even check the DB, exit with a helpful message
+        # If we can't even check the DB, exit with a helpful message.
+        # FR-004 (D-008): name the resolved db path, the env resolution chain
+        # in effect, and the CAIRN_HOME remediation -- not the bare exception.
         from datetime import datetime
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{ts}] cairn: error: failed to check database: {e}. "
-              f"Run 'cairn init && cairn build' first.", file=sys.stderr, flush=True)
+              f"Resolved db path: {db_path}. "
+              f"Env resolution chain: {render_env_resolution_chain()}. "
+              f"Fix: set CAIRN_HOME to the parent of the populated store "
+              f"(default ~/.cairn), then run 'cairn init && cairn build' first.",
+              file=sys.stderr, flush=True)
         sys.exit(1)
 
     # Warm the semantic models (embedder + reranker) in a background daemon

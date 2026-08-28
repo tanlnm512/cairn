@@ -30,6 +30,7 @@ from ..merge import (
     _write_file,
     _write_tree,
 )
+from ...paths import cairn_home_env
 
 
 def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
@@ -39,6 +40,9 @@ def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) 
     ``{"mcp": {"servers": {"name": {...}}}}`` with an explicit ``"type"`` field.
     This differs from the Claude/Cursor/OpenAI format (``{"mcpServers": {...}}``).
 
+    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
+    resolved CAIRN_HOME is non-default; the default home adds no env key.
+
     Args:
         transport: "stdio" (default) or "sse" (shared daemon).
         sse_url: when transport="sse", the URL clients should connect to.
@@ -47,9 +51,14 @@ def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) 
         return {"mcp": {"servers": {"cairn": {"type": "sse", "url": default_sse_url(sse_url)}}}}
     cmd = resolve_cg_command()
     if len(cmd) == 1:
-        return {"mcp": {"servers": {"cairn": {"type": "stdio", "command": cmd[0], "args": ["serve"]}}}}
-    command, *prefix = cmd
-    return {"mcp": {"servers": {"cairn": {"type": "stdio", "command": command, "args": [*prefix, "serve"]}}}}
+        entry: dict = {"type": "stdio", "command": cmd[0], "args": ["serve"]}
+    else:
+        command, *prefix = cmd
+        entry = {"type": "stdio", "command": command, "args": [*prefix, "serve"]}
+    env = cairn_home_env()
+    if env:
+        entry["env"] = env
+    return {"mcp": {"servers": {"cairn": entry}}}
 
 
 def install_zcode(workspace: str, force: bool, dry_run: bool,

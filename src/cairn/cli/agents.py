@@ -192,6 +192,12 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
             click.echo(f"  skipped: {len(res.skipped)} (use --force to overwrite)")
         for note in res.notes:
             click.echo(f"  note: {note}")
+        # FR-006 spawn-probe verdict (set by install()'s verify loop; dry-run,
+        # SSE, and CLI-registered clients stay "skipped" and print no line).
+        if res.verification_status == "pass":
+            click.echo(f"  verify: PASS ({res.verification_detail})")
+        elif res.verification_status == "fail":
+            click.echo(f"  verify: FAIL — {res.verification_detail}")
         click.echo("")
 
     if report.cross_tool:

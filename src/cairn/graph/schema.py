@@ -446,7 +446,7 @@ MIGRATIONS = [
 ]
 
 # Default DB location: resolved from the central store for the current workspace.
-from cairn.paths import resolve_store  # noqa: E402
+from cairn.paths import render_env_resolution_chain, resolve_store  # noqa: E402
 
 DEFAULT_DB_PATH = resolve_store().db
 
@@ -743,6 +743,20 @@ def get_db(
     """
     path = Path(db_path) if db_path else resolve_store().db
     key = str(path.resolve())  # resolve() works on non-existent paths too (strict=False default)
+    # FR-004 (D-008): a missing store PARENT DIRECTORY yields sqlite's bare
+    # "unable to open database file", which names neither the path nor the env
+    # that resolved it. Raise the same exception type (doctor's catch formats
+    # its own "cannot open database: " prefix around it) with the resolved
+    # path, env chain, and remediation. Choke point before any connect, so
+    # read-only and writable opens both enrich. A directory that exists with
+    # the db file merely absent keeps today's behavior (sqlite creates/opens).
+    if not path.parent.exists():
+        raise sqlite3.OperationalError(
+            f"store parent directory does not exist (db path: {path}). "
+            f"Env resolution chain: {render_env_resolution_chain()}. "
+            f"Fix: set CAIRN_HOME to the parent of the populated store "
+            f"(default ~/.cairn), then run 'cairn init && cairn build' first."
+        )
     if read_only:
         # URI form: a read-only connection. must exist -- a read-only open of
         # a missing file is an error a writer must fix via `cairn init && cairn build`.

@@ -227,7 +227,12 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         new = merger["mcp"]["servers"]["cairn"]
         cur_cmd = cur.get("command", "") + " " + " ".join(cur.get("args", []))
         new_cmd = new.get("command", "") + " " + " ".join(new.get("args", []))
-        return cur_cmd.strip() == new_cmd.strip()
+        if cur_cmd.strip() != new_cmd.strip():
+            return False
+        # Same env rule as the flat mcpServers branch: a changed env block
+        # (e.g. CAIRN_HOME after moving the store) must read as not-installed
+        # so the reinstall rewrites it.
+        return (cur.get("env") or {}) == (new.get("env") or {})
     if config_key in ("opencode", "kilo") and "mcp" in merger:
         # opencode/kilo: mcp.<name> = {type, command:[...], enabled}. The
         # command is a single array (no separate args), so compare it joined.
@@ -238,10 +243,16 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
             return False
         new = merger["mcp"]["cairn"]
         if new.get("type") == "remote":
-            return cur.get("url") == new.get("url")
+            return (cur.get("url") == new.get("url")
+                    and (cur.get("env") or {}) == (new.get("env") or {}))
         cur_cmd = " ".join(cur.get("command", []))
         new_cmd = " ".join(new.get("command", []))
-        return cur_cmd.strip() == new_cmd.strip()
+        if cur_cmd.strip() != new_cmd.strip():
+            return False
+        # Same env rule as the flat mcpServers branch: a changed env block
+        # (e.g. CAIRN_HOME after moving the store) must read as not-installed
+        # so the reinstall rewrites it.
+        return (cur.get("env") or {}) == (new.get("env") or {})
     if "mcpServers" in merger:
         servers = existing.get("mcpServers")
         cur = servers.get("cairn") if isinstance(servers, dict) else None

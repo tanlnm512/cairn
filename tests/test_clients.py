@@ -1,8 +1,26 @@
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from cairn.agent_install import check_installed, install, uninstall, CLIENTS
+
+
+@pytest.fixture
+def _cairn_bin_pinned(monkeypatch):
+    """Generated configs resolve `cairn` to a fixed fake binary path (and no
+    agent CLI is visible), so pinned config shapes are machine-independent."""
+    monkeypatch.setattr(shutil, "which",
+                        lambda cmd, path=None: "/fake/bin/cairn" if cmd == "cairn" else None)
+
+
+def _custom_home_env(monkeypatch) -> dict[str, str]:
+    """Point CAIRN_HOME at a non-default home (tilde form); returns the env
+    block generated configs must carry -- the expanded absolute path."""
+    monkeypatch.setenv("CAIRN_HOME", "~/custom-cairn-home")
+    return {"CAIRN_HOME": str(Path.home() / "custom-cairn-home")}
 
 
 def test_clients_list_includes_opencode():
@@ -122,3 +140,86 @@ def test_uninstall_opencode_global_scope_strips_global_path(tmp_path, monkeypatc
     global_cfg = fake_home / ".config" / "opencode" / "opencode.json"
     after = json.loads(global_cfg.read_text(encoding="utf-8"))
     assert "cairn" not in after.get("mcp", {}), "scope=global uninstall must strip the global file"
+
+
+# --------------------------------------------------------------------------
+# FR-001: command-array shapes (opencode + kilo) embed env.CAIRN_HOME iff the
+# home is non-default; default home stays byte-identical to the env-less shape
+# --------------------------------------------------------------------------
+
+def test_custom_home_command_array_generators_embed_env(_cairn_bin_pinned, monkeypatch):
+    from cairn.agent_install.clients.kilo import kilo_mcp_config_json
+    from cairn.agent_install.clients.opencode import opencode_mcp_config_json
+
+    env = _custom_home_env(monkeypatch)
+    expected_entry = {"type": "local", "command": ["/fake/bin/cairn", "serve"],
+                      "enabled": True, "env": env}
+    assert opencode_mcp_config_json(transport="stdio") == {"mcp": {"cairn": expected_entry}}
+    assert kilo_mcp_config_json(transport="stdio") == {"mcp": {"cairn": expected_entry}}
+
+
+def test_custom_home_command_array_install_writes_env(_cairn_bin_pinned, tmp_path, monkeypatch):
+    env = _custom_home_env(monkeypatch)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    install(str(ws), clients=["opencode", "kilo"], force=True, transport="stdio")
+
+    opencode = json.loads((ws / "opencode.json").read_text(encoding="utf-8"))
+    kilo = json.loads((ws / "kilo.json").read_text(encoding="utf-8"))
+    assert opencode["mcp"]["cairn"]["env"] == env
+    assert kilo["mcp"]["cairn"]["env"] == env
+
+
+def test_default_home_command_array_generators_stay_env_less(_cairn_bin_pinned, monkeypatch):
+    from cairn.agent_install.clients.kilo import kilo_mcp_config_json
+    from cairn.agent_install.clients.opencode import opencode_mcp_config_json
+
+    monkeypatch.delenv("CAIRN_HOME")
+    expected_entry = {"type": "local", "command": ["/fake/bin/cairn", "serve"],
+                      "enabled": True}
+    assert opencode_mcp_config_json(transport="stdio") == {"mcp": {"cairn": expected_entry}}
+    assert kilo_mcp_config_json(transport="stdio") == {"mcp": {"cairn": expected_entry}}
+
+
+def test_home_set_to_default_command_array_generators_match_unset(_cairn_bin_pinned, monkeypatch):
+    from cairn.agent_install.clients.kilo import kilo_mcp_config_json
+    from cairn.agent_install.clients.opencode import opencode_mcp_config_json
+
+    generators = (opencode_mcp_config_json, kilo_mcp_config_json)
+    monkeypatch.delenv("CAIRN_HOME")
+    unset = [json.dumps(gen(transport="stdio"), sort_keys=True) for gen in generators]
+    monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
+    defaulted = [json.dumps(gen(transport="stdio"), sort_keys=True) for gen in generators]
+    assert defaulted == unset
+
+
+def test_default_home_command_array_install_writes_no_env(_cairn_bin_pinned, tmp_path, monkeypatch):
+    monkeypatch.delenv("CAIRN_HOME")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    install(str(ws), clients=["opencode", "kilo"], force=True, transport="stdio")
+
+    opencode = json.loads((ws / "opencode.json").read_text(encoding="utf-8"))
+    kilo = json.loads((ws / "kilo.json").read_text(encoding="utf-8"))
+    assert "env" not in opencode["mcp"]["cairn"]
+    assert "env" not in kilo["mcp"]["cairn"]
+
+
+def test_home_set_to_default_command_array_files_byte_identical_to_unset(
+        _cairn_bin_pinned, tmp_path, monkeypatch):
+    monkeypatch.delenv("CAIRN_HOME")
+    ws_unset = tmp_path / "ws_unset"
+    ws_unset.mkdir()
+    install(str(ws_unset), clients=["opencode", "kilo"], force=True, transport="stdio")
+    unset = ((ws_unset / "opencode.json").read_bytes(),
+             (ws_unset / "kilo.json").read_bytes())
+
+    monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
+    ws_default = tmp_path / "ws_default"
+    ws_default.mkdir()
+    install(str(ws_default), clients=["opencode", "kilo"], force=True, transport="stdio")
+
+    assert ((ws_default / "opencode.json").read_bytes(),
+            (ws_default / "kilo.json").read_bytes()) == unset

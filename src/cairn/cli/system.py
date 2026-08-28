@@ -715,8 +715,9 @@ def sync(workspace, db):
 # --------------------------------------------------------------------------
 # cairn doctor (spec observability-telemetry §6.5)
 # --------------------------------------------------------------------------
-# 9 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
-# one informational line unless a server backend is configured, D-012).
+# 10 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
+# one informational line unless a server backend is configured, D-012; the
+# environment wiring audit is appended to both return paths, FR-007/D-007).
 # Read-only -- doctor never writes to
 # the store. Exit code is 0 when every check is PASS or WARN, and 1 when any
 # check is FAIL, so agents can gate on it (spec §6.5, success metric §8).
@@ -1414,6 +1415,329 @@ def _check_config() -> dict:
     return _result("config", _PASS, "; ".join(f"{k}={v}" for k, v in knobs))
 
 
+# --------------------------------------------------------------------------
+# the environment wiring check (FR-007 / D-007)
+#
+# Appended to BOTH _run_doctor return paths: the audit needs no db
+# connection, so it must appear precisely when the store is broken -- that is
+# when wiring matters most. Per the mixed-severity ruling the store's absence
+# is schema's FAIL alone; this check WARNs for it. Sub-audit (b) enumerates
+# installed clients via check_installed, inspects each written env block,
+# spawn-probes stdio registrations against the doctor's own store (T019's
+# verify_registration), and probes SSE endpoints (lifecycle.sse_responds) --
+# all read-only and timeout-bounded. FAILs are reserved for a provably
+# different EXISTING store and an unreachable endpoint; everything else
+# (merely-missing env on a stale registration, probe errors) WARNs.
+# --------------------------------------------------------------------------
+
+# Per-client MCP registration files the doctor audits -- exactly the config
+# paths ``check_installed`` consults (agent_install/detect.py), i.e. the files
+# ``install-agents`` writes. Workspace files are cwd-relative; home files are
+# relative to Path.home(). Registrations made through external CLIs without a
+# file this installer wrote (droid via ``droid mcp add``) stay outside these
+# files, matching D-006: the audit covers what check_installed can read.
+_REG_WS_FILES: dict[str, str] = {
+    "claude": ".mcp.json",
+    "cursor": ".cursor/mcp.json",
+    "droid": ".factory/mcp.json",  # file fallback shape
+    "zcode": ".zcode/config.json",
+    "opencode": "opencode.json",
+    "kilo": "kilo.json",
+    "omp": ".omp/mcp.json",
+}
+_REG_HOME_FILES: dict[str, tuple[str, ...]] = {
+    "cursor": ("~/.cursor/mcp.json",),
+    "zcode": ("~/.zcode/config.json", "~/.zcode/cli/config.json"),
+    "agy": ("~/.gemini/config/mcp_config.json",),
+    "opencode": ("~/.config/opencode/opencode.json",),
+    "kilo": ("~/.config/kilo/kilo.json",),
+    "omp": ("~/.omp/agent/mcp.json",),
+}
+
+
+def _client_config_paths(client: str) -> list[tuple[Path, str]]:
+    """Config files that may hold ``client``'s cairn MCP registration.
+
+    Mirrors the per-client paths ``check_installed`` consults (detect.py):
+    the workspace file plus the client's home-level config(s); claude-desktop
+    is global-only via ``claude_desktop_config_path``. Returns (path, display)
+    pairs -- the display form (workspace-relative or ``~/``-prefixed) keeps
+    doctor details scrub-safe.
+    """
+    pairs: list[tuple[Path, str]] = []
+    if client in _REG_WS_FILES:
+        rel = _REG_WS_FILES[client]
+        pairs.append((Path.cwd() / rel, rel))
+    if client == "claude-desktop":
+        from ..agent_install import claude_desktop_config_path
+
+        path = claude_desktop_config_path()
+        try:
+            disp = "~/" + str(path.relative_to(Path.home()))
+        except ValueError:
+            disp = str(path)
+        pairs.append((path, disp))
+    for rel in _REG_HOME_FILES.get(client, ()):
+        pairs.append((Path.home() / rel.removeprefix("~/"), rel))
+    return pairs
+
+
+def _enumerate_registrations() -> list[tuple[str, str, dict]]:
+    """Every installed client's cairn MCP registration, read-only.
+
+    Enumerates installed clients via ``check_installed`` (the same installed
+    state ``install-agents`` reports), then reads each client's config files
+    for the cairn entry (shape-aware: flat ``mcpServers``, zcode's nested
+    ``mcp.servers``, opencode/kilo's ``mcp.cairn``). Returns (client, display
+    path, entry) triples; absent or unparseable files are skipped, never
+    raised.
+    """
+    from ..agent_install import _registration_entry, check_installed
+
+    found: list[tuple[str, str, dict]] = []
+    for client, installed in check_installed(str(Path.cwd())).items():
+        if not installed:
+            continue
+        for path, disp in _client_config_paths(client):
+            entry = _registration_entry(str(path))
+            if entry is not None:
+                found.append((client, disp, entry))
+    return found
+
+
+def _sse_endpoint(entry: dict) -> str | None:
+    """The SSE URL of a URL-based registration (``url`` / agy's ``serverUrl``)."""
+    for key in ("url", "serverUrl"):
+        value = entry.get(key)
+        if isinstance(value, str) and "://" in value:
+            return value
+    return None
+
+
+def _sse_host_port(url: str) -> tuple[str, int] | None:
+    """(host, port) out of an SSE URL (the minimal parse the reachability
+    probes already use); None when the URL has no usable host:port."""
+    try:
+        host_part = url.split("://", 1)[1].split("/", 1)[0]
+        host, port_s = host_part.rsplit(":", 1)
+        return host, int(port_s)
+    except (IndexError, ValueError):
+        return None
+
+
+# Different-store verdict shape from verify_registration (T019): the fail
+# detail that names the store the registration ACTUALLY resolves alongside
+# the intended one. Everything else it returns starts with "probe ".
+_RESOLVES_PREFIX = "registration resolves db="
+_TARGET_SEP = "; install target db="
+
+
+def _registration_findings(
+    db: str,
+) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+    """Sub-audit (b): client-registration consistency (FR-007, mixed severity).
+
+    Per installed client's cairn registration:
+
+    * stdio -- the WRITTEN env block is inspected first (D-013: the spawn
+      probe pins the intended env over the written one, so it cannot see a
+      merely-missing entry): an env-less registration, or one not carrying
+      the effective home's env, WARNs advising ``cairn install-agents``.
+      Then verify_registration spawns the registration's exact binary+env
+      with the read-only probe args (cwd = this workspace) against the
+      doctor's own store (``db``, the store every other check audits): a
+      FAIL is recorded only when it provably resolves a different EXISTING
+      store (both stores named); a probe that errors, times out, or resolves
+      a store that does not exist on disk stays a WARN (the spec risk ruling
+      forbids blanket-FAIL).
+    * SSE -- ``lifecycle.sse_responds`` probes the endpoint (bounded socket
+      read, no request beyond a root GET); unreachable => FAIL naming the
+      client and the endpoint.
+
+    Returns (findings, hints, sse display paths); the SSE list feeds the
+    platform/transport sub-audit (c).
+    """
+    from ..agent_install import _registration_argv, verify_registration
+    from ..mcp_server import lifecycle
+    from ..paths import cairn_home_env
+
+    findings: list[tuple[str, str]] = []
+    hints: list[str] = []
+    sse_disps: list[str] = []
+    stale_hint = (
+        "run `cairn install-agents` to rewrite registrations with "
+        "environment propagation"
+    )
+    # The doctor's own resolved store: cwd-based, the same store the other
+    # checks audit -- the probe's comparison target.
+    expected = {"db": str(db), "workspace": str(Path.cwd())}
+    required_env = cairn_home_env()
+
+    for client, disp, entry in _enumerate_registrations():
+        if "command" in entry:
+            written = entry.get("env")
+            written_env = dict(written) if isinstance(written, dict) else {}
+            # D-013: env completeness is judged on the written block, BEFORE
+            # the probe (which pins the intended env over it).
+            missing = sorted(
+                k for k, v in required_env.items() if written_env.get(k) != v
+            )
+            if not written_env:
+                findings.append((
+                    _WARN,
+                    f"{client}: stdio registration in {disp} has no env "
+                    "block (pre-environment-propagation shape; it resolves "
+                    "the store by cwd only)",
+                ))
+                hints.append(stale_hint)
+            elif missing:
+                findings.append((
+                    _WARN,
+                    f"{client}: stdio registration in {disp} does not pin "
+                    f"{', '.join(missing)} to the effective home",
+                ))
+                hints.append(stale_hint)
+
+            status, detail = verify_registration(
+                _registration_argv(entry), written_env, Path.cwd(), expected,
+            )
+            if status == "pass":
+                continue
+            resolved_db = ""
+            if detail.startswith(_RESOLVES_PREFIX) and _TARGET_SEP in detail:
+                body = detail[len(_RESOLVES_PREFIX):].split(_TARGET_SEP, 1)[0]
+                resolved_db = body.split(" workspace=", 1)[0]
+            if resolved_db and Path(resolved_db).exists():
+                findings.append((
+                    _FAIL,
+                    f"{client}: registration resolves a different existing "
+                    f"store -- {detail}",
+                ))
+                hints.append(stale_hint)
+            elif resolved_db:
+                findings.append((
+                    _WARN,
+                    f"{client}: {detail} (the resolved store does not exist "
+                    "on disk)",
+                ))
+                hints.append(stale_hint)
+            else:
+                findings.append((
+                    _WARN,
+                    f"{client}: registration probe failed -- {detail}",
+                ))
+                hints.append(stale_hint)
+        else:
+            url = _sse_endpoint(entry)
+            if url is None:
+                continue
+            sse_disps.append(disp)
+            host_port = _sse_host_port(url)
+            responds = host_port is not None and lifecycle.sse_responds(
+                host=host_port[0], port=host_port[1]
+            )
+            if responds:
+                continue
+            findings.append((
+                _FAIL,
+                f"{client}: SSE registration in {disp} points at {url} but "
+                "the endpoint does not respond (no daemon is serving it)",
+            ))
+            hints.append(
+                "start the shared daemon (`cairn serve start`) or "
+                "re-register with `cairn install-agents --stdio`"
+            )
+    return findings, hints, sse_disps
+
+
+def _check_environment(db: str) -> dict:
+    """10. Environment wiring: store / registrations / platform / binary.
+
+    Status is the worst sub-audit (FAIL over WARN over PASS):
+
+    (a) resolved-store existence -- WARN with the ``cairn init`` + ``cairn
+        build`` hint when missing, mirroring _run_doctor's own missing-store
+        branch (the mixed ruling forbids repeating schema's FAIL);
+    (b) registration consistency -- enumerates installed clients via
+        ``check_installed``; stdio registrations are env-inspected (stale
+        registrations WARN) and spawn-probed against this doctor's own store
+        via T019's ``verify_registration`` (FAIL only on a provably different
+        EXISTING store, naming both), SSE registrations are probed with
+        ``lifecycle.sse_responds`` (unreachable endpoint => FAIL). All probes
+        are read-only and timeout-bounded;
+    (c) platform/transport -- WARN when an SSE registration exists but the
+        LaunchAgent daemon lifecycle is macOS-only (read through
+        lifecycle.is_macos so tests can drive the platform);
+    (d) binary coherence -- WARN when the binary registrations resolve
+        (``resolve_cg_command``) differs from the one the daemon lifecycle
+        launches (``lifecycle.cg_bin``), naming both.
+
+    Details are scrub-safe through ``_scrub_doctor``: relative/``~`` config
+    names, client names, the doctor's own ``--db`` (which the schema check
+    already echoes), and static remediation strings; absolute store paths a
+    probe verdict carries are redacted by the report path.
+    """
+    from ..agent_install._common import resolve_cg_command
+    from ..mcp_server import lifecycle
+
+    findings: list[tuple[str, str]] = []
+    hints: list[str] = []
+
+    # (a) resolved-store existence.
+    if not Path(db).exists():
+        findings.append((_WARN, f"store not found at {db}"))
+        hints.append("run `cairn init` + `cairn build` first")
+    else:
+        findings.append((_PASS, "resolved store present"))
+
+    # (b) registration consistency (env inspection + spawn-probe + SSE).
+    reg_findings, reg_hints, sse_disps = _registration_findings(db)
+    findings.extend(reg_findings)
+    hints.extend(reg_hints)
+
+    # (c) platform/transport: an SSE registration nothing can serve here.
+    if sse_disps and not lifecycle.is_macos():
+        findings.append(
+            (
+                _WARN,
+                f"SSE registration in {', '.join(sse_disps)} but the LaunchAgent "
+                "daemon lifecycle is macOS-only -- nothing can serve it on "
+                "this platform",
+            )
+        )
+        hints.append(
+            "re-register with `cairn install-agents --stdio` (or run the "
+            "daemon on macOS)"
+        )
+
+    # (d) binary coherence: what registrations pin vs what the daemon runs.
+    reg_cmd = resolve_cg_command()
+    daemon_bin = lifecycle.cg_bin()
+    if len(reg_cmd) != 1 or reg_cmd[0] != daemon_bin:
+        findings.append(
+            (
+                _WARN,
+                f"binary incoherence: registrations resolve "
+                f"{' '.join(reg_cmd)} but the daemon lifecycle launches "
+                f"{daemon_bin}",
+            )
+        )
+        hints.append(
+            "re-run `cairn install-agents` so registrations and the daemon "
+            "launch the same binary"
+        )
+
+    status = _PASS
+    for worse in (_FAIL, _WARN):
+        if any(st == worse for st, _ in findings):
+            status = worse
+            break
+    detail = "; ".join(text for _, text in findings)
+    # dict.fromkeys dedupes repeated advice while preserving order.
+    hint = "; ".join(dict.fromkeys(hints)) if hints else None
+    return _result("environment", status, detail, hint=hint)
+
+
 def _db_unavailable_results(error: Exception | None) -> list[dict]:
     """Result set when the store can't be opened: schema FAILs, the rest WARN.
 
@@ -1438,7 +1762,7 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
 
 
 def _run_doctor(db: str) -> list[dict]:
-    """Execute the 9 checks against ``db``. Never raises.
+    """Execute the 10 checks against ``db``. Never raises.
 
     A store that can't be opened FAILs the schema check and degrades the
     remaining DB-dependent checks to WARN. A store whose path doesn't EXIST
@@ -1461,7 +1785,10 @@ def _run_doctor(db: str) -> list[dict]:
             _log.debug("doctor: get_db(%s) raised %r", db, e)
 
     if conn is None:
-        return _db_unavailable_results(db_error)
+        # The environment audit needs no db connection, so it is appended on
+        # the degraded path too (D-007): a broken store is precisely when
+        # wiring matters.
+        return [*_db_unavailable_results(db_error), _check_environment(db)]
     try:
         return [
             _check_schema(conn),
@@ -1473,6 +1800,7 @@ def _run_doctor(db: str) -> list[dict]:
             _check_concurrency(conn),
             _check_tool_health(conn),
             _check_config(),
+            _check_environment(db),
         ]
     finally:
         try:
@@ -1507,12 +1835,14 @@ def _render_doctor(results: list[dict], display) -> None:
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def doctor(db, as_json):
-    """Run 9 system health checks (PASS/WARN/FAIL each).
+    """Run 10 system health checks (PASS/WARN/FAIL each).
 
     Surfaces silent degradations: schema integrity, embedding/ANN backend
     fallbacks, embed-server health (probe/model/parity/latency when a server
     backend is configured), graph freshness, parse errors, lock contention,
-    and per-tool error/latency health. Read-only -- never writes to the
+    per-tool error/latency health, and environment wiring (store resolution,
+    registrations, platform/transport, binary coherence). Read-only -- never
+    writes to the
     store. Exit code is
     0 when every check is PASS or WARN, and 1 when any check FAILs, so agents
     can gate on it (spec observability-telemetry §6.5).
@@ -1810,7 +2140,7 @@ def report(db, as_json, out_path):
     """Print a redacted diagnostic bundle for bug reports / GitHub issues.
 
     Assembles four sections into one bundle: versions (cairn/Python/platform/
-    sqlite/store), the 9 doctor checks, recent error-ish events and
+    sqlite/store), the 10 doctor checks, recent error-ish events and
     ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
 
     PRIVACY GATE (spec observability-telemetry §7): every string field is

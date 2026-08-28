@@ -29,6 +29,7 @@ from ..merge import (
     _write_file,
     _write_tree,
 )
+from ...paths import cairn_home_env
 
 
 def install_droid(workspace: str, force: bool, dry_run: bool,
@@ -51,15 +52,25 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
 
     # MCP: prefer `droid mcp add` if the CLI is available; else write a config file.
     if shutil.which("droid") and not dry_run:
+        home_env: dict[str, str] = {}
         if transport == "sse":
             url = default_sse_url(sse_url)
             argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
         else:
             cmd = resolve_cg_command()
             argv = ["droid", "mcp", "add", "cairn", *cmd, "serve"]
+            home_env = cairn_home_env()
         try:
             subprocess.run(argv, capture_output=True, timeout=10, check=False)
             res.notes.append("Registered MCP via `droid mcp add`.")
+            if home_env:
+                res.notes.append(
+                    "WARNING: the `droid mcp add` registration embeds no CAIRN_HOME "
+                    "env (the CLI has no verified env mechanism), so on a custom "
+                    "home the registered server may resolve the default store; a "
+                    "workspace-scope install writes a .factory/mcp.json registration "
+                    "that embeds the environment instead."
+                )
         except (subprocess.SubprocessError, OSError):
             res.notes.append("`droid mcp add` failed; no config file written for MCP.")
     elif not shutil.which("droid"):

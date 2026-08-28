@@ -75,6 +75,105 @@ class TestStoreExistenceCheck:
                     # Verify mcp.run() was called (meaning we didn't exit early)
                     mock_mcp.run.assert_called_once()
 
+    # ------------------------------------------------------------------
+    # FR-004 / TC-007: the boot-guard error must name the resolved db
+    # path, the env resolution chain in effect, and the remediation --
+    # not the bare OperationalError text alone. RED until the boot-guard
+    # message is enriched (tech-spec D-008).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _missing_store_env(monkeypatch, tmp_path):
+        """Point every env var of the resolution chain at sandbox paths
+        whose store directory does not exist; return the values in effect."""
+        db = (tmp_path / "no-such-store" / "missing.db").resolve()
+        home = str((tmp_path / "home").resolve())
+        workspace = str((tmp_path / "ws").resolve())
+        knowledge = str((tmp_path / "knowledge").resolve())
+        monkeypatch.setenv("CAIRN_HOME", home)
+        monkeypatch.setenv("CAIRN_WORKSPACE", workspace)
+        monkeypatch.setenv("CAIRN_DB", str(db))
+        monkeypatch.setenv("CAIRN_KNOWLEDGE", knowledge)
+        return home, workspace, str(db), knowledge
+
+    def test_missing_store_error_names_path_env_and_remediation(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """TC-007: boot against a missing store directory exits 1 with an
+        error naming the resolved db path, the env chain in effect, and the
+        set-CAIRN-HOME / cairn init && cairn build remediation."""
+        home, workspace, db, knowledge = self._missing_store_env(
+            monkeypatch, tmp_path
+        )
+
+        with patch("cairn.mcp_server.server.mcp"), \
+             patch("cairn.mcp_server.server.verify_tool_count"):
+            with pytest.raises(SystemExit) as exc_info:
+                server.run(transport="stdio")
+
+        # Exit-code-1 contract (survives from test_missing_store_exits_cleanly).
+        assert exc_info.value.code == 1
+
+        err = capsys.readouterr().err
+        # (a) the resolved db path
+        assert db in err, "error must name the resolved db path"
+        # (b) the env resolution chain in effect: each var named with its value
+        assert "CAIRN_HOME" in err and home in err
+        assert "CAIRN_WORKSPACE" in err and workspace in err
+        assert "CAIRN_DB" in err
+        assert "CAIRN_KNOWLEDGE" in err and knowledge in err
+        # (c) the remediation: point CAIRN_HOME at the built store, or build it
+        assert "CAIRN_HOME" in err, "remediation must mention CAIRN_HOME"
+        assert "cairn init" in err
+        assert "cairn build" in err
+
+    def test_missing_store_error_reports_unset_env_vars(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """TC-007 edge: chain entries with no env value in effect are still
+        named, rendered as 'unset' (D-008: value or 'unset' per entry)."""
+        monkeypatch.setenv("CAIRN_DB",
+                           str((tmp_path / "no-such-store" / "missing.db").resolve()))
+        monkeypatch.delenv("CAIRN_WORKSPACE", raising=False)
+        monkeypatch.delenv("CAIRN_KNOWLEDGE", raising=False)
+
+        with patch("cairn.mcp_server.server.mcp"), \
+             patch("cairn.mcp_server.server.verify_tool_count"):
+            with pytest.raises(SystemExit) as exc_info:
+                server.run(transport="stdio")
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "CAIRN_WORKSPACE" in err
+        assert "CAIRN_KNOWLEDGE" in err
+        assert "unset" in err
+
+    def test_cli_get_db_missing_store_error_is_actionable(
+        self, monkeypatch, tmp_path
+    ):
+        """TC-008: the CLI db-open path raises the SAME OperationalError type
+        when the store's parent directory is missing, but the text carries
+        the resolved path, the env chain, and the remediation -- the red
+        that drives the schema.get_db pre-check (D-008)."""
+        from cairn.graph.schema import get_db
+
+        home, workspace, db, knowledge = self._missing_store_env(
+            monkeypatch, tmp_path
+        )
+
+        with pytest.raises(sqlite3.OperationalError) as exc_info:
+            get_db(db, read_only=True)
+
+        msg = str(exc_info.value)
+        assert db in msg, "error must name the resolved db path"
+        assert "CAIRN_HOME" in msg and home in msg
+        assert "CAIRN_WORKSPACE" in msg and workspace in msg
+        assert "CAIRN_DB" in msg
+        assert "CAIRN_KNOWLEDGE" in msg and knowledge in msg
+        assert "CAIRN_HOME" in msg, "remediation must mention CAIRN_HOME"
+        assert "cairn init" in msg
+        assert "cairn build" in msg
+
 
 class TestToolCountAssertion:
     """Test L1: Tool count frozen with assertion."""

@@ -3,9 +3,12 @@
 This file tests:
 1. L4: No literal 9876 in serve.py or agent_install.py (VAL-MC-005)
 2. L5: lifecycle.unload() returns real exit status, not always True (VAL-MC-006)
+3. FR-003: render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
+   home is non-default (automated half of TC-005/TC-006)
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -124,7 +127,69 @@ class TestUnloadReturnsRealStatus:
         monkeypatch.setattr(lifecycle, "plist_path", lambda: tmp_path / "nonexistent.plist")
         # Mock is_macos to return True
         monkeypatch.setattr(lifecycle, "is_macos", lambda: True)
-        
+
         # unload() should return True when nothing to unload
         result = lifecycle.unload()
         assert result is True
+
+
+class TestPlistEnvironmentVariables:
+    """FR-003: render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
+    home is non-default, leaving the existing env entries unchanged.
+
+    The automated half of TC-005/TC-006 (loading the actual LaunchAgent stays
+    manual -- macOS only). Tests drive render_plist via the CAIRN_HOME env
+    var (D-010: the same mechanism the fidelity tests pin), not via a
+    render_plist parameter.
+    """
+
+    @staticmethod
+    def _set_custom_home(monkeypatch) -> str:
+        """Point CAIRN_HOME at a custom home; return its expanded absolute path."""
+        monkeypatch.setenv("CAIRN_HOME", "~/custom-cairn-home")
+        return str(Path.home() / "custom-cairn-home")
+
+    def test_render_plist_includes_cairn_home_under_custom_home(self, monkeypatch):
+        """A custom CAIRN_HOME must appear in the plist's EnvironmentVariables
+        as the expanded absolute path."""
+        from cairn.mcp_server import lifecycle
+
+        custom_home = self._set_custom_home(monkeypatch)
+        plist = lifecycle.render_plist()
+        env = plist["EnvironmentVariables"]
+        assert env.get("CAIRN_HOME") == custom_home, (
+            "render_plist must include CAIRN_HOME in EnvironmentVariables "
+            "when the home is non-default (FR-003)"
+        )
+
+    def test_render_plist_omits_cairn_home_under_default_home(self, monkeypatch):
+        """A default home (unset, or explicitly set to ~/.cairn) must produce
+        no CAIRN_HOME entry in the plist's EnvironmentVariables."""
+        from cairn.mcp_server import lifecycle
+
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        plist = lifecycle.render_plist()
+        assert "CAIRN_HOME" not in plist["EnvironmentVariables"]
+
+        # The spec rules an explicitly-set default location counts as default
+        # (TC-003): comparison is by expanded absolute path.
+        monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
+        plist = lifecycle.render_plist()
+        assert "CAIRN_HOME" not in plist["EnvironmentVariables"]
+
+    def test_render_plist_existing_env_entries_unchanged(self, monkeypatch):
+        """PATH and the existing CAIRN_WORKSPACE/CAIRN_DB/CAIRN_KNOWLEDGE
+        entries survive unchanged when the CAIRN_HOME entry is added."""
+        from cairn.mcp_server import lifecycle
+
+        self._set_custom_home(monkeypatch)
+        plist = lifecycle.render_plist(
+            workspace="/tmp/ws",
+            db_path="/tmp/ws/.kg",
+            knowledge_path="/tmp/ws/.knowledge",
+        )
+        env = plist["EnvironmentVariables"]
+        assert env["PATH"] == os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        assert env["CAIRN_WORKSPACE"] == "/tmp/ws"
+        assert env["CAIRN_DB"] == "/tmp/ws/.kg"
+        assert env["CAIRN_KNOWLEDGE"] == "/tmp/ws/.knowledge"

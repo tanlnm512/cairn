@@ -5,10 +5,13 @@ Kept separate from detect/merge/clients so no module imports a sibling client.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .. import paths
 
 # All supported clients. Order matters only for display.
 # "claude" is Claude Code (CLI, workspace-scoped); "claude-desktop" is the
@@ -35,10 +38,23 @@ _MARKER = "cairn"  # used to identify our entries when merging/uninstalling
 
 @dataclass
 class InstallResult:
+    """Outcome of one installer run.
+
+    ``verification_status``/``verification_detail`` (FR-006/D-005) carry the
+    post-install spawn-probe verdict: ``verification_status`` is one of
+    "pass" / "fail" / "skipped" (default "skipped" -- verdicts are set only
+    by install()'s verify loop for file-written stdio registrations;
+    dry_run, SSE, and CLI-registered clients stay skipped per D-006). On
+    "fail", ``verification_detail`` names both stores (resolved and
+    intended). Defaulted because InstallResult has ~24 construction sites.
+    """
+
     client: str
     written: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    verification_status: str = "skipped"
+    verification_detail: str = ""
 
     def add(self, path: Path, existed: bool):
         (self.skipped if existed else self.written).append(str(path))
@@ -101,6 +117,9 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
             shared daemon, requires `cairn serve start` to be running).
         sse_url: when transport="sse", the URL clients should connect to.
             Defaults to http://127.0.0.1:{lc.DEFAULT_PORT}/sse.
+
+    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
+    resolved CAIRN_HOME is non-default; the default home adds no env key.
     """
     if transport == "sse":
         url = default_sse_url(sse_url)
@@ -111,10 +130,18 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
     cmd = resolve_cg_command()
     if len(cmd) == 1:
         # cairn binary: args = ["serve"]
-        return {"mcpServers": {"cairn": {"command": cmd[0], "args": ["serve"]}}}
-    # module fallback (e.g. [python, "-m", "cairn.cli.main"]): append "serve" to args
-    command, *prefix = cmd
-    return {"mcpServers": {"cairn": {"command": command, "args": [*prefix, "serve"]}}}
+        entry: dict = {"command": cmd[0], "args": ["serve"]}
+    else:
+        # module fallback (e.g. [python, "-m", "cairn.cli.main"]): append "serve" to args
+        command, *prefix = cmd
+        entry = {"command": command, "args": [*prefix, "serve"]}
+    # A non-default CAIRN_HOME must travel with the registration so the
+    # client-spawned server resolves the same store; {} on default keeps
+    # the generated config env-less.
+    env = paths.cairn_home_env()
+    if env:
+        entry["env"] = env
+    return {"mcpServers": {"cairn": entry}}
 
 
 def _python_for_hooks() -> str:
@@ -123,8 +150,21 @@ def _python_for_hooks() -> str:
 
 
 def _claude_hook_command(entrypoint: str) -> str:
-    """Build a hook command string: `<python> -m cairn.hooks.claude_hooks <entry>`."""
-    return f"{_python_for_hooks()} -m cairn.hooks.claude_hooks {entrypoint}"
+    """Build a hook command string:
+    `[CAIRN_HOME=<path> ]<python> -m cairn.hooks.claude_hooks <entry>`.
+
+    The `CAIRN_HOME` assignment is prefixed only when the effective home is
+    non-default (FR-002/D-009): clients run this string through a shell, so
+    the assignment travels to the hook process and -- env inheritance -- to
+    the cairn subprocess (claude_hooks runs it with no env kwarg). The path
+    is shlex.quote()d so a shell-metacharacter home cannot inject commands.
+    Uninstall/idempotency matching keys on the
+    `cairn.hooks.claude_hooks <entrypoint>` substring, which the prefix keeps
+    intact.
+    """
+    env = paths.cairn_home_env()
+    prefix = f"CAIRN_HOME={shlex.quote(env['CAIRN_HOME'])} " if env else ""
+    return f"{prefix}{_python_for_hooks()} -m cairn.hooks.claude_hooks {entrypoint}"
 
 
 def _hook_markers() -> list[str]:

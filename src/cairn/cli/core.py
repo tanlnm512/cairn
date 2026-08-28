@@ -151,13 +151,28 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
 @click.option("--mcp-config", is_flag=True, help="Print a path-free .mcp.json snippet for agents.")
 @click.option("--db", "db_only", is_flag=True,
               help="Print only the resolved graph DB path (machine-readable; for scripting).")
-def config(list_all, mcp_config, db_only):
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit the resolved store paths as a single JSON object (machine-readable probe).")
+def config(list_all, mcp_config, db_only, as_json):
     """Show resolved store paths for this workspace (or all registered ones)."""
 
     from ..paths import REGISTRY_FILE, resolve_store, resolve_workspace
 
     if db_only:
         click.echo(str(resolve_store().db))
+        return
+
+    if as_json:
+        # Read-only resolution probe (FR-005): one resolve_store() call — it
+        # only reads env/registry and never creates dirs or registry entries,
+        # so verifiers can spawn this from an arbitrary cwd.
+        store = resolve_store()
+        click.echo(json.dumps({
+            "cairn_home": str(store.home.parent),
+            "workspace": str(store.workspace),
+            "db": str(store.db),
+            "knowledge": str(store.knowledge),
+        }))
         return
 
     if mcp_config:

@@ -13,6 +13,7 @@ from pathlib import Path
 from .._common import InstallResult, mcp_config_json
 from ..detect import claude_desktop_config_path
 from ..merge import _merge_json_file, _strip_mcp
+from ...paths import cairn_home_env
 
 
 def mcp_config_json_desktop(workspace: str, transport: str = "stdio",
@@ -24,15 +25,16 @@ def mcp_config_json_desktop(workspace: str, transport: str = "stdio",
     separate product that does support SSE via `claude mcp add --transport sse`.)
     This function ALWAYS emits a stdio config regardless of the `transport`
     argument, with the workspace pinned via CAIRN_WORKSPACE (the desktop
-    app has no cwd/workspace notion).
+    app has no cwd/workspace notion) and CAIRN_HOME added alongside it
+    when the home is non-default.
 
     The `transport`/`sse_url` args are accepted for API symmetry with
     mcp_config_json() but ignored here.
     """
     cfg = mcp_config_json(transport="stdio")
-    cfg["mcpServers"]["cairn"]["env"] = {
-        "CAIRN_WORKSPACE": str(Path(workspace).resolve())
-    }
+    env = {"CAIRN_WORKSPACE": str(Path(workspace).resolve())}
+    env.update(cairn_home_env())
+    cfg["mcpServers"]["cairn"]["env"] = env
     return cfg
 
 

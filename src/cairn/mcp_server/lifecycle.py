@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cairn.paths import cairn_home_env
+
 LABEL = "dev.cairn.sse"
 DEFAULT_PORT = 9876
 DEFAULT_HOST = "127.0.0.1"
@@ -84,6 +86,10 @@ def render_plist(
     env = {
         # Inherit the user PATH so `cairn` can find python etc.
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        # FR-003: propagate a non-default CAIRN_HOME so the launchd daemon
+        # resolves config.json and shared libs under the same store the
+        # invoking shell used ({} when the home is default).
+        **cairn_home_env(),
     }
     if workspace:
         env["CAIRN_WORKSPACE"] = str(workspace)

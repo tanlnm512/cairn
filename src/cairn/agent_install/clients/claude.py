@@ -40,6 +40,7 @@ from ..merge import (
     _write_file,
     _write_tree,
 )
+from ...paths import cairn_home_env
 
 
 def claude_hooks_block() -> dict:
@@ -98,6 +99,11 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
             else:
                 cmd = resolve_cg_command()
                 argv = ["claude", "mcp", "add", "cairn", "--scope", "user", *cmd, "serve"]
+                # `claude mcp add` persists -e/--env KEY=value into the
+                # user-scope registration; a non-default home must ride along
+                # or the spawned server resolves the default store.
+                for key, value in cairn_home_env().items():
+                    argv += ["-e", f"{key}={value}"]
             try:
                 subprocess.run(argv, capture_output=True, timeout=15, check=False)
                 res.notes.append("Registered MCP globally via `claude mcp add --scope user`.")
