@@ -1,10 +1,14 @@
 """Semantic embeddings for the symbol corpus: build, store, and query dense
 vector representations of symbols so agents can find code by meaning.
 
-Backend selection is env-var driven via ``CAIRN_EMBED_BACKEND``:
-``local`` (default, sentence-transformers), ``hash`` (dep-free fallback), or
-``openai`` (opt-in API). ``embeddings_available()`` reports whether a real
-backend is wired so callers degrade with an install hint.
+Backend selection is env-var driven via ``CAIRN_EMBED_BACKEND`` (each knob
+also reads the persistent ``$CAIRN_HOME/config.json``, env winning -- see
+``_config_or_env``): ``local`` (default, sentence-transformers), ``hash``
+(dep-free fallback), ``openai`` (opt-in API), or the ``server`` family —
+``server``/``omlx``/``ollama``, OpenAI-compatible /v1 endpoints where
+omlx/ollama differ only in their preset base URL. ``embeddings_available()``
+reports whether a real backend is wired so callers degrade with an install
+hint.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import struct
 import threading
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 from .schema import note_contention, rebuild_term_df
 
@@ -43,18 +48,42 @@ def current_model(corpus: str = "code") -> str:
     knowledge/memory corpora, each of which can be pinned to a different
     local model via its own env var (falls back to CAIRN_EMBED_LOCAL_MODEL).
     Only applies to the local backend.
+
+    Server-family backends stamp ``server/{netloc}/{model}`` — the netloc
+    of the resolved base URL (scheme and path stripped) plus the request
+    model id — so staleness, purge, and vec0 table names react to producer
+    swaps with no schema change (FR-004). CAIRN_EMBED_MODEL_STAMP, when
+    set, is returned verbatim: a pure override with no derivation and no
+    validation. The ladder's rung-1 session adoption (checked between the
+    env stamp and the derived stamp) pins the stored corpus stamp so an
+    adopted candidate serves the existing rows with zero re-embed (FR-012).
+    One server model serves every corpus (D-005), so ``corpus`` is ignored
+    for server backends.
     """
     backend = _effective_backend()
     if backend == "hash":
         return HASH_MODEL
     if backend == "openai":
         return os.environ.get("CAIRN_EMBED_OPENAI_MODEL", "text-embedding-3-small")
+    if backend == "server":
+        override = _config_or_env("CAIRN_EMBED_MODEL_STAMP")
+        if override:
+            return override
+        with _BACKEND_CACHE_LOCK:
+            session_stamp = _SESSION_STAMP_OVERRIDE
+        if session_stamp:
+            return session_stamp
+        # urlsplit keeps the bracket pair on IPv6 netlocs ([::1]:8000); the
+        # stamp -- and every vec0 table name derived from it -- drops them.
+        netloc = urlsplit(_server_base_url()).netloc
+        netloc = netloc.replace("[", "").replace("]", "")
+        return f"server/{netloc}/{_server_model()}"
     env_name = _CORPUS_MODEL_ENV.get(corpus)
     if env_name:
-        corpus_model = os.environ.get(env_name)
+        corpus_model = _config_or_env(env_name)
         if corpus_model:
-            return corpus_model.strip()
-    return (os.environ.get("CAIRN_EMBED_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL).strip()
+            return corpus_model
+    return _config_or_env("CAIRN_EMBED_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -66,20 +95,35 @@ def embeddings_available() -> bool:
     """True iff an embedding backend can be loaded right now.
 
     The default 'local' backend falls back to the hash embedder when
-    sentence_transformers is missing. Returns False only when openai is
-    selected but OPENAI_API_KEY is missing.
+    sentence_transformers is missing. Returns False when openai is selected
+    but OPENAI_API_KEY is missing, or when a server-family backend fails its
+    availability probe: GET {base}/models must return 200 AND list the
+    configured model id (FR-002). The probe verdict is cached per process;
+    reset_backend_cache() invalidates it.
     """
     backend = _backend_name()
     if backend == "hash":
         return True
     if backend == "openai":
         return bool(os.environ.get("OPENAI_API_KEY"))
+    if backend in _SERVER_FAMILY:
+        # Probe here, before the local import attempt: the ImportError branch
+        # below stamps 'hash' into the shared cache, which a server config
+        # must never reach (FR-002: server never resolves to hash).
+        # Rung-2 session adoption (FR-012) already proved local availability
+        # before switching, so it answers without the (still failing) probe.
+        with _BACKEND_CACHE_LOCK:
+            session_backend = _SESSION_BACKEND_OVERRIDE
+        if session_backend:
+            return True
+        return _server_probe_available()
     # local (default) — fall back to hash when sentence_transformers missing
     try:
         import sentence_transformers  # noqa: F401
         return True
     except ImportError:
-        _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
+        with _BACKEND_CACHE_LOCK:
+            _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
         return True
 
 
@@ -87,8 +131,11 @@ def install_hint() -> str:
     """The message shown to a user who invokes semantic_search without the extra."""
     return (
         "Semantic search requires the 'semantic' extra. "
-        "Install it with: pip install 'cairn-intel[semantic]' "
-        "(or set CAIRN_EMBED_BACKEND=hash for a dep-free smoke test)."
+        "Install it with: pip install 'cairn-intel[semantic]'. "
+        "Or set CAIRN_EMBED_BACKEND=omlx or ollama (or server + "
+        "CAIRN_EMBED_BASE_URL) to use a local OpenAI-compatible embeddings "
+        "server -- no model install needed. "
+        "Or set CAIRN_EMBED_BACKEND=hash for a dep-free smoke test."
     )
 
 
@@ -294,8 +341,37 @@ def mv_text_for_kind(
 # ---------------------------------------------------------------------------
 
 
+def _config_or_env(name: str, default: Optional[str] = None) -> Optional[str]:
+    """D-008 choke point for the CAIRN_EMBED_* knobs: env var > config file
+    > ``default``. Env and file values are stripped, so a blank env value
+    falls through to the file exactly as blanks used to fall through to
+    defaults. File values live in $CAIRN_HOME/config.json under the same
+    env-var name (paths.CONFIG_FILE); no config file means env-or-default,
+    byte-identical to the pre-FR-010 behavior.
+    """
+    from ..paths import get_config_value
+
+    env = (os.environ.get(name) or "").strip()
+    if env:
+        return env
+    file_val = get_config_value(name)
+    if isinstance(file_val, str) and file_val.strip():
+        return file_val.strip()
+    return default
+
+
 def _backend_name() -> str:
-    return (os.environ.get("CAIRN_EMBED_BACKEND") or "local").strip().lower()
+    return (_config_or_env("CAIRN_EMBED_BACKEND") or "local").strip().lower()
+
+
+# The server family: omlx/ollama are preset aliases of the same 'server' arm
+# (OpenAI-compatible /v1 endpoint); only the default base URL differs.
+_SERVER_FAMILY = frozenset({"server", "omlx", "ollama"})
+
+_SERVER_PRESET_BASE_URL = {
+    "omlx": "http://127.0.0.1:8000/v1",
+    "ollama": "http://127.0.0.1:11434/v1",
+}
 
 
 # Cache the loaded model so repeated calls don't reload weights.
@@ -307,17 +383,95 @@ _MODEL_CACHE: dict = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 # Cache for the effective backend after fallback resolution. Set once per
-# process by embeddings_available().
-_EFFECTIVE_BACKEND_CACHE: dict = {"effective": None}
+# process by embeddings_available(). None until the first resolution stamps
+# it; every later value is a backend name.
+_EFFECTIVE_BACKEND_CACHE: dict[str, Optional[str]] = {"effective": None}
+
+# Cached availability-probe verdict for the server family (FR-002), stamped
+# by _server_probe_available(); invalidated by reset_backend_cache(). None
+# until the first probe answers.
+_SERVER_PROBE_CACHE: dict[str, Optional[bool]] = {"available": None}
+
+# Guards the check-then-act blocks over both caches above -- the resolution
+# is reachable from the embed flusher thread and tool threads alike, so a
+# first stamp wins under the lock and racing first calls settle on a single
+# consistent verdict. Also guards every read of the _SESSION_* overrides.
+_BACKEND_CACHE_LOCK = threading.Lock()
+
+# FR-002 fixes the probe timeout at 2 s: a down server must fail the
+# availability gate fast, independent of CAIRN_EMBED_TIMEOUT (which governs
+# embed requests). Tests inject a shorter value via this module attribute.
+_PROBE_TIMEOUT_S = 2.0
+
+# FR-005 alias-gate verdicts keyed by the CAIRN_EMBED_MODEL_STAMP value: the
+# parity check costs up to 16 embeds, so it runs once per process per stamp.
+_ALIAS_GATE_CACHE: dict = {}
+_ALIAS_GATE_LOCK = threading.Lock()
+
+# Session-scoped ladder adoptions (FR-012, set only by graph.embed_ladder
+# after a parity pass): the rung-1 alias binding (stored stamp pinned so
+# reads/writes stay on the corpus while requests go through the adopted
+# model id), the adopted request model id, and the rung-2 local fallback.
+# Explicit env vars always win over these; reset_backend_cache() clears all.
+# Writes land via embed_ladder's setters as single attribute assignments
+# (GIL-atomic); every read in this module takes _BACKEND_CACHE_LOCK, so an
+# override can only swap between statements -- never in the middle of a
+# resolution that consults it alongside the caches the same lock guards.
+_SESSION_STAMP_OVERRIDE: Optional[str] = None
+_SESSION_SERVER_MODEL: Optional[str] = None
+_SESSION_BACKEND_OVERRIDE: Optional[str] = None
 
 
 def reset_backend_cache() -> None:
-    """Clear the cached effective-backend resolution.
+    """Clear the cached effective-backend resolution, the server probe, and
+    the alias-gate verdicts, plus the ladder's cached verdict and session
+    adoptions.
 
     Call this in test setup/teardown whenever CAIRN_EMBED_BACKEND is changed,
-    since the cache is never invalidated mid-process.
+    since none of these caches are invalidated mid-process.
     """
-    _EFFECTIVE_BACKEND_CACHE["effective"] = None
+    with _BACKEND_CACHE_LOCK:
+        _EFFECTIVE_BACKEND_CACHE["effective"] = None
+        _SERVER_PROBE_CACHE["available"] = None
+    with _ALIAS_GATE_LOCK:
+        _ALIAS_GATE_CACHE.clear()
+    # Config-file reads are cached in paths (mtime-stamped); drop that cache
+    # too so doctor/tests force a re-read.
+    from .. import paths
+
+    paths.reset_config_cache()
+    # Lazy import: embed_ladder imports this module at top level, so the
+    # ladder hook can only be reached from here, never the other way round.
+    from . import embed_ladder
+
+    embed_ladder.reset_cache()
+
+
+def _alias_preflight(conn: sqlite3.Connection) -> None:
+    """FR-005 alias gate: parity-verify stored rows before any writer INSERT.
+
+    Runs only for the server family with CAIRN_EMBED_MODEL_STAMP set; zero
+    stored rows under the stamp is check_parity's vacuous pass. The verdict
+    is evaluated once per process per stamp (reset_backend_cache() clears
+    it). Raises RuntimeError on failure -- measured mean cosine, or both
+    dims on a dim mismatch -- before any row is written.
+    """
+    stamp = (_config_or_env("CAIRN_EMBED_MODEL_STAMP") or "").strip()
+    if not stamp or _effective_backend() != "server":
+        return
+    with _ALIAS_GATE_LOCK:
+        verdict = _ALIAS_GATE_CACHE.get(stamp)
+    if verdict is None:
+        from . import embed_ladder
+
+        verdict = embed_ladder.check_parity(conn, stamp)
+        with _ALIAS_GATE_LOCK:
+            _ALIAS_GATE_CACHE[stamp] = verdict
+    if not verdict.passed:
+        raise RuntimeError(
+            f"CAIRN_EMBED_MODEL_STAMP '{stamp}' failed the alias parity "
+            f"preflight ({verdict.reason}); no rows were written"
+        )
 
 
 def _effective_backend() -> str:
@@ -325,20 +479,139 @@ def _effective_backend() -> str:
 
     When CAIRN_EMBED_BACKEND is unset (default 'local') but
     sentence_transformers isn't installed, falls back to 'hash'.
-    Otherwise returns the configured backend unchanged.
+    Otherwise returns the configured backend unchanged. The server family
+    (server/omlx/ollama) resolves to 'server' with no dependency probing,
+    so it can never coalesce into 'hash'. The ladder's rung-2 session
+    adoption (FR-012) switches a server-family config to local for the
+    process lifetime; it applies only while the env config stays
+    server-family and is never 'hash' (D-003).
+
+    The resolution inputs are process-stable, so the first stamp under
+    _BACKEND_CACHE_LOCK wins: racing first calls compute identical values
+    and the cache settles on one verdict.
     """
-    if _EFFECTIVE_BACKEND_CACHE["effective"] is not None:
-        return _EFFECTIVE_BACKEND_CACHE["effective"]
+    cached: Optional[str] = _EFFECTIVE_BACKEND_CACHE["effective"]
+    if cached is not None:
+        return cached
     backend = _backend_name()
     if backend == "local":
         try:
             import sentence_transformers  # noqa: F401
-            _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
+            resolved = "local"
         except ImportError:
-            _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
+            resolved = "hash"
     else:
-        _EFFECTIVE_BACKEND_CACHE["effective"] = backend
-    return _EFFECTIVE_BACKEND_CACHE["effective"]
+        resolved = "server" if backend in _SERVER_FAMILY else backend
+        if resolved == "server":
+            with _BACKEND_CACHE_LOCK:
+                session_backend = _SESSION_BACKEND_OVERRIDE
+            if session_backend:
+                resolved = session_backend
+    with _BACKEND_CACHE_LOCK:
+        cached = _EFFECTIVE_BACKEND_CACHE["effective"]
+        if cached is None:
+            cached = resolved
+            _EFFECTIVE_BACKEND_CACHE["effective"] = cached
+    return cached
+
+
+def _server_base_url() -> str:
+    """The base URL for the active server backend.
+
+    CAIRN_EMBED_BASE_URL (env or config file, D-008) overrides the
+    per-backend preset; bare 'server' has no preset and requires it.
+    Raises RuntimeError when unresolvable — at resolution time, never at
+    import.
+    """
+    configured = _config_or_env("CAIRN_EMBED_BASE_URL") or ""
+    if configured:
+        return configured
+    preset = _SERVER_PRESET_BASE_URL.get(_backend_name())
+    if preset:
+        return preset
+    raise RuntimeError(
+        "CAIRN_EMBED_BACKEND=server requires CAIRN_EMBED_BASE_URL "
+        "(an OpenAI-compatible base URL ending in /v1); "
+        "or use the 'omlx'/'ollama' presets"
+    )
+
+
+def _server_model() -> str:
+    """The model id sent in server embedding requests.
+
+    The ladder's rung-1 session adoption wins over CAIRN_EMBED_SERVER_MODEL:
+    the adopted id is parity-proven against the stored corpus (D-009), while
+    the env id is the failed producer the ladder is replacing. Otherwise the
+    env-or-config-file value (D-008) wins over the default preset id.
+    """
+    with _BACKEND_CACHE_LOCK:
+        adopted = _SESSION_SERVER_MODEL
+    if adopted:
+        return adopted
+    env = _config_or_env("CAIRN_EMBED_SERVER_MODEL")
+    if env:
+        return env
+    return "bge-m3"
+
+
+def _server_probe_available() -> bool:
+    """The per-process cached server-family availability verdict (FR-002).
+
+    True only when GET {base}/models returns 200 AND lists the configured
+    model id. Both outcomes are cached for the process lifetime;
+    reset_backend_cache() forces the next call to re-probe. The probe
+    (network I/O) runs outside _BACKEND_CACHE_LOCK; only the check-then-stamp
+    is serialized, so racing first calls may probe twice but settle on the
+    single verdict the server actually gives.
+    """
+    verdict: Optional[bool] = _SERVER_PROBE_CACHE["available"]
+    if verdict is None:
+        probed = _run_server_probe()
+        with _BACKEND_CACHE_LOCK:
+            verdict = _SERVER_PROBE_CACHE["available"]
+            if verdict is None:
+                verdict = probed
+                _SERVER_PROBE_CACHE["available"] = verdict
+    return verdict
+
+
+def _run_server_probe() -> bool:
+    """One uncached availability probe: GET {base}/models (FR-002).
+
+    Returns False on connection failure, timeout, non-200 status, or an
+    unparseable / model-missing listing. Never raises — callers gate on it.
+    """
+    import http.client
+    import json
+    import urllib.request
+
+    try:
+        base = _server_base_url().rstrip("/")
+    except RuntimeError:
+        return False  # bare 'server' without CAIRN_EMBED_BASE_URL can't serve
+    headers = {}
+    api_key = _config_or_env("CAIRN_EMBED_API_KEY") or ""
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        req = urllib.request.Request(f"{base}/models", headers=headers)
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:
+            if resp.status != 200:
+                return False
+            body = resp.read()
+    except (OSError, http.client.HTTPException, ValueError):
+        return False
+    try:
+        listing = json.loads(body.decode("utf-8"))
+    except ValueError:
+        return False
+    data = listing.get("data") if isinstance(listing, dict) else None
+    if not isinstance(data, list):
+        return False
+    return any(
+        isinstance(entry, dict) and entry.get("id") == _server_model()
+        for entry in data
+    )
 
 
 def is_hash_fallback() -> bool:
@@ -628,7 +901,8 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
             _run_install_with_progress(cmd, lib_dir)
             _verify_install(lib_dir)  # a second failure is terminal
         reset_backend_cache()
-        _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
+        with _BACKEND_CACHE_LOCK:
+            _EFFECTIVE_BACKEND_CACHE["effective"] = "local"
         # Re-add the lib dir to sys.path in case paths.py ran before it
         # existed, so a later lazy in-process import finds the new install.
         if str(lib_dir) not in sys.path:
@@ -665,7 +939,9 @@ def _get_local_model(model_name: Optional[str] = None):
                 from sentence_transformers import SentenceTransformer
 
                 trust = os.environ.get("CAIRN_EMBED_TRUST_REMOTE_CODE") == "1"
-                kwargs = {"trust_remote_code": trust}
+                # Values stay object-typed: the dict mixes a bool flag with
+                # nested model_kwargs dicts for SentenceTransformer(**kwargs).
+                kwargs: dict[str, object] = {"trust_remote_code": trust}
                 if os.environ.get("CAIRN_EMBED_FP16") == "1":
                     kwargs["model_kwargs"] = {"torch_dtype": "float16"}
                 model = SentenceTransformer(m_name, **kwargs)
@@ -753,6 +1029,152 @@ def _embed_openai(texts: Sequence[str]) -> Tuple[List[bytes], int]:
     return blobs, dim
 
 
+def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
+    """Embed texts via an OpenAI-compatible ``/v1/embeddings`` server endpoint.
+
+    Returns (float32-LE BLOBs in input order, vector dim). Chunks into
+    CAIRN_EMBED_SERVER_BATCH-sized POSTs (default 32); retries connection
+    errors / timeouts / 5xx / 429 up to 3 times with exponential backoff
+    (0.5/1/2 s, jittered); fails other 4xx immediately with the server's
+    error message verbatim; honors CAIRN_EMBED_TIMEOUT (default 30 s);
+    sends a bearer header only when CAIRN_EMBED_API_KEY is set; rejects
+    batches whose embeddings disagree in dimensionality. The three knobs
+    resolve env > config file > default (D-008); a CAIRN_EMBED_TIMEOUT or
+    CAIRN_EMBED_SERVER_BATCH value that does not parse to a positive finite
+    number raises RuntimeError naming the knob before any request is sent.
+    """
+    if not texts:
+        return [], 0
+    import http.client
+    import json
+    import random
+    import time
+    import urllib.error
+    import urllib.request
+
+    base = _server_base_url().rstrip("/")
+    model = _server_model()
+    # Both knobs are validated before the first request: a non-positive batch
+    # would make range() silently skip every chunk (a zero-vector pass
+    # reported as success) or crash it outright, and a non-finite/negative
+    # timeout would surface as an OverflowError/ValueError from
+    # socket.settimeout -- outside the retry clause -- instead of a
+    # configuration error naming the knob.
+    timeout_raw = _config_or_env("CAIRN_EMBED_TIMEOUT")
+    if timeout_raw:
+        try:
+            timeout = float(timeout_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"invalid CAIRN_EMBED_TIMEOUT: {timeout_raw!r}"
+            ) from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise RuntimeError(f"invalid CAIRN_EMBED_TIMEOUT: {timeout_raw!r}")
+    else:
+        timeout = 30.0
+    batch_raw = _config_or_env("CAIRN_EMBED_SERVER_BATCH")
+    if batch_raw:
+        try:
+            batch = int(batch_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"invalid CAIRN_EMBED_SERVER_BATCH: {batch_raw!r}"
+            ) from None
+        if batch < 1:
+            raise RuntimeError(f"invalid CAIRN_EMBED_SERVER_BATCH: {batch_raw!r}")
+    else:
+        batch = 32
+    headers = {"Content-Type": "application/json"}
+    api_key = _config_or_env("CAIRN_EMBED_API_KEY") or ""
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    max_retries = 3
+    blobs: List[bytes] = []
+    dim = 0
+    for start in range(0, len(texts), batch):
+        chunk = list(texts[start:start + batch])
+        payload = json.dumps({"model": model, "input": chunk}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/embeddings", data=payload, headers=headers
+        )
+        raw: Optional[bytes] = None
+        last_error = ""
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read()
+                break
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", errors="replace")
+                if e.code == 429 or e.code >= 500:
+                    last_error = f"HTTP {e.code}: {detail[:80]}"
+                else:
+                    try:
+                        parsed = json.loads(detail)
+                    except ValueError:
+                        parsed = None
+                    err = parsed.get("error") if isinstance(parsed, dict) else None
+                    # OpenAI-shaped error.message carries the server's own
+                    # remediation text (oMLX not_found_error lists valid ids).
+                    message = detail
+                    if isinstance(err, dict) and err.get("message"):
+                        message = err["message"]
+                    raise RuntimeError(
+                        f"embedding server rejected the request "
+                        f"(HTTP {e.code}): {message}"
+                    ) from None
+            except (OSError, http.client.HTTPException) as e:
+                # URLError/ConnectionError/socket.timeout are OSError
+                # subclasses; HTTPException covers drops mid-body.
+                last_error = f"{type(e).__name__}: {e}"
+            if attempt < max_retries:
+                delay = 0.5 * (2 ** attempt)
+                time.sleep(random.uniform(delay / 2, delay * 1.5))
+        if raw is None:
+            raise RuntimeError(
+                f"embedding server unreachable after {max_retries} retries: "
+                f"{last_error}"
+            )
+        # A 200 body is still untrusted: validate the OpenAI envelope shape
+        # before touching it, so a malformed response fails as one loud,
+        # non-retryable error carrying a body excerpt instead of a
+        # KeyError/TypeError from the middle of the write path.
+        body = raw.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            parsed = None
+        data = parsed.get("data") if isinstance(parsed, dict) else None
+        if not isinstance(data, list) or not all(
+            isinstance(entry, dict)
+            and isinstance(entry.get("index"), int)
+            and isinstance(entry.get("embedding"), list)
+            for entry in data
+        ):
+            raise RuntimeError(
+                "embedding server returned malformed response: "
+                f"{body[:120]}"
+            )
+        data.sort(key=lambda d: d["index"])  # preserve input order
+        embeddings = [d["embedding"] for d in data]
+        if len(embeddings) != len(chunk):
+            raise RuntimeError(
+                f"embedding server returned {len(embeddings)} vectors "
+                f"for {len(chunk)} inputs"
+            )
+        for vec in embeddings:
+            if dim == 0:
+                dim = len(vec)
+            elif len(vec) != dim:
+                raise RuntimeError(
+                    f"mixed-dimension batch: expected {dim}-dim vectors, "
+                    f"got {len(vec)}"
+                )
+            blobs.append(_floats_to_blob(vec))
+    return blobs, dim
+
+
 # --- Hash fallback embedder (no deps; deterministic; low quality) ----------
 #
 # Maps a text to a fixed-size float32 vector via SHA-256 hashing. This is NOT a
@@ -810,6 +1232,8 @@ def _embed(texts: Sequence[str]) -> Tuple[List[bytes], int]:
         return _embed_hash(texts)
     if backend == "openai":
         return _embed_openai(texts)
+    if backend == "server":
+        return _embed_server(texts)
     return _embed_local(texts)
 
 
@@ -1016,6 +1440,7 @@ def embed_all(
     callable(n_done, n_total). Returns a dict summary
     {model, embedded, skipped, total, reaped}.
     """
+    _alias_preflight(conn)
     model = current_model()
     # Fetch every column chunk_for_symbol reads, so variant-B/C chunk sections
     # (parameters/return_type/parent_scope/imports_summary/body) are populated.
@@ -1153,6 +1578,7 @@ def embed_symbols(
     written (0 when the backend is off, no index exists yet, or sync
     failed -- each a documented no-op/best-effort, never an error).
     """
+    _alias_preflight(conn)
     model = current_model()
     ids = [sid for sid in symbol_ids if sid]
     if not ids:
@@ -1266,6 +1692,7 @@ def embed_knowledge(conn, bundle, batch_size=64, progress=None):
     Reads from the OKF bundle (not symbols table). Each concept = one chunk
     (title + description + body).
     """
+    _alias_preflight(conn)
     model = current_model(corpus="knowledge")
     # Get all knowledge concept IDs (trailing slash for path-segment matching).
     cids = bundle.list_concepts(prefix="knowledge/")
@@ -1384,6 +1811,7 @@ def embed_memory_concepts(conn: sqlite3.Connection, bundle, concept_ids: Sequenc
     still isolated per concept (a deleted/moved concept is skipped before any
     embedding happens), so one bad concept_id can't abort the batch.
     """
+    _alias_preflight(conn)
     model = current_model(corpus="memory")
     now = datetime.now(timezone.utc).isoformat()
 

@@ -590,7 +590,10 @@ def semantic_search(
     ``"fused(bm25+semantic)"``) and ``score``. Returns
     ``[{"id", "name", "kind", "qualified_name", "file_path", "repo", "score",
     "chunk", "provenance", "reranked"}]`` (plus ``"callers"``/``"callees"`` when
-    requested) sorted by score (or rerank_score) descending.
+    requested) sorted by score (or rerank_score) descending. When a hard
+    dense-leg embed failure falls to an active ladder rung (FR-012), every
+    result additionally carries ``"degraded": "embedding-backend"`` and a
+    ``"hint"`` remediation line; results are otherwise unchanged in shape.
     """
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
@@ -745,6 +748,49 @@ def semantic_search(
 
     model = emb.current_model()
 
+    # FR-012 (D-011): the dense leg's embed call is guarded for ALL backends.
+    # One helper maps any embed failure onto the fallback ladder -- evaluated
+    # at most once per search (the ladder self-caches per process) -- and a
+    # hard failure contributes zero dense candidates instead of raising out
+    # of the search.
+    _dense_ladder_evaluated = False
+    _dense_lost = False
+
+    def _evaluate_dense_ladder_once() -> None:
+        nonlocal _dense_ladder_evaluated
+        from cairn.graph import embed_ladder
+
+        if not _dense_ladder_evaluated:
+            _dense_ladder_evaluated = True
+            embed_ladder.evaluate_ladder(conn)
+
+    def _dense_embed_guarded(
+        text: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Tuple[bytes, int]]:
+        """``emb.embed_query`` with the FR-012 ladder mapped onto failure.
+
+        Returns ``(blob, dim)``, or ``None`` when the dense leg must
+        contribute zero candidates: any embed exception (every backend,
+        D-011) evaluates the ladder once per search; an active rung-1/2
+        adoption gets one retry, a hard failure rides the existing bm25
+        fusion path. Never raises.
+        """
+        try:
+            return emb.embed_query(text)
+        except Exception:
+            pass
+        try:
+            _evaluate_dense_ladder_once()
+            from cairn.graph import embed_ladder
+
+            state = embed_ladder.ladder_state()
+            if state is not None and state.active and state.adopted_model:
+                # Rung 1/2 adopted a session replacement: one retry rides it.
+                return emb.embed_query(text)
+        except Exception:
+            pass
+        return None
+
     def _run_pass(
         dense_text: str, extra_sparse_terms: Tuple[str, ...]
     ) -> Optional[List[dict]]:
@@ -764,13 +810,21 @@ def semantic_search(
         per-call doctrine -- budget-accounted by REPLACING (never
         stacking) the rerank stage.
         """
-        nonlocal _ann_used, _fusion_used, _fusion_degraded
+        nonlocal _ann_used, _fusion_used, _fusion_degraded, _dense_lost
 
-        q_blob, q_dim = emb.embed_query(dense_text)
+        pair = _dense_embed_guarded(dense_text, conn)
 
-        candidates = None
+        # FR-012 rung 3: a hard embed failure (``pair is None``) contributes
+        # ZERO dense candidates -- ``[]`` flows into the existing fusion
+        # below, which yields today's bm25-provenanced shape (no new
+        # short-circuit).
+        candidates: Optional[List[dict]] = [] if pair is None else None
+        _dense_lost = _dense_lost or pair is None
         ann_enabled = ann.ann_backend_enabled()
-        if ann_enabled:
+        if pair is not None and candidates is None and ann_enabled:
+            # Narrowed locals: everything below this line runs only with a
+            # real (blob, dim) pair.
+            q_blob, q_dim = pair
             ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
             if ann_hits is not None:
                 # ANN path available and an index exists for this model.
@@ -790,9 +844,13 @@ def semantic_search(
                             _candidates_from_ann_hits(conn, mv_hits, threshold),
                         )
 
-        if candidates is None:
+        if candidates is None and pair is not None:
             # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
             # fetchall() can't grow unbounded with corpus size.
+            #
+            # ``pair`` is not None here by construction: a hard embed failure
+            # leaves ``candidates == []`` above, never None -- the unpack
+            # below is the type-level statement of that runtime gate.
             #
             # Surface the degradation once when sqlite-vec was *expected* but is
             # unavailable. When ann_enabled is False it's either that or an
@@ -803,6 +861,7 @@ def semantic_search(
             # there is nothing left to warn about here.
             if not ann_enabled:
                 ann.warn_ann_fallback_once(logger, context="semantic_search")
+            q_blob, q_dim = pair
             brute_force_limit = 50000
             if params is not None and params.dense_pool is not None:
                 brute_force_limit = params.dense_pool
@@ -1009,7 +1068,18 @@ def semantic_search(
                 logger.warning("RRF fusion degraded to vector-only", exc_info=True)
         return candidates
 
-    candidates = _run_pass(_dense_query, ())
+    try:
+        candidates = _run_pass(_dense_query, ())
+    except Exception:
+        # D-011: any residual hard failure from the dense pass maps to the
+        # evaluated rung (zero dense candidates) instead of raising out of
+        # the search.
+        try:
+            _evaluate_dense_ladder_once()
+        except Exception:
+            pass
+        _dense_lost = True
+        candidates = []
     if candidates is None:
         return _finish([])
 
@@ -1041,7 +1111,20 @@ def semantic_search(
             # Second pass on the expanded text/terms; its candidates
             # REPLACE the first pass's (D-001), then the confidence
             # gate/slice path below continues on the new list.
-            candidates = _run_pass(expansion.dense_query, expansion.terms)
+            try:
+                candidates = _run_pass(expansion.dense_query, expansion.terms)
+            except Exception:
+                # Same D-011 contract as the first pass's call site above:
+                # a residual hard failure from this pass maps to the
+                # evaluated rung (the once-flag keeps the ladder at one
+                # evaluation per search) and empty candidates, instead of
+                # raising out of the search.
+                try:
+                    _evaluate_dense_ladder_once()
+                except Exception:
+                    pass
+                _dense_lost = True
+                candidates = []
             if candidates is None:
                 return _finish([])
         # Empty expansion (or prf_docs <= 0): prf.expand's contract returns
@@ -1111,6 +1194,20 @@ def semantic_search(
 
     if include_callers:
         _attach_callers(conn, final)
+
+    # FR-012: additive degradation surfacing -- only when a ladder state is
+    # active AND this search's dense leg actually fell to it (a working
+    # rung-1/2 adoption leaves the results untagged). Healthy searches stay
+    # byte-identical. Compass results carry their own ``degraded`` key with
+    # unrelated semantics -- this never feeds them.
+    if _dense_lost:
+        from cairn.graph import embed_ladder
+
+        if embed_ladder.degradation_active():
+            hint = embed_ladder.degradation_footnote()
+            for item in final:
+                item["degraded"] = "embedding-backend"
+                item["hint"] = hint
 
     return _finish(final)
 

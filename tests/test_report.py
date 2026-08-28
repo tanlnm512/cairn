@@ -60,6 +60,7 @@ _DOCTOR_NAMES = [
     "schema",
     "embeddings",
     "ann",
+    "embed_server",
     "freshness",
     "parse_errors",
     "concurrency",

@@ -13,6 +13,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-28
+
+### Added
+- Embedding server backends — embeddings via any OpenAI-compatible
+  `/v1/embeddings` server with zero torch footprint in the cairn process.
+  `CAIRN_EMBED_BACKEND` gains `server` (explicit `CAIRN_EMBED_BASE_URL`),
+  `omlx` (preset `http://127.0.0.1:8000/v1`), and `ollama` (preset
+  `http://127.0.0.1:11434/v1`); oMLX, Ollama, LM Studio, llama.cpp, and
+  vLLM all speak the same shape. The stdlib-urllib client chunks requests
+  (`CAIRN_EMBED_SERVER_BATCH`, default 32), retries transient errors
+  three times with jittered backoff, fails other 4xx loudly with the
+  server's own message, and stamps rows `server/{netloc}/{model}` so the
+  existing staleness/vec0 machinery works unmodified (measured bge-m3
+  parity vs sentence-transformers: cosine 1.000000). Availability is a
+  cached `GET /v1/models` probe that must list the configured model id;
+  a server backend never silently degrades to hash vectors. Warmup fires
+  one tiny probe at boot so the server-side lazy model load is off the
+  first query. `local`, `hash`, and `openai` are byte-for-byte unchanged.
+- Verified migration between embedding producers —
+  `CAIRN_EMBED_MODEL_STAMP` aliases a stored stamp and arms a parity
+  gate before any write: up to 16 stored chunks are re-embedded through
+  the new producer and the mean cosine must clear 0.98 (same weights
+  measure ~1.000; different models land far below), else the pass
+  hard-aborts quoting the measured value. Switching local bge-m3 to a
+  server serving the same weights therefore costs zero re-embeds.
+- Fallback ladder + loud degradation — when the configured backend or
+  model disappears, retrieval degrades in verified steps instead of
+  crashing or lying: a parity-verified same-server candidate may serve
+  the dense leg for the session (alias mechanics, zero re-embed;
+  `cairn embed --adopt-server-model` makes the binding permanent), then
+  a parity-verified local model, then the existing BM25/RRF hybrid with
+  `provenance="bm25"`. The hash backend is never a rung. Results whose
+  dense leg actually fell carry `degraded="embedding-backend"` plus a
+  remediation hint; every degradation fans out to one warn-once log
+  line, one `embed_server_degraded` telemetry event (six-reason enum,
+  host+model payload only), an MCP result footnote, a doctor entry, and
+  a dashboard banner. This also fixes embed errors propagating uncaught
+  out of `semantic_search` (previously a backend outage crashed the
+  search).
+- Persistent configuration — `~/.cairn/config.json` with precedence env
+  > file > default and mtime-based re-read, so running processes pick up
+  edits without restart; file-persisted aliases arm the parity gate
+  identically to env. The dashboard gains a Settings section (its first
+  POST routes — loopback-only, confirm-gated base-URL changes, a
+  write-only API key, live parity check) and an Embeddings status view
+  (effective backend, resolved stamp, per-corpus counts and freshness,
+  probe health, active fallback rung, per-knob source markers). `cairn
+  doctor` grows embed-server probe/model-listing/parity/latency checks
+  and config-source echo; the embed/semantic CLIs print server-specific
+  remediation instead of the torch-install hint, and `install_hint`
+  names the no-torch path. Docs: new server-backend sections in
+  configuration.md (env table, oMLX safetensors walkthrough, privacy
+  note) and retrieval.md (stamps, alias gate, ladder, doctor rule).
+
+### Fixed
+- A failed embedding backend no longer crashes `semantic_search`: the
+  dense leg is guarded end to end (first pass, PRF second pass, ANN and
+  brute-force legs) and hard failures flow into the ladder above.
+- Embedding-knob validation: invalid `CAIRN_EMBED_SERVER_BATCH` (zero,
+  negative, non-numeric) and `CAIRN_EMBED_TIMEOUT` (non-finite,
+  non-positive) fail loudly instead of crashing mid-pass or silently
+  producing an empty index; malformed embedding-server responses are
+  rejected with a body excerpt.
+- `set_config_values` fsyncs before the atomic replace; corrupt or
+  non-object `config.json` degrades to defaults with a warning instead
+  of silence; ladder probes and parity checks honor file-persisted API
+  keys, timeouts, and local-model settings; the cardinality guard pins
+  the degradation reason enum to a local literal so enum drift fails
+  the guard.
+
 ## [0.15.0] - 2026-08-27
 
 ### Added

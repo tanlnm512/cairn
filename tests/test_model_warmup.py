@@ -12,8 +12,11 @@ home where ``cairn download-reranker`` left a marker.
 """
 from __future__ import annotations
 
+import http.server
+import json
 import logging
 import os
+import socket
 import threading
 from pathlib import Path
 
@@ -228,6 +231,201 @@ class TestOfflineEnv:
         warnings = [r for r in caplog.records if "warm-up" in r.getMessage()]
         assert len(warnings) == 1  # embedder step only; reranker step stayed quiet
         assert "HF_HUB_OFFLINE" not in os.environ
+
+
+class _WarmupStubServer:
+    """Loopback OpenAI-compatible /v1 stand-in on an ephemeral port.
+
+    Records every request (method, path, JSON body) and serves GET
+    /v1/models listing ``model_ids`` (OpenAI-shaped) plus POST
+    /v1/embeddings with one unit vector per input.
+    """
+
+    def __init__(self, model_ids=("bge-m3",)):
+        self.requests = []
+        self._model_ids = list(model_ids)
+        outer = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.requests.append({"method": "GET", "path": self.path})
+                body = json.dumps(
+                    {
+                        "object": "list",
+                        "data": [
+                            {"id": i, "object": "model"} for i in outer._model_ids
+                        ],
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(raw.decode("utf-8"))
+                outer.requests.append(
+                    {"method": "POST", "path": self.path, "body": payload}
+                )
+                body = json.dumps(
+                    {
+                        "data": [
+                            {"index": i, "embedding": [0.0]}
+                            for i in range(len(payload["input"]))
+                        ]
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._thread = threading.Thread(
+            target=self._httpd.serve_forever,
+            kwargs={"poll_interval": 0.05},
+            daemon=True,
+        )
+        self._thread.start()
+
+    @property
+    def base_url(self) -> str:
+        host, port = self._httpd.server_address[:2]
+        return f"http://{host}:{port}/v1"
+
+    def hits(self, path: str) -> list[dict]:
+        return [r for r in self.requests if r["path"] == path]
+
+    def close(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+def _closed_loopback_port() -> int:
+    """An ephemeral port that is free right now: bound, then released."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+class TestServerBackendWarmup:
+    """FR-006: a healthy server backend is warmed with one tiny
+    /v1/embeddings POST through the shared T003 probe cache; every guard
+    from the local arm still applies."""
+
+    @pytest.fixture
+    def server_backend(self, monkeypatch):
+        """CAIRN_EMBED_BACKEND=server with fresh backend/probe caches.
+
+        Tests point CAIRN_EMBED_BASE_URL at their own loopback stub (or a
+        closed port for the unhealthy probe)."""
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+        embeddings.reset_backend_cache()
+        yield
+        embeddings.reset_backend_cache()
+
+    @pytest.fixture
+    def stub_server(self):
+        server = _WarmupStubServer()
+        yield server
+        server.close()
+
+    def test_healthy_cached_probe_fires_one_tiny_post_without_reprobing(
+        self, server_backend, stub_server, monkeypatch
+    ):
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        # The boot path already gated on availability: the probe verdict is
+        # cached, so warm-up must consume it -- no second /v1/models hit.
+        assert embeddings.embeddings_available()
+        model_warmup.warm_models()
+        assert len(stub_server.hits("/v1/models")) == 1
+        posts = stub_server.hits("/v1/embeddings")
+        assert len(posts) == 1
+        assert posts[0]["body"]["input"] == ["warmup"]  # tiny single-text input
+        assert posts[0]["body"]["model"] == "bge-m3"
+
+    def test_cold_probe_cache_probes_once_then_posts_once(
+        self, server_backend, stub_server, monkeypatch
+    ):
+        """With nothing pre-probed, the warm step itself populates the
+        shared probe cache (one GET) and then fires its one POST."""
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        model_warmup.warm_models()
+        assert [r["path"] for r in stub_server.requests] == [
+            "/v1/models",
+            "/v1/embeddings",
+        ]
+
+    def test_unreachable_server_warns_once_and_never_raises(
+        self, server_backend, monkeypatch, caplog
+    ):
+        monkeypatch.setenv(
+            "CAIRN_EMBED_BASE_URL",
+            f"http://127.0.0.1:{_closed_loopback_port()}/v1",
+        )
+        with caplog.at_level(logging.WARNING, logger="cairn"):
+            model_warmup.warm_models()  # must not raise into boot
+        warnings = [r for r in caplog.records if "warm-up" in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_model_missing_from_listing_never_posts(
+        self, server_backend, monkeypatch, caplog
+    ):
+        """A reachable server whose /v1/models omits the configured model
+        fails the FR-002 probe: observable here as zero /embeddings hits,
+        not just an unconnectable port."""
+        stub = _WarmupStubServer(model_ids=["some-other-model"])
+        try:
+            monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub.base_url)
+            with caplog.at_level(logging.WARNING, logger="cairn"):
+                model_warmup.warm_models()
+            assert [r["path"] for r in stub.requests] == ["/v1/models"]
+            warnings = [r for r in caplog.records if "warm-up" in r.getMessage()]
+            assert len(warnings) == 1
+        finally:
+            stub.close()
+
+    def test_pytest_guard_blocks_background_server_warmup(
+        self, server_backend, stub_server, monkeypatch
+    ):
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        monkeypatch.setattr(model_warmup, "_inside_pytest", lambda: True)
+        assert model_warmup.warm_models_in_background() is None
+        assert model_warmup._WARM_THREAD is None
+        assert stub_server.requests == []  # no probe, no POST
+
+    def test_server_arm_never_sets_offline_env(
+        self, server_backend, stub_server, monkeypatch
+    ):
+        """The offline vars are a local-HF-cache concern; the server arm
+        makes no HF calls, so the env must be untouched at POST time."""
+        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+        observed = []
+        real_embed_server = embeddings._embed_server
+
+        def _spy(texts):
+            observed.append(
+                (
+                    os.environ.get("HF_HUB_OFFLINE"),
+                    os.environ.get("TRANSFORMERS_OFFLINE"),
+                )
+            )
+            return real_embed_server(texts)
+
+        monkeypatch.setattr(embeddings, "_embed_server", _spy)
+        model_warmup.warm_models()
+        assert observed == [(None, None)]
+        assert "HF_HUB_OFFLINE" not in os.environ
+        assert "TRANSFORMERS_OFFLINE" not in os.environ
 
 
 class TestBackgroundThread:

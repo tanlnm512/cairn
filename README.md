@@ -158,7 +158,10 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 - **The `[semantic]` extra is heavy.** Real embeddings pull
   sentence-transformers (+ torch on Linux); a one-time ~836 MB model download
   lives in `~/.cairn/lib/` (scoped per Python version). The default install is
-  torch-free and network-free.
+  torch-free and network-free. Alternative with no download at all: point
+  `CAIRN_EMBED_BACKEND` at a local OpenAI-compatible embeddings server
+  (oMLX, Ollama, LM Studio) — same bge-m3 vectors, zero torch footprint
+  ([configuration.md](docs/configuration.md)).
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
   won't happen purely locally without any model access.
@@ -187,11 +190,14 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   telemetry egress (OTLP export is opt-in and best-effort).
 - **Agent-first surfaces** — the same store backs 27 MCP tools and the CLI;
   `cairn install-agents` wires every detected client in one command.
-- **Local dashboard** — `cairn dashboard` opens a read-only web console at
+- **Local dashboard** — `cairn dashboard` opens a loopback web console at
   `127.0.0.1:8765`: interactive graph with symbol search, recorded
   tool-call history and token usage (MCP + CLI, mode-labeled estimates),
   session chains, health/memory panels, machine-wide workspace switching,
-  and CSV/JSON export of any filtered view.
+  CSV/JSON export of any filtered view, an Embeddings status view (probe
+  health, fallback state, per-knob config sources) with the degradation
+  banner, and a Settings page that persists embedding-backend configuration
+  to `~/.cairn/config.json`.
 
 ## How It Works
 
@@ -269,7 +275,7 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 | Command | What it does |
 |---------|--------------|
 | `cairn serve` | Run the stdio MCP server |
-| `cairn dashboard` | Local read-only web console (127.0.0.1:8765) |
+| `cairn dashboard` | Local web console, loopback :8765 (views + Settings) |
 | `cairn build` / `cairn update` | Full build (first run) / incremental reindex |
 | `cairn def <symbol>` | Find a symbol's definition |
 | `cairn impact <symbol>` | Within-repo blast radius (precise default; `--fuzzy` to audit) |

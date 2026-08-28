@@ -3,7 +3,10 @@
 Routes: landing, workspaces overview, projects, graph (plus its
 /graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
 history, tokens (plus their .csv/.json exports), chains, health, memory,
-tasks.
+tasks, settings, embeddings — the settings section (FR-011) carries the
+app's only POST routes (/settings/save, /settings/parity-check); the
+embeddings status view and everything else stay GET-only so the read-only
+views keep their assumptions.
 
 starlette / jinja2 arrive only as transitive deps of mcp, so they are
 imported inside :func:`create_app`: importing this module (or the package)
@@ -14,7 +17,9 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +46,28 @@ WINDOW_PRESETS = ("24h", "7d", "30d", "all")
 
 # Preset -> seconds back from now; "all" is absent (unbounded).
 _WINDOW_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
+
+# Settings-section knob set (FR-011): the CAIRN_EMBED_* keys the page reads
+# and writes in $CAIRN_HOME/config.json. Values persist as strings — the
+# D-008 resolver (embeddings._config_or_env) honors str file values only.
+SETTINGS_BACKENDS = ("local", "server", "omlx", "ollama", "hash")
+SETTINGS_KEYS = (
+    "CAIRN_EMBED_BACKEND",
+    "CAIRN_EMBED_SERVER_MODEL",
+    "CAIRN_EMBED_API_KEY",
+    "CAIRN_EMBED_TIMEOUT",
+    "CAIRN_EMBED_SERVER_BATCH",
+    "CAIRN_EMBED_MODEL_STAMP",
+    "CAIRN_EMBED_BASE_URL",
+)
+
+# Keys whose file values must parse as numbers (the server client float()s /
+# int()s them unguarded), validated at save time so the form can never write
+# a value that breaks the embed path.
+SETTINGS_NUMERIC = {
+    "CAIRN_EMBED_TIMEOUT": (float, "a number of seconds"),
+    "CAIRN_EMBED_SERVER_BATCH": (int, "a whole batch size"),
+}
 
 
 def _human_size(num_bytes) -> str:
@@ -212,8 +239,57 @@ def create_app(
     )
     from .workspaces import enumerate_stores, probe_stores
     from .. import paths
+    from ..graph import embed_ladder, embeddings
     from ..paths import default_knowledge_path
     from ..viz import query as viz_query
+
+    # The FR-013 banner reflects THIS process's observability only: the
+    # ladder cache is per-process and nothing in this read-only app evaluates
+    # it, so the first page render adds one uncached server probe (FR-002's
+    # 2 s discipline) whose failure seeds the ladder here; later requests
+    # read that cached verdict. The status view shares the same one-probe
+    # seam for its probe-health row.
+    _probe_lock = threading.Lock()
+    _probed = False
+    _probe_ok = None
+
+    def _server_probe_once():
+        """One uncached server probe per dashboard process, shared by the
+        banner and the status view. None when the backend is not
+        server-family (nothing probes); a failed probe seeds this process's
+        ladder verdict, exactly as the banner always has. The lock is held
+        across the probe AND the verdict assignment: a concurrent first
+        request blocks (worst case the probe's ~2 s timeout — a localhost
+        tool) instead of racing past an unassigned verdict."""
+        nonlocal _probed, _probe_ok
+        if embeddings._backend_name() not in embeddings._SERVER_FAMILY:
+            return None
+        with _probe_lock:
+            if _probed:
+                return _probe_ok
+            _probed = True
+            ok = embeddings._run_server_probe()
+            if not ok:
+                embed_ladder.evaluate_ladder()  # seed this process's verdict
+            _probe_ok = ok
+            return ok
+
+    def embed_banner() -> str:
+        """The degradation banner text for this request ("" when healthy)."""
+        if embed_ladder.degradation_active():
+            return embed_ladder.degradation_banner()
+        if _server_probe_once() is False:
+            return embed_ladder.degradation_banner()
+        return ""
+
+    def render(
+        request: Request, name: str, context: dict, status_code: int = 200
+    ) -> Response:
+        """TemplateResponse carrying the banner context on every page."""
+        context["embed_banner"] = embed_banner()
+        return templates.TemplateResponse(
+            request, name, context, status_code=status_code
+        )
 
     def resolve_selection(
         request: Request, db_path: str | None, knowledge_dir: str | None
@@ -248,7 +324,7 @@ def create_app(
 
     async def landing(request: Request) -> Response:
         _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
-        return templates.TemplateResponse(
+        return render(
             request,
             "index.html",
             {"db_path": db_path or "central store", "store_key": store_key},
@@ -264,7 +340,7 @@ def create_app(
         _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
         home = Path(paths.CAIRN_HOME)
         rows = probe_stores(home, enumerate_stores(home))
-        return templates.TemplateResponse(
+        return render(
             request,
             "workspaces.html",
             {"stores": rows, "launch_db": db_path or "", "store_key": store_key},
@@ -279,7 +355,7 @@ def create_app(
             rows = list_projects(conn)
         finally:
             conn.close()
-        return templates.TemplateResponse(
+        return render(
             request,
             "projects.html",
             {"projects": rows, "store_key": store_key},
@@ -308,7 +384,7 @@ def create_app(
             )
         finally:
             conn.close()
-        return templates.TemplateResponse(
+        return render(
             request,
             "graph.html",
             {
@@ -378,7 +454,7 @@ def create_app(
             health_data = get_health(conn, selected_db)
         finally:
             conn.close()
-        return templates.TemplateResponse(
+        return render(
             request,
             "health.html",
             {
@@ -411,7 +487,7 @@ def create_app(
             )
         finally:
             conn.close()
-        return templates.TemplateResponse(
+        return render(
             request,
             "history.html",
             {
@@ -438,7 +514,7 @@ def create_app(
             rows = get_tool_tokens(conn, since=since)
         finally:
             conn.close()
-        return templates.TemplateResponse(
+        return render(
             request,
             "tokens.html",
             {"tools": rows, "window": window, "store_key": store_key},
@@ -533,7 +609,7 @@ def create_app(
             )
         finally:
             conn.close()
-        return templates.TemplateResponse(
+        return render(
             request,
             "chains.html",
             {
@@ -553,7 +629,7 @@ def create_app(
             request, db_path, knowledge_dir
         )
         entries = get_recent_memories(selected_knowledge)
-        return templates.TemplateResponse(
+        return render(
             request,
             "memory.html",
             {"memories": entries, "store_key": store_key},
@@ -569,13 +645,243 @@ def create_app(
         entries = get_task_queue(
             selected_knowledge, status=None if status == "all" else status
         )
-        return templates.TemplateResponse(
+        return render(
             request,
             "tasks.html",
             {
                 "tasks": entries,
                 "statuses": TASK_STATUSES,
                 "status": status,
+                "store_key": store_key,
+            },
+        )
+
+    def _settings_context(
+        store_key: str, saved: bool = False, error: str = "", parity=None
+    ) -> dict:
+        """Settings-page context: per-knob file/effective state (D-008).
+
+        ``prefill`` is the file value when one exists — the form edits the
+        file layer — else the effective value; ``pinned`` marks an env var
+        shadowing whatever the file holds, rendered as an "overridden by
+        environment" marker so a save that "does nothing" is explainable.
+        """
+        cfg = {}
+        for key in SETTINGS_KEYS:
+            env_value = (os.environ.get(key) or "").strip()
+            file_raw = paths.get_config_value(key)
+            file_value = "" if file_raw is None else str(file_raw).strip()
+            # The API key is write-only: its prefill stays "" unconditionally
+            # (the form's key input never renders a secret back). The
+            # set/not-set badges read ``effective``, so they still work.
+            cfg[key] = {
+                "prefill": (
+                    "" if key == "CAIRN_EMBED_API_KEY" else file_value or env_value
+                ),
+                "effective": env_value or file_value,
+                "pinned": bool(env_value),
+            }
+        return {
+            "cfg": cfg,
+            "backends": SETTINGS_BACKENDS,
+            "backend_value": cfg["CAIRN_EMBED_BACKEND"]["prefill"] or "local",
+            "saved": saved,
+            "error": error,
+            "parity": parity,
+            "store_key": store_key,
+        }
+
+    def settings(request: Request) -> Response:
+        _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
+        return render(request, "settings.html", _settings_context(store_key))
+
+    # Async on purpose: reading the urlencoded form body is await-only, and
+    # the handler's own work is one small atomic file write. The blocking-SQL
+    # handlers above stay plain-def (threadpool) — this route touches no SQL.
+    async def settings_save(request: Request) -> Response:
+        form = await request.form()
+        _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
+        submitted = {
+            key: str(form.get(key) or "").strip()
+            for key in SETTINGS_KEYS
+            if key in form
+        }
+        for key, (cast, what) in SETTINGS_NUMERIC.items():
+            value = submitted.get(key, "")
+            if value:
+                try:
+                    cast(value)
+                except ValueError:
+                    return render(
+                        request,
+                        "settings.html",
+                        _settings_context(
+                            store_key, error=f"Refused: {key} must be {what}."
+                        ),
+                        status_code=400,
+                    )
+        current_base = str(
+            paths.get_config_value("CAIRN_EMBED_BASE_URL") or ""
+        ).strip()
+        if (
+            "CAIRN_EMBED_BASE_URL" in submitted
+            and submitted["CAIRN_EMBED_BASE_URL"] != current_base
+            and "confirm_base_url" not in form
+        ):
+            return render(
+                request,
+                "settings.html",
+                _settings_context(
+                    store_key,
+                    error="Refused: a base-URL change requires the "
+                    "'Confirm base-URL change' checkbox.",
+                ),
+                status_code=400,
+            )
+        values = {}
+        for key, value in submitted.items():
+            if key == "CAIRN_EMBED_API_KEY":
+                if value:  # write-only: blank submit leaves the key untouched
+                    values[key] = value
+            elif key == "CAIRN_EMBED_BACKEND":
+                if value in SETTINGS_BACKENDS:  # never write an unknown arm
+                    values[key] = value
+            elif value:
+                # A blank submit means "no change", never a write of "":
+                # treating it as one silently CLEARED the stored value. A
+                # knob is cleared by editing config.json, not from the form.
+                values[key] = value
+        if not paths.set_config_values(values):
+            return render(
+                request,
+                "settings.html",
+                _settings_context(
+                    store_key,
+                    error=(
+                        f"Could not write {paths.CONFIG_FILE}; "
+                        "nothing was saved."
+                    ),
+                ),
+                status_code=500,
+            )
+        paths.reset_config_cache()
+        embeddings.reset_backend_cache()  # this process re-resolves on next use
+        return render(
+            request, "settings.html", _settings_context(store_key, saved=True)
+        )
+
+    def settings_parity_check(request: Request) -> Response:
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            try:
+                result = embed_ladder.check_parity(
+                    conn, embeddings.current_model()
+                )
+                parity = {
+                    "passed": bool(result.passed),
+                    "mean": (
+                        "—"
+                        if result.mean_cosine is None
+                        else f"{result.mean_cosine:.4f}"
+                    ),
+                    "sampled": result.sampled,
+                    "reason": result.reason,
+                }
+            except Exception as exc:  # embed failures ARE the verdict text
+                parity = {
+                    "passed": False,
+                    "mean": "—",
+                    "sampled": None,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+        finally:
+            conn.close()
+        return render(
+            request,
+            "settings.html",
+            _settings_context(store_key, parity=parity),
+        )
+
+    def _embeddings_rows(conn) -> list:
+        """Per-corpus ``{corpus, model, count, last}`` rows for the status
+        view: the code corpus reads the embeddings table directly,
+        knowledge/memory ride embed_knowledge_count/embed_memory_count.
+        A corpus whose count cannot be read (store predating the table,
+        unresolvable or malformed backend config) reports unknown instead
+        of failing the page.
+        """
+        rows = []
+        for corpus, table in (
+            ("code", "embeddings"),
+            ("knowledge", "knowledge_embeddings"),
+            ("memory", "memory_embeddings"),
+        ):
+            model, count, last = None, None, None
+            try:
+                if corpus == "knowledge":
+                    model = embeddings.current_model(corpus="knowledge")
+                    count = embeddings.embed_knowledge_count(conn)
+                elif corpus == "memory":
+                    model = embeddings.current_model(corpus="memory")
+                    count = embeddings.embed_memory_count(conn)
+                else:
+                    model = embeddings.current_model()
+                    count = conn.execute(
+                        "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+                        (model,),
+                    ).fetchone()[0]
+                last = conn.execute(
+                    f"SELECT MAX(embedded_at) FROM {table} WHERE model = ?",
+                    (model,),
+                ).fetchone()[0]
+            except Exception:
+                # Unknown, rendered as an em-dash — never a 500. Broad on
+                # purpose: this is a status page, and current_model()'s
+                # URL resolution can raise ValueError on a malformed
+                # CAIRN_EMBED_BASE_URL, not just RuntimeError/sqlite3
+                # errors.
+                pass
+            rows.append(
+                {"corpus": corpus, "model": model, "count": count, "last": last}
+            )
+        return rows
+
+    # Plain-def like the SQL views: the store read is blocking, and a
+    # first-request server probe rides the banner's once-per-process seam.
+    def embeddings_status(request: Request) -> Response:
+        """FR-011's status view: effective backend + precedence, resolved
+        stamp, per-corpus counts, probe health, and the active fallback
+        rung — the rung rows read ladder_state(), the same accessor the
+        FR-013 banner text builds from (one degradation source)."""
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        probe_ok = _server_probe_once()  # first: rung adoption may retarget
+        backend = embeddings._backend_name()
+        try:
+            stamp = embeddings.current_model()
+        except Exception as exc:  # unresolvable backend is status, not a 500
+            stamp = f"unresolved ({type(exc).__name__}: {exc})"
+        state = embed_ladder.ladder_state()
+        conn = get_read_only_db(selected_db)
+        try:
+            corpora = _embeddings_rows(conn)
+        finally:
+            conn.close()
+        return render(
+            request,
+            "embeddings.html",
+            {
+                "backend": backend,
+                "stamp": stamp,
+                "is_server": backend in embeddings._SERVER_FAMILY,
+                "probe_ok": probe_ok,
+                "rung": state if state is not None and state.active else None,
+                "corpora": corpora,
+                "cfg": _settings_context(store_key)["cfg"],
                 "store_key": store_key,
             },
         )
@@ -598,6 +904,22 @@ def create_app(
         Route("/health", health, name="health"),
         Route("/memory", memory, name="memory"),
         Route("/tasks", tasks, name="tasks"),
+        Route("/embeddings", embeddings_status, name="embeddings"),
+        Route("/settings", settings, name="settings"),
+        # The app's first POST routes (FR-011) — loopback-only by the CLI's
+        # DEFAULT_HOST + _require_loopback; the GET views stay untouched.
+        Route(
+            "/settings/save",
+            settings_save,
+            methods=["POST"],
+            name="settings_save",
+        ),
+        Route(
+            "/settings/parity-check",
+            settings_parity_check,
+            methods=["POST"],
+            name="settings_parity_check",
+        ),
         Mount(
             "/static",
             app=_RevalidatingStaticFiles(directory=str(static_dir)),

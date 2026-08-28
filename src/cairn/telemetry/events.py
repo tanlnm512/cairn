@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 ANN_FALLBACK = "ann_fallback"
 HASH_FALLBACK = "hash_fallback"
+EMBED_SERVER_DEGRADED = "embed_server_degraded"
 LOCK_CONTENTION = "lock_contention"
 TRUNCATE_RESULT = "truncate_result"
 EMPTY_RESULT = "empty_result"
@@ -52,6 +53,19 @@ EMBED_FLUSH_STALLED = "embed_flush_stalled"
 # stage because the fused (RRF) ranking was already decisive. Emitted at the
 # skip site in graph/semantic.py with a fixed-enum `reason` attr.
 RERANK_SKIPPED = "rerank_skipped"
+
+# Bounded reason enum for embed_server_degraded (FR-013); emitters stay
+# within these six so the doctor/consumers can bucket on them.
+EMBED_SERVER_REASONS = frozenset(
+    {
+        "server_down",
+        "model_missing",
+        "parity_fail",
+        "fallback_session_alias",
+        "fallback_local",
+        "hybrid_only",
+    }
+)
 
 # Defensive cap on any single serialized attr value so a runaway caller can't
 # bloat the events row / the WAL with a huge string. Attrs are supposed to be

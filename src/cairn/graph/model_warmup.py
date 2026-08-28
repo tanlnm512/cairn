@@ -17,16 +17,20 @@ Constraints that shape this module:
   so a missing model, an evicted HF cache, or an import error costs one log
   line, not the server.
 * **Never load what the query path wouldn't load -- and never download.**
-  The embedder is warmed only when the effective backend is ``local``
-  (``hash``/``openai`` have no in-process model) AND its weights are already
-  in the local HF cache; the reranker only when the full gate sequence of
-  ``reranker.rerank()`` passes -- ``rerank_enabled()`` (env ``CAIRN_RERANK``
-  or the download-reranker marker), ``reranker_available()``, and
-  ``reranker_model_is_cached()``. The cache gates mirror rerank()'s proactive
-  guard deliberately: warm-up is a *warm* path, not an install path -- a
-  first-download user's first query downloads exactly as before (no
-  surprise multi-GB fetch at boot), and a hermetic test environment with an
-  empty HF cache makes warm-up a no-op instead of a network client.
+  The embedder is warmed only for the backend the query path would use:
+  ``local`` only when its weights are already in the local HF cache
+  (``hash``/``openai`` have no in-process model); the server family only
+  when the shared availability probe is healthy, in which case one tiny
+  ``/v1/embeddings`` POST triggers the server-side lazy load (it makes no
+  HF calls and downloads nothing); the reranker only when the full gate
+  sequence of ``reranker.rerank()`` passes -- ``rerank_enabled()``
+  (env ``CAIRN_RERANK`` or the download-reranker marker),
+  ``reranker_available()``, and ``reranker_model_is_cached()``. The cache
+  gates mirror the query paths' proactive guards deliberately: warm-up is
+  a *warm* path, not an install path -- a first-download user's first query
+  downloads exactly as before (no surprise multi-GB fetch at boot), and a
+  hermetic test environment with an empty HF cache makes warm-up a no-op
+  instead of a network client.
 * **stdout is the JSON-RPC channel** under the stdio transport. This module
   never prints; its one diagnostic goes through
   ``logging.getLogger("cairn")``, which the server configures to stderr.
@@ -152,25 +156,51 @@ def _inside_pytest() -> bool:
 
 
 def _warm_embedder() -> None:
-    """Populate ``embeddings._MODEL_CACHE`` when the local backend is active.
+    """Warm the active embedding backend: local weights or a server model.
 
     ``_effective_backend()`` (not the raw ``CAIRN_EMBED_BACKEND`` value) is
     the right gate: a ``local`` config without sentence-transformers
-    installed resolves to ``hash``, which has no weights to warm. The
-    ``model_is_cached()`` gate (mirroring rerank()'s proactive cache guard)
-    keeps warm-up from ever *downloading*: a first-download user's first
-    query fetches the weights exactly as it would have without this module,
-    rather than boot silently pulling gigabytes. Since passing the gate
-    means the weights are verifiably local, the load runs under the HF
-    offline env vars (see ``_load_with_offline_guard``).
+    installed resolves to ``hash``, which has no weights to warm, and the
+    server family (server/omlx/ollama) resolves to ``server``. The local
+    path keeps the ``model_is_cached()`` gate (mirroring rerank()'s
+    proactive cache guard) so warm-up can never *download*: a
+    first-download user's first query fetches the weights exactly as it
+    would have without this module. Since passing the gate means the
+    weights are verifiably local, that load runs under the HF offline env
+    vars (see ``_load_with_offline_guard``).
+
+    The server path cannot warm in-process weights -- the model lives in
+    the server -- so the warm step is one tiny ``/v1/embeddings`` POST
+    (``_embed_server``, the query-path client) that makes the server
+    lazy-load the configured model before the first query. Its availability
+    verdict comes from ``_server_probe_available()``, the same per-process
+    cache the query path gates on, so a boot that already probed consumes
+    the verdict without a second ``/v1/models`` round-trip. No HF offline
+    vars are set (a server arm makes no HF calls) and nothing is
+    downloaded; an unhealthy probe or a failed POST raises into
+    ``warm_models``' step guard, which downgrades it to the single
+    non-fatal warning.
     """
     # Lazy import keeps importing this module weightless and mirrors the
     # lazy style of reranker/embeddings' own heavy imports.
     from . import embeddings
 
-    if embeddings._effective_backend() != "local" or not embeddings.model_is_cached():
+    backend = embeddings._effective_backend()
+    if backend == "local":
+        if not embeddings.model_is_cached():
+            return
+        _load_with_offline_guard(embeddings._get_local_model)
         return
-    _load_with_offline_guard(embeddings._get_local_model)
+    if backend == "server":
+        # Consumes (or, on a cold cache, populates) the FR-002 probe verdict
+        # shared with embeddings_available() -- never a duplicate probe.
+        if not embeddings._server_probe_available():
+            raise RuntimeError(
+                "embedding server probe failed; server model not warmed"
+            )
+        # The response is discarded: warm-up only needs the model resident
+        # server-side; the single-text input is the tiniest valid batch.
+        embeddings._embed_server(["warmup"])
 
 
 def _warm_reranker() -> None:

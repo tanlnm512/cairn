@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +33,11 @@ CAIRN_HOME = Path(
 )
 
 REGISTRY_FILE = CAIRN_HOME / "workspaces.json"
+
+# Persistent settings file (FR-010): flat string->scalar JSON object whose
+# keys mirror the CAIRN_EMBED_* env names. Bound at import time exactly like
+# REGISTRY_FILE -- tests monkeypatch this attribute, not the env var.
+CONFIG_FILE = CAIRN_HOME / "config.json"
 
 # Shared library directory for the heavy semantic deps (torch,
 # sentence-transformers, numpy). Installed via `cairn embed --install-deps`
@@ -151,6 +158,124 @@ def register_workspace(workspace: Path) -> StorePaths:
 
 def is_registered(workspace: Path) -> bool:
     return str(workspace.resolve()) in _load_registry()
+
+
+# --------------------------------------------------------------------------
+# Persistent config: $CAIRN_HOME/config.json. Flat JSON object whose keys
+# mirror the CAIRN_EMBED_* env names (e.g. "CAIRN_EMBED_BACKEND": "omlx")
+# and whose values are scalars. Consumers resolve env > file > default
+# (D-008); this layer only reads/writes/caches the file side.
+# --------------------------------------------------------------------------
+
+_CONFIG_CACHE: dict = {"stamp": None, "data": {}}
+
+_logger = logging.getLogger(__name__)
+
+
+def reset_config_cache() -> None:
+    """Drop the cached config so the next get_config_value re-reads disk."""
+    _CONFIG_CACHE["stamp"] = None
+    _CONFIG_CACHE["data"] = {}
+
+
+def _load_config() -> dict:
+    """One uncached read of CONFIG_FILE.
+
+    Returns the flat scalar mapping; empty dict when the file is absent,
+    unreadable, corrupt (one warning on invalid JSON), or not an object
+    (one warning). Non-scalar values are dropped with one summary warning
+    naming the keys. Never raises.
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        raw = CONFIG_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        _logger.warning(
+            "%s is not valid JSON; ignoring it (env vars still apply)",
+            CONFIG_FILE,
+        )
+        return {}
+    if not isinstance(data, dict):
+        _logger.warning(
+            "%s is not a JSON object; ignoring it (env vars still apply)",
+            CONFIG_FILE,
+        )
+        return {}
+    values = {
+        k: v for k, v in data.items() if isinstance(v, (str, int, float, bool))
+    }
+    dropped = sorted(set(data) - set(values))
+    if dropped:
+        # Names only, never values: dropped entries can carry secrets
+        # (e.g. a mistakenly nested API key) and must not reach the log.
+        _logger.warning(
+            "%s: ignoring non-scalar keys: %s (values must be strings, "
+            "numbers, or booleans)",
+            CONFIG_FILE,
+            ", ".join(dropped),
+        )
+    return values
+
+
+def get_config_value(key: str, default=None):
+    """Value for ``key`` from CONFIG_FILE, or ``default`` when unset.
+
+    Re-reads the file only when its (mtime_ns, size) stamp changed, so a
+    running process picks up edits without restart. Never raises.
+    """
+    try:
+        st = CONFIG_FILE.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None
+    if _CONFIG_CACHE["stamp"] != stamp:
+        _CONFIG_CACHE["stamp"] = stamp
+        _CONFIG_CACHE["data"] = _load_config() if stamp is not None else {}
+    return _CONFIG_CACHE["data"].get(key, default)
+
+
+def set_config_values(values: dict) -> bool:
+    """Merge ``values`` into CONFIG_FILE atomically (tmp file + os.replace).
+
+    Creates the parent directory. Returns True on success; on OSError logs
+    one warning, leaves the previous file intact with no tmp file left
+    behind, and returns False.
+    """
+    try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        merged = {**_load_config(), **values}
+        fd, tmp = tempfile.mkstemp(
+            dir=str(CONFIG_FILE.parent), prefix=".config-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(merged, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+                # flush+fsync BEFORE the replace: os.replace is atomic within
+                # the filesystem but not durable -- without fsync a crash can
+                # persist the directory entry while the tmp file's data blocks
+                # were never written, leaving a zero-length config on recovery.
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, CONFIG_FILE)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        _logger.warning(
+            "could not write %s; configuration not saved", CONFIG_FILE
+        )
+        return False
+    reset_config_cache()
+    return True
 
 
 # --------------------------------------------------------------------------

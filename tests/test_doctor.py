@@ -1,9 +1,12 @@
-"""T12: `cairn doctor` -- 8 health checks, PASS/WARN/FAIL, exit 0/1, --json.
+"""T12: `cairn doctor` -- health checks, PASS/WARN/FAIL, exit 0/1, --json.
 
 Doctor surfaces silent degradations (spec observability-telemetry §6.5): schema
-integrity, embedding/ANN backend fallbacks, graph freshness, parse errors, lock
-contention, per-tool error/latency health, and a config echo. It is read-only
-and crash-proof (a missing/corrupt store degrades to WARN/FAIL, never raises).
+integrity, embedding/ANN backend fallbacks, embed-server health (probe /
+model-listing / parity sample / latency when a server backend is configured,
+otherwise one informational line -- D-012), graph freshness, parse errors,
+lock contention, per-tool error/latency health, and a config echo. It is
+read-only and crash-proof (a missing/corrupt store degrades to WARN/FAIL,
+never raises).
 
 Coverage here is fixture-driven and each FAIL/WARN condition is independently
 provable. The environmental backend checks (embeddings hash fallback, ANN
@@ -13,12 +16,17 @@ in the test environment.
 """
 from __future__ import annotations
 
+import http.server
 import json
+import math
 import sqlite3
+import struct
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from click.testing import CliRunner
 
 from cairn.cli import main
@@ -86,7 +94,12 @@ def test_clean_db_exits_zero(tmp_path):
 
 
 def test_eight_checks_always_emitted(tmp_path):
-    """Doctor always emits exactly the 8 spec checks, in order, via --json."""
+    """Doctor always emits the check sequence, in order, via --json.
+
+    The historical 8 checks keep their positions; T015 slots embed_server
+    after ann (an informational PASS line unless a server backend is
+    configured, D-012).
+    """
     db = tmp_path / "graph.db"
     _make_db(db)
 
@@ -97,6 +110,7 @@ def test_eight_checks_always_emitted(tmp_path):
         "schema",
         "embeddings",
         "ann",
+        "embed_server",
         "freshness",
         "parse_errors",
         "concurrency",
@@ -648,6 +662,109 @@ def test_config_echo_always_pass(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Config echo -- file layer (T021, FR-010/FR-011, D-008): each A2.1 embedding
+# knob echoes effective value + source layer (env / file / default); the API
+# key reports presence only. conftest's hermetic env re-points paths.CONFIG_FILE
+# into the sandbox, so a dev machine's real config.json cannot leak in.
+# ---------------------------------------------------------------------------
+
+
+def test_config_echo_embedding_knobs_default(tmp_path):
+    """(a) No env, no config file: every A2.1 knob echoes its default with a
+    (default) marker, the API key reports <unset>, and the historical
+    env-only knobs keep their shape."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "config")
+    assert row["status"] == "PASS"
+    assert "workers=<unset>" in row["detail"]  # historical knobs unchanged
+    assert "embed_backend=local (default)" in row["detail"]
+    assert "embed_base_url=<preset> (default)" in row["detail"]
+    assert "embed_server_model=bge-m3 (default)" in row["detail"]
+    assert "embed_timeout=30 (default)" in row["detail"]
+    assert "embed_server_batch=32 (default)" in row["detail"]
+    assert "embed_model_stamp=<derived> (default)" in row["detail"]
+    assert "api_key=<unset>" in row["detail"]
+    assert "(env)" not in row["detail"]
+    assert "(file)" not in row["detail"]
+
+
+def test_config_echo_env_pins_over_file(tmp_path, monkeypatch):
+    """(b) D-008 precedence: an env-pinned knob echoes the env value even when
+    the config file holds a DIFFERENT value."""
+    from cairn import paths
+
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    assert paths.set_config_values({"CAIRN_EMBED_TIMEOUT": "99"})
+    monkeypatch.setenv("CAIRN_EMBED_TIMEOUT", "7")
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    detail = _by_name(json.loads(result.stdout), "config")["detail"]
+    assert "embed_timeout=7 (env)" in detail
+    assert "99" not in detail, "the file value must not surface when env pins"
+
+
+def test_config_echo_file_set_knob(tmp_path):
+    """(c) A knob persisted in the (sandboxed) config.json echoes the file
+    value with a (file) marker."""
+    from cairn import paths
+
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    assert paths.set_config_values({"CAIRN_EMBED_SERVER_MODEL": "file-model"})
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    detail = _by_name(json.loads(result.stdout), "config")["detail"]
+    assert "embed_server_model=file-model (file)" in detail
+
+
+def test_config_echo_api_key_presence_only(tmp_path):
+    """(d) A file-persisted API key is reported as present only -- the secret
+    value never reaches doctor output (JSON or human render)."""
+    from cairn import paths
+
+    secret = "sk-totally-secret-value-12345"
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    assert paths.set_config_values({"CAIRN_EMBED_API_KEY": secret})
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    detail = _by_name(json.loads(result.stdout), "config")["detail"]
+    assert "api_key=<set via file>" in detail
+    assert secret not in detail
+    assert secret not in result.output
+
+
+def test_config_echo_survives_corrupt_config_file(tmp_path, caplog):
+    """(e) A corrupt config.json degrades to defaults-with-warning (paths logs
+    one warning): the echo still PASSes, every knob marked (default), no raise."""
+    import logging
+
+    from cairn import paths
+
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    paths.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    paths.CONFIG_FILE.write_text("{not json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="cairn.paths"):
+        result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "config")
+    assert row["status"] == "PASS"
+    assert "embed_backend=local (default)" in row["detail"]
+    assert "api_key=<unset>" in row["detail"]
+    assert "not valid JSON" in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # Aggregation -- any FAIL flips the exit code to 1
 # ---------------------------------------------------------------------------
 
@@ -660,3 +777,305 @@ def test_any_fail_exits_one(tmp_path):
     result = _run(db)
     assert result.exit_code == 1
     assert "FAIL" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Embed server (T015, FR-007/FR-013) -- informational PASS unless a
+# server-family backend (server/omlx/ollama) is configured (D-012). HTTP only
+# against a loopback stub on an ephemeral port (or a dead loopback port),
+# never the network.
+# ---------------------------------------------------------------------------
+
+DIM = 8
+
+
+def _blob(vec):
+    """float32-LE blob, matching the embeddings storage format."""
+    return struct.pack(f"<{len(vec)}f", *vec)
+
+
+def _unit(vec):
+    norm = math.sqrt(sum(x * x for x in vec))
+    return [x / norm for x in vec]
+
+
+class _StubEmbedServer:
+    """Loopback OpenAI-compatible /v1 stand-in: GET /models + POST /embeddings."""
+
+    def __init__(self, model_ids, vec):
+        self.model_ids = list(model_ids)
+        self.vec = list(vec)
+        self.embed_requests = 0
+        outer = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def _send(self, payload):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_GET(self):
+                self._send(
+                    json.dumps(
+                        {"data": [{"id": m} for m in outer.model_ids]}
+                    ).encode("utf-8")
+                )
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                outer.embed_requests += 1
+                self._send(
+                    json.dumps(
+                        {
+                            "data": [
+                                {"index": i, "embedding": outer.vec}
+                                for i, _ in enumerate(body["input"])
+                            ]
+                        }
+                    ).encode("utf-8")
+                )
+
+            def log_message(self, *args):
+                pass
+
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(
+            target=self._httpd.serve_forever,
+            daemon=True,
+            kwargs={"poll_interval": 0.05},
+        ).start()
+
+    @property
+    def netloc(self):
+        host, port = self._httpd.server_address[:2]
+        return f"{host}:{port}"
+
+    @property
+    def base_url(self):
+        return f"http://{self.netloc}/v1"
+
+    def close(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+def _dead_base_url():
+    """A loopback URL whose port is (transiently) guaranteed refusing."""
+    httpd = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), http.server.BaseHTTPRequestHandler
+    )
+    host, port = httpd.server_address[:2]
+    httpd.server_close()
+    return f"http://{host}:{port}/v1"
+
+
+def _server_env(monkeypatch, base_url, model="stub-model"):
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+    monkeypatch.setenv("CAIRN_EMBED_BASE_URL", base_url)
+    monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", model)
+
+
+def _seed_stamp_rows(conn, stamp, vec, n=1):
+    """Stored embeddings under a server stamp for the parity arm to sample."""
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk, content_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (f"s{i}", stamp, len(vec), _blob(vec), f"chunk {i}", f"h{i}"),
+        )
+
+
+@pytest.fixture
+def embed_cache_reset():
+    """Backend/ladder caches keyed to mutated env die with each test."""
+    import cairn.graph.embeddings as emb
+
+    emb.reset_backend_cache()
+    yield
+    emb.reset_backend_cache()
+
+
+def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
+    """(a) Default (local) config: one informational PASS line; the historical
+    8 checks keep their names, order, and statuses (D-012 byte-stability)."""
+    monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert [d["name"] for d in data] == [
+        "schema",
+        "embeddings",
+        "ann",
+        "embed_server",
+        "freshness",
+        "parse_errors",
+        "concurrency",
+        "tool_health",
+        "config",
+    ]
+    row = _by_name(data, "embed_server")
+    assert row["status"] == "PASS"
+    assert row["detail"] == "disabled by config (CAIRN_EMBED_BACKEND=local)"
+    assert row["hint"] is None
+
+
+def test_embed_server_pass_healthy_stub(tmp_path, monkeypatch, embed_cache_reset):
+    """(b) Healthy stub (probe 200 + model listed + parity pass on seeded rows)
+    -> PASS naming host, model, and the parity/latency outcome."""
+    vec = _unit([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    server = _StubEmbedServer(["stub-model"], vec)
+    try:
+        _server_env(monkeypatch, server.base_url)
+        db = tmp_path / "graph.db"
+        stamp = f"server/{server.netloc}/stub-model"
+        _make_db(db, setup=lambda conn: _seed_stamp_rows(conn, stamp, vec, n=2))
+
+        result = _run(db, "--json")
+        assert result.exit_code == 0, result.output
+        row = _by_name(json.loads(result.stdout), "embed_server")
+        assert row["status"] == "PASS"
+        assert server.netloc in row["detail"]
+        assert "stub-model" in row["detail"]
+        assert "parity 1.0000" in row["detail"]
+        assert "embed latency" in row["detail"]
+    finally:
+        server.close()
+
+
+def test_embed_server_probe_down_fails_with_remediation(
+    tmp_path, monkeypatch, embed_cache_reset
+):
+    """(c) Closed port -> FAIL naming the base URL with a remediation hint."""
+    base = _dead_base_url()
+    _server_env(monkeypatch, base)
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 1, result.output
+    row = _by_name(json.loads(result.stdout), "embed_server")
+    assert row["status"] == "FAIL"
+    assert base in row["detail"]
+    assert "/models" in row["detail"]
+    assert "start the embedding server" in (row.get("hint") or "")
+
+
+def test_embed_server_model_missing_fails(tmp_path, monkeypatch, embed_cache_reset):
+    """(d) 200 listing without the configured id -> FAIL naming
+    available-vs-configured."""
+    server = _StubEmbedServer(["other-model"], [1.0] * DIM)
+    try:
+        _server_env(monkeypatch, server.base_url, model="gone-model")
+        db = tmp_path / "graph.db"
+        _make_db(db)
+
+        result = _run(db, "--json")
+        assert result.exit_code == 1, result.output
+        row = _by_name(json.loads(result.stdout), "embed_server")
+        assert row["status"] == "FAIL"
+        assert "gone-model" in row["detail"]
+        assert "other-model" in row["detail"]
+        assert "serve the model" in (row.get("hint") or "")
+    finally:
+        server.close()
+
+
+def test_embed_server_parity_fail_warns_with_mean(
+    tmp_path, monkeypatch, embed_cache_reset
+):
+    """(e) Stored rows the stub can't reproduce -> WARN carrying the measured
+    mean (advice: exit stays 0)."""
+    stored = _unit([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    served = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # orthogonal -> cosine 0.0
+    server = _StubEmbedServer(["stub-model"], served)
+    try:
+        _server_env(monkeypatch, server.base_url)
+        db = tmp_path / "graph.db"
+        stamp = f"server/{server.netloc}/stub-model"
+        _make_db(db, setup=lambda conn: _seed_stamp_rows(conn, stamp, stored))
+
+        result = _run(db, "--json")
+        assert result.exit_code == 0, result.output
+        row = _by_name(json.loads(result.stdout), "embed_server")
+        assert row["status"] == "WARN"
+        assert "0.0000" in row["detail"]
+        assert "below gate" in row["detail"]
+        assert "cairn embed" in (row.get("hint") or "")
+    finally:
+        server.close()
+
+
+def test_embed_server_parity_vacuous_with_zero_rows(
+    tmp_path, monkeypatch, embed_cache_reset
+):
+    """(f) No stored rows under the stamp -> parity skipped (vacuous), PASS.
+
+    The stub sees exactly one embed POST (the latency probe); the parity
+    sampler never fires."""
+    server = _StubEmbedServer(["stub-model"], [1.0] * DIM)
+    try:
+        _server_env(monkeypatch, server.base_url)
+        db = tmp_path / "graph.db"
+        _make_db(db)
+
+        result = _run(db, "--json")
+        assert result.exit_code == 0, result.output
+        row = _by_name(json.loads(result.stdout), "embed_server")
+        assert row["status"] == "PASS"
+        assert "parity vacuous" in row["detail"]
+        assert server.embed_requests == 1
+    finally:
+        server.close()
+
+
+def test_embed_server_active_degradation_warn_entry(
+    tmp_path, monkeypatch, embed_cache_reset
+):
+    """(g) An active ladder degradation (FR-012) surfaces as an appended WARN
+    entry naming rung/reason, independent of the current probe verdict."""
+    from cairn.graph import embed_ladder
+
+    server = _StubEmbedServer(["stub-model"], [1.0] * DIM)
+    try:
+        _server_env(monkeypatch, server.base_url)
+        db = tmp_path / "graph.db"
+        _make_db(db)
+        monkeypatch.setitem(
+            embed_ladder._LADDER_CACHE,
+            "state",
+            embed_ladder.LadderState(3, "server_down", "server unreachable", None, True),
+        )
+
+        result = _run(db, "--json")
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        # The server answers now, so the aggregate check PASSes...
+        assert _by_name(data, "embed_server")["status"] == "PASS"
+        # ...but the degradation recorded earlier in this process still surfaces.
+        row = _by_name(data, "embed_server_degraded")
+        assert row["status"] == "WARN"
+        assert "rung 3" in row["detail"]
+        assert "server_down" in row["detail"]
+    finally:
+        server.close()
+
+
+def test_embed_server_exit_mapping_unchanged(tmp_path, monkeypatch, embed_cache_reset):
+    """(h) Exit semantics untouched: the informational line keeps exit 0, and
+    the new check's FAIL alone flips the same store to exit 1."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
+    assert _run(db).exit_code == 0
+
+    _server_env(monkeypatch, _dead_base_url())
+    result = _run(db)
+    assert result.exit_code == 1
+    assert "FAIL embed_server" in result.output

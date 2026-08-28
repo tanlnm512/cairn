@@ -23,7 +23,12 @@ from cairn.dashboard.tokenizer import (
     estimate_tokens,
 )
 from cairn.graph.ann_index import ann_backend_enabled, index_exists, index_row_count
-from cairn.graph.embeddings import current_model, embed_count, is_hash_fallback
+from cairn.graph.embeddings import (
+    _backend_name,
+    current_model,
+    embed_count,
+    is_hash_fallback,
+)
 from cairn.graph.reranker import reranker_available
 from cairn.graph.schema import get_db
 from cairn.llm.tasks import list_tasks
@@ -452,10 +457,10 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         "db_size_bytes": db_size_bytes,
         "last_build_at": last_build_at,
         "last_build_age": last_build_age,
-        "embed_backend": (
-            os.environ.get("CAIRN_EMBED_BACKEND", "local").strip().lower()
-            or "local"
-        ),
+        # D-008 precedence via the embeddings resolver (env > config file >
+        # "local"), not a bare env read — data.py already imports the
+        # embeddings module at load, so this adds no import cost here.
+        "embed_backend": _backend_name(),
         "hash_fallback": probes.get("hash_fallback"),
         "ann_configured": (
             os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()

@@ -274,6 +274,25 @@ def _staleness_banner(conn, file_paths) -> str:
     )
 
 
+def _embed_degradation_footnote() -> str:
+    """The FR-013 degradation footnote for MCP query-tool results.
+
+    Cached-state read only (zero side effects -- never evaluates the ladder);
+    "" when no degradation is active, else one line naming the rung, reason,
+    and remediation.
+    """
+    from cairn.graph.embed_ladder import degradation_footnote
+
+    return degradation_footnote()
+
+
+def _append_embed_degradation_footnote(text: str) -> str:
+    """``text`` with the FR-013 degradation footnote appended as one trailing
+    line; byte-identical when no degradation is active."""
+    footnote = _embed_degradation_footnote()
+    return f"{text}\n{footnote}" if footnote else text
+
+
 def _build_age_str(started_at) -> str | None:
     """Human-readable age of a ``build_runs.started_at`` value, or None.
 

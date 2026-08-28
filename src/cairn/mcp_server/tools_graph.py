@@ -14,7 +14,13 @@ import os
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _conn, _repo_of, _staleness_banner, mcp
+from ._server_core import (
+    _append_embed_degradation_footnote,
+    _conn,
+    _repo_of,
+    _staleness_banner,
+    mcp,
+)
 from .metric_buffering import instrument
 from .structured import (
     GetCallersResult,
@@ -437,7 +443,9 @@ def explore(query: str) -> str:
     hops = result["dispatch_hops"]
 
     if not seeds:
-        return f"No symbols matching '{query}'. Try a broader query or use search_symbols."
+        return _append_embed_degradation_footnote(
+            f"No symbols matching '{query}'. Try a broader query or use search_symbols."
+        )
 
     out = [f'=== explore: "{query}" ===']
     out.append(f"{len(seeds)} symbol(s) matched.")
@@ -516,7 +524,7 @@ def explore(query: str) -> str:
             out.append(f'  "{tgt}" could dispatch to: {cands}')
     else:
         out.append("  (none — all call edges were precisely resolved)")
-    return "\n".join(out)
+    return _append_embed_degradation_footnote("\n".join(out))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
@@ -621,7 +629,9 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
     }
     if structured:
         return SemanticSearchResult.model_validate(data)
-    return _render_semantic_search(data, include_callers=include_callers)
+    return _append_embed_degradation_footnote(
+        _render_semantic_search(data, include_callers=include_callers)
+    )
 
 
 def _render_semantic_search(data: dict, include_callers: bool = False) -> str:

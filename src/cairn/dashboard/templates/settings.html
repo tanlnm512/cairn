@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Settings — Cairn Dashboard{% endblock %}
+{#- The env-pin marker (D-008): an env var shadowing the file value must be
+    visible, or a save that "does nothing" is unexplainable. The API key's
+    marker never echoes the effective value — the key is write-only. -#}
+{% macro env_pin(field, show_effective=true) -%}
+  {%- if field.pinned -%}
+    <span class="env-pin">overridden by environment{% if show_effective and field.effective %} — effective <code>{{ field.effective }}</code>{% endif %}</span>
+  {%- endif -%}
+{%- endmacro %}
+{% block content %}
+<section class="panel">
+  <h1>Settings</h1>
+  <p class="muted">
+    Embedding configuration, persisted to <code>~/.cairn/config.json</code>.
+    Environment variables still take precedence over saved values — a pinned
+    field is marked below. Changes reach running cairn processes without a
+    restart.
+  </p>
+  {% if saved %}
+  <p role="status" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--ok) 12%, transparent); font-weight: 600;">Settings saved.</p>
+  {% endif %}
+  {% if error %}
+  <p role="alert" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font-weight: 600;">{{ error }}</p>
+  {% endif %}
+  <form class="graph-controls" method="post" action="/settings/save">
+    <label>Backend
+      <select name="CAIRN_EMBED_BACKEND">
+        {% for b in backends %}
+        <option value="{{ b }}"{% if b == backend_value %} selected{% endif %}>{{ b }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {{ env_pin(cfg['CAIRN_EMBED_BACKEND']) }}
+    <label>Server model id
+      <input type="text" name="CAIRN_EMBED_SERVER_MODEL" value="{{ cfg['CAIRN_EMBED_SERVER_MODEL'].prefill }}">
+    </label>
+    {{ env_pin(cfg['CAIRN_EMBED_SERVER_MODEL']) }}
+    <label>API key
+      <input type="password" name="CAIRN_EMBED_API_KEY" value="" placeholder="········" autocomplete="off">
+    </label>
+    <span class="muted">API key: {% if cfg['CAIRN_EMBED_API_KEY'].effective %}<span class="badge badge-ok">set</span>{% else %}<span class="badge">not set</span>{% endif %} {{ env_pin(cfg['CAIRN_EMBED_API_KEY'], show_effective=false) }}</span>
+    <label>Timeout (s)
+      <input type="text" name="CAIRN_EMBED_TIMEOUT" value="{{ cfg['CAIRN_EMBED_TIMEOUT'].prefill }}">
+    </label>
+    {{ env_pin(cfg['CAIRN_EMBED_TIMEOUT']) }}
+    <label>Server batch
+      <input type="text" name="CAIRN_EMBED_SERVER_BATCH" value="{{ cfg['CAIRN_EMBED_SERVER_BATCH'].prefill }}">
+    </label>
+    {{ env_pin(cfg['CAIRN_EMBED_SERVER_BATCH']) }}
+    <label>Migration alias (model stamp)
+      <input type="text" name="CAIRN_EMBED_MODEL_STAMP" value="{{ cfg['CAIRN_EMBED_MODEL_STAMP'].prefill }}">
+    </label>
+    {{ env_pin(cfg['CAIRN_EMBED_MODEL_STAMP']) }}
+    <label>Base URL
+      <input type="text" name="CAIRN_EMBED_BASE_URL" value="{{ cfg['CAIRN_EMBED_BASE_URL'].prefill }}">
+    </label>
+    {{ env_pin(cfg['CAIRN_EMBED_BASE_URL']) }}
+    <label class="confirm-base-url">
+      <input type="checkbox" name="confirm_base_url" value="1">
+      Confirm base-URL change
+    </label>
+    <button type="submit">Save settings</button>
+  </form>
+
+  <h2>Parity check</h2>
+  <p class="muted">
+    Re-embeds a sample of stored chunks through the configured backend and
+    compares against what is stored (gate 0.98).
+  </p>
+  <form class="graph-controls" method="post" action="/settings/parity-check">
+    <button type="submit">Run parity check</button>
+  </form>
+  {% if parity %}
+  <p>
+    Verdict: <span class="badge badge-{{ 'ok' if parity.passed else 'error' }}">{{ 'pass' if parity.passed else 'fail' }}</span>
+    mean cosine <strong>{{ parity.mean }}</strong>,
+    sampled {{ parity.sampled }} chunks — {{ parity.reason }}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

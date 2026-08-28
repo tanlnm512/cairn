@@ -1,0 +1,1 @@
+- [embedding-server-backend](embedding-server-backend/spec.md) — done (implemented 2026-08-27)
