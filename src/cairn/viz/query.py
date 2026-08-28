@@ -166,17 +166,51 @@ def get_repo_graph(conn: sqlite3.Connection, repo: str, max_nodes: int = 30) -> 
             "metadata": {"scope": "repo", "repo": repo, "node_count": len(nodes)}}
 
 
-def get_module_graph(conn: sqlite3.Connection, module: str) -> Dict:
-    """All symbols in a module + their internal edges."""
+_MODULE_CAP = 50
+_MODULE_EDGE_CAP = 100
+
+
+def get_module_graph(
+    conn: sqlite3.Connection, module: str = "", include_tests: bool = False
+) -> Dict:
+    """Symbols in a module + their internal edges, curated for usefulness.
+
+    An empty ``module`` (the dashboard's default landing view) matches every
+    path, so "first 50 by rowid" used to fill the canvas with an arbitrary
+    sample — dominated by whichever files the indexer touched first (in
+    practice, tests). Candidates are instead ranked by degree (fan-in +
+    fan-out of any edges) then name, so the cap lands on the symbols that
+    carry the module's structure. Tests are excluded by default (the
+    ``is_test_symbol`` heuristics from the impact layer); ``include_tests``
+    opts back in. ``metadata.tests_included`` and ``metadata.truncated``
+    report both choices honestly.
+    """
+    from ..graph.tests import is_test_symbol
+
     cur = conn.cursor()
     nodes = {}
     edges = []
-    for r in cur.execute(
-        "SELECT s.name, s.kind, f.path, f.repo_id FROM symbols s "
-        "JOIN files f ON s.file_id = f.id WHERE f.path LIKE ? LIMIT 50",
+    rows = cur.execute(
+        "SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
+        "(SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) + "
+        "(SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) AS degree "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE f.path LIKE ? "
+        "ORDER BY degree DESC, s.name ASC",
         (f"%{module}%",),
-    ).fetchall():
+    ).fetchall()
+    kept = 0
+    eligible = 0
+    for r in rows:
+        if not include_tests and is_test_symbol(
+            r["path"], r["name"], r["qualified_name"] or ""
+        )["is_test"]:
+            continue
+        eligible += 1
+        if eligible > _MODULE_CAP:
+            continue
         _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
+        kept += 1
     # Internal edges.
     if nodes:
         names = list(nodes.keys())
@@ -185,14 +219,24 @@ def get_module_graph(conn: sqlite3.Connection, module: str) -> Dict:
             f"SELECT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt, e.kind "
             f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
             f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
-            f"WHERE s1.name IN ({placeholders}) LIMIT 100",
+            f"WHERE s1.name IN ({placeholders}) LIMIT {_MODULE_EDGE_CAP}",
             names,
         ).fetchall()
         for r in rows:
             if r["tgt"] in nodes:
                 edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
-    return {"nodes": list(nodes.values()), "edges": edges,
-            "metadata": {"scope": "module", "module": module, "node_count": len(nodes), "edge_count": len(edges)}}
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "metadata": {
+            "scope": "module",
+            "module": module,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "tests_included": include_tests,
+            "truncated": eligible > _MODULE_CAP,
+        },
+    }
 
 
 # --- helpers -------------------------------------------------------------

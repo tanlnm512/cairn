@@ -2336,3 +2336,136 @@ def test_tokens_render_distinguishes_truncation_unknown_from_zero(fresh_db):
         row = _rendered_tool_row(html, no_evidence)
         assert ">unknown</td>" in row
         assert ">—</td>" in row
+
+
+# ---------------------------------------------------------------------------
+# Module-scope curation (graph-tab info panel): the empty-focus default shows
+# connectivity-ranked production hubs instead of an arbitrary first-50 sample,
+# and tests are excluded by default with an explicit opt-in.
+# ---------------------------------------------------------------------------
+
+
+def _seed_hubs(conn):
+    """55 test symbols inserted first (rowid order), then 6 production
+    symbols whose edges make hub_main the top hub. Under today's
+    LIMIT-50-rowid sample the canvas is entirely test nodes."""
+    conn.executemany(
+        "INSERT INTO repos (id, name, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [("hub", "hub", ".", "python", "2026-08-27T00:00:00")],
+    )
+    conn.executemany(
+        "INSERT INTO files (id, repo_id, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("f_t1", "hub", "tests/test_pack.py", "python", "2026-08-27T00:00:00"),
+            ("f_p1", "hub", "src/pack/core.py", "python", "2026-08-27T00:00:00"),
+            ("f_p2", "hub", "src/pack/util.py", "python", "2026-08-27T00:00:00"),
+        ],
+    )
+    rows = [
+        (f"s_t{i}", "f_t1", f"test_case_{i:02d}",
+         f"tests.test_pack.test_case_{i:02d}", "function")
+        for i in range(55)
+    ]
+    rows += [
+        ("s_p0", "f_p1", "hub_main", "pack.core.hub_main", "function"),
+        ("s_p1", "f_p1", "in_a", "pack.core.in_a", "function"),
+        ("s_p2", "f_p1", "in_b", "pack.core.in_b", "function"),
+        ("s_p3", "f_p2", "out_a", "pack.util.out_a", "function"),
+        ("s_p4", "f_p2", "out_b", "pack.util.out_b", "function"),
+        ("s_p5", "f_p2", "pack_leaf", "pack.util.pack_leaf", "function"),
+    ]
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, docstring) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [r + (None,) for r in rows[:-6]]
+        + [r + ("the hub.",) for r in rows[-6:]],
+    )
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            ("he1", "s_p0", "s_p3", "calls"),
+            ("he2", "s_p0", "s_p4", "calls"),
+            ("he3", "s_p1", "s_p0", "calls"),
+            ("he4", "s_p2", "s_p0", "calls"),
+            ("he5", "s_t0", "s_p0", "calls"),
+        ],
+    )
+    conn.commit()
+
+
+def test_module_default_excludes_tests_and_ranks_hubs(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_hubs(fresh_db)
+    graph = get_graph(fresh_db)  # scope defaults to module, no focus
+
+    ids = {n["id"] for n in graph["nodes"]}
+    assert ids == {"hub_main", "in_a", "in_b", "out_a", "out_b", "pack_leaf"}
+    assert graph["metadata"]["tests_included"] is False
+    assert graph["metadata"]["node_count"] == 6
+    assert graph["metadata"]["edge_count"] == 4  # he1-he4; he5's test source is dropped
+    # Ranked by degree: the hub first, the unconnected leaf last.
+    assert graph["nodes"][0]["id"] == "hub_main"
+    assert graph["nodes"][-1]["id"] == "pack_leaf"
+
+
+def test_module_scope_include_tests_opt_in(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_hubs(fresh_db)
+    graph = get_graph(fresh_db, include_tests=True)
+
+    ids = {n["id"] for n in graph["nodes"]}
+    assert "test_case_00" in ids
+    assert "hub_main" in ids
+    assert graph["metadata"]["tests_included"] is True
+    assert graph["metadata"]["truncated"] is True  # 61 candidates > the 50 cap
+
+
+def test_module_scope_focus_filters_tests_too(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_hubs(fresh_db)
+    # "pack" matches production AND test paths (tests/test_pack.py).
+    default = get_graph(fresh_db, focus="pack")
+    assert not any(n["id"].startswith("test_") for n in default["nodes"])
+    assert "hub_main" in {n["id"] for n in default["nodes"]}
+
+    opted_in = get_graph(fresh_db, focus="pack", include_tests=True)
+    assert "test_case_00" in {n["id"] for n in opted_in["nodes"]}
+
+
+# ---------------------------------------------------------------------------
+# Symbol inspect payload (graph-tab side panel): one call answering
+# "what is this, what feeds it, what does it touch, what breaks".
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_symbol_returns_panel_payload(fresh_db):
+    from cairn.dashboard.data import inspect_symbol
+
+    _seed_hubs(fresh_db)
+    data = inspect_symbol(fresh_db, "hub_main")
+
+    assert data["found"] is True
+    assert data["symbol"]["name"] == "hub_main"
+    assert data["symbol"]["kind"] == "function"
+    assert data["symbol"]["file"] == "src/pack/core.py"
+    assert data["symbol"]["docstring"] == "the hub."
+    assert {c["name"] for c in data["callers"]} >= {"in_a", "in_b", "test_case_00"}
+    assert {c["name"] for c in data["callees"]} >= {"out_a", "out_b"}
+    assert data["impact"]["total"] >= 2
+    tests = {t["symbol"] for t in data["impact"]["affected_tests"]}
+    assert "test_case_00" in tests
+    # The ambiguous-name escape hatch: same-name rows listed for disambiguation.
+    assert data["same_name_count"] == 1
+
+
+def test_inspect_symbol_unknown_name_reports_not_found(fresh_db):
+    from cairn.dashboard.data import inspect_symbol
+
+    _seed_hubs(fresh_db)
+    assert inspect_symbol(fresh_db, "no_such_symbol") == {
+        "found": False,
+        "name": "no_such_symbol",
+    }

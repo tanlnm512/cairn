@@ -33,6 +33,10 @@
     <label>Depth
       <input type="number" name="depth" min="1" value="{{ depth }}">
     </label>
+    <label class="graph-tests-toggle">
+      <input type="checkbox" name="tests" value="1"{% if include_tests %} checked{% endif %}>
+      Include tests
+    </label>
     <button type="submit">Apply</button>
   </form>
   {#- Layout toggle (FR-004): links swap only the layout param, keeping
@@ -46,6 +50,7 @@
   {%- if focus %}{% set _ = q.update({"focus": focus}) %}{% endif %}
   {%- if repo %}{% set _ = q.update({"repo": repo}) %}{% endif %}
   {%- if depth %}{% set _ = q.update({"depth": depth}) %}{% endif %}
+  {%- if include_tests %}{% set _ = q.update({"tests": "1"}) %}{% endif %}
   {{- links.url(request.url.path, q) }}
   {%- endmacro %}
   <p class="muted" id="layout-control">
@@ -75,7 +80,8 @@
     scope queries are capped, so a count at the cap means the graph was truncated.
   </p>
   {% if graph.nodes %}
-  <div class="graph-stage">
+  <div class="graph-layout">
+    <div class="graph-stage">
     <div id="graph-canvas" data-layout="{{ layout }}" class="graph-canvas"></div>
     {#- Overlay controls float over the canvas's bottom-left; app.js
         wires the data-graph-action buttons to vis zoom/fit. -#}
@@ -90,6 +96,11 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
       </button>
     </div>
+    </div>
+    {#- Side panel (graph-tab info panel): app.js fills it from
+        /graph/inspect when a node is selected; hidden when empty so the
+        canvas keeps the full width. -#}
+    <aside id="graph-panel" class="graph-panel" aria-live="polite" hidden></aside>
   </div>
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>

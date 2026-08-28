@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Graph tab curation and side panel (dashboard): the module scope's default
+  view now ranks candidates by degree (fan-in + fan-out) instead of an
+  arbitrary first-50 rowid sample — which had been filling the canvas with
+  test nodes — and excludes tests by default behind an explicit
+  "Include tests" toggle, with `tests_included`/`truncated` reported in the
+  scope metadata. A new `/graph/inspect` endpoint answers the panel's
+  question for one symbol in a single call — identity (kind, file:line,
+  docstring, same-name count), resolved callers and callees (capped, with
+  honest truncation flags), and the depth-3 impact view with the
+  affected-test classification reused from the impact layer. Selecting a
+  node on the canvas fills the side panel; deselecting collapses it and the
+  canvas keeps the full width.
 - Environment propagation and wiring verification for custom `CAIRN_HOME`
   installs (root cause of #70): every cairn-generated integration now
   carries the store location — stdio MCP registrations embed
