@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dashboard graph UX and landing coverage: the graph side panel's
+  callers/callees/impact/affected-test rows are deep links into the
+  symbol-focused graph (the store rides the href), and the FR-013
+  degradation banner links one click into the Embeddings status view
+  carrying the matching rung detail. The landing launcher grid now
+  covers every sidebar view, including the Embeddings and Settings
+  sections added in 0.16.0.
 - Graph tab curation and side panel (dashboard): the module scope's default
   view now ranks candidates by degree (fan-in + fan-out) instead of an
   arbitrary first-50 rowid sample — which had been filling the canvas with
@@ -101,6 +108,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note) and retrieval.md (stamps, alias gate, ladder, doctor rule).
 
 ### Fixed
+- Blank dashboard graph canvas: the module scope's name-based edge join
+  multiplied same-named symbols across repos into parallel edges (10 of
+  the 11 rendered edges were one `__call__`→`append` pair), and parallel
+  edges send vis-network's force layout into a never-converging
+  simulation — zero pixels painted, in every browser. Edges are now
+  deduplicated on `(source, target, kind)` at the query layer and again
+  client-side on initial load, and degree-ranked candidates exclude
+  minified bundles and vendored/build paths (`*.min.*`, `vendor/`,
+  `dist/`, `node_modules/`; `metadata.vendored_excluded` reports the
+  count — one committed `vis-network.min.js` alone carried 1,060 junk
+  symbols). The scanner gains a matching non-overridable
+  `minified_asset` skip so future builds never index such bundles;
+  existing stores are covered at query time without a reindex.
+- The topbar's live-refresh Pause control no longer renders (dead) on
+  the eight views without a live region: the `display: flex` rule had
+  been overriding the `hidden` attribute.
+- Health and Embeddings status views render stored timestamps
+  humanized (`2026-08-21 09:00:00 UTC`, not raw ISO) and an
+  unreadable vec0 row count as "row count unavailable" instead of the
+  literal Python `None`.
 - A failed embedding backend no longer crashes `semantic_search`: the
   dense leg is guarded end to end (first pass, PRF second pass, ANN and
   brute-force legs) and hard failures flow into the ladder above.
