@@ -187,27 +187,32 @@
     known[n.id] = true;
   });
   var nodes = new vis.DataSet(data.nodes.map(nodeView));
-  var edges = new vis.DataSet(
-    data.edges
-      .filter(function (e) {
-        return known[e.source] && known[e.target];
-      })
-      .map(function (e, i) {
-        return {
-          id: i,
-          from: e.source,
-          to: e.target,
-          title: [e.kind, e.label].filter(Boolean).join(" — ")
-        };
-      })
-  );
-  var nextEdgeId = edges.length;
+  /* Parallel edges (same source, target AND kind) collapse to one vis
+     edge. The viz layer dedupes its name-based join, but a store built
+     before that fix still serves duplicates — and parallel edges
+     multiply the force layout's spring forces until the simulation
+     never converges (the blank-canvas bug). edgeKeys doubles as
+     merge()'s dedupe set below. */
   var edgeKeys = {};
+  var edgeViews = [];
   data.edges.forEach(function (e) {
-    if (known[e.source] && known[e.target]) {
-      edgeKeys[edgeKey(e.source, e.target, e.kind)] = true;
+    if (!known[e.source] || !known[e.target]) {
+      return;
     }
+    var key = edgeKey(e.source, e.target, e.kind);
+    if (edgeKeys[key]) {
+      return;
+    }
+    edgeKeys[key] = true;
+    edgeViews.push({
+      id: edgeViews.length,
+      from: e.source,
+      to: e.target,
+      title: [e.kind, e.label].filter(Boolean).join(" — ")
+    });
   });
+  var edges = new vis.DataSet(edgeViews);
+  var nextEdgeId = edges.length;
   /* Layout (FR-004): the initial choice comes from the server-rendered
      data-layout attribute; "hier" starts the network hierarchical
      top-down. Toggling later swaps the option on the live instance. */
