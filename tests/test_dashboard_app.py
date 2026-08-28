@@ -738,7 +738,9 @@ def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
     from cairn.dashboard.app import _human_size
 
     assert _human_size(os.stat(db_path).st_size) in resp.text
-    assert "2026-08-20T07:00:00Z" in resp.text
+    # build_runs.started_at renders humanized (isots), never raw ISO.
+    assert "2026-08-20 07:00:00 UTC" in resp.text
+    assert "2026-08-20T07:00:00Z" not in resp.text
     assert re.search(r"just now|\b\d+[smhd] old\b", resp.text)
 
     # conftest clears CAIRN_EMBED_BACKEND, so the local default is active.
@@ -768,6 +770,26 @@ def test_health_route_empty_db_renders_empty_state(tmp_path):
     assert resp.status_code == 200
     assert "no build_runs recorded" in resp.text
     assert "no embeddings to index yet" in resp.text
+
+
+def test_health_route_unknown_index_row_count_is_honest(tmp_path, monkeypatch):
+    """A present vec0 index whose row count cannot be read (the defensive
+    None from index_row_count) renders an honest note — never the literal
+    Python None ("vec0 index: None rows")."""
+    import cairn.dashboard.data as dashboard_data
+
+    monkeypatch.setattr(dashboard_data, "embed_count", lambda conn: 42)
+    monkeypatch.setattr(dashboard_data, "index_exists", lambda conn, model: True)
+    monkeypatch.setattr(
+        dashboard_data, "index_row_count", lambda conn, model: None
+    )
+    client = _panel_client(
+        tmp_path, _health_db_file(tmp_path, seed=True), str(tmp_path / "knowledge")
+    )
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert "row count unavailable" in resp.text
+    assert "None rows" not in resp.text
 
 
 def _seed_memories(knowledge_dir):
@@ -3373,8 +3395,10 @@ def test_embeddings_status_renders_backend_stamp_counts_and_freshness(
     assert '<td class="num">1</td>' in resp.text  # code: current model only
     assert '<td class="num">2</td>' in resp.text  # knowledge rows
     assert '<td class="num">0</td>' in resp.text  # memory: a zero, not unknown
-    assert "2026-08-21T09:00:00" in resp.text  # MAX(code embedded_at)
-    assert "2026-08-20T12:30:00" in resp.text  # MAX(knowledge embedded_at)
+    # embedded_at renders humanized (isots), never raw ISO.
+    assert "2026-08-21 09:00:00 UTC" in resp.text  # MAX(code embedded_at)
+    assert "2026-08-20 12:30:00 UTC" in resp.text  # MAX(knowledge embedded_at)
+    assert "2026-08-21T09:00:00" not in resp.text
     assert "never" in resp.text  # memory has never embedded
 
 

@@ -89,6 +89,20 @@ def _human_ts(value) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _human_iso(value) -> str:
+    """ISO-8601 timestamp string as a UTC wall-clock string (``—`` when
+    absent or unparseable). Status views render stored ISO columns
+    (build_runs.started_at, embeddings.embedded_at) through this so a
+    raw ``2026-08-28T01:30:08.173238+00:00`` never reaches the page."""
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return "—"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def _human_duration(ms) -> str:
     """Milliseconds as ``ms`` below one second, ``s`` above (one decimal)."""
     if ms is None:
@@ -203,6 +217,7 @@ def create_app(
     )
     templates.env.filters["filesize"] = _human_size
     templates.env.filters["epoch"] = _human_ts
+    templates.env.filters["isots"] = _human_iso
     templates.env.filters["duration"] = _human_duration
     templates.env.filters["tokens"] = _est_tokens
     templates.env.filters["span"] = _human_span
