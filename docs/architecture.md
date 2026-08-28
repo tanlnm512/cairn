@@ -3,7 +3,10 @@
 Read this when you need the system shape: what the pieces are, where state
 lives, and which module owns which job.
 
-![System architecture diagram](diagrams/system-architecture.html)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/system-architecture-dark.png">
+  <img src="diagrams/system-architecture.png" alt="System architecture diagram">
+</picture>
 
 Open [diagrams/system-architecture.html](diagrams/system-architecture.html)
 for the full-size version.

@@ -4,7 +4,10 @@ Read this when you're tuning search quality, touching `semantic.py` /
 `fusion.py` / `reranker.py`, or deciding whether a result's provenance is
 trustworthy.
 
-![Retrieval pipeline diagram](diagrams/retrieval-pipeline.html)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/retrieval-pipeline-dark.png">
+  <img src="diagrams/retrieval-pipeline.png" alt="Retrieval pipeline diagram">
+</picture>
 
 Open [diagrams/retrieval-pipeline.html](diagrams/retrieval-pipeline.html) for
 the full-size version.
