@@ -521,6 +521,17 @@ body.app-shell {
   font-weight: 500;
 }
 
+/* Panel names are deep links into the symbol-focused graph: the accent
+   comes from the global anchor rule; underline only on intent. */
+.panel-row a.panel-name {
+  text-decoration: none;
+}
+
+.panel-row a.panel-name:hover,
+.panel-row a.panel-name:focus {
+  text-decoration: underline;
+}
+
 .panel-empty {
   margin: 0.15rem 0;
   color: var(--muted);

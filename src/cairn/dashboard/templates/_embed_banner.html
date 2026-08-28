@@ -2,9 +2,13 @@
   FR-013 degradation banner, shared by every page via base.html. Renders
   zero bytes unless the context carries a non-empty embed_banner (the
   embed_ladder.degradation_banner() line: rung / reason / remediation), so
-  healthy pages stay byte-identical. Inline styles reuse the badge-warn
-  recipe and the theme's --warn token (dark-theme safe) because the banner
-  must live in the templates only.
+  healthy pages stay byte-identical — every block tag here carries
+  whitespace control because the include site's junction is byte-pinned.
+  Inline styles reuse the badge-warn recipe and the theme's --warn token
+  (dark-theme safe) because the banner must live in the templates only.
+  The status link rides the FR-003 store seam (links.url) and inherits
+  the banner's warn color inline.
 -#}
-{% if embed_banner %}<div class="embed-banner" role="status" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font-size: 0.85rem; font-weight: 600;">{{ embed_banner }}</div>
+{%- import "_links.html" as links with context -%}
+{%- if embed_banner %}<div class="embed-banner" role="status" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font-size: 0.85rem; font-weight: 600;">{{ embed_banner }} <a href="{{ links.url('/embeddings') }}" style="color: inherit; text-decoration: underline;">open Embeddings status</a></div>
 {% endif %}

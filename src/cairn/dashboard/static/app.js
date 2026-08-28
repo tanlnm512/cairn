@@ -583,6 +583,17 @@
     return node;
   }
 
+  /* Side-panel rows deep-link into the symbol-focused graph — the same
+     seam the inspect hint and the search box navigate with (full page
+     load, browser-back returns; the store rides the href). */
+  function panelFocusUrl(name) {
+    return (
+      "/graph?scope=symbol&focus=" +
+      encodeURIComponent(name) +
+      (inspectStore ? "&store=" + encodeURIComponent(inspectStore) : "")
+    );
+  }
+
   function panelRows(list, items, nameKey, withDepth) {
     if (!items.length) {
       list.appendChild(el("li", "panel-empty", "none"));
@@ -590,7 +601,9 @@
     }
     items.forEach(function (item) {
       var row = el("li", "panel-row");
-      row.appendChild(el("span", "panel-name", item[nameKey]));
+      var name = el("a", "panel-name", item[nameKey]);
+      name.href = panelFocusUrl(item[nameKey]);
+      row.appendChild(name);
       var sub = item.file || "";
       if (withDepth && item.depth !== undefined && item.depth !== null) {
         sub = "depth " + item.depth + (sub ? " — " + sub : "");

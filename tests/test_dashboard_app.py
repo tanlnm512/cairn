@@ -2984,6 +2984,8 @@ def test_embed_banner_names_rung_reason_and_remediation_on_every_page(
     assert "rung 3" in resp.text
     assert "model_missing" in resp.text
     assert "CAIRN_EMBED_SERVER_MODEL" in resp.text  # the remediation
+    # The banner links one click into the status view (store riding).
+    assert 'href="/embeddings?store=' in resp.text or 'href="/embeddings"' in resp.text
 
 
 def test_embed_banner_prefers_this_process_ladder_verdict(
