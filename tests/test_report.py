@@ -66,6 +66,7 @@ _DOCTOR_NAMES = [
     "concurrency",
     "tool_health",
     "config",
+    "environment",
 ]
 
 

@@ -1,2 +1,2 @@
 - [embedding-server-backend](embedding-server-backend/spec.md) — done (implemented 2026-08-27)
-- [env-propagation](env-propagation/spec.md) — draft (created 2026-08-28)
+- [env-propagation](archive/2026-08-28-env-propagation/spec.md) — done (implemented 2026-08-28)

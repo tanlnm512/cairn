@@ -22,6 +22,7 @@ ever executes.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -77,6 +78,37 @@ def _spy_subprocess(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     return calls
+
+
+def _repoint_home_bindings(monkeypatch, home: Path) -> None:
+    """Re-point paths.py's import-time CAIRN_HOME bindings into the sandbox.
+
+    Same pit test_config_probe.py fixes for the probe: paths.py binds
+    CAIRN_HOME / REGISTRY_FILE from os.environ at import time (under pytest,
+    collection time), while resolve_store and _load_registry read the globals
+    at call time. Without the re-point an in-process install-time comparison
+    would use the collector's real ~/.cairn instead of the test's custom home.
+    """
+    from cairn import paths
+
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    monkeypatch.setattr(paths, "REGISTRY_FILE", home / "workspaces.json")
+
+
+def _shim_on_path(tmp_path: Path, monkeypatch, name: str, body: str) -> Path:
+    """Install an executable shim script called `name` first on PATH.
+
+    Real-subprocess shadowing (no subprocess patching, C-04): anything that
+    resolves `name` off PATH -- the installer's resolve_cg_command, a spawned
+    probe -- runs the shim. Returns the shim path.
+    """
+    shim_dir = tmp_path / f"_shim_{name}"
+    shim_dir.mkdir(exist_ok=True)
+    shim = shim_dir / name
+    shim.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return shim
 
 
 # --------------------------------------------------------------------------
@@ -187,6 +219,221 @@ class TestHookIdempotency:
         unrelated = {"command": "echo hi", "timeout": 1}
         assert _entry_present(cur, same_ep_other_path), "path change must not duplicate"
         assert not _entry_present(cur, unrelated)
+
+
+# --------------------------------------------------------------------------
+# FR-002: hook command strings embed the CAIRN_HOME assignment iff non-default
+# --------------------------------------------------------------------------
+
+class TestHookCairnHomePrefix:
+    """Hook env contract (tech-spec D-009): generated hook command strings
+    carry a `CAIRN_HOME=<path> ` prefix when CAIRN_HOME resolves to a
+    non-default home and stay byte-identical to today's env-less commands when
+    it is default (unset, or explicitly set to Path.home()/".cairn"). The git
+    post-commit hook gains one quoted `export CAIRN_HOME="<path>"` line right
+    after the shebang. Uninstall/idempotency matching keys on the
+    `cairn.hooks.claude_hooks <entrypoint>` substring, so the prefix must not
+    break recognition -- pinned here with hand-prefixed commands."""
+
+    @staticmethod
+    def _custom_home_env(monkeypatch) -> dict[str, str]:
+        monkeypatch.setenv("CAIRN_HOME", "~/custom-cairn-home")
+        return {"CAIRN_HOME": str(Path.home() / "custom-cairn-home")}
+
+    # -- custom home: the prefix is present ----------------------------------
+
+    def test_claude_shape_hook_commands_carry_prefix(self, monkeypatch):
+        env = self._custom_home_env(monkeypatch)
+        from cairn.agent_install.clients.claude import claude_hooks_block
+
+        block = claude_hooks_block()
+        post_edit = block["PostToolUse"][0]["hooks"][0]["command"]
+        session_end = block["Stop"][0]["hooks"][0]["command"]
+        for cmd, ep in ((post_edit, "post_edit"), (session_end, "session_end")):
+            assert cmd.startswith(f"CAIRN_HOME={env['CAIRN_HOME']} "), (
+                f"{ep} hook command must carry the CAIRN_HOME prefix, got: {cmd}"
+            )
+            assert f"-m cairn.hooks.claude_hooks {ep}" in cmd
+
+    def test_cursor_shape_hook_commands_carry_prefix(self, monkeypatch):
+        env = self._custom_home_env(monkeypatch)
+        from cairn.agent_install.clients.cursor import cursor_hooks_json
+
+        hooks = cursor_hooks_json()["hooks"]
+        for event, ep in (("afterFileEdit", "post_edit"),
+                          ("afterSessionEnd", "session_end")):
+            cmd = hooks[event][0]["command"]
+            assert cmd.startswith(f"CAIRN_HOME={env['CAIRN_HOME']} "), (
+                f"{event} hook command must carry the CAIRN_HOME prefix, got: {cmd}"
+            )
+            assert f"-m cairn.hooks.claude_hooks {ep}" in cmd
+
+    def test_custom_home_install_writes_prefixed_hook_commands(self, tmp_path, monkeypatch):
+        env = self._custom_home_env(monkeypatch)
+        _no_cli(monkeypatch, "claude", "cursor")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude", "cursor"], transport="stdio")
+
+        claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert claude["hooks"]["PostToolUse"][0]["hooks"][0]["command"].startswith(
+            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+        assert claude["hooks"]["Stop"][0]["hooks"][0]["command"].startswith(
+            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+        cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
+        assert cursor["hooks"]["afterFileEdit"][0]["command"].startswith(
+            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+        assert cursor["hooks"]["afterSessionEnd"][0]["command"].startswith(
+            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+
+    def test_custom_home_git_hook_gains_quoted_export_line_after_shebang(
+            self, tmp_path, monkeypatch):
+        custom = tmp_path / "custom_home"
+        monkeypatch.setenv("CAIRN_HOME", str(custom))
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+        from cairn.hooks.git_hooks import install_hooks
+
+        assert install_hooks(["repo"], str(ws)) == ["repo"]
+
+        hook = (ws / ".git" / "hooks" / "post-commit").read_text(encoding="utf-8")
+        lines = hook.splitlines()
+        assert lines[0] == "#!/bin/bash"
+        assert lines[1] == f'export CAIRN_HOME="{custom}"', (
+            "exactly one quoted export line must follow the shebang"
+        )
+        assert [ln for ln in lines if "CAIRN_HOME" in ln] == [lines[1]], \
+            "the export line must appear exactly once"
+        assert 'cairn update --repo "repo"' in hook
+        assert "cairn validate-paths --mark" in hook
+
+    # -- custom home: matching/idempotency survive the prefix -----------------
+
+    def test_custom_home_prefixed_hooks_stay_idempotent_and_uninstallable(
+            self, tmp_path, monkeypatch):
+        """With the prefix present in every written command (the shape this
+        spec generates on a custom home), a reinstall must not duplicate
+        entries and uninstall must still strip them -- matching is
+        entrypoint-substring based, not full-command based."""
+        self._custom_home_env(monkeypatch)
+        _no_cli(monkeypatch, "claude", "cursor")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude", "cursor"], transport="stdio")
+        install(str(ws), clients=["claude", "cursor"], transport="stdio")
+
+        claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert len(claude["hooks"]["PostToolUse"]) == 1
+        assert len(claude["hooks"]["Stop"]) == 1
+        cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
+        assert len(cursor["hooks"]["afterFileEdit"]) == 1
+        assert len(cursor["hooks"]["afterSessionEnd"]) == 1
+
+        uninstall(str(ws), clients=["claude", "cursor"])
+        claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert "hooks" not in claude
+        cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
+        assert "hooks" not in cursor
+
+    def test_hook_marker_matching_survives_cairn_home_prefix(self, tmp_path):
+        """Hand-prefixed commands (the D-009 shape) are recognized by the same
+        machinery that uninstall/idempotency use: _already_installed,
+        _entry_present, _strip_hooks (claude nested) and _strip_cursor_hooks
+        (cursor flat) all key on the `cairn.hooks.claude_hooks <entrypoint>`
+        substring, which the prefix leaves intact."""
+        from cairn.agent_install.clients.claude import claude_hooks_block
+        from cairn.agent_install.merge import (
+            _already_installed,
+            _entry_present,
+            _strip_cursor_hooks,
+            _strip_hooks,
+        )
+
+        def prefixed(ep: str) -> str:
+            return f"CAIRN_HOME=/custom/cairn/home /py -m cairn.hooks.claude_hooks {ep}"
+
+        claude_cfg = {"hooks": {
+            "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [
+                {"type": "command", "command": prefixed("post_edit")}]}],
+            "Stop": [{"hooks": [
+                {"type": "command", "command": prefixed("session_end")}]}],
+        }}
+        assert _already_installed(claude_cfg, {"hooks": claude_hooks_block()}), \
+            "prefixed commands must still read as installed"
+        assert _entry_present(claude_cfg["hooks"]["PostToolUse"],
+                              claude_hooks_block()["PostToolUse"][0]), \
+            "a reinstall onto prefixed entries must not duplicate"
+
+        cursor_cfg = {"hooks": {
+            "afterFileEdit": [{"command": prefixed("post_edit"), "timeout": 10000}],
+            "afterSessionEnd": [{"command": prefixed("session_end"), "timeout": 60000}],
+        }}
+        assert _entry_present(cursor_cfg["hooks"]["afterFileEdit"],
+                              {"command": prefixed("post_edit"), "timeout": 10000})
+
+        claude_cfg["hooks"]["UserEvent"] = [{"hooks": [{"command": "echo mine"}]}]
+        claude_path = tmp_path / "settings.json"
+        claude_path.write_text(json.dumps(claude_cfg), encoding="utf-8")
+        _strip_hooks(claude_path, InstallResult("claude"))
+        data = json.loads(claude_path.read_text(encoding="utf-8"))
+        assert "PostToolUse" not in data["hooks"] and "Stop" not in data["hooks"]
+        assert data["hooks"]["UserEvent"][0]["hooks"][0]["command"] == "echo mine"
+
+        cursor_path = tmp_path / "hooks.json"
+        cursor_path.write_text(json.dumps(cursor_cfg), encoding="utf-8")
+        _strip_cursor_hooks(cursor_path, InstallResult("cursor"))
+        assert "hooks" not in json.loads(cursor_path.read_text(encoding="utf-8"))
+
+    # -- default home: nothing is added ---------------------------------------
+
+    def test_default_home_hook_commands_stay_env_less(self, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        import sys
+
+        from cairn.agent_install._common import _claude_hook_command
+        from cairn.agent_install.clients.claude import claude_hooks_block
+        from cairn.agent_install.clients.cursor import cursor_hooks_json
+
+        assert _claude_hook_command("post_edit") == (
+            f"{sys.executable} -m cairn.hooks.claude_hooks post_edit")
+        assert _claude_hook_command("session_end") == (
+            f"{sys.executable} -m cairn.hooks.claude_hooks session_end")
+
+        claude = claude_hooks_block()
+        for event in ("PostToolUse", "Stop"):
+            for entry in claude[event]:
+                for h in entry["hooks"]:
+                    assert "CAIRN_HOME" not in h["command"]
+        cursor = cursor_hooks_json()["hooks"]
+        for event in ("afterFileEdit", "afterSessionEnd"):
+            assert "CAIRN_HOME" not in cursor[event][0]["command"]
+
+    def test_home_set_to_default_hook_commands_match_unset(self, monkeypatch):
+        from cairn.agent_install.clients.claude import claude_hooks_block
+        from cairn.agent_install.clients.cursor import cursor_hooks_json
+
+        generators = (claude_hooks_block, cursor_hooks_json)
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        unset = [json.dumps(gen(), sort_keys=True) for gen in generators]
+        monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
+        defaulted = [json.dumps(gen(), sort_keys=True) for gen in generators]
+        assert defaulted == unset, \
+            "a CAIRN_HOME set to the default path counts as default (no prefix)"
+
+    def test_default_home_git_hook_stays_env_less(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+        from cairn.hooks.git_hooks import POST_COMMIT_TEMPLATE, install_hooks
+
+        assert install_hooks(["repo"], str(ws)) == ["repo"]
+
+        hook = (ws / ".git" / "hooks" / "post-commit").read_text(encoding="utf-8")
+        assert hook == POST_COMMIT_TEMPLATE.format(repo="repo"), \
+            "default home must keep the hook byte-identical to the template"
+        assert "CAIRN_HOME" not in hook
 
 
 # --------------------------------------------------------------------------
@@ -698,7 +945,10 @@ class TestTransportDefault:
 
     def test_claude_global_stdio_keeps_stdio_registration(self, fake_home, tmp_path, monkeypatch):
         """transport=stdio global install registers the command spawn, with
-        no --transport flag (regression pin for the pre-SSE behavior)."""
+        no --transport flag (regression pin for the pre-SSE behavior). A
+        non-default CAIRN_HOME rides along as `-e CAIRN_HOME=<abs>`; an unset
+        home keeps the argv env-less."""
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
         _cli_at(monkeypatch, "claude")
         calls = _spy_subprocess(monkeypatch)
         ws = tmp_path / "ws"
@@ -711,6 +961,15 @@ class TestTransportDefault:
         assert "--transport" not in add[0]
         assert add[0][3] == "cairn"  # name positional, then --scope user
         assert "serve" in add[0]
+        assert "-e" not in add[0], "default home must stay env-less"
+
+        custom_home = tmp_path / "custom_home"
+        monkeypatch.setenv("CAIRN_HOME", str(custom_home))
+        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+
+        add = [c for c in calls if c[:3] == ["claude", "mcp", "add"]]
+        assert len(add) == 2
+        assert add[1][-2:] == ["-e", f"CAIRN_HOME={custom_home}"]
 
     def test_droid_cli_sse_registers_sse_type(self, tmp_path, monkeypatch):
         """With the droid CLI present, the default SSE transport must
@@ -728,18 +987,38 @@ class TestTransportDefault:
 
     def test_droid_cli_stdio_keeps_stdio_registration(self, tmp_path, monkeypatch):
         """transport=stdio droid install registers the command spawn, with
-        no --type flag (regression pin)."""
+        no --type flag (regression pin). The argv stays env-less even on a
+        custom home; the install notes WARN and point at the workspace-scope
+        file registration instead."""
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
         _cli_at(monkeypatch, "droid")
         calls = _spy_subprocess(monkeypatch)
         ws = tmp_path / "ws"
         ws.mkdir()
 
-        install(str(ws), clients=["droid"], transport="stdio")
+        rep_default = install(str(ws), clients=["droid"], transport="stdio")
 
         add = [c for c in calls if c[:3] == ["droid", "mcp", "add"]]
         assert len(add) == 1
         assert "--type" not in add[0]
         assert "serve" in add[0]
+        default_res = next(r for r in rep_default.results if r.client == "droid")
+        assert not any("CAIRN_HOME" in n for n in default_res.notes)
+
+        custom_home = tmp_path / "custom_home"
+        monkeypatch.setenv("CAIRN_HOME", str(custom_home))
+        rep_custom = install(str(ws), clients=["droid"], transport="stdio")
+
+        add = [c for c in calls if c[:3] == ["droid", "mcp", "add"]]
+        assert len(add) == 2
+        assert not any("CAIRN_HOME" in part for part in add[1]), \
+            "argv stays env-less: `droid mcp add` has no verified env mechanism"
+        custom_res = next(r for r in rep_custom.results if r.client == "droid")
+        warns = [n for n in custom_res.notes
+                 if n.startswith("WARNING") and "CAIRN_HOME" in n]
+        assert warns, "custom home must WARN that the registration embeds no env"
+        assert any("workspace" in n for n in warns), \
+            "the WARN must point at the workspace-scope file registration"
 
     def test_agy_sse_uses_serverurl_shape(self, fake_home, tmp_path, monkeypatch):
         """agy (Antigravity) remote servers use the `serverUrl` field; the
@@ -934,3 +1213,297 @@ class TestOmpClient:
         assert after["mcpServers"]["other-server"] == {"command": "echo"}
         assert not (ws / ".omp" / "agents" / "cairn-explorer.md").exists()
         assert not (ws / ".omp" / "agents" / "knowledge-steward.md").exists()
+
+
+# --------------------------------------------------------------------------
+# FR-001: stdio registrations embed env.CAIRN_HOME iff the home is non-default
+# --------------------------------------------------------------------------
+
+class TestCairnHomeEnvBlock:
+    """stdio env-block contract: generated configs carry env.CAIRN_HOME (the
+    expanded absolute path) when CAIRN_HOME resolves to a non-default home,
+    and stay byte-identical to the env-less shapes when it is default --
+    unset, or explicitly set to Path.home()/".cairn"."""
+
+    @pytest.fixture(autouse=True)
+    def _pin_bin(self, monkeypatch):
+        _cli_at(monkeypatch, "cairn")
+
+    @staticmethod
+    def _custom_home_env(monkeypatch) -> dict[str, str]:
+        monkeypatch.setenv("CAIRN_HOME", "~/custom-cairn-home")
+        return {"CAIRN_HOME": str(Path.home() / "custom-cairn-home")}
+
+    @staticmethod
+    def _set_default_home(monkeypatch) -> None:
+        monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
+
+    def test_custom_home_generators_embed_env(self, monkeypatch):
+        env = self._custom_home_env(monkeypatch)
+        from cairn.agent_install._common import mcp_config_json
+        from cairn.agent_install.clients.agy import agy_mcp_config_json
+        from cairn.agent_install.clients.zcode import zcode_mcp_config_json
+
+        assert mcp_config_json(transport="stdio") == {
+            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"],
+                                     "env": env}}}
+        assert zcode_mcp_config_json(transport="stdio") == {
+            "mcp": {"servers": {"cairn": {"type": "stdio", "command": "/fake/bin/cairn",
+                                          "args": ["serve"], "env": env}}}}
+        assert agy_mcp_config_json(transport="stdio") == {
+            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"],
+                                     "env": env}}}
+
+    def test_custom_home_install_writes_env_into_generated_files(self, tmp_path, monkeypatch):
+        env = self._custom_home_env(monkeypatch)
+        from cairn.agent_install.clients.agy import agy_config_path
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude", "cursor", "zcode", "agy"], transport="stdio")
+
+        claude = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+        cursor = json.loads((ws / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        zcode = json.loads((ws / ".zcode" / "config.json").read_text(encoding="utf-8"))
+        agy = json.loads(agy_config_path().read_text(encoding="utf-8"))
+        assert claude["mcpServers"]["cairn"]["env"] == env
+        assert cursor["mcpServers"]["cairn"]["env"] == env
+        assert zcode["mcp"]["servers"]["cairn"]["env"] == env
+        assert agy["mcpServers"]["cairn"]["env"] == env
+
+    def test_default_home_generators_stay_env_less(self, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME")
+        from cairn.agent_install._common import mcp_config_json
+        from cairn.agent_install.clients.agy import agy_mcp_config_json
+        from cairn.agent_install.clients.zcode import zcode_mcp_config_json
+
+        assert mcp_config_json(transport="stdio") == {
+            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"]}}}
+        assert zcode_mcp_config_json(transport="stdio") == {
+            "mcp": {"servers": {"cairn": {"type": "stdio", "command": "/fake/bin/cairn",
+                                          "args": ["serve"]}}}}
+        assert agy_mcp_config_json(transport="stdio") == {
+            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"]}}}
+
+    def test_home_set_to_default_generators_match_unset(self, monkeypatch):
+        from cairn.agent_install._common import mcp_config_json
+        from cairn.agent_install.clients.agy import agy_mcp_config_json
+        from cairn.agent_install.clients.zcode import zcode_mcp_config_json
+
+        generators = (mcp_config_json, zcode_mcp_config_json, agy_mcp_config_json)
+        monkeypatch.delenv("CAIRN_HOME")
+        unset = [json.dumps(gen(transport="stdio"), sort_keys=True) for gen in generators]
+        self._set_default_home(monkeypatch)
+        defaulted = [json.dumps(gen(transport="stdio"), sort_keys=True) for gen in generators]
+        assert defaulted == unset
+
+    def test_default_home_install_writes_no_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME")
+        from cairn.agent_install.clients.agy import agy_config_path
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude", "cursor", "zcode", "agy"], transport="stdio")
+
+        flat_claude = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+        flat_cursor = json.loads((ws / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        nested_zcode = json.loads((ws / ".zcode" / "config.json").read_text(encoding="utf-8"))
+        agy = json.loads(agy_config_path().read_text(encoding="utf-8"))
+        assert "env" not in flat_claude["mcpServers"]["cairn"]
+        assert "env" not in flat_cursor["mcpServers"]["cairn"]
+        assert "env" not in nested_zcode["mcp"]["servers"]["cairn"]
+        assert "env" not in agy["mcpServers"]["cairn"]
+
+    def test_home_set_to_default_files_byte_identical_to_unset(self, tmp_path, monkeypatch):
+        from cairn.agent_install.clients.agy import agy_config_path
+
+        monkeypatch.delenv("CAIRN_HOME")
+        ws_unset = tmp_path / "ws_unset"
+        ws_unset.mkdir()
+        install(str(ws_unset), clients=["claude", "cursor", "zcode", "agy"],
+                transport="stdio")
+        unset = {
+            ".mcp.json": (ws_unset / ".mcp.json").read_bytes(),
+            ".cursor/mcp.json": (ws_unset / ".cursor" / "mcp.json").read_bytes(),
+            ".zcode/config.json": (ws_unset / ".zcode" / "config.json").read_bytes(),
+            "agy": agy_config_path().read_bytes(),
+        }
+        agy_config_path().unlink()
+
+        self._set_default_home(monkeypatch)
+        ws_default = tmp_path / "ws_default"
+        ws_default.mkdir()
+        install(str(ws_default), clients=["claude", "cursor", "zcode", "agy"],
+                transport="stdio")
+
+        assert (ws_default / ".mcp.json").read_bytes() == unset[".mcp.json"]
+        assert (ws_default / ".cursor" / "mcp.json").read_bytes() == unset[".cursor/mcp.json"]
+        assert (ws_default / ".zcode" / "config.json").read_bytes() == unset[".zcode/config.json"]
+        assert agy_config_path().read_bytes() == unset["agy"]
+
+
+# --------------------------------------------------------------------------
+# FR-006: install-time per-client verification (TC-010 / TC-011; D-005, D-006)
+# --------------------------------------------------------------------------
+
+class TestInstallVerification:
+    """After a stdio install under a custom CAIRN_HOME, every file-written
+    client carries a verification verdict: the registration's exact binary+env
+    is spawned with probe args (`config --json`, D-005) from inside the
+    workspace and its resolved store compared with the install target
+    (TC-010 healthy PASS, TC-011 FAIL naming both stores). dry_run never
+    spawns, and SSE / CLI-registered clients get no verdict (D-006 scope).
+
+    TDD state: the healthy-PASS and FAIL tests are RED until T018 (the
+    defaulted `verification_status` / `verification_detail` fields on
+    InstallResult) and T019 (the spawn-probe loop in install()) land — they
+    must fail on the missing verdict, never on anything else. The dry_run and
+    skip guards are written with getattr(..., "skipped") so they hold both
+    before (field absent) and after (verdict stays "skipped") T018/T019, and
+    only fail if a wrong implementation starts verifying what D-005/D-006
+    exempt.
+
+    Hermeticity (C-04): workspaces live in tmp_path only; spawns are observed
+    through real PATH shims, never by patching subprocess globals.
+    """
+
+    def _custom_home(self, tmp_path, monkeypatch) -> tuple[Path, Path]:
+        """A custom CAIRN_HOME + workspace with the import-time bindings
+        re-pointed; returns (home, ws)."""
+        home = tmp_path / "cairn_home"
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _repoint_home_bindings(monkeypatch, home)
+        monkeypatch.setenv("CAIRN_WORKSPACE", str(ws))
+        return home, ws
+
+    def test_healthy_install_marks_every_file_written_client_pass(
+            self, tmp_path, monkeypatch):
+        """TC-010: a stdio install under a custom CAIRN_HOME with a built
+        store on a healthy machine verifies every file-written client PASS —
+        no client missing a verdict."""
+        from cairn.paths import store_key
+
+        real = shutil.which("cairn")
+        assert real, "verification spawns the real cairn binary; it must be on PATH"
+        home, ws = self._custom_home(tmp_path, monkeypatch)
+        key = store_key(ws.resolve())
+        (home / key).mkdir(parents=True)  # TC-010 Given: a built store
+        (home / key / ".kg").write_bytes(b"")
+
+        rep = install(str(ws), clients=["claude", "cursor", "zcode"],
+                      transport="stdio")
+
+        for res in rep.results:
+            assert res.written, f"{res.client}: premise — file-written stdio client"
+            assert res.verification_status == "pass", (
+                f"{res.client}: healthy install must verify PASS, got "
+                f"{res.verification_status!r} ({res.verification_detail})")
+
+    def test_path_shadowed_cairn_fails_naming_both_stores(
+            self, tmp_path, monkeypatch):
+        """TC-011: a PATH-shadowed cairn that drops CAIRN_HOME makes the
+        registration resolve the default store; the affected client's verdict
+        is FAIL naming both the resolved and the intended store — per client,
+        not one overall pass/fail."""
+        from cairn.paths import store_key
+
+        real = shutil.which("cairn")
+        assert real, "the shim execs the real cairn binary; it must be on PATH"
+        home, ws = self._custom_home(tmp_path, monkeypatch)
+        key = store_key(ws.resolve())
+
+        # Drop CAIRN_HOME (and pin HOME so the default the probe resolves is
+        # deterministic regardless of which env the verifier passes it).
+        shim = _shim_on_path(tmp_path, monkeypatch, "cairn",
+                             f'exec env -u CAIRN_HOME HOME="{Path.home()}" '
+                             f'"{real}" "$@"\n')
+
+        rep = install(str(ws), clients=["claude", "cursor"], transport="stdio")
+
+        written = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+        assert written["mcpServers"]["cairn"]["command"] == str(shim), \
+            "premise: the shadow bit — registrations point at the shimmed cairn"
+
+        intended = home / key
+        resolved = Path.home() / ".cairn" / key
+        for res in rep.results:
+            assert res.verification_status == "fail", (
+                f"{res.client}: env-dropping registration must verify FAIL, got "
+                f"{res.verification_status!r}")
+            assert str(intended) in res.verification_detail, (
+                f"{res.client}: FAIL must name the intended store {intended}")
+            assert str(resolved) in res.verification_detail, (
+                f"{res.client}: FAIL must name the store it actually "
+                f"resolved ({resolved})")
+
+    def test_dry_run_never_spawns_the_probe(self, tmp_path, monkeypatch):
+        """D-005: dry_run never spawns — even for clients a real run would
+        verify. Observed with a real PATH shim that logs any invocation."""
+        _, ws = self._custom_home(tmp_path, monkeypatch)
+        log = tmp_path / "shim_spawns.log"
+        shim = _shim_on_path(tmp_path, monkeypatch, "cairn",
+                             f'echo "$0 $*" >> "{log}"\nexit 127\n')
+        assert shutil.which("cairn") == str(shim), \
+            "premise: the shim shadows cairn"
+
+        rep = install(str(ws), clients=["claude", "cursor"], transport="stdio",
+                      dry_run=True)
+
+        assert not log.exists(), \
+            "dry_run must not spawn the registration binary (D-005)"
+        for res in rep.results:
+            assert getattr(res, "verification_status", "skipped") == "skipped", \
+                "dry-run results must not claim a verification verdict"
+
+    def test_sse_registrations_get_no_verification_verdict(
+            self, tmp_path, monkeypatch):
+        """D-006: SSE registrations are URL-based — nothing to spawn, no
+        verdict (today: field absent; after T019: stays "skipped")."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        rep = install(str(ws), clients=["claude"], transport="sse")
+
+        entry = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+        cairn_entry = entry["mcpServers"]["cairn"]
+        assert "url" in cairn_entry and "command" not in cairn_entry, \
+            "premise: SSE registration is URL-based"
+        res = next(r for r in rep.results if r.client == "claude")
+        assert getattr(res, "verification_status", "skipped") == "skipped", \
+            "SSE clients must not carry a spawn verdict (D-006)"
+
+    def test_cli_registered_clients_get_no_verification_verdict(
+            self, fake_home, tmp_path, monkeypatch):
+        """D-006: global-scope claude registers through `claude mcp add` —
+        cairn never writes the registration file, so there is nothing to
+        read back and spawn-verify: no verdict, no probe spawn."""
+        _, ws = self._custom_home(tmp_path, monkeypatch)
+        log = tmp_path / "shim_spawns.log"
+        cairn_shim = _shim_on_path(tmp_path, monkeypatch, "cairn",
+                                   f'echo "$0 $*" >> "{log}"\nexit 127\n')
+        claude_shim = _shim_on_path(tmp_path, monkeypatch, "claude",
+                                    "exit 0\n")
+
+        # conftest blocks agent CLIs suite-wide; this test explicitly creates
+        # one (same philosophy as _cli_at) on top of the blocker, while cairn
+        # resolves through the real PATH lookup to the shim above.
+        blocked_which = shutil.which
+
+        def _shimmed_which(cmd, *a, **k):
+            if cmd == "claude":
+                return str(claude_shim)
+            return blocked_which(cmd, *a, **k)
+
+        monkeypatch.setattr(shutil, "which", _shimmed_which)
+
+        rep = install(str(ws), clients=["claude"], scope="global",
+                      transport="stdio")
+
+        assert shutil.which("cairn") == str(cairn_shim), \
+            "premise: the cairn shim is what a probe would spawn"
+        res = next(r for r in rep.results if r.client == "claude")
+        assert getattr(res, "verification_status", "skipped") == "skipped", \
+            "CLI-registered clients must not carry a spawn verdict (D-006)"
+        assert not log.exists(), \
+            "CLI-registered registrations must not be spawn-verified"

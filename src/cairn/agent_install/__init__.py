@@ -25,9 +25,14 @@ Package layout (per the agent_install split):
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from .. import paths
 
 # Public re-exports (single source of truth for the public API).
 from ._common import (
@@ -105,6 +110,7 @@ __all__ = [
     "resolve_cg_command",
     "resolve_cg_str",
     "claude_desktop_config_path",
+    "verify_registration",
     # MCP config generators
     "mcp_config_json",
     "zcode_mcp_config_json",
@@ -262,6 +268,177 @@ _UNINSTALLERS = {
 }
 
 
+# --- FR-006/D-005: install-time registration verification ------------------
+#
+# Ceiling for one probe spawn. A warm probe costs ~0.5s (the spec assumes
+# ~1s per client); the ceiling is deliberately generous because a timeout is
+# reported as FAIL and a healthy install must never flake on it.
+
+_PROBE_TIMEOUT_S = 5.0
+
+
+def _registration_entry(config_path: str) -> Optional[dict]:
+    """Return the cairn MCP entry inside a written JSON config, or None.
+
+    Shape-aware exactly like ``detect._json_has_cairn``: flat
+    ``mcpServers.cairn`` (claude/cursor/droid/omp/agy/claude-desktop),
+    zcode's ``mcp.servers.cairn``, opencode/kilo's ``mcp.cairn``, and a
+    top-level ``cairn`` key. Non-object containers are tolerated (the F6
+    backup shapes) and files that do not parse are simply not registrations.
+    """
+    if not config_path.endswith(".json"):
+        return None
+    try:
+        data = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    candidates: list[object] = []
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict):
+        candidates.append(servers.get("cairn"))
+    mcp = data.get("mcp")
+    if isinstance(mcp, dict):
+        nested = mcp.get("servers")
+        if isinstance(nested, dict):
+            candidates.append(nested.get("cairn"))
+        candidates.append(mcp.get("cairn"))
+    candidates.append(data.get("cairn"))
+    for entry in candidates:
+        if isinstance(entry, dict):
+            return entry
+    return None
+
+
+def _registration_argv(entry: dict) -> list[str]:
+    """The registration's full argv from its written config entry.
+
+    Handles both written shapes: ``command`` + ``args`` (claude, cursor,
+    zcode, agy, omp, droid fallback, claude-desktop) and opencode/kilo's
+    single ``command`` array.
+    """
+    cmd = entry.get("command")
+    if isinstance(cmd, list):
+        return [str(part) for part in cmd]
+    if isinstance(cmd, str):
+        args = entry.get("args")
+        if isinstance(args, list):
+            return [cmd, *[str(a) for a in args]]
+        return [cmd]
+    return []
+
+
+def verify_registration(
+    command: list[str],
+    env: dict[str, str],
+    cwd: Path,
+    expected: dict[str, str],
+) -> tuple[str, str]:
+    """Spawn one written registration and compare its resolved store with the
+    install target (FR-006, D-005; TC-010/TC-011).
+
+    ``command`` is the registration's exact argv as written (its ``command``
+    plus ``args``); the trailing ``"serve"`` is replaced by the read-only
+    probe args ``["config", "--json"]`` (the registration's own args would
+    start a long-lived MCP server). ``env`` is the registration's written
+    env block, merged over the invoking process's environment; the intended
+    ``CAIRN_HOME`` and workspace are then pinned so the probe answers
+    exactly one question: does this exact binary, pointed at the intended
+    store, resolve exactly that store? The intended home is derived from
+    ``expected["db"]`` per the StorePaths layout (``<CAIRN_HOME>/<store
+    key>/.kg``). Pinning happens after the written env merges in, so a
+    spawned wrapper that drops ``CAIRN_HOME`` (TC-011's PATH-shadowed
+    binary) is still caught, while a long-lived installer process's
+    binding-vs-env divergence is bridged deterministically. ``cwd`` is the
+    target workspace so cwd-based resolution matches what the client does.
+
+    Returns ``(status, detail)``: ``("pass", <one-line confirmation>)`` or
+    ``("fail", <reason naming both stores>)``. Spawn failure, timeout
+    (``_PROBE_TIMEOUT_S``), non-zero exit, and unparseable output all FAIL
+    naming the intended store. Reused by the doctor's consistency audit
+    (FR-007) instead of duplicating the mechanism.
+    """
+    argv = list(command)
+    if argv and argv[-1] == "serve":
+        argv = argv[:-1]
+    probe_argv = [*argv, "config", "--json"]
+
+    spawn_env = {**os.environ, **env}
+    intended_db = str(expected.get("db", ""))
+    intended_ws = str(expected.get("workspace", ""))
+    if intended_db:
+        # StorePaths invariant: db = <CAIRN_HOME>/<store key>/.kg, so the
+        # intended CAIRN_HOME is the db's grandparent.
+        spawn_env["CAIRN_HOME"] = str(Path(intended_db).parent.parent)
+    if intended_ws:
+        spawn_env["CAIRN_WORKSPACE"] = intended_ws
+    intended = f"db={intended_db or '?'} workspace={intended_ws or '?'}"
+
+    try:
+        proc = subprocess.run(
+            probe_argv, env=spawn_env, cwd=str(cwd),
+            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return "fail", (f"probe timed out after {_PROBE_TIMEOUT_S:g}s; "
+                        f"intended store: {intended}")
+    except OSError as exc:
+        return "fail", (f"probe could not spawn {probe_argv[0]!r}: {exc}; "
+                        f"intended store: {intended}")
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        return "fail", (f"probe exited {proc.returncode}: {err[:200]}; "
+                        f"intended store: {intended}")
+    try:
+        resolved = json.loads(proc.stdout)
+    except ValueError:
+        resolved = None
+    if not isinstance(resolved, dict):
+        return "fail", f"probe printed no JSON object; intended store: {intended}"
+    resolved_db = str(resolved.get("db", ""))
+    resolved_ws = str(resolved.get("workspace", ""))
+    if resolved_db == intended_db and resolved_ws == intended_ws:
+        return "pass", f"resolved db={resolved_db}"
+    return "fail", (f"registration resolves db={resolved_db} "
+                    f"workspace={resolved_ws}; install target "
+                    f"db={intended_db} workspace={intended_ws}")
+
+
+def _verify_results(results: list[InstallResult], workspace: str) -> None:
+    """FR-006 verify loop: record per-client spawn-probe verdicts in place.
+
+    For every result carrying a file-written stdio registration (located by
+    scanning the files this installer actually wrote, per client shape), the
+    registration's exact binary+env is spawned with probe args from inside
+    the workspace and compared against this process's ``resolve_store()``.
+    dry_run never reaches this (guarded by the caller). SSE registrations
+    (URL-based, nothing to spawn) and CLI-registered clients (no file-written
+    registration this run) stay "skipped" and get a note (D-006).
+    """
+    store = paths.resolve_store(workspace)
+    expected = {"db": str(store.db), "workspace": str(store.workspace)}
+    for res in results:
+        entry = None
+        for written in res.written:
+            entry = _registration_entry(written)
+            if entry is not None:
+                break
+        if entry is None:
+            res.notes.append(
+                "verification skipped: no file-written MCP registration this "
+                "run (CLI-registered or unchanged); not spawn-verified")
+            continue
+        if "command" not in entry:
+            res.notes.append(
+                "verification skipped: SSE registration is URL-based "
+                "(nothing to spawn)")
+            continue
+        res.verification_status, res.verification_detail = verify_registration(
+            _registration_argv(entry), entry.get("env") or {},
+            Path(workspace), expected)
+
+
 def install(
     workspace: str,
     clients: Optional[list[str]] = None,
@@ -283,6 +460,11 @@ def install(
     ``cairn serve start`` (the SSE URL derives from ``lifecycle.DEFAULT_PORT``).
     Claude Desktop is stdio-only and always gets a stdio config regardless;
     pass ``transport="stdio"`` to opt out everywhere.
+
+    After writing (unless ``dry_run``), every file-written stdio registration
+    is spawn-verified against the install-time store (FR-006/D-005); the
+    per-client verdict lands on ``InstallResult.verification_status`` /
+    ``verification_detail``.
     """
     if transport is None:
         transport = "sse"
@@ -302,6 +484,15 @@ def install(
             workspace, force, dry_run, transport=transport, sse_url=sse_url,
             scope=scope,
         ))
+
+    # FR-006/D-005: verify each file-written stdio registration by spawning
+    # its exact binary+env with probe args (cwd = target workspace) and
+    # comparing the resolved store against this process's resolve_store().
+    # Lives here — not the CLI layer — so every install() caller gets
+    # verification; agents.py only renders the verdicts. dry_run never
+    # spawns; SSE and CLI-registered clients stay "skipped" (D-006).
+    if not dry_run:
+        _verify_results(results, workspace)
 
     # Cross-tool .agents/ copies: always write when any client is targeted.
     cross = install_cross_tool(workspace, force, dry_run=dry_run) if target else None

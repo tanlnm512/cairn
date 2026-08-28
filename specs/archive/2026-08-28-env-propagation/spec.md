@@ -1,6 +1,6 @@
 # Spec: env-propagation
 
-**Status**: approved          <!-- approved at the execution gate 2026-08-28; active once the first task spawns -->
+**Status**: done            <!-- approved 2026-08-28; all 23 tasks ticked, TC proofs green, closing audit passed -->
 
 **Created**: 2026-08-28
 **Branch**: `feat/env-propagation`

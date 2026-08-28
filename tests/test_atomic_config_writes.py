@@ -9,6 +9,8 @@ These verify:
 import json
 from pathlib import Path
 
+import pytest
+
 from cairn.agent_install.merge import _atomic_write_text, _merge_json_file, _load_json_or_none
 from cairn.agent_install._common import InstallResult
 
@@ -210,3 +212,75 @@ class TestNonObjectKeyBackup:
         assert path.read_text() == original, "dry-run must not rewrite the file"
         assert not path.with_suffix(".json.bak").exists(), "dry-run must not create backups"
         assert any("would back up" in w for w in result.written)
+
+
+def _mcp_merger(config_key: str, env: dict | None) -> dict:
+    """A stdio cairn registration in the client's merge shape.
+
+    zcode nests under ``mcp.servers`` with separate command/args; opencode and
+    kilo use a single command array directly under ``mcp``.
+    """
+    if config_key == "zcode":
+        entry: dict = {"type": "stdio", "command": "cg", "args": ["serve"]}
+    else:
+        entry = {"type": "local", "command": ["cg", "serve"], "enabled": True}
+    if env:
+        entry["env"] = env
+    if config_key == "zcode":
+        return {"mcp": {"servers": {"cairn": entry}}}
+    return {"mcp": {"cairn": entry}}
+
+
+def _cairn_entry(data: dict, config_key: str) -> dict:
+    if config_key == "zcode":
+        return data["mcp"]["servers"]["cairn"]
+    return data["mcp"]["cairn"]
+
+
+class TestAlreadyInstalledEnvComparison:
+    """T023 (FR-001/D-012): the zcode and opencode/kilo idempotence branches
+    must compare env like the flat mcpServers branch, so a reinstall after
+    moving the store (changed CAIRN_HOME) replaces the stale env instead of
+    silently keeping the old registration."""
+
+    @pytest.mark.parametrize("config_key", ["zcode", "opencode", "kilo"])
+    def test_changed_env_rewrites_registration(self, tmp_path, config_key):
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(_mcp_merger(config_key, {"CAIRN_HOME": "/old/cairn-home"})))
+
+        result = InstallResult("test")
+        _merge_json_file(path, _mcp_merger(config_key, {"CAIRN_HOME": "/new/cairn-home"}),
+                         force=False, result=result, config_key=config_key)
+
+        data = json.loads(path.read_text())
+        assert _cairn_entry(data, config_key)["env"] == {"CAIRN_HOME": "/new/cairn-home"}
+        assert str(path) in result.written, "changed env must rewrite, not skip"
+
+    @pytest.mark.parametrize("config_key", ["zcode", "opencode", "kilo"])
+    def test_default_home_reinstall_removes_env_key(self, tmp_path, config_key):
+        """Back on the default home the generator emits no env block, so the
+        reinstall must drop the stale CAIRN_HOME key (FR-001 AC5)."""
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(_mcp_merger(config_key, {"CAIRN_HOME": "/old/cairn-home"})))
+
+        result = InstallResult("test")
+        _merge_json_file(path, _mcp_merger(config_key, env=None),
+                         force=False, result=result, config_key=config_key)
+
+        data = json.loads(path.read_text())
+        assert "env" not in _cairn_entry(data, config_key)
+        assert str(path) in result.written
+
+    @pytest.mark.parametrize("config_key", ["zcode", "opencode", "kilo"])
+    def test_unchanged_env_is_byte_stable(self, tmp_path, config_key):
+        """Idempotence: an identical registration (same env) is not rewritten."""
+        merger = _mcp_merger(config_key, {"CAIRN_HOME": "/fixed/cairn-home"})
+        original = json.dumps(merger, indent=2) + "\n"
+        path = tmp_path / "config.json"
+        path.write_text(original)
+
+        result = InstallResult("test")
+        _merge_json_file(path, merger, force=False, result=result, config_key=config_key)
+
+        assert path.read_text() == original, "unchanged env must not rewrite the file"
+        assert str(path) in result.skipped

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .._common import InstallResult, default_sse_url, resolve_cg_command
 from ..merge import _merge_json_file, _strip_mcp_opencode
+from ...paths import cairn_home_env
 
 
 def _opencode_config_path(workspace: str, scope: str = "workspace") -> Path:
@@ -47,11 +48,17 @@ def opencode_mcp_config_json(transport: str = "stdio", sse_url: str | None = Non
     Args:
         transport: "stdio" (default) or "sse" (shared daemon).
         sse_url: when transport="sse", the URL clients should connect to.
+
+    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
+    resolved CAIRN_HOME is non-default; the default home adds no env key.
     """
     if transport == "sse":
         return {"mcp": {"cairn": {"type": "remote", "url": default_sse_url(sse_url), "enabled": True}}}
-    cmd = resolve_cg_command() + ["serve"]
-    return {"mcp": {"cairn": {"type": "local", "command": cmd, "enabled": True}}}
+    entry: dict = {"type": "local", "command": resolve_cg_command() + ["serve"], "enabled": True}
+    env = cairn_home_env()
+    if env:
+        entry["env"] = env
+    return {"mcp": {"cairn": entry}}
 
 
 def install_opencode(workspace: str, force: bool = False, dry_run: bool = False,

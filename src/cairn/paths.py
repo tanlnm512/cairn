@@ -52,6 +52,56 @@ CONFIG_FILE = CAIRN_HOME / "config.json"
 SHARED_LIB = CAIRN_HOME / "lib"
 
 
+# --------------------------------------------------------------------------
+# CAIRN_HOME default ruling: the binding above is import-time, while these
+# helpers re-read os.environ at call time (tests and long-lived processes may
+# change the variable after import). Comparison is by expanded absolute path,
+# so a CAIRN_HOME explicitly set to the default path counts as default. The
+# binding's verbatim resolution behavior is unchanged.
+# --------------------------------------------------------------------------
+
+def _current_cairn_home() -> Path:
+    """Effective CAIRN_HOME for the current environment: the env var's value
+    (~-expanded, made absolute) when set, else ``~/.cairn``."""
+    return Path(os.path.abspath(os.path.expanduser(
+        os.environ.get("CAIRN_HOME", str(Path.home() / ".cairn"))
+    )))
+
+
+def cairn_home_is_default() -> bool:
+    """Whether the effective CAIRN_HOME equals the default home (``~/.cairn``),
+    compared as expanded absolute paths."""
+    return _current_cairn_home() == Path.home() / ".cairn"
+
+
+def cairn_home_env() -> dict[str, str]:
+    """Env block selecting the current CAIRN_HOME for child processes:
+    ``{}`` when the home is default, else ``{"CAIRN_HOME": <expanded path>}``."""
+    if cairn_home_is_default():
+        return {}
+    return {"CAIRN_HOME": str(_current_cairn_home())}
+
+
+def render_env_resolution_chain() -> str:
+    """One-line rendering of the env resolution chain in effect (FR-004):
+    the CAIRN_HOME / CAIRN_WORKSPACE / CAIRN_DB / CAIRN_KNOWLEDGE values
+    (or ``unset``) plus the db path that chain resolves to, per the
+    resolve_workspace / resolve_store order. Reads the environment at call
+    time like the helpers above and is read-only (no registry writes), so
+    it is safe inside error paths.
+    """
+    def _entry(name: str) -> str:
+        value = os.environ.get(name)
+        return f"{name}={value}" if value else f"{name}=unset"
+
+    entries = " ".join(
+        _entry(name)
+        for name in ("CAIRN_HOME", "CAIRN_WORKSPACE", "CAIRN_DB",
+                     "CAIRN_KNOWLEDGE")
+    )
+    return f"{entries}; resolved db: {resolve_store().db}"
+
+
 def _abi_tag() -> str:
     import sys as _sys
 

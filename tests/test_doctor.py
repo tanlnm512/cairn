@@ -4,7 +4,9 @@ Doctor surfaces silent degradations (spec observability-telemetry §6.5): schema
 integrity, embedding/ANN backend fallbacks, embed-server health (probe /
 model-listing / parity sample / latency when a server backend is configured,
 otherwise one informational line -- D-012), graph freshness, parse errors,
-lock contention, per-tool error/latency health, and a config echo. It is
+lock contention, per-tool error/latency health, and a config echo, plus the
+environment-wiring audit (FR-007/D-007: store resolution, client
+registration consistency, platform/transport, binary coherence). It is
 read-only and crash-proof (a missing/corrupt store degrades to WARN/FAIL,
 never raises).
 
@@ -25,6 +27,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -98,7 +101,8 @@ def test_eight_checks_always_emitted(tmp_path):
 
     The historical 8 checks keep their positions; T015 slots embed_server
     after ann (an informational PASS line unless a server backend is
-    configured, D-012).
+    configured, D-012); T021 appends ``environment`` last (the FR-007 wiring
+    audit, D-007).
     """
     db = tmp_path / "graph.db"
     _make_db(db)
@@ -116,6 +120,7 @@ def test_eight_checks_always_emitted(tmp_path):
         "concurrency",
         "tool_health",
         "config",
+        "environment",
     ]
     assert [d["name"] for d in data] == expected
     # Every row carries the documented keys; status is one of the three values.
@@ -900,7 +905,8 @@ def embed_cache_reset():
 
 def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
     """(a) Default (local) config: one informational PASS line; the historical
-    8 checks keep their names, order, and statuses (D-012 byte-stability)."""
+    8 checks keep their names, order, and statuses (D-012 byte-stability);
+    ``environment`` appends last (D-007)."""
     monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
     db = tmp_path / "graph.db"
     _make_db(db)
@@ -918,6 +924,7 @@ def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
         "concurrency",
         "tool_health",
         "config",
+        "environment",
     ]
     row = _by_name(data, "embed_server")
     assert row["status"] == "PASS"
@@ -1079,3 +1086,177 @@ def test_embed_server_exit_mapping_unchanged(tmp_path, monkeypatch, embed_cache_
     result = _run(db)
     assert result.exit_code == 1
     assert "FAIL embed_server" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Environment wiring (T020, FR-007 / D-007): one `environment` check appended
+# to BOTH doctor return paths, auditing (a) resolved-store existence, (b)
+# client-registration consistency, (c) platform/transport supportability, and
+# (d) binary coherence. Every test in this section is RED until T021 lands
+# the check (today: 9 checks, no `environment` row) -- the same C-02 red
+# convention as tests/test_config_probe.py. Fixtures shape the machine with
+# tmp homes + monkeypatched bindings/env (never global subprocess patching);
+# the platform arm is driven through lifecycle.is_macos -- the function the
+# doctor reads -- never sys.platform.
+# ---------------------------------------------------------------------------
+
+
+def _repoint_cairn_home(monkeypatch, home):
+    """Re-point paths.py's import-time CAIRN_HOME bindings into the sandbox.
+
+    Same pit as tests/test_config_probe.py::_repoint_bindings: under pytest
+    the binding happens at collection time, before conftest's hermetic env
+    runs, so resolve_store would otherwise read the real ~/.cairn.
+    """
+    from cairn import paths
+
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    monkeypatch.setattr(paths, "REGISTRY_FILE", home / "workspaces.json")
+
+
+def _store_db(home, ws):
+    """The .kg path cairn resolves for workspace ``ws`` under ``home``."""
+    from cairn.paths import store_key
+
+    return home / store_key(ws) / ".kg"
+
+
+def _dead_sse_url():
+    """A loopback SSE URL whose port is (transiently) guaranteed refusing."""
+    httpd = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), http.server.BaseHTTPRequestHandler
+    )
+    host, port = httpd.server_address[:2]
+    httpd.server_close()
+    return f"http://{host}:{port}/sse"
+
+
+def _force_non_macos(monkeypatch):
+    """Drive the platform/transport sub-audit off-darwin on any host.
+
+    The audit reads the platform through lifecycle.is_macos; patch THAT (the
+    function the doctor calls), never sys.platform. Both plausible bindings
+    are covered: the lifecycle module attribute and a from-import binding in
+    cli.system (raising=False until T021 introduces the latter).
+    """
+    from cairn.cli import system
+    from cairn.mcp_server import lifecycle as lifecycle_mod
+
+    monkeypatch.setattr(lifecycle_mod, "is_macos", lambda: False)
+    monkeypatch.setattr(system, "is_macos", lambda: False, raising=False)
+
+
+def test_environment_fails_on_incident_wiring(tmp_path, monkeypatch):
+    """#70 machine (TC-012 automated half / AC8): a populated custom store, an
+    empty default store, an SSE registration whose daemon is gone, on a
+    non-macOS host -> `environment` FAILs naming the client and the
+    macOS-only lifecycle, and the run exits 1 -- even though the store itself
+    is schema-healthy (the wiring, not the store, is what broke)."""
+    from cairn.agent_install._common import mcp_config_json
+
+    custom_home = tmp_path / "custom_home"
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("CAIRN_HOME", str(custom_home))
+    _repoint_cairn_home(monkeypatch, custom_home)
+    monkeypatch.chdir(ws)
+
+    # The populated custom store the machine actually built (repos row seeded).
+    db = _store_db(custom_home, ws.resolve())
+    db.parent.mkdir(parents=True)
+    _make_db(db)
+    # The default location exists but holds no store: the empty store #70's
+    # clients silently resolved instead.
+    (Path.home() / ".cairn").mkdir(parents=True, exist_ok=True)
+
+    # A stale SSE registration (env-less by construction) with no daemon
+    # behind its (dead loopback) endpoint.
+    cfg = mcp_config_json(transport="sse", sse_url=_dead_sse_url())
+    (ws / ".mcp.json").write_text(json.dumps(cfg), encoding="utf-8")
+    # The macOS-only daemon lifecycle can never serve it on this host.
+    _force_non_macos(monkeypatch)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.stdout)
+    # The store itself is healthy -- the wiring is the failure.
+    assert _by_name(data, "schema")["status"] == "PASS"
+    row = _by_name(data, "environment")
+    assert row["status"] == "FAIL"
+    findings = row["detail"] + " " + (row.get("hint") or "")
+    assert "claude" in findings, "the mismatching client must be named"
+    assert "macOS-only" in findings, "the macOS-only daemon lifecycle must be named"
+
+
+def test_environment_passes_on_healthy_default_install(tmp_path, monkeypatch):
+    """AC9 / TC-013: a healthy default install -- default home, built store,
+    no client wiring in the sandbox to contradict it -- PASSes the
+    environment check. That the prior 9 checks are unchanged in name and
+    order is pinned by the sequence assertions above; with no SSE
+    registration the platform arm is silent, so the PASS holds on any host."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    default_home = Path.home() / ".cairn"
+    _repoint_cairn_home(monkeypatch, default_home)
+    monkeypatch.delenv("CAIRN_HOME", raising=False)
+    monkeypatch.chdir(ws)
+
+    db = _store_db(default_home, ws.resolve())
+    db.parent.mkdir(parents=True)
+    _make_db(db)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    assert _by_name(json.loads(result.stdout), "environment")["status"] == "PASS"
+
+
+def test_environment_emitted_when_db_unavailable(tmp_path, monkeypatch):
+    """The degraded (store missing/unopenable) return path still emits the
+    `environment` check, last in sequence: the wiring audit needs no db
+    connection, and a broken store is precisely when wiring matters (D-007
+    appends it to BOTH return paths). The missing store must not double-FAIL
+    here -- schema already carries that FAIL (mixed-severity ruling)."""
+    sandbox_home = tmp_path / "_sandbox_home"
+    _repoint_cairn_home(monkeypatch, sandbox_home)
+    monkeypatch.setenv("CAIRN_HOME", str(sandbox_home))
+
+    db = tmp_path / "typo.db"
+    assert not db.exists()
+
+    result = _run(db, "--json")
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.stdout)
+    assert _by_name(data, "schema")["status"] == "FAIL"
+    assert data[-1]["name"] == "environment"
+    assert data[-1]["status"] in {"PASS", "WARN"}, (
+        "the store's absence is schema's FAIL; environment must not repeat it"
+    )
+
+
+def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
+    """TC-015: a registration written by the previous release (no environment
+    entry) that still resolves the doctor's own store draws a WARN advising
+    `cairn install-agents` -- warned, not failed; exit stays 0."""
+    from cairn.agent_install._common import mcp_config_json
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    default_home = Path.home() / ".cairn"
+    _repoint_cairn_home(monkeypatch, default_home)
+    monkeypatch.delenv("CAIRN_HOME", raising=False)
+    monkeypatch.chdir(ws)
+
+    db = _store_db(default_home, ws.resolve())
+    db.parent.mkdir(parents=True)
+    _make_db(db)
+    # Generated by the real generator with the home at default: exactly the
+    # env-less stdio shape the previous release wrote for this machine.
+    cfg = mcp_config_json(transport="stdio")
+    assert "env" not in cfg["mcpServers"]["cairn"]
+    (ws / ".mcp.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "environment")
+    assert row["status"] == "WARN"
+    assert "install-agents" in (row.get("hint") or "")
