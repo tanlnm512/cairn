@@ -231,6 +231,7 @@ def create_app(
         get_session_chains,
         get_task_queue,
         get_tool_tokens,
+        inspect_symbol,
         list_history,
         list_projects,
         prewarm_probes,
@@ -369,6 +370,10 @@ def create_app(
         repo = request.query_params.get("repo", "").strip() or None
         depth_raw = request.query_params.get("depth", "").strip()
         depth = int(depth_raw) or None if depth_raw.isdigit() else None
+        # Tests toggle: only an explicit opt-in includes test symbols in the
+        # module scope; anything else falls back to the curated default,
+        # matching the scope/layout fallback conventions.
+        include_tests = request.query_params.get("tests", "") in ("1", "on", "true")
         # Layout choice (FR-004): only "force" | "hier" are meaningful;
         # absent/bogus falls back to force, matching the scope fallback.
         layout = request.query_params.get("layout", "force")
@@ -380,7 +385,8 @@ def create_app(
         conn = get_read_only_db(selected_db)
         try:
             graph_data = get_graph(
-                conn, scope=scope, focus=focus, repo=repo, depth=depth
+                conn, scope=scope, focus=focus, repo=repo, depth=depth,
+                include_tests=include_tests,
             )
         finally:
             conn.close()
@@ -395,6 +401,7 @@ def create_app(
                 "repo": repo or "",
                 "depth": depth_raw if depth is not None else "",
                 "layout": layout,
+                "include_tests": include_tests,
                 "store_key": store_key,
             },
         )
@@ -441,6 +448,20 @@ def create_app(
         conn = get_read_only_db(selected_db)
         try:
             result = viz_query.get_symbol_neighbors(conn, names, **depth_kwargs)
+        finally:
+            conn.close()
+        return JSONResponse(result)
+
+    def graph_inspect(request: Request) -> Response:
+        # Side-panel payload for one symbol (identity + callers + callees +
+        # impact with affected tests). Missing/blank names hit the data
+        # function's not-found contract (200 with found=False), never an
+        # error — the panel just stays empty.
+        name = request.query_params.get("name", "")
+        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        conn = get_read_only_db(selected_db)
+        try:
+            result = inspect_symbol(conn, name)
         finally:
             conn.close()
         return JSONResponse(result)
@@ -894,6 +915,7 @@ def create_app(
         Route("/graph/candidates", graph_candidates, name="graph_candidates"),
         Route("/graph/suggest", graph_suggest, name="graph_suggest"),
         Route("/graph/neighbors", graph_neighbors, name="graph_neighbors"),
+        Route("/graph/inspect", graph_inspect, name="graph_inspect"),
         Route("/history", history, name="history"),
         Route("/history.csv", history_csv, name="history_csv"),
         Route("/history.json", history_json, name="history_json"),

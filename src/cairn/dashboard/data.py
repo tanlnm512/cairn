@@ -121,15 +121,18 @@ def get_graph(
     focus: Optional[str] = None,
     repo: Optional[str] = None,
     depth: Optional[int] = None,
+    include_tests: bool = False,
 ) -> Dict:
     """Dispatch to a viz query scope; returns its ``{nodes, edges, metadata}``
     verbatim — the scope functions already cap result size (LIMIT 30/50,
     ``max_nodes``), and their metadata carries the possibly-truncated counts.
+    ``include_tests`` only applies to the module scope (the other scopes are
+    focus-driven, where the user asked for exactly that symbol's world).
     """
     if scope == "symbol":
         return viz_query.get_symbol_graph(conn, focus or "", 1 if depth is None else depth)
     if scope == "module":
-        return viz_query.get_module_graph(conn, focus or "")
+        return viz_query.get_module_graph(conn, focus or "", include_tests=include_tests)
     if scope == "impact":
         return viz_query.get_impact_graph(conn, focus or "", 3 if depth is None else depth)
     if scope == "deps":
@@ -137,6 +140,107 @@ def get_graph(
     if scope == "repo":
         return viz_query.get_repo_graph(conn, repo or "", max_nodes=30)
     raise ValueError(f"unknown graph scope: {scope!r}")
+
+
+INSPECT_NEIGHBOR_CAP = 10
+INSPECT_IMPACT_CAP = 15
+
+
+def inspect_symbol(conn: sqlite3.Connection, name: str) -> Dict:
+    """One-call answer payload for the graph tab's side panel: identity,
+    callers, callees, and the impact view with affected tests.
+
+    Same-name rows are possible; the first by (file path, id) is inspected
+    (deterministic, mirroring ``symbol_candidates``' ordering) and
+    ``same_name_count`` tells the panel when more definitions exist. Callers
+    and callees follow resolved edges only, capped at
+    :data:`INSPECT_NEIGHBOR_CAP` with honest ``*_truncated`` flags. Impact
+    reuses the graph engine's recursive caller traversal at depth 3 (the
+    viz impact scope's default), surfacing ``total`` plus the first
+    :data:`INSPECT_IMPACT_CAP` impacted symbols and affected tests — the
+    tests are the graph layer's ``filter_tests`` classification of the
+    impacted set, not a separate traversal. An empty/unknown name yields
+    ``{"found": False, "name": ...}`` at HTTP 200, never an error.
+    """
+    if not name or not name.strip():
+        return {"found": False, "name": name}
+    name = name.strip()
+    from ..graph.queries import impact_analysis
+    from ..graph.tests import filter_tests
+
+    cur = conn.cursor()
+    row = cur.execute(
+        "SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, s.docstring, "
+        "f.path AS file, f.repo_id "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.name = ? ORDER BY f.path ASC, s.id ASC LIMIT 1",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return {"found": False, "name": name}
+
+    same_name_count = cur.execute(
+        "SELECT COUNT(*) FROM symbols WHERE name = ?", (name,)
+    ).fetchone()[0]
+
+    def _neighbors(sql: str) -> tuple:
+        fetched = cur.execute(sql, (row["id"],)).fetchall()
+        truncated = len(fetched) > INSPECT_NEIGHBOR_CAP
+        return (
+            [
+                {"name": r["name"], "kind": r["kind"], "file": r["file"]}
+                for r in fetched[:INSPECT_NEIGHBOR_CAP]
+            ],
+            truncated,
+        )
+
+    cap = INSPECT_NEIGHBOR_CAP + 1
+    callers, callers_truncated = _neighbors(
+        f"SELECT s.name, s.kind, f.path AS file "
+        f"FROM edges e JOIN symbols s ON e.source_id = s.id "
+        f"JOIN files f ON s.file_id = f.id "
+        f"WHERE e.target_id = ? LIMIT {cap}"
+    )
+    callees, callees_truncated = _neighbors(
+        f"SELECT t.name, t.kind, f.path AS file "
+        f"FROM edges e JOIN symbols t ON e.target_id = t.id "
+        f"JOIN files f ON t.file_id = f.id "
+        f"WHERE e.source_id = ? LIMIT {cap}"
+    )
+
+    impact = impact_analysis(conn, name, max_depth=3)
+    affected = filter_tests(impact["impacted"])
+    impact_view = {
+        "total": impact["total"],
+        "truncated": impact["truncated"],
+        "top": [
+            {"symbol": r["symbol"], "file": r["file"], "depth": r["depth"]}
+            for r in impact["impacted"][:INSPECT_IMPACT_CAP]
+        ],
+        "affected_tests": [
+            {"symbol": t["symbol"], "file": t["file"]}
+            for t in affected[:INSPECT_IMPACT_CAP]
+        ],
+        "affected_tests_total": len(affected),
+    }
+    return {
+        "found": True,
+        "symbol": {
+            "name": row["name"],
+            "kind": row["kind"],
+            "qualified_name": row["qualified_name"],
+            "file": row["file"],
+            "repo": row["repo_id"],
+            "line_start": row["line_start"],
+            "docstring": row["docstring"],
+        },
+        "same_name_count": same_name_count,
+        "callers": callers,
+        "callers_truncated": callers_truncated,
+        "callees": callees,
+        "callees_truncated": callees_truncated,
+        "impact": impact_view,
+    }
 
 
 CANDIDATES_LIMIT = 10

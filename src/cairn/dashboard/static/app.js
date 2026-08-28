@@ -559,12 +559,171 @@
     inspectAction.appendChild(link);
   }
 
+  /* Side panel (graph-tab info panel): selecting a node fetches
+     /graph/inspect and fills #graph-panel with the one-call answer —
+     identity, callers, callees, and the impact view with affected tests.
+     Deselecting hides the panel. Built with DOM APIs only (no innerHTML
+     with node data), mirroring the inspect hint above. */
+  var panel = document.getElementById("graph-panel");
+  var panelRequest = 0;
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) {
+      node.className = className;
+    }
+    if (text !== undefined && text !== null && text !== "") {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function panelRows(list, items, nameKey, withDepth) {
+    if (!items.length) {
+      list.appendChild(el("li", "panel-empty", "none"));
+      return;
+    }
+    items.forEach(function (item) {
+      var row = el("li", "panel-row");
+      row.appendChild(el("span", "panel-name", item[nameKey]));
+      var sub = item.file || "";
+      if (withDepth && item.depth !== undefined && item.depth !== null) {
+        sub = "depth " + item.depth + (sub ? " — " + sub : "");
+      }
+      if (sub) {
+        row.appendChild(el("span", "panel-sub", sub));
+      }
+      list.appendChild(row);
+    });
+  }
+
+  function panelSection(title, items, nameKey, withDepth) {
+    var section = el("section", "panel-section");
+    var head = title + " (" + items.length + ")";
+    section.appendChild(el("h3", "panel-head", head));
+    var list = el("ul", "panel-list");
+    panelRows(list, items, nameKey, withDepth);
+    section.appendChild(list);
+    return section;
+  }
+
+  function renderPanel(data) {
+    panel.textContent = "";
+    var sym = data.symbol || {};
+    var head = el("div", "panel-head-row");
+    head.appendChild(el("span", "panel-kind", sym.kind || "?"));
+    head.appendChild(el("span", "panel-title", sym.name));
+    panel.appendChild(head);
+    var where = (sym.file || "") + (sym.line_start ? ":" + sym.line_start : "");
+    if (where) {
+      panel.appendChild(el("p", "panel-sub", where));
+    }
+    if (data.same_name_count > 1) {
+      panel.appendChild(
+        el("p", "panel-note", data.same_name_count + " same-name definitions — showing the first")
+      );
+    }
+    if (sym.docstring) {
+      panel.appendChild(el("p", "panel-doc", sym.docstring));
+    }
+    panel.appendChild(
+      panelSection("Callers", data.callers || [], "name", false)
+    );
+    if (data.callers_truncated) {
+      panel.appendChild(el("p", "panel-note", "more callers not shown"));
+    }
+    panel.appendChild(
+      panelSection("Callees", data.callees || [], "name", false)
+    );
+    if (data.callees_truncated) {
+      panel.appendChild(el("p", "panel-note", "more callees not shown"));
+    }
+    var impact = data.impact || {};
+    var impactSection = el("section", "panel-section");
+    impactSection.appendChild(
+      el(
+        "h3",
+        "panel-head",
+        "Impact — " + impact.total + " symbol" + (impact.total === 1 ? "" : "s") + " affected" +
+          (impact.truncated ? " (capped)" : "")
+      )
+    );
+    var topList = el("ul", "panel-list");
+    panelRows(topList, impact.top || [], "symbol", true);
+    impactSection.appendChild(topList);
+    panel.appendChild(impactSection);
+    var tests = impact.affected_tests || [];
+    var testsSection = el("section", "panel-section");
+    var testHead = "Affected tests";
+    if (impact.affected_tests_total > tests.length) {
+      testHead += " — " + impact.affected_tests_total + " total";
+    } else {
+      testHead += " (" + tests.length + ")";
+    }
+    testsSection.appendChild(el("h3", "panel-head", testHead));
+    var testList = el("ul", "panel-list");
+    panelRows(testList, tests, "symbol", false);
+    testsSection.appendChild(testList);
+    panel.appendChild(testsSection);
+  }
+
+  function inspectPanel(id) {
+    if (!panel) {
+      return;
+    }
+    panelRequest += 1;
+    var seq = panelRequest;
+    if (!id) {
+      panel.hidden = true;
+      panel.textContent = "";
+      return;
+    }
+    panel.hidden = false;
+    panel.textContent = "";
+    panel.appendChild(el("p", "panel-empty", "loading '" + id + "'…"));
+    fetch(
+      "/graph/inspect?name=" +
+        encodeURIComponent(id) +
+        (inspectStore ? "&store=" + encodeURIComponent(inspectStore) : "")
+    )
+      .then(function (resp) {
+        if (!resp.ok) {
+          throw new Error("inspect request failed");
+        }
+        return resp.json();
+      })
+      .then(
+        function (data) {
+          if (seq !== panelRequest) {
+            return; /* a newer selection already owns the panel */
+          }
+          panel.textContent = "";
+          if (!data.found) {
+            panel.appendChild(
+              el("p", "panel-empty", "no definition of '" + id + "' in the index")
+            );
+            return;
+          }
+          renderPanel(data);
+        },
+        function () {
+          if (seq !== panelRequest) {
+            return;
+          }
+          panel.textContent = "";
+          panel.appendChild(el("p", "panel-empty", "inspect request failed"));
+        }
+      );
+  }
+
   network.on("selectNode", function (event) {
     var id = event.nodes && event.nodes.length ? event.nodes[0] : null;
     renderInspect(id);
+    inspectPanel(id);
   });
   network.on("deselectNode", function () {
     renderInspect(null);
+    inspectPanel(null);
   });
 
   /* Layout toggle (FR-004): clicking an anchor in #layout-control

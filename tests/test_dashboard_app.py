@@ -3516,3 +3516,31 @@ def test_embeddings_status_core_schema_only_db_renders_unknown_rows(
     assert "never" in resp.text
     # The two absent tables degrade to em-dash rows, not an error page.
     assert resp.text.count('<td class="num">—</td>') == 2
+
+
+@requires_vis_network
+def test_graph_route_has_include_tests_toggle_and_inspect_panel(tmp_path):
+    """The graph tab ships the tests toggle in the toolbar and the empty
+    side-panel shell the node-inspect fetch fills."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/graph", params={"scope": "module", "focus": "src/demo"})
+    assert resp.status_code == 200
+    assert 'name="tests"' in resp.text
+    assert 'id="graph-panel"' in resp.text
+
+
+def test_graph_inspect_route_returns_json_payload(tmp_path):
+    """/graph/inspect answers the panel's question in one call: identity,
+    callers, callees, and the impact view with affected tests."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/graph/inspect", params={"name": "demo_main"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["found"] is True
+    assert data["symbol"]["name"] == "demo_main"
+    assert data["symbol"]["file"] == "src/demo/core.py"
+    assert {c["name"] for c in data["callees"]} == {"demo_helper"}
+
+    missing = client.get("/graph/inspect", params={"name": "missing_symbol"})
+    assert missing.status_code == 200
+    assert missing.json()["found"] is False

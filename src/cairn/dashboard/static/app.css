@@ -415,6 +415,116 @@ body.app-shell {
   border-radius: var(--radius);
 }
 
+/* Canvas + inspect side panel. The panel participates only while visible
+   (:has keeps the canvas full-width when it's hidden). */
+.graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.graph-layout:has(> .graph-panel[hidden]) {
+  grid-template-columns: 1fr;
+}
+
+.graph-panel {
+  max-height: min(72vh, 780px);
+  overflow-y: auto;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.86rem;
+}
+
+.panel-head-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.panel-kind {
+  flex: none;
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.panel-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.panel-sub {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.panel-doc {
+  margin: 0.45rem 0 0;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+}
+
+.panel-note {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.panel-section {
+  margin-top: 0.7rem;
+}
+
+.panel-head {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0.22rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.panel-row:last-child {
+  border-bottom: none;
+}
+
+.panel-name {
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.panel-empty {
+  margin: 0.15rem 0;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .graph-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .graph-overlay {
   position: absolute;
   left: 0.8rem;
