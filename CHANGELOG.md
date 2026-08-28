@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Environment propagation and wiring verification for custom `CAIRN_HOME`
+  installs (root cause of #70): every cairn-generated integration now
+  carries the store location — stdio MCP registrations embed
+  `env.CAIRN_HOME` across all nine client shapes (the Claude global-scope
+  registration uses the verified `claude mcp add -e` form), generated hook
+  commands and the git post-commit template embed the assignment, and the
+  LaunchAgent plist propagates it to the daemon. Default-home installs
+  generate byte-identical configs. `cairn config --json` is a new
+  read-only resolution probe (`cairn_home`/`workspace`/`db`/`knowledge`);
+  `cairn install-agents` spawn-verifies every written stdio registration
+  and reports per-client PASS/FAIL naming both stores on mismatch; and
+  `cairn doctor` gains a tenth `environment` check auditing store
+  existence, client-registration consistency (mixed severity: FAIL on a
+  provable wrong-store or unreachable SSE endpoint, WARN on stale
+  missing-env registrations), platform/transport supportability, and
+  binary coherence. A missing store directory now fails with the resolved
+  path, the env resolution chain, and the remediation on both the server
+  boot and CLI paths, and a changed-`CAIRN_HOME` reinstall refreshes
+  stale env in the zcode/opencode/kilo config shapes.
+
 ## [0.16.0] - 2026-08-28
 
 ### Added
