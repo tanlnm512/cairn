@@ -14,7 +14,7 @@ are read at process start, not per call.
 | `cairn update [--file <path>]` | incremental reindex (git-diff driven) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | snapshot the store |
-| `cairn config` | show effective configuration |
+| `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
 | `cairn uninstall` | remove cairn integration artifacts |
 
 ## Query
@@ -66,9 +66,9 @@ Group: `cairn memory …`
 
 | Command | Purpose |
 |---|---|
-| `cairn serve run|start|stop|status|restart` | MCP server (stdio foreground / SSE daemon `:9876`) |
+| `cairn serve run|start|stop|status|restart` | MCP server (stdio foreground / SSE daemon `:9876`). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. On Linux these exit 1 — run `cairn serve --port 9876` under a process supervisor, or prefer stdio. |
 | `cairn dashboard [--db] [--port]` | loopback dashboard `:8765` (read-only views + Settings) |
-| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy, claude-desktop) |
+| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy, claude-desktop). With a custom `CAIRN_HOME`, generated stdio registrations embed `env.CAIRN_HOME` (claude global scope via `claude mcp add -e`), hook commands embed the assignment, and each written stdio registration is spawn-verified — the report shows per-client `verify: PASS/FAIL` naming both stores on mismatch. SSE and CLI-registered clients are skipped with a note; `--dry-run` never spawns. |
 
 ## Compass / wiki / tasks / dataflow
 
@@ -84,7 +84,7 @@ Group: `cairn memory …`
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL) |
+| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 10 checks: the 9 store-internal ones plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable SSE endpoint, WARN on stale missing-env registrations), platform/transport supportability (SSE on non-macOS ⇒ WARN), binary coherence. Emitted last, also on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool-metrics and health reports |
 | `cairn validate` / `validate-paths` / `verify` | store integrity checks |
 | `cairn bench` | performance suites |
