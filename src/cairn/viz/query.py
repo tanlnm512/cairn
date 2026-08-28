@@ -6,6 +6,7 @@ Scopes: symbol, neighbors, module, impact, repo, deps. Returns a uniform
 from __future__ import annotations
 
 import sqlite3
+from pathlib import PurePosixPath
 from typing import Dict, Sequence
 
 
@@ -169,6 +170,22 @@ def get_repo_graph(conn: sqlite3.Connection, repo: str, max_nodes: int = 30) -> 
 _MODULE_CAP = 50
 _MODULE_EDGE_CAP = 100
 
+# Paths whose symbols are generated or third-party noise, not hand-written
+# structure. Minified bundles dominate the degree ranking (one vendored
+# vis-network.min.js carried 1,060 symbols whose internal calls outrank every
+# real hub), and the scanner's dir/size layers cannot catch a vendored file
+# committed under src/ — the filename marker does. Matches the scanner's
+# DEFAULT_SKIP_DIRS intent for stores built before those layers existed.
+_VENDORED_SEGMENTS = {"vendor", "dist", "node_modules"}
+
+
+def _is_vendored_path(path: str) -> bool:
+    """True for minified bundles and vendored/build directories."""
+    parts = PurePosixPath(path.replace("\\", "/")).parts
+    if ".min." in parts[-1].lower():
+        return True
+    return any(part.lower() in _VENDORED_SEGMENTS for part in parts[:-1])
+
 
 def get_module_graph(
     conn: sqlite3.Connection, module: str = "", include_tests: bool = False
@@ -182,14 +199,22 @@ def get_module_graph(
     fan-out of any edges) then name, so the cap lands on the symbols that
     carry the module's structure. Tests are excluded by default (the
     ``is_test_symbol`` heuristics from the impact layer); ``include_tests``
-    opts back in. ``metadata.tests_included`` and ``metadata.truncated``
-    report both choices honestly.
+    opts back in. Symbols from vendored/minified assets
+    (:func:`_is_vendored_path`) are never candidates — they are generated
+    noise in every scope, so unlike tests they have no opt-in. Edges are
+    deduplicated on ``(source, target, kind)``: the join is by bare symbol
+    name, so same-named symbols across repos multiply one logical edge into
+    many parallel rows (which also destabilize vis-network's force layout
+    into a blank canvas). ``metadata.tests_included``, ``metadata.truncated``
+    and ``metadata.vendored_excluded`` report all three choices honestly.
     """
     from ..graph.tests import is_test_symbol
 
     cur = conn.cursor()
     nodes = {}
     edges = []
+    seen_edges = set()
+    vendored_excluded = 0
     rows = cur.execute(
         "SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
         "(SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) + "
@@ -202,6 +227,9 @@ def get_module_graph(
     kept = 0
     eligible = 0
     for r in rows:
+        if _is_vendored_path(r["path"]):
+            vendored_excluded += 1
+            continue
         if not include_tests and is_test_symbol(
             r["path"], r["name"], r["qualified_name"] or ""
         )["is_test"]:
@@ -224,6 +252,10 @@ def get_module_graph(
         ).fetchall()
         for r in rows:
             if r["tgt"] in nodes:
+                key = (r["src"], r["tgt"], r["kind"])
+                if key in seen_edges:
+                    continue
+                seen_edges.add(key)
                 edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
     return {
         "nodes": list(nodes.values()),
@@ -235,6 +267,7 @@ def get_module_graph(
             "edge_count": len(edges),
             "tests_included": include_tests,
             "truncated": eligible > _MODULE_CAP,
+            "vendored_excluded": vendored_excluded,
         },
     }
 
