@@ -127,6 +127,7 @@ REASON_DEFAULT_SKIP = "default_skip"
 REASON_GITIGNORED = "gitignored"
 REASON_CONFIG_EXCLUDE = "config_exclude"
 REASON_SIZE_CAP = "size_cap"
+REASON_MINIFIED = "minified_asset"
 
 # Workspace root resolved from the current context (see src/paths.py):
 #   CAIRN_WORKSPACE env > registered ancestor > cwd. Resolved at import time;
@@ -361,6 +362,17 @@ def _is_under_skip_dir(rel_parts: tuple) -> bool:
     return False
 
 
+def _is_minified(path: Path) -> bool:
+    """Layer D: True for minified bundles (``*.min.js`` et al).
+
+    The filename marker, not the size cap, is what catches a vendored
+    bundle committed under src/ — a 400 KB min.js parses into hundreds of
+    junk symbols whose internal calls dominate every degree-ranked view
+    (the scanner's dir layers only catch vendor/ trees, not vendored
+    single files). """
+    return ".min." in path.name.lower()
+
+
 def classify_file(
     abs_path: Path,
     repo_root: Path,
@@ -370,8 +382,10 @@ def classify_file(
 ) -> Tuple[bool, str]:
     """Return (should_index, reason_if_skipped) for one source file.
 
-    Runs the layers in order. `include` overrides A/B/C (Layer D size cap is
-    NOT overridable -- a 50 MB vendored blob helps no one).
+    Runs the layers in order. `include` overrides A/B/C (Layer D size cap
+    and minified-asset skip are NOT overridable -- a 50 MB vendored blob
+    helps no one, and a minified bundle is generated noise in every view
+    regardless of what the config asks for).
     """
     try:
         rel_parts = abs_path.relative_to(repo_root).parts
@@ -379,9 +393,12 @@ def classify_file(
         return False, REASON_DEFAULT_SKIP
 
     # `include` override: checked first. A path explicitly included skips the
-    # A/B/C checks (but still subject to D: size cap).
+    # A/B/C checks (but still subject to D: minified skip + size cap).
     if include_spec is not None and _match_root_relative(include_spec, abs_path, repo_root):
-        # Still enforce size cap even for included files.
+        # Still enforce the Layer D generated-asset skips even for
+        # included files.
+        if _is_minified(abs_path):
+            return False, REASON_MINIFIED
         try:
             size = abs_path.stat().st_size
         except OSError:
@@ -402,7 +419,9 @@ def classify_file(
     if exclude_spec is not None and _match_root_relative(exclude_spec, abs_path, repo_root):
         return False, REASON_CONFIG_EXCLUDE
 
-    # Layer D: size cap.
+    # Layer D: generated assets — minified bundles, then the size cap.
+    if _is_minified(abs_path):
+        return False, REASON_MINIFIED
     try:
         size = abs_path.stat().st_size
     except OSError:
