@@ -219,12 +219,16 @@ def impact_analysis(
                 # accepts cycles=[] (documented) -- the escape hatch for
                 # benchmarks and debugging.
                 if use_index is True or not closure_has_seed_cycle(conn, seed_ids):
-                    return impact_from_closure(conn, seed_ids, max_depth, limit)
+                    closure_result = impact_from_closure(conn, seed_ids, max_depth, limit)
+                    # closure_available() said yes; a None here means the
+                    # closure unexpectedly cannot serve -- fall through to DFS.
+                    if closure_result is not None:
+                        return closure_result
 
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
     visited: set[str] = set()   # globally visited symbol ids — prevents re-traversal
     on_path: set[str] = set()   # current DFS path symbol ids — cycle detection
-    results = []
+    results: list[dict] = []
     cycles_seen: set[str] = set()
     cycles = []
     truncated = False

@@ -13,8 +13,8 @@ from typing import Dict, Sequence
 def get_symbol_graph(conn: sqlite3.Connection, name: str, depth: int = 1) -> Dict:
     """A symbol + its immediate callers and callees."""
     cur = conn.cursor()
-    nodes = {}
-    edges = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
 
     # The focal symbol.
     focal = cur.execute(
@@ -72,8 +72,8 @@ def get_symbol_neighbors(conn: sqlite3.Connection,
     """
     requested = list(dict.fromkeys(n for n in names if n and n.strip()))
     cur = conn.cursor()
-    nodes = {}
-    edges = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
     truncated = False
     if requested:
         placeholders = ",".join("?" * len(requested))
@@ -124,8 +124,8 @@ def get_impact_graph(conn: sqlite3.Connection, name: str, max_depth: int = 3) ->
     from ..graph.queries import impact_analysis
 
     result = impact_analysis(conn, name, max_depth=max_depth)
-    nodes = {}
-    edges = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
     _add_node(nodes, name, "focus", "", "")
     for r in result["impacted"]:
         _add_node(nodes, r["symbol"], "caller", r["file"], r["repo"])
@@ -141,8 +141,8 @@ def get_deps_graph(conn: sqlite3.Connection) -> Dict:
 
     cur = conn.cursor()
     repos = [r["id"] for r in cur.execute("SELECT id FROM repos").fetchall()]
-    nodes = {}
-    edges = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
     for repo in repos:
         _add_node(nodes, repo, "repo", "", repo)
         deps = cross_repo_deps(conn, repo)
@@ -157,8 +157,8 @@ def get_repo_graph(conn: sqlite3.Connection, repo: str, max_nodes: int = 30) -> 
     from ..graph.queries import group_by_top_level
 
     buckets = group_by_top_level(conn, repo)
-    nodes = {}
-    edges = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
     for key, count in buckets[:max_nodes]:
         label = f"{key} ({count})"
         _add_node(nodes, label, "module", "", repo)
@@ -211,8 +211,8 @@ def get_module_graph(
     from ..graph.tests import is_test_symbol
 
     cur = conn.cursor()
-    nodes = {}
-    edges = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
     seen_edges = set()
     vendored_excluded = 0
     rows = cur.execute(

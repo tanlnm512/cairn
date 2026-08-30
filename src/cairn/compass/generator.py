@@ -204,7 +204,7 @@ def _quick_commands(module_path: str, repo: Optional[str]) -> List[str]:
 def _template_body(symbols, key_files, cross_deps, quick_commands, module_path=None) -> str:
     lines = ["# What Does This Module Do?"]
     if symbols:
-        kinds = {}
+        kinds: dict[str, int] = {}
         for s in symbols:
             kinds[s.get("kind", "?")] = kinds.get(s.get("kind", "?"), 0) + 1
         kind_summary = ", ".join(f"{k}({v})" for k, v in sorted(kinds.items(), key=lambda x: -x[1])[:5])
