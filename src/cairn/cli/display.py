@@ -11,7 +11,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Iterator, Literal, Optional
 
 from rich.console import Console
 from rich.live import Live
@@ -20,6 +20,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
@@ -97,7 +98,9 @@ def print_table(title: Optional[str], columns: list[str], rows: list[list]) -> N
     table = Table(title=title, title_style="bold", show_header=True, header_style="bold cyan")
     for col in columns:
         # Right-align columns whose header looks numeric (count, n, etc.)
-        justify = "right" if col.lower() in {"count", "n", "calls", "symbols", "edges", "files", "repos"} else "left"
+        justify: Literal["left", "right"] = (
+            "right" if col.lower() in {"count", "n", "calls", "symbols", "edges", "files", "repos"} else "left"
+        )
         table.add_column(col, justify=justify)
     for row in rows:
         table.add_row(*[str(c) for c in row])
@@ -131,7 +134,7 @@ class _PlainTextProgress:
     def __init__(self, description: str, total: Optional[int], unit: str):
         self.tasks = [_SimpleTask(description, total, unit)]
         self._cg_task_id = 0
-        self._last_desc = None
+        self._last_desc: Optional[str] = None
         self._t0 = time.time()
         # Start _last_draw at _t0 so the first non-forced draw is throttled.
         self._last_draw = self._t0
@@ -218,7 +221,7 @@ class _RichProgressHandle:
     API so ``progress_bar()`` callers see the same contract on both backends.
     """
 
-    def __init__(self, progress: Progress, task_id: int):
+    def __init__(self, progress: Progress, task_id: TaskID):
         self._progress = progress
         self._cg_task_id = task_id
 
@@ -226,7 +229,7 @@ class _RichProgressHandle:
     def tasks(self):
         return self._progress.tasks
 
-    def update(self, task_id: int, **kwargs) -> None:
+    def update(self, task_id: TaskID, **kwargs) -> None:
         self._progress.update(task_id, **kwargs)
 
     def advance(self, amount: int = 1) -> None:

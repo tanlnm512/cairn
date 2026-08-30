@@ -53,6 +53,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boot and CLI paths, and a changed-`CAIRN_HOME` reinstall refreshes
   stale env in the zcode/opencode/kilo config shapes.
 
+### Changed
+- CI type-check gate hardened: mypy was driven from 63 reported errors
+  (advisory `continue-on-error` step) to a clean run across all 172
+  source files and is now a hard gate that blocks CI on new type
+  regressions, matching the ruff gate's philosophy. The fixes were
+  annotations and narrowing for our own code; targeted `type:
+  ignore[...]` markers with justifications only where stubs are
+  genuinely absent (protobuf codegen, OTel SDK re-exports,
+  pydantic-settings version skew, the <3.10 entry-points dict shape).
+- The 7 Medium-severity bandit advisory findings (6x B310 urlopen,
+  1x B615 HuggingFace `from_pretrained`) are pinned with inline
+  `# nosec` markers carrying their review rationale, so the advisory
+  report stays empty while future genuinely-untrusted URL opens would
+  still be flagged (no global skip list added).
+
+### Fixed
+- Eval harness latent crash in the lexical fallback: `search_symbols`
+  returns `sqlite3.Row` rows, which have no `.get` — the fallback path
+  (taken when semantic search raises, e.g. embeddings unavailable)
+  crashed with `AttributeError` instead of degrading. Rows are now
+  indexed directly (`r["name"]`, guaranteed by the SELECT).
+- C# parser no longer emits an edge with a `None` target when a
+  `new T<...>()` generic-name extraction finds no leading identifier;
+  the edge is skipped instead.
+- Storing a memory concept whose title is missing no longer feeds
+  `None` into the slugifier (tier-id paths in both the file-backed and
+  protocol stores now coerce an empty title first).
+
 ## [0.16.0] - 2026-08-28
 
 ### Added

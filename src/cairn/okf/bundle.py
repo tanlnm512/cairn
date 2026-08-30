@@ -143,7 +143,7 @@ class OKFBundle:
 
     def list_concepts(self, prefix: Optional[str] = None) -> List[str]:
         """List all concept IDs (relative paths without .md), optional prefix filter."""
-        ids = []
+        ids: List[str] = []
         if not self.root.is_dir():
             return ids
         for md in self.root.rglob("*.md"):

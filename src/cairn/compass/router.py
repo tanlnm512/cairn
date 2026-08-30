@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..graph.queries import (
     find_definition,
@@ -151,7 +151,7 @@ def _query_graph(query: str, token: str, conn: sqlite3.Connection) -> Dict:
         return _query_graph_hybrid(conn, tokens)
 
     # Fallback: original single-CamelCase-token lookup (backward compat).
-    out = {}
+    out: Dict[str, Any] = {}
     if token:
         defs = find_definition(conn, token)
         callers = get_callers(conn, token)
@@ -235,7 +235,7 @@ def _query_graph_hybrid(conn: sqlite3.Connection, tokens: List[str]) -> Dict:
 
 
 def _search_wiki(query: str, bundle: OKFBundle) -> List[str]:
-    return [c.title for c in bundle.search(query, limit=3) if c.type.startswith("Wiki")]
+    return [c.title or "" for c in bundle.search(query, limit=3) if c.type.startswith("Wiki")]
 
 
 def _get_compass(token: str, bundle: OKFBundle) -> List[str]:
@@ -244,7 +244,7 @@ def _get_compass(token: str, bundle: OKFBundle) -> List[str]:
         try:
             c = bundle.read_concept(cid)
             if token and (token in (c.resource or "") or token in cid):
-                out.append(c.title)
+                out.append(c.title or "")
         except Exception:
             continue
     return out
@@ -258,13 +258,13 @@ def _search_memory(query: str, bundle: OKFBundle, conn: sqlite3.Connection) -> L
     """
     from ..memory.promotion import search_memory
 
-    return [c.title for c in search_memory(conn, bundle, query)[:3]]
+    return [c.title or "" for c in search_memory(conn, bundle, query)[:3]]
 
 
 def _search_knowledge(query: str, bundle: OKFBundle) -> List[str]:
     """Search knowledge documents."""
     return [
-        c.title for c in bundle.search(query, limit=5)
+        c.title or "" for c in bundle.search(query, limit=5)
         if c.concept_id.startswith("knowledge/")
     ]
 

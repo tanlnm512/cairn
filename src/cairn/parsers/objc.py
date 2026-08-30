@@ -80,7 +80,7 @@ class ObjCParser(BaseParser, TreeSitterParserBase):
         self._file_stem = file_path.stem
         # Parsers are cached singletons reused across files, so reset all
         # per-file accumulators here.
-        self._pending_edges: List[Edge] = []
+        self._pending_edges = []
         self._scope = []
         self._callable_scope = []
 

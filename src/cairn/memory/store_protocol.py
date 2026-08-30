@@ -124,9 +124,9 @@ class InMemoryMemoryStore:
         if t == "raw":
             from datetime import datetime, timezone
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            return f"{TIER_DIRS['raw']}/{ts}-{_slugify(concept.title)}"
+            return f"{TIER_DIRS['raw']}/{ts}-{_slugify(concept.title or '')}"
         suffix = uuid.uuid4().hex[:6]
-        return f"{TIER_DIRS.get(t, 'memory/drafts')}/{_slugify(concept.title)}-{suffix}"
+        return f"{TIER_DIRS.get(t, 'memory/drafts')}/{_slugify(concept.title or '')}-{suffix}"
 
     def add(self, concept: OKFConcept, tier: Optional[str] = None,
             old_id: Optional[str] = None) -> str:

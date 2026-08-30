@@ -102,8 +102,8 @@ def verify(doc_path, db, knowledge):
 
     status = "OK" if result.passed else "FAIL"
     click.echo(f"[{status}] {doc_path} (quality={result.quality_score:.2f})")
-    for e in result.errors:
-        click.echo(f"  ERROR: {e}")
+    for err in result.errors:
+        click.echo(f"  ERROR: {err}")
     for w in result.warnings:
         click.echo(f"  warn: {w}")
     # Non-zero exit on blocking errors so scripts/CI can detect a failed verify.

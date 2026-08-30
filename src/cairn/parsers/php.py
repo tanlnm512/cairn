@@ -135,9 +135,9 @@ class PhpParser(BaseParser, TreeSitterParserBase):
                 pf.imports.append(imp)
             return
         if t in _REQUIRE_NODES:
-            imp = self._parse_require_import(node, source)
-            if imp:
-                pf.imports.append(imp)
+            req = self._parse_require_import(node, source)
+            if req:
+                pf.imports.append(req)
             return
 
         # Type declarations: class / interface / trait / enum / anonymous_class.

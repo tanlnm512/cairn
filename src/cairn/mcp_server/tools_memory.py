@@ -42,6 +42,7 @@ def memory_digest(limit: int = 10) -> str:
     try:
         for c in mems:
             score = c.extensions.get("memory_score", "?")
+            refs_verified: float | str
             try:
                 refs_verified = round(_graph_verification(c, conn), 3)
             except Exception:
@@ -131,6 +132,7 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
             from cairn.refs import extract_file_refs, extract_symbol_refs
             body = c.body or ""
             n_refs = len(extract_file_refs(body)) + len(extract_symbol_refs(body))
+            refs_verified: float | str
             try:
                 refs_verified = round(_graph_verification(c, conn), 3)
             except Exception:

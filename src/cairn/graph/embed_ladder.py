@@ -509,7 +509,7 @@ def _fetch_model_listing() -> Optional[List[str]]:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
         req = urllib.request.Request(f"{base}/models", headers=headers)
-        with urllib.request.urlopen(req, timeout=embeddings._PROBE_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=embeddings._PROBE_TIMEOUT_S) as resp:  # nosec B310 -- base is config-controlled
             if resp.status != 200:
                 return None
             body = resp.read()
@@ -550,7 +550,7 @@ def _embed_with_model(texts: Sequence[str], model_id: str) -> Tuple[List[bytes],
         headers["Authorization"] = f"Bearer {api_key}"
     payload = json.dumps({"model": model_id, "input": list(texts)}).encode("utf-8")
     req = urllib.request.Request(f"{base}/embeddings", data=payload, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- base is config-controlled
         body = json.loads(resp.read().decode("utf-8"))
     data = body["data"]
     data.sort(key=lambda d: d["index"])  # preserve input order

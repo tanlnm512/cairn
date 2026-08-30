@@ -595,7 +595,7 @@ def _run_server_probe() -> bool:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
         req = urllib.request.Request(f"{base}/models", headers=headers)
-        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:  # nosec B310 -- base is config-controlled
             if resp.status != 200:
                 return False
             body = resp.read()
@@ -1020,7 +1020,7 @@ def _embed_openai(texts: Sequence[str]) -> Tuple[List[bytes], int]:
         data=payload,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 -- fixed https URL
         body = json.loads(resp.read().decode("utf-8"))
     data = body["data"]
     data.sort(key=lambda d: d["index"])  # preserve input order
@@ -1102,7 +1102,7 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
         last_error = ""
         for attempt in range(max_retries + 1):
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- base is config-controlled
                     raw = resp.read()
                 break
             except urllib.error.HTTPError as e:

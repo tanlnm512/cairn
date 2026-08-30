@@ -34,6 +34,16 @@ def _home() -> Path:
 
 # ─── detection helpers ─────────────────────────────────────────────────────
 
+def _pkg_root() -> Path:
+    """The source-checkout root (three levels above the cairn package)."""
+    from importlib.util import find_spec
+
+    spec = find_spec("cairn")
+    if spec is None or spec.origin is None:
+        raise RuntimeError("cannot locate the installed cairn package")
+    return Path(spec.origin).resolve().parents[2]
+
+
 def _detect_install_method() -> str:
     """How cairn-intel was installed: 'uv', 'pipx', 'pip', 'venv', or 'unknown'."""
     exe = sys.executable
@@ -55,8 +65,7 @@ def _detect_install_method() -> str:
         pass
     # Source checkout's in-tree venv (.venv at the package root).
     try:
-        from importlib.util import find_spec
-        pkg_root = Path(find_spec("cairn").origin).resolve().parents[2]
+        pkg_root = _pkg_root()
         if (pkg_root / ".venv").exists() and pkg_root / ".venv" in Path(exe).resolve().parents:
             return "venv"
     except Exception:
@@ -69,8 +78,7 @@ def _detect_install_method() -> str:
 def _stale_artifacts() -> list[Path]:
     """Leftover build/, dist/, *.egg-info in the source tree (pip install -e debris)."""
     try:
-        from importlib.util import find_spec
-        pkg_root = Path(find_spec("cairn").origin).resolve().parents[2]
+        pkg_root = _pkg_root()
     except Exception:
         return []
     found: list[Path] = []
@@ -263,8 +271,7 @@ def _remove_binary(installed_via: str, dry_run: bool) -> None:
         subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "cairn-intel"], check=False)
     elif installed_via == "venv":
         try:
-            from importlib.util import find_spec
-            pkg_root = Path(find_spec("cairn").origin).resolve().parents[2]
+            pkg_root = _pkg_root()
             shutil.rmtree(pkg_root / ".venv", ignore_errors=True)
         except Exception:
             pass

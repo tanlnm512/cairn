@@ -9,7 +9,7 @@ stays public (no underscore).
 from __future__ import annotations
 
 import sqlite3
-from typing import List
+from typing import List, Tuple
 
 from .schema import note_contention
 
@@ -59,12 +59,12 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     return stats
 
 
-def get_tree(conn: sqlite3.Connection, repo: str, prefix: str = "") -> List[sqlite3.Row]:
+def get_tree(conn: sqlite3.Connection, repo: str, prefix: str = "") -> List[Tuple[str, int]]:
     """Return directory/package structure with symbol counts for a repo."""
     return group_by_top_level(conn, repo)
 
 
-def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[sqlite3.Row]:
+def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[Tuple[str, int]]:
     """Group a repo's symbols by their top-level source directory."""
     cur = conn.cursor()
     # files.path is repo-relative; fetch repos.path to strip it if a DB row

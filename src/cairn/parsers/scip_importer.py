@@ -657,7 +657,7 @@ def import_scip_bytes(
     if not _PROTOBUF_AVAILABLE:
         raise ImportError(_install_hint())
     try:
-        index = _scip.Index.FromString(data)  # type: ignore[union-attr]
+        index = _scip.Index.FromString(data)  # type: ignore[union-attr, attr-defined]  # protobuf codegen has no stubs
     except _ProtoDecodeError as e:  # type: ignore[arg-type]
         raise ValueError(f"data is not a valid SCIP protobuf Index: {e}") from e
     return _import_protobuf(conn, index, repo_id, ws_root=ws_root)

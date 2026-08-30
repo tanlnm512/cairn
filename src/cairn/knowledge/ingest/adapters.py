@@ -169,7 +169,7 @@ def _effective_rules(
 
 
 def _skip_reason(
-    rel: PurePosixPath, rules: Tuple[SkipRule, ...] = SKIP_LIST
+    rel: Union[PurePosixPath, Path], rules: Tuple[SkipRule, ...] = SKIP_LIST
 ) -> str | None:
     """First matching rule's reason for a repo-relative doc path, if any."""
     parts = rel.parts
@@ -280,5 +280,11 @@ class FedBinaryAdapter:
             if reason is not None:
                 self.skipped.append((relpath, reason))
                 logger.info("Skipping %s: %s", relpath, reason)
+                continue
+            if markdown is None:
+                # Defensive: the contract is (markdown, None) or (None,
+                # reason); a pathological (None, None) skips rather than
+                # yields a None document.
+                self.skipped.append((relpath, "conversion returned no markdown"))
                 continue
             yield (FED_REPO, relpath, markdown, CONVERTED_ORIGIN)

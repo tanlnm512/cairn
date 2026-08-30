@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 # release; older versions (e.g. 2.14.x) don't define it and never emit it.
 # Import defensively so this module loads on both old and new versions.
 try:
-    from pydantic_settings.exceptions import IncompleteFieldDefinitionWarning
+    from pydantic_settings.exceptions import IncompleteFieldDefinitionWarning  # type: ignore[import-not-found, attr-defined]
 except ImportError:  # pragma: no cover - depends on installed version
     IncompleteFieldDefinitionWarning = None  # type: ignore[assignment,misc]
 

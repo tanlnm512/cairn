@@ -533,6 +533,7 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
 
     probes = _serve_probes() or {}
     model = probes.get("ann_model")
+    model_name = model if isinstance(model, str) else None
     try:
         embedding_rows = embed_count(conn)
     except sqlite3.Error:
@@ -542,10 +543,12 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         # vec0 table by design, which is doctor's "no embeddings to index
         # yet", not a missing index -- reported as None rather than False.
         # An unknown model (probes still warming) is moot the same way.
-        index_present: Optional[bool] = (
-            index_exists(conn, model) if embedding_rows and model else None
-        )
-        index_rows = index_row_count(conn, model) if index_present else None
+        index_present: Optional[bool] = None
+        index_rows: Optional[int] = None
+        if embedding_rows and model_name:
+            index_present = index_exists(conn, model_name)
+            if index_present:
+                index_rows = index_row_count(conn, model_name)
     except sqlite3.Error:
         index_present, index_rows = None, None
 
@@ -995,7 +998,7 @@ def get_session_chains(
         grouped.setdefault(row["session_id"], []).append(row)
 
     sessions: List[dict] = []
-    for session_id, calls in grouped.items():
+    for sid, calls in grouped.items():
         chains: List[dict] = []
         last_ts: Optional[float] = None
         for row in calls:
@@ -1007,7 +1010,7 @@ def get_session_chains(
                 and (ts - last_ts) > SESSION_GAP_S
             )
             if split or not chains:
-                chains.append({"session_id": session_id, "calls": []})
+                chains.append({"session_id": sid, "calls": []})
             chain = chains[-1]
             chain["calls"].append(
                 {

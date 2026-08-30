@@ -104,7 +104,7 @@ def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = N
     is unlinked to prevent orphan files on re-tiering.
     """
     t = tier or concept.extensions.get("memory_tier", "drafts")
-    slug = slugify(concept.title) or "memory"
+    slug = slugify(concept.title or "") or "memory"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if t == "raw":
         # Raw tier keeps the date prefix (so decay can purge by age) but now
