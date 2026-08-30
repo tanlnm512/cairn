@@ -46,14 +46,13 @@ jobs:
         continue-on-error: true
         run: bandit -r src -ii -ll -s B608
 
-  # --- Type checking: ADVISORY at adoption --------------------------------
-  # mypy reports ~52 errors at default settings today (--ignore-missing-imports
-  # because tree-sitter & friends ship no stubs). Same philosophy as the ruff
-  # gate: ship advisory so NEW type regressions are visible without blocking
-  # CI, then drive the count down and remove `continue-on-error` to make it a
-  # hard gate.
+  # --- Type checking: HARD gate --------------------------------------------
+  # mypy runs clean at default settings (--ignore-missing-imports because
+  # tree-sitter & friends ship no stubs) after the 0-error cleanup wave
+  # (63 errors at adoption time). New type regressions now block CI, same
+  # philosophy as the ruff gate.
   typecheck:
-    name: Type check (mypy, advisory)
+    name: Type check (mypy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -65,14 +64,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      # continue-on-error at the STEP level (not job) -- the standard advisory
-      # pattern, same as bandit above: the job reports SUCCESS (green) so it
-      # doesn't block branch protection, while still printing the ~52 known
-      # errors in the log for visibility. (Job-level continue-on-error leaves
-      # the check red in branch protection.) Remove this line to promote mypy
-      # to a hard gate once the error count is driven down.
       - name: mypy
-        continue-on-error: true
         run: mypy --ignore-missing-imports src
 
   # --- Conventional Commit PR-title gate (hard) ---------------------------
