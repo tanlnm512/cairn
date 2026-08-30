@@ -122,11 +122,11 @@ def cosine_scan(
         # the precomputed unit query, divided by the row norm (the old
         # ``dot(q,v)/(qn*vn)`` form is algebraically identical; scores agree
         # to float epsilon, pinned by the differential tests).
-        q = struct.unpack(f"<{len(q_blob) // 4}f", q_blob)
-        qn = _l2norm(q)
-        if qn == 0.0:
+        q_vec = struct.unpack(f"<{len(q_blob) // 4}f", q_blob)
+        q_norm = _l2norm(q_vec)
+        if q_norm == 0.0:
             return []
-        q_unit = [x / qn for x in q]
+        q_unit_seq = [x / q_norm for x in q_vec]
         scored: List[Tuple[float, T]] = []
         for vec_blob, dim, payload in rows:
             if dim != q_dim:
@@ -135,7 +135,7 @@ def cosine_scan(
             vn = math.sqrt(sum(map(_MUL, v, v)))
             if vn == 0.0:
                 continue
-            score = sum(map(_MUL, q_unit, v)) / vn
+            score = sum(map(_MUL, q_unit_seq, v)) / vn
             if score >= threshold:
                 scored.append((score, payload))
         scored.sort(key=lambda x: -x[0])

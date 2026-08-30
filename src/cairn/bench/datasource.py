@@ -97,6 +97,7 @@ import platform
 import re
 import stat
 from pathlib import Path
+from typing import TypeGuard
 
 from .. import __version__
 
@@ -133,7 +134,7 @@ _HEX64 = re.compile(r"[0-9a-f]{64}")
 _HEX_SHA = re.compile(r"[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?")
 
 
-def _is_int(value: object) -> bool:
+def _is_int(value: object) -> TypeGuard[int]:
     """True for real ints -- bool is an int subclass and never counts."""
     return isinstance(value, int) and not isinstance(value, bool)
 

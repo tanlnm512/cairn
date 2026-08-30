@@ -234,7 +234,7 @@ def _get_logger() -> Any:
         from opentelemetry.exporter.otlp.proto.http.log_exporter import (  # type: ignore[import-not-found]
             OTLPLogExporter,
         )
-        from opentelemetry.sdk._logs import (  # type: ignore[import-not-found]
+        from opentelemetry.sdk._logs import (  # type: ignore[import-not-found, attr-defined]
             LoggerProvider,
             LogRecord,
         )
@@ -260,7 +260,9 @@ def _get_logger() -> Any:
         tracker = _TrackingExporter(
             OTLPLogExporter(endpoint=endpoint(), timeout=_EXPORT_TIMEOUT_S)
         )
-        provider.add_log_record_processor(SimpleLogRecordProcessor(tracker))
+        # _TrackingExporter is duck-typed on purpose (see its docstring); the
+        # stub-visible protocol mismatch is expected, not a regression.
+        provider.add_log_record_processor(SimpleLogRecordProcessor(tracker))  # type: ignore[arg-type]
         _otlp_tracker = tracker
         _otlp_logger = provider.get_logger("cairn.telemetry")
         _log_record_cls = LogRecord

@@ -124,9 +124,9 @@ def _as_tags(value: object) -> list[str]:
         value = value.strip()
         if len(value) >= 2 and value[0] == "[" and value[-1] == "]":
             value = value[1:-1]
-        items = value.split(",")
+        items = list(value.split(","))
     elif isinstance(value, (list, tuple)):
-        items = value
+        items = list(value)
     else:
         return []
     return [str(item).strip() for item in items if str(item).strip()]

@@ -93,7 +93,7 @@ def resolve_file_language(suffix: str, abs_path: str) -> str:
     lang = EXTENSION_MAP.get(suffix)
     if lang == "header":
         return detect_header_language(abs_path)
-    return lang
+    return lang or ""
 
 # Layer A: directories to never descend into. Applied even without a .gitignore.
 # Covers build output, VCS, deps, caches, and IDE state so the graph is
@@ -562,4 +562,4 @@ def infer_repo_language(files: List[FileInfo]) -> Optional[str]:
         counts[f.language] = counts.get(f.language, 0) + 1
     if not counts:
         return None
-    return max(counts, key=counts.get)
+    return max(counts, key=lambda name: counts[name])

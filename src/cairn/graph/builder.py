@@ -552,7 +552,7 @@ def _build_graph_impl(
             if scip_available():
                 # repo_id for the importer: consistent with files.repo_id
                 # (repo basename for multi-repo, or the single repo's id).
-                for lang, idx_path in scip_languages.items():
+                for lang, scip_idx in scip_languages.items():
                     # Determine the repo id to attribute SCIP symbols to. Use
                     # the first repo seen (typical single-repo case); for
                     # multi-repo the index is still imported under one id.
@@ -562,7 +562,7 @@ def _build_graph_impl(
                         # path to (repo_id, repo-relative) so SCIP rows share
                         # file identity with the scanner/incremental paths.
                         s = import_scip_file(
-                            conn, idx_path, repo_id=repo_for_scip, fmt="proto",
+                            conn, scip_idx, repo_id=repo_for_scip, fmt="proto",
                             ws_root=ws_root,
                         )
                         scip_import_stats[lang] = s
