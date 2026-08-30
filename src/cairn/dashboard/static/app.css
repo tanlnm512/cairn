@@ -266,8 +266,15 @@ body.app-shell {
 
 /* ---- Live refresh chrome (topbar-mounted) ---- */
 
-#live-controls {
+/* display:flex sits behind :not([hidden]) on purpose: an author display
+   rule beats the UA's [hidden] { display: none }, so the unguarded
+   flex rule rendered the Pause button — dead, the loop never arms
+   without a #refresh-region — on every view that has no live region. */
+#live-controls:not([hidden]) {
   display: flex;
+}
+
+#live-controls {
   align-items: center;
   gap: 0.6rem;
   margin-left: auto;
@@ -512,6 +519,17 @@ body.app-shell {
 .panel-name {
   overflow-wrap: anywhere;
   font-weight: 500;
+}
+
+/* Panel names are deep links into the symbol-focused graph: the accent
+   comes from the global anchor rule; underline only on intent. */
+.panel-row a.panel-name {
+  text-decoration: none;
+}
+
+.panel-row a.panel-name:hover,
+.panel-row a.panel-name:focus {
+  text-decoration: underline;
 }
 
 .panel-empty {

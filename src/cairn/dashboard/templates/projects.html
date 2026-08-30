@@ -47,7 +47,7 @@
         <td class="num">{{ p.file_count }}</td>
         <td class="num">{{ p.symbol_count }}</td>
         <td class="num">{{ p.edge_count }}</td>
-        <td>{{ p.last_indexed or "never" }}</td>
+        <td>{{ p.last_indexed | isots if p.last_indexed else "never" }}</td>
         <td>
           <span class="badge badge-{{ p.embedding_status }}">{{ p.embedding_status }}</span>
           {%- if p.embedding_models %} <span class="muted">{{ p.embedding_models | join(", ") }}</span>

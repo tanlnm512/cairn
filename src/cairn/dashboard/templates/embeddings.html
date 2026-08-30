@@ -50,7 +50,7 @@
         <td class="num">{% if corpus.count is not none %}{{ corpus.count }}{% else %}—{% endif %}</td>
         {#- An empty corpus has never embedded; an unreadable one (pre-table
             store, unresolvable backend) is unknown, not zero. -#}
-        <td>{% if corpus.last %}{{ corpus.last }}{% elif corpus.count is none %}—{% else %}never{% endif %}</td>
+        <td>{% if corpus.last %}{{ corpus.last | isots }}{% elif corpus.count is none %}—{% else %}never{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

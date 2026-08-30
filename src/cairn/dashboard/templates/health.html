@@ -38,7 +38,7 @@
       <h2>Index freshness</h2>
       {% if health.last_build_age %}
       <p class="card-value">{{ health.last_build_age }}</p>
-      <p class="muted">last build {{ health.last_build_at }}</p>
+      <p class="muted">last build {{ health.last_build_at | isots }}</p>
       {% else %}
       <p class="card-value">never</p>
       <p class="muted">no build_runs recorded</p>
@@ -60,7 +60,14 @@
       {% if health.ann_index_exists is none %}
       <p class="muted">no embeddings to index yet</p>
       {% elif health.ann_index_exists %}
+      {#- index_row_count is defensive: a read failure (e.g. the vector
+          extension not loadable) returns None — report that honestly
+          instead of the literal "None rows". -#}
+      {% if health.ann_index_rows is none %}
+      <p class="muted">vec0 index present — row count unavailable</p>
+      {% else %}
       <p class="muted">vec0 index: {{ health.ann_index_rows }} rows</p>
+      {% endif %}
       {% else %}
       <p class="muted">no vec0 index built</p>
       {% endif %}

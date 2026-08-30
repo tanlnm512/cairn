@@ -95,6 +95,12 @@ def test_create_app_serves_landing_and_static(tmp_path):
     assert landing.status_code == 200
     assert "Cairn Dashboard" in landing.text
     assert db_path in landing.text
+    # Every sidebar view is reachable from the launcher grid, including
+    # the two newest sections.
+    for href in ("/workspaces", "/projects", "/graph", "/history", "/tokens",
+                 "/chains", "/health", "/memory", "/tasks", "/embeddings",
+                 "/settings"):
+        assert f'href="{href}"' in landing.text, href
 
     css = client.get("/static/app.css")
     assert css.status_code == 200
@@ -188,7 +194,7 @@ def test_projects_route_lists_counts_and_embedding_status(tmp_path):
     for header in ("Files", "Symbols", "Edges", "Last indexed", "Embeddings"):
         assert header in resp.text
     assert '<td class="num">3</td>' in resp.text  # symbol count
-    assert "2026-08-20T11:00:00" in resp.text  # MAX(files.indexed_at)
+    assert "2026-08-20 11:00:00 UTC" in resp.text  # MAX(files.indexed_at), humanized
     assert "embedded" in resp.text
     assert "all-MiniLM-L6-v2" in resp.text
     assert "/graph?scope=repo" in resp.text and "repo=demo" in resp.text
@@ -738,7 +744,9 @@ def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
     from cairn.dashboard.app import _human_size
 
     assert _human_size(os.stat(db_path).st_size) in resp.text
-    assert "2026-08-20T07:00:00Z" in resp.text
+    # build_runs.started_at renders humanized (isots), never raw ISO.
+    assert "2026-08-20 07:00:00 UTC" in resp.text
+    assert "2026-08-20T07:00:00Z" not in resp.text
     assert re.search(r"just now|\b\d+[smhd] old\b", resp.text)
 
     # conftest clears CAIRN_EMBED_BACKEND, so the local default is active.
@@ -768,6 +776,26 @@ def test_health_route_empty_db_renders_empty_state(tmp_path):
     assert resp.status_code == 200
     assert "no build_runs recorded" in resp.text
     assert "no embeddings to index yet" in resp.text
+
+
+def test_health_route_unknown_index_row_count_is_honest(tmp_path, monkeypatch):
+    """A present vec0 index whose row count cannot be read (the defensive
+    None from index_row_count) renders an honest note — never the literal
+    Python None ("vec0 index: None rows")."""
+    import cairn.dashboard.data as dashboard_data
+
+    monkeypatch.setattr(dashboard_data, "embed_count", lambda conn: 42)
+    monkeypatch.setattr(dashboard_data, "index_exists", lambda conn, model: True)
+    monkeypatch.setattr(
+        dashboard_data, "index_row_count", lambda conn, model: None
+    )
+    client = _panel_client(
+        tmp_path, _health_db_file(tmp_path, seed=True), str(tmp_path / "knowledge")
+    )
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert "row count unavailable" in resp.text
+    assert "None rows" not in resp.text
 
 
 def _seed_memories(knowledge_dir):
@@ -2472,9 +2500,9 @@ def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
     health_a = client.get("/health", params={"store": _SW_KEY_A})
     health_b = client.get("/health", params={"store": _SW_KEY_B})
     assert str(home / _SW_KEY_A / ".kg") in health_a.text
-    assert "2026-08-20T07:00:00Z" in health_a.text
+    assert "2026-08-20 07:00:00 UTC" in health_a.text
     assert str(home / _SW_KEY_B / ".kg") in health_b.text
-    assert "2026-08-20T09:00:00Z" in health_b.text
+    assert "2026-08-20 09:00:00 UTC" in health_b.text
 
     # No param: the launch store, exactly as before the seam existed.
     plain = client.get("/projects")
@@ -2956,6 +2984,8 @@ def test_embed_banner_names_rung_reason_and_remediation_on_every_page(
     assert "rung 3" in resp.text
     assert "model_missing" in resp.text
     assert "CAIRN_EMBED_SERVER_MODEL" in resp.text  # the remediation
+    # The banner links one click into the status view (store riding).
+    assert 'href="/embeddings?store=' in resp.text or 'href="/embeddings"' in resp.text
 
 
 def test_embed_banner_prefers_this_process_ladder_verdict(
@@ -3373,8 +3403,10 @@ def test_embeddings_status_renders_backend_stamp_counts_and_freshness(
     assert '<td class="num">1</td>' in resp.text  # code: current model only
     assert '<td class="num">2</td>' in resp.text  # knowledge rows
     assert '<td class="num">0</td>' in resp.text  # memory: a zero, not unknown
-    assert "2026-08-21T09:00:00" in resp.text  # MAX(code embedded_at)
-    assert "2026-08-20T12:30:00" in resp.text  # MAX(knowledge embedded_at)
+    # embedded_at renders humanized (isots), never raw ISO.
+    assert "2026-08-21 09:00:00 UTC" in resp.text  # MAX(code embedded_at)
+    assert "2026-08-20 12:30:00 UTC" in resp.text  # MAX(knowledge embedded_at)
+    assert "2026-08-21T09:00:00" not in resp.text
     assert "never" in resp.text  # memory has never embedded
 
 

@@ -2435,6 +2435,113 @@ def test_module_scope_focus_filters_tests_too(fresh_db):
     assert "test_case_00" in {n["id"] for n in opted_in["nodes"]}
 
 
+def _seed_vendored(conn):
+    """One minified asset whose internal calls give it the workspace's
+    highest-degree symbols, one vendored dir, and one real hub."""
+    conn.executemany(
+        "INSERT INTO repos (id, name, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [("v", "v", ".", "javascript", "2026-08-28T00:00:00")],
+    )
+    conn.executemany(
+        "INSERT INTO files (id, repo_id, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("f_min", "v", "src/web/static/app.min.js", "javascript", "2026-08-28T00:00:00"),
+            ("f_dist", "v", "dist/bundle/helpers.js", "javascript", "2026-08-28T00:00:00"),
+            ("f_real", "v", "src/web/app.py", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    rows = [
+        ("s_min_a", "f_min", "append", "minified.append", "method"),
+        ("s_min_b", "f_min", "emit", "minified.emit", "function"),
+        ("s_dist", "f_dist", "dist_helper", "bundled.dist_helper", "function"),
+        ("s_real_a", "f_real", "real_main", "web.app.real_main", "function"),
+        ("s_real_b", "f_real", "real_helper", "web.app.real_helper", "function"),
+    ]
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, docstring) "
+        "VALUES (?, ?, ?, ?, ?, NULL)",
+        rows,
+    )
+    # Degree 6+2 for the minified pair (workspace top), degree 1 for the hub.
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            ("ve1", "s_min_a", "s_min_b", "calls"),
+            ("ve2", "s_min_a", "s_min_b", "calls"),
+            ("ve3", "s_min_a", "s_min_b", "calls"),
+            ("ve4", "s_min_b", "s_min_a", "calls"),
+            ("ve5", "s_min_b", "s_min_a", "calls"),
+            ("ve6", "s_min_b", "s_min_a", "calls"),
+            ("ve7", "s_real_a", "s_real_b", "calls"),
+            ("ve8", "s_dist", "s_real_a", "calls"),
+        ],
+    )
+    conn.commit()
+
+
+def test_module_scope_excludes_vendored_and_minified_symbols(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_vendored(fresh_db)
+    graph = get_graph(fresh_db)
+
+    ids = {n["id"] for n in graph["nodes"]}
+    # The minified pair has the workspace's top degree but is never a
+    # candidate; the dist/ dir is excluded by the same rule.
+    assert "append" not in ids and "emit" not in ids and "dist_helper" not in ids
+    assert ids == {"real_main", "real_helper"}
+    assert graph["metadata"]["vendored_excluded"] == 3
+    # The dist->real edge dies with its vendored source node.
+    assert graph["metadata"]["edge_count"] == 1
+
+
+def test_module_scope_dedupes_cross_repo_parallel_edges(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    # Same bare names in two repos: the name-based edge join sees three
+    # rows for ONE logical edge, plus a distinct kind that must survive.
+    fresh_db.executemany(
+        "INSERT INTO repos (id, name, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("r1", "r1", ".", "python", "2026-08-28T00:00:00"),
+            ("r2", "r2", ".", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("f_r1", "r1", "src/one.py", "python", "2026-08-28T00:00:00"),
+            ("f_r2", "r2", "src/two.py", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, docstring) "
+        "VALUES (?, ?, ?, ?, ?, NULL)",
+        [
+            ("s_a1", "f_r1", "caller", "one.caller", "function"),
+            ("s_b1", "f_r1", "helper", "one.helper", "function"),
+            ("s_a2", "f_r2", "caller", "two.caller", "function"),
+            ("s_b2", "f_r2", "helper", "two.helper", "function"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            ("pe1", "s_a1", "s_b1", "calls"),
+            ("pe2", "s_a2", "s_b2", "calls"),
+            ("pe3", "s_a1", "s_b2", "calls"),
+            ("pe4", "s_a2", "s_b1", "imports"),
+        ],
+    )
+    fresh_db.commit()
+
+    graph = get_graph(fresh_db)
+    # One calls edge caller->helper; the distinct-kind imports edge stays.
+    assert graph["metadata"]["edge_count"] == 2
+    kinds = sorted((e["source"], e["target"], e["kind"]) for e in graph["edges"])
+    assert kinds == [("caller", "helper", "calls"), ("caller", "helper", "imports")]
+
+
 # ---------------------------------------------------------------------------
 # Symbol inspect payload (graph-tab side panel): one call answering
 # "what is this, what feeds it, what does it touch, what breaks".

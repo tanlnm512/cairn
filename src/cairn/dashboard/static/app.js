@@ -187,27 +187,32 @@
     known[n.id] = true;
   });
   var nodes = new vis.DataSet(data.nodes.map(nodeView));
-  var edges = new vis.DataSet(
-    data.edges
-      .filter(function (e) {
-        return known[e.source] && known[e.target];
-      })
-      .map(function (e, i) {
-        return {
-          id: i,
-          from: e.source,
-          to: e.target,
-          title: [e.kind, e.label].filter(Boolean).join(" — ")
-        };
-      })
-  );
-  var nextEdgeId = edges.length;
+  /* Parallel edges (same source, target AND kind) collapse to one vis
+     edge. The viz layer dedupes its name-based join, but a store built
+     before that fix still serves duplicates — and parallel edges
+     multiply the force layout's spring forces until the simulation
+     never converges (the blank-canvas bug). edgeKeys doubles as
+     merge()'s dedupe set below. */
   var edgeKeys = {};
+  var edgeViews = [];
   data.edges.forEach(function (e) {
-    if (known[e.source] && known[e.target]) {
-      edgeKeys[edgeKey(e.source, e.target, e.kind)] = true;
+    if (!known[e.source] || !known[e.target]) {
+      return;
     }
+    var key = edgeKey(e.source, e.target, e.kind);
+    if (edgeKeys[key]) {
+      return;
+    }
+    edgeKeys[key] = true;
+    edgeViews.push({
+      id: edgeViews.length,
+      from: e.source,
+      to: e.target,
+      title: [e.kind, e.label].filter(Boolean).join(" — ")
+    });
   });
+  var edges = new vis.DataSet(edgeViews);
+  var nextEdgeId = edges.length;
   /* Layout (FR-004): the initial choice comes from the server-rendered
      data-layout attribute; "hier" starts the network hierarchical
      top-down. Toggling later swaps the option on the live instance. */
@@ -578,6 +583,17 @@
     return node;
   }
 
+  /* Side-panel rows deep-link into the symbol-focused graph — the same
+     seam the inspect hint and the search box navigate with (full page
+     load, browser-back returns; the store rides the href). */
+  function panelFocusUrl(name) {
+    return (
+      "/graph?scope=symbol&focus=" +
+      encodeURIComponent(name) +
+      (inspectStore ? "&store=" + encodeURIComponent(inspectStore) : "")
+    );
+  }
+
   function panelRows(list, items, nameKey, withDepth) {
     if (!items.length) {
       list.appendChild(el("li", "panel-empty", "none"));
@@ -585,7 +601,9 @@
     }
     items.forEach(function (item) {
       var row = el("li", "panel-row");
-      row.appendChild(el("span", "panel-name", item[nameKey]));
+      var name = el("a", "panel-name", item[nameKey]);
+      name.href = panelFocusUrl(item[nameKey]);
+      row.appendChild(name);
       var sub = item.file || "";
       if (withDepth && item.depth !== undefined && item.depth !== null) {
         sub = "depth " + item.depth + (sub ? " — " + sub : "");
