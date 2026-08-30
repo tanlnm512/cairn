@@ -1764,13 +1764,15 @@ def evaluate_l1_query(
         results = qmod.semantic_search(conn, query, limit=k, params=params)
         retrieved_names = [r.get("name", "") for r in results]
     except Exception:
+        # search_symbols returns sqlite3.Row rows (no .get) whose SELECT
+        # always includes ``name`` -- index directly.
         results = qmod.search_symbols(conn, query, limit=k)
-        retrieved_names = [r.get("name", "") for r in results]
+        retrieved_names = [r["name"] for r in results]
 
     if not retrieved_names:
         # Fallback to search_symbols if semantic search returned no candidates
         results = qmod.search_symbols(conn, query, limit=k)
-        retrieved_names = [r.get("name", "") for r in results]
+        retrieved_names = [r["name"] for r in results]
 
     rank = 0
     for idx, name in enumerate(retrieved_names, start=1):
