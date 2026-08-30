@@ -43,7 +43,7 @@ def _pypi_latest() -> str | None:
         import json
         url = "https://pypi.org/pypi/cairn-intel/json"
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 -- fixed https URL
             data = json.loads(resp.read())
             return data["info"]["version"]
     except Exception:

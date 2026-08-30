@@ -42,7 +42,8 @@ def _probe_tokenizer() -> Optional[Any]:
     except ImportError:
         return None
     try:
-        return AutoTokenizer.from_pretrained(_tokenizer_model(), local_files_only=True)
+        # Cache probe only: local_files_only=True means nothing is ever fetched.
+        return AutoTokenizer.from_pretrained(_tokenizer_model(), local_files_only=True)  # nosec B615
     except Exception:
         return None
 
