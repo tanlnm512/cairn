@@ -410,7 +410,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             is_func_value = value is not None and value.type in (
                 "arrow_function", "function_expression"
             )
-            if is_func_value:
+            if is_func_value and value is not None:
                 if is_top and name:
                     pf.symbols.append(
                         Symbol(
@@ -553,7 +553,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         if name_node is None:
             return None
         if name_node.type == "identifier":
-            name = self._node_text(name_node, source).strip()
+            name: str | None = self._node_text(name_node, source).strip()
         elif name_node.type == "member_expression":
             # <UI.Card/> -> resolve to the property name "Card" (matches how
             # _extract_callee treats member_expression calls, and what the

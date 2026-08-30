@@ -277,12 +277,14 @@ class CSharpParser(BaseParser, TreeSitterParserBase):
                         line=node.start_point[0] + 1,
                     )
                 if child.type == "generic_name":
-                    return Edge(
-                        source_name=self._current_edge_owner(),
-                        kind="calls",
-                        target_name=self._extract_generic_name(child, source),
-                        line=node.start_point[0] + 1,
-                    )
+                    generic = self._extract_generic_name(child, source)
+                    if generic:
+                        return Edge(
+                            source_name=self._current_edge_owner(),
+                            kind="calls",
+                            target_name=generic,
+                            line=node.start_point[0] + 1,
+                        )
             return None
         # invocation_expression: callee is the first child.
         callee_node = node.children[0] if node.children else None

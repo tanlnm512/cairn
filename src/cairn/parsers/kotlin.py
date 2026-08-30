@@ -71,10 +71,10 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         self._callable_scope = []
         # In-file receiver-type tracker: a stack of {var_name: type_name}
         # scopes, one per enclosing function.
-        self._var_types: List[dict] = [{}]
+        self._var_types = [{}]
         # {type_name: {field_name: type_name}}, populated by _prescan_field_types
         # before the main walk.
-        self._field_types: dict = {}
+        self._field_types = {}
         self._prescan_field_types(tree.root_node, source)
 
         self._walk(tree.root_node, source, pf)
