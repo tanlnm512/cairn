@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 
-def _human_bytes(n: int) -> str:
+def _human_bytes(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024:
             return f"{n:.0f} {unit}"
