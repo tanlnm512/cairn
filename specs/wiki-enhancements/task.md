@@ -23,26 +23,34 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 1: Generation quality (FR-001, FR-005)
 <!-- Checkpoint (plan.md): equal-degree plan puts the code module first and the test-majority module only with capacity left; one dead path → one critic error; a `wiki-page-enrich`-named task body carries the full Sources-footer spec. Verify: CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py tests/test_compass_critic.py tests/test_wiki_promotion.py -q -->
-- [ ] T001 [P] Write failing planner-demotion pins — `tests/test_wiki_planner.py` (FR-001)
-      Red-first (C-02). In `TestPlanOrdering` add the class-tier case: a test-majority
-      module with HIGHER cross-module incoming degree still plans after a code module
-      (TC-002/TC-003 shape), and re-anchor
-      `test_equal_degree_modules_tiebroken_by_module_name_asc` deliberately — the class
-      tier now sits ABOVE name-ASC (D-014). `test_overview_page_is_planned_first` stays
+- [ ] T001 [P] Write failing planner-exclusion pins — `tests/test_wiki_planner.py` (FR-001)
+      Red-first (C-02). In `TestPlanOrdering` re-anchor
+      `test_modules_ranked_by_cross_module_incoming_degree_desc:172` as an ABSENCE pin:
+      a test-majority module with HIGHER cross-module incoming degree is ABSENT from
+      the plan entirely and the next code module takes the slot (TC-002/TC-003 shape —
+      the gate amended demotion to exclusion, D-014).
+      `test_equal_degree_modules_tiebroken_by_module_name_asc` survives UNCHANGED —
+      the sort key stays (-degree, name-ASC), no class tier exists. Add the
+      filtered-empty case deliberately (an all-test-majority repo empties the filtered
+      candidate set; `TestEmptyGraph:228` pins the empty-graph path, not this one).
+      `test_overview_page_is_planned_first` stays
       untouched (the overview is a synthetic entry outside `module_files`, exempt).
-      Survey gap (FR-001 PARTIAL): no module is classified test-majority and no class
-      split exists in the sort key at catalog.py:171.
+      Survey gap (FR-001 PARTIAL): no module is classified test-majority and nothing
+      filters `module_files` before the sort at catalog.py:171.
       Verify red: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py -q` (survey baseline 15 passed — the new pins must fail)
-- [ ] T002 Write the test-majority sort key — `src/cairn/wiki/catalog.py` (FR-001) (after T001)
+- [ ] T002 Write the test-majority exclusion filter — `src/cairn/wiki/catalog.py` (FR-001) (after T001)
       Consumes T001's failing pins in `TestPlanOrdering`. In `build_page_plan` add
       `_is_test_majority(paths) -> bool` — a path is a test file when any `/`-segment
       equals `test`, `tests`, `spec`, or `specs`; majority = strictly more test files
-      than non-test — fed by `module_files` already built at catalog.py:162-166; change
-      the rank at catalog.py:171 from `sorted(module_files, key=lambda m: (-degrees[m], m))`
-      to key `(is_test_majority[m], -degrees[m], m)`. Demote-only, never exclusion;
-      degree dominates within a class; name-ASC tiebreak preserved (D-014). Segment-check
+      than non-test — fed by `module_files` already built at catalog.py:162-166; FILTER
+      test-majority modules out of `module_files` BEFORE the rank at catalog.py:171 —
+      filtered modules never enter
+      `sorted(module_files, key=lambda m: (-degrees[m], m))`, whose key stays
+      `(-degrees[m], m)` UNCHANGED (D-014: exclusion, never demotion — no class tier;
+      degree DESC + name-ASC preserved). Segment-check
       the same stored path strings `_module_of:29` already handles — don't re-derive
-      normalization.
+      normalization. input_hash is per-entry (`_page:119` hashes the entry), so
+      filtering alone never requeues promoted pages.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py -q`
 - [ ] T003 [P] Write failing critic-dedupe and spec-prefix pins — `tests/test_compass_critic.py`, `tests/test_wiki_promotion.py` (FR-005)
       Red-first (C-02). Two pins: (1) one completion citing the same dead path in body
@@ -211,60 +219,82 @@ Status reflects code state per [survey.md](survey.md), not intent.
       after T010: FR-006 follows FR-004 on the cli/wiki.py serial spine.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_cli.py tests/test_wiki_export.py -q` and `grep -n "def export" src/cairn/cli/wiki.py` matches
 
-## Phase 6: Enrichment + language (FR-008, FR-009)
-<!-- Checkpoint (plan.md): cairn wiki enrich <page-id> queues the enrich kind; a critic-passing completion replaces the body with the prior body readable from the task result; --lang zh renders a task body instructing Chinese (default en). Verify: CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py tests/test_wiki_promotion.py tests/test_wiki_cli.py -q -->
+## Phase 6: Enrichment (FR-008)
+<!-- Checkpoint (plan.md, as amended at the approval gate 2026-08-31): cairn wiki enrich <page-id> queues the enrich kind; a critic-passing completion APPENDS its new sections to the page body (prior content stays visible in the page; the result records only the new sections with their own ## Sources footer); a critic-failing cycle leaves the page byte-identical. The language option was deferred at the gate: T017/T018 below are struck in place (still counted in the phase total per check.py's convention). Verify: CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py tests/test_wiki_promotion.py tests/test_wiki_cli.py -q -->
 - [ ] T015 Write failing enrich pins — `tests/test_wiki_enrich.py` (new file) (FR-008) (after T014)
       Red-first (C-02); new suite per plan assumption 4. Pins:
       `cairn wiki enrich [<page-id>] [--repo R] [--all]` — exactly one selector required, else exit 1 —
       queues kind `wiki-page-enrich` with resource=page_id ONLY when the promoted
       concept is readable; unpromoted/unknown page-id → exit 1, nothing queued
       (TC-022); facts carry `current_body` (the page's body), fresh seeds/input_hash/
-      repo from the manifest row, a fresh `commit_sha`, optional `lang` (TC-021); the
+      repo from the manifest row, a fresh `commit_sha` (TC-021); the
       row's task_id/state update WITHOUT overwriting its `commit_sha`; a critic-passing
-      completion replaces the promoted body via the unmodified
-      startswith(`wiki-page`) branch and the prior body stays readable from the
-      Task-Result sibling's `extensions.facts` (D-021); critic failure spawns
-      `wiki-page-enrich-revise` and max-cycle drop is inherited (TC-023); `--all` and
+      completion APPENDS the result's sections to the promoted concept's body through
+      the enrich sub-branch keyed startswith(`wiki-page-enrich`) (D-021) — the result
+      records ONLY the new sections, ending in their own `## Sources` footer, the prior
+      body stays visible in the page itself, sources merge old+new deduped by entry
+      value, and the Task-Result sibling records exactly the appended sections while
+      `facts["current_body"]` keeps the prior body; a critic-failing cycle leaves the
+      page byte-identical (nothing appended, sources untouched), spawns
+      `wiki-page-enrich-revise`, and max-cycle drop is inherited (TC-023); `--all` and
       `--repo` scoping (TC-024); an in-flight enrich keeps duplicate generate blocked
       via `_live_task_pages` (pipeline.py:39-48).
       Verify red: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py -q`
-- [ ] T016 Implement the enrich queue path + CLI — `src/cairn/wiki/pipeline.py`, `src/cairn/cli/wiki.py` (FR-008) (after T015)
+- [ ] T016 Implement the enrich queue path, append seam + CLI — `src/cairn/wiki/pipeline.py`, `src/cairn/llm/tasks.py`, `src/cairn/cli/wiki.py` (FR-008) (after T015)
       Consumes T015's pins. New queue function beside `_queue_pages:52` (NEVER through
       its hash-match skip at :70-75 — enrich is an explicit override): requires the
       promoted concept at `wiki/pages/{repo}/{page_id}`, captures
       `facts["current_body"]` from `concept.body`, copies seeds/input_hash/repo from
       the manifest row (row shape pipeline.py:77-94; retry's facts-assembly precedent
       cli/wiki.py:292-301), resolves `commit_sha` fresh at enrich time, updates the
-      row's task_id/state. Promotion needs ZERO keying changes — startswith sites at
+      row's task_id/state WITHOUT touching its `commit_sha`. Promotion ENTRY needs
+      ZERO keying changes — startswith sites at
       tasks.py:291 (section_vocab `("## Sources",)` at :294), tasks.py:385, and
-      pipeline.py:47 already route the kind; revise mapping (tasks.py:448-451) yields
+      pipeline.py:47 already route the kind — but the completion write gains the D-021
+      append seam: beside the plain wiki-page write (tasks.py:409-426), an
+      enrich-specific sub-branch keyed startswith(`wiki-page-enrich`) reads the
+      promoted concept fresh at completion (fallback `facts["current_body"]`),
+      concatenates `concept.body + "\n\n" + new_sections` (the result carries ONLY the
+      new sections + their own `## Sources` footer), merges sources old+new deduped by
+      entry value (producer unchanged: tasks.py:317-321; round-trip concept.py:120/
+      :190-191), refreshes extensions from facts (task_id, commit_sha per D-016), and
+      on critic failure appends NOTHING — the page stays byte-identical; the revise
+      mapping (tasks.py:448-451) yields
       `wiki-page-enrich-revise`, served the full spec by FR-005's prefix rule.
       `cairn wiki enrich` subcommand in cli/wiki.py. Verify revise-spawn fact
-      propagation (tasks.py:445-463) so `current_body`/`lang` reach the revise hop —
+      propagation (tasks.py:445-463) so `current_body` reaches the revise hop —
       if facts don't propagate today, that is a deliberate small extension of the
       spawn, not a new mechanism (unknown — verify at implementation). No MCP tool:
       `_EXPECTED_TOOL_COUNT = 28` (server.py:56) stays.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py tests/test_wiki_promotion.py tests/test_wiki_cli.py -q`
-- [ ] T017 Write failing --lang pins — `tests/test_wiki_enrich.py`, `tests/test_wiki_promotion.py` (FR-009) (after T016)
+- [ ] ~~T017~~ deferred 2026-08-31 (approval gate: --lang deferred; its requirement was struck from the spec — user scope decision, no D-###; traced to the FR-008 enrich suite this task would have extended) (after T016)
+      Historical record of the struck entry, kept verbatim in substance (never delete
+      a task line). Was: Write failing --lang pins — `tests/test_wiki_enrich.py`,
+      `tests/test_wiki_promotion.py`.
       Red-first (C-02); extends T015's suite and the `TestMermaidGating:101` precedent
       file. Pins: `--lang zh` on generate and on enrich sets `facts["lang"]` to `zh`
       and the rendered task body instructs writing in Chinese; `--lang en` explicitly
       instructs English; the flag omitted → no `lang` key → today's bodies
-      byte-identical (TC-025); an invalid value (`--lang fr`) is refused by
-      `click.Choice(["en","zh"])` before anything queues (TC-026). Survey gap (FR-009
-      TODO): grep `--lang` over src/ + tests/ is zero matches today.
-      Verify red: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py "tests/test_wiki_promotion.py::TestMermaidGating" -q`
-- [ ] T018 Implement --lang en|zh — `src/cairn/cli/wiki.py`, `src/cairn/wiki/pipeline.py`, `src/cairn/llm/tasks.py` (FR-009) (after T017)
+      byte-identical (TC-025 — struck with the deferral); an invalid value (`--lang
+      fr`) is refused by `click.Choice(["en","zh"])` before anything queues (TC-026 —
+      struck with the deferral). Survey gap (the deferred language option, TODO at
+      write time): grep `--lang` over src/ + tests/ is zero matches today.
+      Would-have-verified red: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py "tests/test_wiki_promotion.py::TestMermaidGating" -q`
+- [ ] ~~T018~~ deferred 2026-08-31 (approval gate: --lang deferred; its requirement was struck from the spec — user scope decision, no D-###; implementation notes preserved in tech-spec D-022; traced to the FR-008 surfaces it would have edited) (after T017)
+      Historical record of the struck entry, kept verbatim in substance (never delete
+      a task line). Was: Implement --lang en|zh — `src/cairn/cli/wiki.py`,
+      `src/cairn/wiki/pipeline.py`, `src/cairn/llm/tasks.py`.
       Consumes T017's pins. `click.Choice(["en","zh"])` on generate and enrich (current
       generate flag set cli/wiki.py:19-39); `facts["lang"]` set by BOTH queue paths —
       the generate path's `_queue_pages` facts (pipeline.py:77-86, where
       `facts["diagrams"]` is set at :85-86 as the shape) and T016's enrich path;
       `_output_spec` appends the language instruction INSIDE the existing
       startswith(`wiki-page`) gate whenever `facts["lang"]` is present — the diagrams
-      appendix at tasks.py:631-632 is the pinned precedent (D-022); omitted key →
-      byte-identical bodies. MCP untouched; tool count stays 28. P6 is internally
-      serial: FR-008 before FR-009 (both edit cli/wiki.py + tasks.py).
-      Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py tests/test_wiki_promotion.py tests/test_wiki_cli.py -q`
+      appendix at tasks.py:631-632 is the pinned precedent (D-022 — struck/deferred
+      with it); omitted key →
+      byte-identical bodies. MCP untouched; tool count stays 28. P6 was internally
+      serial (both struck tasks edit cli/wiki.py + tasks.py, the FR-008 surfaces).
+      Would-have-verified: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_enrich.py tests/test_wiki_promotion.py tests/test_wiki_cli.py -q`
 
 ## Phase 7: Onboarding, docs & ship gate (FR-010)
 <!-- Checkpoint (plan.md): fresh install-agents output contains the wiki section; full suite green; docs + CHANGELOG updated; MCP tool count unchanged. Verify: CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest -q, plus tests/test_agent_surface.py tests/test_tool_annotations.py tests/test_status_resource_health.py -q, and grep -n '_EXPECTED_TOOL_COUNT = 28' src/cairn/mcp_server/server.py -->
@@ -291,10 +321,12 @@ Status reflects code state per [survey.md](survey.md), not intent.
       AGENTS.md in the same task (the on-disk agreement check inside
       `test_tool_count_string_matches_server` demands it).
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_agent_surface.py tests/test_tool_annotations.py tests/test_status_resource_health.py -q` and `grep -n '_EXPECTED_TOOL_COUNT = 28' src/cairn/mcp_server/server.py`
-- [ ] T021 Docs, CHANGELOG and the full-suite ship gate — `docs/`, `CHANGELOG.md` (FR-010) (after T018) (after T020)
-      The FR-010-carried docs pass recording the final surface FR-001..FR-009 delivered
-      (spec In-scope: docs + CHANGELOG): wiki subcommands generate/search/status/retry/
-      export/enrich, `cairn task drop`, `--kind-prefix`, `--lang`, fresh/stale display;
+- [ ] T021 Docs, CHANGELOG and the full-suite ship gate — `docs/`, `CHANGELOG.md` (FR-010) (after T020)
+      The FR-010-carried docs pass recording the final surface FR-001..FR-008, FR-010
+      delivered (spec In-scope: docs + CHANGELOG; the language option was deferred at
+      the approval gate, so T018 is no longer upstream of this pass): wiki subcommands
+      generate/search/status/retry/
+      export/enrich, `cairn task drop`, `--kind-prefix`, fresh/stale display;
       CHANGELOG entry. Then the Phase-7 gate: whole suite green
       (`CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest -q`), the three
       enforcement suites of T020's verify green, tool count 28. After green, the single

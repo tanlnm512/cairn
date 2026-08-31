@@ -10,7 +10,7 @@ memory.** Session-verified additions are marked **[session]**.
 Two diagrams cover the feature's two data flows; everything else is local
 edits inside machinery the survey already mapped.
 
-**Flow 1 — enrich (FR-008/FR-009), riding the landed promotion branch:**
+**Flow 1 — enrich (FR-008), riding the landed promotion branch:**
 
 ```mermaid
 flowchart TD
@@ -18,15 +18,15 @@ flowchart TD
     B -- "no" --> X["exit 1: nothing to enrich"]
     B -- "yes" --> C["read concept: capture current body"]
     C --> D["new pipeline queue path<br/>(bypasses should_skip hash gate)"]
-    D --> E["create_task kind=wiki-page-enrich<br/>resource=page_id<br/>facts: title/description/module/seeds/<br/>input_hash/repo/current_body/commit_sha/lang"]
+    D --> E["create_task kind=wiki-page-enrich<br/>resource=page_id<br/>facts: title/description/module/seeds/<br/>input_hash/repo/current_body/commit_sha"]
     E --> F["manifest row: task_id=enrich task,<br/>state=queued, commit_sha NOT overwritten"]
     F --> G["agent claims + completes<br/>complete_task (generic, unchanged)"]
     G --> H{"critic_concept + Sources resolve<br/>kind startswith wiki-page<br/>=> scored & promoted"}
     H -- "fail, cycles < MAX_REVISE_CYCLES" --> I["spawn wiki-page-enrich-revise<br/>(same branch, kind += -revise)"]
     I --> G
     H -- "fail, cycles exhausted" --> J["dropped outcome (unchanged)"]
-    H -- "pass" --> K["overwrite concept body at<br/>wiki/pages/{repo}/{page_id}<br/>extensions += commit_sha (facts copy)"]
-    K --> L["Task-Result sibling keeps prior body<br/>via extensions.facts.current_body"]
+    H -- "pass" --> K["enrich sub-branch (kind startswith<br/>wiki-page-enrich): read promoted concept,<br/>body += new sections (result = sections only),<br/>sources old+new deduped, extensions refreshed"]
+    K --> L["Task-Result sibling records exactly the<br/>appended sections; facts.current_body<br/>keeps the prior body (audit trail)"]
 ```
 
 **Flow 2 — commit sha / staleness data flow (FR-003/FR-007):**
@@ -70,25 +70,24 @@ existing `tools_wiki.py:wiki_generate:19` is untouched this round.
 
 ### Chosen approach
 
-Ten FRs, ten decisions (D-014…D-023, continuing the archive's numbering —
+Nine in-scope FRs (FR-009 deferred at the approval gate 2026-08-31), ten
+decisions (D-014…D-023, continuing the archive's numbering —
 D-010/D-013 are landed decisions of specs/archive/2026-08-31-wiki-generation).
 
-- **FR-001 (D-014)** — a test-majority class tier inserted ABOVE degree in
-  the planner sort key. The raw material already sits in
+- **FR-001 (D-014)** — test-majority modules are EXCLUDED from page plans:
+  `build_page_plan` filters them out of `module_files` BEFORE ranking; the
+  sort key itself is unchanged. The raw material already sits in
   `build_page_plan`: it builds `module_files: Dict[str, List[str]]` at
   catalog.py:162-166 from `SELECT path FROM files WHERE repo_id = ?`
   (catalog.py:151-155), so the classification is a segment check over lists
   already in hand at ranking time (survey: "THE RAW MATERIAL FOR A
-  MAJORITY-TEST TEST ALREADY EXISTS IN MEMORY"). Today the rank is
-  `ranked = sorted(module_files, key=lambda m: (-degrees[m], m))` at
-  catalog.py:171; it becomes
-  `(is_test_majority[m], -degrees[m], m)` — demote-only (test modules are
-  never excluded), degree still dominates WITHIN each class, name-ASC
-  tiebreak preserved (spec AC1 requires the stronger reading: a test-majority
-  module with HIGHER degree still plans after a code module). The overview
-  page (planned first, pinned by
-  `test_overview_page_is_planned_first` in tests/test_wiki_planner.py) is a
-  synthetic entry outside `module_files` and is exempt.
+  MAJORITY-TEST TEST ALREADY EXISTS IN MEMORY"), and filtered modules never
+  enter `ranked = sorted(module_files, key=lambda m: (-degrees[m], m))` at
+  catalog.py:171 — no class tier; degree DESC + name-ASC preserved. The
+  overview page (pinned planned-first by
+  `test_overview_page_is_planned_first` in tests/test_wiki_planner.py:164
+  [session]) is a synthetic entry outside `module_files` and is exempt.
+  ZCode parity: the wiki documents product code only (spec FR-001).
 - **FR-002 (D-015)** — the escape-first contract is preserved literally:
   each line is still `html.escape(raw, quote=False)` (markdown.py:52) BEFORE
   any construct matches; the new inline-code pass runs on the ALREADY-ESCAPED
@@ -188,40 +187,55 @@ D-010/D-013 are landed decisions of specs/archive/2026-08-31-wiki-generation).
   state badge (`<span class="badge badge-{{ p.state }}">` at wiki.html:19
   and wiki_page.html:7) and text in the detail view. HEAD is resolved once
   per repo per request (10s subprocess timeout per call — never per page).
-- **FR-008 (D-021)** — the promotion branch needs ZERO keying changes:
-  `task.task_kind.startswith("wiki-page")` already gates the critic's
+- **FR-008 (D-021)** — the promotion branch keeps its zero-keying-changes
+  entry: `task.task_kind.startswith("wiki-page")` already gates the critic's
   Sources scoring (tasks.py:291, `section_vocab=("## Sources",)` at :294),
-  the promotion write (tasks.py:385, :419-424), and pipeline chain-grouping
-  (pipeline.py:47) — [session] re-confirmed all four startswith sites.
-  `wiki-page-enrich` therefore enters the critic gate, the bounded revise
-  cycle (kind mapping appends `-revise`, tasks.py:448-451 →
-  `wiki-page-enrich-revise`, which FR-005's prefix rule then serves), and
-  max-cycle drop (:479-494) unmodified. New queueing function in
-  wiki/pipeline.py (a sibling of `_queue_pages:52`, NOT a `--force` variant):
-  requires the promoted concept readable, captures `facts["current_body"]`
-  from `concept.body`, copies fresh seeds/input_hash/repo from the manifest
-  row (row shape per pipeline.py:77-94), resolves `commit_sha` fresh at
-  enrich time, and updates the row's `task_id`/`state` WITHOUT touching its
-  `commit_sha` (display precedence promoted-first keeps the page shown as
-  promoted while enrichment is in flight, and staleness keeps reading the
-  old concept sha — correct, the old body is still what's published). The
-  audit trail is the Task-Result sibling: every completion persists the full
-  result body at tasks.py:267-275 and `_task_to_concept:532` carries
-  `facts` in the extensions (:552), so `current_body` (the prior body)
-  survives in the result record — the D-008/D-006 pattern the spec locked.
-  Hash-match skip does not apply (enrich is an explicit override; it never
-  enters `_queue_pages`' skip condition at :70-75). CLI:
+  the promotion write (tasks.py:385, :409-426), and pipeline chain-grouping
+  (pipeline.py:47) — [session] re-confirmed all startswith sites. Inside the
+  branch region, an enrich-specific sub-branch keyed
+  `startswith("wiki-page-enrich")` — distinct from the plain wiki-page
+  replace write — reads the promoted concept fresh at completion and
+  APPENDS: `concept.body + "\n\n" + new_sections`, where new_sections is
+  the entire critic-passing result (the task result carries ONLY the new
+  sections, ending in its own `## Sources` footer — that footer is what the
+  critic's Sources scoring gates on); sources = the concept's existing
+  frontmatter entries + the result's resolved footer entries, deduped by
+  entry value, old entries first (the resolved-footer producer stays
+  tasks.py:317-321, `{"path": e}`/`{"symbol": e}`; old entries survive the
+  round-trip — sources popped at concept.py:120, emitted at :190-191);
+  extensions are refreshed by the same facts-copy write (tasks.py:419-424
+  shape: task_id, commit_sha fresh from facts per D-016). complete_task may
+  grow this wiki-internal helper but stays workspace-generic. The
+  Task-Result sibling still records exactly what was appended (full result
+  body persisted at tasks.py:267-275) and `facts["current_body"]` keeps the
+  prior body — audit trail unchanged (D-008/D-006 pattern). Promoted
+  semantics return on completion with no manifest write (manifest.py:14-16:
+  promoted is never trusted from a stored row; `_page_state` precedence at
+  cli/wiki.py:222-233 derives promoted from concept readability). New
+  queueing function in wiki/pipeline.py (a sibling of `_queue_pages:52`,
+  NOT a `--force` variant): requires the promoted concept readable,
+  captures `facts["current_body"]` from `concept.body`, copies fresh
+  seeds/input_hash/repo from the manifest row (row shape per
+  pipeline.py:77-94), resolves `commit_sha` fresh at enrich time, and
+  updates the row's `task_id`/`state` WITHOUT touching its `commit_sha`
+  (staleness keeps reading the old concept sha — correct, the old body is
+  still what's published until the append lands). Hash-match skip does not
+  apply (enrich is an explicit override; it never enters `_queue_pages`'
+  skip condition at :70-75). CLI:
   `cairn wiki enrich [<page-id>] [--repo R] [--all]` — exactly one selector
   required, else exit 1; unpromoted/unknown page-id → exit 1. No MCP tool:
   count stays 28.
-- **FR-009 (D-022)** — facts key `lang` (string, `en|zh`), set by the
+- ~~**FR-009 (D-022)** — facts key `lang` (string, `en|zh`), set by the
   generate queue path and the enrich queue path; `_output_spec` appends a
   language instruction inside the existing startswith gate (the diagrams
   appendix at tasks.py:631-632 is the pinned precedent,
   `TestMermaidGating:101`). Appendix added whenever `facts["lang"]` is
   present (en explicitly requested → explicit English instruction; omitted →
   no key → today's behavior, which IS English default). CLI validation via
-  `click.Choice(["en","zh"])` on generate and enrich; MCP untouched.
+  `click.Choice(["en","zh"])` on generate and enrich; MCP untouched.~~
+  **Deferred at the approval gate 2026-08-31 — `--lang` is out of scope this
+  round (FR-009); D-022 below keeps the implementation notes for the future
+  round.**
 - **FR-010 (D-023)** — one new "## Wiki" section inside the shared
   `_INSTRUCTIONS_BODY:284` (ends ~:406) in agent_install/_common.py, placed
   after the LLM Task Queue section (:366-368) and before the Knowledge Files
@@ -245,7 +259,7 @@ D-010/D-013 are landed decisions of specs/archive/2026-08-31-wiki-generation).
 
 | Alternative | Why rejected |
 |---|---|
-| Test modules excluded from plans entirely | Spec locks demote-only ("never exclusion"), capacity may still reach them (spec risk mitigation) |
+| Demote-only class tier above degree | Gate chose exclusion — ZCode parity (the wiki documents product code only) |
 | Full markdown library (markdown-it / mistune) for FR-002 | New runtime dependency violates C-03; renderer is pure stdlib by pinned docstring (markdown.py:3-4) and import-guard test (tests/test_dashboard_app.py:41) |
 | Inline-code pass BEFORE html.escape | Breaks the escape-first contract the pins assert (`&lt;script&gt;`/`&amp;` at test_dashboard_app.py:3771-3773); escaping is per-line before construct matching (markdown.py:52) |
 | HEAD resolved in cli/wiki.py + tools_wiki.py callers | Duplicates resolution in two surfaces; survey shows both funnel through run_wiki_generate (:68, :39) — one resolution point, and enrich needs the same resolution |
@@ -257,8 +271,9 @@ D-010/D-013 are landed decisions of specs/archive/2026-08-31-wiki-generation).
 | Flat `DIR/{page_id}.md` export | Page ids collide across repos (every repo plans an overview page — planner cap test); per-repo subdirs keep manifest keys 1:1 |
 | Manifest row sha as the staleness source of truth | manifest.py:14-16: promoted state is never trusted from a stored row — the concept decides; row sha is a queue-time hint only |
 | Enrich via `--force` regen | The spec's motivating gap: enrichment "requires `--force` regenerating everything" today; enrich is per-page and must not be skipped by hash-match yet not drag every page |
-| New MCP enrich tool / lang param on wiki_generate | Tool count pinned at 28 (server.py:56, verify_tool_count at :171, tests/test_agent_surface.py:457); enrich and --lang are CLI-only this round |
-| i18n framework for FR-009 | Spec locks "--lang as task-facts instruction (no i18n infrastructure)"; a facts-gated appendix copy matches the diagrams precedent |
+| Replace semantics for enrich (completion overwrites the body) | Gate chose append — prior content must stay visible in the page itself |
+| New MCP enrich tool | Tool count pinned at 28 (server.py:56, verify_tool_count at :171, tests/test_agent_surface.py:457); enrich is CLI-only this round (`--lang` deferred with FR-009) |
+| ~~i18n framework for FR-009~~ | Moot — FR-009 deferred at the gate (2026-08-31); if revived, the facts-gated appendix (D-022 notes) stays the shape, no i18n infrastructure |
 
 ## Impact analysis
 
@@ -282,14 +297,15 @@ manifest tests.
 
 What breaks if the approach is wrong:
 
-- **Sort-key change (D-014)** reorders every plan → all of
+- **Planner exclusion (D-014)** removes modules from every plan → all of
   tests/test_wiki_planner.py (15 tests) plus test_wiki_refine's deterministic
-  fallback tests re-pin; input_hash is per-entry (`_page:119` hashes the
-  entry, not the plan) so reordering alone does NOT spuriously requeue
-  promoted pages.
+  fallback tests re-pin (TestPlanOrdering's test-module ordering case at
+  :172 becomes an absence assertion); input_hash is per-entry (`_page:119`
+  hashes the entry, not the plan) so filtering alone does NOT spuriously
+  requeue promoted pages.
 - **`list_tasks` signature change** is the widest blast radius (38 direct
   callers) → add `kind_prefix` as an OPTIONAL kwarg with default None; zero
-  call sites change. Same discipline for `run_wiki_generate` (lang/commit
+  call sites change. Same discipline for `run_wiki_generate` (commit
   plumbing stays internal) and `extract_file_refs` (order-preserving dedupe
   is behavior-compatible for every caller that only iterates refs).
 - **Renderer change** risks the two escape pins
@@ -312,7 +328,7 @@ What breaks if the approach is wrong:
 
 ## Code guide
 
-### 1. Planner demotion (FR-001)
+### 1. Planner exclusion (FR-001)
 - Touches: the `build_page_plan` function in src/cairn/wiki/catalog.py
   (ranking at catalog.py:171; classification helper new, fed by
   `module_files` built at catalog.py:162-166)
@@ -320,14 +336,20 @@ What breaks if the approach is wrong:
   any `/`-segment equals `test`, `tests`, `spec`, or `specs` (the FR names
   `test`/`spec`; the motivating incident was a `tests/` page, so plural
   forms are required); majority = strictly more test files than non-test.
-  Sort key `(is_test_majority[m], -degrees[m], m)`.
+  Filter test-majority modules out of `module_files` BEFORE the
+  catalog.py:171 sort — the sort key stays `(-degrees[m], m)` unchanged.
 - Verify before implementing: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py -q` (15 passed this session)
-- Pitfalls: TestPlanOrdering's equal-degree pin
-  (`test_equal_degree_modules_tiebroken_by_module_name_asc:178`) gains a
-  class tier ABOVE name ASC — update the pin deliberately, don't preserve it
-  verbatim; overview must stay first; the legacy absolute-path strip lives in
-  `_module_of:29` — segment-check the same stored path strings, don't
-  re-derive normalization.
+- Pitfalls: TestPlanOrdering's test-module ordering pin
+  (`test_modules_ranked_by_cross_module_incoming_degree_desc:172`) becomes
+  an EXCLUSION pin (the test-majority module is absent from the plan and
+  the next code module takes the slot) — update it deliberately, don't
+  preserve it verbatim; the name-ASC tiebreak pin
+  (`test_equal_degree_modules_tiebroken_by_module_name_asc:178`) survives
+  unchanged; overview must stay first; an all-test-majority repo empties
+  the filtered candidate set — decide that path deliberately (TestEmptyGraph:228
+  pins the empty-graph path, not the filtered-empty path); the legacy
+  absolute-path strip lives in `_module_of:29` — segment-check the same
+  stored path strings, don't re-derive normalization.
 
 ### 2. Renderer: inline code + GFM tables (FR-002)
 - Touches: the `render_markdown` function in src/cairn/dashboard/markdown.py
@@ -393,8 +415,8 @@ What breaks if the approach is wrong:
   src/cairn/wiki/sources.py (:71); the `_output_spec` function in
   src/cairn/llm/tasks.py (exact lookup at :630)
 - Approach: see D-018. Insert the startswith fallback AFTER
-  `spec = specs.get(task_kind, …)`; enrich/revise nuance comes from
-  facts-gated appendices (§7), not new dict entries.
+  `spec = specs.get(task_kind, …)`; the enrich kinds are served by that
+  fallback itself (no new dict entries).
 - Verify before implementing: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_compass_critic.py tests/test_wiki_promotion.py -q` (36 passed this session)
 - Pitfalls: both edits land on pinned lines (TestResolveSources:280,
   TestCriticConceptIntegration:133, TestWikiOutputSpecRegistration:78); the
@@ -417,25 +439,35 @@ What breaks if the approach is wrong:
   which is correct; skip index.md/log.md-style non-concepts by iterating
   manifest rows, not by rglob.
 
-### 7. Enrich + --lang (FR-008, FR-009)
+### 7. Enrich append (FR-008)
 - Touches: src/cairn/wiki/pipeline.py (new enrich queue path beside
   `_queue_pages:52`; NOT the skip condition at :70-75); src/cairn/cli/wiki.py
-  (new `enrich` subcommand, `--lang` on generate + enrich);
-  `_output_spec` appendix gates in src/cairn/llm/tasks.py (:631-632 shape);
-  facts assembly (:77-86 shape + `facts["diagrams"]` at :86 [session])
-- Approach: see D-021/D-022. Facts:
+  (new `enrich` subcommand); the wiki promotion branch region in
+  src/cairn/llm/tasks.py (enrich sub-branch keyed
+  `startswith("wiki-page-enrich")`, beside the plain wiki-page write at
+  tasks.py:409-426); facts assembly in src/cairn/wiki/pipeline.py
+  (:77-86 shape + `facts["diagrams"]` at :86 [session])
+- Approach: see D-021. Facts:
   `{title, description, module, seeds, input_hash, repo, current_body,
-  commit_sha, lang?}`; promotion and revise need zero keying changes
+  commit_sha}`; completion APPENDS — `concept.body + "\n\n" +
+  new_sections` (the result carries only the new sections + its own
+  `## Sources` footer), sources = old + new deduped, extensions refreshed
+  from facts; promotion and revise need zero keying changes for entry
   (startswith sites at tasks.py:291/385/631 + pipeline.py:47 [session]).
 - Verify before implementing: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_promotion.py tests/test_mcp_wiki_tool.py tests/test_wiki_refine.py -q` (26 + 12 passed this session)
-- Pitfalls: `_live_task_pages` (pipeline.py:39-48) counts an in-flight
-  enrich as a live chain — duplicate generate queueing is already blocked,
-  don't double-implement; verify revise-spawn fact propagation (tasks.py:445-463)
-  so lang/current_body reach `wiki-page-enrich-revise` — if facts don't
-  propagate today, that is a deliberate small extension of the spawn, not a
-  new mechanism (unknown — verify at implementation); `wiki-page-enrich`'
-  critic vocabulary is `("## Sources",)` automatically via the prefix gate;
-  do not add MCP surface (28-tool pin).
+- Pitfalls: the enrich RESULT must end with its own `## Sources` footer —
+  it is the only body the critic scores and the merge input for sources;
+  the append base is the concept read fresh at completion (fallback
+  `facts["current_body"]`), not the queue-time snapshot; `_live_task_pages`
+  (pipeline.py:39-48) counts an in-flight enrich as a live chain —
+  duplicate generate queueing is already blocked, don't double-implement;
+  verify revise-spawn fact propagation (tasks.py:445-463) so current_body
+  reaches `wiki-page-enrich-revise` (which appends too — the enrich prefix
+  survives the `-revise` suffix mapping at tasks.py:448-451) — if facts
+  don't propagate today, that is a deliberate small extension of the spawn,
+  not a new mechanism (unknown — verify at implementation);
+  `wiki-page-enrich`'s critic vocabulary is `("## Sources",)` automatically
+  via the prefix gate; do not add MCP surface (28-tool pin).
 
 ### 8. Install template + docs (FR-010)
 - Touches: `_INSTRUCTIONS_BODY:284` in src/cairn/agent_install/_common.py
@@ -465,24 +497,33 @@ What breaks if the approach is wrong:
   prior baseline: `specs/archive/2026-08-31-wiki-generation/survey.md`
   (commit 264647a) — the source of the landed D-010 repo-in-facts and
   D-008/D-006 audit-trail patterns this spec extends.
-- [spec.md](spec.md) — Stage-0 locked defaults (GFM subset; enrich replaces
-  with result-sibling audit; export `--dir` only; `--lang en|zh`; sha rides
-  facts).
+- [spec.md](spec.md) — Stage-0 locked defaults as AMENDED at the approval
+  gate (2026-08-31): test-majority modules EXCLUDED (was demote-only);
+  enrich APPENDS sections (was replace); export `--dir` only; `--lang`
+  deferred with FR-009; sha rides facts.
 
 ## Decisions
 
-### D-014: Planner demotion = class tier above degree
-- **Context**: FR-001 text says "at equal degree" but spec AC1 requires a
-  test-majority module with HIGHER degree to plan after a code module; the
-  heuristic must not misfile mixed modules (spec risk).
-- **Decision**: sort key `(is_test_majority, -degree, name-ASC)` over the
-  `module_files` lists already in hand (catalog.py:162-166); test file =
-  any path segment in {test, tests, spec, specs}; majority = strict
-  majority of the module's indexed files; overview exempt; demote-only.
-- **Consequences**: all non-test modules precede all test modules; degree
-  dominates within a class; determinism preserved (name-ASC tiebreak);
-  TestPlanOrdering pins are re-anchored deliberately; input_hash per-entry
-  hashing means reordering alone never requeues promoted pages.
+### D-014: Planner exclusion = filter before ranking (gate-amended)
+- **Context**: the demotion tier was specced pre-gate; the approval gate
+  (2026-08-31) chose ZCode-parity EXCLUSION — test-majority modules are
+  never planned ("the wiki documents product code only"), and spec AC1
+  demands the test-majority module absent from the plan with the next code
+  module taking the slot. Exclusion also retires the misfiled-mixed-module
+  risk: a mixed module keeps its page unless test files are the strict
+  majority.
+- **Decision**: `build_page_plan` filters test-majority modules out of
+  `module_files` BEFORE ranking (lists already in hand at
+  catalog.py:162-166); the sort key stays `(-degree, name-ASC)` unchanged —
+  the class tier disappears. Test file = any path segment in
+  {test, tests, spec, specs}; majority = strict majority of the module's
+  indexed files; overview exempt (synthetic entry outside `module_files`).
+- **Consequences**: test-majority modules never consume page budget and
+  capacity flows to the next code module; TestPlanOrdering pins re-anchor
+  as EXCLUSION pins (the :172 test-module ordering case becomes an absence
+  assertion; the :178 name-ASC tiebreak survives unchanged); determinism
+  preserved; input_hash per-entry hashing means filtering alone never
+  requeues promoted pages.
 
 ### D-015: GFM subset + post-escape inline code
 - **Context**: FR-002 must add both constructs to a 91-line escape-first
@@ -561,38 +602,63 @@ What breaks if the approach is wrong:
   `staleness` field and badge in both templates; HEAD resolved once per repo
   per render.
 - **Consequences**: both surfaces agree; a page being enriched in flight
-  stays stale until its completion actually replaces the body; unknown is
+  stays stale until its completion actually appends to the body; unknown is
   the explicit non-git/missing-sha answer.
 
-### D-021: enrich rides the landed branch; explicit override of skip
-- **Context**: the promotion branch keys on `startswith("wiki-page")`
-  (four sites re-confirmed this session); no enrich kind/command/facts
-  writer exists; hash-match skip must not eat enrich.
+### D-021: enrich APPENDS through a kind-keyed seam in the landed branch (gate-amended)
+- **Context**: the gate amended replace→append (2026-08-31): prior content
+  must stay visible in the page itself. The promotion branch keys on
+  `startswith("wiki-page")` (sites re-confirmed this session); no enrich
+  kind/command/facts writer exists; hash-match skip must not eat enrich.
 - **Decision**: new `wiki-page-enrich` kind queued only by a new pipeline
   function (never through `_queue_pages`' skip); requires a promoted
   concept; facts carry `current_body` + fresh seeds/input_hash/repo +
-  fresh `commit_sha` + optional `lang`; row task_id/state updated,
-  row `commit_sha` untouched; completion replaces the body through the
-  unmodified promotion branch; prior body persists via the Task-Result
-  sibling's `extensions.facts` (tasks.py:267-275, :552 — D-008/D-006
-  pattern); CLI `cairn wiki enrich [<page-id>] [--repo R] [--all]` with
-  exactly one selector; no MCP tool.
-- **Consequences**: critic gate + bounded revise (`wiki-page-enrich-revise`)
-  + max-cycle drop all inherited; in-flight enrich blocks duplicate
-  generate via `_live_task_pages`; enrichment cannot churn pages beyond
-  MAX_REVISE_CYCLES=3; count stays 28 MCP tools.
+  fresh `commit_sha`; row task_id/state updated, row `commit_sha`
+  untouched. Completion: inside the wiki promotion branch region, an
+  enrich-specific sub-branch keyed `startswith("wiki-page-enrich")` —
+  distinct from the plain wiki-page replace write (tasks.py:409-426) —
+  reads the promoted concept fresh at completion (fallback
+  `facts["current_body"]`) and concatenates
+  `concept.body + "\n\n" + new_sections`, where new_sections is the entire
+  critic-passing result (the task result carries ONLY the new sections,
+  ending in its own `## Sources` footer for the critic gate); sources =
+  the concept's existing frontmatter entries + the result's resolved
+  footer entries, deduped by entry value, old first (producer unchanged:
+  tasks.py:317-321; round-trip at concept.py:120/:190-191); extensions
+  refreshed from facts (task_id, commit_sha — D-016). complete_task may
+  grow this wiki-internal helper but stays workspace-generic (same
+  discipline as the landed branch). Promoted semantics return on
+  completion with no manifest write (promoted is derived from concept
+  readability — manifest.py:14-16; `_page_state` precedence at
+  cli/wiki.py:222-233). The Task-Result sibling still records exactly what
+  was appended (tasks.py:267-275, :552) and `facts["current_body"]` keeps
+  the prior body — audit trail unchanged (D-008/D-006 pattern); CLI
+  `cairn wiki enrich [<page-id>] [--repo R] [--all]` with exactly one
+  selector; no MCP tool.
+- **Consequences**: pages grow monotonically and the prior body stays
+  visible in the page itself; critic gate + bounded revise
+  (`wiki-page-enrich-revise` appends too — the enrich prefix survives the
+  `-revise` mapping at tasks.py:448-451) + max-cycle drop all inherited;
+  in-flight enrich blocks duplicate generate via `_live_task_pages`;
+  enrichment cannot churn pages beyond MAX_REVISE_CYCLES=3; count stays 28
+  MCP tools.
 
-### D-022: --lang as a facts-gated spec appendix
-- **Context**: FR-009; no i18n infrastructure allowed; the diagrams gate
-  (tasks.py:631-632, TestMermaidGating:101) is the landed precedent.
-- **Decision**: facts key `lang` ("en"|"zh", click.Choice validation) set by
+### D-022: ~~--lang as a facts-gated spec appendix~~ (deferred)
+**Deferred at the approval gate 2026-08-31** — `--lang` (FR-009) is out of
+scope this round; the decision and implementation notes below are kept
+verbatim for the future round.
+
+~~- **Context**: FR-009; no i18n infrastructure allowed; the diagrams gate
+  (tasks.py:631-632, TestMermaidGating:101) is the landed precedent.~~
+~~- **Decision**: facts key `lang` ("en"|"zh", click.Choice validation) set by
   generate and enrich queue paths; `_output_spec` appends the language
   instruction inside the startswith("wiki-page") gate whenever
   `facts["lang"]` is present; omitted flag = no key = current English
-  behavior; MCP untouched.
-- **Consequences**: revise completions inherit the instruction iff facts
+  behavior; MCP untouched.~~
+~~- **Consequences**: revise completions inherit the instruction iff facts
   propagate through the revise spawn (verify at implementation); en is
-  explicitly instructable; zh is a writing instruction, not UI translation.
+  explicitly instructable; zh is a writing instruction, not UI
+  translation.~~
 
 ### D-023: wiki section in the shared instructions body
 - **Context**: FR-010; `_INSTRUCTIONS_BODY` feeds both CLAUDE.md and

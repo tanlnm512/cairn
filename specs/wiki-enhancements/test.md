@@ -7,7 +7,7 @@ report, or HTTP response). No implementation details.
 
 **Framing**: this spec extends shipped wiki machinery — cases for FR-001/002/
 003/005/008/010 double as regression guards over behavior that already works;
-cases for FR-004/006/007/009 guard brand-new behavior. Cases marked **(guard)**
+cases for FR-004/006/007 guard brand-new behavior. Cases marked **(guard)**
 must keep passing through every change in this spec and after it.
 
 **Observability channels**: the `cairn` CLI (exit codes, printed plans/listings/
@@ -19,38 +19,47 @@ repo's suite the canonical invocation is
 
 ## US1 — Generation quality
 
-### TC-001 — Test-majority module planned after an equal-degree code module
+### TC-001 — Test-majority module is absent even at equal degree with a code module
 - **Story**: US1 · **Traces to**: FR-001, AC1
 - **Given** an indexed workspace where a module composed mostly of automated-test
   files and a module of product code have the same number of incoming
   cross-module references
 - **When** the wiki plan is built (`cairn wiki generate`, deterministic mode)
-- **Then** the product-code module's page is planned before the test module's page
-- **Pass condition**: exit 0; the reported plan / `cairn wiki status` queue shows
-  the code module's page ahead of the test module's page.
+- **Then** the test-majority module is absent from the plan entirely and the
+  product-code module's page takes the slot
+- **Pass condition**: exit 0; the reported plan / `cairn wiki status` queue
+  contains no page for the test-majority module and does contain the code
+  module's page.
 
-### TC-002 — Page budget spent on code even when the test module outranks it
+### TC-002 — Page budget is never spent on a test-majority module, however highly it ranks
 - **Story**: US1 · **Traces to**: FR-001, AC1
 - **Given** an indexed workspace where a test-majority module has MORE incoming
-  cross-module references than a product-code module; page budget capped
+  cross-module references than every product-code module; page budget capped
   (`cairn wiki generate --pages 1`)
 - **When** generation plans pages
-- **Then** only the code module's page is planned; with a budget of 2 the test
-  module's page appears second — demoted, never excluded
+- **Then** the test-majority module is never planned — not demoted to a later
+  slot, absent outright — and the highest-ranked product-code module takes the
+  slot; with a larger budget the test-majority module is still absent and the
+  next product-code module fills the extra slot
 - **Pass condition**: with `--pages 1`, exit 0 and the queued/planned pages name
-  only the code module's page; with `--pages 2` both appear, code first.
+  only the top code module's page; with `--pages 2`, both planned pages are
+  product-code modules' pages and the test-majority module appears in neither.
 
-### TC-003 — Only all-test modules are demoted; mixed modules keep normal rank
+### TC-003 — Majority-test modules are excluded even when mixed; small-minority modules keep normal rank
 - **Story**: US1 · **Traces to**: FR-001
 - **Given** an indexed workspace with (a) a module whose files are 100% test
-  files, (b) a mixed module with a small minority of test files and the highest
-  incoming reference count, and (c) an ordinary product-code module
+  files, (b) a majority-test module — most of its files are automated tests but
+  some are not — holding the highest incoming reference count, (c) a module
+  with only a small minority of test files, and (d) an ordinary product-code
+  module
 - **When** the wiki plan is built
-- **Then** the mixed module ranks first by its degree (the minority of test
-  files does not demote it), and the 100%-test module is planned below every
-  non-test-majority module regardless of its degree
-- **Pass condition**: the reported plan orders: mixed module, then the ordinary
-  code module, with the 100%-test module last.
+- **Then** both (a) and (b) are absent from the plan entirely — being majority
+  test excludes a module even when some of its files are not tests, and no
+  reference count buys the slot back — while (c) ranks first by its degree (the
+  minority of test files does not exclude it) and (d) takes the next slot
+- **Pass condition**: the reported plan orders: the small-minority module, then
+  the ordinary code module, with no page planned for either the 100%-test or
+  the majority-test module.
 
 ## US4 (renderer part) — Richer human surface
 
@@ -247,19 +256,25 @@ repo's suite the canonical invocation is
 
 ## US5 — Enrichment and language
 
-### TC-021 — Enrich queues a task with the page's current body; critic-passing completion replaces it, prior body kept
+### TC-021 — Enrich queues a task with the page's current body; critic-passing completion appends its sections
 - **Story**: US5 · **Traces to**: FR-008, AC1
-- **Given** a promoted page with a known body
+- **Given** a promoted page with a known body and a known sources list
 - **When** `cairn wiki enrich <page-id>` runs, the enrichment task is claimed and
-  completed with a new, critic-passing body
+  completed with new, critic-passing sections carrying their own source
+  citations (some of them overlapping sources the page already has)
 - **Then** the queued task's facts carry the page's current body and fresh seed
-  references; on completion the promoted page's body is replaced by the new one
-  through the same critic gate, and the prior body remains in the task's result
-  record
+  references; on completion the new sections are APPENDED to the promoted
+  page's existing body through the same critic gate — the prior body's content
+  remains visible in the page itself, the page's sources list merges the new
+  entries without duplicates, and the task's result records exactly the
+  appended sections
 - **Pass condition**: `cairn task show` on the enrichment task shows the old body
   text and seed references in its facts; after completion the dashboard /
-  `cairn wiki search` surface the new body; the task's result record still
-  contains the prior body text.
+  `cairn wiki search` surface the page containing BOTH a distinctive phrase
+  from the prior body AND the new sections' text; the page's sources list shows
+  each source exactly once (no duplicate entries for the overlapping ones);
+  the task's result record contains the appended sections, not a rewritten
+  page.
 
 ### TC-022 — Enrich on a never-promoted page is refused
 - **Story**: US5 · **Traces to**: FR-008
@@ -269,17 +284,19 @@ repo's suite the canonical invocation is
 - **Pass condition**: non-zero exit with the refusal on stderr; the task listing
   contains no new enrichment task afterwards.
 
-### TC-023 — Enrichment failing the critic leaves the old body untouched
+### TC-023 — Enrichment failing the critic leaves the page byte-unchanged
 - **Story**: US5 · **Traces to**: FR-008
 - **Given** a promoted page and an enrichment completion that fails the critic
   (e.g. body without the required Sources footer or citing a dead path)
 - **When** the enrichment cycle runs to the end of its bounded revise budget
-- **Then** the page body is never replaced by failing content; revise hops spawn;
-  once the budget is exhausted the chain ends dropped/failed and the page still
-  shows its original body
-- **Pass condition**: dashboard / search show the original body throughout; the
-  task listing shows the enrichment chain's revise hops ending in the
-  dropped/failed terminal state.
+- **Then** the page is left byte-unchanged — no failing section is appended,
+  nothing is removed, and the sources list is untouched; revise hops spawn;
+  once the budget is exhausted the chain ends dropped/failed and the page
+  still shows exactly its original content
+- **Pass condition**: the page's stored content is identical, character for
+  character, before and after the failed run (same body text, same sources
+  list); the task listing shows the enrichment chain's revise hops ending in
+  the dropped/failed terminal state.
 
 ### TC-024 — Enrich --all and --repo scope the queue correctly
 - **Story**: US5 · **Traces to**: FR-008
@@ -291,25 +308,27 @@ repo's suite the canonical invocation is
 - **Pass condition**: task listings show the expected per-page enrichment task
   count: all promoted pages first, then only the scoped repository's pages.
 
-### TC-025 — --lang zh instructs Chinese; default is English
-- **Story**: US5 · **Traces to**: FR-009, AC2
-- **Given** an indexed workspace with planned pages
-- **When** `cairn wiki generate --llm --lang zh` runs, and separately
+### ~~TC-025 — --lang zh instructs Chinese; default is English~~ — deferred at the approval gate 2026-08-31
+- ~~**Story**: US5 · **Traces to**: the deferred language-option requirement
+  (struck from the spec at the same gate)~~
+- ~~**Given** an indexed workspace with planned pages~~
+- ~~**When** `cairn wiki generate --llm --lang zh` runs, and separately
   `cairn wiki generate --llm` (no flag), and `cairn wiki enrich <id> --lang zh`
-  for a promoted page
-- **Then** each flagged task's facts record language zh and its rendered
-  instructions direct writing in Chinese; the unflagged task defaults to English
-- **Pass condition**: `cairn task show` on a `--lang zh` task shows the language
+  for a promoted page~~
+- ~~**Then** each flagged task's facts record language zh and its rendered
+  instructions direct writing in Chinese; the unflagged task defaults to English~~
+- ~~**Pass condition**: `cairn task show` on a `--lang zh` task shows the language
   fact zh plus a write-in-Chinese instruction; the unflagged task shows English
-  as the language; `--lang zh` is accepted on both generate and enrich (exit 0).
+  as the language; `--lang zh` is accepted on both generate and enrich (exit 0).~~
 
-### TC-026 — Invalid --lang value is refused before anything is queued
-- **Story**: US5 · **Traces to**: FR-009
-- **Given** an indexed workspace with a planned/queued wiki
-- **When** `cairn wiki generate --llm --lang fr` runs (a value outside en|zh)
-- **Then** the command refuses with a usage error and the queue is untouched
-- **Pass condition**: non-zero exit; `cairn task list` before and after shows an
-  identical set of tasks (nothing queued).
+### ~~TC-026 — Invalid --lang value is refused before anything is queued~~ — deferred at the approval gate 2026-08-31
+- ~~**Story**: US5 · **Traces to**: the deferred language-option requirement
+  (struck from the spec at the same gate)~~
+- ~~**Given** an indexed workspace with a planned/queued wiki~~
+- ~~**When** `cairn wiki generate --llm --lang fr` runs (a value outside en|zh)~~
+- ~~**Then** the command refuses with a usage error and the queue is untouched~~
+- ~~**Pass condition**: non-zero exit; `cairn task list` before and after shows an
+  identical set of tasks (nothing queued).~~
 
 ## US6 — Onboarding
 
@@ -385,6 +404,5 @@ repo's suite the canonical invocation is
 | FR-006      | TC-016, TC-017, TC-018 | auto |
 | FR-007      | TC-019, TC-020, TC-031 | auto (+ TC-031 manual) |
 | FR-008      | TC-021, TC-022, TC-023, TC-024 | auto |
-| FR-009      | TC-025, TC-026 | auto |
 | FR-010      | TC-027 | auto |
 | Standing    | TC-028, TC-029, TC-030 | auto |
