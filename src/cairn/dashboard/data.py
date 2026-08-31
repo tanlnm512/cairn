@@ -14,7 +14,10 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from cairn.okf.concept import OKFConcept
 
 from cairn.bench.agent_suite import CHARS_PER_TOKEN
 from cairn.dashboard.markdown import render_markdown
@@ -640,7 +643,7 @@ def _split_page_key(key: str) -> Tuple[str, str]:
 
 def _read_wiki_concept(
     bundle: OKFBundle, concept_id: Optional[str]
-) -> Optional[object]:
+) -> Optional["OKFConcept"]:
     """The wiki concept at ``concept_id``, or None when absent/unreadable —
     an unreadable concept file is never fatal."""
     if concept_id is None:
