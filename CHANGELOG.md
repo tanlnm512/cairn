@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.16.1] - 2026-08-31
 
 ### Added
 - Agent-decoupled wiki generation: `cairn wiki generate --llm` plans a
