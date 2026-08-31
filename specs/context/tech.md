@@ -1,6 +1,7 @@
 # Tech stack & conventions: cairn
 
 **Created**: 2026-08-28 | **Baseline**: 0.16.0 @ fe7a7f09edb015d6a8fb12cd5d0f1b06ed07f5c3
+**Refreshed**: 2026-08-31 @ 264647ae4cf286e7efed52afc87d98589b81258a (wiki-generation survey — test-runner line only)
 Stack, build/test runners, and gates. Cited from pyproject.toml,
 .pre-commit-config.yaml, and .github/workflows/ci.yml read at baseline.
 
@@ -19,10 +20,13 @@ Stack, build/test runners, and gates. Cited from pyproject.toml,
   (pymupdf4llm, mammoth, markdownify).
 
 ## Build & run
-- Repo runner is `uv`: `uv run pytest <path> -q` from the repo root is the
-  standard test invocation; `uv run pre-commit install` /
-  `uv run pre-commit run --all-files` for the local gate
-  (.pre-commit-config.yaml:9-11).
+- Repo runner is `uv`. Canonical test invocation (pipeline standard, refreshed
+  2026-08-31 @ 264647ae): `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test
+  pytest <path> -q` — plain `uv run pytest <path> -q` works for many single
+  files but the CAIRN_LIB pin (shared-lib override, src/cairn/paths.py:117)
+  keeps embedding/lib-probe paths hermetic; use the canonical form.
+  `uv run pre-commit install` / `uv run pre-commit run --all-files` for the
+  local gate (.pre-commit-config.yaml:9-11).
 - Install for dev: `pip install -e ".[dev,ingest]"` (CI test job, ci.yml:166-169).
 - Release: `cz bump` updates pyproject `version` + `src/cairn/__init__.py:__version__`
   and tags `v$version`; CHANGELOG.md stays hand-maintained
