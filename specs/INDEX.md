@@ -1,3 +1,4 @@
 - [embedding-server-backend](embedding-server-backend/spec.md) — done (implemented 2026-08-27)
 - [env-propagation](archive/2026-08-28-env-propagation/spec.md) — done (implemented 2026-08-28)
 - [wiki-generation](archive/2026-08-31-wiki-generation/spec.md) — done (implemented 2026-08-31)
+- [wiki-enhancements](wiki-enhancements/spec.md) — draft (created 2026-08-31)

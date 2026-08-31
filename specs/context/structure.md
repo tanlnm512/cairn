@@ -1,12 +1,12 @@
 # Code structure: cairn
 
 **Created**: 2026-08-28 | **Baseline**: 0.16.0 @ fe7a7f09edb015d6a8fb12cd5d0f1b06ed07f5c3
-**Refreshed**: 2026-08-31 @ 264647ae4cf286e7efed52afc87d98589b81258a (wiki-generation survey — cli/ module list)
+**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey — tool count 28, wiki CLI subcommands, wiki package, agent_install line refs, version 0.16.2)
 This repo's first spec-context baseline. Module map of `src/cairn/`, entry points,
 and per-area ownership. All paths cited from file reads in the baseline session.
 
 ## Package facts
-- Distribution `cairn-intel` v0.16.0, src-layout (`[tool.setuptools.packages.find] where = ["src"]`,
+- Distribution `cairn-intel` v0.16.2 (pyproject.toml:7), src-layout (`[tool.setuptools.packages.find] where = ["src"]`,
   pyproject.toml:159-160). Console script: `cairn = "cairn.cli:main"` (pyproject.toml:153-154).
 - Templates shipped as package data: `cairn.agent_integration` = `**/*`,
   `cairn.dashboard` templates/static (pyproject.toml:162-167) — install-agents and the
