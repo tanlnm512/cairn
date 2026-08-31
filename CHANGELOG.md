@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Added
+- Live Mermaid rendering in the dashboard wiki detail view: mermaid fences
+  now render as diagrams client-side (mermaid.js from CDN, strict security
+  level), degrading to the visible code block when offline or JavaScript
+  is unavailable. No new Python dependency — the renderer still emits
+  escaped `pre.mermaid` blocks.
+
 ## [0.16.1] - 2026-08-31
 
 ### Added

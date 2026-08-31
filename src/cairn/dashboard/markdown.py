@@ -4,8 +4,10 @@ Pure stdlib (``html`` + ``re``): importing this module must never load the
 server stack — the same guard the dashboard package is held to. Every line
 is HTML-escaped before any construct is rendered, so inline HTML never
 passes through; the whitelisted block constructs are headings, paragraphs,
-unordered lists, and fenced code (mermaid fences render as static code,
-never live diagrams).
+unordered lists, and fenced code. Mermaid fences emit ``<pre class="mermaid">``
+so the wiki detail view's client-side mermaid.js can render them live; with
+JavaScript or the CDN unavailable the fence degrades to a visible code
+block.
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ _LIST_ITEM_RE = re.compile(r"^-\s+(.*)$")
 def _emit_fence(out: List[str], lang: str, lines: List[str]) -> None:
     body = "\n".join(lines)
     if lang == "mermaid":
-        out.append(f'<pre class="language-mermaid">{body}</pre>')
+        out.append(f'<pre class="mermaid">{body}</pre>')
     else:
         out.append(f"<pre><code>{body}</code></pre>")
 
