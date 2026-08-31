@@ -46,9 +46,9 @@ critic to report each dead reference once with instructions intact, so that
 page budgets and revise cycles are spent on content.
 
 **Acceptance criteria** (each traces to an FR below):
-- AC1: Given a graph where a test-majority module outranks a code module by
-  degree, When the plan is built, Then the code module is planned first and
-  the test module is planned only if capacity remains.
+- AC1: Given a graph where a test-majority module would rank highest by
+  degree, When the plan is built, Then it is absent from the plan and the
+  next code module takes the slot.
 - AC2: Given a completion citing the same dead path in body and footer, When
   the critic runs, Then the error appears once.
 - AC3: Given a task of any `wiki-page*` kind, When its body is rendered,
@@ -95,10 +95,13 @@ output language, so depth and language are operational choices.
 
 **Acceptance criteria**:
 - AC1: Given a promoted page, When I run `cairn wiki enrich <page-id>`, Then
-  an enrichment task is queued whose completion replaces the page body through
-  the same critic gate (the prior body remains in the task result record).
-- AC2: Given `--lang zh` (or `en`) on generate/enrich, When the task body is
-  rendered, Then the output spec instructs that language.
+  an enrichment task is queued whose completion APPENDS its new sections to
+  the page's existing body through the same critic gate (the prior body
+  remains in the page itself; the task result records the appended
+  sections).
+- ~~AC2: Given `--lang zh` (or `en`) on generate/enrich, When the task body
+  is rendered, Then the output spec instructs that language.~~ (deferred with
+  FR-009)
 
 ### US6 — Onboarding (P3)
 As a new agent workspace, I want the generated agent docs to mention the wiki
@@ -109,9 +112,10 @@ workflow, so the consumer side is discoverable.
   template includes the wiki generate/claim/complete and ask_compass workflow.
 
 ## Requirements
-- **FR-001**: The planner shall rank modules whose indexed files are
-  majority test files (`test`/`spec` path segments) below every non-test
-  module at equal degree, so page budgets prefer product code.
+- **FR-001**: The planner shall exclude modules whose indexed files are
+  majority test files (`test`/`spec` path segments) from page plans
+  entirely — the wiki documents product code only (ZCode's explorer applies
+  the same rule).
 - **FR-002**: The dashboard markdown renderer shall render inline code spans
   (`` `code` ``) as code elements and GFM pipe tables as tables, preserving
   the escape-first contract (no inline HTML passthrough).
@@ -131,28 +135,30 @@ workflow, so the consumer side is discoverable.
   either is unavailable).
 - **FR-008**: The system shall provide a `wiki-page-enrich` task kind — queued
   via `cairn wiki enrich [<page-id>] [--repo R] [--all]` carrying the page's
-  current body plus fresh seeds — whose critic-passing completion replaces the
-  promoted concept's body (prior body preserved in the task result), reusing
-  the existing wiki promotion branch and revise cycle.
-- **FR-009**: WHERE `--lang en|zh` is passed to generate or enrich, THEN the
-  task facts shall carry the language and the output spec shall instruct
-  writing in it (default `en`).
+  current body plus fresh seeds — whose critic-passing completion APPENDS the
+  result's sections to the promoted concept's body and merges its Sources
+  entries into the frontmatter, reusing the existing wiki promotion branch
+  and revise cycle.
+- ~~**FR-009**: WHERE `--lang en|zh` is passed to generate or enrich, THEN
+  the task facts shall carry the language and the output spec shall instruct
+  writing in it (default `en`).~~ **Deferred at the approval gate (2026-08-31):
+  no proven second-language consumer yet; it is a facts-gated spec appendix
+  and lands trivially later.**
 - **FR-010**: The install-agents AGENTS.md template shall include a wiki
   section (generate → claim → complete → ask_compass consumption).
 
 ## Scope
-**In**: all ten FRs above; docs + CHANGELOG.
-**Out (deferred)**: `wiki export --remote` push automation (outward side
+**In**: FR-001..FR-008, FR-010 (nine FRs); docs + CHANGELOG.
+**Out (deferred)**: `--lang en|zh` (FR-009, deferred at the gate); `wiki export --remote` push automation (outward side
 effect — `--dir` only this round); live page re-rendering on code change
 (file-watch); per-page delete/edit MCP tools; bold/italic inline rendering;
 non-wiki task kinds' output-spec prefixes.
 
 ## Assumptions & risks
 - Default decisions recorded at Stage 0 (re-presented at the approval gate):
-  tables = GFM pipe-table subset only; enrich REPLACES the body (audit trail
-  = the Task-Result sibling, per the landed wiki-generation spec's
-  retry/manifest patterns); export is `--dir`
-  only; `--lang` values are `en|zh`.
+  tables = GFM pipe-table subset only; export is `--dir` only. AMENDED at the
+  approval gate (2026-08-31): test-majority modules are EXCLUDED (not
+  demoted); enrich APPENDS sections (does not replace).
 - Risk: commit-sha resolution needs git access at promotion time
   (`complete_task` is generic) — mitigation: sha resolved by the CLI/MCP
   pipeline into task facts (facts carry `commit_sha`), promotion just copies
