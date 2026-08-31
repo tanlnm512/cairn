@@ -10,6 +10,12 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
+<!-- Completion target is 19/21, NOT 21/21: T017 and T018 were struck at the
+     approval gate (2026-08-31) with the deferred language requirement and can
+     never be ticked. They stay
+     as unticked entries because check.py's Total must equal the actual entry
+     count; Phase 6 is complete at 2/4 and the spec reaches `Status: done` at
+     Σ 19/21 with those two struck. -->
 | Phase | Total | Done |
 |-------|-------|------|
 | 1     | 4     | 0    |
@@ -22,7 +28,7 @@ Status reflects code state per [survey.md](survey.md), not intent.
 | **Σ** | 21    | 0    |
 
 ## Phase 1: Generation quality (FR-001, FR-005)
-<!-- Checkpoint (plan.md): equal-degree plan puts the code module first and the test-majority module only with capacity left; one dead path → one critic error; a `wiki-page-enrich`-named task body carries the full Sources-footer spec. Verify: CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py tests/test_compass_critic.py tests/test_wiki_promotion.py -q -->
+<!-- Checkpoint (plan.md, as amended at the approval gate 2026-08-31): a test-majority module is ABSENT from the plan even when it outranks every code module by degree, and the next code module takes its slot (D-014 exclusion — never demotion, no class tier); one dead path → one critic error; a `wiki-page-enrich`-named task body carries the full Sources-footer spec. Verify: CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py tests/test_compass_critic.py tests/test_wiki_promotion.py -q -->
 - [ ] T001 [P] Write failing planner-exclusion pins — `tests/test_wiki_planner.py` (FR-001)
       Red-first (C-02). In `TestPlanOrdering` re-anchor
       `test_modules_ranked_by_cross_module_incoming_degree_desc:172` as an ABSENCE pin:

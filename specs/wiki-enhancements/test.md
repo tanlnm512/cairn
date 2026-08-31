@@ -254,7 +254,7 @@ repo's suite the canonical invocation is
 - **Pass condition**: exit 0; the status line / badge for that page shows the
   unknown state.
 
-## US5 — Enrichment and language
+## US5 — Enrichment
 
 ### TC-021 — Enrich queues a task with the page's current body; critic-passing completion appends its sections
 - **Story**: US5 · **Traces to**: FR-008, AC1

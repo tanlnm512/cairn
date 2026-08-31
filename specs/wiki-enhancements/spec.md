@@ -15,8 +15,8 @@ at, surfaced as a fresh/stale badge), operations (`cairn task drop` and
 kind-prefix listing so queue maintenance needs no store surgery), human
 surface (the dashboard renderer supports inline code and tables; wiki export
 to a directory of markdown files), capability (a critic-gated enrichment task
-kind and a `--lang` option), and onboarding (generated agent docs mention the
-wiki workflow).
+kind; the `--lang` option was deferred at the approval gate with FR-009), and
+onboarding (generated agent docs mention the wiki workflow).
 
 ## Why
 The 0.16.1/0.16.2 wiki feature works end to end but its first real run
@@ -41,9 +41,10 @@ consumer side (compass routing surfaces wiki) is invisible to new workspaces.
 
 ## User stories
 ### US1 — Generation quality (P1)
-As a repo owner, I want the planner to rank test-only modules last and the
-critic to report each dead reference once with instructions intact, so that
-page budgets and revise cycles are spent on content.
+As a repo owner, I want the planner to leave test-only modules out of page
+plans entirely and the critic to report each dead reference once with
+instructions intact, so that page budgets and revise cycles are spent on
+content.
 
 **Acceptance criteria** (each traces to an FR below):
 - AC1: Given a graph where a test-majority module would rank highest by
@@ -89,9 +90,10 @@ outside cairn.
   Then each page is written as a markdown file (frontmatter included) named
   by page id, and the command reports the count.
 
-### US5 — Enrichment and language (P2)
-As a repo owner, I want to queue enrichment for existing pages and choose the
-output language, so depth and language are operational choices.
+### US5 — Enrichment (P2)
+As a repo owner, I want to queue enrichment for existing pages, so page depth
+is an operational choice. (The output-language half of this story was deferred
+at the approval gate 2026-08-31 with FR-009 — see the struck AC2 below.)
 
 **Acceptance criteria**:
 - AC1: Given a promoted page, When I run `cairn wiki enrich <page-id>`, Then
@@ -129,10 +131,9 @@ workflow, so the consumer side is discoverable.
 - **FR-006**: The system shall provide `cairn wiki export --dir DIR` writing
   every promoted page as a markdown file (frontmatter preserved), reporting
   the exported count, and refusing a non-empty directory without `--force`.
-- **FR-007**: WHEN wiki status or the dashboard detail view renders a page,
-  THEN it shall display fresh or stale by comparing the recorded commit sha
-  with the workspace's current HEAD (stale when they differ; unknown when
-  either is unavailable).
+- **FR-007**: WHEN wiki status or the dashboard detail view renders a page, THEN the system shall display it as fresh or stale
+  by comparing the recorded commit sha with the workspace's current HEAD
+  (stale when they differ; unknown when either is unavailable).
 - **FR-008**: The system shall provide a `wiki-page-enrich` task kind — queued
   via `cairn wiki enrich [<page-id>] [--repo R] [--all]` carrying the page's
   current body plus fresh seeds — whose critic-passing completion APPENDS the
@@ -163,14 +164,24 @@ non-wiki task kinds' output-spec prefixes.
   (`complete_task` is generic) — mitigation: sha resolved by the CLI/MCP
   pipeline into task facts (facts carry `commit_sha`), promotion just copies
   it; `complete_task` stays generic.
-- Risk: test-majority heuristic misfiles mixed modules — mitigation: rank
-  demotion only (never exclusion), degree still dominates within classes.
+- Risk: test-majority heuristic misfiles mixed modules — mitigation (as
+  amended at the approval gate 2026-08-31): majority is a STRICT majority of
+  the module's indexed files, so a mixed module keeps its page unless test
+  files outnumber code files; the sort key stays `(-degree, name-ASC)` with no
+  class tier (D-014). The pre-gate mitigation ("rank demotion only, never
+  exclusion") was superseded by the gate's choice of exclusion.
 - Risk: enrich tasks could churn pages — mitigation: enrich requires an
   already-promoted page and rides the same critic + bounded revise cycle.
 
-## Decisions locked at Stage 0 (2026-08-31)
-Defaults chosen per established repo patterns; veto at the approval gate:
-GFM-subset tables; enrich replaces with result-sibling audit trail; export
-`--dir` only; `--lang en|zh`; commit sha rides facts (generic complete_task
-preserved, extending the landed repo-in-facts pattern from the
-wiki-generation spec).
+## Decisions locked at Stage 0 (2026-08-31), as ruled at the approval gate
+Defaults were chosen per established repo patterns and put to the user at the
+approval gate. What survived, and what the gate changed (2026-08-31):
+
+| Stage-0 default | Gate ruling |
+|---|---|
+| GFM-subset tables | kept (D-015) |
+| test-majority modules demoted in rank | **AMENDED → excluded entirely** (D-014) |
+| enrich replaces the body, result-sibling audit trail | **AMENDED → enrich APPENDS its sections; prior body stays visible in the page** (D-021) |
+| export `--dir` only | kept (D-019) |
+| `--lang en\|zh` | **DEFERRED → FR-009 struck from scope this round** (notes preserved in tech-spec D-022) |
+| commit sha rides facts (generic `complete_task` preserved, extending the landed repo-in-facts pattern from the wiki-generation spec) | kept (D-016) |

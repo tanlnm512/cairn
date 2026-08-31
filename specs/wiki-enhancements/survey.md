@@ -2,7 +2,10 @@
 
 **Created**: 2026-08-31 | **Baseline**: 0.16.2 @ e002f9b (HEAD, branch feat/wiki-enhancements)
 DELTA survey. The prior baseline
-`specs/archive/2026-08-31-wiki-generation/survey.md` (commit 264647a) surveyed
+`specs/archive/2026-08-31-wiki-generation/survey.md` (surveyed at commit 264647a;
+the archive dir was removed from the tree in 5f4995d per the repo's "as-built
+records live in git history" convention — read it with
+`git show 088d026:specs/archive/2026-08-31-wiki-generation/survey.md`) surveyed
 this territory before the wiki feature landed; since then PRs #79-#85 added
 `src/cairn/wiki/{catalog,manifest,pipeline,refine,sources}.py`,
 `src/cairn/dashboard/markdown.py`, `src/cairn/mcp_server/tools_wiki.py`, wiki
@@ -14,22 +17,30 @@ against e002f9b: citations reused from the prior survey were re-verified in
 place (marked **[re-verified]**), new ground is marked **[new]**. Where this
 survey leans on prior-survey conclusions without re-citing a line, the file
 was still re-read this session. No numbers are carried over unverified.
+CITATION CONVENTION: a click command is cited at its `@group.command(...)`
+decorator line, not at its `def` (e.g. `src/cairn/cli/wiki.py:wiki_status:236`
+is the
+`@wiki.command("status")` line; the `def` follows at :239). `check.py` looks
+only for `def` and warns on these — the citations are correct as written.
 
 ## Items
 
 ```
-item FR-001: "planner ranks modules whose indexed files are majority test files
-  (test/spec path segments) below every non-test module at equal degree"
+item FR-001: "the planner EXCLUDES modules whose indexed files are majority
+  test files (test/spec path segments) from page plans entirely"
+  [item restated 2026-08-31 to match FR-001 as amended at the approval gate
+  (demote → exclude, D-014); the evidence below is unchanged and still
+  describes code state at e002f9b]
   evidence:   [new] The planner exists and is the only ranker:
               `src/cairn/wiki/catalog.py:build_page_plan:135` — buckets files
-              into modules via `catalog.py:_module_of:29` (first 2-3 path
+              into modules via `src/cairn/wiki/catalog.py:_module_of:29` (first 2-3 path
               segments, "Mirrors graph.stats.group_by_top_level exactly",
               including the legacy absolute-path strip), computes cross-module
-              incoming degree via `catalog.py:_module_incoming_degree:53`
+              incoming degree via `src/cairn/wiki/catalog.py:_module_incoming_degree:53`
               (edges entering the prefix from outside it), and ranks at
               catalog.py:171: `ranked = sorted(module_files, key=lambda m:
               (-degrees[m], m))` — degree DESC, module name ASC. Page ids via
-              `catalog.py:_slug:114` (`re.sub(r"[^a-z0-9]+", "-", ...)`,
+              `src/cairn/wiki/catalog.py:_slug:114` (`re.sub(r"[^a-z0-9]+", "-", ...)`,
               stripped). THE RAW MATERIAL FOR A MAJORITY-TEST TEST ALREADY
               EXISTS IN MEMORY: build_page_plan builds `module_files:
               Dict[str, List[str]]` at catalog.py:162-166 from
@@ -48,10 +59,11 @@ item FR-001: "planner ranks modules whose indexed files are majority test files
               (input_hash) over canonical JSON without the hash.
   status:     PARTIAL
   verify:     CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py -q  # 15 passed (this session)
-  gap:        The demotion itself: no module is classified test-majority and
-              no class split exists in the sort key. Adding it changes the
-              pinned ordering semantics of TestPlanOrdering (equal-degree
-              cases gain a class tier above name ASC).
+  gap:        The exclusion itself: no module is classified test-majority and
+              nothing filters `module_files` before the sort at catalog.py:171.
+              Adding the filter re-anchors TestPlanOrdering's degree-ordering
+              pin as an ABSENCE pin; the sort key `(-degrees[m], m)` itself is
+              unchanged (D-014: no class tier).
 
 item FR-002: "renderer renders inline code spans as code elements and GFM pipe
   tables as tables, preserving the escape-first contract"
@@ -68,7 +80,7 @@ item FR-002: "renderer renders inline code spans as code elements and GFM pipe
               docstring :1-10 names headings/paragraphs/lists/fenced-code as
               the whole whitelist). TABLES: none — a pipe row is
               paragraph text; no table regex or emit path exists in the
-              file (read in full, 91 lines). Pins: tests/test_dashboard_app.py
+              file (read in full, 90 lines). Pins: tests/test_dashboard_app.py
               `test_render_markdown_whitelists_blocks_and_escapes_inline_html:3758`
               (asserts `<h2>`, `<p>`, `<li>`, `&lt;script&gt;`, `&amp;`) and
               `test_render_markdown_fenced_code_and_mermaid_fence:3778`
@@ -306,7 +318,7 @@ item FR-007: "wiki status and the dashboard detail display fresh/stale by
               it needs `paths.resolve_workspace:335`/`resolve_store:355`
               (the store dir is derivable from the db path's parent) plus
               `scanner.resolve_repo_path:204`. HEAD resolution itself is
-              `utils/git.py:get_current_commit:29` (unused today — FR-003).
+              `src/cairn/utils/git.py:get_current_commit:29` (unused today — FR-003).
   status:     TODO
   verify:     CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_dashboard_data.py -q  # 82 passed (this session); grep -rn "stale" src/cairn/cli/wiki.py src/cairn/dashboard/data.py  # no staleness logic (only concept.py stale_after machinery elsewhere)
   gap:        Both surfaces need the sha field to exist first (FR-003), then
@@ -321,8 +333,11 @@ item FR-007: "wiki status and the dashboard detail display fresh/stale by
 
 item FR-008: "provide a `wiki-page-enrich` task kind — queued via
   `cairn wiki enrich [<page-id>] [--repo R] [--all]` — whose completion
-  replaces the promoted body through the existing promotion branch and
-  revise cycle (prior body preserved in the task result)"
+  APPENDS its sections to the promoted body through the existing promotion
+  branch and revise cycle (prior body stays visible in the page itself)"
+  [item restated 2026-08-31 to match FR-008 as amended at the approval gate
+  (replace → append, D-021); the evidence below is unchanged and still
+  describes code state at e002f9b]
   evidence:   [new] The promotion branch ALREADY routes any
               `wiki-page*` kind: `task.task_kind.startswith("wiki-page")`
               gates both the critic's Sources-section scoring
@@ -369,6 +384,9 @@ item FR-008: "provide a `wiki-page-enrich` task kind — queued via
 item FR-009: "WHERE `--lang en|zh` is passed to generate or enrich, the task
   facts carry the language and the output spec instructs writing in it
   (default en)"
+  [DEFERRED at the approval gate 2026-08-31 — FR-009 is out of scope this
+  round; the evidence below is retained for the future round and still
+  describes code state at e002f9b]
   evidence:   [new] No --lang exists: grep `--lang|"lang"` over src/ +
               tests/ this session — zero matches. Facts pass-through is
               generic: create_task stores facts verbatim (only memory-*
@@ -388,7 +406,7 @@ item FR-009: "WHERE `--lang en|zh` is passed to generate or enrich, the task
               current file]: --repo, --db, --knowledge, --dry-run,
               --show-rejections, --llm, --pages (default 10), --diagrams,
               --refine-catalog, --force. MCP tool mirrors:
-              tools_wiki.py:wiki_generate:19 (repo, pages=10,
+              src/cairn/mcp_server/tools_wiki.py:wiki_generate:19 (repo, pages=10,
               refine_catalog, diagrams, force; `_clamp(pages, 1, 50)` at
               :35).
   status:     TODO
@@ -411,7 +429,8 @@ item FR-010: "install-agents AGENTS.md template includes a wiki section
               compass (5), memory (8), knowledge (6)\n"` (_common.py:427)
               [re-verified count: `_EXPECTED_TOOL_COUNT = 28` at
               src/cairn/mcp_server/server.py:56 — the file that added the
-              28th tool is tools_wiki.py:wiki_generate:19]. The WRITER:
+              28th tool is src/cairn/mcp_server/tools_wiki.py:wiki_generate:19].
+              The WRITER:
               `src/cairn/agent_install/clients/zcode.py:105-107` writes
               `ws / "AGENTS.md"` from `_agents_instructions(...)` (claude
               writes CLAUDE.md the same way at clients/claude.py:143-145).
@@ -553,7 +572,7 @@ item FR-010: "install-agents AGENTS.md template includes a wiki section
   cross-references in help text.
 
 ### MCP wiki tool [new]
-- `tools_wiki.py:wiki_generate:19` — `@mcp.tool(annotations=...)` over
+- `src/cairn/mcp_server/tools_wiki.py:wiki_generate:19` — `@mcp.tool(annotations=...)` over
   `@instrument`, primitives only, lazy body imports, `_clamp` at :35,
   prose return; delegates to `run_wiki_generate` (:39) with `_conn()` /
   `_bundle()` from `_server_core` [re-verified singleton pattern].

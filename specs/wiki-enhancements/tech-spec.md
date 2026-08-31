@@ -72,7 +72,9 @@ existing `tools_wiki.py:wiki_generate:19` is untouched this round.
 
 Nine in-scope FRs (FR-009 deferred at the approval gate 2026-08-31), ten
 decisions (D-014…D-023, continuing the archive's numbering —
-D-010/D-013 are landed decisions of specs/archive/2026-08-31-wiki-generation).
+D-010/D-013 are landed decisions of the wiki-generation spec set, removed from
+the tree in 5f4995d and readable at
+`git show 088d026:specs/archive/2026-08-31-wiki-generation/tech-spec.md`).
 
 - **FR-001 (D-014)** — test-majority modules are EXCLUDED from page plans:
   `build_page_plan` filters them out of `module_files` BEFORE ranking; the
@@ -353,7 +355,7 @@ What breaks if the approach is wrong:
 
 ### 2. Renderer: inline code + GFM tables (FR-002)
 - Touches: the `render_markdown` function in src/cairn/dashboard/markdown.py
-  (91 lines total; `flush_paragraph:39`, `flush_list:44`, `_emit_fence:23`)
+  (90 lines total; `flush_paragraph:39`, `flush_list:44`, `_emit_fence:23`)
 - Approach: shared `_inline_code(escaped_text)` applied post-escape in
   paragraph, list-item, heading emission, and table cells; table detector =
   line pair (row + delimiter `^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?$`)
@@ -494,9 +496,11 @@ What breaks if the approach is wrong:
   rejected-alternative whys therefore trace to survey constraints, per the
   gate's own framing.
 - [survey.md](survey.md) — sole citation ground (delta survey at e002f9b);
-  prior baseline: `specs/archive/2026-08-31-wiki-generation/survey.md`
-  (commit 264647a) — the source of the landed D-010 repo-in-facts and
-  D-008/D-006 audit-trail patterns this spec extends.
+  prior baseline: the wiki-generation spec set's survey.md (surveyed at commit
+  264647a), removed from the tree in 5f4995d and readable at
+  `git show 088d026:specs/archive/2026-08-31-wiki-generation/survey.md` — the
+  source of the landed D-010 repo-in-facts and D-008/D-006 audit-trail
+  patterns this spec extends.
 - [spec.md](spec.md) — Stage-0 locked defaults as AMENDED at the approval
   gate (2026-08-31): test-majority modules EXCLUDED (was demote-only);
   enrich APPENDS sections (was replace); export `--dir` only; `--lang`
@@ -526,7 +530,7 @@ What breaks if the approach is wrong:
   requeues promoted pages.
 
 ### D-015: GFM subset + post-escape inline code
-- **Context**: FR-002 must add both constructs to a 91-line escape-first
+- **Context**: FR-002 must add both constructs to a 90-line escape-first
   whitelist renderer without passing inline HTML (pinned assertions).
 - **Decision**: inline code = backtick-span wrap on already-escaped text
   (paragraph/list/heading/cells). Tables = header+delimiter-row blocks only,
@@ -631,7 +635,7 @@ What breaks if the approach is wrong:
   completion with no manifest write (promoted is derived from concept
   readability — manifest.py:14-16; `_page_state` precedence at
   cli/wiki.py:222-233). The Task-Result sibling still records exactly what
-  was appended (tasks.py:267-275, :552) and `facts["current_body"]` keeps
+  was appended (the result sibling is persisted at tasks.py:267-275) and `facts["current_body"]` keeps
   the prior body — audit trail unchanged (D-008/D-006 pattern); CLI
   `cairn wiki enrich [<page-id>] [--repo R] [--all]` with exactly one
   selector; no MCP tool.
