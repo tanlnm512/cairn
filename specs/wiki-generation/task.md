@@ -38,6 +38,7 @@ Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wi
 `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_tasks_safety.py tests/test_compass_critic.py -q` (24 passed at baseline). -->
 
 - [x] T001 Write failing planner-contract tests in `tests/test_wiki_planner.py` (FR-001)
+      Scope (as-landed): tests/test_wiki_planner.py
       done 2026-08-31 — red pinned: collection ModuleNotFoundError on cairn.wiki.catalog (orchestrator-verified)
       Red-first (C-02): pin the contract of `build_page_plan(conn, repo, pages_cap=10)`
       in a new `src/cairn/wiki/catalog.py` before it exists — tests fail on the missing
@@ -53,6 +54,7 @@ Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wi
       the `fresh_db` fixture (tests/conftest.py:106).
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_planner.py -q` → red.
 - [x] T002 Implement `src/cairn/wiki/catalog.py` — `build_page_plan(conn, repo, pages_cap=10)` (FR-001) (after T001)
+      Scope (as-landed): src/cairn/wiki/catalog.py
       done 2026-08-31 — `pytest tests/test_wiki_planner.py tests/test_tasks_safety.py tests/test_compass_critic.py -q` -> 39 passed (orchestrator-verified)
       Consumes T001's pinned contract exactly (ordered page records with
       `page_id`/`title`/`description`/`module`/`seeds`/`input_hash`; overview first;
@@ -79,6 +81,7 @@ tasks share `tests/test_wiki_promotion.py` — Phase 2 is one serial workstream;
 no task here is [P]. -->
 
 - [x] T003 Write failing FR-002 kind/spec tests plus FR-004 regression guards in `tests/test_wiki_promotion.py` (FR-002, FR-004)
+      Scope (as-landed): tests/test_wiki_promotion.py
       done 2026-08-31 — verified split 4 red (spec-registration/Mermaid gating) / 2 green (FR-004 guards)
       Red-first (C-02). Pin `_output_spec` (`src/cairn/llm/tasks.py:501`; today only
       the placeholder `"wiki"` line at :527) gaining `wiki-page`, `wiki-page-revise`,
@@ -96,6 +99,7 @@ no task here is [P]. -->
       with `dropped: True`. Drive claim/complete directly per `tests/test_tasks_safety.py`.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_promotion.py -q` → new spec assertions red, FR-004 guards green.
 - [x] T004 Register the wiki output specs and add the `generate --llm` queueing loop in `src/cairn/llm/tasks.py` and `src/cairn/cli/wiki.py` (FR-002) (after T002) (after T003)
+      Scope (as-landed): src/cairn/llm/tasks.py, src/cairn/cli/wiki.py
       done 2026-08-31 — T003's four reds green + guards green (14 passed at wave time; full file 17/17 after T006)
       Consumes T002's `build_page_plan(conn, repo, pages_cap=10)` (ordered records
       with `page_id`/`title`/`description`/`module`/`seeds`/`input_hash`; empty-graph
@@ -109,6 +113,7 @@ no task here is [P]. -->
       diagrams})` per planned page (`create_task` unchanged, tasks.py:64).
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_promotion.py tests/test_tasks_safety.py -q` → green.
 - [x] T005 Write failing FR-003 promotion tests in `tests/test_wiki_promotion.py` (FR-003) (after T003)
+      Scope (as-landed): tests/test_wiki_promotion.py
       done 2026-08-31 — 10 red FR-003 pins quoted (ModuleNotFoundError sources / TypeError section_vocab / promoted=False), 1 green-by-design guard
       Same file as T003 — append, do not rewrite. Pin: (1) a Sources-footer parser in
       new `src/cairn/wiki/sources.py` tolerating list and inline-link forms, entries
@@ -128,6 +133,7 @@ no task here is [P]. -->
       (concept.py:136 is the parse path only).
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_promotion.py -q` → new assertions red.
 - [x] T006 Implement the Sources parser, critic `section_vocab`, and the Wiki-Article promotion branch (FR-003) (after T004) (after T005)
+      Scope (as-landed): src/cairn/wiki/sources.py, src/cairn/llm/tasks.py, src/cairn/compass/critic.py
       done 2026-08-31 — `pytest tests/test_wiki_promotion.py tests/test_tasks_safety.py tests/test_compass_critic.py -q` -> 41 passed; critic callers bit-identical; D-011 recorded
       Files: new `src/cairn/wiki/sources.py`; `src/cairn/llm/tasks.py:complete_task:210`
       (contended with T004 — same serial workstream, hence the chain); an
@@ -143,6 +149,7 @@ no task here is [P]. -->
       (`generate_wiki_with_critic:31`; spec scope freeze).
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_promotion.py tests/test_tasks_safety.py tests/test_compass_critic.py -q` → green (critic baseline 16 passed).
 - [x] T007 Add FR-010 wiring-verification tests in `tests/test_wiki_promotion.py` (FR-010) (after T006)
+      Scope (as-landed): tests/test_wiki_promotion.py
       done 2026-08-31 — `pytest tests/test_wiki_promotion.py tests/test_suite_hygiene.py -q` -> 23 passed
       No new search code (D-004): after driving one promotion through T006's branch,
       assert the Wiki-Article surfaces via `src/cairn/okf/bundle.py:search:182`
@@ -162,6 +169,7 @@ re-queued; `--force` re-queues all. Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv r
 (new) plus the Phase-2 set. -->
 
 - [x] T008 Write failing manifest tests in `tests/test_wiki_manifest.py` (FR-005)
+      Scope (as-landed): tests/test_wiki_manifest.py
       done 2026-08-31 — red pinned: collection ModuleNotFoundError on cairn.wiki.manifest (orchestrator-verified)
       Red-first (C-02). Pin (D-006): JSON manifest at `<knowledge>/_wiki/manifest.json`
       with schema marker `"cairn-wiki-manifest-1"`; per-page rows keyed by page_id
@@ -176,6 +184,7 @@ re-queued; `--force` re-queues all. Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv r
       queued→failed (drop at the revise cap).
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_manifest.py -q` → red.
 - [x] T009 Implement `src/cairn/wiki/manifest.py`, incremental skip, and the public generate pipeline (FR-005) (after T008)
+      Scope (as-landed): src/cairn/wiki/manifest.py, src/cairn/wiki/pipeline.py, src/cairn/cli/wiki.py, tests/test_wiki_manifest.py
       done 2026-08-31 — 40 passed (manifest+promotion); fix 1/5 (D-016): 59 passed scoped, live-store re-run queued 0 new with byte-identical pending list
       Consumes T002's `build_page_plan` hashes and T004's queue loop. Implement the
       D-006 manifest (load/save per T008's pinned format) and expose the public
@@ -198,6 +207,7 @@ promoted untouched. Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test 
 (baseline: 2). -->
 
 - [x] T010 Write failing status/retry CLI tests in `tests/test_wiki_cli.py` (FR-006)
+      Scope (as-landed): tests/test_wiki_cli.py
       done 2026-08-31 — red pinned: `No such command 'status'/'retry'` (orchestrator-verified)
       Red-first (C-02); new file, no shared files — starts Lane A. CliRunner pattern
       per `tests/test_knowledge_cli.py` `cli_env` fixture (:19-25: chdir tmp_path;
@@ -214,6 +224,7 @@ promoted untouched. Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test 
       exit 0. Baseline: `grep -n 'wiki.command' src/cairn/cli/wiki.py` → 2.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_cli.py -q` → red.
 - [x] T011 Implement `wiki status` and `wiki retry` on the `wiki` group in `src/cairn/cli/wiki.py` (FR-006) (after T010)
+      Scope (as-landed): src/cairn/cli/wiki.py, tests/test_wiki_cli.py
       done 2026-08-31 — 3 passed; fix 1/5: 41 passed scoped, live-store chain-drop -> status failed + retry re-queue verified
       Conventions: `from .main import DEFAULT_DB_PATH, get_db, main` (cli/wiki.py:6);
       `--knowledge` default `str(DEFAULT_DB_PATH.parent / ".knowledge")`
@@ -235,6 +246,7 @@ page tasks spawn only from the validated plan. Verify: `CAIRN_LIB=/tmp/__no_such
 matches). -->
 
 - [x] T012 Write failing refine-catalog tests in `tests/test_wiki_refine.py` (FR-007)
+      Scope (as-landed): tests/test_wiki_refine.py
       done 2026-08-31 — verified split 11 red (NoSuchOption --refine-catalog / ModuleNotFoundError refine) / 1 green queue-guard
       Red-first (C-02); new file, no shared files. Pin (D-003 two-step):
       `generate --llm --refine-catalog` queues exactly one `wiki-catalog` task and
@@ -248,6 +260,7 @@ matches). -->
       `grep -rn 'wiki-catalog' src/ tests/` → zero matches.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_wiki_refine.py -q` → red.
 - [x] T013 Implement `--refine-catalog` on `wiki_generate` with the catalog validator (FR-007) (after T011) (after T012)
+      Scope (as-landed): src/cairn/wiki/refine.py, src/cairn/wiki/pipeline.py, src/cairn/cli/wiki.py
       done 2026-08-31 — `pytest tests/test_wiki_refine.py tests/test_wiki_cli.py -q` -> 15 passed
       Files contended with T011/T009 (Lane-A serial per plan.md M4→M5, hence the
       chain): `src/cairn/cli/wiki.py` and `src/cairn/wiki/`. Add the flag to
@@ -269,6 +282,7 @@ tool-count assertion updated. Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --e
 `grep -n '_EXPECTED_TOOL_COUNT' src/cairn/mcp_server/server.py` shows 28. -->
 
 - [x] T014 Add the `wiki_generate` MCP tool with the coordinated 27→28 count bumps, red-first in-task (FR-008)
+      Scope (as-landed): src/cairn/mcp_server/tools_wiki.py, src/cairn/mcp_server/server.py, tests/test_mcp_wiki_tool.py, tests/test_status_resource_health.py, tests/test_agent_surface.py, tests/test_tool_annotations.py, docs/mcp-tools.md, src/cairn/agent_install/_common.py, AGENTS.md, src/cairn/agent_integration/skill/SKILL.md, src/cairn/agent_integration/skill/references/tools.md
       done 2026-08-31 — 5-file verify 41 passed; 28 decorated tools; fix 1/5 (stale refine pin) green; D-013 recorded
       Lane B — file-disjoint from Lanes A/C; starts after Phase 3 (consumes only the
       generate pipeline's public function). Red-first inside this task: a test
@@ -300,6 +314,7 @@ view renders markdown + sources; import-guard still holds. Verify: `CAIRN_LIB=/t
 — must include `test_importing_dashboard_never_loads_server_stack`. -->
 
 - [x] T015 Write failing dashboard wiki-view tests in `tests/test_dashboard_app.py` and `tests/test_dashboard_data.py` (FR-009)
+      Scope (as-landed): tests/test_dashboard_app.py, tests/test_dashboard_data.py
       done 2026-08-31 — verified split 14 red (missing data fns/routes/renderer) / 176 passed, import guard green
       Lane C — file-disjoint from Lanes A/B. Red-first (C-02). Pin: a data function
       in the `get_task_queue`/`get_recent_memories` shape
@@ -313,6 +328,7 @@ view renders markdown + sources; import-guard still holds. Verify: `CAIRN_LIB=/t
       (tests/test_dashboard_app.py:41) stays green throughout.
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_dashboard_app.py tests/test_dashboard_data.py -q` → new assertions red, import guard green.
 - [x] T016 Implement the dashboard wiki routes, data function, template, and stdlib markdown renderer (FR-009) (after T015)
+      Scope (as-landed): src/cairn/dashboard/app.py, src/cairn/dashboard/data.py, src/cairn/dashboard/markdown.py, src/cairn/dashboard/templates/wiki.html, src/cairn/dashboard/templates/wiki_page.html
       done 2026-08-31 — `pytest tests/test_dashboard_app.py tests/test_dashboard_data.py -q` -> 190 passed
       Lane C files: `src/cairn/dashboard/app.py` (routes in the table at
       app.py:925-965 inside `create_app:191`; handler via the `render` helper,
@@ -335,6 +351,7 @@ Then the repo's mandatory C-01 procedure (branch → pre-commit → PR → CI) a
 post-merge `cairn update` + `record_memory`. -->
 
 - [x] T017 Update the docs and CHANGELOG for the wiki generation feature (FR-011) (after T013) (after T014) (after T016)
+      Scope (as-landed): docs/cli-reference.md, docs/mcp-tools.md, docs/knowledge-and-memory.md, CHANGELOG.md, README.md, docs/architecture.md, src/cairn/mcp_server/__init__.py
       done 2026-08-31 — full suite 2713 passed at task close; TC-030 greps green; --force gap found -> D-014/T018
       Strictly after the lanes: `docs/mcp-tools.md` is contended with T014 (count
       heading) and docs must record the final surface (T013 CLI, T014 tool, T016
@@ -351,6 +368,7 @@ post-merge `cairn update` + `record_memory`. -->
       Verify: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest -q` (whole suite) → green; the grep above shows the new wiki sections.
 
 - [x] T018 Add `--force` to `wiki generate --llm` — CLI parity with FR-005/TC-007 (D-014) (FR-005) (after T017)
+      Scope (as-landed): src/cairn/cli/wiki.py, tests/test_wiki_cli.py, docs/cli-reference.md
       done 2026-08-31 — `pytest tests/test_wiki_cli.py tests/test_wiki_refine.py -q` -> 16 passed; TC-007 E2E chain proven on live store
       Appended mid-flight (D-014): T004's flag surface omitted `--force`; T009 wired
       only the pipeline parameter. Red-first in `tests/test_wiki_cli.py` (append):
@@ -381,6 +399,7 @@ post-merge `cairn update` + `record_memory`. -->
 ## Phase 9: Veto re-opens (D-017)
 
 - [x] T020 Update the pre-rendered diagram assets to 28 tools (D-015 re-open) (FR-011)
+      Scope (as-landed): docs/diagrams/system-architecture.svg, docs/diagrams/system-architecture.html, docs/diagrams/system-architecture-dark.html, docs/diagrams/readme-architecture.svg, docs/diagrams/readme-architecture.html, docs/diagrams/readme-architecture-dark.html
       done 2026-08-31 — same-width `27 tools` -> `28 tools` text swap in the six
       self-contained sources (docs/diagrams/system-architecture.svg, docs/diagrams/system-architecture.html,
       docs/diagrams/system-architecture-dark.html, docs/diagrams/readme-architecture.svg,
@@ -389,6 +408,7 @@ post-merge `cairn update` + `record_memory`. -->
       tests/ shows zero remaining real-source mentions (egg-info is build debris).
 
 - [x] T019 Re-key the wiki manifest to {repo}/{page_id} (D-012 re-open, schema cairn-wiki-manifest-2) (FR-005)
+      Scope (as-landed): src/cairn/wiki/manifest.py, src/cairn/wiki/pipeline.py, src/cairn/cli/wiki.py, src/cairn/dashboard/data.py, tests/test_wiki_manifest.py, tests/test_wiki_cli.py, tests/test_dashboard_data.py, tests/test_dashboard_app.py
       done 2026-08-31 — 261 passed across 6 files; live store: 5/5 schema-1 rows migrated, on-disk schema-2, generate queued 0 new (D-016 intact); pin set extended per D-018
       One writer owns the format change end-to-end: `src/cairn/wiki/manifest.py`
       (marker bump; rows keyed f"{repo}/{page_id}"; schema-1 loads migrate
