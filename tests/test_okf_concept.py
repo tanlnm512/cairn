@@ -113,11 +113,14 @@ This is original content that must be preserved."""
 def test_to_file_no_temp_residue(tmp_path):
     """Verify that no temp residue is left after a successful write."""
     # Create a concept
+    # Pinned timestamp: to_markdown() stamps now() when unset, so an unset
+    # timestamp makes this assertion a coin flip on the second boundary.
     concept = OKFConcept(
         type="test",
         title="Test Concept",
         description="A test concept",
         tags=["test"],
+        timestamp="2026-01-01T00:00:00Z",
         body="# Test Body\n\nThis is test content.",
     )
 
