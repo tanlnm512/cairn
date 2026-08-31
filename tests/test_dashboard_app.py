@@ -3728,9 +3728,11 @@ def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     assert "<li>first the catalog</li>" in resp.text
     assert "## How" not in resp.text  # never the raw markdown source
     assert "&lt;two&gt;" in resp.text  # escape-first: no inline-HTML passthrough
-    assert '<pre class="language-mermaid">' in resp.text
+    assert '<pre class="mermaid">' in resp.text
     assert "src/demo/core.py" in resp.text  # the sources list
     assert "demo_main" in resp.text
+    # Live mermaid: the detail view loads mermaid.js client-side.
+    assert 'cdn.jsdelivr.net/npm/mermaid@11' in resp.text
 
 
 def test_wiki_page_route_unknown_page_returns_404(tmp_path):
@@ -3788,5 +3790,5 @@ def test_render_markdown_fenced_code_and_mermaid_fence():
     )
 
     assert "x &lt; 1 &amp;&amp; y &gt; 2" in html
-    assert '<pre class="language-mermaid">' in html
+    assert '<pre class="mermaid">' in html
     assert "A --&gt; B" in html
