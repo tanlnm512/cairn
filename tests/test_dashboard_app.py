@@ -98,8 +98,8 @@ def test_create_app_serves_landing_and_static(tmp_path):
     # Every sidebar view is reachable from the launcher grid, including
     # the two newest sections.
     for href in ("/workspaces", "/projects", "/graph", "/history", "/tokens",
-                 "/chains", "/health", "/memory", "/tasks", "/embeddings",
-                 "/settings"):
+                 "/chains", "/health", "/memory", "/wiki", "/tasks",
+                 "/embeddings", "/settings"):
         assert f'href="{href}"' in landing.text, href
 
     css = client.get("/static/app.css")
@@ -3674,6 +3674,19 @@ def test_wiki_routes_registered_with_pinned_names(tmp_path):
 def test_wiki_templates_ship_with_the_dashboard():
     assert (_templates_dir() / "wiki.html").is_file()
     assert (_templates_dir() / "wiki_page.html").is_file()
+
+
+def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
+    """FR-009 follow-up: the wiki view is discoverable — a sidebar nav entry
+    plus a landing launcher card, mirroring every other view."""
+    client = _wiki_client(tmp_path)
+
+    page = client.get("/wiki")
+    landing = client.get("/")
+
+    assert page.status_code == 200
+    assert 'href="/wiki' in page.text      # sidebar link on the view itself
+    assert 'href="/wiki' in landing.text   # launcher card on the landing grid
 
 
 def test_wiki_route_lists_pages_with_state_badges(tmp_path):
