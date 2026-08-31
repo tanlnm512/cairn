@@ -3576,3 +3576,204 @@ def test_graph_inspect_route_returns_json_payload(tmp_path):
     missing = client.get("/graph/inspect", params={"name": "missing_symbol"})
     assert missing.status_code == 200
     assert missing.json()["found"] is False
+
+
+# ---------------------------------------------------------------------------
+# Dashboard wiki view (FR-009 / US6): /wiki list with state badges,
+# /wiki/{page_id} rendered detail, and the stdlib markdown renderer (D-002).
+# ---------------------------------------------------------------------------
+
+_WIKI_BODY = (
+    "## How it works\n"
+    "\n"
+    "The pipeline runs in <two> phases & one pass.\n"
+    "\n"
+    "- first the catalog\n"
+    "- then the pages\n"
+    "\n"
+    "### Diagram\n"
+    "\n"
+    "```mermaid\n"
+    "graph LR\n"
+    "  A --> B\n"
+    "```\n"
+)
+_WIKI_SOURCES = [{"path": "src/demo/core.py"}, {"symbol": "demo_main"}]
+
+
+def _wiki_plan_entry(page_id, title):
+    return {
+        "page_id": page_id,
+        "title": title,
+        "description": f"Wiki page for {page_id}.",
+        "module": "src/demo",
+        "seeds": {"files": ["src/demo/core.py"], "symbols": ["demo_main"]},
+        "input_hash": f"hash-{page_id}",
+    }
+
+
+def _seed_wiki_pages(knowledge_dir):
+    """Three manifest pages: two with promoted concepts, one queued (no
+    concept on disk)."""
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    wiki_dir = knowledge_dir / "_wiki"
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    pages = {}
+    for page_id, title, state, task_id in [
+        ("overview", "demo architecture overview", "promoted", "task-overview"),
+        ("viz-module", "viz module", "promoted", "task-viz"),
+        ("tasks-module", "tasks module", "queued", "task-tasks"),
+    ]:
+        pages[f"demo/{page_id}"] = {
+            **_wiki_plan_entry(page_id, title),
+            "task_id": task_id,
+            "state": state,
+            "attempts": 0,
+        }
+    (wiki_dir / "manifest.json").write_text(
+        json.dumps({"schema": "cairn-wiki-manifest-2", "pages": pages}, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bundle = OKFBundle(str(knowledge_dir))
+    for page_id in ("overview", "viz-module"):
+        bundle.write_concept(
+            OKFConcept(
+                type="Wiki-Article",
+                title=f"Wiki: {page_id}",
+                description=f"Wiki article for demo/{page_id}",
+                resource=page_id,
+                tags=["demo", "wiki"],
+                timestamp="2026-08-30T10:00:00Z",
+                concept_id=f"wiki/pages/demo/{page_id}",
+                sources=_WIKI_SOURCES,
+                body=_WIKI_BODY,
+                extensions={"page_id": page_id, "input_hash": f"hash-{page_id}"},
+            )
+        )
+
+
+def _wiki_client(tmp_path):
+    kdir = tmp_path / "knowledge"
+    _seed_wiki_pages(kdir)
+    return _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
+
+
+def test_wiki_routes_registered_with_pinned_names(tmp_path):
+    pytest.importorskip("httpx")
+    from cairn.dashboard.app import create_app
+
+    app = create_app(db_path=str(tmp_path / "ro.db"))
+    assert app.url_path_for("wiki") == "/wiki"
+    assert app.url_path_for("wiki_page", page_id="overview") == "/wiki/overview"
+
+
+def test_wiki_templates_ship_with_the_dashboard():
+    assert (_templates_dir() / "wiki.html").is_file()
+    assert (_templates_dir() / "wiki_page.html").is_file()
+
+
+def test_wiki_route_lists_pages_with_state_badges(tmp_path):
+    """FR-009 / TC-025: /wiki lists every planned page with its state,
+    each entry linking to its detail view."""
+    client = _wiki_client(tmp_path)
+
+    resp = client.get("/wiki")
+
+    assert resp.status_code == 200
+    for page_id in ("overview", "viz-module", "tasks-module"):
+        assert f'href="/wiki/{page_id}"' in resp.text
+    assert "demo architecture overview" in resp.text
+    for badge in ("promoted", "queued"):
+        assert f">{badge}<" in resp.text
+
+
+def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
+    client = _panel_client(
+        tmp_path,
+        _graph_db_file(tmp_path, seed=False),
+        str(tmp_path / "missing"),
+    )
+    resp = client.get("/wiki")
+    assert resp.status_code == 200
+    assert "No wiki pages" in resp.text
+
+
+def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
+    """FR-009 / TC-026: the detail view renders headings and lists as HTML
+    elements (never the raw markdown) with the sources listed."""
+    client = _wiki_client(tmp_path)
+
+    resp = client.get("/wiki/overview")
+
+    assert resp.status_code == 200
+    assert re.search(r"<h2[^>]*>How it works</h2>", resp.text)
+    assert re.search(r"<h3[^>]*>Diagram</h3>", resp.text)
+    assert "<li>first the catalog</li>" in resp.text
+    assert "## How" not in resp.text  # never the raw markdown source
+    assert "&lt;two&gt;" in resp.text  # escape-first: no inline-HTML passthrough
+    assert '<pre class="language-mermaid">' in resp.text
+    assert "src/demo/core.py" in resp.text  # the sources list
+    assert "demo_main" in resp.text
+
+
+def test_wiki_page_route_unknown_page_returns_404(tmp_path):
+    client = _wiki_client(tmp_path)
+    resp = client.get("/wiki/no-such-page")
+    assert resp.status_code == 404
+
+
+def test_markdown_renderer_module_never_loads_server_stack():
+    """D-002: the renderer is pure stdlib — importing it must not pull in
+    starlette/uvicorn/jinja2 (same guard as the dashboard package)."""
+    code = (
+        "import sys; import cairn.dashboard.markdown; "
+        "print(any(m in sys.modules "
+        "for m in ('starlette', 'uvicorn', 'jinja2')))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert proc.stdout.strip() == "False"
+
+
+def test_render_markdown_whitelists_blocks_and_escapes_inline_html():
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "## Heading\n"
+        "\n"
+        "Text with <script>alert(1)</script> & an [link](x).\n"
+        "\n"
+        "- alpha\n"
+        "- beta\n"
+    )
+
+    assert re.search(r"<h2[^>]*>Heading</h2>", html)
+    assert "<p>Text with" in html
+    assert "<li>alpha</li>" in html and "<li>beta</li>" in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "&amp;" in html
+
+
+def test_render_markdown_fenced_code_and_mermaid_fence():
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "```python\n"
+        "x < 1 && y > 2\n"
+        "```\n"
+        "\n"
+        "```mermaid\n"
+        "graph LR\n"
+        "  A --> B\n"
+        "```\n"
+    )
+
+    assert "x &lt; 1 &amp;&amp; y &gt; 2" in html
+    assert '<pre class="language-mermaid">' in html
+    assert "A --&gt; B" in html

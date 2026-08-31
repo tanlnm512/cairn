@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Wiki — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Wiki</h1>
+  <p class="muted">Generated wiki pages and their promotion state.</p>
+  {% if pages %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Page</th>
+        <th>State</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pages %}
+      <tr>
+        <td><a href="/wiki/{{ p.page_id }}">{{ p.title }}</a></td>
+        <td><span class="badge badge-{{ p.state }}">{{ p.state }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No wiki pages yet — generate some with <code>cairn wiki generate</code>.</p>
+  {% endif %}
+</section>
+{% endblock %}

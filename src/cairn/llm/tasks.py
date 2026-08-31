@@ -285,10 +285,41 @@ def complete_task(
     # Run critic if a connection is provided
     if conn is not None:
         try:
-            from ..compass.critic import critic_concept
-            
-            critic_result = critic_concept(result_concept, conn)
-            
+            from ..compass.critic import CriticResult, critic_concept
+
+            # Wiki pages are scored on the Sources footer, not compass sections.
+            wiki_page = task.task_kind.startswith("wiki-page")
+            if wiki_page:
+                critic_result = critic_concept(
+                    result_concept, conn, section_vocab=("## Sources",)
+                )
+            else:
+                critic_result = critic_concept(result_concept, conn)
+
+            # Footer entries may ride inline links the backtick critic never
+            # sees, so they are resolved here; an unresolved entry fails the
+            # gate and the revise carries the reason.
+            wiki_sources: Optional[List[Dict[str, Any]]] = None
+            if wiki_page:
+                from ..refs import file_exists as _file_exists
+                from ..wiki.sources import parse_sources_footer, resolve_sources
+
+                resolved, source_errors = resolve_sources(
+                    parse_sources_footer(result), conn
+                )
+                if source_errors:
+                    critic_result = CriticResult(
+                        errors=critic_result.errors + source_errors,
+                        warnings=critic_result.warnings,
+                        quality_score=critic_result.quality_score,
+                        passed=False,
+                    )
+                else:
+                    wiki_sources = [
+                        {"path": e} if _file_exists(conn, e) else {"symbol": e}
+                        for e in resolved
+                    ]
+
             # Mark result concept with critic status
             if critic_result.passed:
                 result_concept.extensions["critic_status"] = "passed"
@@ -349,6 +380,50 @@ def complete_task(
                         body=promoted_body,
                     )
                     bundle.write_concept(flow_concept)
+                    promoted = True
+
+                if task.task_kind.startswith("wiki-page"):
+                    repo = task.facts.get("repo")
+                    if not repo:
+                        return {
+                            "task_id": task_id,
+                            "promoted": False,
+                            "revised": False,
+                            "dropped": False,
+                            "errors": [
+                                "wiki-page task is missing the required 'repo' fact"
+                            ],
+                            "quality": critic_result.quality_score,
+                        }
+                    page_id = (
+                        task.resource.replace("/", "-")
+                        .replace(".", "-")
+                        .replace("#", "-")
+                    )
+                    promoted_body = result
+                    if critic_result.warnings:
+                        marker = "> [critic-warning] " + "; ".join(
+                            critic_result.warnings
+                        ) + "\n\n"
+                        promoted_body = marker + result
+                    wiki_concept = OKFConcept(
+                        type="Wiki-Article",
+                        title=f"Wiki: {page_id}",
+                        description=f"Wiki article for {repo}/{page_id}",
+                        resource=page_id,
+                        tags=[repo, "wiki"],
+                        timestamp=_now(),
+                        concept_id=f"wiki/pages/{repo}/{page_id}",
+                        sources=wiki_sources,
+                        body=promoted_body,
+                        extensions={
+                            "page_id": page_id,
+                            "input_hash": task.facts.get("input_hash"),
+                            "task_id": task_id,
+                            "refine_catalog": task.facts.get("refine_catalog"),
+                        },
+                    )
+                    bundle.write_concept(wiki_concept)
                     promoted = True
 
                 _emit(
@@ -493,12 +568,12 @@ def _render_body(task: Task) -> str:
             lines.append(f"**{key}:** {val}")
         lines.append("")
     lines.append("## Output spec")
-    lines.append(_output_spec(task.task_kind))
+    lines.append(_output_spec(task.task_kind, task.facts))
     lines.append(f"\nWrite your result, then run: `cairn task complete {task.id}`")
     return "\n".join(lines) + "\n"
 
 
-def _output_spec(task_kind: str) -> str:
+def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
     specs = {
         "compass-synthesize": (
             "Write a 25-35 line compass file with exactly these 5 sections:\n"
@@ -525,10 +600,37 @@ def _output_spec(task_kind: str) -> str:
             "Same 5-section flow format. Only reference files/symbols from facts.chain_raw."
         ),
         "wiki": "Write an architectural wiki article in markdown. Only reference graph-verified symbols.",
+        "wiki-page": (
+            "Write an architectural wiki article in markdown for the page described in "
+            "the facts. Only reference files/symbols from the facts (the seeds); never "
+            "reference anything outside the graph. Use backticks for code. End the "
+            "article with a `## Sources` footer listing the files you cited."
+        ),
+        "wiki-page-revise": (
+            "The previous wiki draft had factual errors (listed in facts.errors). "
+            "Rewrite the article fixing ONLY those errors; keep correct content. "
+            "Only reference files/symbols from the facts seeds; never reference "
+            "anything outside the graph. End with a `## Sources` footer."
+        ),
+        "wiki-catalog": (
+            "Refine the deterministic wiki outline provided in the facts: you may "
+            "reorder, retitle, or merge entries, but every entry must name a module "
+            "that exists in the graph. Output the refined outline as JSON with the "
+            "same fields as the input."
+        ),
+        "wiki-catalog-revise": (
+            "The previous catalog refinement had factual errors (listed in "
+            "facts.errors). Fix ONLY those errors; keep valid entries. Every entry "
+            "must still name a module that exists in the graph. Output the corrected "
+            "JSON outline."
+        ),
         "memory-critic": "For each draft memory in facts, judge accuracy/usefulness/specificity/non-redundancy. Output one JSON line per memory: {title, keep: bool, score: 0-1, reason}.",
         "memory-extract": "From the session transcript in facts.transcript, extract candidate memories. Output one JSON line per candidate: {type: decision|pattern|mistake|workaround, title, body, confidence}.",
     }
-    return specs.get(task_kind, "Process per the cairn skill.")
+    spec = specs.get(task_kind, "Process per the cairn skill.")
+    if task_kind.startswith("wiki-page") and facts and facts.get("diagrams"):
+        spec += "\nInclude Mermaid fenced code blocks for the key structures you describe."
+    return spec
 
 
 def _concept_to_task(concept: OKFConcept) -> Task:

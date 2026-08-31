@@ -14,9 +14,13 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from cairn.okf.concept import OKFConcept
 
 from cairn.bench.agent_suite import CHARS_PER_TOKEN
+from cairn.dashboard.markdown import render_markdown
 from cairn.dashboard.tokenizer import (
     HEURISTIC_MODE,
     active_tokenizer_mode,
@@ -629,6 +633,90 @@ def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dic
 
 
 HISTORY_PAGE_SIZE = 50
+
+
+def _split_page_key(key: str) -> Tuple[str, str]:
+    """A manifest key ``"{repo}/{page_id}"`` -> ``(repo, page_id)``."""
+    repo, _, page_id = str(key).partition("/")
+    return repo, page_id
+
+
+def _read_wiki_concept(
+    bundle: OKFBundle, concept_id: Optional[str]
+) -> Optional["OKFConcept"]:
+    """The wiki concept at ``concept_id``, or None when absent/unreadable —
+    an unreadable concept file is never fatal."""
+    if concept_id is None:
+        return None
+    try:
+        return bundle.read_concept(concept_id)
+    except Exception:
+        return None
+
+
+def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]:
+    """Wiki manifest pages joined with their ``wiki/pages/`` concepts.
+
+    One plain dict per manifest row carrying ``page_id``, ``title``,
+    ``state``, and ``promoted``; ``promoted`` is derived from the row's own
+    ``wiki/pages/{repo}/{page_id}`` concept being readable, never the
+    stored state. A missing manifest (or knowledge dir) yields an empty
+    list; ``repo`` selects one repo's rows.
+    """
+    from cairn.wiki.manifest import load_manifest
+
+    bundle = OKFBundle(knowledge_dir)
+    pages: List[dict] = []
+    for key, row in load_manifest(knowledge_dir)["pages"].items():
+        key_repo, page_id = _split_page_key(key)
+        if repo and key_repo != repo:
+            continue
+        pages.append(
+            {
+                "page_id": page_id,
+                "title": row.get("title") or page_id,
+                "state": row.get("state", ""),
+                "promoted": (
+                    _read_wiki_concept(
+                        bundle, f"wiki/pages/{key_repo}/{page_id}"
+                    )
+                    is not None
+                ),
+            }
+        )
+    return pages
+
+
+def get_wiki_page(
+    knowledge_dir: str, page_id: str, repo: Optional[str] = None
+) -> Optional[dict]:
+    """One wiki page: manifest row plus the rendered concept body.
+
+    ``html`` is the body through the escape-first markdown renderer;
+    ``sources`` is the concept's frontmatter list verbatim. None when no
+    manifest row for ``page_id`` (``repo`` narrows the match when several
+    repos plan the same page id) has a readable concept.
+    """
+    from cairn.wiki.manifest import load_manifest
+
+    bundle = OKFBundle(knowledge_dir)
+    for key, row in load_manifest(knowledge_dir)["pages"].items():
+        key_repo, key_page = _split_page_key(key)
+        if key_page != page_id or (repo and key_repo != repo):
+            continue
+        concept = _read_wiki_concept(
+            bundle, f"wiki/pages/{key_repo}/{key_page}"
+        )
+        if concept is None:
+            continue
+        return {
+            "page_id": page_id,
+            "title": row.get("title") or concept.title or page_id,
+            "state": row.get("state", ""),
+            "html": render_markdown(concept.body),
+            "sources": concept.sources or [],
+        }
+    return None
 
 
 def _parse_history_cursor(cursor: Optional[str]) -> Optional[tuple]:

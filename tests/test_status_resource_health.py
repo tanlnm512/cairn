@@ -267,18 +267,18 @@ def test_health_block_survives_unmigrated_db(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Tool-count gate (acceptance: no new MCP tool, count still 27)
+# Tool-count gate (count pinned at 28)
 # ---------------------------------------------------------------------------
 
 
-def test_tool_count_unchanged_at_27():
-    """T14 adds no MCP tool. The 27-tool contract (server.py) still holds.
+def test_tool_count_at_28():
+    """The 28-tool contract (server.py) holds.
 
     ``verify_tool_count`` is the boot guard; calling it here proves the status
     resource (a @mcp.resource, not @mcp.tool) did not register a new tool.
     """
     verify_tool_count()  # raises AssertionError on drift
-    assert _EXPECTED_TOOL_COUNT == 27
+    assert _EXPECTED_TOOL_COUNT == 28
 
 
 def test_health_block_flags_drift_unindexed(status_db, monkeypatch):

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>{{ page.title }}</h1>
+  <p>
+    <span class="badge badge-{{ page.state }}">{{ page.state }}</span>
+    <a href="/wiki">Back to wiki</a>
+  </p>
+  <div class="wiki-body">
+    {{ page.html | safe }}
+  </div>
+  {% if page.sources %}
+  <h2>Sources</h2>
+  <ul>
+    {% for source in page.sources %}
+    <li>{% for key, value in source.items() %}{{ key }}: <code>{{ value }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}

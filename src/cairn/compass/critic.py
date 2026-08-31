@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from ..okf.concept import OKFConcept
 from ..refs import (
@@ -35,10 +35,32 @@ class CriticResult:
         return self.passed
 
 
+# Section headings the default quality heuristic recognizes (module compass,
+# flow compass, and the heading both share).
+_DEFAULT_SECTION_VOCAB = (
+    "# What Does This Module Do?",
+    "# Common Modification Patterns",
+    "# Build-Failure Patterns",
+    "# Cross-Module Dependencies",
+    "# What Does This Flow Do?",
+    "# Call Sequence",
+    "# Failure-Prone Steps",
+    "# Modules Spanned",
+    "# Tribal Knowledge",
+)
+
+
 def critic_concept(
-    concept: OKFConcept, conn: sqlite3.Connection, llm_judge=None
+    concept: OKFConcept,
+    conn: sqlite3.Connection,
+    llm_judge=None,
+    section_vocab: Optional[Sequence[str]] = None,
 ) -> CriticResult:
-    """Run critic checks on a concept against the graph."""
+    """Run critic checks on a concept against the graph.
+
+    ``section_vocab`` replaces the recognized section headings the quality
+    heuristic scores (default: the compass headings above).
+    """
     errors = []
     warnings = []
 
@@ -68,26 +90,14 @@ def critic_concept(
     if llm_judge:
         quality = llm_judge(body)
     else:
-        # Deterministic heuristic: reward presence of all 5 sections (module
-        # compass and flow compass use different section titles, both recognized).
-        sections = sum(
-            1 for h in [
-                # Module compass sections
-                "# What Does This Module Do?",
-                "# Common Modification Patterns",
-                "# Build-Failure Patterns",
-                "# Cross-Module Dependencies",
-                # Flow compass sections
-                "# What Does This Flow Do?",
-                "# Call Sequence",
-                "# Failure-Prone Steps",
-                "# Modules Spanned",
-                # Shared by both
-                "# Tribal Knowledge",
-            ]
-            if h in body
-        )
-        quality = min(sections / 5.0, 1.0)
+        # Deterministic heuristic: fraction of the recognized section
+        # headings present. A compass is complete at 5 sections even though
+        # the default pool spans both compass shapes; an explicit vocabulary
+        # is complete when fully present.
+        vocab = _DEFAULT_SECTION_VOCAB if section_vocab is None else section_vocab
+        sections = sum(1 for h in vocab if h in body)
+        total = 5.0 if section_vocab is None else float(max(len(vocab), 1))
+        quality = min(sections / total, 1.0)
 
     # No factual errors is mandatory. With no warnings this passes at quality
     # >= 0.5; with warnings (e.g. a prose-heavy draft) demand quality >= 0.7.

@@ -3,7 +3,8 @@
 Routes: landing, workspaces overview, projects, graph (plus its
 /graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
 history, tokens (plus their .csv/.json exports), chains, health, memory,
-tasks, settings, embeddings — the settings section (FR-011) carries the
+tasks, wiki (list plus per-page detail), settings, embeddings — the
+settings section (FR-011) carries the
 app's only POST routes (/settings/save, /settings/parity-check); the
 embeddings status view and everything else stay GET-only so the read-only
 views keep their assumptions.
@@ -246,6 +247,8 @@ def create_app(
         get_session_chains,
         get_task_queue,
         get_tool_tokens,
+        get_wiki_page,
+        get_wiki_pages,
         inspect_symbol,
         list_history,
         list_projects,
@@ -692,6 +695,39 @@ def create_app(
             },
         )
 
+    def wiki(request: Request) -> Response:
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        pages = get_wiki_pages(selected_knowledge)
+        return render(
+            request,
+            "wiki.html",
+            {"pages": pages, "store_key": store_key},
+        )
+
+    def wiki_page(request: Request) -> Response:
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
+        if page is None:
+            from starlette.responses import HTMLResponse
+
+            return HTMLResponse(
+                "<html><head><title>cairn dashboard</title></head><body>"
+                "<h1>Wiki page not found</h1>"
+                "<p>No rendered article exists for this page id.</p>"
+                '<p><a href="/wiki">Back to the wiki</a></p>'
+                "</body></html>",
+                status_code=404,
+            )
+        return render(
+            request,
+            "wiki_page.html",
+            {"page": page, "store_key": store_key},
+        )
+
     def _settings_context(
         store_key: str, saved: bool = False, error: str = "", parity=None
     ) -> dict:
@@ -941,6 +977,8 @@ def create_app(
         Route("/health", health, name="health"),
         Route("/memory", memory, name="memory"),
         Route("/tasks", tasks, name="tasks"),
+        Route("/wiki", wiki, name="wiki"),
+        Route("/wiki/{page_id}", wiki_page, name="wiki_page"),
         Route("/embeddings", embeddings_status, name="embeddings"),
         Route("/settings", settings, name="settings"),
         # The app's first POST routes (FR-011) — loopback-only by the CLI's

@@ -2576,3 +2576,196 @@ def test_inspect_symbol_unknown_name_reports_not_found(fresh_db):
         "found": False,
         "name": "no_such_symbol",
     }
+
+
+# ---------------------------------------------------------------------------
+# Dashboard wiki panel (FR-009 / US6): manifest rows joined with the
+# promoted wiki/pages/ concepts, rendered bodies, and sources.
+# ---------------------------------------------------------------------------
+
+_WIKI_BODY = (
+    "## How it works\n"
+    "\n"
+    "The pipeline runs in <two> phases & one pass.\n"
+    "\n"
+    "- first the catalog\n"
+    "- then the pages\n"
+    "\n"
+    "### Diagram\n"
+    "\n"
+    "```mermaid\n"
+    "graph LR\n"
+    "  A --> B\n"
+    "```\n"
+)
+_WIKI_SOURCES = [{"path": "src/demo/core.py"}, {"symbol": "demo_main"}]
+
+
+def _plan_entry(page_id, title):
+    """One deterministic plan entry, the shape manifest rows carry."""
+    return {
+        "page_id": page_id,
+        "title": title,
+        "description": f"Wiki page for {page_id}.",
+        "module": "src/demo",
+        "seeds": {"files": ["src/demo/core.py"], "symbols": ["demo_main"]},
+        "input_hash": f"hash-{page_id}",
+    }
+
+
+def _manifest_row(entry, task_id, state, attempts=0):
+    return {**entry, "task_id": task_id, "state": state, "attempts": attempts}
+
+
+def _write_manifest(knowledge_dir, pages):
+    from pathlib import Path
+
+    wiki_dir = Path(knowledge_dir) / "_wiki"
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    doc = {"schema": "cairn-wiki-manifest-2", "pages": pages}
+    (wiki_dir / "manifest.json").write_text(
+        json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _promote_concept(bundle, repo, page_id):
+    from cairn.okf.concept import OKFConcept
+
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title=f"Wiki: {page_id}",
+            description=f"Wiki article for {repo}/{page_id}",
+            resource=page_id,
+            tags=[repo, "wiki"],
+            timestamp="2026-08-30T10:00:00Z",
+            concept_id=f"wiki/pages/{repo}/{page_id}",
+            sources=_WIKI_SOURCES,
+            body=_WIKI_BODY,
+            extensions={"page_id": page_id, "input_hash": f"hash-{page_id}"},
+        )
+    )
+
+
+def _seed_wiki(knowledge_dir):
+    """Three manifest pages: two with promoted concepts, one queued (no
+    concept on disk)."""
+    from cairn.okf.bundle import OKFBundle
+
+    bundle = OKFBundle(str(knowledge_dir))
+    _promote_concept(bundle, "demo", "overview")
+    _promote_concept(bundle, "demo", "viz-module")
+    _write_manifest(
+        knowledge_dir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "demo architecture overview"),
+                task_id="task-overview",
+                state="promoted",
+            ),
+            "demo/viz-module": _manifest_row(
+                _plan_entry("viz-module", "viz module"),
+                task_id="task-viz",
+                state="promoted",
+            ),
+            "demo/tasks-module": _manifest_row(
+                _plan_entry("tasks-module", "tasks module"),
+                task_id="task-tasks",
+                state="queued",
+            ),
+        },
+    )
+
+
+def test_get_wiki_pages_joins_manifest_with_promoted_concepts(tmp_path):
+    from cairn.dashboard.data import get_wiki_pages
+
+    kdir = tmp_path / "knowledge"
+    _seed_wiki(kdir)
+
+    pages = get_wiki_pages(str(kdir))
+
+    by_id = {p["page_id"]: p for p in pages}
+    assert set(by_id) == {"overview", "viz-module", "tasks-module"}
+    assert by_id["overview"]["title"] == "demo architecture overview"
+    assert by_id["overview"]["state"] == "promoted"
+    assert by_id["overview"]["promoted"] is True
+    assert by_id["viz-module"]["promoted"] is True
+    assert by_id["tasks-module"]["state"] == "queued"
+    assert by_id["tasks-module"]["promoted"] is False
+    # An explicit repo selects pages under wiki/pages/{repo}/.
+    assert {
+        p["page_id"] for p in get_wiki_pages(str(kdir), repo="demo")
+    } == {"overview", "viz-module", "tasks-module"}
+
+
+def test_get_wiki_pages_promoted_derived_from_concept_not_stored_state(tmp_path):
+    from cairn.dashboard.data import get_wiki_pages
+
+    kdir = tmp_path / "knowledge"
+    _write_manifest(
+        kdir,
+        {
+            "demo/ghost": _manifest_row(
+                _plan_entry("ghost", "ghost page"),
+                task_id="task-ghost",
+                state="promoted",
+            ),
+        },
+    )
+
+    pages = get_wiki_pages(str(kdir))
+
+    assert len(pages) == 1
+    assert pages[0]["page_id"] == "ghost"
+    assert pages[0]["promoted"] is False
+
+
+def test_get_wiki_pages_skips_unreadable_concept_files(tmp_path):
+    from cairn.dashboard.data import get_wiki_pages
+
+    kdir = tmp_path / "knowledge"
+    _seed_wiki(kdir)
+    (kdir / "wiki" / "pages" / "demo" / "viz-module.md").write_bytes(b"\xff\xfe\x00")
+
+    pages = get_wiki_pages(str(kdir))
+
+    by_id = {p["page_id"]: p for p in pages}
+    assert by_id["overview"]["promoted"] is True
+    assert by_id["viz-module"]["promoted"] is False
+
+
+def test_get_wiki_pages_missing_dir_returns_empty(tmp_path):
+    from cairn.dashboard.data import get_wiki_pages
+
+    assert get_wiki_pages(str(tmp_path / "nope")) == []
+
+
+def test_get_wiki_page_renders_body_and_carries_sources(tmp_path):
+    from cairn.dashboard.data import get_wiki_page
+
+    kdir = tmp_path / "knowledge"
+    _seed_wiki(kdir)
+
+    page = get_wiki_page(str(kdir), "overview")
+
+    assert page is not None
+    assert page["title"] == "demo architecture overview"
+    assert page["state"] == "promoted"
+    assert page["sources"] == _WIKI_SOURCES
+    html = page["html"]
+    assert re.search(r"<h2[^>]*>How it works</h2>", html)
+    assert re.search(r"<h3[^>]*>Diagram</h3>", html)
+    assert "<li>first the catalog</li>" in html
+    assert "##" not in html  # rendered, never the raw markdown source
+    assert "&lt;two&gt;" in html  # escape-first: inline markup never passes
+
+
+def test_get_wiki_page_missing_page_or_dir_returns_none(tmp_path):
+    from cairn.dashboard.data import get_wiki_page
+
+    kdir = tmp_path / "knowledge"
+    _seed_wiki(kdir)
+
+    assert get_wiki_page(str(kdir), "no-such-page") is None
+    assert get_wiki_page(str(tmp_path / "nope"), "overview") is None
