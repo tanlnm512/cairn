@@ -1,8 +1,14 @@
 # Spec: wiki-generation
 
-**Status**: draft          <!-- draft while writing → approved at the Stage-4 user gate
-                                → active once the first task spawns → done when all
-                                tasks are ticked and `check.py` re-runs green -->
+**Status**: done           <!-- implemented 2026-08-31; first sign-off vetoed all
+                                rulings (D-017) → D-012 re-keyed (T019, schema-2),
+                                D-015 diagrams updated (T020), D-016 held against
+                                TC-009, four re-affirmed on constraint evidence;
+                                closing audit re-run clean (2726 passed / 3 skipped;
+                                20/20 ticked) → done. Re-ack gate unanswered
+                                2026-08-31: proceeded on the recommended default
+                                (ship with D-016 held) per the recorded recipe — the
+                                PR is the veto point. Archive after merge. -->
 **Created**: 2026-08-31
 **Branch**: `feat/wiki-generation`
 

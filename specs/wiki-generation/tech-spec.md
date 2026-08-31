@@ -594,3 +594,118 @@ this session"; CAIRN_LIB override at src/cairn/paths.py:117):
   parsing structured output; all four count consumers move atomically or
   `verify_tool_count` (called from `run()`, server.py line 201) fails loudly at
   startup.
+
+### D-010: Page-task facts carry `repo` (mid-flight ruling from T005's pin)
+- **Context**: T005 pinned `complete_task`'s wiki branch reading `facts["repo"]` for
+  the D-007 concept id and tags; T004's interim CLI queue loop sets only
+  title/description/module/seeds/input_hash[/diagrams] — the pin exposed that the
+  end-to-end path had no repo source on the task.
+- **Decision**: `wiki-page` task facts ALWAYS include `repo`. T006's promotion
+  branch requires it (clear error if absent). T009's `run_wiki_generate` pipeline —
+  which replaces T004's interim inline CLI loop — is the canonical producer.
+- **Consequences**: between T004 and T009 the CLI path omits it (no promotion runs
+  through the CLI until T009 lands — T005's tests construct tasks directly);
+  wrong cost if wrong: T009 brief carries this ruling verbatim.
+
+### D-011: Unresolved Sources-footer entries merge into the critic verdict (T006 ruling, accepted)
+- **Context**: FR-003 requires footer entries AND backticked refs to resolve, but the
+  critic's backtick machinery never sees inline-link targets, so a footer full of
+  dead links could pass the critic untouched.
+- **Decision**: for wiki kinds, `complete_task` resolves the footer immediately after
+  the critic call; unresolved entries are merged into `CriticResult.errors` with
+  `passed=False`, flowing into the existing FR-004 revise/drop machinery (revise
+  facts carry the reason). Non-wiki kinds unaffected.
+- **Consequences**: footer dead-links behave identically to dead backticks (revise,
+  bounded drop); promoted concepts' `sources` frontmatter only ever lists verified
+  entries; wrong cost if wrong: one extra revise cycle on legitimately-linked-but-
+  renamed files, self-healing on the next completion.
+
+### D-012: Manifest rows keyed by page_id alone — multi-repo collision accepted for v1 (T009 ruling, accepted)
+- **Context**: T008's pinned format keys manifest rows by `page_id`. In a multi-repo
+  store, colliding page ids (notably every repo's `overview`) share a row — the last
+  repo's generate overwrites the earlier repo's tracking fields.
+- **Decision**: accept for v1. Failure direction is safe: `should_skip` requires the
+  recorded hash to equal the current plan hash AND the repo-scoped concept
+  `wiki/pages/{repo}/{page_id}` to be readable, so a clobbered row can only cause
+  RE-QUEUEING of an already-promoted page (duplicate work), never a wrong skip and
+  never a wrong promotion (concept ids stay repo-scoped). Single-repo stores are
+  unaffected.
+- **Consequences**: multi-repo workspaces over-queue colliding pages on re-runs;
+  follow-up when it matters in practice: re-key rows to `{repo}/{page_id}` via a
+  fresh qa re-brief + schema marker bump (cairn-wiki-manifest-2). Wrong cost if
+  wrong: wasted agent claims, self-healing on completion.
+
+### D-013: The 27→28 tool-count bump's coordinate set is wider than surveyed (T014 deviation, accepted)
+- **Context**: the task's bump list named server.py + two pinned tests + the docs
+  heading; doc-drift tests enforce more surfaces, and `tests/test_tool_annotations.py:130`
+  pins `len(all_tools) == 27` (missed by both task text and survey).
+- **Decision**: accept T014's wider atomic bump — also `test_tool_annotations.py`,
+  `tests/test_agent_surface.py:457` (the :11 mention is docstring-only),
+  `src/cairn/agent_install/_common.py` installer blurb, repo-root `AGENTS.md:9`
+  ("28 tools … knowledge (6)"), `~/.zcode`-installed SKILL.md L5 index +
+  `skill/references/tools.md` signature line, and mcp-tools.md lines 3/13 beyond the
+  heading. `tests/test_server_robustness.py` needed no edit (count-relative assert).
+- **Consequences**: non-test-enforced "27" mentions remain for FR-011's docs task:
+  `README.md:14,280`, `docs/architecture.md:29`, `src/cairn/mcp_server/__init__.py:7`
+  (CHANGELOG historical entries stay). The closing audit's scope diff adjudicates
+  AGENTS.md + skill files via this decision.
+
+### D-014: `--force` missing from the CLI — appended as T018 (T017 finding, ruled a gap not a deferral)
+- **Context**: spec FR-005/US1 AC2/TC-007 require `cairn wiki generate --llm --force`
+  to re-queue unchanged promoted pages; T004's flag surface (--llm/--pages/--diagrams)
+  omitted it and T009 only wired the pipeline's `force=` parameter (MCP tool has it).
+  T017 caught it by refusing to document an option absent from source.
+- **Decision**: append task T018 (CLI flag + red-first test + doc row) rather than
+  amending FR text — the spec is the contract and stays unchanged.
+- **Consequences**: burndown 17→18; wrong cost if wrong: none — TC-007 stays
+  satisfiable.
+
+### D-015: Pre-rendered diagram assets still say "27 tools" — deferred (T017 finding)
+- **Context**: docs/diagrams/*.svg|html are committed rendered assets; their "27
+  tools" text now lags the 28-tool surface (all prose surfaces fixed).
+- **Decision**: defer regeneration to the next diagram pass (the assets are rendered
+  from sources per the repo's diagram recipe; regenerating for a one-word change is
+  disproportionate in this PR).
+- **Consequences**: visual assets lag one release at most; noted in the PR body.
+
+### D-016: Re-run skip covers live tasks, not only promotions (closing-audit finding, T009 fix round 1)
+- **Context**: FR-005's letter ("skip iff hash matches AND concept promoted") made
+  un-promoted pages re-queue on every generate re-run — duplicate pending tasks for
+  pages already queued at the same hash, violating D-006's state machine and
+  TC-009's no-duplicate-task condition (observed live on the real store).
+- **Decision**: the pipeline skips a page when hash matches AND (concept promoted OR
+  a live pending/in-progress task exists in the page's chain). Changed-hash and
+  force=True still re-queue. The spec's FR-005 wording is read as the *promoted*
+  skip case; the live-task case is D-006's queued-state semantics made explicit.
+- **Consequences**: generate is idempotent for unchanged inputs; pre-existing
+  duplicates (created before the fix) remain as harmless pending tasks; wrong cost
+  if wrong: a hung stale claim could block re-queueing — the existing
+  CLAIM_STALE_SECONDS reclaim covers it.
+
+### D-017: Sign-off veto — D-012/D-015/D-016 re-opened; D-010/D-011/D-013/D-014 re-affirmed (2026-08-31)
+- **Context**: at the DoD gate-10 sign-off the user vetoed every mid-flight ruling
+  ("all"). Triage by alternative-existence:
+- **Decision**: RE-OPEN D-012 (manifest re-keyed to `{repo}/{page_id}`, schema marker
+  `cairn-wiki-manifest-2` — task T019), D-015 (diagram assets regenerated now —
+  task T020), D-016 (re-examined below). RE-AFFIRM D-010 (facts are the only
+  channel carrying repo to the generic promotion branch), D-013 (doc-drift tests
+  enforce the surfaces — no alternative), D-011 (FR-003's "footer entries all
+  resolve" without it is unenforced), D-014 (--force is FR-005/TC-007's own text)
+  — each stands on constraint evidence, override welcome with a stated alternative.
+- **D-016 re-examined against the veto**: both listed alternatives violate test.md's
+  TC-009 ("no page has two pending tasks for the same attempt"): full revert
+  restores duplicate queueing; narrowing to the row's own task_id leaves duplicates
+  whenever a revise is live (row task done, revise pending). The chain-wide skip is
+  the only shape satisfying the approved TC — holding D-016 unless TC-009 itself is
+  relaxed via a fresh qa re-brief.
+- **Consequences**: closing audit re-runs from step 7 (all-or-nothing) after T019
+  and T020 land; ticks stay recorded but nothing commits until the re-run is green
+  and re-acked.
+
+### D-018: T019's authorized test-pin set extended to tests/test_dashboard_app.py (fixture keys only)
+- **Context**: T019's mandate named three test files for the re-key pin updates; the
+  dashboard APP tests carry the same schema-1 fixture shape and broke under the
+  (correct) migration drop of a concept-less row.
+- **Decision**: same fixture-key change (schema marker + `demo/` key prefix), same
+  D-012 re-open authorization umbrella — accepted.
+- **Consequences**: none beyond the renamed keys; 261 passed across all six files.

@@ -1,6 +1,6 @@
 # MCP Tools
 
-Read this when you need the tool surface: what the 27 tools are, how they're
+Read this when you need the tool surface: what the 28 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
 "Tool Quirks" table in [AGENTS.md](../AGENTS.md) — it is kept there so every
 agent session loads it.
@@ -10,7 +10,7 @@ agent session loads it.
 - Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
 - Transports: **stdio** (default, one process per client) or **SSE daemon**
   on `:9876` (`cairn serve start|stop|status|restart`, `run` for foreground).
-- Boot sequence (`server.py:run`): verify exactly 27 tools registered →
+- Boot sequence (`server.py:run`): verify exactly 28 tools registered →
   parent-death watchdog (stdio) → boot catch-up reindex (`ensure_fresh_force`)
   → memory decay → live file watcher (`[watch]` extra).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
@@ -18,7 +18,7 @@ agent session loads it.
 - `CAIRN_READ_ONLY=1` makes the server refuse write tools.
 - Resource `cairn://status` exposes live server status.
 
-## The 27 tools by layer
+## The 28 tools by layer
 
 **L1 — Graph** (`tools_graph.py`, 9):
 
@@ -54,7 +54,7 @@ agent session loads it.
 | `memory_decay` | run the decay cycle |
 | `memory_delete` | remove a memory (destructive) |
 
-**L5 — Knowledge documents** (`tools_knowledge.py`, 5):
+**L5 — Knowledge documents** (`tools_knowledge.py` + `tools_wiki.py`, 6):
 
 | Tool | Purpose |
 |---|---|
@@ -63,6 +63,30 @@ agent session loads it.
 | `knowledge_delete` | remove a document (destructive) |
 | `knowledge_status` | set/query document status |
 | `trace_workflow` | workflow-definition execution trace |
+| `wiki_generate` | plan a repo's wiki and queue its page-writing tasks (`repo`, `pages`, `refine_catalog`, `diagrams`, `force`) |
+
+## Wiki generation
+
+`wiki_generate` plans the deterministic page outline (overview + top modules)
+and queues the writing work — cairn never calls an LLM itself, so agents
+finish the wiki through the task queue:
+
+1. Call `wiki_generate`; it returns the page plan plus the queued
+   `wiki-page` task ids — or, with `refine_catalog=True`, the single
+   `wiki-catalog` task id and re-run guidance (page tasks queue only after
+   that task completes and its refined outline validates; invalid entries
+   revert to the deterministic plan).
+2. For each task id: `cairn task show <id>` → `cairn task claim <id>` →
+   write the article per the task's output spec (markdown ending in a
+   `## Sources` footer; Mermaid fences only when diagrams were requested) →
+   `cairn task complete <id> --result-file <path>`.
+3. The deterministic critic verifies every reference against the graph. A
+   passing completion is promoted as a `Wiki-Article` concept under
+   `wiki/pages/{repo}/{page_id}` with the verified sources in its
+   frontmatter; a failing one spawns a bounded revise cycle.
+4. Track progress with `cairn wiki status`, re-queue failures with
+   `cairn wiki retry`; `cairn wiki search` and compass routing surface the
+   promoted articles.
 
 ## Choosing tools
 

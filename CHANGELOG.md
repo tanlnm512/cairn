@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Agent-decoupled wiki generation: `cairn wiki generate --llm` plans a
+  deterministic page outline from the code graph (overview + top modules by
+  cross-module incoming degree, `--pages` cap) and queues one `wiki-page`
+  task per page for any agent to claim and complete; completions are
+  critic-gated (the `## Sources` footer is the wiki quality signal) and
+  promoted as `Wiki-Article` concepts with verified `sources` frontmatter,
+  while failing attempts run the existing bounded revise cycle. A
+  `.knowledge/_wiki/manifest.json` manifest makes regeneration incremental
+  (unchanged, promoted pages are skipped; `--force` re-queues everything)
+  and powers `cairn wiki status` and `cairn wiki retry`;
+  `--refine-catalog` queues a `wiki-catalog` refinement task whose
+  validated outline drives the page tasks. The new `wiki_generate` MCP
+  tool brings the server to 28 tools, and the dashboard gains a wiki tab
+  listing pages with state badges and rendering promoted pages with their
+  sources.
 - Dashboard graph UX and landing coverage: the graph side panel's
   callers/callees/impact/affected-test rows are deep links into the
   symbol-focused graph (the store rides the href), and the FR-013

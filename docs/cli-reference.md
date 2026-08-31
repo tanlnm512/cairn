@@ -75,7 +75,10 @@ Group: `cairn memory …`
 | Command | Purpose |
 |---|---|
 | `cairn compass generate|list|validate|gaps|flow|flow-gaps` | module navigation guides |
-| `cairn wiki generate|search` | architecture wiki |
+| `cairn wiki generate --llm [--pages N] [--refine-catalog] [--diagrams] [--force] [--repo R]` | agent-decoupled wiki generation: plans a deterministic page outline (overview + top modules by incoming reference degree, capped by `--pages`, default 10) and queues one pending `wiki-page` task per page for any agent to claim and complete — a passing completion is critic-gated and promoted as a wiki article with a verified `## Sources` footer; a failing one runs the bounded revise cycle. Incremental via the `_wiki/manifest.json` manifest: unchanged, already-promoted pages are skipped unless `--force` re-queues every page; an empty/unindexed graph exits 1. `--refine-catalog` queues one `wiki-catalog` refinement task first — re-run the command after it completes to queue the page tasks from the validated refined outline. `--diagrams` instructs writers to include Mermaid fences. Without `--llm`, the deterministic single-summary generation is unchanged |
+| `cairn wiki status` | per-page generation state (queued / in-progress / promoted / failed) with aggregate counts, joined from the manifest and live task state |
+| `cairn wiki retry` | re-queue exactly the failed/dropped pages as fresh task chains (cumulative attempt count preserved); promoted pages untouched |
+| `cairn wiki search <query>` | search the wiki (promoted articles + deterministic summaries) |
 | `cairn task list|show|claim|complete` | LLM synthesis task queue |
 | `cairn dataflow build|lookup` | precomputed impact index |
 

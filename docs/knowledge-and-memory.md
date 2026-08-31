@@ -85,7 +85,8 @@ Cairn never calls an LLM in-process. Synthesis work is queued as task
 concepts (`src/cairn/llm/tasks.py`) in `.knowledge/_tasks/`:
 
 - Kinds: `compass-synthesize`, `compass-revise`, `flow-synthesize`,
-  `flow-revise`, `wiki`, `memory-critic`, `memory-extract`.
+  `flow-revise`, `wiki`, `wiki-page`, `wiki-page-revise`, `wiki-catalog`,
+  `wiki-catalog-revise`, `memory-critic`, `memory-extract`.
 - Lifecycle: `pending` → `in-progress` (atomic `O_EXCL` claim, 1h stale
   recovery) → `done` → promoted / revised (≤ 3 cycles) / dropped.
 - Drive it with `cairn task list|show|claim|complete --result-file <path>`.
@@ -93,6 +94,19 @@ concepts (`src/cairn/llm/tasks.py`) in `.knowledge/_tasks/`:
   every result: backtick file paths must exist in the graph, symbol refs
   must resolve, prose-heavy low-ref bodies get warned. It is not a
   hallucination detector — only graph-verified references pass.
+
+**Wiki generation** (`cairn wiki generate --llm`) rides the same queue.
+Generate plans a deterministic page outline from the graph and queues one
+`wiki-page` task per page; with `--refine-catalog` a `wiki-catalog` task
+refines the outline first (re-run generate to queue page tasks from the
+validated result). A manifest at `.knowledge/_wiki/manifest.json` records
+each page's plan, input hash, task id, and cumulative attempts, so re-runs
+skip unchanged, already-promoted pages (`--force` re-queues everything) and
+`cairn wiki status` / `cairn wiki retry` derive per-page state from the
+manifest joined with live task state. For wiki kinds the critic scores the
+`## Sources` footer instead of compass sections, and a passing page is
+promoted to a `Wiki-Article` concept under `wiki/pages/{repo}/{page_id}`
+with its verified sources in frontmatter.
 
 Compass files are 5-section module guides (`src/cairn/compass/generator.py`);
 wiki entries (`src/cairn/wiki/generator.py`) are deterministic graph-derived

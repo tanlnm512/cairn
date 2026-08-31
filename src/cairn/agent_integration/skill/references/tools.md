@@ -39,3 +39,4 @@ server. SKILL.md keeps only a name index — come here for the details.
 - `knowledge_delete(doc_id)` -- Delete a knowledge document and its embeddings (irreversible)
 - `knowledge_status(doc_id, new_status)` -- Update doc_status (active → superseded → archived)
 - `trace_workflow(ref)` -- Trace ordered procedural workflow steps referenced by a knowledge doc
+- `wiki_generate(repo, pages, refine_catalog, diagrams, force)` -- Plan a repo's deterministic wiki and queue one wiki-page task per unskipped page; returns the page plan + queued task ids

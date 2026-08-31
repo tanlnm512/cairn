@@ -454,8 +454,8 @@ def test_skill_tool_index_lists_all_registered_tools():
     """
     registered = _scrape_mcp_tool_names()
     assert registered, "no @mcp.tool() functions scraped from tools_*.py"
-    assert len(registered) == 27, (
-        f"expected 27 registered tools, scraper found {len(registered)}: "
+    assert len(registered) == 28, (
+        f"expected 28 registered tools, scraper found {len(registered)}: "
         f"{sorted(registered)}"
     )
 
