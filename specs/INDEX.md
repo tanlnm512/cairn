@@ -1,4 +1,4 @@
-- [embedding-server-backend](archive/2026-08-31-embedding-server-backend/spec.md) — done (implemented 2026-08-27)
-- [env-propagation](archive/2026-08-28-env-propagation/spec.md) — done (implemented 2026-08-28)
-- [wiki-generation](archive/2026-08-31-wiki-generation/spec.md) — done (implemented 2026-08-31)
 - [wiki-enhancements](wiki-enhancements/spec.md) — active (amended at the approval gate 2026-08-31; awaiting re-approval)
+
+(Done specs are removed from the tree on request — their as-built records
+live in git history at their merge commits.)
