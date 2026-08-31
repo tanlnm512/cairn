@@ -150,7 +150,8 @@ non-wiki task kinds' output-spec prefixes.
 ## Assumptions & risks
 - Default decisions recorded at Stage 0 (re-presented at the approval gate):
   tables = GFM pipe-table subset only; enrich REPLACES the body (audit trail
-  = the Task-Result sibling, per D-008/D-006 patterns); export is `--dir`
+  = the Task-Result sibling, per the landed wiki-generation spec's
+  retry/manifest patterns); export is `--dir`
   only; `--lang` values are `en|zh`.
 - Risk: commit-sha resolution needs git access at promotion time
   (`complete_task` is generic) — mitigation: sha resolved by the CLI/MCP
@@ -165,4 +166,5 @@ non-wiki task kinds' output-spec prefixes.
 Defaults chosen per established repo patterns; veto at the approval gate:
 GFM-subset tables; enrich replaces with result-sibling audit trail; export
 `--dir` only; `--lang en|zh`; commit sha rides facts (generic complete_task
-preserved, extending the D-010 pattern).
+preserved, extending the landed repo-in-facts pattern from the
+wiki-generation spec).
