@@ -193,8 +193,12 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 - **Local dashboard** — `cairn dashboard` opens a loopback web console at
   `127.0.0.1:8765`: interactive graph with symbol search, recorded
   tool-call history and token usage (MCP + CLI, mode-labeled estimates),
-  session chains, health/memory panels, machine-wide workspace switching,
-  CSV/JSON export of any filtered view, an Embeddings status view (probe
+  session chains, health/memory panels, a global workspace selector in the
+  topbar (every view follows the selection), a `Ctrl/Cmd+K` command palette
+  (views, workspaces, symbol search), repo-scoped wiki navigation (grouped
+  catalog with filters and search, breadcrumbs, in-page TOCs, prev/next,
+  graph cross-links), a collapsible grouped sidebar, CSV/JSON export of any
+  filtered view, an Embeddings status view (probe
   health, fallback state, per-knob config sources) with the degradation
   banner, and a Settings page that persists embedding-backend configuration
   to `~/.cairn/config.json`.
