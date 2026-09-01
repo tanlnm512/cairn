@@ -677,13 +677,15 @@ def _wiki_staleness(recorded_sha: Optional[str], head: Optional[str]) -> str:
 def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]:
     """Wiki manifest pages joined with their ``wiki/pages/`` concepts.
 
-    One plain dict per manifest row carrying ``page_id``, ``title``,
-    ``state``, ``promoted``, and ``staleness``; ``promoted`` is derived
-    from the row's own ``wiki/pages/{repo}/{page_id}`` concept being
-    readable, never the stored state, and ``staleness`` compares the
-    recorded commit sha with the repo's current HEAD (fresh/stale/unknown).
-    HEAD is resolved once per repo per call. A missing manifest (or
-    knowledge dir) yields an empty list; ``repo`` selects one repo's rows.
+    One plain dict per manifest row carrying ``repo``, ``page_id``,
+    ``title``, ``description``, ``state``, ``promoted``, and ``staleness``;
+    ``promoted`` is derived from the row's own
+    ``wiki/pages/{repo}/{page_id}`` concept being readable, never the
+    stored state, and ``staleness`` compares the recorded commit sha with
+    the repo's current HEAD (fresh/stale/unknown). HEAD is resolved once
+    per repo per call. A missing manifest (or knowledge dir) yields an
+    empty list; ``repo`` selects one repo's rows. Row order is manifest
+    order (plan order) — the catalog groups by ``repo`` on top of it.
     """
     from cairn.wiki.manifest import load_manifest
 
@@ -701,8 +703,10 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
             heads[key_repo] = get_repo_head(key_repo)
         pages.append(
             {
+                "repo": key_repo,
                 "page_id": page_id,
                 "title": row.get("title") or page_id,
+                "description": row.get("description") or "",
                 "state": row.get("state", ""),
                 "promoted": concept is not None,
                 "staleness": _wiki_staleness(
@@ -723,7 +727,9 @@ def get_wiki_page(
     compares the recorded commit sha with the repo's current HEAD
     (fresh/stale/unknown, HEAD resolved once per repo per call). None when
     no manifest row for ``page_id`` (``repo`` narrows the match when
-    several repos plan the same page id) has a readable concept.
+    several repos plan the same page id) has a readable concept. The
+    returned ``repo`` names the owning repo — the caller needs it for the
+    repo-qualified URL ``/wiki/{repo}/{page_id}``.
     """
     from cairn.wiki.manifest import load_manifest
 
@@ -741,6 +747,7 @@ def get_wiki_page(
         if key_repo not in heads:
             heads[key_repo] = get_repo_head(key_repo)
         return {
+            "repo": key_repo,
             "page_id": page_id,
             "title": row.get("title") or concept.title or page_id,
             "state": row.get("state", ""),

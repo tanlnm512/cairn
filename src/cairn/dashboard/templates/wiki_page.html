@@ -1,12 +1,17 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}{{ page.title }} — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
+  <nav class="wiki-breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ links.url('/wiki') }}">Wiki</a> /
+    <a href="{{ links.url('/wiki', {'repo': page.repo}) }}">{{ page.repo }}</a> /
+    <span>{{ page.title }}</span>
+  </nav>
   <h1>{{ page.title }}</h1>
   <p>
     <span class="badge badge-{{ page.state }}">{{ page.state }}</span>
     <span class="badge badge-{{ page.staleness }}">{{ page.staleness }}</span>
-    <a href="/wiki">Back to wiki</a>
   </p>
   <div class="wiki-body">
     {{ page.html | safe }}
@@ -18,6 +23,13 @@
     <li>{% for key, value in source.items() %}{{ key }}: <code>{{ value }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</li>
     {% endfor %}
   </ul>
+  {% endif %}
+  {% if prev or next %}
+  <p class="wiki-pager">
+    {%- if prev %}<a href="{{ links.url('/wiki/' ~ page.repo ~ '/' ~ prev.page_id) }}">← {{ prev.title }}</a>{% else %}<span class="muted">←</span>{% endif %}
+    {%- if prev and next %} · {% endif %}
+    {%- if next %}<a href="{{ links.url('/wiki/' ~ page.repo ~ '/' ~ next.page_id) }}">{{ next.title }} →</a>{% else %}<span class="muted">→</span>{% endif %}
+  </p>
   {% endif %}
 </section>
 {% endblock %}

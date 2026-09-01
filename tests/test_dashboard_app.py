@@ -3716,6 +3716,11 @@ def test_wiki_routes_registered_with_pinned_names(tmp_path):
 
     app = create_app(db_path=str(tmp_path / "ro.db"))
     assert app.url_path_for("wiki") == "/wiki"
+    assert (
+        app.url_path_for("wiki_page_repo", repo="demo", page_id="overview")
+        == "/wiki/demo/overview"
+    )
+    # The one-segment URL survives as the legacy redirect route.
     assert app.url_path_for("wiki_page", page_id="overview") == "/wiki/overview"
 
 
@@ -3739,17 +3744,120 @@ def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
 
 def test_wiki_route_lists_pages_with_state_badges(tmp_path):
     """FR-009 / TC-025: /wiki lists every planned page with its state,
-    each entry linking to its detail view."""
+    each entry linking to its repo-qualified detail view, grouped by repo."""
     client = _wiki_client(tmp_path)
 
     resp = client.get("/wiki")
 
     assert resp.status_code == 200
     for page_id in ("overview", "viz-module", "tasks-module"):
-        assert f'href="/wiki/{page_id}"' in resp.text
+        assert f'href="/wiki/demo/{page_id}"' in resp.text
     assert "demo architecture overview" in resp.text
     for badge in ("promoted", "queued"):
         assert f">{badge}<" in resp.text
+    # The catalog groups by repo under a per-repo heading.
+    assert "wiki-repo-heading" in resp.text
+
+
+def test_wiki_catalog_filters_by_state_and_search(tmp_path):
+    """The catalog's GET filters: state narrows to one badge value, q
+    narrows by title/page-id/description substring, and they compose."""
+    client = _wiki_client(tmp_path)
+
+    promoted_only = client.get("/wiki", params={"state": "promoted"})
+    assert promoted_only.status_code == 200
+    assert "demo architecture overview" in promoted_only.text
+    assert "tasks module" not in promoted_only.text  # queued row filtered out
+
+    searched = client.get("/wiki", params={"q": "viz"})
+    assert searched.status_code == 200
+    assert 'href="/wiki/demo/viz-module"' in searched.text
+    assert 'href="/wiki/demo/overview"' not in searched.text
+
+    narrowed = client.get("/wiki", params={"q": "viz", "state": "promoted"})
+    assert 'href="/wiki/demo/viz-module"' in narrowed.text
+
+    nothing = client.get("/wiki", params={"q": "no-such-page"})
+    assert "No wiki pages match the current filters" in nothing.text
+
+
+def test_wiki_legacy_page_url_redirects_to_the_repo_qualified_url(tmp_path):
+    """Bookmarked one-segment URLs keep working: a 307 to the canonical
+    repo-qualified URL; an unknown page id stays the same 404 as before."""
+    client = _wiki_client(tmp_path)
+
+    resp = client.get("/wiki/overview", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/wiki/demo/overview"
+
+    followed = client.get("/wiki/overview", follow_redirects=True)
+    assert followed.status_code == 200
+    assert "<h2" in followed.text  # the redirect lands on a rendered page
+
+
+def test_wiki_legacy_redirect_carries_the_selected_store(tmp_path, monkeypatch):
+    """The store param rides the legacy redirect (the bookmark equivalent of
+    a selected-store deep link): /wiki/overview?store=A redirects to the
+    repo-qualified URL under A's knowledge root, store intact."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    _seed_wiki_pages(home / _SW_KEY_A / ".knowledge")
+
+    resp = client.get(
+        "/wiki/overview", params={"store": _SW_KEY_A}, follow_redirects=False
+    )
+
+    assert resp.status_code == 307
+    assert resp.headers["location"] == f"/wiki/demo/overview?store={_SW_KEY_A}"
+
+
+def test_wiki_repo_qualified_urls_reach_colliding_page_ids(tmp_path):
+    """The collision the repo segment fixes: two repos that both plan
+    ``overview`` are BOTH reachable at their own qualified URLs (the
+    legacy URL could only ever serve the first readable concept)."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+
+    kdir = tmp_path / "knowledge"
+    _seed_wiki_pages(kdir)
+    for repo, marker in (("alpha", "alpha overview body"), ("beta", "beta overview body")):
+        wiki_dir = kdir / "_wiki"
+        manifest = json.loads((wiki_dir / "manifest.json").read_text())
+        manifest["pages"][f"{repo}/overview"] = {
+            **_wiki_plan_entry("overview", f"{repo} overview"),
+            "task_id": f"task-{repo}",
+            "state": "promoted",
+            "attempts": 0,
+        }
+        (wiki_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        from cairn.okf.bundle import OKFBundle
+        from cairn.okf.concept import OKFConcept
+
+        OKFBundle(str(kdir)).write_concept(
+            OKFConcept(
+                type="Wiki-Article",
+                title=f"Wiki: {repo} overview",
+                description=f"Wiki article for {repo}/overview",
+                resource="overview",
+                tags=[repo, "wiki"],
+                timestamp="2026-08-30T10:00:00Z",
+                concept_id=f"wiki/pages/{repo}/overview",
+                sources=_WIKI_SOURCES,
+                body=marker,
+                extensions={"page_id": "overview", "input_hash": f"hash-{repo}"},
+            )
+        )
+
+    client = TestClient(
+        create_app(
+            db_path=_graph_db_file(tmp_path, seed=False), knowledge_dir=str(kdir)
+        )
+    )
+    alpha = client.get("/wiki/alpha/overview")
+    beta = client.get("/wiki/beta/overview")
+    assert alpha.status_code == 200 and "alpha overview body" in alpha.text
+    assert beta.status_code == 200 and "beta overview body" in beta.text
 
 
 def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
@@ -3765,10 +3873,11 @@ def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
 
 def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     """FR-009 / TC-026: the detail view renders headings and lists as HTML
-    elements (never the raw markdown) with the sources listed."""
+    elements (never the raw markdown) with the sources listed, a breadcrumb
+    naming the repo, and prev/next links to the repo's other pages."""
     client = _wiki_client(tmp_path)
 
-    resp = client.get("/wiki/overview")
+    resp = client.get("/wiki/demo/overview")
 
     assert resp.status_code == 200
     assert re.search(r"<h2[^>]*>How it works</h2>", resp.text)
@@ -3781,12 +3890,17 @@ def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     assert "demo_main" in resp.text
     # Live mermaid: the detail view loads mermaid.js client-side.
     assert 'cdn.jsdelivr.net/npm/mermaid@11' in resp.text
+    # Breadcrumb + prev/next navigation (viz-module is the next promoted
+    # page in manifest order; overview is first, so no prev).
+    assert 'href="/wiki?repo=demo"' in resp.text
+    assert 'href="/wiki/demo/viz-module"' in resp.text
+    assert "wiki-pager" in resp.text
 
 
 def test_wiki_page_route_unknown_page_returns_404(tmp_path):
     client = _wiki_client(tmp_path)
-    resp = client.get("/wiki/no-such-page")
-    assert resp.status_code == 404
+    assert client.get("/wiki/no-such-page").status_code == 404
+    assert client.get("/wiki/demo/no-such-page").status_code == 404
 
 
 # --- wiki staleness badges (FR-007 / TC-019 / TC-020) -------------------------
@@ -3842,7 +3956,7 @@ def test_wiki_views_render_fresh_badge_beside_state_badge(tmp_path, monkeypatch)
     client = _staleness_client(tmp_path, monkeypatch, head=_SHA_A)
 
     listing = client.get("/wiki")
-    detail = client.get("/wiki/overview")
+    detail = client.get("/wiki/demo/overview")
 
     assert listing.status_code == 200
     assert ">fresh<" in listing.text
@@ -3858,7 +3972,7 @@ def test_wiki_views_render_stale_badge_after_head_moves(tmp_path, monkeypatch):
     client = _staleness_client(tmp_path, monkeypatch, head=_SHA_B)
 
     listing = client.get("/wiki")
-    detail = client.get("/wiki/overview")
+    detail = client.get("/wiki/demo/overview")
 
     assert listing.status_code == 200
     assert ">stale<" in listing.text
@@ -3876,7 +3990,7 @@ def test_wiki_views_render_unknown_badge_when_comparison_unavailable(
     client = _staleness_client(tmp_path, monkeypatch, head=None)
 
     listing = client.get("/wiki")
-    detail = client.get("/wiki/overview")
+    detail = client.get("/wiki/demo/overview")
 
     assert listing.status_code == 200
     assert ">unknown<" in listing.text

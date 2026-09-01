@@ -1,10 +1,33 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Wiki — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Wiki</h1>
   <p class="muted">Generated wiki pages and their promotion state.</p>
+  <form class="graph-controls wiki-controls" method="get" action="/wiki">
+    <label>Search
+      <input type="text" name="q" value="{{ filters.q }}" placeholder="title, page id, or description">
+    </label>
+    {{ links.store_field() }}
+    <button type="submit">Search</button>
+  </form>
+  <p class="window-control wiki-state-filter">
+    State:
+    {%- set base_q = {} %}
+    {%- if filters.q %}{% set _ = base_q.update({'q': filters.q}) %}{% endif %}
+    {%- if filters.repo %}{% set _ = base_q.update({'repo': filters.repo}) %}{% endif %}
+    {% for s in ["all"] + (page_states | list) %}
+    {%- set q = dict(base_q, state=s) if s != "all" else dict(base_q) %}
+    {% if not loop.first %} · {% endif %}{% if s == (filters.state or "all") %}<strong>{{ s }}</strong>{% else %}<a href="{{ links.url('/wiki', q) }}">{{ s }}</a>{% endif %}
+    {%- endfor %}
+  </p>
   {% if pages %}
+  {% for repo, rows in pages | groupby("repo") %}
+  <h2 class="wiki-repo-heading">
+    <a href="{{ links.url('/wiki', dict(base_q, repo=repo)) }}">{{ repo }}</a>
+    <span class="muted">({{ rows | length }})</span>
+  </h2>
   <table class="data-table">
     <thead>
       <tr>
@@ -13,9 +36,12 @@
       </tr>
     </thead>
     <tbody>
-      {% for p in pages %}
+      {% for p in rows %}
       <tr>
-        <td><a href="/wiki/{{ p.page_id }}">{{ p.title }}</a></td>
+        <td>
+          <a href="{{ links.url('/wiki/' ~ p.repo ~ '/' ~ p.page_id) }}">{{ p.title }}</a>
+          {%- if p.description %} <span class="muted">— {{ p.description }}</span>{% endif %}
+        </td>
         <td>
           <span class="badge badge-{{ p.state }}">{{ p.state }}</span>
           <span class="badge badge-{{ p.staleness }}">{{ p.staleness }}</span>
@@ -24,8 +50,11 @@
       {% endfor %}
     </tbody>
   </table>
+  {% endfor %}
   {% else %}
-  <p class="empty-state">No wiki pages yet — generate some with <code>cairn wiki generate</code>.</p>
+  <p class="empty-state">
+    {%- if filters.q or filters.state or filters.repo %}No wiki pages match the current filters.{% else %}No wiki pages yet — generate some with <code>cairn wiki generate</code>.{% endif %}
+  </p>
   {% endif %}
 </section>
 {% endblock %}
