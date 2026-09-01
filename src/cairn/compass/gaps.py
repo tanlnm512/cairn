@@ -15,20 +15,31 @@ def detect_gaps(conn: sqlite3.Connection, bundle: OKFBundle) -> List[str]:
     compass concept covers it (by matching its `resource` field).
     """
     all_modules = _get_all_modules(conn)
-    covered = set()
+    repo_ids = {r["id"] for r in conn.cursor().execute("SELECT id FROM repos")}
+    # Compass resources are repo-relative (generator's `module_path`); the
+    # generator records the owning repo as the concept's first tag. An
+    # untagged compass matches any repo.
+    covered = []
     for cid in bundle.list_concepts(prefix="compass/"):
         try:
             concept = bundle.read_concept(cid)
             if concept.resource:
-                covered.add(concept.resource)
+                repo = concept.tags[0] if concept.tags and concept.tags[0] in repo_ids else None
+                covered.append((repo, concept.resource))
         except Exception:
             continue
     gaps = []
     for mod in all_modules:
-        # A module is covered if any compass resource matches it exactly or is
-        # a path-segment-prefix of it (or vice-versa). Require segment boundary
-        # so a compass for `app/foo` does NOT cover `app/foobar`.
-        if not any(mod == c or mod.startswith(c + "/") or c.startswith(mod + "/") for c in covered):
+        repo_id, _, rel = mod.partition("/")
+        # A module is covered if any same-repo (or untagged) compass resource
+        # matches its repo-relative path exactly or is a path-segment-prefix
+        # of it (or vice-versa). Require segment boundary so a compass for
+        # `app/foo` does NOT cover `app/foobar`.
+        if not any(
+            c_repo in (None, repo_id)
+            and (rel == c or rel.startswith(c + "/") or c.startswith(rel + "/"))
+            for c_repo, c in covered
+        ):
             gaps.append(mod)
     return gaps
 
