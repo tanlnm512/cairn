@@ -498,8 +498,6 @@ def status(db, knowledge):
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def eval_cmd(db, knowledge, corpus, queries_path, as_json):
     """Run retrieval evaluation harness across L1/L5 corpora."""
-    from pathlib import Path
-
     from ..eval import run_evaluation
 
     qpath = Path(queries_path) if queries_path else None

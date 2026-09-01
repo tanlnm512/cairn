@@ -8,16 +8,9 @@ The survey found zero dedicated eval tests; this is the first suite. Covers:
   then the legacy substring rule);
 * grade-aware recall@10 / MRR arithmetic on hand-built result sets;
 * ``run_evaluation`` / ``eval_cmd --queries`` directory dispatch;
-* the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape);
-* the seeded 50/50 tune/validate split (FR-006, TC-018);
-* the seeded k-fold rotation partition (FR-001, TC-002, TC-004);
-* the held-out guard on ``evaluate_on`` selection runs (FR-006, TC-019);
-* the paired-bootstrap accept guard (D-006: bootstrap/t, not Wilcoxon).
+* the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape).
 
-Loader/matcher fixtures live in tmp_path. The split tests
-(TestSplitQueries) additionally read the committed real pair under
-benchmarks/datasource/t2/ground_truth/ to pin the 58-L1 29/29 contract
-against the actual dataset.
+Loader/matcher fixtures live in tmp_path.
 """
 import json
 from pathlib import Path
@@ -38,9 +31,6 @@ from cairn.eval import (
 )
 from cairn.graph.schema import get_db
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-REAL_GROUND_TRUTH = REPO_ROOT / "benchmarks" / "datasource" / "t2" / "ground_truth"
-N_REAL_L1 = 58
 
 GOOD_QUERIES = [
     {

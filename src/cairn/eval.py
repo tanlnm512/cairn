@@ -9,9 +9,8 @@ Two query sources (D-008): the legacy yaml fixture via ``load_eval_queries``
 schema) with identity-first matching and grade-aware scoring.
 ``run_evaluation`` renders the per-level report behind ``cairn eval``.
 
-The retrieval-quality campaign machinery (seeded splits, k-fold rotation,
-lever sweeps, paired bootstrap) that once lived here was retired with its
-CLI flags; its record survives in ``benchmarks/quality/`` and git history.
+Campaign methodology and verdict records live under
+``benchmarks/quality/`` (see the CHANGELOG's Removed entries).
 """
 from __future__ import annotations
 
@@ -37,8 +36,6 @@ if TYPE_CHECKING:
     from cairn.graph.semantic import RetrievalParams
 
 logger = logging.getLogger(__name__)
-
-
 
 
 def _resolve_default_queries_path() -> Path:
@@ -373,7 +370,7 @@ def match_rank(symbol_id: str, results: List[Any], k: int = 10) -> int:
         if name == symbol_part and file_path and file_path.endswith(file_part):
             return idx + 1
 
-    # Tier 2: legacy substring rule (eval.py:81) on the symbol name only.
+    # Tier 2: legacy substring rule  on the symbol name only.
     symbol_lower = symbol_part.lower()
     for idx in range(min(k, len(results))):
         if symbol_lower in _result_field(results[idx], "name").lower():
