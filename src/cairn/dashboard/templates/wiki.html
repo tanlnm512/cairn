@@ -16,7 +16,10 @@
       {% for p in pages %}
       <tr>
         <td><a href="/wiki/{{ p.page_id }}">{{ p.title }}</a></td>
-        <td><span class="badge badge-{{ p.state }}">{{ p.state }}</span></td>
+        <td>
+          <span class="badge badge-{{ p.state }}">{{ p.state }}</span>
+          <span class="badge badge-{{ p.staleness }}">{{ p.staleness }}</span>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

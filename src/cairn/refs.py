@@ -36,14 +36,21 @@ SYMBOL_RE = re.compile(
 # --- extraction -----------------------------------------------------------
 
 def extract_file_refs(body: str) -> List[str]:
-    """Extract backtick-quoted tokens that look like file paths."""
-    refs = []
+    """Extract backtick-quoted tokens that look like file paths.
+
+    Order-preserving dedupe: a path cited repeatedly is returned once, at
+    its first occurrence.
+    """
+    refs: List[str] = []
+    seen = set()
     for m in BACKTICK_RE.findall(body):
         if "/" in m or m.endswith(FILE_EXTENSIONS):
             # Skip build/CLI commands like ./gradlew or `cairn embed`.
             if m.startswith("./") or m.startswith("cairn "):
                 continue
-            refs.append(m)
+            if m not in seen:
+                seen.add(m)
+                refs.append(m)
     return refs
 
 
@@ -78,6 +85,11 @@ def file_exists(conn: sqlite3.Connection, ref: str) -> bool:
         (ref, f"%/{ref}"),
     ).fetchone()
     return row is not None
+
+
+def unresolved_file_refs(conn: sqlite3.Connection, refs: List[str]) -> List[str]:
+    """Refs with no graph file match, deduped, input order preserved."""
+    return [ref for ref in dict.fromkeys(refs) if not file_exists(conn, ref)]
 
 
 def symbol_exists(conn: sqlite3.Connection, name: str) -> bool:

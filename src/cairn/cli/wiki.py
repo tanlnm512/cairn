@@ -5,10 +5,11 @@ import click
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main
+from ..utils.git import get_repo_head
 
 # Display states (hyphenated) for `wiki status`; the manifest stores
 # "in_progress" with an underscore.
-_DISPLAY_STATES = ("queued", "in-progress", "promoted", "failed")
+_DISPLAY_STATES = ("queued", "in-progress", "promoted", "failed", "dropped")
 
 
 @main.group()
@@ -190,6 +191,25 @@ def _is_promoted(bundle, repo, page_id):
         return False
 
 
+def _recorded_sha(bundle, row, repo, page_id):
+    """The page's recorded commit sha: the promoted concept's extension is
+    the source of truth; a page with no concept falls back to the manifest
+    row's queue-time sha."""
+    try:
+        concept = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
+    except Exception:
+        return row.get("commit_sha") or None
+    return concept.extensions.get("commit_sha") or None
+
+
+def _staleness(recorded_sha, head):
+    """fresh: recorded sha equals HEAD; stale: both present and differing;
+    unknown: either side unavailable."""
+    if not recorded_sha or not head:
+        return "unknown"
+    return "fresh" if recorded_sha == head else "stale"
+
+
 def _wiki_chains(bundle):
     """Page id -> every wiki-page task for it, across all revise hops."""
     from ..llm.tasks import list_tasks
@@ -217,14 +237,18 @@ def _result_critic_status(bundle, task_id):
 
 def _page_state(bundle, row, repo, page_id, chain):
     """Derived state: promoted by concept (never the stored row), else the
-    live chain, else failed when the row says so or the chain dropped --
-    terminal done task whose result failed the critic with no successor."""
+    live chain, else dropped when an explicitly dropped task is in the chain
+    (terminal -- retry's failed-only selection never resurrects it), else
+    failed when the row says so or the chain dropped -- terminal done task
+    whose result failed the critic with no successor."""
     if _is_promoted(bundle, repo, page_id):
         return "promoted"
     if any(t.status == "in-progress" for t in chain):
         return "in-progress"
     if any(t.status == "pending" for t in chain):
         return "queued"
+    if any(t.status == "dropped" for t in chain):
+        return "dropped"
     if row.get("state") == "failed":
         return "failed"
     done = [t for t in chain if t.status == "done"]
@@ -245,6 +269,8 @@ def wiki_status(repo, knowledge):
         return
     chains = _wiki_chains(bundle)
     counts = dict.fromkeys(_DISPLAY_STATES, 0)
+    staleness_counts = dict.fromkeys(("fresh", "stale", "unknown"), 0)
+    heads = {}
     shown = 0
     for key in sorted(pages):
         page_repo, page_id = _split_page_key(key)
@@ -253,13 +279,19 @@ def wiki_status(repo, knowledge):
         row = pages[key]
         state = _page_state(bundle, row, page_repo, page_id,
                             chains.get(page_id, []))
+        if page_repo not in heads:
+            heads[page_repo] = get_repo_head(page_repo)
+        staleness = _staleness(_recorded_sha(bundle, row, page_repo, page_id),
+                               heads[page_repo])
         shown += 1
         if state in counts:
             counts[state] += 1
-        click.echo(f"  {key:<36} {state:<12} "
+        staleness_counts[staleness] += 1
+        click.echo(f"  {key:<36} {state:<12} {staleness:<8} "
                    f"attempts={row.get('attempts', 0)}")
     totals = "  ".join(f"{state}={n}" for state, n in counts.items())
-    click.echo(f"Wiki pages: {shown}  {totals}")
+    freshness = "  ".join(f"{s}={n}" for s, n in staleness_counts.items())
+    click.echo(f"Wiki pages: {shown}  {totals}  {freshness}")
 
 
 @wiki.command("retry")

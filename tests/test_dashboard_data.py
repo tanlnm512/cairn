@@ -2769,3 +2769,202 @@ def test_get_wiki_page_missing_page_or_dir_returns_none(tmp_path):
 
     assert get_wiki_page(str(kdir), "no-such-page") is None
     assert get_wiki_page(str(tmp_path / "nope"), "overview") is None
+
+
+# ---------------------------------------------------------------------------
+# Wiki staleness (FR-007 / D-020): recorded sha (concept extensions, manifest
+# row fallback) vs the workspace HEAD, as fresh/stale/unknown.
+# ---------------------------------------------------------------------------
+
+_SHA_A = "abc1234a"
+_SHA_B = "def5678b"
+
+
+def _promote_concept_with_sha(bundle, repo, page_id, sha=None):
+    """The FR-009 promoted concept, plus the recorded-sha extension."""
+    from cairn.okf.concept import OKFConcept
+
+    extensions = {"page_id": page_id, "input_hash": f"hash-{page_id}"}
+    if sha:
+        extensions["commit_sha"] = sha
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title=f"Wiki: {page_id}",
+            description=f"Wiki article for {repo}/{page_id}",
+            resource=page_id,
+            tags=[repo, "wiki"],
+            timestamp="2026-08-30T10:00:00Z",
+            concept_id=f"wiki/pages/{repo}/{page_id}",
+            sources=_WIKI_SOURCES,
+            body=_WIKI_BODY,
+            extensions=extensions,
+        )
+    )
+
+
+def _fake_head(monkeypatch, head):
+    """HEAD resolution is read through the ``cairn.dashboard.data``
+    namespace seam (the module-level re-export of
+    ``utils.git.get_repo_head``)."""
+    monkeypatch.setattr(
+        "cairn.dashboard.data.get_repo_head",
+        lambda repo, workspace=None: head,
+        raising=False,
+    )
+
+
+def test_get_wiki_pages_gain_staleness_stale_and_unknown(tmp_path, monkeypatch):
+    """Every page dict carries ``staleness``: a concept sha behind the HEAD
+    reads stale; a page with no recorded sha anywhere reads unknown."""
+    from cairn.dashboard.data import get_wiki_pages
+    from cairn.okf.bundle import OKFBundle
+
+    kdir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(kdir))
+    _promote_concept_with_sha(bundle, "demo", "overview", sha=_SHA_A)
+    _promote_concept_with_sha(bundle, "demo", "viz-module", sha=_SHA_A)
+    _write_manifest(
+        kdir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "overview"),
+                task_id="t-overview",
+                state="promoted",
+            ),
+            "demo/viz-module": _manifest_row(
+                _plan_entry("viz-module", "viz"),
+                task_id="t-viz",
+                state="promoted",
+            ),
+            "demo/tasks-module": _manifest_row(
+                _plan_entry("tasks-module", "tasks"),
+                task_id="t-tasks",
+                state="queued",
+            ),
+        },
+    )
+    _fake_head(monkeypatch, _SHA_B)
+
+    pages = get_wiki_pages(str(kdir))
+
+    staleness = {p["page_id"]: p["staleness"] for p in pages}
+    assert staleness["overview"] == "stale"
+    assert staleness["viz-module"] == "stale"
+    assert staleness["tasks-module"] == "unknown"
+
+
+def test_get_wiki_pages_staleness_fresh_when_head_matches(tmp_path, monkeypatch):
+    from cairn.dashboard.data import get_wiki_pages
+    from cairn.okf.bundle import OKFBundle
+
+    kdir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(kdir))
+    _promote_concept_with_sha(bundle, "demo", "overview", sha=_SHA_A)
+    _write_manifest(
+        kdir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "overview"),
+                task_id="t-overview",
+                state="promoted",
+            ),
+        },
+    )
+    _fake_head(monkeypatch, _SHA_A)
+
+    pages = get_wiki_pages(str(kdir))
+
+    assert [p["staleness"] for p in pages] == ["fresh"]
+
+
+def test_get_wiki_pages_staleness_unknown_when_head_unavailable(
+    tmp_path, monkeypatch
+):
+    """A recorded sha with an unresolvable HEAD is unknown, never
+    fresh/stale."""
+    from cairn.dashboard.data import get_wiki_pages
+    from cairn.okf.bundle import OKFBundle
+
+    kdir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(kdir))
+    _promote_concept_with_sha(bundle, "demo", "overview", sha=_SHA_A)
+    _write_manifest(
+        kdir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "overview"),
+                task_id="t-overview",
+                state="promoted",
+            ),
+        },
+    )
+    _fake_head(monkeypatch, None)
+
+    pages = get_wiki_pages(str(kdir))
+
+    assert pages[0]["staleness"] == "unknown"
+
+
+def test_get_wiki_pages_staleness_falls_back_to_manifest_row_sha(
+    tmp_path, monkeypatch
+):
+    """A not-yet-promoted page has no concept, so its recorded sha comes
+    from the manifest row's ``commit_sha``."""
+    from cairn.dashboard.data import get_wiki_pages
+
+    kdir = tmp_path / "knowledge"
+    _write_manifest(
+        kdir,
+        {
+            "demo/tasks-module": {
+                **_manifest_row(
+                    _plan_entry("tasks-module", "tasks"),
+                    task_id="t-tasks",
+                    state="queued",
+                ),
+                "commit_sha": _SHA_A,
+            },
+        },
+    )
+    _fake_head(monkeypatch, _SHA_A)
+
+    pages = get_wiki_pages(str(kdir))
+
+    assert pages[0]["staleness"] == "fresh"
+
+    _fake_head(monkeypatch, _SHA_B)
+    pages = get_wiki_pages(str(kdir))
+
+    assert pages[0]["staleness"] == "stale"
+
+
+def test_get_wiki_page_gain_staleness(tmp_path, monkeypatch):
+    from cairn.dashboard.data import get_wiki_page
+    from cairn.okf.bundle import OKFBundle
+
+    kdir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(kdir))
+    _promote_concept_with_sha(bundle, "demo", "overview", sha=_SHA_A)
+    _write_manifest(
+        kdir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "overview"),
+                task_id="t-overview",
+                state="promoted",
+            ),
+        },
+    )
+    _fake_head(monkeypatch, _SHA_A)
+
+    page = get_wiki_page(str(kdir), "overview")
+
+    assert page is not None
+    assert page["staleness"] == "fresh"
+
+    _fake_head(monkeypatch, _SHA_B)
+    page = get_wiki_page(str(kdir), "overview")
+
+    assert page is not None
+    assert page["staleness"] == "stale"

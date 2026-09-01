@@ -3741,6 +3741,105 @@ def test_wiki_page_route_unknown_page_returns_404(tmp_path):
     assert resp.status_code == 404
 
 
+# --- wiki staleness badges (FR-007 / TC-019 / TC-020) -------------------------
+
+_SHA_A = "abc1234a"
+_SHA_B = "def5678b"
+
+
+def _promote_wiki_concept_with_sha(kdir, page_id, sha):
+    """Re-promote ``page_id`` with the recorded-sha extension added."""
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    OKFBundle(str(kdir)).write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title=f"Wiki: {page_id}",
+            description=f"Wiki article for demo/{page_id}",
+            resource=page_id,
+            tags=["demo", "wiki"],
+            timestamp="2026-08-30T10:00:00Z",
+            concept_id=f"wiki/pages/demo/{page_id}",
+            sources=_WIKI_SOURCES,
+            body=_WIKI_BODY,
+            extensions={
+                "page_id": page_id,
+                "input_hash": f"hash-{page_id}",
+                "commit_sha": sha,
+            },
+        )
+    )
+
+
+def _staleness_client(tmp_path, monkeypatch, head, sha=_SHA_A):
+    """The standard wiki fixture with ``overview`` carrying a recorded sha
+    and HEAD resolution faked at the ``cairn.dashboard.data`` seam."""
+    kdir = tmp_path / "knowledge"
+    _seed_wiki_pages(kdir)
+    _promote_wiki_concept_with_sha(kdir, "overview", sha)
+    monkeypatch.setattr(
+        "cairn.dashboard.data.get_repo_head",
+        lambda repo, workspace=None: head,
+        raising=False,
+    )
+    return _panel_client(
+        tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir)
+    )
+
+
+def test_wiki_views_render_fresh_badge_beside_state_badge(tmp_path, monkeypatch):
+    """TC-019: recorded sha == HEAD reads fresh, on the /wiki list and the
+    detail view, next to the unchanged state badge."""
+    client = _staleness_client(tmp_path, monkeypatch, head=_SHA_A)
+
+    listing = client.get("/wiki")
+    detail = client.get("/wiki/overview")
+
+    assert listing.status_code == 200
+    assert ">fresh<" in listing.text
+    assert ">promoted<" in listing.text
+    assert detail.status_code == 200
+    assert ">fresh<" in detail.text
+    assert ">promoted<" in detail.text
+
+
+def test_wiki_views_render_stale_badge_after_head_moves(tmp_path, monkeypatch):
+    """US2 AC2: the workspace HEAD moved past the page's recorded sha —
+    both views read stale."""
+    client = _staleness_client(tmp_path, monkeypatch, head=_SHA_B)
+
+    listing = client.get("/wiki")
+    detail = client.get("/wiki/overview")
+
+    assert listing.status_code == 200
+    assert ">stale<" in listing.text
+    assert ">fresh<" not in listing.text
+    assert detail.status_code == 200
+    assert ">stale<" in detail.text
+    assert ">fresh<" not in detail.text
+
+
+def test_wiki_views_render_unknown_badge_when_comparison_unavailable(
+    tmp_path, monkeypatch
+):
+    """TC-020: HEAD unresolvable — every page reads unknown, never
+    fresh/stale, on both views."""
+    client = _staleness_client(tmp_path, monkeypatch, head=None)
+
+    listing = client.get("/wiki")
+    detail = client.get("/wiki/overview")
+
+    assert listing.status_code == 200
+    assert ">unknown<" in listing.text
+    assert ">fresh<" not in listing.text
+    assert ">stale<" not in listing.text
+    assert detail.status_code == 200
+    assert ">unknown<" in detail.text
+    assert ">fresh<" not in detail.text
+    assert ">stale<" not in detail.text
+
+
 def test_markdown_renderer_module_never_loads_server_stack():
     """D-002: the renderer is pure stdlib — importing it must not pull in
     starlette/uvicorn/jinja2 (same guard as the dashboard package)."""
@@ -3792,3 +3891,57 @@ def test_render_markdown_fenced_code_and_mermaid_fence():
     assert "x &lt; 1 &amp;&amp; y &gt; 2" in html
     assert '<pre class="mermaid">' in html
     assert "A --&gt; B" in html
+
+
+def test_render_markdown_inline_code_spans_render_as_code_elements():
+    """FR-002 / TC-004: backticked spans render as <code> elements inside
+    paragraph, list-item, and heading output (never literal backticks)."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "## The `config` file\n"
+        "\n"
+        "Use the `foo` helper.\n"
+        "\n"
+        "- run `cairn doctor` first\n"
+    )
+
+    assert "<p>Use the <code>foo</code> helper.</p>" in html
+    assert "<li>run <code>cairn doctor</code> first</li>" in html
+    assert re.search(r"<h2[^>]*>The <code>config</code> file</h2>", html)
+
+
+def test_render_markdown_pipe_tables_render_as_tables():
+    """FR-002 / TC-005: a header + delimiter-row block renders as a table
+    with rows and cells; the alignment row vanishes, an escaped pipe stays
+    a literal pipe inside its single cell, outer pipes are optional, HTML
+    in a cell stays escaped, and a column-count mismatch degrades the whole
+    block back to paragraphs."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "| Layer | Status | Notes |\n"
+        "| :--- | :---: | ---: |\n"
+        "| catalog | ready | pipes \\| inside |\n"
+        "refs | done | no outer pipes\n"
+        "| guards | <script>alert(1)</script> | third |\n"
+    )
+
+    assert "<table>" in html and "</table>" in html
+    assert re.search(r"<tr[^>]*>", html)
+    for cell in ("Layer", "Status", "Notes", "catalog", "ready"):
+        assert re.search(rf"<t[dh][^>]*>{cell}</t[dh]>", html)
+    assert "---" not in html  # the delimiter/alignment row never leaks as text
+    assert re.search(r"<t[dh][^>]*>pipes \| inside</t[dh]>", html)
+    assert "\\|" not in html
+    assert re.search(r"<t[dh][^>]*>refs</t[dh]>", html)
+    assert re.search(r"<t[dh][^>]*>no outer pipes</t[dh]>", html)
+    assert re.search(
+        r"<t[dh][^>]*>&lt;script&gt;alert\(1\)&lt;/script&gt;</t[dh]>", html
+    )
+    assert "<script>" not in html
+
+    degraded = render_markdown("| one | two |\n| --- | --- |\n| a | b | c |\n")
+
+    assert "<table>" not in degraded
+    assert "a | b | c" in degraded

@@ -465,3 +465,26 @@ class TestLiveTaskSkip:
         second = self._run(fresh_db, bundle)
         assert second["queued_task_ids"] == []
         assert len(list_tasks(bundle)) == len(plan) + 1
+
+
+class TestRowCommitSha:
+    """FR-003 (D-016): ``run_wiki_generate`` records the workspace HEAD sha
+    in each queued row, so staleness readers have a fallback for
+    not-yet-promoted pages."""
+
+    def test_queued_row_gains_commit_sha(self, fresh_db, bundle, plan, monkeypatch):
+        from cairn.wiki.pipeline import run_wiki_generate
+
+        # HEAD seam: the pipeline resolves the sha through a
+        # ``cairn.wiki.pipeline``-namespace ``get_repo_head`` (re-exported
+        # from utils.git), so a fake can stand in for git here.
+        monkeypatch.setattr(
+            "cairn.wiki.pipeline.get_repo_head",
+            lambda repo, workspace=None: "abc1234",
+            raising=False,
+        )
+
+        run_wiki_generate(fresh_db, bundle, REPO)
+
+        row = load_manifest(bundle)["pages"][f"{REPO}/{plan[0]['page_id']}"]
+        assert row["commit_sha"] == "abc1234"

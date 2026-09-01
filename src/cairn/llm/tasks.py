@@ -44,7 +44,7 @@ class Task:
     task_kind: str  # compass-synthesize | compass-revise | flow-synthesize | flow-revise | wiki | memory-critic | memory-extract
     resource: str  # the module/symbol/transcript being worked on
     facts: Dict[str, Any] = field(default_factory=dict)  # graph-grounded, agent must not invent
-    status: str = "pending"  # pending | in-progress | done | failed
+    status: str = "pending"  # pending | in-progress | done | failed | dropped
     assigned_to: str = ""
     result_path: str = ""
     attempt: int = 1
@@ -99,9 +99,12 @@ def create_task(
 
 
 def list_tasks(
-    bundle: OKFBundle, status: Optional[str] = None, kind: Optional[str] = None
+    bundle: OKFBundle,
+    status: Optional[str] = None,
+    kind: Optional[str] = None,
+    kind_prefix: Optional[str] = None,
 ) -> List[Task]:
-    """List tasks, optionally filtered by status or kind."""
+    """List tasks, optionally filtered by status, exact kind, or kind prefix."""
     out = []
     for cid in bundle.list_concepts(prefix=f"{TASK_DIR}/"):
         if cid.endswith(".result"):
@@ -116,6 +119,8 @@ def list_tasks(
         if status and task.status != status:
             continue
         if kind and task.task_kind != kind:
+            continue
+        if kind_prefix and not task.task_kind.startswith(kind_prefix):
             continue
         out.append(task)
     return out
@@ -302,11 +307,26 @@ def complete_task(
             wiki_sources: Optional[List[Dict[str, Any]]] = None
             if wiki_page:
                 from ..refs import file_exists as _file_exists
+                from ..refs import (
+                    extract_file_refs as _extract_file_refs,
+                    unresolved_file_refs as _unresolved_file_refs,
+                )
                 from ..wiki.sources import parse_sources_footer, resolve_sources
 
                 resolved, source_errors = resolve_sources(
                     parse_sources_footer(result), conn
                 )
+                # One error per distinct dead path: a footer entry the
+                # body's own citations already reported stays out of the
+                # merge.
+                body_unresolved = _unresolved_file_refs(
+                    conn, _extract_file_refs(result)
+                )
+                source_errors = [
+                    e
+                    for e in source_errors
+                    if not any(e.endswith(f": {ref}") for ref in body_unresolved)
+                ]
                 if source_errors:
                     critic_result = CriticResult(
                         errors=critic_result.errors + source_errors,
@@ -421,6 +441,11 @@ def complete_task(
                             "input_hash": task.facts.get("input_hash"),
                             "task_id": task_id,
                             "refine_catalog": task.facts.get("refine_catalog"),
+                            **(
+                                {"commit_sha": task.facts["commit_sha"]}
+                                if task.facts.get("commit_sha")
+                                else {}
+                            ),
                         },
                     )
                     bundle.write_concept(wiki_concept)
@@ -512,6 +537,45 @@ def complete_task(
         "errors": [],
         "quality": 0.0,
     }
+
+
+def drop_task(bundle: OKFBundle, task_id: str) -> Dict[str, Any]:
+    """Mark a pending or in-progress task dropped (terminal status).
+
+    Returns {task_id, dropped, errors}. Done, unknown, and already-dropped
+    tasks are refused with their status left unchanged. A dropped task is
+    never claimable again (claim_task claims pending only); dropping an
+    in-progress task removes its claim marker so the resource can be
+    re-queued.
+    """
+    task = _read(bundle, task_id)
+    if task is None:
+        return {
+            "task_id": task_id,
+            "dropped": False,
+            "errors": ["task not found"],
+        }
+    if task.status not in ("pending", "in-progress"):
+        return {
+            "task_id": task_id,
+            "dropped": False,
+            "errors": [f"task is {task.status}; only pending or in-progress "
+                       "tasks can be dropped"],
+        }
+    task.status = "dropped"
+    bundle.write_concept(_task_to_concept(task))
+    claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
+    try:
+        os.remove(claim_marker)
+    except OSError:
+        pass
+    _emit(
+        TASK_LIFECYCLE,
+        task_kind=task.task_kind,
+        event="dropped",
+        attempt=task.attempt,
+    )
+    return {"task_id": task_id, "dropped": True, "errors": []}
 
 
 def read_result(bundle: OKFBundle, task_id: str) -> Optional[str]:
@@ -627,7 +691,12 @@ def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
         "memory-critic": "For each draft memory in facts, judge accuracy/usefulness/specificity/non-redundancy. Output one JSON line per memory: {title, keep: bool, score: 0-1, reason}.",
         "memory-extract": "From the session transcript in facts.transcript, extract candidate memories. Output one JSON line per candidate: {type: decision|pattern|mistake|workaround, title, body, confidence}.",
     }
-    spec = specs.get(task_kind, "Process per the cairn skill.")
+    spec = specs.get(task_kind)
+    if spec is None:
+        if task_kind.startswith("wiki-page"):
+            spec = specs["wiki-page"]
+        else:
+            spec = "Process per the cairn skill."
     if task_kind.startswith("wiki-page") and facts and facts.get("diagrams"):
         spec += "\nInclude Mermaid fenced code blocks for the key structures you describe."
     return spec
