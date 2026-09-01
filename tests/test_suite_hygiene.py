@@ -110,15 +110,32 @@ def test_infra_tier_shape_stays_guarded():
         "addopts with a -m filter would silently deselect the bench job's "
         "-k t2 gate (it invokes pytest without -m)"
     )
+    def _is_infra_mark(node):
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "infra"
+        )
+
     violations = []
     for path, src in _iter_test_sources():
         tree = ast.parse(src)
+        # marked iff pytestmark actually carries pytest.mark.infra (a
+        # usefixtures-only pytestmark is NOT tier membership) or any
+        # top-level class carries the infra decorator
         marked_module = any(
             isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in n.targets)
             and any(
-                isinstance(t, ast.Name) and t.id == "pytestmark"
-                for t in n.targets
+                _is_infra_mark(d) or (
+                    isinstance(d, ast.Attribute) and d.attr == "infra"
+                )
+                for d in ([n.value] if not isinstance(n.value, (ast.List, ast.Tuple)) else n.value.elts)
             )
+            for n in tree.body
+        ) or any(
+            isinstance(n, ast.ClassDef)
+            and any(_is_infra_mark(d) for d in n.decorator_list)
             for n in tree.body
         )
         for node in ast.walk(tree):

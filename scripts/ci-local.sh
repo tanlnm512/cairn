@@ -143,9 +143,11 @@ case "$JOB" in
     python scripts/run_skill_evals.py
     log "core smoke subset (CI: Run core smoke subset)"
     python -m pytest -m core -q
-    log "full suite (CI: Run full test suite)"
-    python -m pytest -q --junitxml=test-results.xml \
+    log "full suite (CI: Run full test suite, PR-leg shape: infra tier excluded)"
+    python -m pytest -q -m "not infra" --junitxml=test-results.xml \
       --cov=cairn --cov-report=term --cov-report=xml
+    log "infra tier (CI: Run infra tier, main-push shape)"
+    python -m pytest -q -m infra
     log "suite green (results: test-results.xml, coverage.xml)"
     ;;
 
