@@ -771,7 +771,7 @@ def create_app(
 
         from starlette.responses import RedirectResponse
 
-        _, selected_knowledge, _ = resolve_selection(
+        _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
         page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
@@ -780,9 +780,8 @@ def create_app(
         target = "/wiki/{}/{}".format(
             quote(page["repo"], safe=""), quote(page["page_id"], safe="")
         )
-        store = request.query_params.get("store", "").strip()
-        if store:
-            target += "?store=" + quote(store, safe="")
+        if store_key:
+            target += "?store=" + quote(store_key, safe="")
         return RedirectResponse(target, status_code=307)
 
     def wiki_page_repo(request: Request) -> Response:
@@ -1117,6 +1116,8 @@ def create_app(
             f"<p>No graph database found at <code>{escape(str(exc))}</code>.</p>"
             "<p>Run <code>cairn build</code> to index this workspace, "
             "then refresh.</p>"
+            '<p><a href="/workspaces">Open the workspaces overview</a> '
+            "to pick an available store.</p>"
             "</body></html>"
         )
 

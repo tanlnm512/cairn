@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_icons.html" as icons %}
 {% block title %}Cairn Dashboard{% endblock %}
 {% block view_title %}Overview{% endblock %}
 {% block content %}
@@ -10,65 +11,66 @@
     <code>{{ db_path }}</code>
   </p>
   {#- FR-003: a selected store rides every landing-card link (links.url);
-      empty selection keeps the bare hrefs, byte-identical. -#}
+      empty selection keeps the bare hrefs, byte-identical. The glyphs
+      come from the same _icons macro the sidebar renders. -#}
   <div class="launcher-grid">
     <a class="launcher-card" href="{{ links.url('/workspaces') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+      {{ icons.svg('workspaces', 18) }}
       <span class="launcher-title">Workspaces</span>
       <span class="launcher-blurb">Local stores, one click away</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/projects') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      {{ icons.svg('projects', 18) }}
       <span class="launcher-title">Projects &amp; index status</span>
       <span class="launcher-blurb">Indexed repos and embeddings</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/graph') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+      {{ icons.svg('graph', 18) }}
       <span class="launcher-title">Graph explorer</span>
       <span class="launcher-blurb">Interactive symbol graph</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/history') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      {{ icons.svg('history', 18) }}
       <span class="launcher-title">Tool-call history</span>
       <span class="launcher-blurb">Every recorded invocation</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/tokens') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+      {{ icons.svg('tokens', 18) }}
       <span class="launcher-title">Token usage</span>
       <span class="launcher-blurb">Context cost per tool</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/chains') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+      {{ icons.svg('chains', 18) }}
       <span class="launcher-title">Session chains</span>
       <span class="launcher-blurb">Calls grouped per session</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/health') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      {{ icons.svg('health', 18) }}
       <span class="launcher-title">Health</span>
       <span class="launcher-blurb">Same checks as cairn doctor</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/memory') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.7-4 3-9 3s-9-1.3-9-3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg>
+      {{ icons.svg('memory', 18) }}
       <span class="launcher-title">Memory</span>
       <span class="launcher-blurb">Recent tribal knowledge</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/wiki') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>
+      {{ icons.svg('wiki', 18) }}
       <span class="launcher-title">Wiki</span>
       <span class="launcher-blurb">Generated project pages</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/tasks') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      {{ icons.svg('tasks', 18) }}
       <span class="launcher-title">Task queue</span>
       <span class="launcher-blurb">LLM synthesis jobs</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/embeddings') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 16-9 5-9-5V8l9-5 9 5z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+      {{ icons.svg('embeddings', 18) }}
       <span class="launcher-title">Embeddings</span>
       <span class="launcher-blurb">Backend, stamp, per-corpus state</span>
     </a>
     <a class="launcher-card" href="{{ links.url('/settings') }}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>
+      {{ icons.svg('settings', 18) }}
       <span class="launcher-title">Settings</span>
       <span class="launcher-blurb">Embedding config + parity check</span>
     </a>

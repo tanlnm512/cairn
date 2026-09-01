@@ -56,15 +56,19 @@
       });
     })();
   </script>
-  <script>
+  <script{% if shell is defined and shell.selector.options %} data-valid-stores='{{ shell.selector.options | map(attribute='key') | list | tojson }}'{% endif %}>
     /* Workspace stickiness: the store selection rides the URL
        (?store=<key>, the FR-003 seam), which a typed URL or new tab
        drops — so, like the theme, the last explicit selection is
        remembered (localStorage "cairn-store") and a bare visit
        redirects to it. Until the user picks a workspace, nothing is
        stored and bare URLs keep the launch store, byte-identical. A
-       remembered-but-since-deleted store lands on the friendly
-       missing-DB page, where Workspaces is one click away. */
+       remembered key that no longer names a populated store (the
+       workspace was deleted) is NOT redirected to — that would poison
+       every future visit with the missing-DB page — it is forgotten and
+       the launch store serves; the valid key set rides this tag's
+       data-valid-stores attribute, server-rendered from the same
+       enumerate_stores rows the selector lists. */
     (function () {
       "use strict";
       var STORAGE_KEY = "cairn-store";
@@ -75,11 +79,26 @@
           window.localStorage.setItem(STORAGE_KEY, selected);
         } else {
           var remembered = window.localStorage.getItem(STORAGE_KEY);
-          if (remembered) {
+          var valid = null;
+          var validRaw = document.currentScript
+            ? document.currentScript.getAttribute("data-valid-stores")
+            : null;
+          if (validRaw) {
+            try {
+              valid = JSON.parse(validRaw);
+            } catch (err) {
+              valid = null; /* unparsable set: redirect as before */
+            }
+          }
+          var known = valid === null ||
+            valid.indexOf(remembered) !== -1;
+          if (remembered && known) {
             url.searchParams.set("store", remembered);
             window.location.replace(
               url.pathname + url.search + url.hash
             );
+          } else if (remembered) {
+            window.localStorage.removeItem(STORAGE_KEY);
           }
         }
       } catch (err) {

@@ -68,14 +68,17 @@ def workspace_label(path: Optional[str], key: str) -> str:
 
 
 def selector_context(
-    stores: List[dict], store_key: str, launch_label: str = LAUNCH_LABEL
+    stores: List[dict], store_key: str
 ) -> dict:
     """The topbar selector's render context: populated stores only (the
     switch targets the same validated set resolve_selection serves), each
     as ``{key, label, path}`` with the registry path kept for the option's
     title tooltip; ``selected`` is the active key ("" = launch store)."""
-    options = _populated_options(stores)
-    return {"options": options, "selected": store_key, "launch_label": launch_label}
+    return {
+        "options": _populated_options(stores),
+        "selected": store_key,
+        "launch_label": LAUNCH_LABEL,
+    }
 
 
 def _populated_options(stores: List[dict]) -> List[dict]:
@@ -104,6 +107,7 @@ def shell_context(
     same URL-rewrite behavior as the topbar selector).
     """
     nav_query = "?store=" + quote(store_key, safe="") if store_key else ""
+    options = _populated_options(stores)
     sections: List[dict] = []
     palette_views: List[dict] = []
     for section_label, view_ids in NAV_SECTIONS:
@@ -122,10 +126,11 @@ def shell_context(
             palette_views.append({"label": label, "href": href})
         sections.append({"label": section_label, "items": items})
     return {
-        "selector": selector_context(stores, store_key),
-        "nav": {"sections": sections},
-        "palette": {
-            "views": palette_views,
-            "workspaces": _populated_options(stores),
+        "selector": {
+            "options": options,
+            "selected": store_key,
+            "launch_label": LAUNCH_LABEL,
         },
+        "nav": {"sections": sections},
+        "palette": {"views": palette_views, "workspaces": options},
     }

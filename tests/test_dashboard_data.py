@@ -2828,6 +2828,48 @@ def test_get_wiki_page_builds_ref_map_from_sources_and_seeds(tmp_path):
     assert '<h2 id="how-it-works">' in page["html"]
 
 
+def test_get_wiki_page_ref_map_keys_match_escaped_span_text(tmp_path):
+    """The renderer looks spans up post-escape, so a vouched symbol
+    containing &amp;-escapable characters (&, <) must key the map by its
+    escaped form or its backticked mentions silently stay plain code."""
+    from cairn.dashboard.data import get_wiki_page
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    kdir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(kdir))
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki: overview",
+            description="Wiki article for demo/overview",
+            resource="overview",
+            tags=["demo", "wiki"],
+            timestamp="2026-09-02T10:00:00Z",
+            concept_id="wiki/pages/demo/overview",
+            sources=[{"symbol": "operator&"}],
+            body="The `operator&` helper.\n",
+            extensions={"page_id": "overview", "input_hash": "hash-overview"},
+        )
+    )
+    _write_manifest(
+        kdir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "demo architecture overview"),
+                task_id="task-overview",
+                state="promoted",
+            )
+        },
+    )
+
+    page = get_wiki_page(str(kdir), "overview")
+
+    assert "operator&amp;" in page["ref_hrefs"]
+    assert '<a class="code-ref"' in page["html"]
+    assert "operator&amp;</code></a>" in page["html"]
+
+
 # ---------------------------------------------------------------------------
 # Wiki staleness (FR-007 / D-020): recorded sha (concept extensions, manifest
 # row fallback) vs the workspace HEAD, as fresh/stale/unknown.

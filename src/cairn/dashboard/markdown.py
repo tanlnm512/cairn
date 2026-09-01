@@ -67,7 +67,12 @@ def _inline(escaped_text: str, link_map: Optional[dict] = None) -> str:
             return f"<code>{code}</code>"
         label, target = match.group(2), match.group(3)
         if _ALLOWED_LINK_RE.match(target):
-            return f'<a href="{target}">{label}</a>'
+            # The working text was escaped with quote=False (backtick/code
+            # spans must stay readable), so a ``"`` inside the target would
+            # terminate the href attribute — neutralize it here. Re-escaping
+            # wholesale would double-encode ``&amp;`` in legitimate URLs.
+            safe = target.replace('"', "&quot;")
+            return f'<a href="{safe}">{label}</a>'
         return match.group(0)  # refused target: the literal text, escaped
 
     return _INLINE_TOKEN_RE.sub(replace, escaped_text)

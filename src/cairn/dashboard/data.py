@@ -13,6 +13,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
+from html import escape as html_escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -674,6 +675,33 @@ def _wiki_staleness(recorded_sha: Optional[str], head: Optional[str]) -> str:
     return "fresh" if recorded_sha == head else "stale"
 
 
+def _wiki_rows(
+    knowledge_dir: str, repo: Optional[str] = None, page_id: Optional[str] = None
+):
+    """Lazy ``(repo, page_id, manifest_row, concept, head)`` tuples over
+    the manifest — the one traversal ``get_wiki_pages`` and
+    ``get_wiki_page`` share (concept ids, per-repo HEAD caching, and the
+    staleness inputs live here once). ``concept`` is None when the row's
+    concept is absent or unreadable; ``head`` is the repo's current HEAD
+    (resolved once per repo per call)."""
+    from cairn.wiki.manifest import load_manifest
+
+    bundle = OKFBundle(knowledge_dir)
+    heads: Dict[str, Optional[str]] = {}
+    for key, row in load_manifest(knowledge_dir)["pages"].items():
+        key_repo, key_page = _split_page_key(key)
+        if repo and key_repo != repo:
+            continue
+        if page_id and key_page != page_id:
+            continue
+        concept = _read_wiki_concept(
+            bundle, f"wiki/pages/{key_repo}/{key_page}"
+        )
+        if key_repo not in heads:
+            heads[key_repo] = get_repo_head(key_repo)
+        yield key_repo, key_page, row, concept, heads[key_repo]
+
+
 def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]:
     """Wiki manifest pages joined with their ``wiki/pages/`` concepts.
 
@@ -682,25 +710,15 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
     ``promoted`` is derived from the row's own
     ``wiki/pages/{repo}/{page_id}`` concept being readable, never the
     stored state, and ``staleness`` compares the recorded commit sha with
-    the repo's current HEAD (fresh/stale/unknown). HEAD is resolved once
-    per repo per call. A missing manifest (or knowledge dir) yields an
-    empty list; ``repo`` selects one repo's rows. Row order is manifest
-    order (plan order) — the catalog groups by ``repo`` on top of it.
+    the repo's current HEAD (fresh/stale/unknown). A missing manifest (or
+    knowledge dir) yields an empty list; ``repo`` selects one repo's rows.
+    Row order is manifest order (plan order) — the catalog groups by
+    ``repo`` on top of it.
     """
-    from cairn.wiki.manifest import load_manifest
-
-    bundle = OKFBundle(knowledge_dir)
-    heads: Dict[str, Optional[str]] = {}
     pages: List[dict] = []
-    for key, row in load_manifest(knowledge_dir)["pages"].items():
-        key_repo, page_id = _split_page_key(key)
-        if repo and key_repo != repo:
-            continue
-        concept = _read_wiki_concept(
-            bundle, f"wiki/pages/{key_repo}/{page_id}"
-        )
-        if key_repo not in heads:
-            heads[key_repo] = get_repo_head(key_repo)
+    for key_repo, page_id, row, concept, head in _wiki_rows(
+        knowledge_dir, repo=repo
+    ):
         pages.append(
             {
                 "repo": key_repo,
@@ -709,9 +727,7 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
                 "description": row.get("description") or "",
                 "state": row.get("state", ""),
                 "promoted": concept is not None,
-                "staleness": _wiki_staleness(
-                    _recorded_sha(concept, row), heads[key_repo]
-                ),
+                "staleness": _wiki_staleness(_recorded_sha(concept, row), head),
             }
         )
     return pages
@@ -730,15 +746,23 @@ def _wiki_ref_map(concept, row: dict, store_suffix: str) -> dict:
     vouches for: frontmatter sources plus the manifest plan's symbol seeds
     (both already verified against the graph by the promotion gate). Only
     mapped spans become links, so an arbitrary backticked word can never
-    link to a symbol the graph never resolved."""
+    link to a symbol the graph never resolved. Keys carry the same
+    html.escape(quote=False) the rendered body went through, so the
+    renderer's post-escape span lookup matches."""
     refs: Dict[str, str] = {}
     for entry in concept.sources or []:
         symbol = entry.get("symbol") if isinstance(entry, dict) else None
         if symbol:
-            refs.setdefault(str(symbol), _symbol_graph_href(str(symbol), store_suffix))
+            key = html_escape(str(symbol), quote=False)
+            refs.setdefault(
+                key, _symbol_graph_href(str(symbol), store_suffix)
+            )
     seeds = row.get("seeds") or {}
     for symbol in seeds.get("symbols") or []:
-        refs.setdefault(str(symbol), _symbol_graph_href(str(symbol), store_suffix))
+        key = html_escape(str(symbol), quote=False)
+        refs.setdefault(
+            key, _symbol_graph_href(str(symbol), store_suffix)
+        )
     return refs
 
 
@@ -757,30 +781,20 @@ def get_wiki_page(
     sources list linkify through it, with the selected store riding when
     ``store_key`` is set. ``sources`` is the concept's frontmatter list
     verbatim; ``staleness`` compares the recorded commit sha with the
-    repo's current HEAD (fresh/stale/unknown, HEAD resolved once per repo
-    per call). None when no manifest row for ``page_id`` (``repo`` narrows
-    the match when several repos plan the same page id) has a readable
-    concept. The returned ``repo`` names the owning repo — the caller
-    needs it for the repo-qualified URL ``/wiki/{repo}/{page_id}``.
+    repo's current HEAD (fresh/stale/unknown). None when no manifest row
+    for ``page_id`` (``repo`` narrows the match when several repos plan
+    the same page id) has a readable concept. The returned ``repo`` names
+    the owning repo — the caller needs it for the repo-qualified URL
+    ``/wiki/{repo}/{page_id}``.
     """
     from urllib.parse import quote
 
-    from cairn.wiki.manifest import load_manifest
-
-    store_suffix = f"&store={quote(store_key, safe='')}" if store_key else ""
-    bundle = OKFBundle(knowledge_dir)
-    heads: Dict[str, Optional[str]] = {}
-    for key, row in load_manifest(knowledge_dir)["pages"].items():
-        key_repo, key_page = _split_page_key(key)
-        if key_page != page_id or (repo and key_repo != repo):
-            continue
-        concept = _read_wiki_concept(
-            bundle, f"wiki/pages/{key_repo}/{key_page}"
-        )
+    for key_repo, key_page, row, concept, head in _wiki_rows(
+        knowledge_dir, repo=repo, page_id=page_id
+    ):
         if concept is None:
             continue
-        if key_repo not in heads:
-            heads[key_repo] = get_repo_head(key_repo)
+        store_suffix = f"&store={quote(store_key, safe='')}" if store_key else ""
         ref_hrefs = _wiki_ref_map(concept, row, store_suffix)
         html, toc = render_markdown_with_toc(concept.body, ref_hrefs)
         return {
@@ -792,9 +806,7 @@ def get_wiki_page(
             "toc": toc,
             "ref_hrefs": ref_hrefs,
             "sources": concept.sources or [],
-            "staleness": _wiki_staleness(
-                _recorded_sha(concept, row), heads[key_repo]
-            ),
+            "staleness": _wiki_staleness(_recorded_sha(concept, row), head),
         }
     return None
 

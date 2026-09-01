@@ -2694,6 +2694,28 @@ def test_settings_save_keeps_the_selected_store(tmp_path, monkeypatch):
     assert f'href="/projects?store={_SW_KEY_A}"' in resp.text
 
 
+def test_settings_post_actions_carry_the_store_in_the_url(tmp_path, monkeypatch):
+    """Both settings POST actions compose through links.url when a store
+    is selected: the POST lands at /settings/save?store=<key>, so the
+    response URL already carries the selection and the head stickiness
+    script never redirects the landing to a GET of a POST-only route
+    (405). Bare selection keeps the bare action URLs."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    selected = client.get("/settings", params={"store": _SW_KEY_A})
+    assert (
+        f'action="/settings/save?store={_SW_KEY_A}"' in selected.text
+    )
+    assert (
+        f'action="/settings/parity-check?store={_SW_KEY_A}"'
+        in selected.text
+    )
+
+    bare = client.get("/settings")
+    assert 'action="/settings/save"' in bare.text
+    assert 'action="/settings/parity-check"' in bare.text
+
+
 # ---------------------------------------------------------------------------
 # Global workspace selector (topbar): server-rendered on every view from
 # enumerate_stores (populated only, never probed), labels from the
@@ -4213,6 +4235,21 @@ def test_markdown_renderer_module_never_loads_server_stack():
     assert proc.stdout.strip() == "False"
 
 
+def test_shell_module_never_loads_server_stack():
+    """The shell context module is pure like the renderer — importing it
+    must not pull in the server stack (it is imported only inside
+    create_app, so the package-level pin alone would never load it)."""
+    code = (
+        "import sys; import cairn.dashboard.shell; "
+        "print(any(m in sys.modules "
+        "for m in ('starlette', 'uvicorn', 'jinja2')))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert proc.stdout.strip() == "False"
+
+
 def test_render_markdown_whitelists_blocks_and_escapes_inline_html():
     from cairn.dashboard.markdown import render_markdown
 
@@ -4327,6 +4364,24 @@ def test_render_markdown_inline_links_render_only_allowlisted_targets():
     assert "[relative](some-page)" in html
     assert 'href="javascript' not in html
     assert 'href="data:' not in html
+
+
+def test_render_markdown_link_target_quotes_cannot_break_out_of_href():
+    """A double quote inside an allowlisted target must not terminate the
+    href attribute (the working text is escaped with quote=False, so the
+    renderer neutralizes quotes at emission) — the classic attribute-
+    injection payload renders as data inside the href, never as new
+    attributes."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        '[hover](https://e.com/"onmouseover="location=\'//evil\'"x="y)\n'
+    )
+
+    assert 'onmouseover="' not in html
+    # Exactly one anchor, and the payload lives inside its href.
+    assert html.count("<a ") == 1
+    assert 'href="https://e.com/&quot;onmouseover=&quot;location=' in html
 
 
 def test_render_markdown_code_spans_beat_link_syntax():
