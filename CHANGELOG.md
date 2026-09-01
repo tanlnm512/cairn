@@ -11,6 +11,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Added
+- Wiki trust context and outward surfaces: every promoted wiki page now
+  records the workspace HEAD commit sha it was generated at (in the
+  concept's extensions and the manifest row), and both `cairn wiki status`
+  and the dashboard wiki views compare it with the repo's current HEAD —
+  `fresh` when they match, `stale` when both are present and differ,
+  `unknown` when either side is unavailable — so "how old is this page" is
+  answerable at a glance. `cairn wiki export --dir DIR [--force]` writes
+  every promoted page as `DIR/{repo}/{page_id}.md` with its OKF frontmatter
+  preserved (a non-empty target directory is refused without `--force`) and
+  reports the exported count, and `cairn wiki enrich [<page-id>|--all]`
+  queues `wiki-page-enrich` tasks whose facts carry the page's current body
+  plus fresh seeds; a critic-passing completion appends the new sections to
+  the promoted body — the prior text stays in the page — and merges the new
+  `## Sources` entries into the frontmatter (old entries first, deduped),
+  riding the existing critic gate and bounded revise cycle. Enrichment
+  requires an already-promoted page.
+- Queue maintenance without store surgery: `cairn task drop <id>` marks a
+  pending or in-progress task dropped — a terminal state no claim can touch
+  (done tasks are refused; dropping an in-progress task releases its claim
+  marker so the resource can be re-queued) — and `cairn task list
+  --kind-prefix PREFIX` filters whole task families, e.g.
+  `--kind-prefix wiki-page` lists every hop of the wiki chains. `cairn wiki
+  status` derives the new `dropped` per-page state from the live chain, and
+  retry's failed-only selection never resurrects a dropped page.
+- Wiki rendering and onboarding: the dashboard's escape-first markdown
+  renderer now renders inline code spans as `<code>` elements and GFM pipe
+  tables as tables (still no inline HTML passthrough), so pages can use the
+  two constructs technical writers lean on; and the generated agent docs
+  (`cairn install-agents`) gain a `## Wiki` section walking the
+  generate → claim → complete → `ask_compass` consumption loop, making the
+  consumer side of the wiki visible to new workspaces.
+
+### Changed
+- Wiki generation quality: the planner excludes test-majority modules — a
+  strict majority of the module's indexed files under
+  `test`/`tests`/`spec`/`specs` path segments — from page plans entirely
+  instead of letting them outrank product code by degree (a mixed module
+  keeps its page; only modules whose test files outnumber code files are
+  dropped). The critic reports each unresolved path once per completion
+  regardless of how many citation forms mention it (the same dead path
+  cited in the body and the footer no longer double-reports), and the wiki
+  output spec — the `## Sources` footer requirement — now serves any task
+  kind whose name starts with `wiki-page`, so revise hops and enrichment
+  chains of any depth keep their output instructions.
+- Docs set synced with the wiki surface: `docs/cli-reference.md` gains
+  `wiki export`/`enrich` rows, the `dropped` state and fresh/stale
+  staleness on `wiki status`, and `task drop`/`--kind-prefix`;
+  `docs/knowledge-and-memory.md` covers the commit-sha provenance, the
+  staleness model, the test-majority exclusion, and the enrich append
+  semantics; `docs/mcp-tools.md` extends the wiki workflow's
+  consume-and-operate step.
+
 ## [0.16.2] - 2026-08-31
 
 ### Added

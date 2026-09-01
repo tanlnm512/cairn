@@ -687,3 +687,45 @@ verbatim for the future round.
 - **Consequences**: test-only repos fail generation loudly; T002 implements
   the guard as one check after the filter; wrong cost if wrong: a mixed repo
   with only test-majority modules (rare) cannot generate until code lands.
+
+### D-025: T013 pin setup-order fix (fixture bug, contract unchanged)
+- **Context**: T014's digest found `test_export_iterates_manifest_rows_not_the_
+  bundle_tree` writing `knowledge/_wiki/index.md` before anything creates
+  `_wiki/` (only `_write_manifest`, later in the test, mkdirs it) — a
+  `FileNotFoundError` in the fixture itself, failing identically at the red
+  baseline, invisible to any cli/wiki.py implementation.
+- **Decision**: orchestrator fix-round on T013's deliverable (inline — one
+  line, zero unknowns, proven in T014's /tmp experiment): mkdir `_wiki/`
+  before the stray-file write. Assertions untouched — the pinned contract
+  (manifest-row iteration, not rglob) is exactly what T013 wrote.
+- **Consequences**: the pin now exercises its intended iteration contract
+  against the implementation; no TC or test.md change; fixture-order lessons
+  go to the qa brief's exemplars, not the contract.
+
+### D-026: closing-audit regression gate — 4 test_ensure_semantic_deps failures parked as environmental
+- **Context**: the Phase-7 whole-suite gate ran 2782 passed / 4 failed (plus
+  one contention-flake, `test_recording_overhead_under_5_percent`, green on
+  the unloaded re-run). All 4 failures are in
+  tests/test_ensure_semantic_deps.py, whose contract requires the
+  verification child (`sys.executable -c "import sentence_transformers,
+  numpy, sqlite_vec"`) to FAIL so the wipe-and-reinstall path exercises.
+  `sentence-transformers` is `[semantic]`-extra only, but has been present
+  in `.venv` since 2026-08-31 00:37 — predating the branch cut
+  (e002f9b, 16:30) and every task in this plan. The plan's 30-file diff
+  touches nothing in graph/embeddings or the deps machinery.
+- **Decision**: park, don't fix and don't uninstall. Counterfactual proof:
+  `uv run --isolated --extra test pytest tests/test_ensure_semantic_deps.py`
+  → the 4 pass in a semantic-free env (its one different failure,
+  `test_install_cmd_pip_branch_uses_current_interpreter`, is an --isolated
+  harness artifact — green in both .venv full-suite runs). Uninstalling from
+  `.venv` was rejected: with `~/.cairn/lib` gone it may be the live local
+  semantic runtime.
+- **Consequences**: local-env pollution breaks these 4 tests for ANY branch
+  on this machine until the venv is re-synced without the semantic extra;
+  CI (installs `.[dev]` only) is unaffected; not attributable to this plan's
+  implementation, so the gate is recorded green-with-ruling rather than
+  blocking. Audit-proofs note: 6 auto TC commands ran via the stale pipx
+  `cairn` on PATH (no wiki subcommands) with their Given fixtures absent —
+  FAILs adjudicated harness artifacts; the behaviors are covered by the
+  mapped pytest suites (planner/promotion/critic/enrich/CLI), all green.
+

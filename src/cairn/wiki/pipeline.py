@@ -104,6 +104,56 @@ def _queue_pages(
     return queued_task_ids
 
 
+def queue_enrich_tasks(
+    bundle: OKFBundle,
+    repo: Optional[str] = None,
+    page_id: Optional[str] = None,
+) -> List[Task]:
+    """Queue one ``wiki-page-enrich`` task per promoted manifest page.
+
+    Only rows whose promoted concept (``wiki/pages/{repo}/{page_id}``) is
+    readable are queued; ``repo``/``page_id`` narrow the selection. Each
+    task's facts carry the page's current body plus the row's
+    seeds/input_hash/repo and a freshly resolved ``commit_sha``; the row's
+    ``task_id``/``state`` move to the enrich task while its recorded
+    ``commit_sha`` is left alone — the old body is still what is published
+    until the append lands.
+    """
+    manifest = load_manifest(bundle)
+    pages: Dict[str, Any] = manifest.setdefault("pages", {})
+    queued: List[Task] = []
+    for key in sorted(pages):
+        row_repo, _, row_page = str(key).partition("/")
+        if repo and row_repo != repo:
+            continue
+        if page_id and row_page != page_id:
+            continue
+        row = pages[key]
+        try:
+            concept = bundle.read_concept(f"wiki/pages/{row_repo}/{row_page}")
+        except Exception:
+            continue
+        facts: Dict[str, Any] = {
+            "title": row.get("title", row_page),
+            "description": row.get("description", ""),
+            "module": row.get("module", ""),
+            "seeds": row.get("seeds", []),
+            "input_hash": row.get("input_hash", ""),
+            "repo": row_repo,
+            "current_body": concept.body,
+        }
+        commit_sha = get_repo_head(row_repo)
+        if commit_sha:
+            facts["commit_sha"] = commit_sha
+        task = create_task(bundle, "wiki-page-enrich", row_page, facts=facts)
+        row["task_id"] = task.id
+        row["state"] = "queued"
+        queued.append(task)
+    if queued:
+        save_manifest(bundle.root, manifest)
+    return queued
+
+
 def _latest(tasks: List[Task]) -> Task:
     return max(tasks, key=lambda t: (t.created_at, t.attempt))
 

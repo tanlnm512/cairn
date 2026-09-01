@@ -212,6 +212,59 @@ def _try_remove_stale_marker(claim_marker: Path) -> bool:
         return False
 
 
+def _enriched_article(
+    bundle: OKFBundle,
+    task: Task,
+    task_id: str,
+    repo: str,
+    page_id: str,
+    new_sections: str,
+    new_sources: Optional[List[Dict[str, Any]]],
+) -> OKFConcept:
+    """The enriched Wiki-Article: the promoted page's body with
+    ``new_sections`` appended, sources merged old entries first and deduped
+    by entry value, extensions refreshed from the task's facts. The promoted
+    concept is read at completion time; a page with no readable concept
+    falls back to ``facts["current_body"]``."""
+    try:
+        current = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
+    except Exception:
+        current = None
+    base = (
+        current.body
+        if current is not None
+        else str(task.facts.get("current_body") or "")
+    )
+    merged: List[Dict[str, Any]] = (
+        list(current.sources) if current is not None and current.sources else []
+    )
+    for entry in new_sources or []:
+        if entry not in merged:
+            merged.append(entry)
+    return OKFConcept(
+        type="Wiki-Article",
+        title=f"Wiki: {page_id}",
+        description=f"Wiki article for {repo}/{page_id}",
+        resource=page_id,
+        tags=[repo, "wiki"],
+        timestamp=_now(),
+        concept_id=f"wiki/pages/{repo}/{page_id}",
+        sources=merged or None,
+        body=f"{base}\n\n{new_sections}" if base else new_sections,
+        extensions={
+            "page_id": page_id,
+            "input_hash": task.facts.get("input_hash"),
+            "task_id": task_id,
+            "refine_catalog": task.facts.get("refine_catalog"),
+            **(
+                {"commit_sha": task.facts["commit_sha"]}
+                if task.facts.get("commit_sha")
+                else {}
+            ),
+        },
+    )
+
+
 def complete_task(
     bundle: OKFBundle,
     task_id: str,
@@ -420,34 +473,40 @@ def complete_task(
                         .replace(".", "-")
                         .replace("#", "-")
                     )
-                    promoted_body = result
-                    if critic_result.warnings:
-                        marker = "> [critic-warning] " + "; ".join(
-                            critic_result.warnings
-                        ) + "\n\n"
-                        promoted_body = marker + result
-                    wiki_concept = OKFConcept(
-                        type="Wiki-Article",
-                        title=f"Wiki: {page_id}",
-                        description=f"Wiki article for {repo}/{page_id}",
-                        resource=page_id,
-                        tags=[repo, "wiki"],
-                        timestamp=_now(),
-                        concept_id=f"wiki/pages/{repo}/{page_id}",
-                        sources=wiki_sources,
-                        body=promoted_body,
-                        extensions={
-                            "page_id": page_id,
-                            "input_hash": task.facts.get("input_hash"),
-                            "task_id": task_id,
-                            "refine_catalog": task.facts.get("refine_catalog"),
-                            **(
-                                {"commit_sha": task.facts["commit_sha"]}
-                                if task.facts.get("commit_sha")
-                                else {}
-                            ),
-                        },
-                    )
+                    if task.task_kind.startswith("wiki-page-enrich"):
+                        wiki_concept = _enriched_article(
+                            bundle, task, task_id, repo, page_id, result,
+                            wiki_sources,
+                        )
+                    else:
+                        promoted_body = result
+                        if critic_result.warnings:
+                            marker = "> [critic-warning] " + "; ".join(
+                                critic_result.warnings
+                            ) + "\n\n"
+                            promoted_body = marker + result
+                        wiki_concept = OKFConcept(
+                            type="Wiki-Article",
+                            title=f"Wiki: {page_id}",
+                            description=f"Wiki article for {repo}/{page_id}",
+                            resource=page_id,
+                            tags=[repo, "wiki"],
+                            timestamp=_now(),
+                            concept_id=f"wiki/pages/{repo}/{page_id}",
+                            sources=wiki_sources,
+                            body=promoted_body,
+                            extensions={
+                                "page_id": page_id,
+                                "input_hash": task.facts.get("input_hash"),
+                                "task_id": task_id,
+                                "refine_catalog": task.facts.get("refine_catalog"),
+                                **(
+                                    {"commit_sha": task.facts["commit_sha"]}
+                                    if task.facts.get("commit_sha")
+                                    else {}
+                                ),
+                            },
+                        )
                     bundle.write_concept(wiki_concept)
                     promoted = True
 
