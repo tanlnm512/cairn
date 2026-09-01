@@ -6,16 +6,18 @@ bundle. Every string field passes through ``memory.privacy.strip_private_data``
 (spec observability-telemetry §7) so the bundle is safe to paste into a public
 GitHub issue, and nothing is ever uploaded.
 
-Coverage here mirrors test_doctor.py / test_metrics_extensions.py: a file-backed
-fixture DB built with ``_apply_schema`` and seeded directly, then driven through
-the CliRunner. Asserts (a) the expected sections, (b) valid ``--json``, (c)
-REDACTION -- a secret-shaped value seeded into tool_metrics / events is
-scrubbed and does NOT appear verbatim, (d) ``--out`` writes a file, and (e)
-graceful behavior on an empty / missing store.
+Coverage: a file-backed fixture DB built with ``_apply_schema`` and seeded
+directly, then driven through the CliRunner. Asserts the expected sections,
+valid ``--json``, REDACTION (a secret-shaped value seeded into tool_metrics /
+events is scrubbed and does NOT appear verbatim), ``--out`` writing a file,
+and graceful degradation on empty and broken stores (report's own
+open-never-raise / never-materialize glue, distinct from doctor's).
 """
 from __future__ import annotations
 
 import json
+
+import pytest
 import sqlite3
 import time
 
@@ -143,12 +145,6 @@ def test_doctor_results_surface_recent_errors(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# (b) --json output is valid JSON
-# ---------------------------------------------------------------------------
-
-
-
-# ---------------------------------------------------------------------------
 # (c) REDACTION -- strip_private_data scrubs secret-shaped content
 # ---------------------------------------------------------------------------
 
@@ -244,7 +240,32 @@ def test_graceful_on_empty_store(tmp_path):
     assert data["versions"]["cairn"]
 
 
+@pytest.mark.parametrize("store", ["nodir", "typo", "garbage"])
+def test_graceful_on_broken_store(tmp_path, store):
+    """report's own degradation glue: a store that cannot open (missing
+    under a nonexistent dir, missing in an existing dir, or corrupt bytes)
+    still yields an exit-0 bundle with schema FAIL -- and never
+    materializes the store (a read-only diagnostic must not mask a typo'd
+    --db with a fresh empty bundle)."""
+    preexisting = store == "garbage"
+    if store == "nodir":
+        db = tmp_path / "nodir" / "missing.db"
+    elif store == "typo":
+        db = tmp_path / "typo.db"
+    else:
+        db = tmp_path / "garbage.db"
+        db.write_bytes(b"\x00not a database\x00" * 20)
 
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["versions"]["cairn"]
+    schema = next(r for r in data["doctor"] if r["name"] == "schema")
+    assert schema["status"] == "FAIL"
+    if preexisting:
+        assert db.read_bytes() == b"\x00not a database\x00" * 20
+    else:
+        assert not db.exists(), "report must not materialize a store"
 
 
 # ---------------------------------------------------------------------------

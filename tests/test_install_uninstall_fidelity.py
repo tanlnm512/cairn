@@ -349,6 +349,14 @@ class TestGlobalScopeUninstall:
         st = json.loads((fake_home / ".claude" / "settings.json").read_text(encoding="utf-8"))
         assert "PostToolUse" in st.get("hooks", {})
 
+    def test_global_uninstall_invokes_claude_mcp_remove(self, fake_home, tmp_path, monkeypatch):
+        _cli_at(monkeypatch, "claude")
+        calls = _spy_subprocess(monkeypatch)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        uninstall(str(ws), clients=["claude"], scope="global")
+        assert ["claude", "mcp", "remove", "cairn", "--scope", "user"] in calls
+
     def test_workspace_uninstall_never_invokes_claude_mcp_remove(self, fake_home, tmp_path, monkeypatch):
         """The historical workspace path spawns no subprocesses (it never
         registered one)."""
@@ -599,6 +607,20 @@ class TestTransportDefault:
         assert "command" in cd["mcpServers"]["cairn"]
         assert "url" not in cd["mcpServers"]["cairn"]
 
+    def test_droid_cli_sse_registers_sse_type(self, tmp_path, monkeypatch):
+        """With the droid CLI present, the default SSE transport must
+        register the daemon URL via `--type sse`, not a stdio command spawn."""
+        _cli_at(monkeypatch, "droid")
+        calls = _spy_subprocess(monkeypatch)
+        from cairn.mcp_server import lifecycle as lc
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["droid"])
+
+        expected_url = f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
+        assert ["droid", "mcp", "add", "cairn", expected_url, "--type", "sse"] in calls
+
     def test_claude_global_stdio_keeps_stdio_registration(self, fake_home, tmp_path, monkeypatch):
         """transport=stdio global install registers the command spawn, with
         no --transport flag (regression pin for the pre-SSE behavior). A
@@ -779,25 +801,9 @@ class TestCairnHomeEnvBlock:
 # --------------------------------------------------------------------------
 
 class TestInstallVerification:
-    """After a stdio install under a custom CAIRN_HOME, every file-written
-    client carries a verification verdict: the registration's exact binary+env
-    is spawned with probe args (`config --json`, D-005) from inside the
-    workspace and its resolved store compared with the install target
-    (TC-010 healthy PASS, TC-011 FAIL naming both stores). dry_run never
-    spawns, and SSE / CLI-registered clients get no verdict (D-006 scope).
-
-    TDD state: the healthy-PASS and FAIL tests are RED until T018 (the
-    defaulted `verification_status` / `verification_detail` fields on
-    InstallResult) and T019 (the spawn-probe loop in install()) land — they
-    must fail on the missing verdict, never on anything else. The dry_run and
-    skip guards are written with getattr(..., "skipped") so they hold both
-    before (field absent) and after (verdict stays "skipped") T018/T019, and
-    only fail if a wrong implementation starts verifying what D-005/D-006
-    exempt.
-
-    Hermeticity (C-04): workspaces live in tmp_path only; spawns are observed
-    through real PATH shims, never by patching subprocess globals.
-    """
+    """Real-subprocess install verification: a healthy install marks every
+    written-client file PASS; a PATH-shadowed cairn names both stores in the
+    FAIL verdict."""
 
     def _custom_home(self, tmp_path, monkeypatch) -> tuple[Path, Path]:
         """A custom CAIRN_HOME + workspace with the import-time bindings

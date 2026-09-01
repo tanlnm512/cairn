@@ -214,7 +214,7 @@ class TestServerBackendFamily:
     """CAIRN_EMBED_BACKEND=server/omlx/ollama resolves to the 'server' arm.
 
     The family must never coalesce into 'hash': is_hash_fallback() stays
-    False for every server config, with or without sentence-transformers.
+    False for every server config.
     """
 
     @pytest.mark.parametrize("name", ["server", "omlx", "ollama", "OMLX"])
@@ -295,14 +295,12 @@ class _StubEmbedServer:
       ("json", status, payload) — respond with that status and JSON body
       ("raw", status, text)     — respond with that status and a plain body
       ("close",)                — drop the connection without responding
-      ("hang",)                 — accept the request and never respond
     """
 
     def __init__(self):
         self.requests = []
         self.behavior = None
         outer = self
-        self._release = threading.Event()
 
         class _Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
@@ -331,8 +329,6 @@ class _StubEmbedServer:
                 if kind == "close":
                     self.close_connection = True
                     return
-                if kind == "hang":
-                    outer._release.wait(5)
                     return
                 _, status, body = action
                 if kind == "raw":
@@ -364,7 +360,6 @@ class _StubEmbedServer:
         return f"http://{host}:{port}/v1"
 
     def close(self):
-        self._release.set()
         self._httpd.shutdown()
         self._httpd.server_close()
 
@@ -592,7 +587,7 @@ class TestServerAvailabilityProbe:
 
 
 # ---------------------------------------------------------------------------
-# 6. current_model() — server-family stamp derivation (FR-004)
+# 6b. current_model() — server-family stamp derivation (FR-004)
 # ---------------------------------------------------------------------------
 
 
