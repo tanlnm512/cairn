@@ -16,6 +16,8 @@ from click.testing import CliRunner
 from cairn.cli import main
 from cairn.cli import upgrade as upgrade_mod
 
+pytestmark = pytest.mark.infra
+
 
 # --- Fixtures --------------------------------------------------------------
 

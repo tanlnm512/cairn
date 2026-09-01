@@ -38,6 +38,8 @@ from cairn.graph import scanner as scanner_mod
 from cairn.graph.schema import _apply_schema
 from cairn.graph.watcher import FileWatcherService, _DebouncingHandler
 
+pytestmark = pytest.mark.infra
+
 
 # ---------------------------------------------------------------------------
 # Helpers: corpus, DB, fake watchdog, event objects
