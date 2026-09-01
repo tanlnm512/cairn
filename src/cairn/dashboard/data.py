@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from cairn.okf.concept import OKFConcept
 
 from cairn.bench.agent_suite import CHARS_PER_TOKEN
-from cairn.dashboard.markdown import render_markdown
+from cairn.dashboard.markdown import render_markdown_with_toc
 from cairn.dashboard.tokenizer import (
     HEURISTIC_MODE,
     active_tokenizer_mode,
@@ -717,22 +717,57 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
     return pages
 
 
+def _symbol_graph_href(symbol: str, store_suffix: str) -> str:
+    """Deep link to the symbol's graph view (the existing /graph seam:
+    scope=symbol&focus=..., store riding last when selected)."""
+    from urllib.parse import quote
+
+    return f"/graph?scope=symbol&focus={quote(symbol, safe='')}{store_suffix}"
+
+
+def _wiki_ref_map(concept, row: dict, store_suffix: str) -> dict:
+    """``code-span text -> graph deep link`` for the refs this page itself
+    vouches for: frontmatter sources plus the manifest plan's symbol seeds
+    (both already verified against the graph by the promotion gate). Only
+    mapped spans become links, so an arbitrary backticked word can never
+    link to a symbol the graph never resolved."""
+    refs: Dict[str, str] = {}
+    for entry in concept.sources or []:
+        symbol = entry.get("symbol") if isinstance(entry, dict) else None
+        if symbol:
+            refs.setdefault(str(symbol), _symbol_graph_href(str(symbol), store_suffix))
+    seeds = row.get("seeds") or {}
+    for symbol in seeds.get("symbols") or []:
+        refs.setdefault(str(symbol), _symbol_graph_href(str(symbol), store_suffix))
+    return refs
+
+
 def get_wiki_page(
-    knowledge_dir: str, page_id: str, repo: Optional[str] = None
+    knowledge_dir: str,
+    page_id: str,
+    repo: Optional[str] = None,
+    store_key: str = "",
 ) -> Optional[dict]:
     """One wiki page: manifest row plus the rendered concept body.
 
-    ``html`` is the body through the escape-first markdown renderer;
-    ``sources`` is the concept's frontmatter list verbatim; ``staleness``
-    compares the recorded commit sha with the repo's current HEAD
-    (fresh/stale/unknown, HEAD resolved once per repo per call). None when
-    no manifest row for ``page_id`` (``repo`` narrows the match when
-    several repos plan the same page id) has a readable concept. The
-    returned ``repo`` names the owning repo — the caller needs it for the
-    repo-qualified URL ``/wiki/{repo}/{page_id}``.
+    ``html`` is the body through the escape-first markdown renderer and
+    ``toc`` its h2/h3 outline (anchors match the emitted heading ids);
+    ``ref_hrefs`` maps the page's vouched symbol refs (sources + plan
+    seeds) to graph deep links — the body's backticked spans and the
+    sources list linkify through it, with the selected store riding when
+    ``store_key`` is set. ``sources`` is the concept's frontmatter list
+    verbatim; ``staleness`` compares the recorded commit sha with the
+    repo's current HEAD (fresh/stale/unknown, HEAD resolved once per repo
+    per call). None when no manifest row for ``page_id`` (``repo`` narrows
+    the match when several repos plan the same page id) has a readable
+    concept. The returned ``repo`` names the owning repo — the caller
+    needs it for the repo-qualified URL ``/wiki/{repo}/{page_id}``.
     """
+    from urllib.parse import quote
+
     from cairn.wiki.manifest import load_manifest
 
+    store_suffix = f"&store={quote(store_key, safe='')}" if store_key else ""
     bundle = OKFBundle(knowledge_dir)
     heads: Dict[str, Optional[str]] = {}
     for key, row in load_manifest(knowledge_dir)["pages"].items():
@@ -746,12 +781,16 @@ def get_wiki_page(
             continue
         if key_repo not in heads:
             heads[key_repo] = get_repo_head(key_repo)
+        ref_hrefs = _wiki_ref_map(concept, row, store_suffix)
+        html, toc = render_markdown_with_toc(concept.body, ref_hrefs)
         return {
             "repo": key_repo,
             "page_id": page_id,
             "title": row.get("title") or concept.title or page_id,
             "state": row.get("state", ""),
-            "html": render_markdown(concept.body),
+            "html": html,
+            "toc": toc,
+            "ref_hrefs": ref_hrefs,
             "sources": concept.sources or [],
             "staleness": _wiki_staleness(
                 _recorded_sha(concept, row), heads[key_repo]

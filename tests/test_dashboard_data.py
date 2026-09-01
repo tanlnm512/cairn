@@ -2771,6 +2771,63 @@ def test_get_wiki_page_missing_page_or_dir_returns_none(tmp_path):
     assert get_wiki_page(str(tmp_path / "nope"), "overview") is None
 
 
+def test_get_wiki_page_builds_ref_map_from_sources_and_seeds(tmp_path):
+    """ref_hrefs maps the page's vouched symbols (frontmatter sources +
+    plan seeds) to graph deep links, store riding last; the body's
+    backticked spans linkify through the map while unmapped spans stay
+    plain code. toc carries the h2/h3 outline with matching anchors."""
+    from cairn.dashboard.data import get_wiki_page
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    kdir = tmp_path / "knowledge"
+    body = (
+        "## How it works\n"
+        "\n"
+        "Calls `demo_main` on startup; see also `plain_word`.\n"
+    )
+    bundle = OKFBundle(str(kdir))
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki: overview",
+            description="Wiki article for demo/overview",
+            resource="overview",
+            tags=["demo", "wiki"],
+            timestamp="2026-08-30T10:00:00Z",
+            concept_id="wiki/pages/demo/overview",
+            sources=_WIKI_SOURCES,
+            body=body,
+            extensions={"page_id": "overview", "input_hash": "hash-overview"},
+        )
+    )
+    _write_manifest(
+        kdir,
+        {
+            "demo/overview": _manifest_row(
+                _plan_entry("overview", "demo architecture overview"),
+                task_id="task-overview",
+                state="promoted",
+            )
+        },
+    )
+
+    page = get_wiki_page(str(kdir), "overview", store_key="ab12")
+
+    assert page["ref_hrefs"] == {
+        "demo_main": "/graph?scope=symbol&focus=demo_main&store=ab12"
+    }
+    assert (
+        '<a class="code-ref" href="/graph?scope=symbol&amp;focus=demo_main'
+        '&amp;store=ab12"><code>demo_main</code></a>' in page["html"]
+    )
+    assert "<code>plain_word</code>" in page["html"]
+    assert page["toc"] == [
+        {"level": 2, "text": "How it works", "anchor": "how-it-works"}
+    ]
+    assert '<h2 id="how-it-works">' in page["html"]
+
+
 # ---------------------------------------------------------------------------
 # Wiki staleness (FR-007 / D-020): recorded sha (concept extensions, manifest
 # row fallback) vs the workspace HEAD, as fresh/stale/unknown.

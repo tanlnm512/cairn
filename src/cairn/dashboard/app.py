@@ -785,7 +785,9 @@ def create_app(
         )
         repo = request.path_params["repo"]
         page_id = request.path_params["page_id"]
-        page = get_wiki_page(selected_knowledge, page_id, repo=repo)
+        page = get_wiki_page(
+            selected_knowledge, page_id, repo=repo, store_key=store_key
+        )
         if page is None:
             return _wiki_not_found()
         promoted = [

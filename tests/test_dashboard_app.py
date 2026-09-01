@@ -4107,3 +4107,93 @@ def test_render_markdown_pipe_tables_render_as_tables():
 
     assert "<table>" not in degraded
     assert "a | b | c" in degraded
+
+
+def test_render_markdown_inline_links_render_only_allowlisted_targets():
+    """[label](target) becomes an anchor only for http(s)://, /, and #
+    targets; every other scheme (javascript:, data:) or bare relative
+    renders as the literal escaped text — the href attribute is emitted
+    exclusively from an allowlist match, never from the source text."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "See [docs](https://example.com/a?b=1), [local](/graph), "
+        "[anchor](#top), [bad](javascript:alert(1)), "
+        "[data](data:text/plain,x), and [relative](some-page).\n"
+    )
+
+    assert '<a href="https://example.com/a?b=1">docs</a>' in html
+    assert '<a href="/graph">local</a>' in html
+    assert '<a href="#top">anchor</a>' in html
+    assert "[bad](javascript:alert(1))" in html  # literal, still escaped text
+    assert "[data](data:text/plain,x)" in html
+    assert "[relative](some-page)" in html
+    assert 'href="javascript' not in html
+    assert 'href="data:' not in html
+
+
+def test_render_markdown_code_spans_beat_link_syntax():
+    """A link written inside backticks is a code span, not a link — the
+    combined inline pass consumes the span atomically."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown("Use the `[x](/y)` literal.\n")
+
+    assert "<code>[x](/y)</code>" in html
+    assert '<a href="/y">' not in html
+
+
+def test_render_markdown_link_map_wraps_vouched_code_refs():
+    """A code span whose exact text sits in the link map renders as an
+    anchor around the code element; unmapped spans stay plain <code>."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "Calls `demo_main` and `plain_word`.\n",
+        link_map={"demo_main": "/graph?scope=symbol&focus=demo_main&store=ab"},
+    )
+
+    assert (
+        '<a class="code-ref" href="/graph?scope=symbol&amp;focus=demo_main'
+        '&amp;store=ab"><code>demo_main</code></a>' in html
+    )
+    assert "<code>plain_word</code>" in html
+    assert 'code-ref" href="[^"]*plain_word' not in html
+
+
+def test_render_markdown_with_toc_anchors_match_heading_ids():
+    """The outline's anchors are exactly the ids the headings emitted,
+    including dedupe suffixes; h1/h4+ stay out of the outline."""
+    from cairn.dashboard.markdown import render_markdown_with_toc
+
+    html, toc = render_markdown_with_toc(
+        "# Title\n"
+        "\n"
+        "## Alpha\n"
+        "\n"
+        "text\n"
+        "\n"
+        "### Beta\n"
+        "\n"
+        "## Alpha again\n"
+        "\n"
+        "#### Deep\n"
+    )
+
+    assert [t["text"] for t in toc] == ["Alpha", "Beta", "Alpha again"]
+    assert toc[0]["anchor"] == "alpha"
+    assert toc[1]["anchor"] == "beta"
+    assert toc[2]["anchor"] == "alpha-again"
+    assert '<h2 id="alpha">' in html
+    assert '<h3 id="beta">' in html
+    assert '<h2 id="alpha-again">' in html
+    assert '<h1 id="title">' in html  # ids on every heading, toc h2/h3 only
+
+
+def test_render_markdown_with_toc_dedupes_repeated_headings():
+    from cairn.dashboard.markdown import render_markdown_with_toc
+
+    html, toc = render_markdown_with_toc("## Same\n\n## Same\n\n## Same\n")
+
+    assert [t["anchor"] for t in toc] == ["same", "same-1", "same-2"]
+    assert html.count("<h2 ") == 3
