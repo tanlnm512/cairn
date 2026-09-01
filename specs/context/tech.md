@@ -45,7 +45,7 @@ Stack, build/test runners, and gates. Cited from pyproject.toml,
 - Hermetic by default: `tests/conftest.py:47-67` points HOME/CAIRN_HOME into a
   per-test tmp sandbox. Tests that exercise env propagation across a REAL
   process boundary use subprocess + `env={"CAIRN_HOME": ...}` (e.g.
-  tests/test_install_uninstall_fidelity.py:513, 577, 590, 631;
+  tests/test_install_uninstall_fidelity.py:501, 544, 563;
   tests/test_cli_init_rail.py:34-96; tests/test_uninstall_cmd.py:39-81).
 - Conventions observable in the suite: one test file per feature area
   (`test_doctor.py`, `test_clients.py`, `test_install_uninstall_fidelity.py`,
