@@ -2647,6 +2647,54 @@ def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Forms keep the selected store (FR-003 follow-up): GET filter forms drop
+# the action URL's query string on submit, and the settings POST actions
+# carried no store at all -- so applying a filter or saving settings on a
+# selected store silently reverted to the launch store one hop later
+# (rescued by the stickiness redirect, and for POSTs landing back on a
+# POST-only route path, not rescued at all). The fix: every form carries a
+# hidden store input, and settings_save resolves the body store through
+# the same validation seam.
+# ---------------------------------------------------------------------------
+
+
+def test_filter_forms_carry_the_selected_store_as_a_hidden_input(
+    tmp_path, monkeypatch
+):
+    """The history/tasks/graph filter forms and both settings forms render
+    the hidden store input on a selected store, and never on the launch
+    store (bare pages stay byte-identical)."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    for path in ("/history", "/tasks", "/graph", "/settings"):
+        selected = client.get(path, params={"store": _SW_KEY_A})
+        assert selected.status_code == 200, path
+        assert (
+            f'<input type="hidden" name="store" value="{_SW_KEY_A}">'
+            in selected.text
+        ), path
+        bare = client.get(path)
+        assert '<input type="hidden" name="store"' not in bare.text, path
+
+
+def test_settings_save_keeps_the_selected_store(tmp_path, monkeypatch):
+    """settings_save reads the store from the POST body (a form POST drops
+    the query string) through the same validation seam and re-renders with
+    the selection riding the nav links. An invalid knob forces the
+    refusal re-render, proving the store survived without writing config."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.post(
+        "/settings/save",
+        data={"store": _SW_KEY_A, "CAIRN_EMBED_TIMEOUT": "not-a-number"},
+    )
+
+    assert resp.status_code == 400
+    assert "Refused" in resp.text
+    assert f'href="/projects?store={_SW_KEY_A}"' in resp.text
+
+
+# ---------------------------------------------------------------------------
 # Mixed-source usage (cli-usage-recording FR-002, TC-003 / TC-004): CLI
 # invocations land in tool_metrics as source='cli' rows named 'cli:<command>'
 # beside source='mcp' tool rows (cli_metrics stamps 'cli'; MCP rows ride the

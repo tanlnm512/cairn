@@ -311,7 +311,10 @@ def create_app(
         )
 
     def resolve_selection(
-        request: Request, db_path: str | None, knowledge_dir: str | None
+        request: Request,
+        db_path: str | None,
+        knowledge_dir: str | None,
+        form=None,
     ) -> tuple[str | None, str, str]:
         """This request's ``(db, knowledge_root, store_key)`` (FR-003, D-001).
 
@@ -322,8 +325,15 @@ def create_app(
         path (no arbitrary-file-open vector). An unknown, empty, or missing
         key raises MissingDatabaseError so the app-level handler renders
         the missing-DB page: the friendly missing state, never an error.
+
+        ``form`` is the already-parsed body of a POST whose form carries the
+        hidden store input (settings): the body store is a fallback for the
+        query param only — one seam, two transports, same validation.
         """
         store_key = request.query_params.get("store", "").strip()
+        if not store_key and form is not None:
+            raw = form.get("store")
+            store_key = (str(raw) if raw is not None else "").strip()
         if not store_key:
             return db_path, knowledge_dir or str(default_knowledge_path()), ""
         home = Path(paths.CAIRN_HOME)
@@ -772,7 +782,9 @@ def create_app(
     # handlers above stay plain-def (threadpool) — this route touches no SQL.
     async def settings_save(request: Request) -> Response:
         form = await request.form()
-        _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
+        _, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir, form=form
+        )
         submitted = {
             key: str(form.get(key) or "").strip()
             for key in SETTINGS_KEYS

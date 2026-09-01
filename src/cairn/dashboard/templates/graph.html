@@ -37,6 +37,7 @@
       <input type="checkbox" name="tests" value="1"{% if include_tests %} checked{% endif %}>
       Include tests
     </label>
+    {{ links.store_field() }}
     <button type="submit">Apply</button>
   </form>
   {#- Layout toggle (FR-004): links swap only the layout param, keeping
