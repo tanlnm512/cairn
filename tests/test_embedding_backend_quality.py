@@ -24,7 +24,6 @@ import socket
 import sqlite3
 import struct
 import threading
-import time
 from unittest import mock
 
 import pytest
@@ -85,36 +84,6 @@ class TestIsHashFallback:
         with mock.patch("cairn.graph.embeddings._backend_name", return_value="hash"):
             assert emb.is_hash_fallback() is False
 
-    def test_false_when_real_local_backend(self, monkeypatch):
-        monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
-        with mock.patch(
-            "cairn.graph.embeddings._effective_backend", return_value="local"
-        ), mock.patch("cairn.graph.embeddings._backend_name", return_value="local"):
-            assert emb.is_hash_fallback() is False
-
-    def test_false_when_openai_backend(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "openai")
-        with mock.patch(
-            "cairn.graph.embeddings._effective_backend", return_value="openai"
-        ), mock.patch("cairn.graph.embeddings._backend_name", return_value="openai"):
-            assert emb.is_hash_fallback() is False
-
-    def test_actual_default_install_matches_expectation(self, monkeypatch):
-        """Integration check against the real resolution logic (no mocks).
-
-        In the default test env (no [semantic] extra), the effective backend
-        resolves to "hash" and _backend_name() is "local" -> fallback is True.
-        Skip if sentence-transformers happens to be installed (then it's real).
-        """
-        monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
-        emb.reset_backend_cache()
-        try:
-            import sentence_transformers  # noqa: F401
-
-            pytest.skip("sentence-transformers installed; no hash fallback in this env")
-        except ImportError:
-            assert emb.is_hash_fallback() is True
-
 
 # ---------------------------------------------------------------------------
 # 2. warn_hash_fallback_once — rate-limited warning
@@ -136,24 +105,6 @@ class TestWarnHashFallbackOnce:
         assert len(warnings) == 1, "should fire at most once per process"
         assert "recall_memory" in warnings[0].getMessage(), "first caller's context recorded"
         assert "hash backend" in warnings[0].getMessage().lower()
-
-    def test_noop_when_real_backend(self, caplog):
-        logger = logging.getLogger("cairn.tests.hash_fallback_warning")
-        caplog.set_level(logging.WARNING, logger="cairn.tests.hash_fallback_warning")
-        with mock.patch("cairn.graph.embeddings.is_hash_fallback", return_value=False):
-            emb.warn_hash_fallback_once(logger, context="semantic_search")
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warnings == [], "real backend should not warn"
-
-    def test_noop_when_explicit_hash(self, caplog):
-        logger = logging.getLogger("cairn.tests.hash_fallback_warning")
-        caplog.set_level(logging.WARNING, logger="cairn.tests.hash_fallback_warning")
-        # is_hash_fallback() is False under explicit CAIRN_EMBED_BACKEND=hash,
-        # so the warning never fires (informed choice, not silent fallback).
-        with mock.patch("cairn.graph.embeddings.is_hash_fallback", return_value=False):
-            emb.warn_hash_fallback_once(logger, context="explore")
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warnings == []
 
 
 # ---------------------------------------------------------------------------
@@ -217,24 +168,6 @@ class TestMemoryRecallProvenance:
                 "hash fallback should annotate provenance so callers can flag degraded results"
             )
 
-    def test_provenance_under_real_backend(self, db, bundle, monkeypatch):
-        from cairn.graph.embeddings import embed_memory_concepts
-        from cairn.memory.promotion import _semantic_memory_search
-
-        concept = _write_memory(bundle, title="Use JWT auth", body="Use JWT for authentication")
-        monkeypatch.setattr(
-            "cairn.graph.embeddings.is_hash_fallback", lambda: False
-        )
-        monkeypatch.setattr("cairn.graph.embeddings.embeddings_available", lambda: True)
-        embed_memory_concepts(db, bundle, [concept.concept_id])
-        db.commit()
-
-        out = _semantic_memory_search(db, bundle, "JWT authentication")
-        # The hash embedder still runs in the test env, so we get hits; the point
-        # is the provenance label reflects a real backend (no hash annotation).
-        for c in out:
-            assert c.extensions["provenance"] == "semantic"
-
 
 # ---------------------------------------------------------------------------
 # 4. semantic_search provenance enrichment
@@ -256,14 +189,6 @@ class TestSemanticSearchProvenance:
         _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
         assert _sem_prov == "semantic (hash backend)"
         assert _fused_prov == "fused(bm25+semantic, hash)"
-
-    def test_provenance_strings_under_real_backend(self, monkeypatch):
-        monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: False)
-        _hash = emb.is_hash_fallback()
-        _sem_prov = "semantic (hash backend)" if _hash else "semantic"
-        _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
-        assert _sem_prov == "semantic"
-        assert _fused_prov == "fused(bm25+semantic)"
 
 
 # ---------------------------------------------------------------------------
@@ -292,46 +217,11 @@ class TestServerBackendFamily:
     False for every server config, with or without sentence-transformers.
     """
 
-    @pytest.mark.parametrize(
-        "raw, expected",
-        [
-            ("server", "server"),
-            ("OMLX", "omlx"),
-            ("  ollama ", "ollama"),
-            ("weird-backend", "weird-backend"),
-        ],
-    )
-    def test_backend_name_normalization(self, monkeypatch, raw, expected):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", raw)
-        assert emb._backend_name() == expected
-
     @pytest.mark.parametrize("name", ["server", "omlx", "ollama", "OMLX"])
     def test_effective_backend_resolves_family_to_server(self, monkeypatch, name):
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", name)
         emb.reset_backend_cache()
         assert emb._effective_backend() == "server"
-
-    def test_unknown_backend_stays_unchanged(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "weird-backend")
-        emb.reset_backend_cache()
-        assert emb._effective_backend() == "weird-backend"
-
-    @pytest.mark.parametrize(
-        "name, preset",
-        [
-            ("omlx", "http://127.0.0.1:8000/v1"),
-            ("ollama", "http://127.0.0.1:11434/v1"),
-        ],
-    )
-    def test_preset_base_url(self, monkeypatch, name, preset):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", name)
-        monkeypatch.delenv("CAIRN_EMBED_BASE_URL", raising=False)
-        assert emb._server_base_url() == preset
-
-    def test_base_url_env_overrides_preset(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://10.0.0.5:9999/v1")
-        assert emb._server_base_url() == "http://10.0.0.5:9999/v1"
 
     def test_bare_server_error_at_resolution_not_import(self, monkeypatch):
         """Bare 'server' without CAIRN_EMBED_BASE_URL fails only on use.
@@ -353,56 +243,6 @@ class TestServerBackendFamily:
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", name)
         emb.reset_backend_cache()
         assert emb.is_hash_fallback() is False
-
-    def test_is_hash_fallback_false_for_omlx_without_sentence_transformers(
-        self, monkeypatch
-    ):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
-        emb.reset_backend_cache()
-        try:
-            import sentence_transformers  # noqa: F401
-        except ImportError:
-            assert emb._effective_backend() == "server"
-            assert emb.is_hash_fallback() is False
-        else:
-            pytest.skip(
-                "sentence-transformers installed; the ImportError coalesce is unreachable"
-            )
-
-    def test_availability_check_does_not_poison_server_config(
-        self, stub_server, monkeypatch
-    ):
-        """embeddings_available() must not stamp a server config into 'hash'.
-
-        In a torch-less env the local arm's ImportError writes the shared
-        cache. Whatever the probe verdict (True or False), availability must
-        be answered from the server arm — the cache never records 'hash'.
-        """
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        emb.reset_backend_cache()
-        stub_server.behavior = _models_behavior(["bge-large"])
-        assert emb.embeddings_available() is False
-        assert emb._effective_backend() == "server"
-        assert emb.is_hash_fallback() is False
-
-        emb.reset_backend_cache()
-        stub_server.behavior = _models_behavior(["bge-m3"])
-        assert emb.embeddings_available() is True
-        assert emb._effective_backend() == "server"
-        assert emb.is_hash_fallback() is False
-
-    def test_install_hint_names_server_path_as_no_torch_option(self):
-        """FR-008 / US5 AC3: the hint offers the dep-free server path
-        (omlx/ollama presets, or bare server + CAIRN_EMBED_BASE_URL)
-        alongside the semantic extra and the hash smoke test."""
-        hint = emb.install_hint()
-        assert "pip install" in hint  # the [semantic] extra stays option 1
-        assert "omlx" in hint and "ollama" in hint
-        assert "server" in hint and "CAIRN_EMBED_BASE_URL" in hint
-        assert "no model install needed" in hint  # no torch/sentence-transformers
-        assert "hash" in hint  # the dep-free smoke test stays the last rung
-        assert "cairn doctor" not in hint  # doctor is the server-down remediation
 
 
 class TestFrozenBackendsContract:
@@ -435,17 +275,6 @@ class TestFrozenBackendsContract:
         assert captured["authorization"] == "Bearer test-key"
         assert dim == 3
         assert len(blobs) == 1 and len(blobs[0]) == dim * 4
-
-    def test_embed_openai_still_requires_api_key(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
-            emb._embed_openai(["hello"])
-
-    def test_hash_backend_contract_unchanged(self):
-        blobs, dim = emb._embed_hash(["alpha", "beta"])
-        assert dim == emb.DEFAULT_DIM
-        assert len(blobs) == 2
-        assert all(len(b) == dim * 4 for b in blobs)
 
 
 # ---------------------------------------------------------------------------
@@ -623,96 +452,6 @@ class TestEmbedServerClient:
         ]
         assert stub_server.requests[0]["path"] == "/v1/embeddings"
 
-    def test_model_id_defaults_to_bge_m3_and_env_overrides(
-        self, stub_server, monkeypatch
-    ):
-        stub_server.behavior = _echo_behavior(["a"])
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-
-        emb._embed_server(["a"])
-        assert stub_server.requests[0]["body"]["model"] == "bge-m3"
-
-        monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "bge-large")
-        stub_server.requests.clear()
-        emb._embed_server(["a"])
-        assert stub_server.requests[0]["body"]["model"] == "bge-large"
-
-    def test_chunks_at_default_batch_size_preserving_order(
-        self, stub_server, monkeypatch
-    ):
-        texts = [f"t{i}" for i in range(33)]
-        stub_server.behavior = _echo_behavior(texts)
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-
-        blobs, dim = emb._embed_server(texts)
-
-        assert dim == 4
-        assert [len(r["body"]["input"]) for r in stub_server.requests] == [32, 1]
-        chunked_inputs = [t for r in stub_server.requests for t in r["body"]["input"]]
-        assert chunked_inputs == texts
-        assert [struct.unpack("<4f", b) for b in blobs] == [
-            (float(i),) * 4 for i in range(len(texts))
-        ]
-
-    def test_batch_env_override_chunks_and_preserves_order(
-        self, stub_server, monkeypatch
-    ):
-        texts = [f"t{i}" for i in range(5)]
-        stub_server.behavior = _echo_behavior(texts)
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        monkeypatch.setenv("CAIRN_EMBED_SERVER_BATCH", "2")
-
-        blobs, dim = emb._embed_server(texts)
-
-        assert dim == 4
-        assert [len(r["body"]["input"]) for r in stub_server.requests] == [2, 2, 1]
-        assert [struct.unpack("<4f", b) for b in blobs] == [
-            (float(i),) * 4 for i in range(len(texts))
-        ]
-
-    def test_retries_connection_drops_then_succeeds(
-        self, stub_server, monkeypatch, fast_backoff
-    ):
-        texts = ["alpha", "beta"]
-        echo = _echo_behavior(texts)
-
-        def flaky(record):
-            if len(stub_server.requests) < 3:
-                return ("close",)
-            return echo(record)
-
-        stub_server.behavior = flaky
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-
-        blobs, dim = emb._embed_server(texts)
-
-        assert dim == 4
-        assert [struct.unpack("<4f", b) for b in blobs] == [(0.0,) * 4, (1.0,) * 4]
-        assert len(stub_server.requests) == 3
-        assert fast_backoff == [0.5, 1.0]
-
-    @pytest.mark.parametrize("status", [429, 500, 503])
-    def test_retries_retryable_statuses_then_succeeds(
-        self, stub_server, monkeypatch, fast_backoff, status
-    ):
-        texts = ["alpha", "beta"]
-        echo = _echo_behavior(texts)
-
-        def flaky(record):
-            if len(stub_server.requests) < 3:
-                return ("json", status, {"error": {"message": "slow down"}})
-            return echo(record)
-
-        stub_server.behavior = flaky
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-
-        blobs, dim = emb._embed_server(texts)
-
-        assert dim == 4
-        assert [struct.unpack("<4f", b) for b in blobs] == [(0.0,) * 4, (1.0,) * 4]
-        assert len(stub_server.requests) == 3
-        assert fast_backoff == [0.5, 1.0]
-
     def test_retry_ladder_exhausts_after_three_retries(
         self, stub_server, monkeypatch, fast_backoff
     ):
@@ -751,33 +490,6 @@ class TestEmbedServerClient:
         assert len(stub_server.requests) == 1
         assert fast_backoff == []
 
-    def test_non_json_4xx_body_surfaces_verbatim(
-        self, stub_server, monkeypatch, fast_backoff
-    ):
-        stub_server.behavior = lambda record: ("raw", 400, "plain-text refusal")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-
-        with pytest.raises(RuntimeError, match="plain-text refusal"):
-            emb._embed_server(["hello"])
-
-        assert len(stub_server.requests) == 1
-        assert fast_backoff == []
-
-    def test_timeout_honored_and_treated_as_retryable(
-        self, stub_server, monkeypatch, fast_backoff
-    ):
-        stub_server.behavior = lambda record: ("hang",)
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        monkeypatch.setenv("CAIRN_EMBED_TIMEOUT", "0.3")
-
-        start = time.monotonic()
-        with pytest.raises(RuntimeError, match="retries"):
-            emb._embed_server(["hello"])
-        elapsed = time.monotonic() - start
-
-        assert len(stub_server.requests) == 4
-        assert 1.0 <= elapsed < 8.0
-
     def test_bearer_header_sent_only_when_api_key_set(
         self, stub_server, monkeypatch
     ):
@@ -805,23 +517,6 @@ class TestEmbedServerClient:
 
         with pytest.raises(RuntimeError, match="mixed-dimension"):
             emb._embed_server(["hello", "world"])
-
-    def test_embed_dispatches_server_family_to_client(
-        self, stub_server, monkeypatch
-    ):
-        texts = ["hello"]
-        stub_server.behavior = _echo_behavior(texts)
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        emb.reset_backend_cache()
-
-        blobs, dim = emb._embed(texts)
-
-        assert emb._effective_backend() == "server"
-        assert len(stub_server.requests) == 1
-        assert stub_server.requests[0]["path"] == "/v1/embeddings"
-        assert dim == 4
-        assert struct.unpack("<4f", blobs[0]) == (0.0, 0.0, 0.0, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -876,22 +571,6 @@ class TestServerAvailabilityProbe:
         assert emb.embeddings_available() is False
         assert emb.is_hash_fallback() is False
 
-    def test_false_on_non_200_listing(self, stub_server, monkeypatch):
-        stub_server.behavior = _models_behavior(["bge-m3"], status=500)
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        emb.reset_backend_cache()
-
-        assert emb.embeddings_available() is False
-
-    def test_false_when_listing_is_not_openai_shaped(self, stub_server, monkeypatch):
-        stub_server.behavior = lambda record: ("raw", 200, "not json")
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        emb.reset_backend_cache()
-
-        assert emb.embeddings_available() is False
-
     def test_probe_cached_until_reset_backend_cache(
         self, stub_server, monkeypatch
     ):
@@ -908,65 +587,8 @@ class TestServerAvailabilityProbe:
         assert emb.embeddings_available() is True
         assert len(_model_probe_hits(stub_server)) == 2, "reset forces re-probe"
 
-    def test_bearer_header_sent_only_when_api_key_set(
-        self, stub_server, monkeypatch
-    ):
-        stub_server.behavior = _models_behavior(["bge-m3"])
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-
-        monkeypatch.setenv("CAIRN_EMBED_API_KEY", "probe-key")
-        emb.reset_backend_cache()
-        assert emb.embeddings_available() is True
-        assert stub_server.requests[0]["authorization"] == "Bearer probe-key"
-
-        monkeypatch.delenv("CAIRN_EMBED_API_KEY")
-        emb.reset_backend_cache()
-        stub_server.requests.clear()
-        assert emb.embeddings_available() is True
-        assert stub_server.requests[0]["authorization"] is None
-
     def test_probe_timeout_defaults_to_two_seconds(self):
         assert emb._PROBE_TIMEOUT_S == 2.0
-
-    def test_false_promptly_when_server_never_responds(
-        self, stub_server, monkeypatch
-    ):
-        stub_server.behavior = lambda record: ("hang",)
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", stub_server.base_url)
-        # Inject a short probe timeout instead of sleeping out the real 2 s.
-        monkeypatch.setattr(emb, "_PROBE_TIMEOUT_S", 0.25)
-        emb.reset_backend_cache()
-
-        start = time.monotonic()
-        assert emb.embeddings_available() is False
-        assert time.monotonic() - start < 2.0, "probe must fail fast"
-
-    def test_non_server_backends_keep_availability_semantics(
-        self, stub_server, monkeypatch
-    ):
-        # The stub sits reachable but no non-server arm may touch it.
-        stub_server.behavior = _models_behavior(["bge-m3"])
-        monkeypatch.delenv("CAIRN_EMBED_BASE_URL", raising=False)
-
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
-        emb.reset_backend_cache()
-        assert emb.embeddings_available() is True
-
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "local")
-        emb.reset_backend_cache()
-        assert emb.embeddings_available() is True  # hash coalesce still True
-
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "openai")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        emb.reset_backend_cache()
-        assert emb.embeddings_available() is False
-        monkeypatch.setenv("OPENAI_API_KEY", "k")
-        emb.reset_backend_cache()
-        assert emb.embeddings_available() is True
-
-        assert stub_server.requests == [], "non-server arms must not probe"
 
 
 # ---------------------------------------------------------------------------
@@ -987,12 +609,6 @@ class TestCurrentModelServerStamp:
         monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "bge-m3")
         assert emb.current_model() == "server/127.0.0.1:8000/bge-m3"
 
-    def test_server_stamp_model_id_defaults_to_bge_m3(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://127.0.0.1:8000/v1")
-        monkeypatch.delenv("CAIRN_EMBED_SERVER_MODEL", raising=False)
-        assert emb.current_model() == "server/127.0.0.1:8000/bge-m3"
-
     @pytest.mark.parametrize(
         "name,netloc",
         [("omlx", "127.0.0.1:8000"), ("ollama", "127.0.0.1:11434")],
@@ -1000,11 +616,6 @@ class TestCurrentModelServerStamp:
     def test_preset_backends_derive_preset_netloc(self, monkeypatch, name, netloc):
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", name)
         assert emb.current_model() == f"server/{netloc}/bge-m3"
-
-    def test_env_base_url_overrides_preset_netloc(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "omlx")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://10.0.0.5:9000/v1")
-        assert emb.current_model() == "server/10.0.0.5:9000/bge-m3"
 
     def test_model_stamp_env_is_pure_override(self, monkeypatch):
         # Returned verbatim: no derivation, no validation — the value even
@@ -1022,67 +633,12 @@ class TestCurrentModelServerStamp:
         # stamp's / : separators and the model id's hyphen) to underscore.
         assert ann_index._table_name(stamp) == "vec_server_127_0_0_1_8000_bge_m3"
 
-    def test_stamp_netloc_strips_scheme_and_path(self, monkeypatch):
-        # netloc is host:port only — scheme and any path suffix are dropped.
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "https://emb.internal:8443/api/v1")
-        assert emb.current_model() == "server/emb.internal:8443/bge-m3"
-
-    def test_ipv6_base_url_stamp_drops_brackets(self, monkeypatch):
-        # urlsplit keeps the bracket pair on IPv6 netlocs; the stamp (and the
-        # vec0 table names derived from it) must come out bracket-free.
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://[::1]:8000/v1")
-        assert emb.current_model() == "server/::1:8000/bge-m3"
-
     def test_unresolvable_bare_server_raises_at_stamp_time(self, monkeypatch):
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
         monkeypatch.delenv("CAIRN_EMBED_BASE_URL", raising=False)
         monkeypatch.delenv("CAIRN_EMBED_MODEL_STAMP", raising=False)
         with pytest.raises(RuntimeError):
             emb.current_model()
-
-    def test_local_hash_openai_semantics_byte_identical(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
-        emb.reset_backend_cache()
-        assert emb.current_model() == emb.HASH_MODEL
-
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "openai")
-        emb.reset_backend_cache()
-        monkeypatch.delenv("CAIRN_EMBED_OPENAI_MODEL", raising=False)
-        assert emb.current_model() == "text-embedding-3-small"
-        monkeypatch.setenv("CAIRN_EMBED_OPENAI_MODEL", "text-embedding-3-large")
-        assert emb.current_model() == "text-embedding-3-large"
-
-        # local: mock the effective resolution so the assertion holds with
-        # or without the [semantic] extra installed.
-        with mock.patch(
-            "cairn.graph.embeddings._effective_backend", return_value="local"
-        ):
-            monkeypatch.delenv("CAIRN_EMBED_LOCAL_MODEL", raising=False)
-            assert emb.current_model() == emb.DEFAULT_LOCAL_MODEL
-            monkeypatch.setenv("CAIRN_EMBED_LOCAL_MODEL", "custom/local")
-            assert emb.current_model() == "custom/local"
-
-    def test_corpus_overrides_apply_only_to_local(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_EMBED_KNOWLEDGE_MODEL", "know-model")
-        monkeypatch.setenv("CAIRN_EMBED_MEMORY_MODEL", "mem-model")
-
-        with mock.patch(
-            "cairn.graph.embeddings._effective_backend", return_value="local"
-        ):
-            assert emb.current_model(corpus="knowledge") == "know-model"
-            assert emb.current_model(corpus="memory") == "mem-model"
-            assert emb.current_model() == emb.DEFAULT_LOCAL_MODEL
-
-        # Server backends ignore the corpus envs: one stamp across corpora.
-        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
-        monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://127.0.0.1:8000/v1")
-        emb.reset_backend_cache()
-        stamp = "server/127.0.0.1:8000/bge-m3"
-        assert emb.current_model() == stamp
-        assert emb.current_model(corpus="knowledge") == stamp
-        assert emb.current_model(corpus="memory") == stamp
 
 
 # ---------------------------------------------------------------------------

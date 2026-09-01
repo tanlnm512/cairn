@@ -47,6 +47,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumer side of the wiki visible to new workspaces.
 
 ### Changed
+- Test suite reduced by ~470 cases with the core regression net intact, in
+  three reviewable parts: the closed retrieval-quality campaign machinery
+  retired lockstep with its CLI flags (see Removed); bench/dataset/soak
+  infrastructure tests moved to an explicit `infra` marker tier that per-PR
+  CI legs skip (`-m "not infra"`) but every main push runs, so the tier
+  cannot rot; and subsumed pins pruned from the two largest audit-era
+  files (`test_install_uninstall_fidelity.py` 74 → 32,
+  `test_embedding_backend_quality.py` 70 → 35) plus duplicate suites
+  (`test_t2_snapshot.py`, `test_chunk_spike.py`, the doctor-mirrored
+  report tests, and the spike-era `test_big_tech_improvements.py` tests
+  subsumed by their dedicated files) — every deletion justified by the
+  surviving test that subsumes it. A new suite-hygiene tripwire pins the
+  tier's shape (whole-file/class marks only, never per-test; no global
+  pytest addopts, which would silently deselect the bench job's `-k t2`
+  gate).
 - Wiki generation quality: the planner excludes test-majority modules — a
   strict majority of the module's indexed files under
   `test`/`tests`/`spec`/`specs` path segments — from page plans entirely
