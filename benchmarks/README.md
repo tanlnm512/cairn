@@ -7,21 +7,24 @@ human-readable companion that names each — read this when you want the rendere
 explanation of a benchmark result instead of parsing raw JSON. Rows key on
 repo-relative path, never basename: `quality.json` exists under both
 `baselines/DS-v1/` and `baselines/DS-v1.1/`, and basename keying over-merges.
-A companion is either the campaign's sibling README/FIGURES/SIZE/MEASURE/ablation
-doc or a generated reference table in `docs/benchmarks.md`.
+A companion is a campaign's sibling README/FIGURES/SIZE/MEASURE/ablation doc
+that names the artifact. The one-shot runner/analyze scripts that produced
+the `quality/` campaign artifacts were retired with the eval sweep engine
+(see CHANGELOG "Removed"); the committed JSON/MD artifacts remain the record
+of the closed campaign, scripts recoverable from git history.
 
 | Artifact | Named by |
 |----------|----------|
-| `benchmarks/baselines/DS-v1.1/quality.json` | `benchmarks/baselines/DS-v1.1/README.md`, `benchmarks/baselines/DS-v1/README.md`, `benchmarks/quality/ablation.md`, `docs/benchmarks.md` |
+| `benchmarks/baselines/DS-v1.1/quality.json` | `benchmarks/baselines/DS-v1.1/README.md`, `benchmarks/baselines/DS-v1/README.md`, `benchmarks/quality/ablation.md` |
 | `benchmarks/baselines/DS-v1/agent.json` | `benchmarks/baselines/DS-v1/README.md`, `benchmarks/baselines/DS-v1.1/README.md` |
 | `benchmarks/baselines/DS-v1/perf.json` | `benchmarks/baselines/DS-v1/README.md`, `benchmarks/baselines/DS-v1.1/README.md` |
-| `benchmarks/baselines/DS-v1/quality.json` | `benchmarks/baselines/DS-v1/README.md`, `benchmarks/baselines/DS-v1.1/README.md`, `benchmarks/quality/ablation.md`, `docs/benchmarks.md` |
+| `benchmarks/baselines/DS-v1/quality.json` | `benchmarks/baselines/DS-v1/README.md`, `benchmarks/baselines/DS-v1.1/README.md`, `benchmarks/quality/ablation.md` |
 | `benchmarks/baselines/DS-v1/scaling.json` | `benchmarks/baselines/DS-v1/README.md`, `benchmarks/baselines/DS-v1.1/README.md` |
 | `benchmarks/datasource/ds2/ground_truth/VERIFICATION.json` | `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md`, `benchmarks/datasource/ds2/ground_truth/AUTHORING.md` |
-| `benchmarks/datasource/ds2/ground_truth/manifest.json` | `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md`, `benchmarks/datasource/ds2/ground_truth/AUTHORING.md`, `docs/benchmarks.md` |
+| `benchmarks/datasource/ds2/ground_truth/manifest.json` | `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md`, `benchmarks/datasource/ds2/ground_truth/AUTHORING.md` |
 | `benchmarks/datasource/ds2/power-analysis.json` | `benchmarks/datasource/ds2/power-analysis.md` |
 | `benchmarks/datasource/ds2/second-corpus/attrs-26.1.0/provenance.json` | `benchmarks/datasource/ds2/second-corpus/DECISION.md` |
-| `benchmarks/datasource/manifest.json` | `benchmarks/datasource/ds2/ground_truth/AUTHORING.md`, `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md`, `docs/benchmarks.md` |
+| `benchmarks/datasource/manifest.json` | `benchmarks/datasource/ds2/ground_truth/AUTHORING.md`, `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md` |
 | `benchmarks/datasource/t2/provenance.json` | `benchmarks/datasource/ds2/second-corpus/DECISION.md` |
 | `benchmarks/quality/ablation.json` | `benchmarks/quality/MEASURE.md`, `benchmarks/quality/ablation.md`, `benchmarks/datasource/ds2/power-analysis.md`, `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md`, `benchmarks/quality/fr003-calibration/README.md` |
 | `benchmarks/quality/fr003-calibration/analysis.json` | `benchmarks/quality/fr003-calibration/README.md`, `benchmarks/datasource/ds2/power-analysis.md` |
@@ -41,7 +44,7 @@ doc or a generated reference table in `docs/benchmarks.md`.
 | `benchmarks/quality/ladder-v2/sweep-ds2-zeroshot.json` | `benchmarks/quality/ladder-v2/FIGURES.md` (gap fill — `## Artifacts` table) |
 | `benchmarks/quality/ladder-v2/sweep-ladder-enrich-rerankoff.json` | `benchmarks/quality/MEASURE.md` |
 | `benchmarks/quality/ladder-v2/sweep-ladder-enrichidf-rerankoff.json` | `benchmarks/quality/MEASURE.md` |
-| `benchmarks/quality/warm_time.json` | `docs/benchmarks.md` (Quick reference row) |
+| `benchmarks/quality/warm_time.json` | `benchmarks/quality/MEASURE.md` (Quick reference row) |
 
 ## Keeping this inventory true
 

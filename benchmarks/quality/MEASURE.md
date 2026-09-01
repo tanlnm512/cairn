@@ -31,6 +31,10 @@ CAIRN_ANN_BACKEND=off OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 If `/tmp` was wiped between steps, rerun the builders — they are idempotent
 and self-verifying (they gate on the recorded DS-v1 build facts).
 
+> RETIRED: the runner/analyze scripts this step drove were removed with the
+> eval sweep/kfold engine (see CHANGELOG "Removed"); the committed artifacts
+> remain the record. Kept below as the historical protocol.
+
 ## Step 1 — the sweep chain (serial; ~15–25 min per run)
 
 ```bash

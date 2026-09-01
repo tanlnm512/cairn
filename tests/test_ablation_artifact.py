@@ -10,7 +10,7 @@ git history at merge commit 7d9049e and earlier; blob hashes recorded in
 the artifact). The guards below pin, so drift fails loudly:
 
 * parses, canonical bytes (sorted keys, trailing newline — the
-  ``format_sweep_json`` discipline the artifact commits to);
+  canonical-bytes discipline the artifact commits to);
 * the embedded first-campaign record is BYTE-IDENTICAL to its recorded
   blob hashes (the TC-028 pin, moved from the removed sibling files onto
   the embedded copy and the appendix's verbatim block);
@@ -87,7 +87,7 @@ def test_parses_with_self_declared_schema_and_canonical_bytes():
     doc = json.loads(raw)
     assert doc["schema"] == SCHEMA
     # Canonical serialization: sorted keys, 2-space indent, one trailing \n
-    # (the format_sweep_json discipline inherited from the v1 record).
+    # (the canonical-bytes discipline inherited from the v1 record).
     assert raw == json.dumps(doc, indent=2, sort_keys=True) + "\n"
     # Family declaration: exactly the two FR-006 measurement families.
     assert set(doc["dataset"]["families"]) == FAMILIES

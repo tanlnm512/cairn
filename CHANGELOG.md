@@ -66,6 +66,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantics; `docs/mcp-tools.md` extends the wiki workflow's
   consume-and-operate step.
 
+### Removed
+- The closed retrieval-quality campaign machinery, retired with its CLI
+  surface: `cairn eval --sweep/--out/--kfold/--folds`, the seeded-split,
+  k-fold, lever-sweep and paired-bootstrap engines in `src/cairn/eval.py`
+  (~1,500 lines), the one-shot runner/analyze scripts under
+  `benchmarks/quality/{fr003-calibration,fr004-prf,fr005-mv,ladder-v2}/`,
+  and their test suites. The campaign closed documented-shortfall-no-ship
+  (no retrieval lever shipped), so no behavior changes; `cairn eval`
+  itself (yaml fixture + graded ground truth) is unchanged, and the
+  committed artifacts under `benchmarks/quality/` remain the record of
+  the closed verdict (scripts recoverable from git history).
+
+### Fixed
+- `cairn compass gaps` reported every module as uncovered: `detect_gaps`
+  compared repo-qualified module ids against repo-relative compass
+  `resource` fields, so the match could never succeed. Coverage now
+  compares same-repo (or untagged) compass resources against the module's
+  repo-relative path, keeping the segment-boundary prefix rule.
+
 ## [0.16.2] - 2026-08-31
 
 ### Added

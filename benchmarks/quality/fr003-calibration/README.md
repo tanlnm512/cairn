@@ -22,11 +22,11 @@ file is touched; the shipped code value stays 0.90) and runs
 
 | file | what |
 |---|---|
-| `scratch_db.py` | build + embed the scratch measurement DB |
-| `run_fr003_sweep.py` | one k-fold sweep per cutoff (also `--cutoff baseline` = the integrity run) |
-| `remeasure_p95.py` | quiet-machine p95 re-measurement (baseline + shipped config) |
-| `diagnose_d03.py` | the L1-D03 / L1-I03 corpus-level diagnostic (AC4 evidence) |
-| `analyze_fr003.py` | analysis record + decision + `rows-fr003.json` |
+| ~~scratch_db.py~~ (retired) | build + embed the scratch measurement DB |
+| ~~run_fr003_sweep.py~~ (retired) | one k-fold sweep per cutoff (also `--cutoff baseline` = the integrity run) |
+| ~~remeasure_p95.py~~ (retired) | quiet-machine p95 re-measurement (baseline + shipped config) |
+| ~~diagnose_d03.py~~ (retired) | the L1-D03 / L1-I03 corpus-level diagnostic (AC4 evidence) |
+| ~~analyze_fr003.py~~ (retired) | analysis record + decision + `rows-fr003.json` |
 | `sweep-baseline.json`, `sweep-df0.{75,80,85,90}.json` | raw k-fold sweep documents |
 | `p95-remeasure.json` | quiet p95 pass output (+ per-query determinism cross-check) |
 | `d03-diagnostic.json` | measured diagnostic output |
