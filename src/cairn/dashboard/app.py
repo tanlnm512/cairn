@@ -257,6 +257,7 @@ def create_app(
         symbol_suggest,
     )
     from .workspaces import enumerate_stores, probe_stores
+    from .shell import selector_context
     from .. import paths
     from ..graph import embed_ladder, embeddings
     from ..paths import default_knowledge_path
@@ -304,8 +305,19 @@ def create_app(
     def render(
         request: Request, name: str, context: dict, status_code: int = 200
     ) -> Response:
-        """TemplateResponse carrying the banner context on every page."""
+        """TemplateResponse carrying the banner and shell context on every
+        page. The selector's options come from enumerate_stores (stat-only,
+        never probed — probe_stores and its 100-open budget stay exclusive
+        to the workspaces overview) and cost one registry read plus one
+        directory scan per render."""
         context["embed_banner"] = embed_banner()
+        if "shell" not in context:
+            context["shell"] = {
+                "selector": selector_context(
+                    enumerate_stores(Path(paths.CAIRN_HOME)),
+                    context.get("store_key", ""),
+                )
+            }
         return templates.TemplateResponse(
             request, name, context, status_code=status_code
         )

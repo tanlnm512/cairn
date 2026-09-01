@@ -2695,6 +2695,95 @@ def test_settings_save_keeps_the_selected_store(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Global workspace selector (topbar): server-rendered on every view from
+# enumerate_stores (populated only, never probed), labels from the
+# registry path. Switching is shell.js rewriting ?store= on the current
+# URL and reloading — the browser-side contract is pinned at the source
+# level, like the app.js fetch builders.
+# ---------------------------------------------------------------------------
+
+_DASH_VIEWS = (
+    "/",
+    "/workspaces",
+    "/projects",
+    "/graph",
+    "/history",
+    "/tokens",
+    "/chains",
+    "/health",
+    "/memory",
+    "/wiki",
+    "/tasks",
+    "/embeddings",
+    "/settings",
+)
+
+
+def test_workspace_selector_renders_on_every_view(tmp_path, monkeypatch):
+    """The selector and its script ride the shell: present on every view,
+    on the launch store and a selected store alike."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    for path in _DASH_VIEWS:
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert 'id="store-select"' in resp.text, path
+        assert "/static/shell.js" in resp.text, path
+
+
+def test_workspace_selector_lists_populated_stores_only(tmp_path, monkeypatch):
+    """Options are the populated stores — never the empty-state dir or an
+    unknown key — labeled by the registered workspace path's basename,
+    with the raw key as the orphan-store fallback."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+
+    resp = client.get("/projects")
+
+    assert resp.status_code == 200
+    assert f'<option value="{_SW_KEY_A}"' in resp.text
+    assert ">proj-alpha</option>" in resp.text
+    # Orphan store B (on disk, no registry entry): the key is the label.
+    assert f'<option value="{_SW_KEY_B}">{_SW_KEY_B}</option>' in resp.text
+    # Empty-state and unknown keys never appear as switch targets.
+    assert f'<option value="{_SW_KEY_EMPTY}"' not in resp.text
+    assert f'<option value="{_SW_KEY_UNKNOWN}"' not in resp.text
+    # The registry path rides the option as its tooltip.
+    assert 'title="/workspaces/proj-alpha' in resp.text
+    # The launch store is always reachable as the empty-value option.
+    assert "<option value=\"\">Launch workspace</option>" in resp.text
+
+
+def test_workspace_selector_marks_the_selected_store(tmp_path, monkeypatch):
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/projects", params={"store": _SW_KEY_A})
+
+    assert (
+        f'<option value="{_SW_KEY_A}" selected' in resp.text
+    )
+    assert f'<option value="{_SW_KEY_B}" selected' not in resp.text
+
+
+def test_shell_js_switch_contract_is_pinned_at_source_level():
+    """The switch behavior, source-pinned like the app.js fetch builders:
+    rewrite the store param on the current URL (stay on the tab), and
+    clear the remembered store when returning to the launch store — or
+    the stickiness script would bounce the bare URL right back."""
+    import cairn.dashboard
+
+    src = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
+    ).read_text(encoding="utf-8")
+    assert 'getElementById("store-select")' in src
+    assert 'searchParams.set("store"' in src
+    assert 'searchParams.delete("store"' in src
+    assert 'localStorage.removeItem("cairn-store")' in src
+
+
+# ---------------------------------------------------------------------------
 # Mixed-source usage (cli-usage-recording FR-002, TC-003 / TC-004): CLI
 # invocations land in tool_metrics as source='cli' rows named 'cli:<command>'
 # beside source='mcp' tool rows (cli_metrics stamps 'cli'; MCP rows ride the

@@ -157,15 +157,37 @@
       {#- The topbar label derives from the path segment ("/" -> Overview);
           views may override via the view_title block. -#}
       <div class="topbar-title">{% block view_title %}{{ 'Overview' if path == '/' else (path.strip('/').split('/')[0] | capitalize) }}{% endblock %}</div>
-      <div id="live-controls" class="muted" data-state="running" hidden>
-        <span id="live-state"></span>
-        <button type="button" id="live-pause">Pause</button>
+      <div class="topbar-actions">
+        {#- Global workspace selector (FR-003 seam stays the URL param):
+            switching rewrites ?store= on the current URL and reloads, so
+            every tab shows the selected workspace. shell.js owns the
+            change behavior; the options are server-rendered. Production
+            renders always carry the shell context (render() injects it);
+            undefined here means a minimal-context unit render, where the
+            chrome degrades away like any other absent context var. -#}
+        {%- set selector = shell.selector if shell is defined else none %}
+        {% if selector %}
+        <label class="store-picker">
+          <span class="visually-hidden">Workspace</span>
+          <select id="store-select" aria-label="Workspace">
+            <option value="">{{ selector.launch_label }}</option>
+            {%- for o in selector.options %}
+            <option value="{{ o.key }}"{% if o.key == selector.selected %} selected{% endif %}{% if o.path %} title="{{ o.path }} — {{ o.key }}"{% endif %}>{{ o.label }}</option>
+            {%- endfor %}
+          </select>
+        </label>
+        {% endif %}
+        <div id="live-controls" class="muted" data-state="running" hidden>
+          <span id="live-state"></span>
+          <button type="button" id="live-pause">Pause</button>
+        </div>
       </div>
     </header>
     <main class="site-main">{% include "_embed_banner.html" %}
       {% block content %}{% endblock %}
     </main>
   </div>
+  <script src="{{ url_for('static', path='/shell.js') }}?v={{ asset_version }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

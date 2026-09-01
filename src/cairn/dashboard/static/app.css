@@ -206,6 +206,44 @@ body.app-shell {
   color: var(--muted);
 }
 
+/* ---- Topbar actions: workspace selector + live chrome ---- */
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-left: auto;
+}
+
+.store-picker select {
+  max-width: 260px;
+  padding: 0.34rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.store-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .site-main {
   width: 100%;
   max-width: 1280px;
@@ -277,7 +315,6 @@ body.app-shell {
 #live-controls {
   align-items: center;
   gap: 0.6rem;
-  margin-left: auto;
   font-size: 0.85rem;
 }
 
