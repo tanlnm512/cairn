@@ -15,6 +15,7 @@ permanent tripwire).
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -99,14 +100,13 @@ def test_infra_tier_shape_stays_guarded():
     skip-quarantine shape (release-checklist bans per-test skips/xfails).
     Static AST checks keep the tier auditable:
     """
-    import tomllib
-
-    pyproject = tomllib.loads((TESTS_DIR.parent / "pyproject.toml").read_text(encoding="utf-8"))
-    ini = pyproject["tool"]["pytest"]["ini_options"]
-    assert any(str(m).startswith("infra:") for m in ini.get("markers", [])), (
+    pyproject = (TESTS_DIR.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert re.search(r'^\s*"infra:', pyproject, re.M), (
         "infra marker unregistered in pyproject.toml"
     )
-    assert "addopts" not in ini, (
+    # line-anchored: an addopts ASSIGNMENT is the hazard; the explanatory
+    # comments legitimately mention the word
+    assert not re.search(r"^\s*addopts\s*=", pyproject, re.M), (
         "addopts with a -m filter would silently deselect the bench job's "
         "-k t2 gate (it invokes pytest without -m)"
     )
