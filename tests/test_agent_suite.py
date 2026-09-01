@@ -17,6 +17,9 @@ from cairn.bench.agent_suite import (
     run_agent_suite,
 )
 from cairn.bench.corpus import generate_corpus
+import pytest
+
+pytestmark = pytest.mark.infra
 
 # 6 modules + __init__.py = 7 files -- small enough that build+embed+tasks
 # stay well under a second, large enough that every task finds its target.

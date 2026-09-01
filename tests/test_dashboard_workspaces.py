@@ -29,8 +29,8 @@ CI runners is noisy):
 
       CAIRN_WORKSPACES_STRICT=1 uv run pytest tests/test_dashboard_workspaces.py
 
-  The repo registers no timing/slow pytest marker, so this module-local
-  env gate is the fallback. It is read at IMPORT time because the
+  The ``infra`` marker selects this module out of per-PR CI legs; the
+  module-local env gate below is the strictness mechanism and stays. It is read at IMPORT time because the
   suite-wide ``_hermetic_env`` autouse fixture (tests/conftest.py)
   deletes every ``CAIRN_*`` env var per test -- a test-body read would
   always see it unset. Ungated runs (CI) still assert a generous 20s
@@ -49,6 +49,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.infra
 
 # Read at module import -- see module docstring (_hermetic_env clears
 # CAIRN_* per test, so this cannot live inside a test body).

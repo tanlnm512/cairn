@@ -32,6 +32,8 @@ from html.parser import HTMLParser
 
 import pytest
 
+pytestmark = pytest.mark.infra
+
 # Fixed era (2025-08-20 00:00:00 UTC -- the suite's seeded-fixture era):
 # deterministic timestamps, one row per second, so every stored row owns a
 # distinct rendered timestamp and a (tool, timestamp) pair identifies it.

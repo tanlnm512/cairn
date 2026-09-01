@@ -19,9 +19,9 @@ is noisy):
 
       CAIRN_SCALE_STRICT=1 uv run pytest tests/test_dashboard_scale.py
 
-  The repo registers no timing/slow pytest marker (pyproject.toml
-  declares only ``core`` and ``real_env``), so this module-local env gate
-  is the fallback the plan sanctioned. It is read at IMPORT time because
+  The ``infra`` marker selects this module out of per-PR CI legs; it is
+  a tier selection, not a strictness switch — the module-local env gate
+  below is the strictness mechanism and stays. It is read at IMPORT time because
   the suite-wide ``_hermetic_env`` autouse fixture (tests/conftest.py)
   deletes every ``CAIRN_*`` env var per test -- a test-body read would
   always see it unset. Ungated runs (CI) still assert a generous 10s
@@ -35,6 +35,8 @@ import sqlite3
 import time
 
 import pytest
+
+pytestmark = pytest.mark.infra
 
 # Read at module import -- see module docstring (_hermetic_env clears
 # CAIRN_* per test, so this cannot live inside a test body).

@@ -178,7 +178,13 @@ where = ["src"]
 testpaths = ["tests"]
 markers = [
     "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
-    "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment),"
+    "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment)",
+    # The infra tier is CI selection, NOT a quarantine: every marked test still
+    # runs and must pass on each main push (ci.yml's main-only `-m infra` step);
+    # per-PR legs exclude it via an explicit `-m "not infra"` on the full-suite
+    # step. Deliberately no addopts: a global -m filter would silently deselect
+    # the bench job's `-k t2` gate (ci.yml runs it without -m).
+    "infra: benchmark/dataset/soak infrastructure tests -- excluded from per-PR legs (pytest -m \"not infra\"), run on every main push (pytest -m infra)",
 ]
 
 [tool.ruff]

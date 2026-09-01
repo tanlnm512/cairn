@@ -174,11 +174,20 @@ jobs:
         run: |
           # Coverage rides one leg only (3.12, main pushes): collecting it on
           # every matrix leg is redundant signal at ~real minutes each.
+          # The infra tier (bench/dataset/soak tests) is excluded on PR legs
+          # and run by the dedicated step below on every main push — no
+          # addopts on purpose: the bench job's `-k t2` gate runs without -m.
           if [ "${{ matrix.python-version }}" = "3.12" ]; then
-            pytest -q --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
+            pytest -q -m "not infra" --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
           else
-            pytest -q --junitxml=test-results.xml
+            pytest -q -m "not infra" --junitxml=test-results.xml
           fi
+
+      - name: Run infra tier (main pushes only)
+        # The bench/dataset/soak infrastructure tier: excluded from PR legs
+        # above, but every merge runs it so the tier can never rot.
+        if: github.event_name == 'push' && matrix.python-version == '3.12'
+        run: pytest -q -m infra
 
       - name: Publish test summary
         if: always()

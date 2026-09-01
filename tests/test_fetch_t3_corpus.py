@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.infra
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "fetch_t3_corpus.py"
 REAL_MANIFEST = REPO_ROOT / "benchmarks" / "datasource" / "manifest.json"

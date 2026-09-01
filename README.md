@@ -349,7 +349,8 @@ and doc-ingestion pipelines. Contribution and release procedures:
 pip install -e ".[dev]"   # pytest + watchdog + build + ruff
                             # (compiles the vendored Kotlin grammar — needs a C toolchain)
 pytest -m core            # fast <3s smoke subset (one test per core function)
-pytest                    # full suite (the CI path)
+pytest                    # full suite (default gate + infra tier; CI splits them)
+pytest -m infra           # bench/dataset/soak tier alone (CI runs it on main pushes)
 make ci-local             # clean-room CI replication in a Linux container
 ```
 

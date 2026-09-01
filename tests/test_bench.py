@@ -25,6 +25,9 @@ from cairn.bench import (
     TimingResult,
     MemoryResult,
 )
+import pytest
+
+pytestmark = pytest.mark.infra
 
 
 # --- timing primitives ---------------------------------------------------
