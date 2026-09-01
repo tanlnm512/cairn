@@ -15,6 +15,9 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.infra
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "measure_warm_time.py"

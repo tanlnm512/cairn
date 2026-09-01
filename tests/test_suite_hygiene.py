@@ -87,3 +87,54 @@ def test_agent_cli_names_covered_by_fixture():
         f"detect.py probes {sorted(probed)} but _hermetic_env only blocks "
         f"{sorted(blocked)} -- add {sorted(missing)} to _AGENT_CLIS in conftest.py"
     )
+
+
+def test_infra_tier_shape_stays_guarded():
+    """The infra marker tier must stay whole-file/class-shaped and off the t2 gate.
+
+    The bench job runs ``pytest tests/ -q -k t2`` with NO ``-m`` filter, so an
+    infra mark cannot deselect it today -- but a t2-named test inside an
+    infra-marked module would break the moment anyone adds a global ``-m``
+    filter (addopts), and a per-test infra mark would recreate the forbidden
+    skip-quarantine shape (release-checklist bans per-test skips/xfails).
+    Static AST checks keep the tier auditable:
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((TESTS_DIR.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    ini = pyproject["tool"]["pytest"]["ini_options"]
+    assert any(str(m).startswith("infra:") for m in ini.get("markers", [])), (
+        "infra marker unregistered in pyproject.toml"
+    )
+    assert "addopts" not in ini, (
+        "addopts with a -m filter would silently deselect the bench job's "
+        "-k t2 gate (it invokes pytest without -m)"
+    )
+    violations = []
+    for path, src in _iter_test_sources():
+        tree = ast.parse(src)
+        marked_module = any(
+            isinstance(n, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "pytestmark"
+                for t in n.targets
+            )
+            for n in tree.body
+        )
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                is_test = node.name.startswith("test")
+                has_infra_mark = any(
+                    isinstance(d, ast.Call)
+                    and isinstance(d.func, ast.Attribute)
+                    and d.func.attr == "infra"
+                    for d in node.decorator_list
+                )
+                if is_test and has_infra_mark:
+                    violations.append(f"{path.name}:{node.lineno} per-test infra mark")
+                if is_test and marked_module and "t2" in node.name:
+                    violations.append(f"{path.name}:{node.lineno} t2-named test in infra module")
+    assert not violations, (
+        "infra tier shape violations (per-test marks are quarantine-shaped; "
+        f"t2-named tests must never sit in an infra module): {violations}"
+    )

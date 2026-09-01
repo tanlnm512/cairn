@@ -71,6 +71,7 @@ def _mint_manifest(path, corpus_root, sizes, *, seed=0xC0DE, complexity="low"):
     return manifest
 
 
+@pytest.mark.infra
 class TestHappyPath:
     def test_all_declared_sizes_verify_ok(self, tmp_path):
         _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [3, 5])
@@ -93,6 +94,7 @@ class TestHappyPath:
         assert report.recipe["complexity"] == "low"
 
 
+@pytest.mark.infra
 class TestDrift:
     def test_flipped_byte_in_generated_file_exits_nonzero(self, tmp_path):
         """TC-003 via content: mint the pin from a corpus with one flipped
@@ -163,6 +165,7 @@ class TestDrift:
         assert first.results[0].actual_hash == second.results[0].actual_hash
 
 
+@pytest.mark.infra
 class TestTreeHashNoiseExclusion:
     """tree_hash must not see machine build-noise dropped inside a corpus tree.
 
@@ -241,6 +244,7 @@ class TestTreeHashNoiseExclusion:
             assert tree_hash(source) == pin, name
 
 
+@pytest.mark.infra
 class TestManifestFailureClass:
     def test_schema_error_is_distinct_from_drift(self, tmp_path):
         manifest = _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [4])
@@ -260,6 +264,7 @@ class TestManifestFailureClass:
         assert vd.main(["--manifest", str(tmp_path / "absent.json")]) == vd.EXIT_MANIFEST
 
 
+@pytest.mark.infra
 class TestJsonOutput:
     def test_shape_is_machine_readable(self, tmp_path, capsys):
         _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [4])
@@ -428,6 +433,7 @@ class TestDs2Budget:
         assert not by_path["benchmarks/datasource/t2"].breached
 
 
+@pytest.mark.infra
 class TestBudgetCli:
     """FR-002/AC4 wire layer: --budget mode, default-run wiring, exit codes.
     vd.REPO_ROOT is monkeypatched to a scratch tree so main() measures the
@@ -505,6 +511,7 @@ class TestBudgetCli:
             vd.main(["--size", "100", "--budget", "--manifest", str(tmp_path / "m.json")])
 
 
+@pytest.mark.infra
 class TestEndToEnd:
     def test_real_manifest_size_100_verifies_over_the_wire(self):
         """The committed pin, the real CLI surface, a real subprocess: exit 0

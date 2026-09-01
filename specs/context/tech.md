@@ -35,9 +35,13 @@ Stack, build/test runners, and gates. Cited from pyproject.toml,
 ## Tests
 - pytest; `testpaths = ["tests"]` so bare runs never collect the vendored
   benchmark corpora (pyproject.toml:169-178).
-- Markers (pyproject.toml:179-182): `core` — fast one-test-per-function smoke
+- Markers (pyproject.toml:179-192): `core` — fast one-test-per-function smoke
   subset (`pytest -m core -q`, <3s); `real_env` — opts a test out of the
-  suite-wide hermetic-env fixture (must justify in a comment).
+  suite-wide hermetic-env fixture (must justify in a comment); `infra` —
+  bench/dataset/soak tier, excluded from per-PR CI legs (`-m "not infra"`),
+  run on every main push. No addopts on purpose: the bench job's `-k t2`
+  gate invokes pytest without `-m`; a global filter would silently empty it
+  (test_suite_hygiene pins the tier's shape).
 - Hermetic by default: `tests/conftest.py:47-67` points HOME/CAIRN_HOME into a
   per-test tmp sandbox. Tests that exercise env propagation across a REAL
   process boundary use subprocess + `env={"CAIRN_HOME": ...}` (e.g.

@@ -24,6 +24,9 @@ from cairn.bench.datasource import (
     runner_class,
     save_manifest,
 )
+import pytest
+
+pytestmark = pytest.mark.infra
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 

@@ -20,11 +20,18 @@ don't skip on "I'm sure it's fine."
 | [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
 
 ## Tests
-- [ ] `uv run pytest tests/ -q` — full suite (~1100 tests). CI runs this too
-      (after a `core` smoke pass), but confirm locally before pushing so you
-      aren't waiting on a CI round-trip for a local failure. Note the
-      pass/skip/fail count; compare to the last green run.
-- [ ] No new `xfail` or `skip` slipped in to make a failure "pass."
+- [ ] `uv run pytest tests/ -q` — the full local suite (default gate + infra
+      tier together; a bare `pytest` runs everything by design). CI runs the
+      default gate on PR legs (`-m "not infra"`) and the infra tier
+      (`-m infra`) on every main push. Note the pass/skip/fail count; compare
+      to the last green run.
+- [ ] `uv run pytest tests/ -m infra -q` — when cutting a release or touching
+      the bench/dataset/soak subsystems, run the infra tier explicitly too
+      (PR CI legs skip it).
+- [ ] No new `xfail` or `skip` slipped in to make a failure "pass." Moving a
+      whole file (or class) into the infra tier is deliberate CI selection
+      recorded in the pyproject marker description — per-test
+      skip-quarantining remains forbidden.
 
 ## Build verification (for changes touching indexing/embedding)
 - [ ] `uv run cairn build` succeeds against the real workspace.

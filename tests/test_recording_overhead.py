@@ -15,6 +15,9 @@ import statistics
 import time
 
 from cairn.mcp_server.metric_buffering import instrument
+import pytest
+
+pytestmark = pytest.mark.infra
 
 
 def _work(n: int = 30000) -> str:

@@ -155,6 +155,7 @@ class TestTreeHash:
 
 # --- integration with the real corpus generator ---------------------------
 
+@pytest.mark.infra
 class TestGeneratedCorpus:
     def test_same_params_same_hash_across_roots(self, tmp_path):
         """The substrate FR-001 pins: two regenerations of the same corpus
@@ -194,6 +195,7 @@ def _valid_manifest() -> dict:
     }
 
 
+@pytest.mark.infra
 class TestManifestIO:
     def test_round_trip_save_load(self, tmp_path):
         path = tmp_path / "manifest.json"
@@ -227,6 +229,7 @@ class TestManifestIO:
 
 # --- manifest validation ---------------------------------------------------
 
+@pytest.mark.infra
 class TestValidateManifest:
     def test_valid_manifest_has_no_errors(self):
         assert validate_manifest(_valid_manifest()) == []
@@ -328,6 +331,7 @@ def _valid_t3() -> dict:
     }
 
 
+@pytest.mark.infra
 class TestValidateManifestT3:
     def test_valid_t3_section_has_no_errors(self):
         manifest = _valid_manifest()
