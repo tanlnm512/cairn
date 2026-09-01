@@ -495,105 +495,21 @@ def status(db, knowledge):
 @click.option("--queries", "queries_path", default=None,
               help="Path to eval queries.yaml OR a ground-truth directory "
                    "(queries.jsonl + expectations.tsv); default: bundled tests/eval/queries.yaml.")
-@click.option("--sweep", "sweep_spec", default=None,
-              help="Run the lever sweep instead of a single evaluation: a JSON file "
-                   "or inline JSON list of {name, params} combos (RetrievalParams "
-                   "fields; null/omitted = today's default). Evaluates the TUNE "
-                   "split only -- held-out ids are guarded (FR-006).")
-@click.option("--out", "out_path", default=None,
-              help="With --sweep: write the canonical sweep document to this path "
-                   "(the harness itself never writes; this flag is the only writer).")
-@click.option("--kfold", "kfold", is_flag=True, default=False,
-              help="With --sweep: run the lever sweep once per fold of the seeded "
-                   "k-fold rotation (FR-001) instead of one tune/validate split; "
-                   "the emitted document carries fold-level rows plus the pooled "
-                   "aggregate verdict and per-fold spread.")
-@click.option("--folds", "k_folds", type=int, default=5, show_default=True,
-              help="Fold count for --kfold; the harness refuses fewer than 5 "
-                   "(the floor is enforced downstream, never here). "
-                   "Ignored without --kfold.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def eval_cmd(db, knowledge, corpus, queries_path, sweep_spec, out_path, kfold, k_folds, as_json):
+def eval_cmd(db, knowledge, corpus, queries_path, as_json):
     """Run retrieval evaluation harness across L1/L5 corpora."""
-    import json as _json
     from pathlib import Path
 
-    from ..eval import format_sweep_json, run_evaluation, run_sweep, run_sweep_kfold
-
-    if kfold and sweep_spec is None:
-        raise click.ClickException("--kfold requires --sweep (the rotation wraps the lever sweep)")
+    from ..eval import run_evaluation
 
     qpath = Path(queries_path) if queries_path else None
     conn = get_db(db)
     try:
-        if sweep_spec is not None:
-            from ..graph.semantic import RetrievalParams
-
-            raw = Path(sweep_spec).read_text() if Path(sweep_spec).exists() else sweep_spec
-            combos_raw = _json.loads(raw)
-            combos = [
-                {
-                    "name": c["name"],
-                    "params": RetrievalParams(**c.get("params", {})),
-                    **({"variant": c["variant"]} if "variant" in c else {}),
-                }
-                for c in combos_raw
-            ]
-            queries_dir = qpath if qpath and qpath.is_dir() else None
-            if queries_dir is None:
-                raise click.ClickException(
-                    "--sweep requires --queries pointing at a ground-truth directory"
-                )
-            from ..eval import load_ground_truth
-
-            gq = load_ground_truth(queries_dir)
-            if kfold:
-                # The fold-count floor (< 5) is enforced downstream by
-                # kfold_partitions; surface its message verbatim, never
-                # mislabeled as an invalid dataset (TC-004).
-                try:
-                    doc = run_sweep_kfold(
-                        conn,
-                        gq,
-                        combos=combos,
-                        k_folds=k_folds,
-                        bundle_root=knowledge,
-                        dataset_name="ground-truth",
-                        dataset_version="dir",
-                    )
-                except ValueError as exc:
-                    raise click.ClickException(str(exc)) from exc
-            else:
-                doc = run_sweep(
-                    conn,
-                    gq,
-                    combos=combos,
-                    bundle_root=knowledge,
-                    dataset_name="ground-truth",
-                    dataset_version="dir",
-                )
-        else:
-            report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
+        report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
     except ValueError as exc:
         raise click.ClickException(f"invalid eval dataset: {exc}") from exc
     finally:
         conn.close()
-
-    if sweep_spec is not None:
-        payload = format_sweep_json(doc)
-        if out_path:
-            Path(out_path).write_text(payload, encoding="utf-8")
-            if kfold:
-                n_rows = sum(len(fold["rows"]) for fold in doc["folds"])
-                click.echo(
-                    f"wrote {out_path} ({len(doc['folds'])} fold(s), "
-                    f"{n_rows} row(s), aggregate with spread)"
-                )
-            else:
-                click.echo(f"wrote {out_path} ({len(doc['rows'])} row(s))")
-            return
-        click.echo(payload)
-        return
 
     if as_json:
         click.echo(json.dumps(report, indent=2))
