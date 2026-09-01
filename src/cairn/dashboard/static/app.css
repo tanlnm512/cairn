@@ -56,8 +56,11 @@
   --radius-l: 14px;
   --shadow-1: 0 1px 2px var(--shadow);
   --shadow-2: 0 12px 32px -16px var(--shadow);
+  --shadow-3: 0 24px 64px -24px var(--shadow);
   --sidebar-w: 220px;
+  --sidebar-w-collapsed: 58px;
   --topbar-h: 56px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
 }
@@ -137,6 +140,23 @@ body.app-shell {
   gap: 0.15rem;
 }
 
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.85rem;
+}
+
+.nav-group-label {
+  padding: 0 0.65rem 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
 .side-nav a {
   display: flex;
   align-items: center;
@@ -174,6 +194,59 @@ body.app-shell {
   margin-top: auto;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
+  display: flex;
+  gap: 0.4rem;
+}
+
+.sidebar-collapse {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sidebar-collapse:hover,
+.sidebar-collapse:focus {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* Collapsed rail (desktop only — the ≤920px sidebar is a horizontal
+   bar where collapse does not apply): icon rail, labels and group
+   headers hidden, chevron flips. */
+@media (min-width: 921px) {
+  html[data-sidebar="collapsed"] body.app-shell {
+    grid-template-columns: var(--sidebar-w-collapsed) minmax(0, 1fr);
+  }
+
+  html[data-sidebar="collapsed"] .brand span,
+  html[data-sidebar="collapsed"] .nav-group-label,
+  html[data-sidebar="collapsed"] .side-nav a span,
+  html[data-sidebar="collapsed"] .sidebar-collapse span,
+  html[data-sidebar="collapsed"] .theme-toggle {
+    display: none;
+  }
+
+  html[data-sidebar="collapsed"] .side-nav a,
+  html[data-sidebar="collapsed"] .brand,
+  html[data-sidebar="collapsed"] .sidebar-collapse {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  html[data-sidebar="collapsed"] .sidebar-collapse svg {
+    transform: rotate(180deg);
+  }
 }
 
 .app-body {
@@ -232,6 +305,129 @@ body.app-shell {
   outline-offset: 1px;
 }
 
+/* ---- Command palette ---- */
+
+.palette-open {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.36rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.palette-open:hover,
+.palette-open:focus {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.palette-open kbd {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.palette-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.palette-card {
+  position: relative;
+  max-width: 560px;
+  margin: 12vh auto 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.palette-card input {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.palette-card input:focus {
+  outline: none;
+}
+
+.palette-card ul {
+  max-height: 46vh;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.palette-row.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.palette-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row-hint {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.palette-row-empty {
+  justify-content: center;
+  cursor: default;
+  color: var(--muted);
+}
+
+.palette-hint {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -284,7 +480,7 @@ body.app-shell {
 /* ---- Theme toggle ---- */
 
 .theme-toggle {
-  width: 100%;
+  flex: 1;
   padding: 0.42rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);

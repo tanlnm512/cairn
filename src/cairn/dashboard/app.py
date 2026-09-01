@@ -257,7 +257,7 @@ def create_app(
         symbol_suggest,
     )
     from .workspaces import enumerate_stores, probe_stores
-    from .shell import selector_context
+    from .shell import shell_context
     from .. import paths
     from ..graph import embed_ladder, embeddings
     from ..paths import default_knowledge_path
@@ -312,12 +312,11 @@ def create_app(
         directory scan per render."""
         context["embed_banner"] = embed_banner()
         if "shell" not in context:
-            context["shell"] = {
-                "selector": selector_context(
-                    enumerate_stores(Path(paths.CAIRN_HOME)),
-                    context.get("store_key", ""),
-                )
-            }
+            context["shell"] = shell_context(
+                enumerate_stores(Path(paths.CAIRN_HOME)),
+                context.get("store_key", ""),
+                request.url.path,
+            )
         return templates.TemplateResponse(
             request, name, context, status_code=status_code
         )

@@ -2784,6 +2784,114 @@ def test_shell_js_switch_contract_is_pinned_at_source_level():
 
 
 # ---------------------------------------------------------------------------
+# Grouped sidebar + command palette (shell chrome): the sidebar renders
+# from shell.NAV_SECTIONS (same href shape as the hand-written anchors it
+# replaced), collapse persists pre-paint like the theme, and the palette
+# seeds from server JSON — views with store-carrying hrefs, workspaces,
+# symbols live from /graph/suggest. JS contracts are source-pinned.
+# ---------------------------------------------------------------------------
+
+
+def test_sidebar_renders_grouped_nav_from_shell_sections(tmp_path, monkeypatch):
+    """The grouped sections replace the flat list, every view's anchor
+    survives with the exact href shape the pins expect, and the selected
+    store rides every anchor."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    bare = client.get("/projects")
+    assert bare.status_code == 200
+    for section in ("Explore", "Knowledge", "Activity", "System"):
+        assert f'class="nav-group-label">{section}<' in bare.text, section
+    for view_id, label in (
+        ("projects", "Projects"),
+        ("graph", "Graph"),
+        ("wiki", "Wiki"),
+        ("memory", "Memory"),
+        ("tasks", "Tasks"),
+        ("history", "History"),
+        ("tokens", "Tokens"),
+        ("chains", "Chains"),
+        ("workspaces", "Workspaces"),
+        ("health", "Health"),
+        ("embeddings", "Embeddings"),
+        ("settings", "Settings"),
+    ):
+        assert f'href="/{view_id}"' in bare.text, view_id
+        assert f"<span>{label}</span>" in bare.text, label
+    # The current view flags active.
+    assert 'href="/projects" class="active" aria-current="page"' in bare.text
+
+    selected = client.get("/projects", params={"store": _SW_KEY_A})
+    assert f'href="/graph?store={_SW_KEY_A}"' in selected.text
+
+
+def test_sidebar_collapse_button_and_prepaint_script(tmp_path, monkeypatch):
+    """The collapse toggle ships in the sidebar foot, and base.html's head
+    carries the pre-paint script that re-applies the remembered state
+    (localStorage "cairn-sidebar") before the shell renders."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/projects")
+    assert 'id="sidebar-collapse"' in resp.text
+    base = (_templates_dir() / "base.html").read_text(encoding="utf-8")
+    assert '"cairn-sidebar"' in base
+    # The theme script stays the FIRST head script (pinned separately).
+    assert base.index("cairn-theme") < base.index("cairn-sidebar")
+
+    import cairn.dashboard
+
+    shell_src = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
+    ).read_text(encoding="utf-8")
+    assert 'localStorage.setItem(\n        "cairn-sidebar"' in shell_src or (
+        '"cairn-sidebar"' in shell_src and "setAttribute" in shell_src
+    )
+
+
+def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
+    """The palette overlay and its JSON seed ride every page: the view
+    list carries store-qualified hrefs when a store is selected, the
+    workspace list mirrors the selector's populated options."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+
+    resp = client.get("/projects", params={"store": _SW_KEY_A})
+    assert resp.status_code == 200
+    assert 'id="palette-open"' in resp.text
+    assert 'id="palette"' in resp.text
+    assert 'id="palette-data"' in resp.text
+
+    seed = json.loads(
+        re.search(
+            r'<script id="palette-data" type="application/json">(.*?)</script>',
+            resp.text,
+            re.S,
+        ).group(1)
+    )
+    by_label = {v["label"]: v["href"] for v in seed["views"]}
+    assert len(by_label) == 12
+    assert by_label["Graph"] == f"/graph?store={_SW_KEY_A}"
+    assert [w["key"] for w in seed["workspaces"]] == [_SW_KEY_A, _SW_KEY_B]
+
+
+def test_command_palette_js_contract_is_pinned_at_source_level():
+    """The palette reuses /graph/suggest with the store param guarded from
+    the current URL, and switches workspaces through the same URL-rewrite
+    behavior as the selector."""
+    import cairn.dashboard
+
+    src = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
+    ).read_text(encoding="utf-8")
+    assert "/graph/suggest?name=" in src
+    assert 'searchParams.get("store")' in src
+    assert "metaKey" in src  # Cmd/Ctrl+K opens
+    assert "keyCode" not in src  # key names, not deprecated codes
+
+
+# ---------------------------------------------------------------------------
 # Mixed-source usage (cli-usage-recording FR-002, TC-003 / TC-004): CLI
 # invocations land in tool_metrics as source='cli' rows named 'cli:<command>'
 # beside source='mcp' tool rows (cli_metrics stamps 'cli'; MCP rows ride the
