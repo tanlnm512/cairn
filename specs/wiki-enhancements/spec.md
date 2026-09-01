@@ -1,6 +1,6 @@
 # Spec: wiki-enhancements
 
-**Status**: draft          <!-- draft while writing → approved at the Stage-4 user gate
+**Status**: active          <!-- amended set approved 2026-08-31 ("start implement"); single end-of-plan commit shape (recommended default, unchallenged); first task spawned same day → active -->          <!-- draft while writing → approved at the Stage-4 user gate
                                 → active once the first task spawns → done when all
                                 tasks are ticked and `check.py` re-runs green -->
 **Created**: 2026-08-31

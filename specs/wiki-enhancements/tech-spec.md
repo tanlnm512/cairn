@@ -676,3 +676,14 @@ verbatim for the future round.
 - **Consequences**: both instruction files gain the section (superset of
   AC1); tool-count lines untouched; section text is pinned so future body
   edits can't silently drop the wiki workflow.
+
+### D-024: An all-test-majority repo raises WikiPlannerError (T001 pin ruling)
+- **Context**: the exclusion filter can empty the candidate set; the task text
+  left the filtered-empty shape open (plan risk line).
+- **Decision**: raise `WikiPlannerError` (the CLI's existing clean exit-1 path)
+  rather than emitting an overview-only plan — an overview whose seeds are
+  entirely test files spends page budget on test content, the misfortune
+  FR-001 exists to fix.
+- **Consequences**: test-only repos fail generation loudly; T002 implements
+  the guard as one check after the filter; wrong cost if wrong: a mixed repo
+  with only test-majority modules (rare) cannot generate until code lands.
