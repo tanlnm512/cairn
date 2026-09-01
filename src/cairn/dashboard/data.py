@@ -39,6 +39,7 @@ from cairn.llm.tasks import list_tasks
 from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
 from cairn.telemetry.sink import retention_policy
+from cairn.utils.git import get_repo_head
 from cairn.viz import query as viz_query
 
 GRAPH_SCOPES = ("symbol", "module", "impact", "deps", "repo")
@@ -654,33 +655,58 @@ def _read_wiki_concept(
         return None
 
 
+def _recorded_sha(
+    concept: Optional["OKFConcept"], row: dict
+) -> Optional[str]:
+    """The page's recorded commit sha: the promoted concept's extension is
+    the source of truth; a page with no concept falls back to the manifest
+    row's queue-time sha."""
+    if concept is not None:
+        return concept.extensions.get("commit_sha") or None
+    return row.get("commit_sha") or None
+
+
+def _wiki_staleness(recorded_sha: Optional[str], head: Optional[str]) -> str:
+    """fresh: recorded sha equals HEAD; stale: both present and differing;
+    unknown: either side unavailable."""
+    if not recorded_sha or not head:
+        return "unknown"
+    return "fresh" if recorded_sha == head else "stale"
+
+
 def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]:
     """Wiki manifest pages joined with their ``wiki/pages/`` concepts.
 
     One plain dict per manifest row carrying ``page_id``, ``title``,
-    ``state``, and ``promoted``; ``promoted`` is derived from the row's own
-    ``wiki/pages/{repo}/{page_id}`` concept being readable, never the
-    stored state. A missing manifest (or knowledge dir) yields an empty
-    list; ``repo`` selects one repo's rows.
+    ``state``, ``promoted``, and ``staleness``; ``promoted`` is derived
+    from the row's own ``wiki/pages/{repo}/{page_id}`` concept being
+    readable, never the stored state, and ``staleness`` compares the
+    recorded commit sha with the repo's current HEAD (fresh/stale/unknown).
+    HEAD is resolved once per repo per call. A missing manifest (or
+    knowledge dir) yields an empty list; ``repo`` selects one repo's rows.
     """
     from cairn.wiki.manifest import load_manifest
 
     bundle = OKFBundle(knowledge_dir)
+    heads: Dict[str, Optional[str]] = {}
     pages: List[dict] = []
     for key, row in load_manifest(knowledge_dir)["pages"].items():
         key_repo, page_id = _split_page_key(key)
         if repo and key_repo != repo:
             continue
+        concept = _read_wiki_concept(
+            bundle, f"wiki/pages/{key_repo}/{page_id}"
+        )
+        if key_repo not in heads:
+            heads[key_repo] = get_repo_head(key_repo)
         pages.append(
             {
                 "page_id": page_id,
                 "title": row.get("title") or page_id,
                 "state": row.get("state", ""),
-                "promoted": (
-                    _read_wiki_concept(
-                        bundle, f"wiki/pages/{key_repo}/{page_id}"
-                    )
-                    is not None
+                "promoted": concept is not None,
+                "staleness": _wiki_staleness(
+                    _recorded_sha(concept, row), heads[key_repo]
                 ),
             }
         )
@@ -693,13 +719,16 @@ def get_wiki_page(
     """One wiki page: manifest row plus the rendered concept body.
 
     ``html`` is the body through the escape-first markdown renderer;
-    ``sources`` is the concept's frontmatter list verbatim. None when no
-    manifest row for ``page_id`` (``repo`` narrows the match when several
-    repos plan the same page id) has a readable concept.
+    ``sources`` is the concept's frontmatter list verbatim; ``staleness``
+    compares the recorded commit sha with the repo's current HEAD
+    (fresh/stale/unknown, HEAD resolved once per repo per call). None when
+    no manifest row for ``page_id`` (``repo`` narrows the match when
+    several repos plan the same page id) has a readable concept.
     """
     from cairn.wiki.manifest import load_manifest
 
     bundle = OKFBundle(knowledge_dir)
+    heads: Dict[str, Optional[str]] = {}
     for key, row in load_manifest(knowledge_dir)["pages"].items():
         key_repo, key_page = _split_page_key(key)
         if key_page != page_id or (repo and key_repo != repo):
@@ -709,12 +738,17 @@ def get_wiki_page(
         )
         if concept is None:
             continue
+        if key_repo not in heads:
+            heads[key_repo] = get_repo_head(key_repo)
         return {
             "page_id": page_id,
             "title": row.get("title") or concept.title or page_id,
             "state": row.get("state", ""),
             "html": render_markdown(concept.body),
             "sources": concept.sources or [],
+            "staleness": _wiki_staleness(
+                _recorded_sha(concept, row), heads[key_repo]
+            ),
         }
     return None
 

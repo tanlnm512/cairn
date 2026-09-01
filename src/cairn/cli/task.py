@@ -1,4 +1,4 @@
-"""Task CLI: the task group (list/show/claim/complete)."""
+"""Task CLI: the task group (list/show/claim/complete/drop)."""
 from __future__ import annotations
 
 import click
@@ -13,15 +13,19 @@ def task():
 
 
 @task.command("list")
-@click.option("--status", default=None, help="Filter: pending|in-progress|done|failed")
+@click.option("--status", default=None,
+              help="Filter: pending|in-progress|done|failed|dropped")
 @click.option("--kind", default=None, help="Filter by task kind")
+@click.option("--kind-prefix", default=None,
+              help="Filter by task kind prefix (e.g. wiki-page)")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def task_list(status, kind, knowledge):
+def task_list(status, kind, kind_prefix, knowledge):
     from ..llm.tasks import list_tasks
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    tasks = list_tasks(bundle, status=status, kind=kind)
+    tasks = list_tasks(bundle, status=status, kind=kind,
+                       kind_prefix=kind_prefix)
     if not tasks:
         click.echo("No tasks.")
         return
@@ -126,5 +130,22 @@ def task_complete(task_id, result, result_file, db, knowledge):
                     click.echo(f"  - {err}", err=True)
     finally:
         conn.close()
+
+
+@task.command("drop")
+@click.argument("task_id")
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def task_drop(task_id, knowledge):
+    """Drop a pending or in-progress task (terminal; never claimable again)."""
+    from ..llm.tasks import drop_task
+    from ..okf.bundle import OKFBundle
+
+    bundle = OKFBundle(knowledge)
+    outcome = drop_task(bundle, task_id)
+    if not outcome["dropped"]:
+        reasons = "; ".join(outcome["errors"]) or "not droppable"
+        click.echo(f"Could not drop '{task_id}': {reasons}", err=True)
+        sys.exit(1)
+    click.echo(f"Dropped {task_id}.")
 
 

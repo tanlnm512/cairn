@@ -811,3 +811,68 @@ def test_ask_compass_surfaces_all_layers_empty():
         "ask_compass no longer prints the explicit all-layers-empty line."
     )
 
+
+# ---------------------------------------------------------------------------
+# Test 8
+# ---------------------------------------------------------------------------
+
+def _agents_instructions_text() -> str:
+    """``_agents_instructions()`` output, with the dep-free source fallback.
+
+    Mirrors the import discipline of ``test_tool_count_string_matches_server``:
+    importing ``cairn.agent_install`` can transitively pull the ``mcp`` package,
+    so fall back to rendering the instruction text from source when the import
+    fails.
+    """
+    try:
+        from cairn.agent_install import _agents_instructions
+        return _agents_instructions()
+    except Exception as exc:  # optional deps (mcp/...) missing
+        instructions = _render_agents_instructions_from_source()
+        assert instructions, (
+            f"could not import _agents_instructions ({exc!r}) and the source "
+            "fallback also failed to render the instruction text"
+        )
+        return instructions
+
+
+def test_agents_instructions_include_wiki_section():
+    """The install template must carry a ``## Wiki`` workflow section.
+
+    The generated AGENTS.md/CLAUDE.md body documents the explore-first
+    workflow, the task queue, and the knowledge files, but never the wiki
+    consumer side: how pages are generated, how their tasks flow through the
+    queue, and how to read them back via compass routing. This pins the
+    section's existence in the shared instructions body both files are built
+    from.
+    """
+    instructions = _agents_instructions_text()
+    assert "## Wiki" in instructions, (
+        "_agents_instructions() output has no `## Wiki` section -- the wiki "
+        "workflow is missing from the generated agent docs"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 9
+# ---------------------------------------------------------------------------
+
+def test_wiki_section_covers_generate_claim_complete_and_ask_compass():
+    """The ``## Wiki`` section must walk the full wiki workflow: generate ->
+    claim -> complete -> consume via ``ask_compass``.
+
+    The workflow steps are pinned as stable substrings (command/tool names,
+    not full sentences) so the prose stays free to change while dropping a
+    step from the section still fails.
+    """
+    instructions = _agents_instructions_text()
+    start = instructions.find("## Wiki")
+    assert start != -1, "no `## Wiki` section in _agents_instructions() output"
+    section = instructions[start:].split("\n## ", 1)[0]
+    for phrase in ("wiki generate", "task claim", "task complete", "ask_compass"):
+        assert phrase in section, (
+            f"the `## Wiki` section does not mention {phrase!r} -- the "
+            "generate -> task claim -> task complete -> ask_compass workflow "
+            "is incomplete"
+        )
+

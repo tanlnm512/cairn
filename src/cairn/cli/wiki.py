@@ -1,14 +1,17 @@
-"""Wiki CLI: the wiki group (generate/search/status/retry)."""
+"""Wiki CLI: the wiki group (generate/search/status/retry/export/enrich)."""
 from __future__ import annotations
+
+from pathlib import Path
 
 import click
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main
+from ..utils.git import get_repo_head
 
 # Display states (hyphenated) for `wiki status`; the manifest stores
 # "in_progress" with an underscore.
-_DISPLAY_STATES = ("queued", "in-progress", "promoted", "failed")
+_DISPLAY_STATES = ("queued", "in-progress", "promoted", "failed", "dropped")
 
 
 @main.group()
@@ -190,6 +193,25 @@ def _is_promoted(bundle, repo, page_id):
         return False
 
 
+def _recorded_sha(bundle, row, repo, page_id):
+    """The page's recorded commit sha: the promoted concept's extension is
+    the source of truth; a page with no concept falls back to the manifest
+    row's queue-time sha."""
+    try:
+        concept = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
+    except Exception:
+        return row.get("commit_sha") or None
+    return concept.extensions.get("commit_sha") or None
+
+
+def _staleness(recorded_sha, head):
+    """fresh: recorded sha equals HEAD; stale: both present and differing;
+    unknown: either side unavailable."""
+    if not recorded_sha or not head:
+        return "unknown"
+    return "fresh" if recorded_sha == head else "stale"
+
+
 def _wiki_chains(bundle):
     """Page id -> every wiki-page task for it, across all revise hops."""
     from ..llm.tasks import list_tasks
@@ -217,14 +239,18 @@ def _result_critic_status(bundle, task_id):
 
 def _page_state(bundle, row, repo, page_id, chain):
     """Derived state: promoted by concept (never the stored row), else the
-    live chain, else failed when the row says so or the chain dropped --
-    terminal done task whose result failed the critic with no successor."""
+    live chain, else dropped when an explicitly dropped task is in the chain
+    (terminal -- retry's failed-only selection never resurrects it), else
+    failed when the row says so or the chain dropped -- terminal done task
+    whose result failed the critic with no successor."""
     if _is_promoted(bundle, repo, page_id):
         return "promoted"
     if any(t.status == "in-progress" for t in chain):
         return "in-progress"
     if any(t.status == "pending" for t in chain):
         return "queued"
+    if any(t.status == "dropped" for t in chain):
+        return "dropped"
     if row.get("state") == "failed":
         return "failed"
     done = [t for t in chain if t.status == "done"]
@@ -245,6 +271,8 @@ def wiki_status(repo, knowledge):
         return
     chains = _wiki_chains(bundle)
     counts = dict.fromkeys(_DISPLAY_STATES, 0)
+    staleness_counts = dict.fromkeys(("fresh", "stale", "unknown"), 0)
+    heads = {}
     shown = 0
     for key in sorted(pages):
         page_repo, page_id = _split_page_key(key)
@@ -253,13 +281,19 @@ def wiki_status(repo, knowledge):
         row = pages[key]
         state = _page_state(bundle, row, page_repo, page_id,
                             chains.get(page_id, []))
+        if page_repo not in heads:
+            heads[page_repo] = get_repo_head(page_repo)
+        staleness = _staleness(_recorded_sha(bundle, row, page_repo, page_id),
+                               heads[page_repo])
         shown += 1
         if state in counts:
             counts[state] += 1
-        click.echo(f"  {key:<36} {state:<12} "
+        staleness_counts[staleness] += 1
+        click.echo(f"  {key:<36} {state:<12} {staleness:<8} "
                    f"attempts={row.get('attempts', 0)}")
     totals = "  ".join(f"{state}={n}" for state, n in counts.items())
-    click.echo(f"Wiki pages: {shown}  {totals}")
+    freshness = "  ".join(f"{s}={n}" for s, n in staleness_counts.items())
+    click.echo(f"Wiki pages: {shown}  {totals}  {freshness}")
 
 
 @wiki.command("retry")
@@ -311,5 +345,65 @@ def wiki_retry(repo, knowledge):
     click.echo(f"Re-queued {len(failed)} failed wiki page(s). "
                "Any agent with the cairn skill can process them:")
     click.echo("  cairn task list --kind wiki-page --status pending")
+    click.echo("  cairn task claim <id> && cairn task complete <id> --result-file <path>")
+
+
+@wiki.command("export")
+@click.option("--dir", "out_dir", required=True, type=click.Path(path_type=Path),
+              help="Directory to write the exported pages into.")
+@click.option("--force", is_flag=True,
+              help="Overwrite files in an existing non-empty target directory.")
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def export(out_dir: Path, force, knowledge):
+    """Write every promoted page as DIR/{repo}/{page_id}.md."""
+    if out_dir.is_dir() and any(out_dir.iterdir()) and not force:
+        click.echo(f"Refusing to export into non-empty directory {out_dir}; "
+                   "pass --force to overwrite.", err=True)
+        sys.exit(1)
+    bundle, manifest = _load_manifest_or_exit(knowledge)
+    exported = 0
+    for key in sorted(manifest.get("pages", {})):
+        page_repo, page_id = _split_page_key(key)
+        if not _is_promoted(bundle, page_repo, page_id):
+            continue
+        concept = bundle.read_concept(f"wiki/pages/{page_repo}/{page_id}")
+        concept.to_file(str(out_dir / page_repo / f"{page_id}.md"))
+        exported += 1
+    click.echo(f"Exported {exported} page(s) to {out_dir}")
+
+
+@wiki.command("enrich")
+@click.argument("page_id", required=False)
+@click.option("--repo", default=None, help="Scope the enrichment to one repo.")
+@click.option("--all", "enrich_all", is_flag=True,
+              help="Queue one enrichment per promoted page across repos.")
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def enrich(page_id, repo, enrich_all, knowledge):
+    """Queue wiki-page-enrich tasks appending new sections to promoted pages."""
+    from ..wiki.pipeline import queue_enrich_tasks
+
+    if page_id is not None and enrich_all:
+        click.echo("Enrich one PAGE_ID or --all, not both.", err=True)
+        sys.exit(1)
+    if page_id is None and not enrich_all:
+        click.echo("Enrich one PAGE_ID or --all.", err=True)
+        sys.exit(1)
+    bundle, _ = _load_manifest_or_exit(knowledge)
+    queued = queue_enrich_tasks(bundle, repo=repo, page_id=page_id)
+    if not queued and not enrich_all:
+        scope = f" in repo '{repo}'" if repo else ""
+        click.echo(f"Cannot enrich '{page_id}': no promoted wiki page "
+                   f"for it{scope}.", err=True)
+        sys.exit(1)
+    for task in queued:
+        click.echo(f"Queued wiki-page-enrich task {task.id}: {task.resource} "
+                   f"({task.facts['repo']})")
+    if not queued:
+        scope = f" in repo '{repo}'" if repo else ""
+        click.echo(f"Nothing to enrich: no promoted wiki pages{scope}.")
+        return
+    click.echo(f"Queued {len(queued)} wiki-page-enrich task(s). "
+               "Any agent with the cairn skill can process them:")
+    click.echo("  cairn task list --kind wiki-page-enrich --status pending")
     click.echo("  cairn task claim <id> && cairn task complete <id> --result-file <path>")
 

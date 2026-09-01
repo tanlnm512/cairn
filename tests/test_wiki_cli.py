@@ -350,3 +350,128 @@ def test_generate_llm_force_requeues_unchanged_promoted_page(cli_env, tmp_path):
     assert [t.resource for t in requeued] == ["overview", "overview"]
     ids = {t.id for t in requeued}
     assert len(ids) == 2 and queued[0].id in ids
+
+
+# --- wiki status staleness column (TC-019 / TC-020, FR-007) -------------------
+
+SHA_A = "abc1234a"
+SHA_B = "def5678b"
+
+
+def _promote_with_sha(bundle, page_id, sha=None):
+    """The promoted article, optionally carrying the recorded commit sha."""
+    extensions = {"commit_sha": sha} if sha else {}
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki page",
+            body=f"# {page_id}\n\n## Sources\n",
+            concept_id=f"wiki/pages/{REPO}/{page_id}",
+            tags=[REPO, "wiki"],
+            extensions=extensions,
+        )
+    )
+
+
+def _fake_head(monkeypatch, head):
+    """HEAD resolution is read through the ``cairn.cli.wiki`` namespace seam
+    (the module-level re-export of ``utils.git.get_repo_head``)."""
+    monkeypatch.setattr(
+        "cairn.cli.wiki.get_repo_head",
+        lambda repo, workspace=None: head,
+        raising=False,
+    )
+
+
+def test_status_labels_recorded_sha_equal_to_head_fresh(cli_env, monkeypatch):
+    """TC-019: a page whose recorded sha equals the current HEAD reads
+    fresh in its status line."""
+    bundle = _bundle(cli_env)
+    _promote_with_sha(bundle, PROMOTED, sha=SHA_A)
+    _write_manifest(cli_env, {
+        _key(PROMOTED): _row(PROMOTED, state="promoted",
+                             task_id="spent-chain", attempts=1),
+    })
+    _fake_head(monkeypatch, SHA_A)
+
+    result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    line = _page_lines(result.stdout.lower(), PROMOTED)[0]
+    assert "fresh" in line
+
+
+def test_status_labels_recorded_sha_behind_head_stale(cli_env, monkeypatch):
+    """US2 AC2: the workspace HEAD moved past the page's recorded sha —
+    the page reads stale."""
+    bundle = _bundle(cli_env)
+    _promote_with_sha(bundle, PROMOTED, sha=SHA_A)
+    _write_manifest(cli_env, {
+        _key(PROMOTED): _row(PROMOTED, state="promoted",
+                             task_id="spent-chain", attempts=1),
+    })
+    _fake_head(monkeypatch, SHA_B)
+
+    result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    line = _page_lines(result.stdout.lower(), PROMOTED)[0]
+    assert "stale" in line
+    assert "fresh" not in line
+
+
+def test_status_labels_unavailable_sha_or_head_unknown(cli_env, monkeypatch):
+    """TC-020: no recorded sha anywhere, or HEAD unresolvable at display
+    time, reads unknown — never fresh, never stale."""
+    bundle = _bundle(cli_env)
+    _promote_with_sha(bundle, PROMOTED, sha=None)
+    _write_manifest(cli_env, {
+        _key(PROMOTED): _row(PROMOTED, state="promoted",
+                             task_id="spent-chain", attempts=1),
+    })
+    _fake_head(monkeypatch, SHA_A)
+
+    result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    line = _page_lines(result.stdout.lower(), PROMOTED)[0]
+    assert "unknown" in line
+    assert "fresh" not in line
+    assert "stale" not in line
+
+    _promote_with_sha(bundle, PROMOTED, sha=SHA_A)
+    _fake_head(monkeypatch, None)
+    result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    line = _page_lines(result.stdout.lower(), PROMOTED)[0]
+    assert "unknown" in line
+    assert "fresh" not in line
+    assert "stale" not in line
+
+
+def test_status_recorded_sha_falls_back_to_manifest_row(cli_env, monkeypatch):
+    """A not-yet-promoted page has no concept to read, so its recorded sha
+    comes from the manifest row's ``commit_sha``."""
+    bundle = _bundle(cli_env)
+    queued = _queue_page(bundle, QUEUED_A)
+    _write_manifest(cli_env, {
+        _key(QUEUED_A): {
+            **_row(QUEUED_A, state="queued", task_id=queued.id, attempts=1),
+            "commit_sha": SHA_A,
+        },
+    })
+    _fake_head(monkeypatch, SHA_A)
+
+    result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    line = _page_lines(result.stdout.lower(), QUEUED_A)[0]
+    assert "fresh" in line
+
+    _fake_head(monkeypatch, SHA_B)
+    result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    line = _page_lines(result.stdout.lower(), QUEUED_A)[0]
+    assert "stale" in line

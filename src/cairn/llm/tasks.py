@@ -44,7 +44,7 @@ class Task:
     task_kind: str  # compass-synthesize | compass-revise | flow-synthesize | flow-revise | wiki | memory-critic | memory-extract
     resource: str  # the module/symbol/transcript being worked on
     facts: Dict[str, Any] = field(default_factory=dict)  # graph-grounded, agent must not invent
-    status: str = "pending"  # pending | in-progress | done | failed
+    status: str = "pending"  # pending | in-progress | done | failed | dropped
     assigned_to: str = ""
     result_path: str = ""
     attempt: int = 1
@@ -99,9 +99,12 @@ def create_task(
 
 
 def list_tasks(
-    bundle: OKFBundle, status: Optional[str] = None, kind: Optional[str] = None
+    bundle: OKFBundle,
+    status: Optional[str] = None,
+    kind: Optional[str] = None,
+    kind_prefix: Optional[str] = None,
 ) -> List[Task]:
-    """List tasks, optionally filtered by status or kind."""
+    """List tasks, optionally filtered by status, exact kind, or kind prefix."""
     out = []
     for cid in bundle.list_concepts(prefix=f"{TASK_DIR}/"):
         if cid.endswith(".result"):
@@ -116,6 +119,8 @@ def list_tasks(
         if status and task.status != status:
             continue
         if kind and task.task_kind != kind:
+            continue
+        if kind_prefix and not task.task_kind.startswith(kind_prefix):
             continue
         out.append(task)
     return out
@@ -205,6 +210,59 @@ def _try_remove_stale_marker(claim_marker: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def _enriched_article(
+    bundle: OKFBundle,
+    task: Task,
+    task_id: str,
+    repo: str,
+    page_id: str,
+    new_sections: str,
+    new_sources: Optional[List[Dict[str, Any]]],
+) -> OKFConcept:
+    """The enriched Wiki-Article: the promoted page's body with
+    ``new_sections`` appended, sources merged old entries first and deduped
+    by entry value, extensions refreshed from the task's facts. The promoted
+    concept is read at completion time; a page with no readable concept
+    falls back to ``facts["current_body"]``."""
+    try:
+        current = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
+    except Exception:
+        current = None
+    base = (
+        current.body
+        if current is not None
+        else str(task.facts.get("current_body") or "")
+    )
+    merged: List[Dict[str, Any]] = (
+        list(current.sources) if current is not None and current.sources else []
+    )
+    for entry in new_sources or []:
+        if entry not in merged:
+            merged.append(entry)
+    return OKFConcept(
+        type="Wiki-Article",
+        title=f"Wiki: {page_id}",
+        description=f"Wiki article for {repo}/{page_id}",
+        resource=page_id,
+        tags=[repo, "wiki"],
+        timestamp=_now(),
+        concept_id=f"wiki/pages/{repo}/{page_id}",
+        sources=merged or None,
+        body=f"{base}\n\n{new_sections}" if base else new_sections,
+        extensions={
+            "page_id": page_id,
+            "input_hash": task.facts.get("input_hash"),
+            "task_id": task_id,
+            "refine_catalog": task.facts.get("refine_catalog"),
+            **(
+                {"commit_sha": task.facts["commit_sha"]}
+                if task.facts.get("commit_sha")
+                else {}
+            ),
+        },
+    )
 
 
 def complete_task(
@@ -302,11 +360,26 @@ def complete_task(
             wiki_sources: Optional[List[Dict[str, Any]]] = None
             if wiki_page:
                 from ..refs import file_exists as _file_exists
+                from ..refs import (
+                    extract_file_refs as _extract_file_refs,
+                    unresolved_file_refs as _unresolved_file_refs,
+                )
                 from ..wiki.sources import parse_sources_footer, resolve_sources
 
                 resolved, source_errors = resolve_sources(
                     parse_sources_footer(result), conn
                 )
+                # One error per distinct dead path: a footer entry the
+                # body's own citations already reported stays out of the
+                # merge.
+                body_unresolved = _unresolved_file_refs(
+                    conn, _extract_file_refs(result)
+                )
+                source_errors = [
+                    e
+                    for e in source_errors
+                    if not any(e.endswith(f": {ref}") for ref in body_unresolved)
+                ]
                 if source_errors:
                     critic_result = CriticResult(
                         errors=critic_result.errors + source_errors,
@@ -400,29 +473,40 @@ def complete_task(
                         .replace(".", "-")
                         .replace("#", "-")
                     )
-                    promoted_body = result
-                    if critic_result.warnings:
-                        marker = "> [critic-warning] " + "; ".join(
-                            critic_result.warnings
-                        ) + "\n\n"
-                        promoted_body = marker + result
-                    wiki_concept = OKFConcept(
-                        type="Wiki-Article",
-                        title=f"Wiki: {page_id}",
-                        description=f"Wiki article for {repo}/{page_id}",
-                        resource=page_id,
-                        tags=[repo, "wiki"],
-                        timestamp=_now(),
-                        concept_id=f"wiki/pages/{repo}/{page_id}",
-                        sources=wiki_sources,
-                        body=promoted_body,
-                        extensions={
-                            "page_id": page_id,
-                            "input_hash": task.facts.get("input_hash"),
-                            "task_id": task_id,
-                            "refine_catalog": task.facts.get("refine_catalog"),
-                        },
-                    )
+                    if task.task_kind.startswith("wiki-page-enrich"):
+                        wiki_concept = _enriched_article(
+                            bundle, task, task_id, repo, page_id, result,
+                            wiki_sources,
+                        )
+                    else:
+                        promoted_body = result
+                        if critic_result.warnings:
+                            marker = "> [critic-warning] " + "; ".join(
+                                critic_result.warnings
+                            ) + "\n\n"
+                            promoted_body = marker + result
+                        wiki_concept = OKFConcept(
+                            type="Wiki-Article",
+                            title=f"Wiki: {page_id}",
+                            description=f"Wiki article for {repo}/{page_id}",
+                            resource=page_id,
+                            tags=[repo, "wiki"],
+                            timestamp=_now(),
+                            concept_id=f"wiki/pages/{repo}/{page_id}",
+                            sources=wiki_sources,
+                            body=promoted_body,
+                            extensions={
+                                "page_id": page_id,
+                                "input_hash": task.facts.get("input_hash"),
+                                "task_id": task_id,
+                                "refine_catalog": task.facts.get("refine_catalog"),
+                                **(
+                                    {"commit_sha": task.facts["commit_sha"]}
+                                    if task.facts.get("commit_sha")
+                                    else {}
+                                ),
+                            },
+                        )
                     bundle.write_concept(wiki_concept)
                     promoted = True
 
@@ -512,6 +596,45 @@ def complete_task(
         "errors": [],
         "quality": 0.0,
     }
+
+
+def drop_task(bundle: OKFBundle, task_id: str) -> Dict[str, Any]:
+    """Mark a pending or in-progress task dropped (terminal status).
+
+    Returns {task_id, dropped, errors}. Done, unknown, and already-dropped
+    tasks are refused with their status left unchanged. A dropped task is
+    never claimable again (claim_task claims pending only); dropping an
+    in-progress task removes its claim marker so the resource can be
+    re-queued.
+    """
+    task = _read(bundle, task_id)
+    if task is None:
+        return {
+            "task_id": task_id,
+            "dropped": False,
+            "errors": ["task not found"],
+        }
+    if task.status not in ("pending", "in-progress"):
+        return {
+            "task_id": task_id,
+            "dropped": False,
+            "errors": [f"task is {task.status}; only pending or in-progress "
+                       "tasks can be dropped"],
+        }
+    task.status = "dropped"
+    bundle.write_concept(_task_to_concept(task))
+    claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
+    try:
+        os.remove(claim_marker)
+    except OSError:
+        pass
+    _emit(
+        TASK_LIFECYCLE,
+        task_kind=task.task_kind,
+        event="dropped",
+        attempt=task.attempt,
+    )
+    return {"task_id": task_id, "dropped": True, "errors": []}
 
 
 def read_result(bundle: OKFBundle, task_id: str) -> Optional[str]:
@@ -627,7 +750,12 @@ def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
         "memory-critic": "For each draft memory in facts, judge accuracy/usefulness/specificity/non-redundancy. Output one JSON line per memory: {title, keep: bool, score: 0-1, reason}.",
         "memory-extract": "From the session transcript in facts.transcript, extract candidate memories. Output one JSON line per candidate: {type: decision|pattern|mistake|workaround, title, body, confidence}.",
     }
-    spec = specs.get(task_kind, "Process per the cairn skill.")
+    spec = specs.get(task_kind)
+    if spec is None:
+        if task_kind.startswith("wiki-page"):
+            spec = specs["wiki-page"]
+        else:
+            spec = "Process per the cairn skill."
     if task_kind.startswith("wiki-page") and facts and facts.get("diagrams"):
         spec += "\nInclude Mermaid fenced code blocks for the key structures you describe."
     return spec

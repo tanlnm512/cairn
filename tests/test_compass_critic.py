@@ -64,6 +64,14 @@ class TestFileRefExtraction:
         refs = _extract_file_refs(body)
         assert refs == []
 
+    def test_repeated_refs_dedupe_order_preserving(self):
+        body = (
+            "See `src/graph/queries.py` first, then `src/ApiClient.ts`, "
+            "and `src/graph/queries.py` again."
+        )
+        refs = _extract_file_refs(body)
+        assert refs == ["src/graph/queries.py", "src/ApiClient.ts"]
+
 
 class TestSymbolRefExtraction:
     def test_extracts_qualified_and_lowercamel_and_snake_case(self):
@@ -141,6 +149,22 @@ class TestCriticConceptIntegration:
         result = critic_concept(concept, conn)
         assert any("DoesNotExist.kt" in e for e in result.errors)
         assert result.passed is False
+
+    def test_repeated_dead_path_reported_once(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        concept = OKFConcept(
+            type="Compass",
+            title="test",
+            body=(
+                "See `src/DoesNotExist.kt` for the entry point; "
+                "`src/DoesNotExist.kt` is also the exit."
+            ),
+        )
+        result = critic_concept(concept, conn)
+        assert result.passed is False
+        assert (
+            sum(1 for e in result.errors if "DoesNotExist.kt" in e) == 1
+        ), f"expected the dead path reported once, got {result.errors}"
 
     def test_real_qualified_symbol_ref_not_flagged(self, fresh_db):
         conn = _conn_with_fixture(fresh_db)

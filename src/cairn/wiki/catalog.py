@@ -3,8 +3,11 @@
 Turns the code graph into an ordered page plan: an overview page first,
 then one page per module. A module is a path-prefix bucket of
 ``files.path`` (same bucketing as ``graph.stats.group_by_top_level``);
-modules are ranked by cross-module incoming edge degree (degree DESC,
-module name ASC) so a large self-referential module cannot win. Each page
+modules whose indexed files are strictly majority test files
+(``test``/``tests``/``spec``/``specs`` path segments) are excluded from the
+plan entirely. The rest are ranked by cross-module incoming edge degree
+(degree DESC, module name ASC) so a large self-referential module cannot
+win. Each page
 record carries ``page_id``, ``title``, ``description``, ``module``,
 ``seeds`` (graph-grounded ``files``/``symbols``), and ``input_hash``
 (sha256 over the canonical JSON of the record without the hash) so
@@ -37,6 +40,19 @@ def _module_of(path: str, repo_root: str) -> str:
         path = path[len(repo_root) + 1:]
     parts = path.split("/")
     return "/".join(parts[:3]) if len(parts) >= 3 else parts[0]
+
+
+_TEST_SEGMENTS = {"test", "tests", "spec", "specs"}
+
+
+def _is_test_majority(paths: List[str]) -> bool:
+    """True when strictly more of ``paths`` are test files than non-test.
+
+    A test file is any path carrying a ``test``/``tests``/``spec``/
+    ``specs`` ``/``-segment (checked on the stored path strings as-is).
+    """
+    test_count = sum(1 for p in paths if _TEST_SEGMENTS & set(p.split("/")))
+    return test_count * 2 > len(paths)
 
 
 def _like_under_prefix(prefix: str) -> str:
@@ -142,7 +158,8 @@ def build_page_plan(
     ties), capped at ``pages_cap`` records including the overview. Each
     module page's ``seeds`` name exactly that module's file paths and its
     top symbols by incoming degree. Raises ``WikiPlannerError`` when the
-    repo has no indexed files.
+    repo has no indexed files or when every indexed file belongs to a
+    test-majority module.
     """
     cur = conn.cursor()
     repo_row = cur.execute("SELECT path FROM repos WHERE id = ?", (repo,)).fetchone()
@@ -164,6 +181,16 @@ def build_page_plan(
         module_files.setdefault(_module_of(p, repo_root), []).append(p)
     for members in module_files.values():
         members.sort()
+    module_files = {
+        module: members
+        for module, members in module_files.items()
+        if not _is_test_majority(members)
+    }
+    if not module_files:
+        raise WikiPlannerError(
+            f"no product-code modules for repo '{repo}': every indexed file "
+            "is majority test files"
+        )
 
     degrees = {
         module: _module_incoming_degree(cur, repo, module) for module in module_files

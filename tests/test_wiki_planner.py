@@ -4,6 +4,9 @@ Pins the contract of ``build_page_plan(conn, repo, pages_cap=10)`` in
 ``src/cairn/wiki/catalog.py``:
 
 - an overview page is planned first;
+- modules whose indexed files are majority test files (``test``/``spec``
+  path segments) are excluded from the plan entirely — page budget flows to
+  the next product-code module;
 - modules are ranked by cross-module incoming edge degree DESC, ties broken
   by module name ASC (D-005) — a large self-referential module must not win;
 - the plan is capped at ``pages_cap`` (default 10), overview included;
@@ -93,6 +96,45 @@ def _modules(plan: list) -> list:
     return [page["module"] for page in plan if page["module"]]
 
 
+def _seed_graph_with_tests_module(conn: sqlite3.Connection) -> None:
+    """Seed a five-module graph: ``_seed_graph`` plus a pure test module that
+    outranks every code module.
+
+    Cross-module incoming degree ledger: tests=4, m_a=3, m_b=2, m_c=2,
+    m_big=0. Every ``tests/`` file sits under a ``tests`` path segment, so
+    the module is test-majority and must never be planned.
+    """
+    _seed_graph(conn)
+    for fid, path in [
+        ("f_t1", "tests/conftest.py"),
+        ("f_t2", "tests/test_planner.py"),
+    ]:
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'r', ?, 'python')",
+            (fid, path),
+        )
+    for sid, fid, name in [
+        ("s_t1", "f_t1", "t_hook"),
+        ("s_t2", "f_t2", "t_case"),
+    ]:
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+            "VALUES (?, ?, ?, 'function', ?, 1, 10)",
+            (sid, fid, name, name),
+        )
+    for eid, src, dst in [
+        ("e_t1", "s_a", "s_t1"),     # m_a -> tests
+        ("e_t2", "s_b", "s_t1"),     # m_b -> tests
+        ("e_t3", "s_c", "s_t1"),     # m_c -> tests
+        ("e_t4", "s_big1", "s_t2"),  # m_big -> tests
+    ]:
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, 'calls')",
+            (eid, src, dst),
+        )
+    conn.commit()
+
+
 def _page_for(plan: list, module: str) -> dict:
     return next(page for page in plan if page["module"] == module)
 
@@ -159,7 +201,8 @@ class TestPageRecordContract:
 
 
 class TestPlanOrdering:
-    """Overview first; module ranking per D-005."""
+    """Overview first; test-majority modules excluded entirely; module
+    ranking per D-005 over the remaining code modules."""
 
     def test_overview_page_is_planned_first(self, fresh_db):
         _seed_graph(fresh_db)
@@ -170,10 +213,34 @@ class TestPlanOrdering:
         assert len(plan) == 5  # overview + all four seeded modules
 
     def test_modules_ranked_by_cross_module_incoming_degree_desc(self, fresh_db):
-        _seed_graph(fresh_db)
+        _seed_graph_with_tests_module(fresh_db)
         plan = build_page_plan(fresh_db, "r")
-        # Degrees: m_a=3, m_b=2, m_c=2, m_big=0 (5 internal edges ignored).
+        # Degrees: tests=4, m_a=3, m_b=2, m_c=2, m_big=0 (5 internal edges
+        # ignored). The test-majority module outranks every code module yet
+        # is absent from the plan entirely; the top code module takes its
+        # slot and the rest keep their degree order.
+        assert "tests" not in _modules(plan)
         assert _modules(plan) == ["m_a", "m_b", "m_c", "m_big"]
+        capped = build_page_plan(fresh_db, "r", pages_cap=2)
+        assert [page["page_id"] for page in capped] == ["overview", "m-a"]
+
+    def test_all_test_majority_modules_raise_wiki_planner_error(self, fresh_db):
+        fresh_db.execute(
+            "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/tmp/r')"
+        )
+        for fid, path in [
+            ("f1", "tests/conftest.py"),
+            ("f2", "tests/test_core.py"),
+        ]:
+            fresh_db.execute(
+                "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'r', ?, 'python')",
+                (fid, path),
+            )
+        fresh_db.commit()
+        # Files are indexed, but no product-code module survives the
+        # exclusion — a distinct path from the empty-graph error below.
+        with pytest.raises(WikiPlannerError, match=r".+"):
+            build_page_plan(fresh_db, "r")
 
     def test_equal_degree_modules_tiebroken_by_module_name_asc(self, fresh_db):
         _seed_graph(fresh_db)

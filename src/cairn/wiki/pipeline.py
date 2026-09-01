@@ -29,6 +29,7 @@ from ..llm.tasks import (
     read_result,
 )
 from ..okf.bundle import OKFBundle
+from ..utils.git import get_repo_head
 from .catalog import build_page_plan
 from .manifest import load_manifest, save_manifest, should_skip
 from .refine import validate_refined_outline
@@ -56,6 +57,7 @@ def _queue_pages(
     plan: List[Dict[str, Any]],
     force: bool,
     diagrams: bool,
+    commit_sha: Optional[str],
 ) -> List[str]:
     """Queue a ``wiki-page`` task per unskipped page; persist the manifest."""
     manifest = load_manifest(bundle)
@@ -84,17 +86,72 @@ def _queue_pages(
         }
         if diagrams:
             facts["diagrams"] = True
+        if commit_sha:
+            facts["commit_sha"] = commit_sha
         task = create_task(bundle, "wiki-page", page_id, facts=facts)
         queued_task_ids.append(task.id)
-        pages[key] = {
+        new_row = {
             **entry,
             "task_id": task.id,
             "state": "queued",
             "attempts": (row or {}).get("attempts", 0),
         }
+        if commit_sha:
+            new_row["commit_sha"] = commit_sha
+        pages[key] = new_row
 
     save_manifest(bundle.root, manifest)
     return queued_task_ids
+
+
+def queue_enrich_tasks(
+    bundle: OKFBundle,
+    repo: Optional[str] = None,
+    page_id: Optional[str] = None,
+) -> List[Task]:
+    """Queue one ``wiki-page-enrich`` task per promoted manifest page.
+
+    Only rows whose promoted concept (``wiki/pages/{repo}/{page_id}``) is
+    readable are queued; ``repo``/``page_id`` narrow the selection. Each
+    task's facts carry the page's current body plus the row's
+    seeds/input_hash/repo and a freshly resolved ``commit_sha``; the row's
+    ``task_id``/``state`` move to the enrich task while its recorded
+    ``commit_sha`` is left alone — the old body is still what is published
+    until the append lands.
+    """
+    manifest = load_manifest(bundle)
+    pages: Dict[str, Any] = manifest.setdefault("pages", {})
+    queued: List[Task] = []
+    for key in sorted(pages):
+        row_repo, _, row_page = str(key).partition("/")
+        if repo and row_repo != repo:
+            continue
+        if page_id and row_page != page_id:
+            continue
+        row = pages[key]
+        try:
+            concept = bundle.read_concept(f"wiki/pages/{row_repo}/{row_page}")
+        except Exception:
+            continue
+        facts: Dict[str, Any] = {
+            "title": row.get("title", row_page),
+            "description": row.get("description", ""),
+            "module": row.get("module", ""),
+            "seeds": row.get("seeds", []),
+            "input_hash": row.get("input_hash", ""),
+            "repo": row_repo,
+            "current_body": concept.body,
+        }
+        commit_sha = get_repo_head(row_repo)
+        if commit_sha:
+            facts["commit_sha"] = commit_sha
+        task = create_task(bundle, "wiki-page-enrich", row_page, facts=facts)
+        row["task_id"] = task.id
+        row["state"] = "queued"
+        queued.append(task)
+    if queued:
+        save_manifest(bundle.root, manifest)
+    return queued
 
 
 def _latest(tasks: List[Task]) -> Task:
@@ -130,6 +187,7 @@ def _refine_catalog_step(
     plan: List[Dict[str, Any]],
     force: bool,
     diagrams: bool,
+    commit_sha: Optional[str],
 ) -> Dict[str, Any]:
     """One refine-catalog step: queue the catalog task, or consume its
     completed result (latest done chain task by creation time, then attempt)
@@ -158,10 +216,10 @@ def _refine_catalog_step(
                 facts={"repo": repo, "outline": json.dumps(plan)},
             )
             return {"plan": plan, "queued_task_ids": [], "catalog_task_id": task.id}
-        queued = _queue_pages(conn, bundle, repo, plan, force, diagrams)
+        queued = _queue_pages(conn, bundle, repo, plan, force, diagrams, commit_sha)
         return {"plan": plan, "queued_task_ids": queued}
     effective = validate_refined_outline(refined, plan, conn)
-    queued = _queue_pages(conn, bundle, repo, effective, force, diagrams)
+    queued = _queue_pages(conn, bundle, repo, effective, force, diagrams, commit_sha)
     return {"plan": effective, "queued_task_ids": queued}
 
 
@@ -186,12 +244,17 @@ def run_wiki_generate(
     files (nothing is queued). A page whose inputs are unchanged is skipped
     when its concept is promoted or a live task (pending or in progress)
     already covers it; changed inputs re-queue the page even when an older
-    task lingers; ``force`` re-queues every page. The manifest is read
+    task lingers; ``force`` re-queues every page. When the repo's HEAD sha
+    resolves it rides each queued task's facts and manifest row as
+    ``commit_sha``. The manifest is read
     before the queue decisions and written atomically afterwards; a page's
     cumulative ``attempts`` counter is preserved across re-queues.
     """
     plan = build_page_plan(conn, repo, pages_cap=pages_cap)
+    commit_sha = get_repo_head(repo)
     if refine_catalog:
-        return _refine_catalog_step(conn, bundle, repo, plan, force, diagrams)
-    queued_task_ids = _queue_pages(conn, bundle, repo, plan, force, diagrams)
+        return _refine_catalog_step(
+            conn, bundle, repo, plan, force, diagrams, commit_sha
+        )
+    queued_task_ids = _queue_pages(conn, bundle, repo, plan, force, diagrams, commit_sha)
     return {"plan": plan, "queued_task_ids": queued_task_ids}

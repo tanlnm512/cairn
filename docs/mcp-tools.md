@@ -84,9 +84,15 @@ finish the wiki through the task queue:
    passing completion is promoted as a `Wiki-Article` concept under
    `wiki/pages/{repo}/{page_id}` with the verified sources in its
    frontmatter; a failing one spawns a bounded revise cycle.
-4. Track progress with `cairn wiki status`, re-queue failures with
-   `cairn wiki retry`; `cairn wiki search` and compass routing surface the
-   promoted articles.
+4. Track progress with `cairn wiki status` (per-page state plus a
+   fresh/stale verdict against the repo's current HEAD), re-queue failures
+   with `cairn wiki retry`; `cairn wiki search` and compass routing surface
+   the promoted articles, `cairn wiki export --dir DIR [--force]` writes
+   them out as markdown files (frontmatter preserved), and
+   `cairn wiki enrich [<page-id>|--all]` queues critic-gated append-only
+   extensions of promoted pages. Queue maintenance never needs store
+   surgery: `cairn task drop <id>` abandons a pending/in-progress task and
+   `cairn task list --kind-prefix wiki-page` lists every chain hop.
 
 ## Choosing tools
 

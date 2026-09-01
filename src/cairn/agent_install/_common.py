@@ -368,6 +368,19 @@ Cairn never calls an LLM directly. To generate compass/wiki with LLM quality:
 - `cairn task show <id>` -> `cairn task claim <id>` -> `cairn task complete <id> --result-file <path>`
 - The deterministic critic fact-checks every result; only graph-verified files/symbols allowed.
 
+## Wiki (architecture documentation)
+`cairn wiki generate --llm` queues page-writing tasks (a catalog refinement
+task first with `--refine-catalog`); work them through the task queue:
+- `cairn task claim <id>` -> write the page -> `cairn task complete <id> --result-file <path>`;
+  the result body must end with a `## Sources` footer -- the deterministic critic
+  fact-checks it against the graph before the page is promoted.
+- `cairn wiki status` -- per-page state (queued / in-progress / promoted / failed) with counts
+- `cairn wiki retry` -- re-queue failed pages as fresh task chains
+- `cairn wiki export --dir DIR` -- write every promoted page out as markdown
+- `cairn wiki enrich [<page-id>]` -- queue an append-only extension of a promoted page
+Consume the pages through the router: `ask_compass` reads wiki alongside
+graph/compass/memory; `search_knowledge(query, type_filter="Wiki")` queries pages directly.
+
 ## CLI Fallback (if MCP tools are unavailable):
 - `cairn def <symbol>` -- find definition
 - `cairn callers <symbol>` -- who calls this

@@ -19,8 +19,9 @@ from ..refs import (
     BACKTICK_RE,
     extract_file_refs as _extract_file_refs,
     extract_symbol_refs as _extract_symbol_refs,
-    file_exists as _file_exists,
+    file_exists as _file_exists,  # noqa: F401 -- re-exported for consumers
     symbol_exists as _symbol_exists,
+    unresolved_file_refs as _unresolved_file_refs,
 )
 
 
@@ -68,9 +69,8 @@ def critic_concept(
 
     # 1. Extract backtick-quoted file references and check existence.
     file_refs = _extract_file_refs(body)
-    for ref in file_refs:
-        if not _file_exists(conn, ref):
-            errors.append(f"Hallucinated/unresolved file path: {ref}")
+    for ref in _unresolved_file_refs(conn, file_refs):
+        errors.append(f"Hallucinated/unresolved file path: {ref}")
 
     # 2. Extract `Symbol(...)` or backtick Capitalized tokens and verify.
     symbol_refs = _extract_symbol_refs(body)

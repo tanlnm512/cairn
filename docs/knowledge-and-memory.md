@@ -85,28 +85,51 @@ Cairn never calls an LLM in-process. Synthesis work is queued as task
 concepts (`src/cairn/llm/tasks.py`) in `.knowledge/_tasks/`:
 
 - Kinds: `compass-synthesize`, `compass-revise`, `flow-synthesize`,
-  `flow-revise`, `wiki`, `wiki-page`, `wiki-page-revise`, `wiki-catalog`,
-  `wiki-catalog-revise`, `memory-critic`, `memory-extract`.
+  `flow-revise`, `wiki`, `wiki-page`, `wiki-page-revise`, `wiki-page-enrich`,
+  `wiki-page-enrich-revise`, `wiki-catalog`, `wiki-catalog-revise`,
+  `memory-critic`, `memory-extract`.
 - Lifecycle: `pending` → `in-progress` (atomic `O_EXCL` claim, 1h stale
   recovery) → `done` → promoted / revised (≤ 3 cycles) / dropped.
-- Drive it with `cairn task list|show|claim|complete --result-file <path>`.
+- Drive it with `cairn task list|show|claim|complete --result-file <path>`;
+  `list` filters by `--status`, `--kind`, or `--kind-prefix` (e.g.
+  `--kind-prefix wiki-page` lists every hop of the wiki chains), and
+  `cairn task drop <id>` abandons a pending or in-progress task — terminal:
+  done tasks are refused and a dropped task is never claimable again.
 - The **deterministic critic** (`src/cairn/compass/critic.py`) fact-checks
   every result: backtick file paths must exist in the graph, symbol refs
   must resolve, prose-heavy low-ref bodies get warned. It is not a
   hallucination detector — only graph-verified references pass.
 
 **Wiki generation** (`cairn wiki generate --llm`) rides the same queue.
-Generate plans a deterministic page outline from the graph and queues one
-`wiki-page` task per page; with `--refine-catalog` a `wiki-catalog` task
-refines the outline first (re-run generate to queue page tasks from the
-validated result). A manifest at `.knowledge/_wiki/manifest.json` records
-each page's plan, input hash, task id, and cumulative attempts, so re-runs
-skip unchanged, already-promoted pages (`--force` re-queues everything) and
-`cairn wiki status` / `cairn wiki retry` derive per-page state from the
-manifest joined with live task state. For wiki kinds the critic scores the
-`## Sources` footer instead of compass sections, and a passing page is
-promoted to a `Wiki-Article` concept under `wiki/pages/{repo}/{page_id}`
-with its verified sources in frontmatter.
+Generate plans a deterministic page outline from the graph — modules whose
+indexed files are a strict majority of test files
+(`test`/`tests`/`spec`/`specs` path segments) are excluded from the plan
+entirely, so page budgets are spent on product code — and queues one
+`wiki-page` task per page; with `--refine-catalog` a
+`wiki-catalog` task refines the outline first (re-run generate to queue page
+tasks from the validated result). A manifest at `.knowledge/_wiki/manifest.json`
+records each page's plan, input hash, task id, cumulative attempts, and the
+commit sha current at queue time, so re-runs skip unchanged, already-promoted
+pages (`--force` re-queues everything) and `cairn wiki status` /
+`cairn wiki retry` derive per-page state from the manifest joined with live
+task state. For wiki kinds the critic scores the `## Sources` footer instead
+of compass sections — reporting each unresolved path once no matter how many
+citation forms mention it — and a passing page is promoted to a
+`Wiki-Article` concept under `wiki/pages/{repo}/{page_id}` with its verified
+sources in frontmatter and the workspace HEAD sha recorded in its extensions.
+
+**Consuming and extending a promoted wiki**: both `cairn wiki status` and
+the dashboard wiki views compare the page's recorded sha with the repo's
+current HEAD — `fresh` when equal, `stale` when they differ, `unknown` when
+either is unavailable. `cairn wiki export --dir DIR [--force]` writes every
+promoted page as `DIR/{repo}/{page_id}.md` with its frontmatter preserved.
+`cairn wiki enrich [<page-id>|--all]` queues `wiki-page-enrich` tasks whose
+facts carry the page's current body plus fresh seeds; a critic-passing
+completion appends the new sections to the promoted body (the prior text
+stays in the page) and merges the new `## Sources` entries into the
+frontmatter, riding the same bounded revise cycle. The wiki output spec —
+the `## Sources` footer requirement — serves any task kind whose name starts
+with `wiki-page`, so revise hops of any depth keep it.
 
 Compass files are 5-section module guides (`src/cairn/compass/generator.py`);
 wiki entries (`src/cairn/wiki/generator.py`) are deterministic graph-derived

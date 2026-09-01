@@ -76,7 +76,11 @@ def _pending_wiki_page_tasks(bundle: OKFBundle) -> list:
 
 
 class TestWikiOutputSpecRegistration:
-    """FR-002: every wiki kind resolves to a real output spec."""
+    """FR-002: every wiki kind resolves to a real output spec.
+
+    FR-005: any kind whose name starts with ``wiki-page`` is served the full
+    wiki spec (Sources-footer requirement intact), never the default string.
+    """
 
     def test_all_four_wiki_kinds_have_registered_specs(self):
         fallback = _output_spec("__not_a_registered_kind__")
@@ -96,6 +100,29 @@ class TestWikiOutputSpecRegistration:
         spec = _output_spec("wiki-page-revise")
         assert "## Sources" in spec
         assert "outside the graph" in spec
+
+    def test_wiki_page_prefix_kinds_serve_the_full_wiki_spec(self):
+        fallback = _output_spec("__not_a_registered_kind__")
+        for kind in ("wiki-page-enrich", "wiki-page-enrich-revise"):
+            spec = _output_spec(kind)
+            assert spec != fallback, f"{kind} falls back to the default spec"
+            assert "## Sources" in spec
+            assert "outside the graph" in spec
+
+    def test_wiki_page_prefix_kinds_render_the_wiki_spec_in_the_task_body(
+        self, tmp_path
+    ):
+        bundle = _create_bundle(tmp_path)
+        for kind in ("wiki-page-enrich", "wiki-page-enrich-revise"):
+            task = create_task(
+                bundle,
+                kind,
+                "overview",
+                facts={"repo": "r1", "input_hash": "h1"},
+            )
+            body = _render_body(get_task(bundle, task.id))
+            assert "## Sources" in body, f"{kind} body lacks the Sources spec"
+            assert "Process per the cairn skill." not in body
 
 
 class TestMermaidGating:
@@ -207,6 +234,54 @@ class TestWikiPageReviseCycle:
         assert outcome["errors"]
         assert _pending_wiki_page_tasks(bundle) == []
         assert bundle.list_concepts(prefix="wiki/") == []
+
+
+# --------------------------------------------------------------------------
+# FR-005: the critic reports each unresolved path once per completion,
+# regardless of how many citation forms mention it.
+# --------------------------------------------------------------------------
+
+
+class TestCriticDedupePerCompletion:
+    """FR-005: one unresolved-path error per distinct dead path."""
+
+    def test_path_cited_in_prose_and_footer_reported_once(
+        self, fresh_db, tmp_path
+    ):
+        _seed_graph(fresh_db)
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            "wiki-page",
+            "overview",
+            facts={"repo": "r1", "input_hash": "hash-overview"},
+        )
+        claim_task(bundle, task.id, "test-agent")
+
+        result = (
+            "# Overview\n\n"
+            "The page describes `src/does_not_exist.py` in detail.\n\n"
+            "## Sources\n"
+            "- `src/does_not_exist.py`\n"
+            "- `src/also_missing.py`\n"
+        )
+        outcome = complete_task(bundle, task.id, result, conn=fresh_db)
+
+        errors = outcome["errors"]
+        # Exactly one error line per distinct dead path -- the prose backtick,
+        # the footer backtick, and the footer entry collapse into one.
+        assert len(errors) == 2, f"expected one error per dead path, got {errors}"
+        assert sum(1 for e in errors if "src/does_not_exist.py" in e) == 1
+        assert sum(1 for e in errors if "src/also_missing.py" in e) == 1
+        # Rejection itself is not weakened by the dedupe.
+        assert outcome["promoted"] is False
+        assert outcome["revised"] is True
+        assert bundle.list_concepts(prefix="wiki/") == []
+        revise_tasks = list_tasks(
+            bundle, status="pending", kind="wiki-page-revise"
+        )
+        assert len(revise_tasks) == 1
+        assert revise_tasks[0].facts.get("errors")
 
 
 # --------------------------------------------------------------------------
@@ -513,3 +588,68 @@ class TestPromotedArticleFrontmatterFidelity:
         )
         # Re-rendering is a fixed point: no field added or dropped.
         assert reparsed.to_markdown() == on_disk.to_markdown()
+
+
+# --------------------------------------------------------------------------
+# FR-003 (US2 AC1, D-016): the promotion branch records the workspace HEAD
+# sha the page was generated from as a fifth extensions key, copied from
+# facts exactly like input_hash.
+# --------------------------------------------------------------------------
+
+
+class TestPromotionRecordsCommitSha:
+    """FR-003: extensions carry the generation-time HEAD sha."""
+
+    def test_passing_completion_copies_the_facts_sha_into_extensions(
+        self, fresh_db, tmp_path
+    ):
+        _seed_graph(fresh_db)
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            "wiki-page",
+            "overview",
+            facts={
+                "repo": "r1",
+                "input_hash": "hash-overview",
+                "commit_sha": "abc1234",
+            },
+        )
+        claim_task(bundle, task.id, "test-agent")
+
+        outcome = complete_task(bundle, task.id, _PASSING_RESULT, conn=fresh_db)
+
+        assert outcome["promoted"] is True
+        article = bundle.read_concept("wiki/pages/r1/overview")
+        assert article.extensions.get("commit_sha") == "abc1234"
+        # Fifth key alongside the existing four.
+        assert {
+            "page_id",
+            "input_hash",
+            "task_id",
+            "refine_catalog",
+            "commit_sha",
+        } <= set(article.extensions)
+
+    def test_completion_without_a_resolvable_sha_still_promotes_without_one(
+        self, fresh_db, tmp_path
+    ):
+        _seed_graph(fresh_db)
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            "wiki-page",
+            "overview",
+            facts={"repo": "r1", "input_hash": "hash-overview"},
+        )
+        claim_task(bundle, task.id, "test-agent")
+
+        outcome = complete_task(bundle, task.id, _PASSING_RESULT, conn=fresh_db)
+
+        assert outcome["promoted"] is True
+        article = bundle.read_concept("wiki/pages/r1/overview")
+        assert {"page_id", "input_hash", "task_id", "refine_catalog"} <= set(
+            article.extensions
+        )
+        # Unknown HEAD: the key is absent, never None-valued (TC-008).
+        assert "commit_sha" not in article.extensions
