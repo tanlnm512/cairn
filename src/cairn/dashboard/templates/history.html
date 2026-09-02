@@ -64,10 +64,10 @@
       {% for h in calls %}
       <tr>
         <td>{{ h.tool_name }}</td>
-        <td>{{ h.invoked_at | epoch }}</td>
+        <td class="ts">{{ h.invoked_at | epoch }}</td>
         <td class="num">{{ h.duration_ms | duration }}</td>
         <td><span class="badge badge-{{ h.status }}">{{ h.status }}</span></td>
-        <td><code>{{ links.view_link('chains', 'session', h.session_id, window) }}</code></td>
+        <td class="cell-id"><code title="{{ h.session_id }}">{{ links.view_link('chains', 'session', h.session_id, window) }}</code></td>
         <td>{{ h.source }}</td>
         <td class="num">{{ h | tokens }}</td>
         <td>{{ h.args_summary or "—" }}</td>

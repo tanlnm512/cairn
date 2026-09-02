@@ -58,6 +58,7 @@
   --radius-s: 8px;
   --radius: 12px;
   --radius-l: 16px;
+  --control-h: 38px;
   --shadow-1: 0 1px 2px var(--shadow);
   --shadow-2: 0 12px 32px -16px var(--shadow);
   --shadow-3: 0 24px 64px -24px var(--shadow);
@@ -609,10 +610,15 @@ body.app-shell {
   letter-spacing: 0.07em;
 }
 
+/* One fixed row height for every control: selects, text inputs, and
+   buttons carry different intrinsic widget heights, which bottom-aligned
+   rows turn into ragged label baselines. */
 .graph-controls input[type="text"],
 .graph-controls input[type="number"],
+.graph-controls input[type="password"],
 .graph-controls select {
   min-width: 0;
+  height: var(--control-h);
   padding: 0.42rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -624,6 +630,45 @@ body.app-shell {
   transition: border-color 120ms ease;
 }
 
+.graph-controls input[type="number"] {
+  width: 7.5rem;
+}
+
+.graph-controls input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Checkbox toggles share the control height and row direction so the box
+   centers against the neighboring inputs/buttons instead of stacking the
+   checkbox above its caption (column direction inherited from the label
+   rule above). */
+.graph-controls .graph-tests-toggle,
+.graph-controls .confirm-base-url {
+  flex-direction: row;
+  align-items: center;
+  height: var(--control-h);
+  gap: 0.45rem;
+}
+
+/* Bare inline items interleaved in the row (env-pin markers, the API-key
+   status chip) must meet the same bottom line as the controls they
+   annotate. */
+.graph-controls .env-pin,
+.graph-controls > .muted {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  gap: 0.35rem;
+}
+
+.graph-controls .env-pin {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .graph-controls input:focus,
 .graph-controls select:focus {
   outline: none;
@@ -632,7 +677,8 @@ body.app-shell {
 }
 
 .graph-controls button[type="submit"] {
-  padding: 0.45rem 1rem;
+  height: var(--control-h);
+  padding: 0 1.1rem;
   border: 0;
   border-radius: var(--radius-s);
   background: var(--accent);
@@ -919,6 +965,26 @@ td.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Timestamp cells: ISO stamps break at their hyphens, so under width
+   pressure they wrap mid-string — hold them to one line. */
+.data-table td.ts {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Long identifier chips (memory IDs): word-break on code collapses the
+   column's min-content width, so the auto table layout squeezes it to a
+   one-glyph sliver. Cap the chip to one ellipsized line; the full id
+   rides the title attribute. */
+.data-table td.cell-id code {
+  display: inline-block;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 code {

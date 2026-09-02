@@ -33,14 +33,14 @@
     <tbody>
       {% for t in tasks %}
       <tr>
-        <td><code>{{ t.id }}</code></td>
+        <td class="cell-id"><code title="{{ t.id }}">{{ t.id }}</code></td>
         <td>{{ t.kind }}</td>
         <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
-        <td><code>{{ t.resource }}</code></td>
+        <td class="cell-id"><code title="{{ t.resource }}">{{ t.resource }}</code></td>
         <td>{{ t.assigned_to or "—" }}</td>
-        <td>{{ t.created_at or "—" }}</td>
-        <td>{{ t.claimed_at or "—" }}</td>
-        <td>{{ t.completed_at or "—" }}</td>
+        <td class="ts">{{ t.created_at or "—" }}</td>
+        <td class="ts">{{ t.claimed_at or "—" }}</td>
+        <td class="ts">{{ t.completed_at or "—" }}</td>
       </tr>
       {% endfor %}
     </tbody>
