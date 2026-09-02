@@ -3854,6 +3854,22 @@ def test_markdown_renderer_module_never_loads_server_stack():
     assert proc.stdout.strip() == "False"
 
 
+def test_jinja2_is_a_declared_runtime_dependency():
+    """The dashboard renders through starlette's Jinja2Templates, and
+    starlette ships jinja2 only in its [full] extra — mcp's starlette
+    never pulls it. Dev/CI environments happen to install it via extras,
+    which masked the gap: a minimal (PyPI) install crashed `cairn
+    dashboard` on ImportError. The dependency is pinned here so it can
+    never be pruned as "unused" again."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject.open("rb") as fh:
+        deps = tomllib.load(fh)["project"]["dependencies"]
+    assert any(d.strip().startswith("jinja2") for d in deps)
+
+
 def test_render_markdown_whitelists_blocks_and_escapes_inline_html():
     from cairn.dashboard.markdown import render_markdown
 

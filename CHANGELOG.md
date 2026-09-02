@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the closed verdict (scripts recoverable from git history).
 
 ### Fixed
+- A minimal install (pip/pipx from PyPI, no extras) crashed `cairn
+  dashboard` on `ImportError: jinja2 must be installed to use
+  Jinja2Templates`: starlette ships jinja2 only in its `[full]` extra, so
+  the copy mcp pulls never brings it, and every dev/CI environment
+  happened to install it via extras — masking the gap. jinja2 is now a
+  declared runtime dependency (verified end-to-end in a base-deps-only
+  venv), pinned by a test so it cannot be pruned as "unused" again.
 - `cairn compass gaps` reported every module as uncovered: `detect_gaps`
   compared repo-qualified module ids against repo-relative compass
   `resource` fields, so the match could never succeed. Coverage now
