@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.16.3] - 2026-09-02
 
 ### Added
 - Wiki trust context and outward surfaces: every promoted wiki page now
