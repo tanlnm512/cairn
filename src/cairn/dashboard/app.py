@@ -244,6 +244,7 @@ def create_app(
         GRAPH_SCOPES,
         SESSION_GAP_S,
         MissingDatabaseError,
+        get_database_schema,
         get_graph,
         get_health,
         get_read_only_db,
@@ -1075,6 +1076,21 @@ def create_app(
             },
         )
 
+    def database(request: Request) -> Response:
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            schema = get_database_schema(conn)
+        finally:
+            conn.close()
+        return render(
+            request,
+            "database.html",
+            {"schema": schema, "store_key": store_key},
+        )
+
     routes = [
         Route("/", landing, name="index"),
         Route("/workspaces", workspaces_overview, name="workspaces"),
@@ -1101,6 +1117,7 @@ def create_app(
         Route("/wiki/{repo}/{page_id}", wiki_page_repo, name="wiki_page_repo"),
         Route("/wiki/{page_id}", wiki_page, name="wiki_page"),
         Route("/embeddings", embeddings_status, name="embeddings"),
+        Route("/database", database, name="database"),
         Route("/settings", settings, name="settings"),
         # The app's first POST routes (FR-011) — loopback-only by the CLI's
         # DEFAULT_HOST + _require_loopback; the GET views stay untouched.

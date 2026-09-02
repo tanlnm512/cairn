@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dashboard database view (`/database`, System section): the store's
+  schema rendered as an interactive relationship graph on the same
+  vis-network canvas as the Graph view — tables are nodes sized by row
+  count, solid edges are declared foreign keys, dashed edges are
+  `*_id` references implied by column naming (a column already covered
+  by a declared FK is never re-inferred), internal `sqlite_%`/FTS shadow
+  tables are excluded, and selecting a node opens a side panel with the
+  table's columns, types, and incoming/outgoing references. Theme flips
+  re-color the live network.
 - Dashboard Memory view categorization: a Type filter pill row
   (all · decision · pattern · mistake · workaround) above the table,
   mirroring the Wiki catalog's state filter — `?type=` narrows the list
