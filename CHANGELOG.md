@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.17.0] - 2026-09-02
 
 ### Added
 - Dashboard shell: a global workspace selector in the topbar of every view
