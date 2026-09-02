@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one ellipsized line with the full value on the `title` tooltip instead
   of being squeezed to a one-glyph sliver by the auto table layout.
 
+### Changed
+- Dashboard sidebar: the collapse control and theme toggle are icon-only
+  square buttons — a chevron that flips with the collapse state, and a
+  sun/moon glyph showing the theme the button switches to (sun while
+  dark, moon while light). The visible text is gone; the accessible
+  name and tooltip state the action ("Switch to light theme" /
+  "Collapse sidebar") and stay in sync in both states.
 
 ## [0.17.0] - 2026-09-02
 
