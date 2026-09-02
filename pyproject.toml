@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cairn-intel"
-version = "0.16.2"
+version = "0.16.3"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
@@ -43,6 +43,7 @@ dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
     "mcp>=0.9.0,<2.0.0",  # SSE/streamable-http + uvicorn/starlette are core deps in mcp>=0.9; the legacy [sse] extra was removed upstream
+    "jinja2>=3.0",  # dashboard template rendering; starlette ships it only in its [full] extra, so mcp's starlette never pulls it — without this a minimal install crashed `cairn dashboard` on ImportError
     "pydantic>=2.0",  # used directly by mcp_server/structured.py; declared explicitly (not just transitive via mcp)
     "pathspec>=0.12",
     "packaging>=21.0",  # PEP 440 version comparison in `cairn upgrade`; declared explicitly (transitively always present via pip/setuptools, but the CLI relies on it)
@@ -231,7 +232,7 @@ select = ["F"]
 # The custom template (.cz_templates/keepachangelog.j2) renders that draft in
 # the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
 # default `## X.Y.Z (YYYY-MM-DD)`.
-version = "0.16.2"
+version = "0.16.3"
 version_scheme = "pep440"
 tag_format = "v$version"
 update_changelog_on_bump = false
