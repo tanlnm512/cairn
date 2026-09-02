@@ -590,11 +590,15 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     }
 
 
-def get_recent_memories(knowledge_dir: str, limit: int = 20) -> List[dict]:
+def get_recent_memories(
+    knowledge_dir: str, limit: int = 20, memory_type: Optional[str] = None
+) -> List[dict]:
     """Recent memories, newest-first, each with type and title (FR-009).
 
     Reads the OKF bundle's ``memory/`` namespace directly; an unreadable
-    concept file is skipped, never fatal.
+    concept file is skipped, never fatal. ``memory_type`` narrows to one
+    category (decision / pattern / mistake / workaround) before the limit
+    applies, so a filtered page still shows the newest of that type.
     """
     bundle = OKFBundle(knowledge_dir)
     entries: List[dict] = []
@@ -603,10 +607,13 @@ def get_recent_memories(knowledge_dir: str, limit: int = 20) -> List[dict]:
             concept = bundle.read_concept(cid)
         except Exception:
             continue
+        entry_type = concept.extensions.get("memory_type") or concept.type
+        if memory_type is not None and entry_type != memory_type:
+            continue
         entries.append(
             {
                 "id": cid,
-                "type": concept.extensions.get("memory_type") or concept.type,
+                "type": entry_type,
                 "title": concept.title or cid,
                 "tier": concept.extensions.get("memory_tier", ""),
                 "timestamp": concept.timestamp or "",

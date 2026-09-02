@@ -41,6 +41,10 @@ DEFAULT_PORT = 8765
 # llm.tasks Task.status vocabulary — the /tasks filter's allowed values.
 TASK_STATUSES = ("pending", "in-progress", "done", "failed")
 
+# Agent-memory type vocabulary (cairn memory record) — the /memory
+# filter's allowed values.
+MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
+
 # Traffic-view time-window presets (FR-002) — the ``window`` param's
 # allowed values; "all" is the unbounded default.
 WINDOW_PRESETS = ("24h", "7d", "30d", "all")
@@ -685,14 +689,28 @@ def create_app(
         )
 
     def memory(request: Request) -> Response:
+        # Type filter, read like every other view's param: absent or blank
+        # means no filter; ``type`` outside MEMORY_TYPES falls back to no
+        # filter (silent fallback, matching the tasks/wiki filters).
+        memory_type = request.query_params.get("type", "all").strip() or "all"
+        if memory_type not in MEMORY_TYPES:
+            memory_type = "all"
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        entries = get_recent_memories(selected_knowledge)
+        entries = get_recent_memories(
+            selected_knowledge,
+            memory_type=None if memory_type == "all" else memory_type,
+        )
         return render(
             request,
             "memory.html",
-            {"memories": entries, "store_key": store_key},
+            {
+                "memories": entries,
+                "memory_types": MEMORY_TYPES,
+                "memory_type": memory_type,
+                "store_key": store_key,
+            },
         )
 
     def tasks(request: Request) -> Response:
