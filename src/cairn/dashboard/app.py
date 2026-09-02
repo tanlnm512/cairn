@@ -737,9 +737,10 @@ def create_app(
 
     def wiki(request: Request) -> Response:
         # Catalog filters, read like every other view's params: absent or
-        # blank means no filter; ``state`` outside PAGE_STATES falls back to
-        # no filter (silent fallback, matching the scope/window fallbacks).
-        from ..wiki.manifest import PAGE_STATES
+        # blank means no filter; ``state`` outside the derived vocabulary
+        # falls back to no filter (silent fallback, matching the
+        # scope/window fallbacks).
+        from ..wiki.lifecycle import DERIVED_STATES as PAGE_STATES
 
         repo = request.query_params.get("repo", "").strip() or None
         state = request.query_params.get("state", "").strip() or None

@@ -220,23 +220,17 @@ def _enriched_article(
     page_id: str,
     new_sections: str,
     new_sources: Optional[List[Dict[str, Any]]],
+    commit_sha: Optional[str],
 ) -> OKFConcept:
-    """The enriched Wiki-Article: the promoted page's body with
-    ``new_sections`` appended, sources merged old entries first and deduped
-    by entry value, extensions refreshed from the task's facts. The promoted
-    concept is read at completion time; a page with no readable concept
-    falls back to ``facts["current_body"]``."""
-    try:
-        current = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
-    except Exception:
-        current = None
-    base = (
-        current.body
-        if current is not None
-        else str(task.facts.get("current_body") or "")
-    )
+    """The enriched Wiki-Article: the promoted page's body — read at
+    completion time, never a facts snapshot — with ``new_sections``
+    appended, sources merged old entries first and deduped by entry value,
+    provenance refreshed from this enrich task (``commit_sha`` resolved at
+    completion)."""
+    current = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
+    base = current.body
     merged: List[Dict[str, Any]] = (
-        list(current.sources) if current is not None and current.sources else []
+        list(current.sources) if current.sources else []
     )
     for entry in new_sources or []:
         if entry not in merged:
@@ -253,14 +247,10 @@ def _enriched_article(
         body=f"{base}\n\n{new_sections}" if base else new_sections,
         extensions={
             "page_id": page_id,
+            "repo": repo,
             "input_hash": task.facts.get("input_hash"),
             "task_id": task_id,
-            "refine_catalog": task.facts.get("refine_catalog"),
-            **(
-                {"commit_sha": task.facts["commit_sha"]}
-                if task.facts.get("commit_sha")
-                else {}
-            ),
+            **({"commit_sha": commit_sha} if commit_sha else {}),
         },
     )
 
@@ -305,9 +295,6 @@ def complete_task(
             "quality": 0.0,
         }
 
-    task.status = "done"
-    task.completed_at = _now()
-
     # Privacy floor (audit F9): memory-* task results are derived from user
     # session content (memory-extract embeds the transcript, memory-critic
     # quotes draft bodies), so scrub secret-shaped substrings before the
@@ -321,7 +308,24 @@ def complete_task(
 
         result = strip_private_data(result)
 
-    # Write the result as a sibling concept.
+    # Wiki kinds require the repo fact (it names the content path and the
+    # provenance sha's repo). Refuse before anything is consumed or written:
+    # the task stays in-progress, though realistically it can never complete
+    # until the facts are fixed — queueing always supplies the repo.
+    if task.task_kind.startswith("wiki-page") and not (task.facts or {}).get("repo"):
+        return {
+            "task_id": task_id,
+            "promoted": False,
+            "revised": False,
+            "dropped": False,
+            "errors": [
+                "wiki-page task is missing the required 'repo' fact"
+            ],
+            "quality": 0.0,
+        }
+
+    # Write the result as a sibling concept: it is the critic's subject and
+    # is stamped with the verdict after the gate runs.
     result_concept = OKFConcept(
         type="Task-Result",
         title=f"Result for {task_id}",
@@ -331,23 +335,43 @@ def complete_task(
         body=result,
     )
     bundle.write_concept(result_concept)
-    bundle.write_concept(_task_to_concept(task))
-    
-    # Remove claim marker if it exists
+
+    # The claim marker goes now. From here the task is either finished by
+    # the outcome branches below or left in-progress and re-completable
+    # when the critic itself fails — done is never written without a
+    # verdict (that zombie used to display queued forever, unreachable by
+    # retry).
     claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
     try:
         os.remove(claim_marker)
     except OSError:
         pass
-    
+
+    def _finish_done():
+        """Persist the task in its terminal done state (one write, one shape)."""
+        task.status = "done"
+        task.completed_at = _now()
+        bundle.write_concept(_task_to_concept(task))
+
     # Run critic if a connection is provided
     if conn is not None:
         try:
             from ..compass.critic import CriticResult, critic_concept
 
-            # Wiki pages are scored on the Sources footer, not compass sections.
+            # Wiki pages are scored on the Sources footer, not compass
+            # sections. The catalog outline is JSON validated
+            # deterministically by the pipeline's refine step, so it is
+            # critic-exempt — the vocab gate would fail every chain and
+            # reduce --refine-catalog to its deterministic fallback.
             wiki_page = task.task_kind.startswith("wiki-page")
-            if wiki_page:
+            catalog_task = task.task_kind == "wiki-catalog"
+            if catalog_task:
+                from ..compass.critic import CriticResult
+
+                critic_result = CriticResult(
+                    errors=[], warnings=[], quality_score=1.0, passed=True
+                )
+            elif wiki_page:
                 critic_result = critic_concept(
                     result_concept, conn, section_vocab=("## Sources",)
                 )
@@ -456,27 +480,27 @@ def complete_task(
                     promoted = True
 
                 if task.task_kind.startswith("wiki-page"):
+                    # The repo fact was validated at the top of completion.
                     repo = task.facts.get("repo")
-                    if not repo:
-                        return {
-                            "task_id": task_id,
-                            "promoted": False,
-                            "revised": False,
-                            "dropped": False,
-                            "errors": [
-                                "wiki-page task is missing the required 'repo' fact"
-                            ],
-                            "quality": critic_result.quality_score,
-                        }
-                    page_id = (
-                        task.resource.replace("/", "-")
-                        .replace(".", "-")
-                        .replace("#", "-")
+                    # Qualified resources are "{repo}/{page_id}"; legacy bare
+                    # ids keep the slug sanitation.
+                    raw_page_id = (
+                        task.resource.partition("/")[2]
+                        if "/" in task.resource
+                        else task.resource
                     )
+                    page_id = (
+                        raw_page_id.replace(".", "-").replace("#", "-")
+                    )
+                    # Provenance sha is resolved at completion time — the
+                    # only place content truth is written.
+                    from ..utils.git import get_repo_head
+
+                    commit_sha = get_repo_head(repo)
                     if task.task_kind.startswith("wiki-page-enrich"):
                         wiki_concept = _enriched_article(
                             bundle, task, task_id, repo, page_id, result,
-                            wiki_sources,
+                            wiki_sources, commit_sha,
                         )
                     else:
                         promoted_body = result
@@ -497,12 +521,12 @@ def complete_task(
                             body=promoted_body,
                             extensions={
                                 "page_id": page_id,
+                                "repo": repo,
                                 "input_hash": task.facts.get("input_hash"),
                                 "task_id": task_id,
-                                "refine_catalog": task.facts.get("refine_catalog"),
                                 **(
-                                    {"commit_sha": task.facts["commit_sha"]}
-                                    if task.facts.get("commit_sha")
+                                    {"commit_sha": commit_sha}
+                                    if commit_sha
                                     else {}
                                 ),
                             },
@@ -510,6 +534,7 @@ def complete_task(
                     bundle.write_concept(wiki_concept)
                     promoted = True
 
+                _finish_done()
                 _emit(
                     TASK_LIFECYCLE,
                     task_kind=task.task_kind,
@@ -546,6 +571,7 @@ def complete_task(
                         parent_attempt=task.attempt,
                     )
 
+                    _finish_done()
                     _emit(
                         TASK_LIFECYCLE,
                         task_kind=task.task_kind,
@@ -562,6 +588,7 @@ def complete_task(
                     }
                 else:
                     # Max cycles reached - drop the task
+                    _finish_done()
                     _emit(
                         TASK_LIFECYCLE,
                         task_kind=task.task_kind,
@@ -577,7 +604,10 @@ def complete_task(
                         "quality": critic_result.quality_score,
                     }
         except Exception:
-            # Critic run failed - treat as success but log error
+            # Critic run failed: the task stays in-progress and
+            # re-completable (the claim marker is already gone) — done is
+            # never written without a verdict, so no zombie is created. The
+            # failure is reported; nothing is promoted.
             return {
                 "task_id": task_id,
                 "promoted": False,
@@ -586,7 +616,8 @@ def complete_task(
                 "errors": ["critic execution failed"],
                 "quality": 0.0,
             }
-    
+
+    _finish_done()
     # No connection provided - return basic completion
     return {
         "task_id": task_id,

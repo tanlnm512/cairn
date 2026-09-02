@@ -59,7 +59,7 @@ def context(file_path, knowledge):
     seg = parts[-1].replace(".kt", "").replace(".java", "") if parts else ""
     if seg:
         for c in bundle.search(seg, limit=3):
-            if c.type.startswith("Wiki"):
+            if c.type in ("Wiki-Article", "Wiki-Feature"):
                 out.append(f"\n# Wiki: {c.title}\n{c.body[:500]}...")
                 break
     if seg:

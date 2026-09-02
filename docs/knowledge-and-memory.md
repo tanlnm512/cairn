@@ -100,38 +100,64 @@ concepts (`src/cairn/llm/tasks.py`) in `.knowledge/_tasks/`:
   must resolve, prose-heavy low-ref bodies get warned. It is not a
   hallucination detector — only graph-verified references pass.
 
-**Wiki generation** (`cairn wiki generate --llm`) rides the same queue.
-Generate plans a deterministic page outline from the graph — modules whose
-indexed files are a strict majority of test files
+**The wiki: the agent-facing knowledge surface.** The wiki is the
+workspace's documentation for agents — covering code or documents —
+searchable via `search_knowledge` / `ask_compass` and explorable in the
+dashboard's wiki views. It stores exactly two kinds with disjoint jobs,
+and nothing else:
+
+- **The plan** (`.knowledge/_wiki/manifest.json`) records pipeline *intent*:
+  which pages should exist (identity, title/description, module, seeds,
+  input hash) and where their queue work stands (task id, queue attempts).
+  The plan never describes content — no bodies, no provenance, no lifecycle
+  verdicts.
+- **Content** (promoted `Wiki-Article` concepts under
+  `wiki/pages/{repo}/{page_id}`) is the only record of what *exists*: the
+  body, verified sources in frontmatter, and provenance (the workspace HEAD
+  sha and writing task id) in its extensions.
+
+Everything else is derived at read time by `cairn.wiki.lifecycle` from
+plan, content, and the task chain — promotion, lifecycle state, staleness
+are never stored, so the two kinds cannot vouch for each other. The
+dashboard and CLI read models expose the derived lifecycle only
+(`planned/queued/in-progress/promoted/failed/dropped`); staleness compares
+the content's recorded sha with the repo's current HEAD (`fresh`/`stale`),
+and a page with no content is always `unknown` — plan data is never
+consulted for what exists.
+
+**Generation** (`cairn wiki generate --llm`) rides the same queue. Generate
+plans a deterministic page outline from the graph — modules whose indexed
+files are a strict majority of test files
 (`test`/`tests`/`spec`/`specs` path segments) are excluded from the plan
 entirely, so page budgets are spent on product code — and queues one
-`wiki-page` task per page; with `--refine-catalog` a
-`wiki-catalog` task refines the outline first (re-run generate to queue page
-tasks from the validated result). A manifest at `.knowledge/_wiki/manifest.json`
-records each page's plan, input hash, task id, cumulative attempts, and the
-commit sha current at queue time, so re-runs skip unchanged, already-promoted
-pages (`--force` re-queues everything) and `cairn wiki status` /
-`cairn wiki retry` derive per-page state from the manifest joined with live
-task state. For wiki kinds the critic scores the `## Sources` footer instead
-of compass sections — reporting each unresolved path once no matter how many
-citation forms mention it — and a passing page is promoted to a
-`Wiki-Article` concept under `wiki/pages/{repo}/{page_id}` with its verified
-sources in frontmatter and the workspace HEAD sha recorded in its extensions.
+`wiki-page` task per page, keyed by the qualified `{repo}/{page_id}`
+resource; with `--refine-catalog` a `wiki-catalog` task refines the outline
+first (re-run generate to queue page tasks from the validated result; an
+invalid refined entry falls back to its module's deterministic record, and
+a refinement can reorder and reseed but never silently drop a planned
+page). Re-runs skip pages whose input hash is unchanged and whose content
+is promoted (`--force` re-queues everything), adopt a live task whose work
+order already matches instead of duplicating it, and never let an in-flight
+enrichment block generation. For wiki kinds the critic scores the
+`## Sources` footer instead of compass sections — reporting each unresolved
+path once no matter how many citation forms mention it — and a passing page
+is promoted to the `Wiki-Article` concept with its verified sources in
+frontmatter and the HEAD sha (resolved at completion) in its extensions.
 
-**Consuming and extending a promoted wiki**: both `cairn wiki status` and
-the dashboard wiki views compare the page's recorded sha with the repo's
-current HEAD — `fresh` when equal, `stale` when they differ, `unknown` when
-either is unavailable. `cairn wiki export --dir DIR [--force]` writes every
-promoted page as `DIR/{repo}/{page_id}.md` with its frontmatter preserved.
-`cairn wiki enrich [<page-id>|--all]` queues `wiki-page-enrich` tasks whose
-facts carry the page's current body plus fresh seeds; a critic-passing
-completion appends the new sections to the promoted body (the prior text
-stays in the page) and merges the new `## Sources` entries into the
-frontmatter, riding the same bounded revise cycle. The wiki output spec —
-the `## Sources` footer requirement — serves any task kind whose name starts
-with `wiki-page`, so revise hops of any depth keep it.
+**Consuming and extending promoted pages**: `cairn wiki status` and the
+dashboard wiki views render the derived lifecycle and staleness.
+`cairn wiki export --dir DIR [--force]` writes every promoted page as
+`DIR/{repo}/{page_id}.md` with its frontmatter preserved. `cairn wiki
+enrich [<page-id>|--all]` queues `wiki-page-enrich` tasks carrying page
+identity only; the completion reads the promoted page, appends the new
+sections (the prior text stays), merges the new `## Sources` entries into
+the frontmatter, and refreshes the provenance sha — riding the same bounded
+revise cycle. The `## Sources` footer requirement serves any task kind
+whose name starts with `wiki-page`, so revise hops of any depth keep it.
 
 Compass files are 5-section module guides (`src/cairn/compass/generator.py`);
-wiki entries (`src/cairn/wiki/generator.py`) are deterministic graph-derived
-architecture summaries. Both work without any LLM; the queue only upgrades
-prose quality.
+the deterministic generator (`src/cairn/wiki/generator.py`) produces
+`Architecture-Report` diagnostics under `reports/architecture/{repo}` —
+useful summaries, but outside the wiki layer since they never pass the
+critic gate. Both work without any LLM; the queue only upgrades prose
+quality.

@@ -251,12 +251,12 @@ class TestRerunQueuesPagesFromRefinedOutline:
 
         pages = _page_modules(bundle)
         assert Counter(t.resource for t in pages) == Counter(
-            {"overview": 1, "m-c": 1, "m-a": 1, "m-b": 1, "m-big": 1}
+            {"r/overview": 1, "r/m-c": 1, "r/m-a": 1, "r/m-b": 1, "r/m-big": 1}
         )
         by_resource = {t.resource: t for t in pages}
         # The retitled refined entry (not the deterministic title) drove the queue.
-        assert by_resource["m-c"].facts["title"] == "C utilities (retitled)"
-        assert by_resource["overview"].facts["title"] == "Repository overview"
+        assert by_resource["r/m-c"].facts["title"] == "C utilities (retitled)"
+        assert by_resource["r/overview"].facts["title"] == "Repository overview"
         assert list_tasks(bundle, kind="wiki-catalog", status="pending") == []
 
 
@@ -290,18 +290,18 @@ class TestInvalidRefinedEntryKeepsDeterministicSlot:
         assert second.exit_code == 0, second.output
 
         pages = _page_modules(bundle)
-        # The rejected slot keeps the deterministic plan's entry in its place;
-        # the valid refined entries are honored.
+        # The rejected phantom module is dropped (nothing to fall back to at
+        # that position); the valid refined entries are honored, and the
+        # deterministic pages the refinement never mentioned are appended.
         assert Counter(t.resource for t in pages) == Counter(
-            {"overview": 1, "m-b": 2, "m-a": 1}
+            {"r/overview": 1, "r/m-b": 1, "r/m-a": 1, "r/m-c": 1, "r/m-big": 1}
         )
-        b_pages = [t for t in pages if t.resource == "m-b"]
+        b_pages = [t for t in pages if t.resource == "r/m-b"]
         refined_b = [t for t in b_pages if t.facts["title"] == "B refined"]
-        det_b = [t for t in b_pages if t.facts["input_hash"] == det[2]["input_hash"]]
         assert len(refined_b) == 1
-        assert len(det_b) == 1
-        assert det_b[0].facts["title"] == det[2]["title"]
-        a_page = next(t for t in pages if t.resource == "m-a")
+        c_page = next(t for t in pages if t.resource == "r/m-c")
+        assert c_page.facts["input_hash"] == det[3]["input_hash"]
+        a_page = next(t for t in pages if t.resource == "r/m-a")
         assert a_page.facts["title"] == "A refined"
         assert list_tasks(bundle, kind="wiki-catalog", status="pending") == []
 
@@ -310,7 +310,13 @@ class TestInvalidRefinedEntryKeepsDeterministicSlot:
 
 
 class TestDroppedCatalogFallsBackToDeterministicPlan:
-    def test_rerun_after_catalog_chain_drops_queues_deterministic_plan(self, cli_env):
+    def test_rerun_after_unusable_catalog_result_queues_deterministic_plan(
+        self, cli_env
+    ):
+        """A catalog result that never lands a usable outline (garbage JSON)
+        falls back to the deterministic plan. The catalog itself is
+        critic-exempt — its output is validated deterministically here — so
+        'unusable' means unparseable, not critic-failed."""
         tmp_path = cli_env
         db = _make_db(tmp_path)
         knowledge = str(tmp_path / ".knowledge")
@@ -318,37 +324,30 @@ class TestDroppedCatalogFallsBackToDeterministicPlan:
 
         first = _generate(db, knowledge)
         assert first.exit_code == 0, first.output
-
-        # Drive the catalog chain through its bounded revise cycle to the drop.
-        conn = _open_db(db)
-        try:
-            outcome = None
-            for _ in range(3):
-                chain = _pending_catalog_chain(bundle)
-                assert len(chain) == 1
-                outcome = _complete_catalog(
-                    bundle, chain[0].id, _FAILING_RESULT, conn=conn
-                )
-            assert outcome["dropped"] is True
-        finally:
-            conn.close()
-
-        conn2 = _open_db(db)
-        try:
-            det = build_page_plan(conn2, "r")
-        finally:
-            conn2.close()
+        catalog = _pending_catalog_task(bundle)
+        outcome = _complete_catalog(
+            bundle, catalog.id, "not a json outline at all"
+        )
+        assert outcome["promoted"] is False
 
         second = _generate(db, knowledge)
         assert second.exit_code == 0, second.output
 
+        conn = _open_db(db)
+        try:
+            det = build_page_plan(conn, "r")
+        finally:
+            conn.close()
+
         pages = _page_modules(bundle)
         assert Counter(t.resource for t in pages) == Counter(
-            {page["page_id"]: 1 for page in det}
+            {f"r/{page['page_id']}": 1 for page in det}
         )
-        det_by_id = {page["page_id"]: page for page in det}
+        det_by_resource = {
+            f"r/{page['page_id']}": page for page in det
+        }
         for t in pages:
-            assert t.facts["input_hash"] == det_by_id[t.resource]["input_hash"]
+            assert t.facts["input_hash"] == det_by_resource[t.resource]["input_hash"]
         assert list_tasks(bundle, kind="wiki-catalog", status="pending") == []
 
 
@@ -370,11 +369,16 @@ class TestValidateRefinedOutline:
             {"title": "A core", "description": "d2", "module": "m_a"},
         ]
         eff = validate_refined_outline(refined, det, fresh_db)
-        assert [page["module"] for page in eff] == ["", "m_c", "m_a"]
+        # Refined order is kept; deterministic entries the refinement never
+        # mentioned are appended (a refinement reorders/reseeds, never loses).
+        assert [page["module"] for page in eff] == [
+            "", "m_c", "m_a", "m_b", "m_big",
+        ]
         assert eff[1]["title"] == "C utilities"
         assert eff[2]["title"] == "A core"
+        assert eff[3] == det[2] and eff[4] == det[4]
 
-    def test_phantom_module_entry_is_replaced_by_deterministic_slot_entry(
+    def test_phantom_module_entry_is_rejected_and_det_pages_appended(
         self, fresh_db
     ):
         from cairn.wiki.refine import validate_refined_outline
@@ -385,8 +389,10 @@ class TestValidateRefinedOutline:
             {"title": "Ghost page", "description": "g", "module": "m_ghost"},
         ]
         eff = validate_refined_outline(refined, det, fresh_db)
+        # The ghost module is rejected (no positional slot to inherit); the
+        # untouched deterministic pages follow in plan order.
         assert eff[0]["title"] == "Repository overview"
-        assert eff[1] == det[1]
+        assert eff[1:] == det[1:]
 
     def test_entry_with_unresolvable_seed_file_is_replaced(self, fresh_db):
         from cairn.wiki.refine import validate_refined_outline
@@ -404,9 +410,15 @@ class TestValidateRefinedOutline:
             },
         ]
         eff = validate_refined_outline(refined, det, fresh_db)
-        assert eff[1] == det[1]
-        assert eff[2]["title"] == "B good seeds"
-        assert eff[2]["seeds"] == {"files": ["m_c/util.py"], "symbols": ["c_util"]}
+        assert eff[0]["title"] == "Repository overview"
+        assert eff[1]["title"] == "B good seeds"
+        assert eff[1]["seeds"] == {
+            "files": ["m_c/util.py"], "symbols": ["c_util"], "docs": [],
+        }
+        # The rejected m_b entry falls back to ITS module's deterministic
+        # record, appended after the kept entries.
+        assert eff[2] == det[1]
+        assert [page["module"] for page in eff] == ["", "m_c", "m_a", "m_b", "m_big"]
 
     def test_empty_module_is_the_valid_overview_entry(self, fresh_db):
         from cairn.wiki.refine import validate_refined_outline
@@ -416,9 +428,10 @@ class TestValidateRefinedOutline:
             {"title": "Custom overview", "description": "d", "module": ""},
         ]
         eff = validate_refined_outline(refined, det, fresh_db)
-        assert len(eff) == 1
         assert eff[0]["title"] == "Custom overview"
         assert eff[0]["page_id"] == "overview"
+        # Deterministic pages the refinement never covered still follow.
+        assert eff[1:] == det[1:]
 
     def test_records_carry_planner_shape_and_recomputed_input_hash(self, fresh_db):
         from cairn.wiki.refine import validate_refined_outline
@@ -438,12 +451,14 @@ class TestValidateRefinedOutline:
         assert eff[0]["input_hash"] == _expected_hash(
             {
                 "page_id": "m-b", "title": "B retitled", "description": "d",
-                "module": "m_b", "seeds": seeds,
+                "module": "m_b", "source": "code",
+                "seeds": {**seeds, "docs": []},
             }
         )
-        # The replaced slot keeps the deterministic record verbatim, hash included.
-        assert eff[1] == det[1]
-        assert eff[1]["input_hash"] == det[1]["input_hash"]
+        # Deterministic pages the refinement never covered keep their
+        # records verbatim, hash included.
+        assert eff[1] == det[0]
+        assert eff[1]["input_hash"] == det[0]["input_hash"]
 
     def test_omitted_seeds_inherit_from_deterministic_entry_for_the_module(
         self, fresh_db
@@ -459,7 +474,7 @@ class TestValidateRefinedOutline:
         assert eff[0]["input_hash"] == _expected_hash(
             {
                 "page_id": "m-b", "title": "B!", "description": "d",
-                "module": "m_b", "seeds": det_b["seeds"],
+                "module": "m_b", "source": "code", "seeds": det_b["seeds"],
             }
         )
 

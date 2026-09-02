@@ -1,9 +1,15 @@
-"""Wiki generation (Layer 2).
+"""Architecture reports (the deterministic, non-LLM path).
 
 Produces a graph-derived architectural summary per repo -- OKF concepts of
-type Wiki-Architecture, built from graph statistics (symbol-kind
-distribution, most-referenced classes, cross-repo deps). Deterministic, no
-LLM call, no external process.
+type Architecture-Report at ``reports/architecture/{repo}``, built from
+graph statistics (symbol-kind distribution, most-referenced classes,
+cross-repo deps). Deterministic, no LLM call, no external process.
+
+These are diagnostics, NOT wiki pages: they never pass through the
+critic-gated promotion that ``Wiki-Article`` pages require and are
+therefore excluded from the wiki layer's search surface (router and
+ask_compass match the gated types only). They stay reachable via
+unfiltered ``search_knowledge``.
 
 Wiki bodies are critic-checked: the deterministic critic verifies
 backtick-quoted file/symbol references against the graph. A body with broken
@@ -94,13 +100,13 @@ def _graph_derived_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) 
 
     body = "\n".join(body_parts) + "\n"
     concept = OKFConcept(
-        type="Wiki-Architecture",
+        type="Architecture-Report",
         title=f"{repo} Architecture",
         description=f"Graph-derived architectural overview of {repo}",
         resource=repo,
         tags=[repo, "architecture"],
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        concept_id=f"wiki/architecture/{repo}",
+        concept_id=f"reports/architecture/{repo}",
         body=body,
     )
     return [concept]

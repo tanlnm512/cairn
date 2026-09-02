@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Changed
+- Wiki two-kind contract: the wiki's two stored kinds have disjoint,
+  structurally separated purposes — the plan manifest records pipeline
+  intent only (identity, seeds, input hash, task linkage, queue attempts;
+  schema `cairn-wiki-manifest-3` with v2/v1 manifests migrating on load),
+  while promoted `Wiki-Article` concepts remain the sole record of what
+  exists (body, sources, provenance sha/task id). All lifecycle state is
+  derived at read time by the new `cairn.wiki.lifecycle` module (one
+  promoted-check implementation instead of five), the dashboard and CLI
+  expose derived state only, staleness never verdicts on pages without
+  content, completions write `done` only after the critic verdict (a
+  critic failure leaves the task re-completable — no more queued-forever
+  zombies), wiki-page tasks are keyed by the qualified `{repo}/{page_id}`
+  resource (repos can share page ids), enrichment no longer blocks
+  generation or snapshots page bodies into task facts, and the ungated
+  deterministic reports left the wiki search surface (renamed
+  `Architecture-Report` under `reports/architecture/`). The wiki is the
+  agent-facing knowledge surface for the whole workspace — code or
+  documents — searchable via `search_knowledge`/`ask_compass` and
+  explorable in the dashboard. First generate after upgrade re-queues all
+  pages once (the input-hash recipe now covers `source` and document
+  seeds); in-flight legacy tasks complete normally.
+
 ## [0.18.0] - 2026-09-02
 
 ### Added

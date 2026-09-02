@@ -9,10 +9,6 @@ import sys
 from .main import DEFAULT_DB_PATH, get_db, main
 from ..utils.git import get_repo_head
 
-# Display states (hyphenated) for `wiki status`; the manifest stores
-# "in_progress" with an underscore.
-_DISPLAY_STATES = ("queued", "in-progress", "promoted", "failed", "dropped")
-
 
 @main.group()
 def wiki():
@@ -185,92 +181,30 @@ def _split_page_key(key: str) -> tuple:
     return repo, page_id
 
 
-def _is_promoted(bundle, repo, page_id):
-    try:
-        bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
-        return True
-    except Exception:
-        return False
-
-
-def _recorded_sha(bundle, row, repo, page_id):
-    """The page's recorded commit sha: the promoted concept's extension is
-    the source of truth; a page with no concept falls back to the manifest
-    row's queue-time sha."""
-    try:
-        concept = bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
-    except Exception:
-        return row.get("commit_sha") or None
-    return concept.extensions.get("commit_sha") or None
-
-
-def _staleness(recorded_sha, head):
-    """fresh: recorded sha equals HEAD; stale: both present and differing;
-    unknown: either side unavailable."""
-    if not recorded_sha or not head:
-        return "unknown"
-    return "fresh" if recorded_sha == head else "stale"
-
-
-def _wiki_chains(bundle):
-    """Page id -> every wiki-page task for it, across all revise hops."""
-    from ..llm.tasks import list_tasks
-
-    chains = {}
-    for task in list_tasks(bundle):
-        if task.task_kind.startswith("wiki-page"):
-            chains.setdefault(task.resource, []).append(task)
-    return chains
-
-
-def _latest(tasks):
-    return max(tasks, key=lambda t: (t.created_at, t.attempt))
-
-
-def _result_critic_status(bundle, task_id):
-    from ..llm.tasks import TASK_DIR
-
-    try:
-        result = bundle.read_concept(f"{TASK_DIR}/{task_id}.result")
-    except Exception:
-        return None
-    return result.extensions.get("critic_status")
-
-
-def _page_state(bundle, row, repo, page_id, chain):
-    """Derived state: promoted by concept (never the stored row), else the
-    live chain, else dropped when an explicitly dropped task is in the chain
-    (terminal -- retry's failed-only selection never resurrects it), else
-    failed when the row says so or the chain dropped -- terminal done task
-    whose result failed the critic with no successor."""
-    if _is_promoted(bundle, repo, page_id):
-        return "promoted"
-    if any(t.status == "in-progress" for t in chain):
-        return "in-progress"
-    if any(t.status == "pending" for t in chain):
-        return "queued"
-    if any(t.status == "dropped" for t in chain):
-        return "dropped"
-    if row.get("state") == "failed":
-        return "failed"
-    done = [t for t in chain if t.status == "done"]
-    if done and _result_critic_status(bundle, _latest(done).id) == "failed":
-        return "failed"
-    return str(row.get("state", "planned")).replace("_", "-")
-
-
 @wiki.command("status")
 @click.option("--repo", default=None, help="Only pages of this repo.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def wiki_status(repo, knowledge):
-    """Show per-page wiki state with aggregate counts."""
+    """Show per-page wiki state with aggregate counts.
+
+    State is derived at read time (promoted content beats the live chain;
+    a done task with no passing critic verdict derives failed), never from
+    a stored verdict — the plan kind keeps none."""
+    from ..wiki.lifecycle import (
+        DERIVED_STATES,
+        derived_state,
+        page_chains,
+        recorded_sha,
+        staleness,
+    )
+
     bundle, manifest = _load_manifest_or_exit(knowledge)
     pages = manifest.get("pages", {})
     if not pages:
         click.echo("No wiki pages planned; run 'cairn wiki generate --llm' first.")
         return
-    chains = _wiki_chains(bundle)
-    counts = dict.fromkeys(_DISPLAY_STATES, 0)
+    chains = page_chains(bundle)
+    counts = dict.fromkeys(DERIVED_STATES, 0)
     staleness_counts = dict.fromkeys(("fresh", "stale", "unknown"), 0)
     heads = {}
     shown = 0
@@ -279,18 +213,19 @@ def wiki_status(repo, knowledge):
         if repo and page_repo != repo:
             continue
         row = pages[key]
-        state = _page_state(bundle, row, page_repo, page_id,
-                            chains.get(page_id, []))
+        chain = chains.get(key, [])
+        state = derived_state(bundle, page_repo, page_id, chain)
         if page_repo not in heads:
             heads[page_repo] = get_repo_head(page_repo)
-        staleness = _staleness(_recorded_sha(bundle, row, page_repo, page_id),
-                               heads[page_repo])
+        page_staleness = staleness(
+            recorded_sha(bundle, page_repo, page_id), heads[page_repo]
+        )
         shown += 1
         if state in counts:
             counts[state] += 1
-        staleness_counts[staleness] += 1
-        click.echo(f"  {key:<36} {state:<12} {staleness:<8} "
-                   f"attempts={row.get('attempts', 0)}")
+        staleness_counts[page_staleness] += 1
+        click.echo(f"  {key:<36} {state:<12} {page_staleness:<8} "
+                   f"queue_attempts={row.get('queue_attempts', 0)}")
     totals = "  ".join(f"{state}={n}" for state, n in counts.items())
     freshness = "  ".join(f"{s}={n}" for s, n in staleness_counts.items())
     click.echo(f"Wiki pages: {shown}  {totals}  {freshness}")
@@ -300,8 +235,12 @@ def wiki_status(repo, knowledge):
 @click.option("--repo", default=None, help="Only pages of this repo.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def wiki_retry(repo, knowledge):
-    """Re-queue failed pages as fresh task chains; promoted pages untouched."""
+    """Re-queue failed pages as fresh task chains; promoted pages untouched.
+
+    Failure is derived (a done task whose result lacks a passing critic
+    verdict counts — the zombie rescue), never read from a stored state."""
     from ..llm.tasks import create_task
+    from ..wiki.lifecycle import derived_state, page_chains, plan_facts
     from ..wiki.manifest import save_manifest
 
     bundle, manifest = _load_manifest_or_exit(knowledge)
@@ -309,36 +248,29 @@ def wiki_retry(repo, knowledge):
     if not pages:
         click.echo("No wiki pages planned; run 'cairn wiki generate --llm' first.")
         return
-    chains = _wiki_chains(bundle)
+    chains = page_chains(bundle)
     failed = []
     for key in sorted(pages):
         page_repo, page_id = _split_page_key(key)
         if repo and page_repo != repo:
             continue
-        if _page_state(bundle, pages[key], page_repo, page_id,
-                       chains.get(page_id, [])) == "failed":
+        if derived_state(bundle, page_repo, page_id, chains.get(key, [])) == "failed":
             failed.append((key, page_repo, page_id))
     if not failed:
         click.echo("Nothing to retry: no failed wiki pages.")
         return
     for key, page_repo, page_id in failed:
         row = pages[key]
-        facts = {
-            "title": row.get("title", page_id),
-            "description": row.get("description", ""),
-            "module": row.get("module", ""),
-            "seeds": row.get("seeds", []),
-            "input_hash": row.get("input_hash", ""),
-            "repo": page_repo,
-        }
-        if row.get("diagrams"):
-            facts["diagrams"] = True
-        task = create_task(bundle, "wiki-page", page_id, facts=facts)
+        task = create_task(
+            bundle,
+            "wiki-page",
+            key,
+            facts=plan_facts(row, page_repo, diagrams=bool(row.get("diagrams"))),
+        )
         row["task_id"] = task.id
-        row["state"] = "queued"
-        row["attempts"] = int(row.get("attempts", 0)) + 1
+        row["queue_attempts"] = int(row.get("queue_attempts", 0)) + 1
         click.echo(f"Re-queued wiki-page task {task.id}: {key} "
-                   f"(attempt {row['attempts']})")
+                   f"(attempt {row['queue_attempts']})")
     if not save_manifest(bundle.root, manifest):
         click.echo("Failed to write the wiki manifest.", err=True)
         sys.exit(1)
@@ -356,6 +288,8 @@ def wiki_retry(repo, knowledge):
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def export(out_dir: Path, force, knowledge):
     """Write every promoted page as DIR/{repo}/{page_id}.md."""
+    from ..wiki.lifecycle import read_page_concept
+
     if out_dir.is_dir() and any(out_dir.iterdir()) and not force:
         click.echo(f"Refusing to export into non-empty directory {out_dir}; "
                    "pass --force to overwrite.", err=True)
@@ -364,9 +298,9 @@ def export(out_dir: Path, force, knowledge):
     exported = 0
     for key in sorted(manifest.get("pages", {})):
         page_repo, page_id = _split_page_key(key)
-        if not _is_promoted(bundle, page_repo, page_id):
+        concept = read_page_concept(bundle, page_repo, page_id)
+        if concept is None:
             continue
-        concept = bundle.read_concept(f"wiki/pages/{page_repo}/{page_id}")
         concept.to_file(str(out_dir / page_repo / f"{page_id}.md"))
         exported += 1
     click.echo(f"Exported {exported} page(s) to {out_dir}")

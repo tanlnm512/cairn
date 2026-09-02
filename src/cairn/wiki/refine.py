@@ -7,11 +7,13 @@ kept when its ``module`` matches a real ``files.path`` prefix (``path =
 module OR path LIKE 'module/%'``; the empty module is the repo-wide overview
 and is always valid) and every ``seeds.files`` path resolves via
 ``refs.file_exists``; seed symbols are not existence-checked. A rejected
-entry is replaced by the deterministic plan's entry at the same position.
-Kept entries are rebuilt with the planner's record shape: omitted ``seeds``
-inherit from the deterministic entry for the same module, and
-``input_hash`` is recomputed over the canonical JSON of the record without
-the hash.
+entry is replaced by the deterministic plan's entry for the SAME MODULE —
+never a positional neighbor — and a deterministic entry whose module the
+refinement dropped is appended, so a refinement can reorder and reseed but
+never silently lose a planned page. Kept entries are rebuilt with the
+planner's record shape: omitted ``seeds`` inherit from the deterministic
+entry for the same module, and ``input_hash`` is recomputed over the
+canonical JSON of the record without the hash.
 """
 from __future__ import annotations
 
@@ -34,37 +36,37 @@ def _module_in_graph(conn: sqlite3.Connection, module: str) -> bool:
 
 def _effective_entry(
     entry: Any,
-    index: int,
-    deterministic_plan: List[Dict[str, Any]],
     det_by_module: Dict[str, Dict[str, Any]],
     conn: sqlite3.Connection,
 ) -> Optional[Dict[str, Any]]:
-    """The effective record for one refined entry, or None to keep the
-    deterministic plan's entry for the same position."""
-
-    def fallback() -> Optional[Dict[str, Any]]:
-        return deterministic_plan[index] if index < len(deterministic_plan) else None
-
+    """The effective record for one refined entry, or None when the entry
+    is rejected (the deterministic plan still owns its module's page via
+    the append pass in ``validate_refined_outline``)."""
     if not isinstance(entry, dict):
-        return fallback()
+        return None
     module = entry.get("module")
     if not isinstance(module, str):
-        return fallback()
+        return None
     if module != "" and not _module_in_graph(conn, module):
-        return fallback()
+        return None
     raw_seeds = entry.get("seeds")
     if raw_seeds is None:
         inherited = det_by_module.get(module)
-        seeds = dict(inherited["seeds"]) if inherited else {"files": [], "symbols": []}
+        seeds = (
+            dict(inherited["seeds"])
+            if inherited
+            else {"files": [], "symbols": [], "docs": []}
+        )
     elif isinstance(raw_seeds, dict):
         seeds = {
             "files": list(raw_seeds.get("files", [])),
             "symbols": list(raw_seeds.get("symbols", [])),
+            "docs": list(raw_seeds.get("docs", [])),
         }
     else:
-        return fallback()
+        return None
     if not all(isinstance(p, str) and file_exists(conn, p) for p in seeds["files"]):
-        return fallback()
+        return None
     return _page(
         page_id=_OVERVIEW_PAGE_ID if module == "" else _slug(module),
         title=entry.get("title", ""),
@@ -82,17 +84,20 @@ def validate_refined_outline(
     """Validate a refined catalog outline against the graph.
 
     Returns the effective page plan in refined order; every record carries
-    the planner's six fields (``page_id``/``title``/``description``/
-    ``module``/``seeds``/``input_hash``). An entry that fails validation is
-    replaced by ``deterministic_plan``'s entry at the same index (dropped
-    when the refined outline is longer than the deterministic plan).
+    the planner's record shape (``page_id``/``title``/``description``/
+    ``module``/``source``/``seeds``/``input_hash``). A rejected entry is
+    replaced by the deterministic entry for the same module, and any
+    deterministic entry the refinement dropped is appended, so a page is
+    never silently lost to a positional shift.
     """
     det_by_module = {entry["module"]: entry for entry in deterministic_plan}
     effective: List[Dict[str, Any]] = []
-    for index, entry in enumerate(refined):
-        record = _effective_entry(
-            entry, index, deterministic_plan, det_by_module, conn
-        )
+    for entry in refined:
+        record = _effective_entry(entry, det_by_module, conn)
         if record is not None:
             effective.append(record)
+    covered = {record["module"] for record in effective}
+    for entry in deterministic_plan:
+        if entry["module"] not in covered:
+            effective.append(entry)
     return effective

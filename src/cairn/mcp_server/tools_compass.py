@@ -134,11 +134,13 @@ def ask_compass(query: str, file_path: str = "") -> str:
                 pass  # verdict is advisory; never block a context load
             finally:
                 conn.close()
-        # Wiki mentioning path segments.
+        # Wiki mentioning path segments (gated content only: promoted
+        # articles and memory-promoted features — the same allowlist the
+        # compass router's wiki search uses).
         seg = parts[-1].replace(".kt", "").replace(".java", "") if parts else ""
         if seg:
             for c in bundle.search(seg, limit=3):
-                if c.type.startswith("Wiki"):
+                if c.type in ("Wiki-Article", "Wiki-Feature"):
                     out.append(f"\n# Wiki: {c.title}\n{c.body[:500]}...")
                     break
         # Memory for the path.

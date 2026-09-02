@@ -120,6 +120,15 @@ def task_complete(task_id, result, result_file, db, knowledge):
             click.echo(f"Quality score: {outcome.get('quality', 0.0):.2f}")
         elif outcome.get("promoted"):
             click.echo(f"Task {task_id} completed and promoted.")
+        elif outcome.get("errors"):
+            # Completion aborted before any outcome (critic failure, missing
+            # required facts): the task is untouched and re-completable —
+            # never report this as success.
+            click.echo(f"Task {task_id} was not completed; it remains "
+                       "in-progress and can be completed again.", err=True)
+            for err in outcome["errors"]:
+                click.echo(f"  Error: {err}", err=True)
+            sys.exit(1)
         else:
             # Passed but not auto-promoted
             click.echo(f"Task {task_id} completed. Result stored.")

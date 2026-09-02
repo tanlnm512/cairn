@@ -2691,7 +2691,9 @@ def test_get_wiki_pages_joins_manifest_with_promoted_concepts(tmp_path):
     assert by_id["overview"]["state"] == "promoted"
     assert by_id["overview"]["promoted"] is True
     assert by_id["viz-module"]["promoted"] is True
-    assert by_id["tasks-module"]["state"] == "queued"
+    # State is derived, never the stored verdict: this row says "queued"
+    # but its task does not exist and no content exists — planned.
+    assert by_id["tasks-module"]["state"] == "planned"
     assert by_id["tasks-module"]["promoted"] is False
     # An explicit repo selects pages under wiki/pages/{repo}/.
     assert {
@@ -3005,11 +3007,12 @@ def test_get_wiki_pages_staleness_unknown_when_head_unavailable(
     assert pages[0]["staleness"] == "unknown"
 
 
-def test_get_wiki_pages_staleness_falls_back_to_manifest_row_sha(
+def test_get_wiki_pages_unpromoted_page_is_never_fresh_or_stale(
     tmp_path, monkeypatch
 ):
-    """A not-yet-promoted page has no concept, so its recorded sha comes
-    from the manifest row's ``commit_sha``."""
+    """Anti-collapse pin: the plan kind keeps no provenance, so a page with
+    no promoted content can never render fresh or stale — whatever the row
+    claims and whatever the HEAD is."""
     from cairn.dashboard.data import get_wiki_pages
 
     kdir = tmp_path / "knowledge"
@@ -3030,12 +3033,12 @@ def test_get_wiki_pages_staleness_falls_back_to_manifest_row_sha(
 
     pages = get_wiki_pages(str(kdir))
 
-    assert pages[0]["staleness"] == "fresh"
+    assert pages[0]["staleness"] == "unknown"
 
     _fake_head(monkeypatch, _SHA_B)
     pages = get_wiki_pages(str(kdir))
 
-    assert pages[0]["staleness"] == "stale"
+    assert pages[0]["staleness"] == "unknown"
 
 
 def test_get_wiki_page_gain_staleness(tmp_path, monkeypatch):
