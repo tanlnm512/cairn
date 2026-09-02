@@ -1182,6 +1182,12 @@ code {
   background: var(--surface-2);
 }
 
+/* Memory view's type filter rides the window-control pills; same margin
+   as the wiki state filter so both sit identically above their tables. */
+.memory-type-filter {
+  margin: 0.45rem 0 0.2rem;
+}
+
 /* ---- Launcher (landing page) ---- */
 
 .launcher-grid {

@@ -832,6 +832,26 @@ def test_memory_route_lists_memories_newest_first_with_type(tmp_path):
         assert f">{mtype}<" in resp.text
 
 
+def test_memory_route_type_filter(tmp_path):
+    """The type pills narrow to one memory category before the limit
+    applies; an out-of-vocabulary type falls back to the unfiltered page."""
+    kdir = tmp_path / "knowledge"
+    _seed_memories(kdir)
+    client = _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
+
+    resp = client.get("/memory", params={"type": "mistake"})
+    assert resp.status_code == 200
+    assert "Skipped the fuzzy retry" in resp.text
+    assert "Use RRF fusion by default" not in resp.text
+    assert "Seeded-DB test convention" not in resp.text
+    assert "<strong>mistake</strong>" in resp.text  # active pill
+
+    resp = client.get("/memory", params={"type": "bogus"})
+    assert resp.status_code == 200
+    assert "Use RRF fusion by default" in resp.text  # fallback: all types
+    assert "<strong>all</strong>" in resp.text
+
+
 def test_memory_route_empty_knowledge_dir_renders_empty_state(tmp_path):
     client = _panel_client(
         tmp_path,

@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Dashboard Memory view categorization: a Type filter pill row
+  (all · decision · pattern · mistake · workaround) above the table,
+  mirroring the Wiki catalog's state filter — `?type=` narrows the list
+  server-side before the newest-first limit applies, an
+  out-of-vocabulary value silently falls back to the unfiltered page,
+  the active pill renders highlighted, and the empty state names the
+  category when a filtered type has no records.
+
 ### Fixed
 - Dashboard alignment: every `.graph-controls` row (graph filter bar,
   settings embedding config, history/tasks/wiki filters) now renders on

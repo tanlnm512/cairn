@@ -1,9 +1,19 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Memory — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Memory</h1>
   <p class="muted">Recent memories from the knowledge bundle, newest first.</p>
+  {% if memories or memory_type != "all" %}
+  <p class="window-control memory-type-filter">
+    Type:
+    {%- for t in ["all"] + (memory_types | list) %}
+    {%- set q = {"type": t} if t != "all" else {} %}
+    {%- if not loop.first %} · {% endif %}{% if t == memory_type %}<strong>{{ t }}</strong>{% else %}<a href="{{ links.url('/memory', q) }}">{{ t }}</a>{% endif %}
+    {%- endfor %}
+  </p>
+  {% endif %}
   {% if memories %}
   <table class="data-table">
     <thead>
@@ -28,7 +38,7 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty-state">No memories recorded yet — capture one with <code>cairn memory record</code>.</p>
+  <p class="empty-state">{% if memory_type != "all" %}No {{ memory_type }} memories recorded.{% else %}No memories recorded yet — capture one with <code>cairn memory record</code>.{% endif %}</p>
   {% endif %}
 </section>
 {% endblock %}
