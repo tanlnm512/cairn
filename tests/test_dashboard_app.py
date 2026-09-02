@@ -852,6 +852,51 @@ def test_memory_route_type_filter(tmp_path):
     assert "<strong>all</strong>" in resp.text
 
 
+def test_database_route_renders_schema_relationships(tmp_path):
+    """The database view lists user tables and both edge kinds: declared
+    foreign keys (authoritative) and *_id references implied by column
+    naming; columns covered by a declared FK are never re-inferred, and a
+    reference to a non-table (session_id) produces no edge."""
+    db = tmp_path / "store.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE repos(id INTEGER PRIMARY KEY);
+        CREATE TABLE files(id INTEGER PRIMARY KEY, repo_id INTEGER REFERENCES repos(id));
+        CREATE TABLE build_runs(id INTEGER PRIMARY KEY, repo_id INTEGER);
+        CREATE TABLE events(id INTEGER PRIMARY KEY, session_id TEXT);
+        """
+    )
+    conn.commit()
+    conn.close()
+    client = _panel_client(tmp_path, str(db), str(tmp_path / "missing"))
+    resp = client.get("/database")
+    assert resp.status_code == 200
+
+    marker = '<script id="db-graph-data" type="application/json">'
+    payload = json.loads(resp.text.split(marker, 1)[1].split("</script>", 1)[0])
+    assert sorted(t["name"] for t in payload["tables"]) == [
+        "build_runs",
+        "events",
+        "files",
+        "repos",
+    ]
+    edges = {(e["from"], e["to"]): e for e in payload["edges"]}
+    assert edges[("files", "repos")]["kind"] == "fk"
+    assert edges[("files", "repos")]["columns"] == ["repo_id"]
+    assert edges[("build_runs", "repos")]["kind"] == "inferred"
+    assert not any("events" in (e["from"], e["to"]) for e in payload["edges"])
+
+
+def test_database_route_empty_store_renders_empty_state(tmp_path):
+    db = tmp_path / "empty.db"
+    sqlite3.connect(db).close()
+    client = _panel_client(tmp_path, str(db), str(tmp_path / "missing"))
+    resp = client.get("/database")
+    assert resp.status_code == 200
+    assert "No tables" in resp.text
+
+
 def test_memory_route_empty_knowledge_dir_renders_empty_state(tmp_path):
     client = _panel_client(
         tmp_path,
@@ -2913,7 +2958,7 @@ def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
         ).group(1)
     )
     by_label = {v["label"]: v["href"] for v in seed["views"]}
-    assert len(by_label) == 12
+    assert len(by_label) == 13
     assert by_label["Graph"] == f"/graph?store={_SW_KEY_A}"
     assert [w["key"] for w in seed["workspaces"]] == [_SW_KEY_A, _SW_KEY_B]
 

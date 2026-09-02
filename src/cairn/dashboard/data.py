@@ -590,6 +590,82 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     }
 
 
+def get_database_schema(conn: sqlite3.Connection) -> Dict:
+    """Store schema as a relationship graph for the database view.
+
+    Every user table becomes a node carrying row/column counts and its
+    primary-key columns; edges come from two sources — declared foreign
+    keys (authoritative, kind ``fk``) and ``*_id`` columns whose base name
+    names another table (kind ``inferred``, e.g. ``build_runs.repo_id``
+    without a declared FK). A column already covered by a declared FK is
+    never re-inferred. Read-only introspection; internal ``sqlite_%`` and
+    FTS shadow tables are excluded.
+    """
+    tables = sorted(
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        if not row[0].startswith("sqlite_") and "_fts" not in row[0]
+    )
+
+    def _q(identifier: str) -> str:
+        return '"' + identifier.replace('"', '""') + '"'
+
+    meta: Dict[str, Dict] = {}
+    for name in tables:
+        columns = [
+            {"name": r[1], "type": r[2] or "", "pk": bool(r[5])}
+            for r in conn.execute(f"PRAGMA table_info({_q(name)})")
+        ]
+        rows = conn.execute(f"SELECT COUNT(*) FROM {_q(name)}").fetchone()[0]
+        meta[name] = {"columns": columns, "rows": rows}
+
+    declared: set = set()
+    edges: Dict[Tuple[str, str], Dict] = {}
+    for name in tables:
+        for fk in conn.execute(f"PRAGMA foreign_key_list({_q(name)})"):
+            target, column = fk[2], fk[3]
+            if target not in meta:
+                continue
+            declared.add((name, column))
+            edge = edges.setdefault(
+                (name, target),
+                {"from": name, "to": target, "kind": "fk", "columns": []},
+            )
+            edge["columns"].append(column)
+
+    for name in tables:
+        for column in meta[name]["columns"]:
+            col = column["name"]
+            if not col.endswith("_id") or col == "id" or (name, col) in declared:
+                continue
+            base = col[: -len("_id")]
+            target = base + "s" if base + "s" in meta else (base if base in meta else None)
+            if not target or target == name:
+                continue
+            edge = edges.setdefault(
+                (name, target),
+                {
+                    "from": name,
+                    "to": target,
+                    "kind": "inferred",
+                    "columns": [],
+                },
+            )
+            edge["columns"].append(col)
+
+    return {
+        "tables": [
+            {
+                "name": name,
+                "rows": meta[name]["rows"],
+                "columns": meta[name]["columns"],
+            }
+            for name in tables
+        ],
+        "edges": [edges[key] for key in sorted(edges)],
+    }
+
+
 def get_recent_memories(
     knowledge_dir: str, limit: int = 20, memory_type: Optional[str] = None
 ) -> List[dict]:

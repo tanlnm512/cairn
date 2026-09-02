@@ -36,7 +36,7 @@ def test_workspace_label_prefers_registered_path_basename():
 def test_nav_sections_cover_every_view_exactly_once():
     ids = [v for _, views in NAV_SECTIONS for v in views]
     assert sorted(ids) == sorted(NAV_LABELS)
-    assert len(ids) == len(set(ids)) == 12
+    assert len(ids) == len(set(ids)) == 13
 
 
 def test_shell_context_groups_nav_and_flags_active_by_path():

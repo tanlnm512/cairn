@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Database — Cairn Dashboard{% endblock %}
+{% block view_title %}Database{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Database</h1>
+  <p class="muted">Store schema as a relationship graph — node size encodes row count,
+    solid edges are declared foreign keys, dashed edges are <code>*_id</code> references
+    implied by column naming. Select a node for the table's columns and links.</p>
+  {% if schema.tables %}
+  <div class="graph-layout">
+    <div class="graph-stage">
+      <div id="db-graph-canvas" class="graph-canvas"></div>
+      <div class="graph-overlay">
+        <button type="button" data-db-action="zoom-in" title="Zoom in" aria-label="Zoom in">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button type="button" data-db-action="zoom-out" title="Zoom out" aria-label="Zoom out">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+        </button>
+        <button type="button" data-db-action="fit" title="Fit view" aria-label="Fit view">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+      </div>
+    </div>
+    <aside id="db-panel" class="graph-panel" aria-live="polite" hidden></aside>
+  </div>
+  <script id="db-graph-data" type="application/json"{% if store_key %} data-store="{{ store_key }}"{% endif %}>{{ schema | tojson }}</script>
+  {% else %}
+  <p class="empty-state">No tables in this store yet — run <code>cairn build</code> first.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+{% if schema.tables %}
+<script src="{{ url_for('static', path='/vis-network.min.js') }}?v={{ asset_version }}"></script>
+<script src="{{ url_for('static', path='/db-graph.js') }}?v={{ asset_version }}"></script>
+{% endif %}
+{% endblock %}

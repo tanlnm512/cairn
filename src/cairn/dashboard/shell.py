@@ -37,7 +37,7 @@ NAV_SECTIONS: tuple = (
     ("Explore", ("projects", "graph")),
     ("Knowledge", ("wiki", "memory", "tasks")),
     ("Activity", ("history", "tokens", "chains")),
-    ("System", ("health", "embeddings", "settings")),
+    ("System", ("health", "embeddings", "database", "settings")),
 )
 
 NAV_LABELS: dict = {
@@ -52,6 +52,7 @@ NAV_LABELS: dict = {
     "wiki": "Wiki",
     "tasks": "Tasks",
     "embeddings": "Embeddings",
+    "database": "Database",
     "settings": "Settings",
 }
 
