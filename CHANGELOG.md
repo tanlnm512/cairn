@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Explore / Knowledge / Activity / System — Workspaces still leads
   ungrouped — rendered from one `NAV_SECTIONS` source shared with the
   palette so the two can never drift.
+
 - Dashboard wiki navigation: canonical repo-qualified page URLs
   (`/wiki/{repo}/{page_id}`) fix the multi-repo collision where every
   repo's `overview` page but one was unreachable — the old one-segment
@@ -40,6 +41,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backticked refs the page itself vouches for (frontmatter sources plus
   plan seeds, both already graph-verified by the critic gate) link into
   `/graph?scope=symbol&focus=…` with the selected store riding.
+
+
+### Changed
+- Dashboard visual redesign ("Terrain"): the GitNexus teal tokens give
+  way to a warm sandstone light mode, deep ink-brown dark mode, and a
+  burnt-amber primary — same token names in both theme blocks, so the
+  pinned theme contract holds unchanged. Component pass: transparent
+  table headers with a strong rule, monospace code chips, the active nav
+  item carries an accent inset bar, and the new wiki surfaces (catalog,
+  article prose at a 46rem measure, TOC rail, pager) get their styles.
+
+
+### Fixed
+- Dashboard forms silently dropped the selected workspace: GET filter
+  forms (history/tasks/graph) lose the action URL's query string on
+  submit and the settings POST actions carried no store at all, so
+  applying a filter or saving settings on a selected store reverted to
+  the launch store one hop later — and for the POSTs, the stickiness
+  redirect could land back on a POST-only route (405). Every form now
+  carries a hidden store input and `settings_save` resolves the body
+  store through the same validation seam.
+
+
+## [0.16.3] - 2026-09-02
+
+### Added
 - Wiki trust context and outward surfaces: every promoted wiki page now
   records the workspace HEAD commit sha it was generated at (in the
   concept's extensions and the manifest row), and both `cairn wiki status`
@@ -73,13 +100,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumer side of the wiki visible to new workspaces.
 
 ### Changed
-- Dashboard visual redesign ("Terrain"): the GitNexus teal tokens give
-  way to a warm sandstone light mode, deep ink-brown dark mode, and a
-  burnt-amber primary — same token names in both theme blocks, so the
-  pinned theme contract holds unchanged. Component pass: transparent
-  table headers with a strong rule, monospace code chips, the active nav
-  item carries an accent inset bar, and the new wiki surfaces (catalog,
-  article prose at a 46rem measure, TOC rail, pager) get their styles.
 - Test suite reduced by ~470 cases with the core regression net intact, in
   three reviewable parts: the closed retrieval-quality campaign machinery
   retired lockstep with its CLI flags (see Removed); bench/dataset/soak
@@ -127,14 +147,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the closed verdict (scripts recoverable from git history).
 
 ### Fixed
-- Dashboard forms silently dropped the selected workspace: GET filter
-  forms (history/tasks/graph) lose the action URL's query string on
-  submit and the settings POST actions carried no store at all, so
-  applying a filter or saving settings on a selected store reverted to
-  the launch store one hop later — and for the POSTs, the stickiness
-  redirect could land back on a POST-only route (405). Every form now
-  carries a hidden store input and `settings_save` resolves the body
-  store through the same validation seam.
+- A minimal install (pip/pipx from PyPI, no extras) crashed `cairn
+  dashboard` on `ImportError: jinja2 must be installed to use
+  Jinja2Templates`: starlette ships jinja2 only in its `[full]` extra, so
+  the copy mcp pulls never brings it, and every dev/CI environment
+  happened to install it via extras — masking the gap. jinja2 is now a
+  declared runtime dependency (verified end-to-end in a base-deps-only
+  venv), pinned by a test so it cannot be pruned as "unused" again.
 - `cairn compass gaps` reported every module as uncovered: `detect_gaps`
   compared repo-qualified module ids against repo-relative compass
   `resource` fields, so the match could never succeed. Coverage now
