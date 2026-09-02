@@ -2647,6 +2647,273 @@ def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Forms keep the selected store (FR-003 follow-up): GET filter forms drop
+# the action URL's query string on submit, and the settings POST actions
+# carried no store at all -- so applying a filter or saving settings on a
+# selected store silently reverted to the launch store one hop later
+# (rescued by the stickiness redirect, and for POSTs landing back on a
+# POST-only route path, not rescued at all). The fix: every form carries a
+# hidden store input, and settings_save resolves the body store through
+# the same validation seam.
+# ---------------------------------------------------------------------------
+
+
+def test_filter_forms_carry_the_selected_store_as_a_hidden_input(
+    tmp_path, monkeypatch
+):
+    """The history/tasks/graph filter forms and both settings forms render
+    the hidden store input on a selected store, and never on the launch
+    store (bare pages stay byte-identical)."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    for path in ("/history", "/tasks", "/graph", "/settings"):
+        selected = client.get(path, params={"store": _SW_KEY_A})
+        assert selected.status_code == 200, path
+        assert (
+            f'<input type="hidden" name="store" value="{_SW_KEY_A}">'
+            in selected.text
+        ), path
+        bare = client.get(path)
+        assert '<input type="hidden" name="store"' not in bare.text, path
+
+
+def test_settings_save_keeps_the_selected_store(tmp_path, monkeypatch):
+    """settings_save reads the store from the POST body (a form POST drops
+    the query string) through the same validation seam and re-renders with
+    the selection riding the nav links. An invalid knob forces the
+    refusal re-render, proving the store survived without writing config."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.post(
+        "/settings/save",
+        data={"store": _SW_KEY_A, "CAIRN_EMBED_TIMEOUT": "not-a-number"},
+    )
+
+    assert resp.status_code == 400
+    assert "Refused" in resp.text
+    assert f'href="/projects?store={_SW_KEY_A}"' in resp.text
+
+
+def test_settings_post_actions_carry_the_store_in_the_url(tmp_path, monkeypatch):
+    """Both settings POST actions compose through links.url when a store
+    is selected: the POST lands at /settings/save?store=<key>, so the
+    response URL already carries the selection and the head stickiness
+    script never redirects the landing to a GET of a POST-only route
+    (405). Bare selection keeps the bare action URLs."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    selected = client.get("/settings", params={"store": _SW_KEY_A})
+    assert (
+        f'action="/settings/save?store={_SW_KEY_A}"' in selected.text
+    )
+    assert (
+        f'action="/settings/parity-check?store={_SW_KEY_A}"'
+        in selected.text
+    )
+
+    bare = client.get("/settings")
+    assert 'action="/settings/save"' in bare.text
+    assert 'action="/settings/parity-check"' in bare.text
+
+
+# ---------------------------------------------------------------------------
+# Global workspace selector (topbar): server-rendered on every view from
+# enumerate_stores (populated only, never probed), labels from the
+# registry path. Switching is shell.js rewriting ?store= on the current
+# URL and reloading — the browser-side contract is pinned at the source
+# level, like the app.js fetch builders.
+# ---------------------------------------------------------------------------
+
+_DASH_VIEWS = (
+    "/",
+    "/workspaces",
+    "/projects",
+    "/graph",
+    "/history",
+    "/tokens",
+    "/chains",
+    "/health",
+    "/memory",
+    "/wiki",
+    "/tasks",
+    "/embeddings",
+    "/settings",
+)
+
+
+def test_workspace_selector_renders_on_every_view(tmp_path, monkeypatch):
+    """The selector and its script ride the shell: present on every view,
+    on the launch store and a selected store alike."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    for path in _DASH_VIEWS:
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert 'id="store-select"' in resp.text, path
+        assert "/static/shell.js" in resp.text, path
+
+
+def test_workspace_selector_lists_populated_stores_only(tmp_path, monkeypatch):
+    """Options are the populated stores — never the empty-state dir or an
+    unknown key — labeled by the registered workspace path's basename,
+    with the raw key as the orphan-store fallback."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+
+    resp = client.get("/projects")
+
+    assert resp.status_code == 200
+    assert f'<option value="{_SW_KEY_A}"' in resp.text
+    assert ">proj-alpha</option>" in resp.text
+    # Orphan store B (on disk, no registry entry): the key is the label.
+    assert f'<option value="{_SW_KEY_B}">{_SW_KEY_B}</option>' in resp.text
+    # Empty-state and unknown keys never appear as switch targets.
+    assert f'<option value="{_SW_KEY_EMPTY}"' not in resp.text
+    assert f'<option value="{_SW_KEY_UNKNOWN}"' not in resp.text
+    # The registry path rides the option as its tooltip.
+    assert 'title="/workspaces/proj-alpha' in resp.text
+    # The launch store is always reachable as the empty-value option.
+    assert "<option value=\"\">Launch workspace</option>" in resp.text
+
+
+def test_workspace_selector_marks_the_selected_store(tmp_path, monkeypatch):
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/projects", params={"store": _SW_KEY_A})
+
+    assert (
+        f'<option value="{_SW_KEY_A}" selected' in resp.text
+    )
+    assert f'<option value="{_SW_KEY_B}" selected' not in resp.text
+
+
+def test_shell_js_switch_contract_is_pinned_at_source_level():
+    """The switch behavior, source-pinned like the app.js fetch builders:
+    rewrite the store param on the current URL (stay on the tab), and
+    clear the remembered store when returning to the launch store — or
+    the stickiness script would bounce the bare URL right back."""
+    import cairn.dashboard
+
+    src = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
+    ).read_text(encoding="utf-8")
+    assert 'getElementById("store-select")' in src
+    assert 'searchParams.set("store"' in src
+    assert 'searchParams.delete("store"' in src
+    assert 'localStorage.removeItem("cairn-store")' in src
+
+
+# ---------------------------------------------------------------------------
+# Grouped sidebar + command palette (shell chrome): the sidebar renders
+# from shell.NAV_SECTIONS (same href shape as the hand-written anchors it
+# replaced), collapse persists pre-paint like the theme, and the palette
+# seeds from server JSON — views with store-carrying hrefs, workspaces,
+# symbols live from /graph/suggest. JS contracts are source-pinned.
+# ---------------------------------------------------------------------------
+
+
+def test_sidebar_renders_grouped_nav_from_shell_sections(tmp_path, monkeypatch):
+    """The grouped sections replace the flat list, every view's anchor
+    survives with the exact href shape the pins expect, and the selected
+    store rides every anchor."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    bare = client.get("/projects")
+    assert bare.status_code == 200
+    for section in ("Explore", "Knowledge", "Activity", "System"):
+        assert f'class="nav-group-label">{section}<' in bare.text, section
+    for view_id, label in (
+        ("projects", "Projects"),
+        ("graph", "Graph"),
+        ("wiki", "Wiki"),
+        ("memory", "Memory"),
+        ("tasks", "Tasks"),
+        ("history", "History"),
+        ("tokens", "Tokens"),
+        ("chains", "Chains"),
+        ("workspaces", "Workspaces"),
+        ("health", "Health"),
+        ("embeddings", "Embeddings"),
+        ("settings", "Settings"),
+    ):
+        assert f'href="/{view_id}"' in bare.text, view_id
+        assert f"<span>{label}</span>" in bare.text, label
+    # The current view flags active.
+    assert 'href="/projects" class="active" aria-current="page"' in bare.text
+
+    selected = client.get("/projects", params={"store": _SW_KEY_A})
+    assert f'href="/graph?store={_SW_KEY_A}"' in selected.text
+
+
+def test_sidebar_collapse_button_and_prepaint_script(tmp_path, monkeypatch):
+    """The collapse toggle ships in the sidebar foot, and base.html's head
+    carries the pre-paint script that re-applies the remembered state
+    (localStorage "cairn-sidebar") before the shell renders."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/projects")
+    assert 'id="sidebar-collapse"' in resp.text
+    base = (_templates_dir() / "base.html").read_text(encoding="utf-8")
+    assert '"cairn-sidebar"' in base
+    # The theme script stays the FIRST head script (pinned separately).
+    assert base.index("cairn-theme") < base.index("cairn-sidebar")
+
+    import cairn.dashboard
+
+    shell_src = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
+    ).read_text(encoding="utf-8")
+    assert 'localStorage.setItem(\n        "cairn-sidebar"' in shell_src or (
+        '"cairn-sidebar"' in shell_src and "setAttribute" in shell_src
+    )
+
+
+def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
+    """The palette overlay and its JSON seed ride every page: the view
+    list carries store-qualified hrefs when a store is selected, the
+    workspace list mirrors the selector's populated options."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+
+    resp = client.get("/projects", params={"store": _SW_KEY_A})
+    assert resp.status_code == 200
+    assert 'id="palette-open"' in resp.text
+    assert 'id="palette"' in resp.text
+    assert 'id="palette-data"' in resp.text
+
+    seed = json.loads(
+        re.search(
+            r'<script id="palette-data" type="application/json">(.*?)</script>',
+            resp.text,
+            re.S,
+        ).group(1)
+    )
+    by_label = {v["label"]: v["href"] for v in seed["views"]}
+    assert len(by_label) == 12
+    assert by_label["Graph"] == f"/graph?store={_SW_KEY_A}"
+    assert [w["key"] for w in seed["workspaces"]] == [_SW_KEY_A, _SW_KEY_B]
+
+
+def test_command_palette_js_contract_is_pinned_at_source_level():
+    """The palette reuses /graph/suggest with the store param guarded from
+    the current URL, and switches workspaces through the same URL-rewrite
+    behavior as the selector."""
+    import cairn.dashboard
+
+    src = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
+    ).read_text(encoding="utf-8")
+    assert "/graph/suggest?name=" in src
+    assert 'searchParams.get("store")' in src
+    assert "metaKey" in src  # Cmd/Ctrl+K opens
+    assert "keyCode" not in src  # key names, not deprecated codes
+
+
+# ---------------------------------------------------------------------------
 # Mixed-source usage (cli-usage-recording FR-002, TC-003 / TC-004): CLI
 # invocations land in tool_metrics as source='cli' rows named 'cli:<command>'
 # beside source='mcp' tool rows (cli_metrics stamps 'cli'; MCP rows ride the
@@ -3668,6 +3935,11 @@ def test_wiki_routes_registered_with_pinned_names(tmp_path):
 
     app = create_app(db_path=str(tmp_path / "ro.db"))
     assert app.url_path_for("wiki") == "/wiki"
+    assert (
+        app.url_path_for("wiki_page_repo", repo="demo", page_id="overview")
+        == "/wiki/demo/overview"
+    )
+    # The one-segment URL survives as the legacy redirect route.
     assert app.url_path_for("wiki_page", page_id="overview") == "/wiki/overview"
 
 
@@ -3691,17 +3963,120 @@ def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
 
 def test_wiki_route_lists_pages_with_state_badges(tmp_path):
     """FR-009 / TC-025: /wiki lists every planned page with its state,
-    each entry linking to its detail view."""
+    each entry linking to its repo-qualified detail view, grouped by repo."""
     client = _wiki_client(tmp_path)
 
     resp = client.get("/wiki")
 
     assert resp.status_code == 200
     for page_id in ("overview", "viz-module", "tasks-module"):
-        assert f'href="/wiki/{page_id}"' in resp.text
+        assert f'href="/wiki/demo/{page_id}"' in resp.text
     assert "demo architecture overview" in resp.text
     for badge in ("promoted", "queued"):
         assert f">{badge}<" in resp.text
+    # The catalog groups by repo under a per-repo heading.
+    assert "wiki-repo-heading" in resp.text
+
+
+def test_wiki_catalog_filters_by_state_and_search(tmp_path):
+    """The catalog's GET filters: state narrows to one badge value, q
+    narrows by title/page-id/description substring, and they compose."""
+    client = _wiki_client(tmp_path)
+
+    promoted_only = client.get("/wiki", params={"state": "promoted"})
+    assert promoted_only.status_code == 200
+    assert "demo architecture overview" in promoted_only.text
+    assert "tasks module" not in promoted_only.text  # queued row filtered out
+
+    searched = client.get("/wiki", params={"q": "viz"})
+    assert searched.status_code == 200
+    assert 'href="/wiki/demo/viz-module"' in searched.text
+    assert 'href="/wiki/demo/overview"' not in searched.text
+
+    narrowed = client.get("/wiki", params={"q": "viz", "state": "promoted"})
+    assert 'href="/wiki/demo/viz-module"' in narrowed.text
+
+    nothing = client.get("/wiki", params={"q": "no-such-page"})
+    assert "No wiki pages match the current filters" in nothing.text
+
+
+def test_wiki_legacy_page_url_redirects_to_the_repo_qualified_url(tmp_path):
+    """Bookmarked one-segment URLs keep working: a 307 to the canonical
+    repo-qualified URL; an unknown page id stays the same 404 as before."""
+    client = _wiki_client(tmp_path)
+
+    resp = client.get("/wiki/overview", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/wiki/demo/overview"
+
+    followed = client.get("/wiki/overview", follow_redirects=True)
+    assert followed.status_code == 200
+    assert "<h2" in followed.text  # the redirect lands on a rendered page
+
+
+def test_wiki_legacy_redirect_carries_the_selected_store(tmp_path, monkeypatch):
+    """The store param rides the legacy redirect (the bookmark equivalent of
+    a selected-store deep link): /wiki/overview?store=A redirects to the
+    repo-qualified URL under A's knowledge root, store intact."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    _seed_wiki_pages(home / _SW_KEY_A / ".knowledge")
+
+    resp = client.get(
+        "/wiki/overview", params={"store": _SW_KEY_A}, follow_redirects=False
+    )
+
+    assert resp.status_code == 307
+    assert resp.headers["location"] == f"/wiki/demo/overview?store={_SW_KEY_A}"
+
+
+def test_wiki_repo_qualified_urls_reach_colliding_page_ids(tmp_path):
+    """The collision the repo segment fixes: two repos that both plan
+    ``overview`` are BOTH reachable at their own qualified URLs (the
+    legacy URL could only ever serve the first readable concept)."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+
+    kdir = tmp_path / "knowledge"
+    _seed_wiki_pages(kdir)
+    for repo, marker in (("alpha", "alpha overview body"), ("beta", "beta overview body")):
+        wiki_dir = kdir / "_wiki"
+        manifest = json.loads((wiki_dir / "manifest.json").read_text())
+        manifest["pages"][f"{repo}/overview"] = {
+            **_wiki_plan_entry("overview", f"{repo} overview"),
+            "task_id": f"task-{repo}",
+            "state": "promoted",
+            "attempts": 0,
+        }
+        (wiki_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        from cairn.okf.bundle import OKFBundle
+        from cairn.okf.concept import OKFConcept
+
+        OKFBundle(str(kdir)).write_concept(
+            OKFConcept(
+                type="Wiki-Article",
+                title=f"Wiki: {repo} overview",
+                description=f"Wiki article for {repo}/overview",
+                resource="overview",
+                tags=[repo, "wiki"],
+                timestamp="2026-08-30T10:00:00Z",
+                concept_id=f"wiki/pages/{repo}/overview",
+                sources=_WIKI_SOURCES,
+                body=marker,
+                extensions={"page_id": "overview", "input_hash": f"hash-{repo}"},
+            )
+        )
+
+    client = TestClient(
+        create_app(
+            db_path=_graph_db_file(tmp_path, seed=False), knowledge_dir=str(kdir)
+        )
+    )
+    alpha = client.get("/wiki/alpha/overview")
+    beta = client.get("/wiki/beta/overview")
+    assert alpha.status_code == 200 and "alpha overview body" in alpha.text
+    assert beta.status_code == 200 and "beta overview body" in beta.text
 
 
 def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
@@ -3717,10 +4092,11 @@ def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
 
 def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     """FR-009 / TC-026: the detail view renders headings and lists as HTML
-    elements (never the raw markdown) with the sources listed."""
+    elements (never the raw markdown) with the sources listed, a breadcrumb
+    naming the repo, and prev/next links to the repo's other pages."""
     client = _wiki_client(tmp_path)
 
-    resp = client.get("/wiki/overview")
+    resp = client.get("/wiki/demo/overview")
 
     assert resp.status_code == 200
     assert re.search(r"<h2[^>]*>How it works</h2>", resp.text)
@@ -3733,12 +4109,17 @@ def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     assert "demo_main" in resp.text
     # Live mermaid: the detail view loads mermaid.js client-side.
     assert 'cdn.jsdelivr.net/npm/mermaid@11' in resp.text
+    # Breadcrumb + prev/next navigation (viz-module is the next promoted
+    # page in manifest order; overview is first, so no prev).
+    assert 'href="/wiki?repo=demo"' in resp.text
+    assert 'href="/wiki/demo/viz-module"' in resp.text
+    assert "wiki-pager" in resp.text
 
 
 def test_wiki_page_route_unknown_page_returns_404(tmp_path):
     client = _wiki_client(tmp_path)
-    resp = client.get("/wiki/no-such-page")
-    assert resp.status_code == 404
+    assert client.get("/wiki/no-such-page").status_code == 404
+    assert client.get("/wiki/demo/no-such-page").status_code == 404
 
 
 # --- wiki staleness badges (FR-007 / TC-019 / TC-020) -------------------------
@@ -3794,7 +4175,7 @@ def test_wiki_views_render_fresh_badge_beside_state_badge(tmp_path, monkeypatch)
     client = _staleness_client(tmp_path, monkeypatch, head=_SHA_A)
 
     listing = client.get("/wiki")
-    detail = client.get("/wiki/overview")
+    detail = client.get("/wiki/demo/overview")
 
     assert listing.status_code == 200
     assert ">fresh<" in listing.text
@@ -3810,7 +4191,7 @@ def test_wiki_views_render_stale_badge_after_head_moves(tmp_path, monkeypatch):
     client = _staleness_client(tmp_path, monkeypatch, head=_SHA_B)
 
     listing = client.get("/wiki")
-    detail = client.get("/wiki/overview")
+    detail = client.get("/wiki/demo/overview")
 
     assert listing.status_code == 200
     assert ">stale<" in listing.text
@@ -3828,7 +4209,7 @@ def test_wiki_views_render_unknown_badge_when_comparison_unavailable(
     client = _staleness_client(tmp_path, monkeypatch, head=None)
 
     listing = client.get("/wiki")
-    detail = client.get("/wiki/overview")
+    detail = client.get("/wiki/demo/overview")
 
     assert listing.status_code == 200
     assert ">unknown<" in listing.text
@@ -3845,6 +4226,21 @@ def test_markdown_renderer_module_never_loads_server_stack():
     starlette/uvicorn/jinja2 (same guard as the dashboard package)."""
     code = (
         "import sys; import cairn.dashboard.markdown; "
+        "print(any(m in sys.modules "
+        "for m in ('starlette', 'uvicorn', 'jinja2')))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert proc.stdout.strip() == "False"
+
+
+def test_shell_module_never_loads_server_stack():
+    """The shell context module is pure like the renderer — importing it
+    must not pull in the server stack (it is imported only inside
+    create_app, so the package-level pin alone would never load it)."""
+    code = (
+        "import sys; import cairn.dashboard.shell; "
         "print(any(m in sys.modules "
         "for m in ('starlette', 'uvicorn', 'jinja2')))"
     )
@@ -3967,3 +4363,111 @@ def test_render_markdown_pipe_tables_render_as_tables():
 
     assert "<table>" not in degraded
     assert "a | b | c" in degraded
+
+
+def test_render_markdown_inline_links_render_only_allowlisted_targets():
+    """[label](target) becomes an anchor only for http(s)://, /, and #
+    targets; every other scheme (javascript:, data:) or bare relative
+    renders as the literal escaped text — the href attribute is emitted
+    exclusively from an allowlist match, never from the source text."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "See [docs](https://example.com/a?b=1), [local](/graph), "
+        "[anchor](#top), [bad](javascript:alert(1)), "
+        "[data](data:text/plain,x), and [relative](some-page).\n"
+    )
+
+    assert '<a href="https://example.com/a?b=1">docs</a>' in html
+    assert '<a href="/graph">local</a>' in html
+    assert '<a href="#top">anchor</a>' in html
+    assert "[bad](javascript:alert(1))" in html  # literal, still escaped text
+    assert "[data](data:text/plain,x)" in html
+    assert "[relative](some-page)" in html
+    assert 'href="javascript' not in html
+    assert 'href="data:' not in html
+
+
+def test_render_markdown_link_target_quotes_cannot_break_out_of_href():
+    """A double quote inside an allowlisted target must not terminate the
+    href attribute (the working text is escaped with quote=False, so the
+    renderer neutralizes quotes at emission) — the classic attribute-
+    injection payload renders as data inside the href, never as new
+    attributes."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        '[hover](https://e.com/"onmouseover="location=\'//evil\'"x="y)\n'
+    )
+
+    assert 'onmouseover="' not in html
+    # Exactly one anchor, and the payload lives inside its href.
+    assert html.count("<a ") == 1
+    assert 'href="https://e.com/&quot;onmouseover=&quot;location=' in html
+
+
+def test_render_markdown_code_spans_beat_link_syntax():
+    """A link written inside backticks is a code span, not a link — the
+    combined inline pass consumes the span atomically."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown("Use the `[x](/y)` literal.\n")
+
+    assert "<code>[x](/y)</code>" in html
+    assert '<a href="/y">' not in html
+
+
+def test_render_markdown_link_map_wraps_vouched_code_refs():
+    """A code span whose exact text sits in the link map renders as an
+    anchor around the code element; unmapped spans stay plain <code>."""
+    from cairn.dashboard.markdown import render_markdown
+
+    html = render_markdown(
+        "Calls `demo_main` and `plain_word`.\n",
+        link_map={"demo_main": "/graph?scope=symbol&focus=demo_main&store=ab"},
+    )
+
+    assert (
+        '<a class="code-ref" href="/graph?scope=symbol&amp;focus=demo_main'
+        '&amp;store=ab"><code>demo_main</code></a>' in html
+    )
+    assert "<code>plain_word</code>" in html
+    assert 'code-ref" href="[^"]*plain_word' not in html
+
+
+def test_render_markdown_with_toc_anchors_match_heading_ids():
+    """The outline's anchors are exactly the ids the headings emitted,
+    including dedupe suffixes; h1/h4+ stay out of the outline."""
+    from cairn.dashboard.markdown import render_markdown_with_toc
+
+    html, toc = render_markdown_with_toc(
+        "# Title\n"
+        "\n"
+        "## Alpha\n"
+        "\n"
+        "text\n"
+        "\n"
+        "### Beta\n"
+        "\n"
+        "## Alpha again\n"
+        "\n"
+        "#### Deep\n"
+    )
+
+    assert [t["text"] for t in toc] == ["Alpha", "Beta", "Alpha again"]
+    assert toc[0]["anchor"] == "alpha"
+    assert toc[1]["anchor"] == "beta"
+    assert toc[2]["anchor"] == "alpha-again"
+    assert '<h2 id="alpha">' in html
+    assert '<h3 id="beta">' in html
+    assert '<h2 id="alpha-again">' in html
+    assert '<h1 id="title">' in html  # ids on every heading, toc h2/h3 only
+
+
+def test_render_markdown_with_toc_dedupes_repeated_headings():
+    from cairn.dashboard.markdown import render_markdown_with_toc
+
+    html, toc = render_markdown_with_toc("## Same\n\n## Same\n\n## Same\n")
+
+    assert [t["anchor"] for t in toc] == ["same", "same-1", "same-2"]
+    assert html.count("<h2 ") == 3

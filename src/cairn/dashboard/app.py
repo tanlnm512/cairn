@@ -257,6 +257,7 @@ def create_app(
         symbol_suggest,
     )
     from .workspaces import enumerate_stores, probe_stores
+    from .shell import shell_context
     from .. import paths
     from ..graph import embed_ladder, embeddings
     from ..paths import default_knowledge_path
@@ -304,14 +305,27 @@ def create_app(
     def render(
         request: Request, name: str, context: dict, status_code: int = 200
     ) -> Response:
-        """TemplateResponse carrying the banner context on every page."""
+        """TemplateResponse carrying the banner and shell context on every
+        page. The selector's options come from enumerate_stores (stat-only,
+        never probed — probe_stores and its 100-open budget stay exclusive
+        to the workspaces overview) and cost one registry read plus one
+        directory scan per render."""
         context["embed_banner"] = embed_banner()
+        if "shell" not in context:
+            context["shell"] = shell_context(
+                enumerate_stores(Path(paths.CAIRN_HOME)),
+                context.get("store_key", ""),
+                request.url.path,
+            )
         return templates.TemplateResponse(
             request, name, context, status_code=status_code
         )
 
     def resolve_selection(
-        request: Request, db_path: str | None, knowledge_dir: str | None
+        request: Request,
+        db_path: str | None,
+        knowledge_dir: str | None,
+        form=None,
     ) -> tuple[str | None, str, str]:
         """This request's ``(db, knowledge_root, store_key)`` (FR-003, D-001).
 
@@ -322,8 +336,15 @@ def create_app(
         path (no arbitrary-file-open vector). An unknown, empty, or missing
         key raises MissingDatabaseError so the app-level handler renders
         the missing-DB page: the friendly missing state, never an error.
+
+        ``form`` is the already-parsed body of a POST whose form carries the
+        hidden store input (settings): the body store is a fallback for the
+        query param only — one seam, two transports, same validation.
         """
         store_key = request.query_params.get("store", "").strip()
+        if not store_key and form is not None:
+            raw = form.get("store")
+            store_key = (str(raw) if raw is not None else "").strip()
         if not store_key:
             return db_path, knowledge_dir or str(default_knowledge_path()), ""
         home = Path(paths.CAIRN_HOME)
@@ -696,36 +717,112 @@ def create_app(
         )
 
     def wiki(request: Request) -> Response:
+        # Catalog filters, read like every other view's params: absent or
+        # blank means no filter; ``state`` outside PAGE_STATES falls back to
+        # no filter (silent fallback, matching the scope/window fallbacks).
+        from ..wiki.manifest import PAGE_STATES
+
+        repo = request.query_params.get("repo", "").strip() or None
+        state = request.query_params.get("state", "").strip() or None
+        query = request.query_params.get("q", "").strip()
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        pages = get_wiki_pages(selected_knowledge)
+        pages = get_wiki_pages(selected_knowledge, repo=repo)
+        if state in PAGE_STATES:
+            pages = [p for p in pages if p["state"] == state]
+        if query:
+            needle = query.lower()
+            pages = [
+                p
+                for p in pages
+                if needle in p["title"].lower()
+                or needle in p["page_id"].lower()
+                or needle in (p.get("description") or "").lower()
+            ]
         return render(
             request,
             "wiki.html",
-            {"pages": pages, "store_key": store_key},
+            {
+                "pages": pages,
+                "page_states": PAGE_STATES,
+                "filters": {"repo": repo or "", "state": state or "", "q": query},
+                "store_key": store_key,
+            },
+        )
+
+    def _wiki_not_found() -> Response:
+        from starlette.responses import HTMLResponse
+
+        return HTMLResponse(
+            "<html><head><title>cairn dashboard</title></head><body>"
+            "<h1>Wiki page not found</h1>"
+            "<p>No rendered article exists for this page id.</p>"
+            '<p><a href="/wiki">Back to the wiki</a></p>'
+            "</body></html>",
+            status_code=404,
         )
 
     def wiki_page(request: Request) -> Response:
+        """Legacy one-segment URL: a permanent redirect to the repo-qualified
+        canonical URL (bookmarks and recorded links keep working), or the
+        same 404 as before when no readable concept matches."""
+        from urllib.parse import quote
+
+        from starlette.responses import RedirectResponse
+
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
         page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
         if page is None:
-            from starlette.responses import HTMLResponse
+            return _wiki_not_found()
+        target = "/wiki/{}/{}".format(
+            quote(page["repo"], safe=""), quote(page["page_id"], safe="")
+        )
+        if store_key:
+            target += "?store=" + quote(store_key, safe="")
+        return RedirectResponse(target, status_code=307)
 
-            return HTMLResponse(
-                "<html><head><title>cairn dashboard</title></head><body>"
-                "<h1>Wiki page not found</h1>"
-                "<p>No rendered article exists for this page id.</p>"
-                '<p><a href="/wiki">Back to the wiki</a></p>'
-                "</body></html>",
-                status_code=404,
-            )
+    def wiki_page_repo(request: Request) -> Response:
+        # The canonical URL: repo-qualified, so multi-repo workspaces can
+        # reach every page even when repos plan colliding page ids (every
+        # repo plans an "overview"). prev/next walk the repo's promoted
+        # pages in manifest (plan) order — non-promoted rows have no
+        # readable concept, so linking to them would be a dead end.
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        repo = request.path_params["repo"]
+        page_id = request.path_params["page_id"]
+        page = get_wiki_page(
+            selected_knowledge, page_id, repo=repo, store_key=store_key
+        )
+        if page is None:
+            return _wiki_not_found()
+        promoted = [
+            p
+            for p in get_wiki_pages(selected_knowledge, repo=repo)
+            if p["promoted"]
+        ]
+        index = next(
+            (i for i, p in enumerate(promoted) if p["page_id"] == page_id), None
+        )
+        prev_page = promoted[index - 1] if index not in (None, 0) else None
+        next_page = (
+            promoted[index + 1]
+            if index is not None and index + 1 < len(promoted)
+            else None
+        )
         return render(
             request,
             "wiki_page.html",
-            {"page": page, "store_key": store_key},
+            {
+                "page": page,
+                "prev": prev_page,
+                "next": next_page,
+                "store_key": store_key,
+            },
         )
 
     def _settings_context(
@@ -772,7 +869,9 @@ def create_app(
     # handlers above stay plain-def (threadpool) — this route touches no SQL.
     async def settings_save(request: Request) -> Response:
         form = await request.form()
-        _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
+        _, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir, form=form
+        )
         submitted = {
             key: str(form.get(key) or "").strip()
             for key in SETTINGS_KEYS
@@ -978,6 +1077,10 @@ def create_app(
         Route("/memory", memory, name="memory"),
         Route("/tasks", tasks, name="tasks"),
         Route("/wiki", wiki, name="wiki"),
+        # Repo-qualified canonical URL first; the one-segment legacy route
+        # follows as a redirect (a single path param never matches two
+        # segments, so the two never shadow each other).
+        Route("/wiki/{repo}/{page_id}", wiki_page_repo, name="wiki_page_repo"),
         Route("/wiki/{page_id}", wiki_page, name="wiki_page"),
         Route("/embeddings", embeddings_status, name="embeddings"),
         Route("/settings", settings, name="settings"),
@@ -1013,6 +1116,8 @@ def create_app(
             f"<p>No graph database found at <code>{escape(str(exc))}</code>.</p>"
             "<p>Run <code>cairn build</code> to index this workspace, "
             "then refresh.</p>"
+            '<p><a href="/workspaces">Open the workspaces overview</a> '
+            "to pick an available store.</p>"
             "</body></html>"
         )
 

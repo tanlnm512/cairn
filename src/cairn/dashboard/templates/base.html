@@ -56,15 +56,19 @@
       });
     })();
   </script>
-  <script>
+  <script{% if shell is defined and shell.selector.options %} data-valid-stores='{{ shell.selector.options | map(attribute='key') | list | tojson }}'{% endif %}>
     /* Workspace stickiness: the store selection rides the URL
        (?store=<key>, the FR-003 seam), which a typed URL or new tab
        drops — so, like the theme, the last explicit selection is
        remembered (localStorage "cairn-store") and a bare visit
        redirects to it. Until the user picks a workspace, nothing is
        stored and bare URLs keep the launch store, byte-identical. A
-       remembered-but-since-deleted store lands on the friendly
-       missing-DB page, where Workspaces is one click away. */
+       remembered key that no longer names a populated store (the
+       workspace was deleted) is NOT redirected to — that would poison
+       every future visit with the missing-DB page — it is forgotten and
+       the launch store serves; the valid key set rides this tag's
+       data-valid-stores attribute, server-rendered from the same
+       enumerate_stores rows the selector lists. */
     (function () {
       "use strict";
       var STORAGE_KEY = "cairn-store";
@@ -75,11 +79,26 @@
           window.localStorage.setItem(STORAGE_KEY, selected);
         } else {
           var remembered = window.localStorage.getItem(STORAGE_KEY);
-          if (remembered) {
+          var valid = null;
+          var validRaw = document.currentScript
+            ? document.currentScript.getAttribute("data-valid-stores")
+            : null;
+          if (validRaw) {
+            try {
+              valid = JSON.parse(validRaw);
+            } catch (err) {
+              valid = null; /* unparsable set: redirect as before */
+            }
+          }
+          var known = valid === null ||
+            valid.indexOf(remembered) !== -1;
+          if (remembered && known) {
             url.searchParams.set("store", remembered);
             window.location.replace(
               url.pathname + url.search + url.hash
             );
+          } else if (remembered) {
+            window.localStorage.removeItem(STORAGE_KEY);
           }
         }
       } catch (err) {
@@ -87,8 +106,28 @@
       }
     })();
   </script>
+  <script>
+    /* Sidebar collapse, applied pre-paint like the theme: the remembered
+       state (localStorage "cairn-sidebar", set by shell.js's toggle) sets
+       data-sidebar on the root before the shell renders, so a collapsed
+       session never flashes the expanded sidebar first. */
+    (function () {
+      "use strict";
+      try {
+        if (window.localStorage.getItem("cairn-sidebar") === "collapsed") {
+          document.documentElement.dataset.sidebar = "collapsed";
+        }
+      } catch (err) {
+        /* storage unavailable: the sidebar stays expanded */
+      }
+    })();
+  </script>
 </head>
 <body class="app-shell">
+  {%- set shell_ctx = shell if shell is defined else none %}
+  {%- set nav_sections = (shell_ctx.nav.sections if shell_ctx else none) or [] %}
+  {%- set selector = (shell_ctx.selector if shell_ctx else none) %}
+  {%- set palette = (shell_ctx.palette if shell_ctx else none) %}
   <aside class="sidebar">
     {#- FR-003: keep the selected store on every nav hop; empty when the
         launch store is served (byte-identical plain hrefs). -#}
@@ -98,57 +137,25 @@
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.5 4.5 5.5h-9L12 3.5z"/><path d="m12 12 4.5 5.5h-9L12 12z"/><path d="M12 21.5v-1"/></svg>
       <span>cairn</span>
     </a>
+    {% import "_icons.html" as icons %}
     <nav class="side-nav">
-      <a href="/workspaces{{ nav_query }}"{% if path.startswith('/workspaces') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
-        <span>Workspaces</span>
-      </a>
-      <a href="/projects{{ nav_query }}"{% if path.startswith('/projects') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        <span>Projects</span>
-      </a>
-      <a href="/graph{{ nav_query }}"{% if path.startswith('/graph') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
-        <span>Graph</span>
-      </a>
-      <a href="/history{{ nav_query }}"{% if path.startswith('/history') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
-        <span>History</span>
-      </a>
-      <a href="/tokens{{ nav_query }}"{% if path.startswith('/tokens') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
-        <span>Tokens</span>
-      </a>
-      <a href="/chains{{ nav_query }}"{% if path.startswith('/chains') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
-        <span>Chains</span>
-      </a>
-      <a href="/health{{ nav_query }}"{% if path.startswith('/health') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span>Health</span>
-      </a>
-      <a href="/memory{{ nav_query }}"{% if path.startswith('/memory') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.7-4 3-9 3s-9-1.3-9-3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg>
-        <span>Memory</span>
-      </a>
-      <a href="/wiki{{ nav_query }}"{% if path.startswith('/wiki') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>
-        <span>Wiki</span>
-      </a>
-      <a href="/tasks{{ nav_query }}"{% if path.startswith('/tasks') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        <span>Tasks</span>
-      </a>
-      <a href="/embeddings{{ nav_query }}"{% if path.startswith('/embeddings') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 16-9 5-9-5V8l9-5 9 5z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
-        <span>Embeddings</span>
-      </a>
-      <a href="/settings{{ nav_query }}"{% if path.startswith('/settings') %} class="active" aria-current="page"{% endif %}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>
-        <span>Settings</span>
-      </a>
+      {% for section in nav_sections %}
+      <div class="nav-group{% if not section["label"] %} nav-group-standalone{% endif %}">
+        {% if section["label"] %}<div class="nav-group-label">{{ section["label"] }}</div>{% endif %}
+        {% for item in section["items"] %}
+        <a href="{{ item.href }}"{% if item.active %} class="active" aria-current="page"{% endif %}>
+          {{ icons.svg(item.id) }}
+          <span>{{ item.label }}</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endfor %}
     </nav>
     <div class="sidebar-foot">
+      <button type="button" id="sidebar-collapse" class="sidebar-collapse" aria-label="Collapse sidebar" title="Collapse sidebar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+        <span>Collapse</span>
+      </button>
       <button type="button" id="theme-toggle" class="theme-toggle">Theme</button>
     </div>
   </aside>
@@ -157,15 +164,57 @@
       {#- The topbar label derives from the path segment ("/" -> Overview);
           views may override via the view_title block. -#}
       <div class="topbar-title">{% block view_title %}{{ 'Overview' if path == '/' else (path.strip('/').split('/')[0] | capitalize) }}{% endblock %}</div>
-      <div id="live-controls" class="muted" data-state="running" hidden>
-        <span id="live-state"></span>
-        <button type="button" id="live-pause">Pause</button>
+      <div class="topbar-actions">
+        {#- Global workspace selector (FR-003 seam stays the URL param):
+            switching rewrites ?store= on the current URL and reloads, so
+            every tab shows the selected workspace. shell.js owns the
+            change behavior; the options are server-rendered. -#}
+        {% if selector %}
+        <label class="store-picker">
+          <span class="visually-hidden">Workspace</span>
+          <select id="store-select" aria-label="Workspace">
+            <option value="">{{ selector.launch_label }}</option>
+            {%- for o in selector.options %}
+            <option value="{{ o.key }}"{% if o.key == selector.selected %} selected{% endif %}{% if o.path %} title="{{ o.path }} — {{ o.key }}"{% endif %}>{{ o.label }}</option>
+            {%- endfor %}
+          </select>
+        </label>
+        {% endif %}
+        {% if palette %}
+        <button type="button" id="palette-open" class="palette-open" aria-label="Open search (Ctrl+K or Cmd+K)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="palette-open-label">Search</span>
+          <kbd id="palette-kbd">Ctrl K</kbd>
+        </button>
+        {% endif %}
+        <div id="live-controls" class="muted" data-state="running" hidden>
+          <span id="live-state"></span>
+          <button type="button" id="live-pause">Pause</button>
+        </div>
       </div>
     </header>
     <main class="site-main">{% include "_embed_banner.html" %}
       {% block content %}{% endblock %}
     </main>
   </div>
+  {% if palette %}
+  {#- Command palette overlay: body-level so live-refresh region swaps
+      (which replace only #refresh-region's children) never touch it.
+      The seed JSON carries the view list (store-carrying hrefs, composed
+      server-side from the same NAV_SECTIONS the sidebar renders) and the
+      workspace options; symbols arrive live from /graph/suggest. -#}
+  <div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Search" hidden>
+    <div class="palette-backdrop" data-palette-close></div>
+    <div class="palette-card">
+      <input id="palette-input" type="text" placeholder="Jump to a view, workspace, or symbol…"
+             autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+      <ul id="palette-list" role="listbox"></ul>
+      <p class="palette-hint muted">↑ ↓ navigate · ↵ open · esc close</p>
+    </div>
+  </div>
+  <script id="palette-data" type="application/json">{{ palette | tojson }}</script>
+  {% endif %}
+  <script src="{{ url_for('static', path='/shell.js') }}?v={{ asset_version }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

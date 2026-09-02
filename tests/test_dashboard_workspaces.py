@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -358,3 +359,50 @@ def test_base_template_carries_store_stickiness_script(tmp_path):
     assert "localStorage.setItem" in block  # ...is remembered
     assert "localStorage.getItem" in block  # a bare visit...
     assert "location.replace" in block  # ...restores it
+
+
+def test_stickiness_script_only_redirects_to_still_valid_stores(
+    tmp_path, monkeypatch
+):
+    """A remembered key that no longer names a populated store (the
+    workspace was deleted) must not poison every future visit with the
+    missing-DB page: the server renders the valid populated key set on
+    the stickiness script's own tag (data-valid-stores), the script
+    redirects only to members, and a stale key is forgotten so the
+    launch store serves."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn import paths
+    from cairn.dashboard.app import create_app
+    from tests.test_dashboard_app import _seed_switch_store
+    from tests.test_dashboard_app import _SW_KEY_A
+
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    _seed_switch_store(
+        home / _SW_KEY_A / ".kg", "storeA", "store_a_tool",
+        "2026-09-01T07:00:00Z", calls=1,
+    )
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    client = TestClient(
+        create_app(
+            db_path=str(tmp_path / "dash.db"),
+            knowledge_dir=str(tmp_path / "missing"),
+        )
+    )
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    # The valid set rides the stickiness script's tag: populated keys
+    # only, in a single-quoted attribute (tojson escapes ' but not ").
+    attr = re.search(r"data-valid-stores='([^']*)'", resp.text)
+    assert attr is not None
+    assert json.loads(attr.group(1)) == [_SW_KEY_A]
+    # The guard reads the attribute and drops stale keys.
+    script_start = resp.text.index("cairn-store")
+    block = resp.text[script_start : resp.text.index("</script>", script_start)]
+    assert "data-valid-stores" in block
+    assert "JSON.parse" in block
+    assert "localStorage.removeItem(STORAGE_KEY)" in block

@@ -1,4 +1,6 @@
-/* Cairn dashboard — GitNexus-inspired design system.
+/* Cairn dashboard — "Terrain" design system: warm sandstone light mode,
+   deep ink-brown dark mode, one burnt-amber primary (a cairn is a trail
+   marker — the palette reads geological, not tech-corporate).
    Theme contract (pinned by tests/test_dashboard_theme.py — note that
    test locates blocks by first substring match, so keep selector
    spellings OUT of comments):
@@ -10,60 +12,69 @@
      system-color-scheme media query may appear in this file. */
 
 :root {
-  --bg: #eef1f6;
-  --surface: #ffffff;
-  --surface-2: #f4f6fa;
-  --sidebar: #f7f9fc;
-  --canvas: #fbfcfe;
-  --text: #182230;
-  --muted: #5f6d81;
-  --border: #dbe2ec;
-  --accent: #0d9488;
-  --accent-2: #7c5cf6;
-  --accent-contrast: #ffffff;
-  --accent-soft: rgba(13, 148, 136, 0.12);
-  --ok: #15803d;
-  --warn: #b45309;
+  --bg: #f5f2ec;
+  --surface: #fffdf9;
+  --surface-2: #f0ebe1;
+  --sidebar: #ece5d8;
+  --canvas: #faf8f3;
+  --text: #23201b;
+  --muted: #6f675a;
+  --border: #dcd2c0;
+  --accent: #b45309;
+  --accent-2: #4f46e5;
+  --accent-contrast: #fffdf9;
+  --accent-soft: rgba(180, 83, 9, 0.12);
+  --ok: #166534;
+  --warn: #a16207;
   --err: #b91c1c;
-  --shadow: rgba(23, 31, 46, 0.1);
+  --shadow: rgba(35, 32, 27, 0.12);
+  --backdrop: rgba(35, 32, 27, 0.32);
 }
 
 [data-theme="dark"] {
-  --bg: #0b0f16;
-  --surface: #131a26;
-  --surface-2: #18202e;
-  --sidebar: #0e131d;
-  --canvas: #0a0d13;
-  --text: #e6edf5;
-  --muted: #8d9aae;
-  --border: #232d3f;
-  --accent: #2dd4bf;
-  --accent-2: #a78bfa;
-  --accent-contrast: #04211d;
-  --accent-soft: rgba(45, 212, 191, 0.14);
-  --ok: #34d399;
-  --warn: #fbbf24;
+  --bg: #14110d;
+  --surface: #1c1813;
+  --surface-2: #241f18;
+  --sidebar: #171310;
+  --canvas: #100e0b;
+  --text: #ece7dd;
+  --muted: #a29885;
+  --border: #342c21;
+  --accent: #f59e0b;
+  --accent-2: #818cf8;
+  --accent-contrast: #1c1503;
+  --accent-soft: rgba(245, 158, 11, 0.14);
+  --ok: #4ade80;
+  --warn: #fde047;
   --err: #f87171;
-  --shadow: rgba(0, 0, 0, 0.45);
+  --shadow: rgba(0, 0, 0, 0.5);
+  --backdrop: rgba(0, 0, 0, 0.6);
   color-scheme: dark;
 }
 
 /* Theme-invariant design constants (NOT scanned by the theme test —
    keep them out of the first :root block above). */
 :root {
-  --radius-s: 6px;
-  --radius: 10px;
-  --radius-l: 14px;
+  --radius-s: 8px;
+  --radius: 12px;
+  --radius-l: 16px;
   --shadow-1: 0 1px 2px var(--shadow);
   --shadow-2: 0 12px 32px -16px var(--shadow);
-  --sidebar-w: 220px;
+  --shadow-3: 0 24px 64px -24px var(--shadow);
+  --sidebar-w: 232px;
+  --sidebar-w-collapsed: 60px;
   --topbar-h: 56px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -137,6 +148,23 @@ body.app-shell {
   gap: 0.15rem;
 }
 
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.85rem;
+}
+
+.nav-group-label {
+  padding: 0 0.65rem 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
 .side-nav a {
   display: flex;
   align-items: center;
@@ -164,6 +192,7 @@ body.app-shell {
   color: var(--accent);
   background: var(--accent-soft);
   font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .side-nav a.active svg {
@@ -174,6 +203,59 @@ body.app-shell {
   margin-top: auto;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
+  display: flex;
+  gap: 0.4rem;
+}
+
+.sidebar-collapse {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sidebar-collapse:hover,
+.sidebar-collapse:focus {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* Collapsed rail (desktop only — the ≤920px sidebar is a horizontal
+   bar where collapse does not apply): icon rail, labels and group
+   headers hidden, chevron flips. */
+@media (min-width: 921px) {
+  html[data-sidebar="collapsed"] body.app-shell {
+    grid-template-columns: var(--sidebar-w-collapsed) minmax(0, 1fr);
+  }
+
+  html[data-sidebar="collapsed"] .brand span,
+  html[data-sidebar="collapsed"] .nav-group-label,
+  html[data-sidebar="collapsed"] .side-nav a span,
+  html[data-sidebar="collapsed"] .sidebar-collapse span,
+  html[data-sidebar="collapsed"] .theme-toggle {
+    display: none;
+  }
+
+  html[data-sidebar="collapsed"] .side-nav a,
+  html[data-sidebar="collapsed"] .brand,
+  html[data-sidebar="collapsed"] .sidebar-collapse {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  html[data-sidebar="collapsed"] .sidebar-collapse svg {
+    transform: rotate(180deg);
+  }
 }
 
 .app-body {
@@ -206,6 +288,167 @@ body.app-shell {
   color: var(--muted);
 }
 
+/* ---- Topbar actions: workspace selector + live chrome ---- */
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-left: auto;
+}
+
+.store-picker select {
+  max-width: 260px;
+  padding: 0.34rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.store-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- Command palette ---- */
+
+.palette-open {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.36rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.palette-open:hover,
+.palette-open:focus {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.palette-open kbd {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.palette-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--backdrop);
+}
+
+.palette-card {
+  position: relative;
+  max-width: 560px;
+  margin: 12vh auto 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.palette-card input {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.palette-card input:focus {
+  outline: none;
+}
+
+.palette-card ul {
+  max-height: 46vh;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.palette-row.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.palette-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row-hint {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.palette-row-empty {
+  justify-content: center;
+  cursor: default;
+  color: var(--muted);
+}
+
+.palette-hint {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .site-main {
   width: 100%;
   max-width: 1280px;
@@ -220,14 +463,15 @@ body.app-shell {
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
-  padding: 1.4rem 1.6rem;
+  padding: 1.5rem 1.7rem;
   overflow-x: auto;
 }
 
 .panel h1 {
   margin: 0 0 0.6rem;
-  font-size: 1.4rem;
-  letter-spacing: -0.01em;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .muted {
@@ -246,7 +490,7 @@ body.app-shell {
 /* ---- Theme toggle ---- */
 
 .theme-toggle {
-  width: 100%;
+  flex: 1;
   padding: 0.42rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -277,7 +521,6 @@ body.app-shell {
 #live-controls {
   align-items: center;
   gap: 0.6rem;
-  margin-left: auto;
   font-size: 0.85rem;
 }
 
@@ -646,10 +889,12 @@ body.app-shell {
   font-size: 0.92rem;
 }
 
+/* Transparent header row with a strong rule under it — the header reads
+   as typography, not a filled strip. */
 .data-table th {
-  padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid color-mix(in srgb, var(--text) 16%, transparent);
+  background: none;
   text-align: left;
   font-size: 0.72rem;
   font-weight: 600;
@@ -661,7 +906,7 @@ body.app-shell {
 
 .data-table td {
   padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   vertical-align: top;
 }
 
@@ -681,6 +926,7 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--canvas);
+  font-family: var(--font-mono);
   font-size: 0.84em;
   word-break: break-all;
 }
@@ -970,6 +1216,178 @@ code {
   }
 }
 
+/* ---- Wiki: catalog, article prose, and page navigation ---- */
+
+.wiki-controls {
+  margin-bottom: 0.4rem;
+}
+
+.wiki-state-filter {
+  margin: 0.45rem 0 0.2rem;
+}
+
+.wiki-repo-heading {
+  margin: 1.7rem 0 0.55rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.wiki-repo-heading .muted {
+  font-weight: 400;
+  font-size: 0.82rem;
+}
+
+.wiki-breadcrumb {
+  margin-bottom: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.wiki-breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.wiki-breadcrumb a:hover,
+.wiki-breadcrumb a:focus {
+  color: var(--accent);
+}
+
+/* Article + TOC rail; the rail docks beside the article on wide screens
+   and stacks below it (hidden from the flow, simply full-width) below
+   1100px. */
+.wiki-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.6rem;
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .wiki-layout {
+    grid-template-columns: minmax(0, 1fr) 210px;
+  }
+
+  .wiki-toc {
+    position: sticky;
+    top: calc(var(--topbar-h) + 1.25rem);
+  }
+}
+
+.wiki-body {
+  max-width: 46rem;
+  line-height: 1.68;
+}
+
+.wiki-body h2 {
+  margin-top: 1.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.wiki-body h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.wiki-body pre {
+  overflow-x: auto;
+}
+
+.wiki-body pre.mermaid {
+  display: flex;
+  justify-content: center;
+  padding: 0.9rem;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.wiki-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.wiki-body th,
+.wiki-body td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  text-align: left;
+}
+
+.wiki-body th {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+/* Backtick refs that link into the graph: the code chip is the anchor —
+   intent (hover/focus) tints it, no underline to fight the chip border. */
+a.code-ref {
+  text-decoration: none;
+}
+
+a.code-ref:hover code,
+a.code-ref:focus code {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wiki-toc {
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 0.82rem;
+}
+
+.wiki-toc-label {
+  margin-bottom: 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.wiki-toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wiki-toc li {
+  margin: 0.2rem 0;
+}
+
+.wiki-toc-l3 {
+  padding-left: 0.75rem;
+}
+
+.wiki-toc a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.wiki-toc a:hover,
+.wiki-toc a:focus {
+  color: var(--accent);
+}
+
+.wiki-pager {
+  margin-top: 1.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
 /* ---- Symbol-search typeahead dropdown ---- */
 .suggest-wrap {
   position: relative;
@@ -988,7 +1406,7 @@ code {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--shadow-2);
   padding: 4px 0;
 }
 

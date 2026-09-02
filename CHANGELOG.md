@@ -11,6 +11,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [0.17.0] - 2026-09-02
+
+### Added
+- Dashboard shell: a global workspace selector in the topbar of every view
+  (server-rendered from the store registry, populated stores only, labeled
+  by workspace path) — switching rewrites the `?store=` param on the
+  current URL and reloads, so the tab stays and every view re-renders on
+  the selected workspace, with the existing localStorage stickiness
+  re-persisting the choice; a `Ctrl/Cmd+K` command palette searching
+  views, workspaces, and live symbol suggestions through the same
+  `/graph/suggest` endpoint the graph typeahead uses; and a collapsible
+  sidebar (persisted pre-paint like the theme) with the nav grouped
+  Explore / Knowledge / Activity / System — Workspaces still leads
+  ungrouped — rendered from one `NAV_SECTIONS` source shared with the
+  palette so the two can never drift.
+
+- Dashboard wiki navigation: canonical repo-qualified page URLs
+  (`/wiki/{repo}/{page_id}`) fix the multi-repo collision where every
+  repo's `overview` page but one was unreachable — the old one-segment
+  URL survives as a 307 redirect carrying the selected store. The catalog
+  groups pages by repo with state-filter pills and a search box
+  (title/page-id/description); detail pages carry a breadcrumb, an
+  in-page table of contents (heading anchors emitted by the renderer,
+  h2/h3 outline provably matching them), prev/next links walking the
+  repo's promoted pages in plan order, and graph cross-links — inline
+  markdown links render under a strict scheme allowlist
+  (`http(s)://`, `/`, `#`; `javascript:`/`data:` stay literal text) and
+  backticked refs the page itself vouches for (frontmatter sources plus
+  plan seeds, both already graph-verified by the critic gate) link into
+  `/graph?scope=symbol&focus=…` with the selected store riding.
+
+
+### Changed
+- Dashboard visual redesign ("Terrain"): the GitNexus teal tokens give
+  way to a warm sandstone light mode, deep ink-brown dark mode, and a
+  burnt-amber primary — same token names in both theme blocks, so the
+  pinned theme contract holds unchanged. Component pass: transparent
+  table headers with a strong rule, monospace code chips, the active nav
+  item carries an accent inset bar, and the new wiki surfaces (catalog,
+  article prose at a 46rem measure, TOC rail, pager) get their styles.
+
+
+### Fixed
+- Dashboard forms silently dropped the selected workspace: GET filter
+  forms (history/tasks/graph) lose the action URL's query string on
+  submit and the settings POST actions carried no store at all, so
+  applying a filter or saving settings on a selected store reverted to
+  the launch store one hop later — and for the POSTs, the stickiness
+  redirect could land back on a POST-only route (405). Every form now
+  carries a hidden store input and `settings_save` resolves the body
+  store through the same validation seam.
+
+
 ## [0.16.3] - 2026-09-02
 
 ### Added

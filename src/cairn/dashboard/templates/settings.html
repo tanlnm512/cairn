@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Settings — Cairn Dashboard{% endblock %}
 {#- The env-pin marker (D-008): an env var shadowing the file value must be
     visible, or a save that "does nothing" is unexplainable. The API key's
@@ -23,7 +24,14 @@
   {% if error %}
   <p role="alert" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font-weight: 600;">{{ error }}</p>
   {% endif %}
-  <form class="graph-controls" method="post" action="/settings/save">
+  {#- The POST actions carry the store in the action URL's query string
+      (POST forms keep it; GET forms drop it — hence store_field elsewhere):
+      the response then renders at a URL that already has ?store=, so the
+      head stickiness script never redirects the POST landing to a GET of
+      this POST-only route (405). The hidden input stays as the fallback
+      transport resolve_selection also accepts. -#}
+  <form class="graph-controls" method="post" action="{{ links.url('/settings/save') }}">
+    {{ links.store_field() }}
     <label>Backend
       <select name="CAIRN_EMBED_BACKEND">
         {% for b in backends %}
@@ -68,7 +76,8 @@
     Re-embeds a sample of stored chunks through the configured backend and
     compares against what is stored (gate 0.98).
   </p>
-  <form class="graph-controls" method="post" action="/settings/parity-check">
+  <form class="graph-controls" method="post" action="{{ links.url('/settings/parity-check') }}">
+    {{ links.store_field() }}
     <button type="submit">Run parity check</button>
   </form>
   {% if parity %}

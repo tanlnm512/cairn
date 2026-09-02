@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% import "_links.html" as links with context %}
 {% block title %}Tasks — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Tasks</h1>
   <form class="graph-controls" method="get" action="/tasks">
+    {{ links.store_field() }}
     <label>Status
       <select name="status">
         <option value="all"{% if status == "all" %} selected{% endif %}>all</option>

@@ -20,6 +20,14 @@
 {{ base }}{% if parts %}?{{ parts | join("&") }}{% endif %}
 {%- endmacro %}
 
+{% macro store_field() -%}
+{#- Forms drop the action URL's query string on submit (GET forms) or never
+    carry one (POST actions), so the selected store rides the form body as a
+    hidden input. Empty selection renders nothing — bare pages stay
+    byte-identical. -#}
+{%- if store_key -%}<input type="hidden" name="store" value="{{ store_key }}">{%- endif -%}
+{%- endmacro %}
+
 {% macro view_link(view, param, value, window='') -%}
 {% set q = {param: value} %}
 {%- if window and window != 'all' %}{% set _ = q.update({'window': window}) %}{% endif -%}

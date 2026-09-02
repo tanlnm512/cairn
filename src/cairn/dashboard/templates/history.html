@@ -30,6 +30,7 @@
       <input type="text" name="source" value="{{ source }}">
     </label>
     <input type="hidden" name="window" value="{{ window }}">
+    {{ links.store_field() }}
     <button type="submit">Apply</button>
   </form>
   {% include "window_control.html" %}
