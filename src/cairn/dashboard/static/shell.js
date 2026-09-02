@@ -62,10 +62,9 @@
       } catch (err) {
         /* storage unavailable: the choice lasts only for this page */
       }
-      button.setAttribute(
-        "aria-label",
-        collapsing ? "Expand sidebar" : "Collapse sidebar"
-      );
+      var label = collapsing ? "Expand sidebar" : "Collapse sidebar";
+      button.setAttribute("aria-label", label);
+      button.title = label;
     });
   })();
 

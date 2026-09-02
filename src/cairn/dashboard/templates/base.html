@@ -27,7 +27,12 @@
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         var toggle = document.getElementById("theme-toggle");
         if (toggle) {
-          toggle.textContent = dark ? "Light" : "Dark";
+          /* The button shows the icon of the theme it switches TO (sun in
+             dark, moon in light — CSS picks the glyph); the label states
+             the action for assistive tech. */
+          var label = dark ? "Switch to light theme" : "Switch to dark theme";
+          toggle.setAttribute("aria-label", label);
+          toggle.title = label;
         }
       }
       window.__cairnApplyTheme = applyTheme;
@@ -154,9 +159,11 @@
     <div class="sidebar-foot">
       <button type="button" id="sidebar-collapse" class="sidebar-collapse" aria-label="Collapse sidebar" title="Collapse sidebar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
-        <span>Collapse</span>
       </button>
-      <button type="button" id="theme-toggle" class="theme-toggle">Theme</button>
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch theme" title="Switch theme">
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41-1.41"/></svg>
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
     </div>
   </aside>
   <div class="app-body">
