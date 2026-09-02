@@ -481,7 +481,7 @@ def complete_task(
 
                 if task.task_kind.startswith("wiki-page"):
                     # The repo fact was validated at the top of completion.
-                    repo = task.facts.get("repo")
+                    repo = str(task.facts.get("repo") or "")
                     # Qualified resources are "{repo}/{page_id}"; legacy bare
                     # ids keep the slug sanitation.
                     raw_page_id = (
