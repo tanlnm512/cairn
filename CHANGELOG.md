@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Fixed
+- Dashboard alignment: every `.graph-controls` row (graph filter bar,
+  settings embedding config, history/tasks/wiki filters) now renders on
+  one baseline — selects, text/password/number inputs, and submit buttons
+  share a fixed control height (their differing intrinsic widget heights
+  previously sat raggedly under the rows' bottom alignment), checkbox
+  toggles render as one centered line instead of stacking the checkbox
+  above its caption, and inline status chips (env-pin markers, the API-key
+  state) meet the same bottom line as the controls they annotate. Data
+  tables no longer collapse under width pressure: timestamp cells hold
+  one line instead of wrapping mid-string at their hyphens, and long-ID
+  `code` chips (memory IDs, history sessions, task IDs/resources) cap to
+  one ellipsized line with the full value on the `title` tooltip instead
+  of being squeezed to a one-glyph sliver by the auto table layout.
+
+
 ## [0.17.0] - 2026-09-02
 
 ### Added

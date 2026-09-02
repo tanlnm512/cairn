@@ -21,8 +21,8 @@
         <td><span class="badge badge-{{ m.type }}">{{ m.type }}</span></td>
         <td>{{ m.title }}</td>
         <td>{{ m.tier or "—" }}</td>
-        <td>{{ m.timestamp or "—" }}</td>
-        <td><code>{{ m.id }}</code></td>
+        <td class="ts">{{ m.timestamp or "—" }}</td>
+        <td class="cell-id"><code title="{{ m.id }}">{{ m.id }}</code></td>
       </tr>
       {% endfor %}
     </tbody>
