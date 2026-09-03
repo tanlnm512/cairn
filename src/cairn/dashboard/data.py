@@ -590,6 +590,12 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     }
 
 
+# ANN internals: sqlite-vec ``vec0`` virtual tables and their shadow
+# tables (``vec_<model>``, ``vec_<model>_info``/``_chunks``/``_rowids``,
+# ``vecmv_*``). Their module is not loaded on the dashboard's connection.
+_ANN_TABLE_PREFIXES = ("vec_", "vecmv_")
+
+
 def get_database_schema(conn: sqlite3.Connection) -> Dict:
     """Store schema as a relationship graph for the database view.
 
@@ -599,12 +605,19 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
     names another table (kind ``inferred``, e.g. ``build_runs.repo_id``
     without a declared FK). A column already covered by a declared FK is
     never re-inferred. Read-only introspection; internal ``sqlite_%`` and
-    FTS shadow tables are excluded.
+    FTS shadow tables are excluded, and so are the sqlite-vec ANN internals
+    (``vec_*``/``vecmv_*``): stores with embeddings carry ``vec0`` virtual
+    tables whose module is not loaded on the dashboard's plain read-only
+    connection, and introspecting them would fail the whole view. Per-table
+    introspection is never fatal for the same reason — a table whose
+    module is unavailable is skipped, not an error.
     """
     tables = sorted(
         row[0]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        if not row[0].startswith("sqlite_") and "_fts" not in row[0]
+        if not row[0].startswith("sqlite_")
+        and "_fts" not in row[0]
+        and not row[0].startswith(_ANN_TABLE_PREFIXES)
     )
 
     def _q(identifier: str) -> str:
@@ -612,12 +625,16 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
 
     meta: Dict[str, Dict] = {}
     for name in tables:
-        columns = [
-            {"name": r[1], "type": r[2] or "", "pk": bool(r[5])}
-            for r in conn.execute(f"PRAGMA table_info({_q(name)})")
-        ]
-        rows = conn.execute(f"SELECT COUNT(*) FROM {_q(name)}").fetchone()[0]
+        try:
+            columns = [
+                {"name": r[1], "type": r[2] or "", "pk": bool(r[5])}
+                for r in conn.execute(f"PRAGMA table_info({_q(name)})")
+            ]
+            rows = conn.execute(f"SELECT COUNT(*) FROM {_q(name)}").fetchone()[0]
+        except sqlite3.Error:
+            continue
         meta[name] = {"columns": columns, "rows": rows}
+    tables = [name for name in tables if name in meta]
 
     declared: set = set()
     edges: Dict[Tuple[str, str], Dict] = {}
