@@ -54,6 +54,59 @@ def _escape_like(value: str, escape: str = LIKE_ESCAPE_CHAR) -> str:
     )
 
 
+class ModuleResolutionError(ValueError):
+    """The module argument could not be resolved to a single repo.
+
+    Raised when a bare module name (e.g. `app`) names directories in more
+    than one repo and no --repo was given: silently dropping the repo filter
+    would mix both repos' facts into one compass.
+    """
+
+
+def _module_match_sql(alias: str = "path") -> str:
+    """SQL fragment matching a files.path column to a module directory on
+    segment boundaries: the module path itself (module pointing at a file),
+    files directly under it, or files under it deeper in the tree. Takes 3
+    params via _module_match_params.
+
+    Anchored on purpose: an unanchored `%app%` substring matches unrelated
+    paths (`trapper/utils.py`) and same-named directories in every repo.
+    """
+    return (
+        f"({alias} = ? OR {alias} LIKE ? ESCAPE '\\' "
+        f"OR {alias} LIKE ? ESCAPE '\\')"
+    )
+
+
+def _module_match_params(module_path: str) -> tuple:
+    e = _escape_like(module_path)
+    return (module_path, f"{e}/%", f"%/{e}/%")
+
+
+def _normalize_module_path(module_path: str, repo: Optional[str]) -> str:
+    """Strip a `{repo}/` prefix from a module path.
+
+    `cairn compass generate polaris-app/app` names the `app` module of the
+    polaris-app repo; files.path is repo-relative, so queries must use the
+    stripped form.
+    """
+    if repo and module_path.startswith(repo + "/"):
+        return module_path[len(repo) + 1:]
+    return module_path
+
+
+def _resolve_module(
+    conn: sqlite3.Connection, module_path: str, repo: Optional[str],
+) -> tuple:
+    """Resolve the (repo, repo-relative module path) pair for generation.
+
+    Raises ModuleResolutionError when the module is ambiguous across repos.
+    """
+    module_path = module_path.strip("/")
+    repo = repo or _infer_repo(conn, module_path)
+    return repo, _normalize_module_path(module_path, repo)
+
+
 def generate_compass(
     module_path: str,
     conn: sqlite3.Connection,
@@ -70,8 +123,8 @@ def generate_compass(
         repo: optional repo name; if None, inferred from the path.
         llm_synthesize: optional callable(symbols, key_files, cross_deps) -> str body.
     """
-    # 1. Find all symbols in the module path (path substring match).
-    repo_filter = repo or _infer_repo(conn, module_path)
+    # 1. Find all symbols in the module path (segment-anchored, repo-scoped).
+    repo_filter, module_path = _resolve_module(conn, module_path, repo)
     symbols = _symbols_in_module(conn, module_path, repo_filter)
 
     # 2. Key files: rank by incoming edges (most-referenced = most important).
@@ -118,7 +171,24 @@ def _infer_repo(conn, module_path: str) -> Optional[str]:
         if module_path.startswith(rid + "/") or ("/" + rid + "/") in module_path \
                 or module_path == rid:
             return rid
-    # Fallback: single-repo workspace — there's only one repo.
+    # Bare module name: which repos actually contain it? A directory named
+    # `app` can exist in several repos -- without a repo filter the fact
+    # queries would mix them into one compass, so make ambiguity loud.
+    rows = cur.execute(
+        f"SELECT DISTINCT repo_id FROM files WHERE {_module_match_sql()}",
+        _module_match_params(module_path),
+    ).fetchall()
+    if len(rows) > 1:
+        candidates = ", ".join(sorted(r["repo_id"] for r in rows))
+        raise ModuleResolutionError(
+            f"module '{module_path}' exists in multiple repos ({candidates}); "
+            "pass --repo to pick one"
+        )
+    if len(rows) == 1:
+        return rows[0]["repo_id"]
+    # Fallback: single-repo workspace — there's only one repo. This keeps a
+    # no-match module (typo, empty dir) reporting "(no symbols detected)"
+    # instead of crossing repos.
     repos = cur.execute("SELECT id FROM repos").fetchall()
     if len(repos) == 1:
         return repos[0]["id"]
@@ -127,10 +197,10 @@ def _infer_repo(conn, module_path: str) -> Optional[str]:
 
 def _symbols_in_module(conn, module_path: str, repo: Optional[str]) -> List[dict]:
     cur = conn.cursor()
-    q = """SELECT s.name, s.kind, s.qualified_name, s.line_start, f.path, f.repo_id
+    q = f"""SELECT s.name, s.kind, s.qualified_name, s.line_start, f.path, f.repo_id
            FROM symbols s JOIN files f ON s.file_id = f.id
-           WHERE f.path LIKE ? ESCAPE '\\'"""
-    params: list = [f"%{_escape_like(module_path)}%"]
+           WHERE {_module_match_sql('f.path')}"""
+    params: list = list(_module_match_params(module_path))
     if repo:
         q += " AND f.repo_id = ?"
         params.append(repo)
@@ -160,7 +230,14 @@ def _rank_key_files(conn, symbols: List[dict], top: int = 5) -> List[dict]:
 
 
 def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]:
-    """Outgoing edges from this module's symbols to symbols in other modules."""
+    """Outgoing edges from this module's symbols to symbols in other modules.
+
+    The source side is segment-anchored to `module_path` and scoped to `repo`
+    when known (a bare directory name can exist in many repos). "Outside the
+    module" is repo-aware too: a same-named directory in ANOTHER repo is a
+    distinct module, so its files count as cross-module targets. Such targets
+    keep a repo-qualified label, which the critic's repo bridge validates.
+    """
     cur = conn.cursor()
     mods = set()
     # files.path is repo-relative (portable), so target paths need no repo-root
@@ -171,16 +248,24 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
         row = cur.execute("SELECT path FROM repos WHERE id = ?", (repo,)).fetchone()
         if row:
             legacy_repo_root = row["path"]
-    rows = cur.execute(
-        """SELECT DISTINCT f2.path AS target_path, f2.repo_id AS target_repo
+    if repo:
+        f2_outside = f"NOT ({_module_match_sql('f2.path')} AND f2.repo_id = ?)"
+    else:
+        f2_outside = f"NOT {_module_match_sql('f2.path')}"
+    q = f"""SELECT DISTINCT f2.path AS target_path, f2.repo_id AS target_repo
            FROM edges e
            JOIN symbols s1 ON e.source_id = s1.id
            JOIN files f1 ON s1.file_id = f1.id
            JOIN symbols s2 ON e.target_id = s2.id
            JOIN files f2 ON s2.file_id = f2.id
-           WHERE f1.path LIKE ? ESCAPE '\\' AND f2.path NOT LIKE ? ESCAPE '\\'""",
-        (f"%{_escape_like(module_path)}%", f"%{_escape_like(module_path)}%"),
-    ).fetchall()
+           WHERE {_module_match_sql('f1.path')} AND {f2_outside}"""
+    params: list = list(_module_match_params(module_path))
+    params += list(_module_match_params(module_path))
+    if repo:
+        params.append(repo)
+        q += " AND f1.repo_id = ?"
+        params.append(repo)
+    rows = cur.execute(q, params).fetchall()
     for r in rows:
         rel = r["target_path"]
         # Strip an absolute repo root if present; repo-relative paths need none.
@@ -257,7 +342,7 @@ def _derive_title(module_path: str) -> str:
 
 def _gather_facts(conn: sqlite3.Connection, module_path: str, repo: Optional[str]) -> Dict[str, Any]:
     """Gather graph-grounded facts for a module. Single source of truth for synthesis."""
-    repo = repo or _infer_repo(conn, module_path)
+    repo, module_path = _resolve_module(conn, module_path, repo)
     symbols = _symbols_in_module(conn, module_path, repo)
     key_files = _rank_key_files(conn, symbols)
     cross_deps = _cross_module_deps(conn, module_path, repo)

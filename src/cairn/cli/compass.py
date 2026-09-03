@@ -24,6 +24,7 @@ def compass():
               help="With --use-llm, print every revise cycle's critic verdict.")
 def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejections):
     from ..okf.bundle import OKFBundle
+    from ..compass.generator import ModuleResolutionError
 
     conn = get_db(db)
     try:
@@ -145,6 +146,9 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
             click.echo(f"  ERROR: {e}")
         click.echo("\n--- body ---\n")
         click.echo(concept.body)
+    except ModuleResolutionError as e:
+        click.echo(f"Cannot generate compass for '{module}': {e}")
+        sys.exit(1)
     finally:
         conn.close()
 
