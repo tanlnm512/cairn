@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- Server boot (`cairn serve` / MCP stdio): non-actionable third-party
+  output suppressed — HF Hub unauthenticated-request warnings, MCP
+  pre-initialization request warnings, model-loading progress bars.
+  Errors still surface.
 - Compass critic file refs (`refs.file_exists`):
   - directory paths resolve (`app/adk`): a directory is valid iff an
     indexed file lives under it

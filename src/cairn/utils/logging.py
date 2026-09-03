@@ -29,7 +29,7 @@ import logging
 import os
 import sys
 
-__all__ = ["configure_logging"]
+__all__ = ["configure_logging", "quiet_server_noise"]
 
 # The cairn namespace logger — the single ancestor of every
 # `logging.getLogger("cairn.<...>")` created across the codebase.
@@ -113,3 +113,31 @@ def configure_logging(verbose: bool = False, level_override: str | None = None) 
         logger.addHandler(handler)
     logger.setLevel(level_name)
     return level_name
+
+
+# Third-party loggers that are WARNING-noisy in long-running servers.
+_NOISY_LOGGERS = ("huggingface_hub", "mcp")
+
+
+def quiet_server_noise() -> None:
+    """Suppress non-actionable third-party output for long-running servers.
+
+    1. `_NOISY_LOGGERS` loggers -> ERROR (Hub rate-limit hints,
+       MCP pre-initialization request chatter)
+    2. progress bars -> off (huggingface_hub ``disable_progress_bars``;
+       ``TQDM_DISABLE=1`` as fallback): bar escape sequences corrupt
+       log files
+
+    Existing ``TQDM_DISABLE`` values are respected. Idempotent.
+    """
+    os.environ.setdefault("TQDM_DISABLE", "1")
+    try:
+        from huggingface_hub.utils import disable_progress_bars
+
+        disable_progress_bars()
+    except ImportError:
+        pass  # optional dependency; TQDM_DISABLE covers its bars
+    # After the HF import: importing huggingface_hub re-runs its own
+    # logging setup and would reset the level set here.
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.ERROR)
