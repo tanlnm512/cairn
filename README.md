@@ -1,8 +1,16 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/tanlnm512/cairn/main/docs/assets/logo/cairn-mark.svg" alt="cairn — five stones, five layers" width="180">
+</div>
+
 # cairn
 
 > **Verifiable codebase memory for AI agents** — a structural graph + compass + wiki + tribal memory, all local, all traceable to source.
 
+<div align="center">
+
 The precise call graph, without the guesswork · every answer re-derivable from local data · 100% local SQLite, no network calls · LLM never in the query path
+
+</div>
 
 [![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
 [![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
