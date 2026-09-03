@@ -11,9 +11,9 @@ manifest's cumulative attempt counter and never touching promoted pages;
 retry with nothing to retry is a friendly no-op with exit 0.
 
 Manifest fixtures are written directly as JSON at
-`<knowledge>/_wiki/manifest.json` (schema "cairn-wiki-manifest-2", rows
-keyed "{repo}/{page_id}"), so the tests do not depend on
-`cairn.wiki.manifest`. Only the specific CLI module
+`<knowledge>/_wiki/manifest.json` (schema "cairn-wiki-manifest-3", rows
+keyed "{repo}/{page_id}" carrying no lifecycle state — state is derived at
+read time), so the tests do not depend on `cairn.wiki.manifest`. Only the specific CLI module
 is imported, never the `cairn.cli` package root (C-04); the hermetic
 ``cli_env`` pattern is tests/test_knowledge_cli.py's.
 """
@@ -36,7 +36,7 @@ from cairn.llm.tasks import (
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 
-MANIFEST_SCHEMA = "cairn-wiki-manifest-2"
+MANIFEST_SCHEMA = "cairn-wiki-manifest-3"
 REPO = "r"
 
 
@@ -68,8 +68,11 @@ def _bundle(knowledge):
     return OKFBundle(str(knowledge))
 
 
-def _row(page_id, *, state, task_id="", attempts=0):
-    """One manifest row: the plan entry plus the D-006 tracking fields."""
+def _row(page_id, *, state=None, task_id="", attempts=0):
+    """One manifest row (schema-3). ``state`` is accepted for call
+    compatibility and deliberately DROPPED — the plan kind stores no
+    lifecycle verdict (state is derived at read time); the counter is
+    ``queue_attempts``."""
     return {
         "page_id": page_id,
         "title": "Wiki page",
@@ -78,8 +81,7 @@ def _row(page_id, *, state, task_id="", attempts=0):
         "seeds": ["src/some-module/core.py"],
         "input_hash": "input-hash-value",
         "task_id": task_id,
-        "state": state,
-        "attempts": attempts,
+        "queue_attempts": attempts,
     }
 
 
@@ -99,9 +101,23 @@ def _read_manifest(knowledge):
 
 
 def _queue_page(bundle, page_id, *, claim=False):
-    task = create_task(bundle, "wiki-page", page_id)
+    """Queue through the current contract: qualified resource + repo fact."""
+    task = create_task(
+        bundle,
+        "wiki-page",
+        f"{REPO}/{page_id}",
+        facts={"repo": REPO, "input_hash": "input-hash-value"},
+    )
     if claim:
         assert claim_task(bundle, task.id, "agent") is not None
+    return task
+
+
+def _zombie(bundle, page_id):
+    """A done task with no critic verdict (conn-less completion): the
+    derived state is failed, so retry reaches it."""
+    task = _queue_page(bundle, page_id, claim=True)
+    complete_task(bundle, task.id, FAILING_BODY)
     return task
 
 
@@ -134,12 +150,13 @@ def test_status_lists_each_page_once_with_a_state_and_aggregates(cli_env):
     q2 = _queue_page(bundle, QUEUED_B)
     live = _queue_page(bundle, IN_FLIGHT, claim=True)
     _promote(bundle, PROMOTED)
+    zombie = _zombie(bundle, FAILED)
     _write_manifest(cli_env, {
         _key(QUEUED_A): _row(QUEUED_A, state="queued", task_id=q1.id, attempts=1),
         _key(QUEUED_B): _row(QUEUED_B, state="queued", task_id=q2.id, attempts=1),
         _key(IN_FLIGHT): _row(IN_FLIGHT, state="in_progress", task_id=live.id, attempts=1),
         _key(PROMOTED): _row(PROMOTED, state="promoted", task_id="spent-chain", attempts=1),
-        _key(FAILED): _row(FAILED, state="failed", task_id="dropped-chain", attempts=2),
+        _key(FAILED): _row(FAILED, state="failed", task_id=zombie.id, attempts=2),
     })
 
     result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
@@ -174,7 +191,8 @@ def test_retry_requeues_only_failed_pages_as_fresh_chains(cli_env):
     waiting = _queue_page(bundle, QUEUED_B)
     _promote(bundle, PROMOTED)
     promoted_row = _row(PROMOTED, state="promoted", task_id="spent-chain", attempts=1)
-    failed_row = _row(FAILED, state="failed", task_id="dropped-chain", attempts=2)
+    zombie = _zombie(bundle, FAILED)
+    failed_row = _row(FAILED, state="failed", task_id=zombie.id, attempts=2)
     _write_manifest(cli_env, {
         _key(QUEUED_B): _row(QUEUED_B, state="queued", task_id=waiting.id, attempts=1),
         _key(PROMOTED): promoted_row,
@@ -186,17 +204,16 @@ def test_retry_requeues_only_failed_pages_as_fresh_chains(cli_env):
     assert result.exit_code == 0, result.output
     pending = list_tasks(bundle, kind="wiki-page", status="pending")
     assert len(pending) == 2
-    retried = [t for t in pending if t.resource == FAILED]
+    retried = [t for t in pending if t.resource == f"{REPO}/{FAILED}"]
     assert len(retried) == 1
     assert retried[0].attempt == 1
-    assert [t.id for t in pending if t.resource == QUEUED_B] == [waiting.id]
-    assert [t for t in pending if t.resource == PROMOTED] == []
+    assert [t.id for t in pending if t.resource == f"{REPO}/{QUEUED_B}"] == [waiting.id]
+    assert [t for t in pending if t.resource == f"{REPO}/{PROMOTED}"] == []
 
     on_disk = _read_manifest(cli_env)["pages"]
-    assert on_disk[_key(FAILED)]["attempts"] == failed_row["attempts"] + 1
-    assert on_disk[_key(FAILED)]["state"] == "queued"
+    assert on_disk[_key(FAILED)]["queue_attempts"] == failed_row["queue_attempts"] + 1
     assert on_disk[_key(PROMOTED)] == promoted_row
-    assert on_disk[_key(QUEUED_B)]["attempts"] == 1
+    assert on_disk[_key(QUEUED_B)]["queue_attempts"] == 1
     assert f"wiki/pages/{REPO}/{PROMOTED}" in bundle.list_concepts()
 
 
@@ -216,7 +233,7 @@ def test_retry_with_nothing_to_retry_queues_nothing_and_exits_zero(cli_env):
     assert result.stdout.strip()
     pending = list_tasks(bundle, kind="wiki-page", status="pending")
     assert [t.id for t in pending] == [waiting.id]
-    assert _read_manifest(cli_env)["pages"][_key(QUEUED_B)]["attempts"] == 1
+    assert _read_manifest(cli_env)["pages"][_key(QUEUED_B)]["queue_attempts"] == 1
 
 
 def _drive_dropped_chain(bundle, page_id, conn):
@@ -255,11 +272,10 @@ def test_dropped_chain_derives_failed_for_status_and_retry(cli_env, fresh_db):
     result = CliRunner().invoke(wiki, ["retry", "--knowledge", str(cli_env)])
     assert result.exit_code == 0, result.output
     pending = list_tasks(bundle, kind="wiki-page", status="pending")
-    assert [t.resource for t in pending] == [FAILED]
+    assert [t.resource for t in pending] == [f"{REPO}/{FAILED}"]
     assert pending[0].attempt == 1
     on_disk = _read_manifest(cli_env)["pages"]
-    assert on_disk[_key(FAILED)]["state"] == "queued"
-    assert on_disk[_key(FAILED)]["attempts"] == 2
+    assert on_disk[_key(FAILED)]["queue_attempts"] == 2
     assert on_disk[_key(FAILED)]["task_id"] == pending[0].id
 
 
@@ -294,7 +310,7 @@ def test_pending_revise_keeps_the_chain_alive_and_untouched_by_retry(
     assert [t.id for t in pending] == [revise.id]
     assert pending[0].attempt == 2
     on_disk = _read_manifest(cli_env)["pages"]
-    assert on_disk[_key(FAILED)]["attempts"] == 1
+    assert on_disk[_key(FAILED)]["queue_attempts"] == 1
     assert on_disk[_key(FAILED)]["task_id"] == original.id
 
 
@@ -333,7 +349,7 @@ def test_generate_llm_force_requeues_unchanged_promoted_page(cli_env, tmp_path):
     assert first.exit_code == 0, first.output
     bundle = _bundle(knowledge)
     queued = list_tasks(bundle, kind="wiki-page", status="pending")
-    assert [t.resource for t in queued] == ["overview"]
+    assert [t.resource for t in queued] == [f"{REPO}/overview"]
     _promote(bundle, "overview")
 
     plain = CliRunner().invoke(wiki, generate)
@@ -347,7 +363,7 @@ def test_generate_llm_force_requeues_unchanged_promoted_page(cli_env, tmp_path):
     assert forced.exit_code == 0, forced.output
     assert "Queued 1 new" in forced.stdout
     requeued = list_tasks(bundle, kind="wiki-page", status="pending")
-    assert [t.resource for t in requeued] == ["overview", "overview"]
+    assert sorted(t.resource for t in requeued) == [f"{REPO}/overview"] * 2
     ids = {t.id for t in requeued}
     assert len(ids) == 2 and queued[0].id in ids
 
@@ -450,14 +466,15 @@ def test_status_labels_unavailable_sha_or_head_unknown(cli_env, monkeypatch):
     assert "stale" not in line
 
 
-def test_status_recorded_sha_falls_back_to_manifest_row(cli_env, monkeypatch):
-    """A not-yet-promoted page has no concept to read, so its recorded sha
-    comes from the manifest row's ``commit_sha``."""
+def test_status_unpromoted_page_reports_unknown_staleness(cli_env, monkeypatch):
+    """Anti-collapse pin: a page with no promoted content has no provenance
+    sha — the plan's rows are never consulted, so the verdict is unknown
+    no matter what the repo HEAD or any stray row field says."""
     bundle = _bundle(cli_env)
-    queued = _queue_page(bundle, QUEUED_A)
+    _queue_page(bundle, QUEUED_A)
     _write_manifest(cli_env, {
         _key(QUEUED_A): {
-            **_row(QUEUED_A, state="queued", task_id=queued.id, attempts=1),
+            **_row(QUEUED_A, state="queued", attempts=1),
             "commit_sha": SHA_A,
         },
     })
@@ -467,11 +484,12 @@ def test_status_recorded_sha_falls_back_to_manifest_row(cli_env, monkeypatch):
 
     assert result.exit_code == 0, result.output
     line = _page_lines(result.stdout.lower(), QUEUED_A)[0]
-    assert "fresh" in line
+    assert "unknown" in line
+    assert "fresh" not in line and "stale" not in line
 
     _fake_head(monkeypatch, SHA_B)
     result = CliRunner().invoke(wiki, ["status", "--knowledge", str(cli_env)])
 
     assert result.exit_code == 0, result.output
     line = _page_lines(result.stdout.lower(), QUEUED_A)[0]
-    assert "stale" in line
+    assert "unknown" in line

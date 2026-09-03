@@ -11,7 +11,8 @@ Pins the contract of ``build_page_plan(conn, repo, pages_cap=10)`` in
   by module name ASC (D-005) — a large self-referential module must not win;
 - the plan is capped at ``pages_cap`` (default 10), overview included;
 - every page record carries ``page_id`` (filesystem-safe slug), ``title``,
-  ``description``, ``module``, ``seeds`` (``{"files", "symbols"}``), and
+  ``description``, ``module``, ``source`` (``"code"``), ``seeds``
+  (``{"files", "symbols", "docs"}``), and
   ``input_hash`` (sha256 over the canonical JSON of the entry without the
   hash itself);
 - two builds over one unchanged graph are identical;
@@ -154,14 +155,17 @@ class TestPageRecordContract:
                 "title",
                 "description",
                 "module",
+                "source",
                 "seeds",
                 "input_hash",
             }
+            assert page["source"] == "code"
             assert isinstance(page["title"], str) and page["title"]
             assert isinstance(page["description"], str) and page["description"]
             assert isinstance(page["module"], str)
             seeds = page["seeds"]
-            assert set(seeds.keys()) == {"files", "symbols"}
+            assert set(seeds.keys()) == {"files", "symbols", "docs"}
+            assert seeds["docs"] == []
             assert all(isinstance(f, str) and f for f in seeds["files"])
             assert all(isinstance(s, str) and s for s in seeds["symbols"])
             assert re.fullmatch(r"[0-9a-f]{64}", page["input_hash"])

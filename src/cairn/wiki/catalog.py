@@ -135,13 +135,20 @@ def _slug(module: str) -> str:
 def _page(
     page_id: str, title: str, description: str, module: str, seeds: Dict[str, List[str]]
 ) -> Dict[str, Any]:
-    """Build one page record; ``input_hash`` covers the entry without itself."""
+    """Build one page record; ``input_hash`` covers the entry without itself.
+
+    ``source`` records the corpus the page is planned from (the code graph
+    today; document-seeded planning is the noted extension) and ``seeds``
+    carries a ``docs`` list alongside files/symbols so the identity algebra
+    is corpus-agnostic.
+    """
     entry: Dict[str, Any] = {
         "page_id": page_id,
         "title": title,
         "description": description,
         "module": module,
-        "seeds": seeds,
+        "source": "code",
+        "seeds": {**seeds, "docs": []},
     }
     canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"))
     entry["input_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()

@@ -1,19 +1,27 @@
 """Wiki manifest: incremental-regeneration state for the page plan.
 
+This file is the PLAN kind of the two-kind wiki contract. It records
+pipeline intent only: which pages should exist (the plan entry: identity,
+title/description, module, seeds, input hash) and where their queue work
+stands (``task_id`` and the cumulative ``queue_attempts`` counter). It never
+describes content — no bodies, no provenance, no lifecycle verdicts. What
+exists is decided solely by promoted content concepts
+(``wiki/pages/{repo}/{page_id}``, see :mod:`cairn.wiki.lifecycle`), and
+lifecycle state is derived at read time, never stored.
+
 A JSON document at ``<knowledge>/_wiki/manifest.json`` with a schema
-marker, keyed by ``{repo}/{page_id}``; each row is the page's plan entry
-plus ``task_id``, ``state`` (one of ``PAGE_STATES``), and the cumulative
-``attempts`` counter. A schema-1 document (keyed by page id alone) is
-upgraded in memory on load: the repo is recovered from the row task's
-facts, else the promoted concept path, else the row is dropped with a
-warning (a later generate re-plans it). Loads never write back; the next
-save persists the current schema. The ``_wiki/`` directory holds no
+marker, keyed by ``{repo}/{page_id}``. Older documents upgrade in memory on
+load: a schema-1 document (keyed by page id alone) is re-keyed by
+recovering the repo from the row task's facts, else the promoted concept
+path, else the row is dropped with a warning (a later generate re-plans
+it); schema-2 rows carried ``state``/``commit_sha``/``attempts``, which the
+plan kind no longer owns — normalization strips the retired fields and
+renames ``attempts`` to ``queue_attempts``. Loads never write back; the
+next save persists the current schema. The ``_wiki/`` directory holds no
 ``.md`` files, so ``OKFBundle.list_concepts`` never lists the manifest as
 a concept. Writes are atomic: mkstemp inside the target directory, flush
 + fsync before ``os.replace``, unlink the temp file on any failure,
-``False`` on ``OSError``. "Promoted" is never trusted from a stored row
--- readers derive it by reading the ``wiki/pages/{repo}/{page_id}``
-concept.
+``False`` on ``OSError``.
 """
 from __future__ import annotations
 
@@ -26,15 +34,7 @@ from typing import Any, Dict
 
 from ..okf.bundle import OKFBundle
 
-MANIFEST_SCHEMA = "cairn-wiki-manifest-2"
-
-PAGE_STATES = (
-    "planned",
-    "queued",
-    "in_progress",
-    "promoted",
-    "failed",
-)
+MANIFEST_SCHEMA = "cairn-wiki-manifest-3"
 
 MANIFEST_DIR = "_wiki"
 MANIFEST_FILENAME = "manifest.json"
@@ -100,6 +100,23 @@ def _migrate_v1(doc: Dict[str, Any], bundle_or_knowledge_root: Any) -> None:
     doc["pages"] = migrated
 
 
+def _normalize_rows(doc: Dict[str, Any]) -> None:
+    """Strip the fields the plan kind no longer owns, in memory.
+
+    Schema-2 rows carried ``state`` (a lifecycle verdict — derived at read
+    time by :mod:`cairn.wiki.lifecycle`, never stored) and ``commit_sha``
+    (content provenance — owned by the promoted concept alone), and named
+    their counter ``attempts``. Idempotent; runs after any key migration.
+    """
+    for row in doc.get("pages", {}).values():
+        if not isinstance(row, dict):
+            continue
+        row.pop("state", None)
+        row.pop("commit_sha", None)
+        if "attempts" in row:
+            row["queue_attempts"] = row.pop("attempts")
+
+
 def load_manifest(bundle_or_knowledge_root: Any) -> Dict[str, Any]:
     """Load the manifest for a bundle or knowledge root.
 
@@ -123,6 +140,7 @@ def load_manifest(bundle_or_knowledge_root: Any) -> Dict[str, Any]:
     doc.setdefault("pages", {})
     if doc.get("schema") != MANIFEST_SCHEMA:
         _migrate_v1(doc, bundle_or_knowledge_root)
+    _normalize_rows(doc)
     return doc
 
 
@@ -169,15 +187,12 @@ def should_skip(
     """True when a page needs no new writing task.
 
     Skip requires the recorded input hash to equal the current plan hash
-    AND the promoted concept (``wiki/pages/{repo}/{page_id}``) to be
-    readable; an unreadable concept is treated as not promoted. Never
-    raises. ``--force`` is the caller's concern.
+    AND promoted content to exist (the gated ``Wiki-Article`` concept at
+    ``wiki/pages/{repo}/{page_id}``); without content the page is not
+    promoted. Never raises. ``--force`` is the caller's concern.
     """
     if page_row.get("input_hash") != current_plan_entry.get("input_hash"):
         return False
-    page_id = current_plan_entry["page_id"]
-    try:
-        bundle.read_concept(f"wiki/pages/{repo}/{page_id}")
-    except Exception:
-        return False
-    return True
+    from .lifecycle import is_promoted
+
+    return is_promoted(bundle, repo, current_plan_entry["page_id"])

@@ -243,6 +243,71 @@ class TestCompleteTaskCriticIntegration:
 
 # --- C2: Atomic Claim and claimed_at Tests ---
 
+class TestCompleteTaskCriticFailureLeavesTaskReCompletable:
+    """Two-kind contract: done is never written without a critic verdict.
+
+    Reordering completion (result written -> critic runs -> done written
+    only in an outcome branch) means a critic that raises mid-run leaves
+    the task in-progress and re-completable — the old ordering marked done
+    first, so a critic exception created a zombie that displayed queued
+    forever and that retry could never reach."""
+
+    def test_critic_exception_leaves_task_in_progress_and_recompletable(
+        self, fresh_db, tmp_path, monkeypatch
+    ):
+        conn = _conn_with_fixture(fresh_db)
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={"key_files": ["src/graph/queries.py"]},
+        )
+        claim_task(bundle, task.id, "test-agent")
+        passing_result = (
+            "# What Does This Module Do?\nSee `src/graph/queries.py`.\n"
+            "# Common Modification Patterns\n...\n"
+            "# Build-Failure Patterns\n...\n"
+            "# Cross-Module Dependencies\n...\n"
+            "# Tribal Knowledge\n...\n"
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("critic exploded")
+
+        monkeypatch.setattr("cairn.compass.critic.critic_concept", _boom)
+
+        outcome = complete_task(bundle, task.id, passing_result, conn=conn)
+
+        assert outcome == {
+            "task_id": task.id,
+            "promoted": False,
+            "revised": False,
+            "dropped": False,
+            "errors": ["critic execution failed"],
+            "quality": 0.0,
+        }
+        from cairn.llm.tasks import get_task
+
+        reloaded = get_task(bundle, task.id)
+        assert reloaded.status == "in-progress"
+        # Re-completable: the same result completes successfully now.
+        monkeypatch.setattr(
+            "cairn.compass.critic.critic_concept",
+            lambda *args, **kwargs: __import__(
+                "cairn.compass.critic", fromlist=["CriticResult"]
+            ).CriticResult(
+                errors=[],
+                warnings=[],
+                quality_score=0.9,
+                passed=True,
+            ),
+        )
+        second = complete_task(bundle, task.id, passing_result, conn=conn)
+        assert second["promoted"] is True
+        assert get_task(bundle, task.id).status == "done"
+
+
 class TestClaimTaskAtomicity:
     """C2: claim_task uses atomic filesystem primitive and records claimed_at."""
 

@@ -168,8 +168,8 @@ class TestWikiPageReviseCycle:
         task = create_task(
             bundle,
             "wiki-page",
-            "overview",
-            facts={"input_hash": "h1"},
+            "r1/overview",
+            facts={"repo": "r1", "input_hash": "h1"},
         )
         claim_task(bundle, task.id, "test-agent")
 
@@ -208,8 +208,8 @@ class TestWikiPageReviseCycle:
         current = create_task(
             bundle,
             "wiki-page",
-            "overview",
-            facts={"input_hash": "h1"},
+            "r1/overview",
+            facts={"repo": "r1", "input_hash": "h1"},
         )
         assert current.attempt == 1
 
@@ -583,7 +583,7 @@ class TestPromotedArticleFrontmatterFidelity:
         assert reparsed.sources == on_disk.sources
         assert reparsed.sources
         assert reparsed.extensions == on_disk.extensions
-        assert {"page_id", "input_hash", "task_id", "refine_catalog"} <= set(
+        assert {"page_id", "repo", "input_hash", "task_id"} <= set(
             reparsed.extensions
         )
         # Re-rendering is a fixed point: no field added or dropped.
@@ -598,57 +598,66 @@ class TestPromotedArticleFrontmatterFidelity:
 
 
 class TestPromotionRecordsCommitSha:
-    """FR-003: extensions carry the generation-time HEAD sha."""
+    """FR-003 (two-kind contract edition): provenance is resolved at
+    completion time — the HEAD sha rides the article's extensions alone,
+    never the task facts or the manifest."""
 
-    def test_passing_completion_copies_the_facts_sha_into_extensions(
-        self, fresh_db, tmp_path
+    def test_passing_completion_resolves_head_into_extensions(
+        self, fresh_db, tmp_path, monkeypatch
     ):
         _seed_graph(fresh_db)
         bundle = _create_bundle(tmp_path)
         task = create_task(
             bundle,
             "wiki-page",
-            "overview",
-            facts={
-                "repo": "r1",
-                "input_hash": "hash-overview",
-                "commit_sha": "abc1234",
-            },
+            "r1/overview",
+            facts={"repo": "r1", "input_hash": "hash-overview"},
         )
         claim_task(bundle, task.id, "test-agent")
+        monkeypatch.setattr(
+            "cairn.utils.git.get_repo_head",
+            lambda repo, workspace=None: "abc1234",
+        )
 
         outcome = complete_task(bundle, task.id, _PASSING_RESULT, conn=fresh_db)
 
         assert outcome["promoted"] is True
         article = bundle.read_concept("wiki/pages/r1/overview")
         assert article.extensions.get("commit_sha") == "abc1234"
-        # Fifth key alongside the existing four.
         assert {
             "page_id",
+            "repo",
             "input_hash",
             "task_id",
-            "refine_catalog",
             "commit_sha",
         } <= set(article.extensions)
+        # Plan provenance is not content provenance: refine_catalog stays
+        # in the task facts where it belongs.
+        assert "refine_catalog" not in article.extensions
+        assert "commit_sha" not in task.facts
 
     def test_completion_without_a_resolvable_sha_still_promotes_without_one(
-        self, fresh_db, tmp_path
+        self, fresh_db, tmp_path, monkeypatch
     ):
         _seed_graph(fresh_db)
         bundle = _create_bundle(tmp_path)
         task = create_task(
             bundle,
             "wiki-page",
-            "overview",
+            "r1/overview",
             facts={"repo": "r1", "input_hash": "hash-overview"},
         )
         claim_task(bundle, task.id, "test-agent")
+        monkeypatch.setattr(
+            "cairn.utils.git.get_repo_head",
+            lambda repo, workspace=None: None,
+        )
 
         outcome = complete_task(bundle, task.id, _PASSING_RESULT, conn=fresh_db)
 
         assert outcome["promoted"] is True
         article = bundle.read_concept("wiki/pages/r1/overview")
-        assert {"page_id", "input_hash", "task_id", "refine_catalog"} <= set(
+        assert {"page_id", "repo", "input_hash", "task_id"} <= set(
             article.extensions
         )
         # Unknown HEAD: the key is absent, never None-valued (TC-008).

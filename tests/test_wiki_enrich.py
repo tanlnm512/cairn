@@ -8,21 +8,21 @@ Enrichment contract pinned here (D-021, TC-021..TC-024):
 * Queueing happens only when the promoted concept at
   ``wiki/pages/{repo}/{page_id}`` is readable; an unpromoted or unknown
   page id exits 1 with nothing queued.
-* The queued task carries kind ``wiki-page-enrich`` with resource=page_id
-  and facts: ``current_body`` (the page's body), fresh seeds/input_hash/
-  repo from the manifest row, and a fresh ``commit_sha``; the row's
-  task_id/state update without overwriting its recorded ``commit_sha``.
+* The queued task carries kind ``wiki-page-enrich`` with the qualified
+  resource ``{repo}/{page_id}`` and facts: fresh seeds/input_hash/repo from
+  the manifest row. No body and no commit sha ride in facts — the promoted
+  concept is read at completion time and the sha is resolved then. The
+  plan kind is untouched by enrichment (no manifest writes).
 * A critic-passing completion APPENDS the result -- new sections only,
   ending in their own ``## Sources`` footer -- to the promoted body; the
   page's sources merge old+new entries deduped by entry value; the
-  Task-Result sibling records exactly the appended sections; and
-  ``facts["current_body"]`` keeps the prior body.
+  Task-Result sibling records exactly the appended sections.
 * A critic-failing cycle leaves the page byte-identical, spawns
   ``wiki-page-enrich-revise``, and the chain still drops at
   MAX_REVISE_CYCLES with the page untouched.
 * ``--all``/``--repo`` scope one enrichment per promoted page across repos,
-  and an in-flight enrich already counts as a live chain, blocking
-  duplicate generate queueing (``pipeline._live_task_pages``).
+  and an in-flight enrich never counts as a live generation chain (content
+  maintenance neither blocks nor races the plan).
 
 Manifest fixtures are written directly as JSON at
 `<knowledge>/_wiki/manifest.json` (schema "cairn-wiki-manifest-2", rows
@@ -52,7 +52,7 @@ from cairn.llm.tasks import (
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 
-MANIFEST_SCHEMA = "cairn-wiki-manifest-2"
+MANIFEST_SCHEMA = "cairn-wiki-manifest-3"
 REPO = "r"
 CRITIC_REPO = "r1"
 
@@ -118,8 +118,9 @@ def _key(page_id, repo=REPO):
     return f"{repo}/{page_id}"
 
 
-def _row(page_id, *, state, task_id="", attempts=0):
-    """One manifest row: the plan entry plus the D-006 tracking fields."""
+def _row(page_id, *, state=None, task_id="", attempts=0):
+    """One manifest row (schema-3). ``state`` is accepted for call
+    compatibility and dropped — the plan stores no lifecycle verdict."""
     return {
         "page_id": page_id,
         "title": "Wiki page",
@@ -128,8 +129,7 @@ def _row(page_id, *, state, task_id="", attempts=0):
         "seeds": SEEDS,
         "input_hash": INPUT_HASH,
         "task_id": task_id,
-        "state": state,
-        "attempts": attempts,
+        "queue_attempts": attempts,
     }
 
 
@@ -178,8 +178,10 @@ def _fresh_head(monkeypatch, sha):
     monkeypatch.setattr("cairn.utils.git.get_repo_head", head, raising=False)
 
 
-def _enrich_facts(repo=CRITIC_REPO, current_body=PRIOR_BODY):
-    """Facts in the enrich queue path's shape (D-021)."""
+def _enrich_facts(repo=CRITIC_REPO):
+    """Facts in the enrich queue path's shape (D-021): identity + seeds
+    only — the body is read from the promoted concept at completion and
+    the sha is resolved then."""
     return {
         "title": "Wiki page",
         "description": "Describes the module.",
@@ -187,8 +189,6 @@ def _enrich_facts(repo=CRITIC_REPO, current_body=PRIOR_BODY):
         "seeds": SEEDS,
         "input_hash": INPUT_HASH,
         "repo": repo,
-        "current_body": current_body,
-        "commit_sha": FRESH_SHA,
     }
 
 
@@ -237,12 +237,11 @@ def _page_file(knowledge, repo, page_id):
 # --- TC-021 (queue half): the enrich task carries the page's facts -----------
 
 
-def test_enrich_queues_task_with_current_body_and_row_facts(cli_env,
-                                                            monkeypatch):
+def test_enrich_queues_task_with_row_identity_facts(cli_env, monkeypatch):
     """TC-021: enriching a promoted page queues one wiki-page-enrich task
-    whose facts carry the page's current body, the row's seeds/input_hash/
-    repo, and a freshly resolved commit_sha; the manifest row's task_id and
-    state move to the enrich task while its recorded commit_sha stays."""
+    keyed by the qualified resource, whose facts carry the row's identity
+    (seeds/input_hash/repo) — never the body, never a sha. The plan kind
+    is untouched: the manifest keeps whatever it had."""
     knowledge = cli_env
     bundle = _bundle(knowledge)
     _promote_article(bundle, "overview", body=PRIOR_BODY)
@@ -261,16 +260,15 @@ def test_enrich_queues_task_with_current_body_and_row_facts(cli_env,
     queued = list_tasks(bundle, status="pending", kind="wiki-page-enrich")
     assert len(queued) == 1
     task = queued[0]
-    assert task.resource == "overview"
-    assert task.facts["current_body"] == PRIOR_BODY
+    assert task.resource == _key("overview")
+    assert "current_body" not in task.facts
+    assert "commit_sha" not in task.facts
     assert task.facts["seeds"] == SEEDS
     assert task.facts["input_hash"] == INPUT_HASH
     assert task.facts["repo"] == REPO
-    assert task.facts["commit_sha"] == FRESH_SHA
 
     on_disk = _read_manifest(knowledge)["pages"][_key("overview")]
-    assert on_disk["task_id"] == task.id
-    assert on_disk["state"] == "queued"
+    assert on_disk["task_id"] == "spent-chain"  # untouched by enrichment
     assert on_disk["commit_sha"] == OLD_SHA
 
 
@@ -321,9 +319,8 @@ def test_passing_enrich_completion_appends_sections_and_merges_sources(
 ):
     """TC-021: a critic-passing enrich completion appends its sections to
     the promoted body (prior content stays visible, in order), merges the
-    page's sources old+new deduped by entry value, records exactly the
-    appended sections in the Task-Result sibling, and keeps the prior body
-    in facts['current_body']."""
+    page's sources old+new deduped by entry value, and records exactly the
+    appended sections in the Task-Result sibling."""
     knowledge = cli_env
     bundle = _bundle(knowledge)
     _seed_graph(fresh_db)
@@ -352,7 +349,8 @@ def test_passing_enrich_completion_appends_sections_and_merges_sources(
 
     result_concept = bundle.read_concept(f"{TASK_DIR}/{task.id}.result")
     assert result_concept.body == NEW_SECTIONS
-    assert get_task(bundle, task.id).facts["current_body"] == PRIOR_BODY
+    # No stale body ever rode the facts.
+    assert "current_body" not in get_task(bundle, task.id).facts
 
 
 # --- TC-023: critic-failing cycles leave the page byte-identical --------------
@@ -456,7 +454,10 @@ def test_enrich_all_then_repo_scopes_the_queue(cli_env, fresh_db):
     assert first.exit_code == 0, first.output
     pending = _pending_enrich_tasks(bundle)
     assert len(pending) == 2
-    assert all(t.resource == "overview" for t in pending)
+    assert {t.resource for t in pending} == {
+        _key("overview", "alpha"),
+        _key("overview", "beta"),
+    }
     assert {t.facts["repo"] for t in pending} == {"alpha", "beta"}
 
     for t in pending:
@@ -468,16 +469,17 @@ def test_enrich_all_then_repo_scopes_the_queue(cli_env, fresh_db):
     assert second.exit_code == 0, second.output
     pending_after = _pending_enrich_tasks(bundle)
     assert [t.facts["repo"] for t in pending_after] == ["alpha"]
-    assert all(t.resource == "overview" for t in pending_after)
+    assert all(t.resource == _key("overview", "alpha") for t in pending_after)
 
 
 # --- guard: an in-flight enrich keeps duplicate generate blocked --------------
 
 
-def test_inflight_enrich_blocks_duplicate_generate_queueing(cli_env, fresh_db):
-    """An in-flight wiki-page-enrich task counts as a live chain: a plain
-    generate re-run queues nothing for that page even though its concept is
-    unreadable (pipeline._live_task_pages)."""
+def test_inflight_enrich_never_blocks_generate_queueing(cli_env, fresh_db):
+    """Anti-collapse pin: enrichment is content maintenance, not
+    generation. An in-flight enrich must not satisfy the plan's skip
+    decision — an unchanged page whose enrich is pending still needs its
+    generation task when no content exists."""
     from cairn.wiki.catalog import build_page_plan
     from cairn.wiki.pipeline import run_wiki_generate
 
@@ -486,22 +488,21 @@ def test_inflight_enrich_blocks_duplicate_generate_queueing(cli_env, fresh_db):
     _seed_indexed_repo(fresh_db)
     entry = build_page_plan(fresh_db, REPO, pages_cap=1)[0]
     enrich = create_task(
-        bundle, "wiki-page-enrich", entry["page_id"],
+        bundle, "wiki-page-enrich", f"{REPO}/{entry['page_id']}",
         facts={"repo": REPO, "input_hash": entry["input_hash"]},
     )
     _write_manifest(knowledge, {
-        _key(entry["page_id"]): {
-            **_row(entry["page_id"], state="queued", task_id=enrich.id,
-                   attempts=1),
-            "input_hash": entry["input_hash"],
-        },
+        _key(entry["page_id"]): _row(entry["page_id"], state="queued",
+                                     task_id=enrich.id, attempts=1),
     })
 
     result = run_wiki_generate(fresh_db, bundle, REPO, pages_cap=1)
 
-    assert result["queued_task_ids"] == []
+    # The page has no promoted content, so it is queued for real.
+    assert len(result["queued_task_ids"]) == 1
     live = [
         t for t in list_tasks(bundle, status="pending")
-        if t.task_kind.startswith("wiki-page")
+        if t.task_kind == "wiki-page"
     ]
-    assert [t.id for t in live] == [enrich.id]
+    assert [t.resource for t in live] == [f"{REPO}/{entry['page_id']}"]
+    assert enrich.id in {t.id for t in list_tasks(bundle, status="pending")}

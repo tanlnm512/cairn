@@ -136,7 +136,7 @@ task first with `--refine-catalog`); work them through the task queue:
 - `cairn task claim <id>` -> write the page -> `cairn task complete <id> --result-file <path>`;
   the result body must end with a `## Sources` footer -- the deterministic critic
   fact-checks it against the graph before the page is promoted.
-- `cairn wiki status` -- per-page state (queued / in-progress / promoted / failed) with counts
+- `cairn wiki status` -- per-page state, derived at read time (planned / queued / in-progress / promoted / failed / dropped) with counts
 - `cairn wiki retry` -- re-queue failed pages as fresh task chains
 - `cairn wiki export --dir DIR` -- write every promoted page out as markdown
 - `cairn wiki enrich [<page-id>]` -- queue an append-only extension of a promoted page

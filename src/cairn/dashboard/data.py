@@ -726,50 +726,31 @@ def _split_page_key(key: str) -> Tuple[str, str]:
     return repo, page_id
 
 
-def _read_wiki_concept(
-    bundle: OKFBundle, concept_id: Optional[str]
-) -> Optional["OKFConcept"]:
-    """The wiki concept at ``concept_id``, or None when absent/unreadable —
-    an unreadable concept file is never fatal."""
-    if concept_id is None:
+def _recorded_sha(concept: Optional["OKFConcept"]) -> Optional[str]:
+    """The page content's provenance sha — the concept extension alone. A
+    page with no content has no sha: the plan kind keeps no provenance, so
+    staleness never verdicts on non-existent content."""
+    if concept is None:
         return None
-    try:
-        return bundle.read_concept(concept_id)
-    except Exception:
-        return None
-
-
-def _recorded_sha(
-    concept: Optional["OKFConcept"], row: dict
-) -> Optional[str]:
-    """The page's recorded commit sha: the promoted concept's extension is
-    the source of truth; a page with no concept falls back to the manifest
-    row's queue-time sha."""
-    if concept is not None:
-        return concept.extensions.get("commit_sha") or None
-    return row.get("commit_sha") or None
-
-
-def _wiki_staleness(recorded_sha: Optional[str], head: Optional[str]) -> str:
-    """fresh: recorded sha equals HEAD; stale: both present and differing;
-    unknown: either side unavailable."""
-    if not recorded_sha or not head:
-        return "unknown"
-    return "fresh" if recorded_sha == head else "stale"
+    return concept.extensions.get("commit_sha") or None
 
 
 def _wiki_rows(
     knowledge_dir: str, repo: Optional[str] = None, page_id: Optional[str] = None
 ):
-    """Lazy ``(repo, page_id, manifest_row, concept, head)`` tuples over
-    the manifest — the one traversal ``get_wiki_pages`` and
-    ``get_wiki_page`` share (concept ids, per-repo HEAD caching, and the
-    staleness inputs live here once). ``concept`` is None when the row's
-    concept is absent or unreadable; ``head`` is the repo's current HEAD
-    (resolved once per repo per call)."""
+    """Lazy ``(repo, page_id, manifest_row, concept, head, chain, bundle)``
+    tuples over the manifest — the one traversal ``get_wiki_pages`` and
+    ``get_wiki_page`` share (concept ids, per-repo HEAD caching, write
+    chains, and the staleness inputs live here once). ``concept`` is None
+    when the row's promoted ``Wiki-Article`` concept is absent or unreadable
+    (the gated type is the promotion check); ``head`` is the repo's current
+    HEAD (resolved once per repo per call); ``chain`` is the page's write
+    chain for lifecycle derivation."""
+    from cairn.wiki.lifecycle import page_chains, read_page_concept
     from cairn.wiki.manifest import load_manifest
 
     bundle = OKFBundle(knowledge_dir)
+    chains = page_chains(bundle)
     heads: Dict[str, Optional[str]] = {}
     for key, row in load_manifest(knowledge_dir)["pages"].items():
         key_repo, key_page = _split_page_key(key)
@@ -777,29 +758,38 @@ def _wiki_rows(
             continue
         if page_id and key_page != page_id:
             continue
-        concept = _read_wiki_concept(
-            bundle, f"wiki/pages/{key_repo}/{key_page}"
-        )
+        concept = read_page_concept(bundle, key_repo, key_page)
         if key_repo not in heads:
             heads[key_repo] = get_repo_head(key_repo)
-        yield key_repo, key_page, row, concept, heads[key_repo]
+        yield (
+            key_repo,
+            key_page,
+            row,
+            concept,
+            heads[key_repo],
+            chains.get(key, []),
+            bundle,
+        )
 
 
 def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]:
-    """Wiki manifest pages joined with their ``wiki/pages/`` concepts.
+    """Wiki manifest pages joined with their promoted content.
 
     One plain dict per manifest row carrying ``repo``, ``page_id``,
-    ``title``, ``description``, ``state``, ``promoted``, and ``staleness``;
-    ``promoted`` is derived from the row's own
-    ``wiki/pages/{repo}/{page_id}`` concept being readable, never the
-    stored state, and ``staleness`` compares the recorded commit sha with
-    the repo's current HEAD (fresh/stale/unknown). A missing manifest (or
-    knowledge dir) yields an empty list; ``repo`` selects one repo's rows.
-    Row order is manifest order (plan order) — the catalog groups by
-    ``repo`` on top of it.
+    ``title``, ``description``, ``state``, ``promoted``, and ``staleness``.
+    ``state`` is the derived lifecycle (never a stored verdict — the plan
+    kind keeps none) and ``promoted`` is derived from the row's gated
+    ``wiki/pages/{repo}/{page_id}`` concept being readable; ``staleness``
+    compares the content's recorded commit sha with the repo's current
+    HEAD (fresh/stale/unknown) — a page with no content is always
+    ``unknown``. A missing manifest (or knowledge dir) yields an empty
+    list; ``repo`` selects one repo's rows. Row order is manifest order
+    (plan order) — the catalog groups by ``repo`` on top of it.
     """
+    from cairn.wiki.lifecycle import derived_state, staleness as wiki_staleness
+
     pages: List[dict] = []
-    for key_repo, page_id, row, concept, head in _wiki_rows(
+    for key_repo, page_id, row, concept, head, chain, bundle in _wiki_rows(
         knowledge_dir, repo=repo
     ):
         pages.append(
@@ -808,9 +798,9 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
                 "page_id": page_id,
                 "title": row.get("title") or page_id,
                 "description": row.get("description") or "",
-                "state": row.get("state", ""),
+                "state": derived_state(bundle, key_repo, page_id, chain),
                 "promoted": concept is not None,
-                "staleness": _wiki_staleness(_recorded_sha(concept, row), head),
+                "staleness": wiki_staleness(_recorded_sha(concept), head),
             }
         )
     return pages
@@ -872,7 +862,9 @@ def get_wiki_page(
     """
     from urllib.parse import quote
 
-    for key_repo, key_page, row, concept, head in _wiki_rows(
+    from cairn.wiki.lifecycle import derived_state, staleness as wiki_staleness
+
+    for key_repo, key_page, row, concept, head, chain, bundle in _wiki_rows(
         knowledge_dir, repo=repo, page_id=page_id
     ):
         if concept is None:
@@ -884,12 +876,12 @@ def get_wiki_page(
             "repo": key_repo,
             "page_id": page_id,
             "title": row.get("title") or concept.title or page_id,
-            "state": row.get("state", ""),
+            "state": derived_state(bundle, key_repo, key_page, chain),
             "html": html,
             "toc": toc,
             "ref_hrefs": ref_hrefs,
             "sources": concept.sources or [],
-            "staleness": _wiki_staleness(_recorded_sha(concept, row), head),
+            "staleness": wiki_staleness(_recorded_sha(concept), head),
         }
     return None
 

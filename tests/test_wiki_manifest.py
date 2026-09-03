@@ -2,9 +2,9 @@
 
 Pins the contract of ``src/cairn/wiki/manifest.py``:
 
-- ``MANIFEST_SCHEMA = "cairn-wiki-manifest-2"`` and the page lifecycle
-  vocabulary ``PAGE_STATES`` (planned -> queued -> in_progress -> promoted;
-  queued -> failed at the revise cap; failed re-enters at queued on retry);
+- ``MANIFEST_SCHEMA = "cairn-wiki-manifest-3"``; the lifecycle vocabulary is
+  DERIVED at read time (``cairn.wiki.lifecycle.DERIVED_STATES``) and never
+  stored in the manifest;
 - the manifest lives at ``<knowledge>/_wiki/manifest.json`` -- non-``.md``,
   so ``OKFBundle.list_concepts`` (rglob ``*.md``) never lists it;
 - ``load_manifest(bundle_or_knowledge_root) -> dict`` returns
@@ -19,8 +19,12 @@ Pins the contract of ``src/cairn/wiki/manifest.py``:
   flush + fsync, ``os.replace``, unlink on error), creates ``_wiki/`` when
   absent, and returns ``False`` on ``OSError``;
 - per-page rows are keyed by ``{repo}/{page_id}`` and carry the full plan
-  entry (page_id, title, description, module, seeds, input_hash) plus
-  ``task_id``, ``state``, and the cumulative ``attempts`` counter;
+  entry (page_id, title, description, module, source, seeds, input_hash)
+  plus ``task_id`` and the cumulative ``queue_attempts`` counter — and
+  NEVER a lifecycle ``state`` or a content ``commit_sha`` (the two-kind
+  anti-collapse contract); schema-2 rows carrying those retired fields are
+  normalized on load (``state``/``commit_sha`` stripped, ``attempts``
+  renamed ``queue_attempts``);
 - ``should_skip(page_row, current_plan_entry, bundle, repo)`` is True only
   when the recorded input hash equals the current plan hash AND the
   promoted concept (D-007 identity ``wiki/pages/{repo}/{page_id}``) is
@@ -41,7 +45,6 @@ from cairn.okf.concept import OKFConcept
 from cairn.wiki.catalog import build_page_plan
 from cairn.wiki.manifest import (
     MANIFEST_SCHEMA,
-    PAGE_STATES,
     load_manifest,
     save_manifest,
     should_skip,
@@ -81,10 +84,25 @@ def bundle(tmp_path):
 
 
 def _row(
-    plan_entry: dict, *, task_id: str = "", state: str = "planned", attempts: int = 0
+    plan_entry: dict,
+    *,
+    task_id: str = "",
+    state: str = "planned",
+    attempts: int = 0,
+    legacy: bool = False,
 ) -> dict:
-    """One manifest row: the full plan entry plus the D-006 tracking fields."""
-    return {**plan_entry, "task_id": task_id, "state": state, "attempts": attempts}
+    """One manifest row: the full plan entry plus the tracking fields.
+
+    Default (legacy=False) emits the schema-3 shape: ``queue_attempts``, no
+    ``state``. ``legacy=True`` emits the retired schema-2 shape (``state`` +
+    ``attempts``) for migration tests."""
+    row = {**plan_entry, "task_id": task_id}
+    if legacy:
+        row["state"] = state
+        row["attempts"] = attempts
+    else:
+        row["queue_attempts"] = attempts
+    return row
 
 
 def _manifest(plan: list) -> dict:
@@ -127,17 +145,25 @@ def _changed_entry(plan_entry: dict) -> dict:
 class TestSchemaConstants:
     """The schema marker and lifecycle vocabulary are module constants."""
 
-    def test_schema_marker_is_cairn_wiki_manifest_2(self):
-        assert MANIFEST_SCHEMA == "cairn-wiki-manifest-2"
+    def test_schema_marker_is_cairn_wiki_manifest_3(self):
+        assert MANIFEST_SCHEMA == "cairn-wiki-manifest-3"
 
-    def test_page_states_pin_the_lifecycle(self):
-        assert PAGE_STATES == (
+    def test_lifecycle_vocabulary_is_derived_not_stored(self):
+        """The lifecycle lives in cairn.wiki.lifecycle as DERIVED_STATES —
+        the manifest has no lifecycle vocabulary of its own."""
+        from cairn.wiki.lifecycle import DERIVED_STATES as DERIVED
+
+        assert DERIVED == (
             "planned",
             "queued",
-            "in_progress",
+            "in-progress",
             "promoted",
             "failed",
+            "dropped",
         )
+        import cairn.wiki.manifest as manifest_module
+
+        assert not hasattr(manifest_module, "PAGE_STATES")
 
 
 class TestManifestLocation:
@@ -238,18 +264,19 @@ class TestPageRows:
 
     def test_row_carries_plan_entry_plus_tracking_fields(self, plan):
         entry = plan[0]
-        row = _row(entry, task_id="task-1", state="queued", attempts=2)
-        assert set(row) == set(entry) | {"task_id", "state", "attempts"}
+        row = _row(entry, task_id="task-1", attempts=2)
+        assert set(row) == set(entry) | {"task_id", "queue_attempts"}
         assert row["input_hash"] == entry["input_hash"]
         assert row["task_id"] == "task-1"
-        assert row["attempts"] == 2
+        assert row["queue_attempts"] == 2
+        assert "state" not in row
+        assert "commit_sha" not in row
 
     def test_rows_survive_the_json_round_trip_losslessly(self, bundle, plan):
         rows = {
             f"{REPO}/{page['page_id']}": _row(
                 page,
                 task_id=f"task-{page['page_id']}",
-                state=PAGE_STATES[i % len(PAGE_STATES)],
                 attempts=i,
             )
             for i, page in enumerate(plan)
@@ -258,9 +285,32 @@ class TestPageRows:
         loaded = load_manifest(bundle)["pages"]
         assert loaded == rows
         for page_id, row in loaded.items():
-            assert isinstance(row["attempts"], int)
-            assert row["state"] in PAGE_STATES
+            assert isinstance(row["queue_attempts"], int)
             assert row["seeds"] == rows[page_id]["seeds"]
+
+    def test_schema2_rows_normalize_on_load(self, bundle, plan):
+        """Retired schema-2 fields (state/commit_sha/attempts) are stripped
+        or renamed in memory — the plan kind no longer carries them."""
+        rows = {
+            f"{REPO}/{page['page_id']}": _row(
+                page,
+                task_id=f"task-{page['page_id']}",
+                state="promoted",
+                attempts=3,
+                legacy=True,
+            )
+            for page in plan
+        }
+        for row in rows.values():
+            row["commit_sha"] = "abc1234"
+        save_manifest(bundle.root, {"schema": "cairn-wiki-manifest-2", "pages": rows})
+        loaded = load_manifest(bundle)
+        assert loaded["schema"] == MANIFEST_SCHEMA
+        for row in loaded["pages"].values():
+            assert "state" not in row
+            assert "commit_sha" not in row
+            assert "attempts" not in row
+            assert row["queue_attempts"] == 3
 
 
 class TestSchema1Migration:
@@ -290,7 +340,9 @@ class TestSchema1Migration:
         loaded = load_manifest(bundle)
 
         assert loaded["schema"] == MANIFEST_SCHEMA
-        assert loaded["pages"] == {f"{REPO}/{entry['page_id']}": old}
+        assert loaded["pages"] == {
+            f"{REPO}/{entry['page_id']}": _row(entry, task_id=task.id)
+        }
 
     def test_row_repo_recovered_from_promoted_concept_path(self, bundle, plan):
         entry = plan[0]
@@ -348,7 +400,7 @@ class TestSchema1Migration:
         _promote(bundle, REPO, entry["page_id"])
         self._write_v1(
             bundle,
-            {entry["page_id"]: _row(entry, state="queued", attempts=1)},
+            {entry["page_id"]: _row(entry, state="queued", attempts=1, legacy=True)},
         )
 
         run_wiki_generate(fresh_db, bundle, REPO)
@@ -364,9 +416,8 @@ class TestShouldSkip:
     def test_unchanged_hash_with_promoted_concept_skips(self, bundle, plan):
         entry = plan[0]
         _promote(bundle, REPO, entry["page_id"])
-        # state stays "queued" in the row: promotion is derived from the
-        # concept, never from the recorded state.
-        assert should_skip(_row(entry, state="queued"), entry, bundle, REPO) is True
+        # No stored state exists: promotion is derived from the concept.
+        assert should_skip(_row(entry), entry, bundle, REPO) is True
 
     def test_unchanged_hash_without_promoted_concept_does_not_skip(
         self, bundle, plan
@@ -440,8 +491,8 @@ class TestLiveTaskSkip:
         second = self._run(fresh_db, bundle)
         by_id = {t.id: t for t in list_tasks(bundle)}
         queued_pages = {by_id[tid].resource for tid in second["queued_task_ids"]}
-        assert "m-a" in queued_pages
-        assert "m-b" not in queued_pages
+        assert f"{REPO}/m-a" in queued_pages
+        assert f"{REPO}/m-b" not in queued_pages
 
     def test_force_requeues_all_despite_live_tasks(self, fresh_db, bundle, plan):
         self._run(fresh_db, bundle)
@@ -461,30 +512,25 @@ class TestLiveTaskSkip:
         first = self._run(fresh_db, bundle)
         overview_task_id = first["queued_task_ids"][0]
         complete_task(bundle, overview_task_id, "plain completion")
-        create_task(bundle, "wiki-page-revise", plan[0]["page_id"])
+        create_task(
+            bundle, "wiki-page-revise", plan[0]["page_id"], facts={"repo": REPO}
+        )
         second = self._run(fresh_db, bundle)
         assert second["queued_task_ids"] == []
         assert len(list_tasks(bundle)) == len(plan) + 1
 
 
-class TestRowCommitSha:
-    """FR-003 (D-016): ``run_wiki_generate`` records the workspace HEAD sha
-    in each queued row, so staleness readers have a fallback for
-    not-yet-promoted pages."""
+class TestRowCarriesNoContentProvenance:
+    """The two-kind anti-collapse contract, pinned from the negative side:
+    queueing never writes content provenance (commit_sha) or a lifecycle
+    verdict into the plan — the concept alone owns both."""
 
-    def test_queued_row_gains_commit_sha(self, fresh_db, bundle, plan, monkeypatch):
+    def test_queued_row_never_carries_commit_sha_or_state(
+        self, fresh_db, bundle, plan
+    ):
         from cairn.wiki.pipeline import run_wiki_generate
 
-        # HEAD seam: the pipeline resolves the sha through a
-        # ``cairn.wiki.pipeline``-namespace ``get_repo_head`` (re-exported
-        # from utils.git), so a fake can stand in for git here.
-        monkeypatch.setattr(
-            "cairn.wiki.pipeline.get_repo_head",
-            lambda repo, workspace=None: "abc1234",
-            raising=False,
-        )
-
         run_wiki_generate(fresh_db, bundle, REPO)
-
-        row = load_manifest(bundle)["pages"][f"{REPO}/{plan[0]['page_id']}"]
-        assert row["commit_sha"] == "abc1234"
+        for row in load_manifest(bundle)["pages"].values():
+            assert "commit_sha" not in row
+            assert "state" not in row

@@ -75,7 +75,7 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `retrieval/` | composable Retriever / Fusion / Reranker stages |
 | `telemetry/` | best-effort local telemetry sink + optional OTLP export |
 | `viz/` | Mermaid / DOT / JSON graph renderers |
-| `wiki/` | deterministic, graph-derived architecture wiki |
+| `wiki/` | the wiki's page-plan pipeline (plan → refine → queue) and the lifecycle module that derives promotion/state/staleness from the two stored kinds (plan manifest + promoted articles) |
 
 Standalone modules: `eval.py`, `paths.py` (store resolution + the `~/.cairn/config.json` layer), `refs.py`.
 

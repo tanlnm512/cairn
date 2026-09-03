@@ -235,7 +235,11 @@ def _query_graph_hybrid(conn: sqlite3.Connection, tokens: List[str]) -> Dict:
 
 
 def _search_wiki(query: str, bundle: OKFBundle) -> List[str]:
-    return [c.title or "" for c in bundle.search(query, limit=3) if c.type.startswith("Wiki")]
+    # Gated wiki content only: critic-promoted articles and memory-promoted
+    # features. The ungated deterministic reports (Architecture-Report) are
+    # diagnostics, not wiki.
+    gated = ("Wiki-Article", "Wiki-Feature")
+    return [c.title or "" for c in bundle.search(query, limit=3) if c.type in gated]
 
 
 def _get_compass(token: str, bundle: OKFBundle) -> List[str]:

@@ -67,6 +67,13 @@ agent session loads it.
 
 ## Wiki generation
 
+The wiki is the agent-facing knowledge surface for the whole workspace —
+code or documents. It stores two kinds with disjoint jobs: the plan
+manifest (`.knowledge/_wiki/manifest.json`) records pipeline intent only
+(pages, seeds, task linkage, queue attempts), while promoted `Wiki-Article`
+concepts under `wiki/pages/{repo}/{page_id}` are the only record of what
+exists. Lifecycle state is derived at read time — never stored.
+
 `wiki_generate` plans the deterministic page outline (overview + top modules)
 and queues the writing work — cairn never calls an LLM itself, so agents
 finish the wiki through the task queue:
@@ -76,7 +83,8 @@ finish the wiki through the task queue:
    `wiki-catalog` task id and re-run guidance (page tasks queue only after
    that task completes and its refined outline validates; invalid entries
    revert to the deterministic plan).
-2. For each task id: `cairn task show <id>` → `cairn task claim <id>` →
+2. For each task id (keyed by the qualified `{repo}/{page_id}`
+   resource): `cairn task show <id>` → `cairn task claim <id>` →
    write the article per the task's output spec (markdown ending in a
    `## Sources` footer; Mermaid fences only when diagrams were requested) →
    `cairn task complete <id> --result-file <path>`.
@@ -84,8 +92,9 @@ finish the wiki through the task queue:
    passing completion is promoted as a `Wiki-Article` concept under
    `wiki/pages/{repo}/{page_id}` with the verified sources in its
    frontmatter; a failing one spawns a bounded revise cycle.
-4. Track progress with `cairn wiki status` (per-page state plus a
-   fresh/stale verdict against the repo's current HEAD), re-queue failures
+4. Track progress with `cairn wiki status` (per-page derived state
+   plus a fresh/stale verdict against the repo's current HEAD; a page
+   without promoted content is always `unknown`), re-queue failures
    with `cairn wiki retry`; `cairn wiki search` and compass routing surface
    the promoted articles, `cairn wiki export --dir DIR [--force]` writes
    them out as markdown files (frontmatter preserved), and
