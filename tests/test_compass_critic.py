@@ -115,6 +115,53 @@ class TestFileExists:
         conn = _conn_with_fixture(fresh_db)
         assert _file_exists(conn, "src/DoesNotExist.kt") is False
 
+    def test_directory_ref_resolves_via_prefix(self, fresh_db):
+        # Directories exist only as prefixes of stored file paths.
+        conn = _conn_with_fixture(fresh_db)
+        assert _file_exists(conn, "src/graph") is True
+        assert _file_exists(conn, "other/unrelated") is True
+
+    def test_hallucinated_directory_rejected(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        assert _file_exists(conn, "no/such/dir") is False
+
+    def test_directory_prefix_matches_on_segment_boundary(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        # `src/grap` must not resolve via a substring of `src/graph/...`.
+        assert _file_exists(conn, "src/grap") is False
+
+    def test_repo_qualified_ref_bridges_to_repo(self, fresh_db):
+        # files.path is repo-relative here, so only the repo bridge can
+        # resolve `repo/path` refs (the pkg/inner row is repo-relative).
+        conn = _conn_with_fixture(fresh_db)
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES "
+            "(4, 'r1', 'pkg/inner/util.py', 'python')"
+        )
+        conn.commit()
+        assert _file_exists(conn, "r1/pkg/inner/util.py") is True
+        assert _file_exists(conn, "r1/pkg/inner") is True  # bridged directory
+        # The bridge scopes: r2 has no pkg/inner.
+        assert _file_exists(conn, "r2/pkg/inner/util.py") is False
+
+    def test_like_wildcards_in_ref_are_literal(self, fresh_db):
+        # '%'/'_' in refs are literals, not wildcards.
+        conn = _conn_with_fixture(fresh_db)
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES "
+            "(4, 'r1', '/tmp/r1/app/services/extra/mod.py', 'python')"
+        )
+        conn.commit()
+        assert _file_exists(conn, "app/services_extra") is False
+        assert _file_exists(conn, "app/services/extra") is True
+        assert _file_exists(conn, "app/%") is False
+
+    def test_ref_slash_and_empty_normalization(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        assert _file_exists(conn, "src/graph/") is True
+        assert _file_exists(conn, "") is False
+        assert _file_exists(conn, "/") is False
+
 
 class TestSymbolExists:
     def test_bare_name_matches(self, fresh_db):
@@ -149,6 +196,16 @@ class TestCriticConceptIntegration:
         result = critic_concept(concept, conn)
         assert any("DoesNotExist.kt" in e for e in result.errors)
         assert result.passed is False
+
+    def test_directory_ref_not_flagged_as_hallucination(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        concept = OKFConcept(
+            type="Compass",
+            title="test",
+            body="The queries live in `src/graph` (see `src/graph/queries.py`).",
+        )
+        result = critic_concept(concept, conn)
+        assert result.errors == []
 
     def test_repeated_dead_path_reported_once(self, fresh_db):
         conn = _conn_with_fixture(fresh_db)

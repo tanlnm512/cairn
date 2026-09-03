@@ -36,6 +36,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages once (the input-hash recipe now covers `source` and document
   seeds); in-flight legacy tasks complete normally.
 
+### Fixed
+- Server boot (`cairn serve` / MCP stdio): non-actionable third-party
+  output suppressed — HF Hub unauthenticated-request warnings, MCP
+  pre-initialization request warnings, model-loading progress bars.
+  Errors still surface.
+- Compass critic file refs (`refs.file_exists`):
+  - directory paths resolve (`app/adk`): a directory is valid iff an
+    indexed file lives under it
+  - repo-qualified refs (`repo/app/adk`) re-validate within that repo
+  - LIKE wildcards in refs are escaped
+  - inherited by every consumer (critic, memory scoring, wiki
+    sources/refine, task gate, workflow validation)
+- Compass module resolution (multi-repo workspaces):
+  - module matching is segment-anchored; no substring matches
+  - bare names resolve via the repos containing them; ambiguity raises a
+    `--repo` hint instead of mixing repos
+  - `repo/module` paths normalize to repo-relative; all generation paths
+    (deterministic, LLM, task queue) produce one concept identity
+  - cross-dep sources are repo-scoped; a same-named directory in another
+    repo is a cross-module target (repo-qualified label)
+- Dashboard `/database` view:
+  - sqlite-vec internals (`vec_*`, `vecmv_*`) are excluded
+  - unintrospectable tables are skipped and reported (banner), never
+    fatal
+
 ## [0.18.0] - 2026-09-02
 
 ### Added

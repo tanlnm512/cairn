@@ -12,11 +12,25 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import List
+from typing import List, Tuple
 
 # --- shared patterns ------------------------------------------------------
 
 BACKTICK_RE = re.compile(r"`([^`]+)`")
+
+# LIKE escape char: literal '%'/'_' in refs must not act as wildcards.
+LIKE_ESCAPE_CHAR = "\\"
+
+
+def _escape_like(value: str, escape: str = LIKE_ESCAPE_CHAR) -> str:
+    """Escape LIKE wildcard metacharacters for use inside `LIKE ? ESCAPE '\\'`."""
+    if not value:
+        return ""
+    return (
+        value.replace(escape, escape * 2)
+        .replace("%", escape + "%")
+        .replace("_", escape + "_")
+    )
 
 # Extensions for all languages cairn parses (see pyproject.toml
 # tree-sitter deps).
@@ -71,18 +85,52 @@ def extract_symbol_refs(body: str) -> List[str]:
 
 # --- graph existence checks ----------------------------------------------
 
-def file_exists(conn: sqlite3.Connection, ref: str) -> bool:
-    """Path-suffix match, not "contains this basename anywhere".
-
-    A bare filename (no "/") still only has the basename to go on and stays
-    a basename match -- but a path fragment (`src/graph/queries.py`) must
-    match as a suffix of a real stored path, so it can't be satisfied by an
-    unrelated file that merely shares a basename.
+def _path_match_sql(alias: str = "path") -> str:
+    """SQL fragment matching a column to a path ref (4 params, via
+    _path_match_params):
+    1. exact file path
+    2. file-path suffix
+    3. root-anchored directory prefix
+    4. mid-path directory prefix
     """
+    return (
+        f"({alias} = ? OR {alias} LIKE ? ESCAPE '\\' "
+        f"OR {alias} LIKE ? ESCAPE '\\' OR {alias} LIKE ? ESCAPE '\\')"
+    )
+
+
+def _path_match_params(ref: str) -> Tuple[str, str, str, str]:
+    e = _escape_like(ref)
+    return (ref, f"%/{e}", f"{e}/%", f"%/{e}/%")
+
+
+def file_exists(conn: sqlite3.Connection, ref: str) -> bool:
+    """True if `ref` resolves to a real file or directory.
+
+    Directories exist only as prefixes of stored file paths. Match arms
+    (segment-boundary only, never bare substring):
+    1. exact file path
+    2. file-path suffix (`src/graph/queries.py`)
+    3. directory prefix (`src/graph`)
+    4. repo-qualified (`repo/...`) re-validated within that repo
+    """
+    ref = ref.strip("/")
+    if not ref:
+        return False
     cur = conn.cursor()
     row = cur.execute(
-        "SELECT 1 FROM files WHERE path = ? OR path LIKE ? LIMIT 1",
-        (ref, f"%/{ref}"),
+        f"SELECT 1 FROM files WHERE {_path_match_sql()} LIMIT 1",
+        _path_match_params(ref),
+    ).fetchone()
+    if row is not None:
+        return True
+    # Repo-qualification bridge: `repo/...` -> validate `...` within repo.
+    rid, _, rest = ref.partition("/")
+    if not rest:
+        return False
+    row = cur.execute(
+        f"SELECT 1 FROM files WHERE repo_id = ? AND {_path_match_sql()} LIMIT 1",
+        (rid, *_path_match_params(rest)),
     ).fetchone()
     return row is not None
 

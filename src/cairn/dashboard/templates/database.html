@@ -7,6 +7,11 @@
   <p class="muted">Store schema as a relationship graph — node size encodes row count,
     solid edges are declared foreign keys, dashed edges are <code>*_id</code> references
     implied by column naming. Select a node for the table's columns and links.</p>
+  {% if schema.skipped %}
+  <p class="empty-state">{{ schema.skipped | length }} table(s) not shown —
+    {% for s in schema.skipped %}<code>{{ s.name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+    ({{ schema.skipped[-1].reason }})</p>
+  {% endif %}
   {% if schema.tables %}
   <div class="graph-layout">
     <div class="graph-stage">

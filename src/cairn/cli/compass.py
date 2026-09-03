@@ -24,6 +24,7 @@ def compass():
               help="With --use-llm, print every revise cycle's critic verdict.")
 def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejections):
     from ..okf.bundle import OKFBundle
+    from ..compass.generator import ModuleResolutionError
 
     conn = get_db(db)
     try:
@@ -96,7 +97,8 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
             from ..llm.tasks import create_task
 
             facts = _gather_facts(conn, module, repo)
-            t = create_task(bundle, "compass-synthesize", module, facts=facts)
+            # facts["module"] is the repo-relative module path.
+            t = create_task(bundle, "compass-synthesize", facts["module"], facts=facts)
             click.echo(f"Queued compass task: {t.id}")
             click.echo("Any agent with the cairn skill can process it:")
             click.echo(f"  cairn task show {t.id}        # view the task + facts")
@@ -145,6 +147,9 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
             click.echo(f"  ERROR: {e}")
         click.echo("\n--- body ---\n")
         click.echo(concept.body)
+    except ModuleResolutionError as e:
+        click.echo(f"Cannot generate compass for '{module}': {e}")
+        sys.exit(1)
     finally:
         conn.close()
 

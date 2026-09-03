@@ -590,34 +590,46 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     }
 
 
-def get_database_schema(conn: sqlite3.Connection) -> Dict:
-    """Store schema as a relationship graph for the database view.
+# sqlite-vec ANN internals (``vec0`` virtual tables, shadows, ``vecmv_*``):
+# their module is not loaded on the dashboard's connection.
+_ANN_TABLE_PREFIXES = ("vec_", "vecmv_")
 
-    Every user table becomes a node carrying row/column counts and its
-    primary-key columns; edges come from two sources — declared foreign
-    keys (authoritative, kind ``fk``) and ``*_id`` columns whose base name
-    names another table (kind ``inferred``, e.g. ``build_runs.repo_id``
-    without a declared FK). A column already covered by a declared FK is
-    never re-inferred. Read-only introspection; internal ``sqlite_%`` and
-    FTS shadow tables are excluded.
+
+def get_database_schema(conn: sqlite3.Connection) -> Dict:
+    """Store schema as a relationship graph for the /database view.
+
+    - nodes: user tables (row/column counts, pk columns)
+    - edges: declared foreign keys (``fk``); ``*_id`` columns naming
+      another table (``inferred``; never re-inferred over a declared FK)
+    - excluded: ``sqlite_%``, FTS shadows, sqlite-vec internals
+    - a table that cannot be introspected is skipped and reported in
+      ``skipped`` as ``{name, reason}``
     """
     tables = sorted(
         row[0]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        if not row[0].startswith("sqlite_") and "_fts" not in row[0]
+        if not row[0].startswith("sqlite_")
+        and "_fts" not in row[0]
+        and not row[0].startswith(_ANN_TABLE_PREFIXES)
     )
 
     def _q(identifier: str) -> str:
         return '"' + identifier.replace('"', '""') + '"'
 
     meta: Dict[str, Dict] = {}
+    skipped: List[Dict[str, str]] = []
     for name in tables:
-        columns = [
-            {"name": r[1], "type": r[2] or "", "pk": bool(r[5])}
-            for r in conn.execute(f"PRAGMA table_info({_q(name)})")
-        ]
-        rows = conn.execute(f"SELECT COUNT(*) FROM {_q(name)}").fetchone()[0]
+        try:
+            columns = [
+                {"name": r[1], "type": r[2] or "", "pk": bool(r[5])}
+                for r in conn.execute(f"PRAGMA table_info({_q(name)})")
+            ]
+            rows = conn.execute(f"SELECT COUNT(*) FROM {_q(name)}").fetchone()[0]
+        except sqlite3.Error as e:
+            skipped.append({"name": name, "reason": f"{type(e).__name__}: {e}"})
+            continue
         meta[name] = {"columns": columns, "rows": rows}
+    tables = [name for name in tables if name in meta]
 
     declared: set = set()
     edges: Dict[Tuple[str, str], Dict] = {}
@@ -663,6 +675,7 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
             for name in tables
         ],
         "edges": [edges[key] for key in sorted(edges)],
+        "skipped": skipped,
     }
 
 

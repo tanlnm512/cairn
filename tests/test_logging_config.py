@@ -169,3 +169,51 @@ def test_module_logger_inherits_level(reset_cairn_logger):
     configure_logging()
     child = logging.getLogger("cairn.graph.semantic")
     assert child.getEffectiveLevel() == logging.DEBUG
+
+
+# --- server-noise suppression ----------------------------------------------
+
+@pytest.fixture
+def reset_noisy_loggers():
+    """Restore the third-party loggers quiet_server_noise() mutates."""
+    saved = {n: logging.getLogger(n).level for n in ("huggingface_hub", "mcp")}
+    yield
+    for n, lvl in saved.items():
+        logging.getLogger(n).setLevel(lvl)
+
+
+class TestQuietServerNoise:
+    def test_noisy_loggers_raised_to_error(self, reset_noisy_loggers, monkeypatch):
+        monkeypatch.delenv("TQDM_DISABLE", raising=False)
+        from cairn.utils.logging import quiet_server_noise
+
+        quiet_server_noise()
+        for name in ("huggingface_hub", "mcp"):
+            assert logging.getLogger(name).level == logging.ERROR
+        assert os.environ["TQDM_DISABLE"] == "1"
+
+    def test_existing_tqdm_disable_respected(self, reset_noisy_loggers, monkeypatch):
+        monkeypatch.setenv("TQDM_DISABLE", "0")
+        from cairn.utils.logging import quiet_server_noise
+
+        quiet_server_noise()
+        assert os.environ["TQDM_DISABLE"] == "0"
+
+    def test_warnings_suppressed_at_source(self, reset_noisy_loggers, monkeypatch, caplog):
+        monkeypatch.delenv("TQDM_DISABLE", raising=False)
+        from cairn.utils.logging import quiet_server_noise
+
+        quiet_server_noise()
+        with caplog.at_level(logging.WARNING):
+            logging.getLogger("huggingface_hub").warning("hub hint")
+            logging.getLogger("mcp").warning("pre-init request")
+        assert caplog.records == []
+
+    def test_errors_still_propagate(self, reset_noisy_loggers, monkeypatch, caplog):
+        monkeypatch.delenv("TQDM_DISABLE", raising=False)
+        from cairn.utils.logging import quiet_server_noise
+
+        quiet_server_noise()
+        with caplog.at_level(logging.ERROR):
+            logging.getLogger("huggingface_hub").error("real failure")
+        assert len(caplog.records) == 1

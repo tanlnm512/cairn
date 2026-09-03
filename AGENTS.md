@@ -112,6 +112,19 @@ checklist; `docs/review-checklist.md` is the procedure behind each box.
 Layers 0-1 (pre-commit + CI: tests, pip-audit, bandit, mypy, PR-title, dependency-review) are automated;
 this is the human/agent layer that catches what they can't.
 
+## Comment and doc style (mandatory, all files)
+Applies to code comments, docstrings, markdown, and CHANGELOG entries.
+- State behavior and contract only — what the code/doc is or does.
+- No decision logs: no rationale narratives, review findings, or
+  "why this changed" prose. Decisions go to cairn memory
+  (`record_memory`), never into comments.
+- No history: no dates, PR numbers, version references, "previously",
+  "reported bug", incident stories.
+- Short and precise; prefer numbered/bulleted lists over prose.
+- Anti-stale: no enumerations or examples that rot (line numbers,
+  version-specific names, workspace-specific paths) — reference the
+  code or a query instead.
+
 ## Tool Quirks (empirically verified)
 
 | Tool | Behavior | Workaround |

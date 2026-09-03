@@ -897,6 +897,58 @@ def test_database_route_empty_store_renders_empty_state(tmp_path):
     assert "No tables" in resp.text
 
 
+def test_database_route_excludes_vec_ann_internals(tmp_path):
+    """sqlite-vec internals (``vec_*``) are excluded by name like the FTS
+    shadows. Introspection-skip coverage:
+    test_database_schema_reports_skipped_tables."""
+    db = tmp_path / "vectors.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE repos(id INTEGER PRIMARY KEY);
+        CREATE VIRTUAL TABLE vec_BAAI_bge_m3 USING fts5(chunk);
+        CREATE VIRTUAL TABLE vec_hash_256_v1_chunks USING fts5(chunk);
+        """
+    )
+    conn.commit()
+    conn.close()
+    client = _panel_client(tmp_path, str(db), str(tmp_path / "missing"))
+    resp = client.get("/database")
+    assert resp.status_code == 200
+
+    marker = '<script id="db-graph-data" type="application/json">'
+    payload = json.loads(resp.text.split(marker, 1)[1].split("</script>", 1)[0])
+    assert [t["name"] for t in payload["tables"]] == ["repos"]
+
+
+def test_database_schema_reports_skipped_tables(tmp_path):
+    """An unintrospectable table is skipped (never fatal) and reported in
+    ``skipped``. The connection factory simulates an unloadable module."""
+    from cairn.dashboard.data import get_database_schema
+
+    db = tmp_path / "broken.db"
+    seed = sqlite3.connect(db)
+    seed.execute("CREATE TABLE repos(id INTEGER PRIMARY KEY)")
+    seed.execute("CREATE TABLE zzz_broken(id INTEGER PRIMARY KEY)")
+    seed.commit()
+    seed.close()
+
+    class _BrokenTableConn(sqlite3.Connection):
+        def execute(self, sql, params=()):
+            if "zzz_broken" in sql:
+                raise sqlite3.OperationalError("no such module: vec0")
+            return super().execute(sql, params)
+
+    conn = sqlite3.connect(db, factory=_BrokenTableConn)
+    try:
+        schema = get_database_schema(conn)
+    finally:
+        conn.close()
+    assert [t["name"] for t in schema["tables"]] == ["repos"]
+    assert [s["name"] for s in schema["skipped"]] == ["zzz_broken"]
+    assert "vec0" in schema["skipped"][0]["reason"]
+
+
 def test_memory_route_empty_knowledge_dir_renders_empty_state(tmp_path):
     client = _panel_client(
         tmp_path,

@@ -27,7 +27,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from cairn.graph.schema import get_db
 from cairn.paths import render_env_resolution_chain, resolve_store
-from cairn.utils.logging import configure_logging
+from cairn.utils.logging import configure_logging, quiet_server_noise
 
 # Wire the metric-buffering conn factory BEFORE importing any tools_*.py:
 # the first @instrument-wrapped tool call would otherwise hit a None factory.
@@ -197,6 +197,9 @@ def run(transport: str = "stdio", port: int | None = None):
     # (_server_core.py:75) to avoid reconfiguring root, which this complements
     # rather than fights (it configures the `cairn` namespace, not root).
     configure_logging()
+
+    # Long-running server boot: suppress non-actionable third-party noise.
+    quiet_server_noise()
 
     # Fail fast if tool registration drifted.
     verify_tool_count()
