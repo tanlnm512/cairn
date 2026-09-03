@@ -65,9 +65,10 @@ class ModuleResolutionError(ValueError):
 
 def _module_match_sql(alias: str = "path") -> str:
     """SQL fragment matching a files.path column to a module directory on
-    segment boundaries: the module path itself (module pointing at a file),
-    files directly under it, or files under it deeper in the tree. Takes 3
-    params via _module_match_params.
+    segment boundaries, taking 3 params via _module_match_params: the
+    module path itself (a module pointing at a file), a root-anchored
+    module prefix (`app/...` for module `app`), or a mid-path module
+    prefix (`src/app/...`).
 
     Anchored on purpose: an unanchored `%app%` substring matches unrelated
     paths (`trapper/utils.py`) and same-named directories in every repo.
@@ -100,9 +101,12 @@ def _resolve_module(
 ) -> tuple:
     """Resolve the (repo, repo-relative module path) pair for generation.
 
-    Raises ModuleResolutionError when the module is ambiguous across repos.
+    Raises ModuleResolutionError when the module is ambiguous across repos
+    (or empty after slash-stripping).
     """
     module_path = module_path.strip("/")
+    if not module_path:
+        raise ModuleResolutionError("module path is empty")
     repo = repo or _infer_repo(conn, module_path)
     return repo, _normalize_module_path(module_path, repo)
 
@@ -117,7 +121,8 @@ def generate_compass(
     """Generate a compass OKF concept for a module path.
 
     Args:
-        module_path: repo-relative or absolute path to the module directory.
+        module_path: repo-relative module path; a `{repo}/`-prefixed path
+            (``polaris-app/app``) is normalized to repo-relative.
         conn: graph DB connection.
         bundle: OKF bundle to write into (used for concept_id derivation).
         repo: optional repo name; if None, inferred from the path.
@@ -133,7 +138,7 @@ def generate_compass(
     # 3. Cross-module dependencies.
     cross_deps = _cross_module_deps(conn, module_path, repo_filter)
 
-    # 4. Quick commands (build commands inferred from gradle if available).
+    # 4. Quick commands (a gradle build command when the repo is known).
     quick_commands = _quick_commands(module_path, repo_filter)
 
     # 5. Synthesize body.
@@ -187,8 +192,8 @@ def _infer_repo(conn, module_path: str) -> Optional[str]:
     if len(rows) == 1:
         return rows[0]["repo_id"]
     # Fallback: single-repo workspace — there's only one repo. This keeps a
-    # no-match module (typo, empty dir) reporting "(no symbols detected)"
-    # instead of crossing repos.
+    # no-match module (typo, empty dir) reporting "(no symbols detected in
+    # this module)" instead of crossing repos.
     repos = cur.execute("SELECT id FROM repos").fetchall()
     if len(repos) == 1:
         return repos[0]["id"]
@@ -235,8 +240,10 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
     The source side is segment-anchored to `module_path` and scoped to `repo`
     when known (a bare directory name can exist in many repos). "Outside the
     module" is repo-aware too: a same-named directory in ANOTHER repo is a
-    distinct module, so its files count as cross-module targets. Such targets
-    keep a repo-qualified label, which the critic's repo bridge validates.
+    distinct module, so its files count as cross-module targets. All target
+    labels are repo-qualified (`{repo}/{top-two-segments}`); for cross-repo
+    targets that qualification is exactly what the critic's repo bridge
+    validates.
     """
     cur = conn.cursor()
     mods = set()
@@ -376,7 +383,11 @@ def generate_compass_with_llm(
         client: an LLMClient (synthesize/revise). If None or unavailable, the
                 function falls back to the deterministic generator.
     """
-    # 1. Gather facts from the graph (single source of truth).
+    # 1. Resolve the module the same way the deterministic path does (repo
+    # inference + repo-prefix normalization), then gather facts. Resolving
+    # here keeps this path's concept identity (resource/concept_id/tags)
+    # identical to the deterministic path's for the same module.
+    repo, module_path = _resolve_module(conn, module_path, repo)
     facts = _gather_facts(conn, module_path, repo)
 
     # 2. If no client, fall back to deterministic generation.

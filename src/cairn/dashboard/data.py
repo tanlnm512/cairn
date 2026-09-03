@@ -590,9 +590,11 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     }
 
 
-# ANN internals: sqlite-vec ``vec0`` virtual tables and their shadow
-# tables (``vec_<model>``, ``vec_<model>_info``/``_chunks``/``_rowids``,
-# ``vecmv_*``). Their module is not loaded on the dashboard's connection.
+# ANN internals: sqlite-vec ``vec0`` virtual tables and everything their
+# prefixes produce (the ``vec_<model>`` virtual table, its shadow tables
+# ``vec_<model>_info``/``_chunks``/``_rowids``/``_vector_chunksNN``, and the
+# ``vecmv_*`` mv-index tables). Their module is not loaded on the
+# dashboard's connection.
 _ANN_TABLE_PREFIXES = ("vec_", "vecmv_")
 
 
@@ -609,8 +611,10 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
     (``vec_*``/``vecmv_*``): stores with embeddings carry ``vec0`` virtual
     tables whose module is not loaded on the dashboard's plain read-only
     connection, and introspecting them would fail the whole view. Per-table
-    introspection is never fatal for the same reason — a table whose
-    module is unavailable is skipped, not an error.
+    introspection is never fatal for the same reason — a table that cannot
+    be introspected (module unavailable, transient lock, ...) is skipped,
+    not an error, and every skip is reported in the returned ``skipped``
+    list so the omission stays observable.
     """
     tables = sorted(
         row[0]
@@ -624,6 +628,7 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
         return '"' + identifier.replace('"', '""') + '"'
 
     meta: Dict[str, Dict] = {}
+    skipped: List[Dict[str, str]] = []
     for name in tables:
         try:
             columns = [
@@ -631,7 +636,8 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
                 for r in conn.execute(f"PRAGMA table_info({_q(name)})")
             ]
             rows = conn.execute(f"SELECT COUNT(*) FROM {_q(name)}").fetchone()[0]
-        except sqlite3.Error:
+        except sqlite3.Error as e:
+            skipped.append({"name": name, "reason": f"{type(e).__name__}: {e}"})
             continue
         meta[name] = {"columns": columns, "rows": rows}
     tables = [name for name in tables if name in meta]
@@ -680,6 +686,7 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
             for name in tables
         ],
         "edges": [edges[key] for key in sorted(edges)],
+        "skipped": skipped,
     }
 
 

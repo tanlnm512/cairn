@@ -1,6 +1,7 @@
 """Module resolution for `cairn compass generate` in multi-repo workspaces.
 
-Two reported bugs (2026-09-03, polaris workspace):
+Reported symptoms (2026-09-03, polaris workspace) — two root causes, three
+surfaces:
 1. A bare module name (`app`) matched same-named directories in EVERY repo
    via an unanchored `%app%` path LIKE, mixing both repos' facts into one
    compass (polaris-app + polaris-api both have `app/`).
@@ -29,8 +30,25 @@ from cairn.compass.generator import (
     _resolve_module,
     _symbols_in_module,
     generate_compass,
+    generate_compass_with_llm,
 )
 from cairn.okf.bundle import OKFBundle
+
+
+class _PassCriticClient:
+    """Minimal LLM client whose first draft passes the deterministic critic."""
+
+    def synthesize(self, kind, facts):
+        return (
+            "# What Does This Module Do?\n- `agent_run` drives the module.\n"
+            "# Common Modification Patterns\n- Edit `agent.py` carefully.\n"
+            "# Build-Failure Patterns\n- None known.\n"
+            "# Cross-Module Dependencies\n- Calls out via utils.\n"
+            "# Tribal Knowledge\n- None yet.\n"
+        )
+
+    def revise(self, kind, draft, errors, facts):
+        return self.synthesize(kind, facts)
 
 
 def _row(conn, table, **cols):
@@ -93,6 +111,19 @@ class TestModuleResolution:
         names = {s["name"] for s in syms}
         assert names == {"agent_run"}
 
+    def test_module_like_wildcards_are_literal(self, conn):
+        # A module's '%'/'_' must not act as wildcards: unescaped,
+        # `%/graph_core/%` would match `graph/core/...` ('_' matches '/').
+        _row(conn, "files", id="f9", repo_id="polaris-app", path="graph/core/mod.py", language="python")
+        _row(conn, "symbols", id="s9", file_id="f9", name="core_fn", qualified_name="core.core_fn", kind="function", line_start=1, line_end=5)
+        conn.commit()
+        assert _symbols_in_module(conn, "graph_core", "polaris-app") == []
+        assert {s["name"] for s in _symbols_in_module(conn, "graph/core", "polaris-app")} == {"core_fn"}
+
+    def test_empty_module_path_rejected(self, conn, tmp_path):
+        with pytest.raises(ModuleResolutionError):
+            generate_compass("/", conn, OKFBundle(str(tmp_path / "k")))
+
 
 class TestGenerateCompass:
     def test_repo_scoped_compass_not_polluted(self, conn, tmp_path):
@@ -111,6 +142,40 @@ class TestGenerateCompass:
         assert concept.tags[0] == "polaris-app"
         assert "agent_run" in concept.body
         assert "api_handler" not in concept.body
+
+    def test_llm_path_identity_matches_deterministic(self, conn, tmp_path):
+        # The LLM path must derive its concept identity (resource,
+        # concept_id, tags) from the resolved repo + repo-relative module,
+        # so one module gets ONE compass file whichever path generated it
+        # (a diverged identity also never satisfies detect_gaps coverage).
+        bundle = OKFBundle(str(tmp_path / "k"))
+        det = generate_compass("polaris-app/app", conn, bundle)
+        fallback = generate_compass_with_llm("polaris-app/app", conn, bundle, client=None)
+        assert fallback["mode"] == "deterministic"
+        assert fallback["concept"].concept_id == det.concept_id == "compass/app"
+        assert fallback["concept"].resource == det.resource == "app"
+        assert fallback["concept"].tags == det.tags
+
+        llm = generate_compass_with_llm(
+            "polaris-app/app", conn, bundle, client=_PassCriticClient()
+        )
+        assert llm["mode"] == "llm"
+        assert llm["concept"].concept_id == det.concept_id
+        assert llm["concept"].resource == det.resource
+        assert llm["concept"].tags == det.tags
+
+
+def test_no_match_module_reports_empty_not_cross_repo(fresh_db, tmp_path):
+    # Single-repo workspace, module matching nothing: the only repo is
+    # still inferred so the compass reports "(no symbols detected ...)"
+    # rather than silently querying across repos.
+    _row(fresh_db, "repos", id="solo", name="solo", path="/work/solo")
+    _row(fresh_db, "files", id="sf1", repo_id="solo", path="app/agent.py", language="python")
+    _row(fresh_db, "symbols", id="ss1", file_id="sf1", name="solo_fn", qualified_name="solo.solo_fn", kind="function", line_start=1, line_end=5)
+    fresh_db.commit()
+    concept = generate_compass("typo", fresh_db, OKFBundle(str(tmp_path / "k")))
+    assert "(no symbols detected in this module)" in concept.body
+    assert concept.tags[0] == "solo"
 
 
 class TestCrossModuleDeps:
@@ -153,6 +218,23 @@ class TestCompassGenerateCLI:
             assert "multiple repos" in result.output
             assert "--repo" in result.output
             # Nothing written.
+            assert not list(Path(know).rglob("compass/*.md"))
+
+    def test_use_llm_queue_path_ambiguity_fails_at_enqueue(self):
+        # Default file-queue backend: ambiguity must fail at ENQUEUE time
+        # (the except covers the _gather_facts call), not later during
+        # task completion.
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._setup(tmp)
+            from cairn.cli import main
+            result = runner.invoke(
+                main,
+                ["compass", "generate", "app", "--use-llm", "--db", db, "--knowledge", know],
+            )
+            assert result.exit_code == 1
+            assert "multiple repos" in result.output
+            assert "Queued compass task" not in result.output
             assert not list(Path(know).rglob("compass/*.md"))
 
     def test_repo_scoped_generation_passes_critic(self):

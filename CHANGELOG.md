@@ -43,9 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exist only as prefixes of `files.path`, so `refs.file_exists` now also
   matches segment-boundary directory prefixes and bridges repo-qualified
   refs (`polaris-app/app/adk`) by re-validating the remainder within the
-  named repo (every shared consumer — critic, memory scoring, wiki
-  sources, task gate — inherits this via the one function, and LIKE
-  wildcards in refs are escaped). A bare module name (`app`) no longer
+  named repo (every consumer — critic, memory scoring, wiki
+  sources/refine, task gate, workflow validation — inherits this via the
+  one function, and LIKE wildcards in refs are escaped). A bare module name (`app`) no longer
   mixes same-named directories across repos into one compass: module
   matching is segment-anchored (an unanchored `%app%` also matched
   unrelated paths like `trapper/…`), a bare name resolves via the repos
@@ -59,8 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain read-only connection — introspecting them crashed the whole view
   with "no such module: vec0". The ANN internals (`vec_*`, `vecmv_*`,
   and shadow tables) are excluded like the FTS shadows, and per-table
-  introspection is never fatal: a table whose module is unavailable is
-  skipped, not an error.
+  introspection is never fatal: a table that cannot be introspected
+  (module unavailable, transient lock, ...) is skipped, not an error —
+  and every skip is reported (a one-line banner in the view) so the
+  omission stays observable.
 
 ## [0.18.0] - 2026-09-02
 

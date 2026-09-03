@@ -902,8 +902,9 @@ def test_database_route_excludes_vec_ann_internals(tmp_path):
     (``vec_<model>`` + shadows) whose module is not loaded on the
     dashboard's plain read-only connection — introspecting them crashed
     the whole view with "no such module: vec0". The ANN internals are
-    excluded like the FTS shadows, and an unavailable module can never
-    kill the view (fts5 stands in for an exotic module here)."""
+    excluded by name like the FTS shadows. (The fts5 tables stand in for
+    the vec0 shapes only; the never-fatal introspection skip is covered by
+    test_database_schema_reports_skipped_tables.)"""
     db = tmp_path / "vectors.db"
     conn = sqlite3.connect(db)
     conn.executescript(
@@ -922,6 +923,37 @@ def test_database_route_excludes_vec_ann_internals(tmp_path):
     marker = '<script id="db-graph-data" type="application/json">'
     payload = json.loads(resp.text.split(marker, 1)[1].split("</script>", 1)[0])
     assert [t["name"] for t in payload["tables"]] == ["repos"]
+
+
+def test_database_schema_reports_skipped_tables(tmp_path):
+    """A table whose introspection raises (module unavailable, transient
+    lock, ...) is skipped without killing the view AND is reported in the
+    ``skipped`` payload — the omission is observable, never silent. A
+    connection factory stands in for the un-loadable module, since a
+    module-less virtual table cannot be created in-process."""
+    from cairn.dashboard.data import get_database_schema
+
+    db = tmp_path / "broken.db"
+    seed = sqlite3.connect(db)
+    seed.execute("CREATE TABLE repos(id INTEGER PRIMARY KEY)")
+    seed.execute("CREATE TABLE zzz_broken(id INTEGER PRIMARY KEY)")
+    seed.commit()
+    seed.close()
+
+    class _BrokenTableConn(sqlite3.Connection):
+        def execute(self, sql, params=()):
+            if "zzz_broken" in sql:
+                raise sqlite3.OperationalError("no such module: vec0")
+            return super().execute(sql, params)
+
+    conn = sqlite3.connect(db, factory=_BrokenTableConn)
+    try:
+        schema = get_database_schema(conn)
+    finally:
+        conn.close()
+    assert [t["name"] for t in schema["tables"]] == ["repos"]
+    assert [s["name"] for s in schema["skipped"]] == ["zzz_broken"]
+    assert "vec0" in schema["skipped"][0]["reason"]
 
 
 def test_memory_route_empty_knowledge_dir_renders_empty_state(tmp_path):

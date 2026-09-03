@@ -133,14 +133,42 @@ class TestFileExists:
         assert _file_exists(conn, "src/grap") is False
 
     def test_repo_qualified_ref_bridges_to_repo(self, fresh_db):
-        # files.path is repo-relative, so a repo-qualified ref (the form
-        # multi-repo facts cite) never matches literally -- it must be
-        # re-validated within the named repo.
+        # Under the current repo-relative storage contract a repo-qualified
+        # ref never matches literally (files.path carries no repo prefix),
+        # so only the bridge -- re-validating the remainder within the
+        # named repo -- can resolve it. The pkg/inner row below is seeded
+        # repo-relative; no suffix/prefix arm can reach it without the
+        # bridge.
         conn = _conn_with_fixture(fresh_db)
-        assert _file_exists(conn, "r1/src/graph/queries.py") is True
-        assert _file_exists(conn, "r2/other/unrelated/queries.py") is True
-        # The bridge scopes: r2 does not contain src/graph/queries.py.
-        assert _file_exists(conn, "r2/src/graph/queries.py") is False
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES "
+            "(4, 'r1', 'pkg/inner/util.py', 'python')"
+        )
+        conn.commit()
+        assert _file_exists(conn, "r1/pkg/inner/util.py") is True
+        assert _file_exists(conn, "r1/pkg/inner") is True  # bridged directory
+        # The bridge scopes: r2 has no pkg/inner.
+        assert _file_exists(conn, "r2/pkg/inner/util.py") is False
+
+    def test_like_wildcards_in_ref_are_literal(self, fresh_db):
+        # A ref's '%'/'_' must not act as wildcards: unescaped,
+        # `app/services_extra` would match `app/services/extra/...` ('_'
+        # matches '/') and `app/%` would match everything.
+        conn = _conn_with_fixture(fresh_db)
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES "
+            "(4, 'r1', '/tmp/r1/app/services/extra/mod.py', 'python')"
+        )
+        conn.commit()
+        assert _file_exists(conn, "app/services_extra") is False
+        assert _file_exists(conn, "app/services/extra") is True
+        assert _file_exists(conn, "app/%") is False
+
+    def test_ref_slash_and_empty_normalization(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        assert _file_exists(conn, "src/graph/") is True
+        assert _file_exists(conn, "") is False
+        assert _file_exists(conn, "/") is False
 
 
 class TestSymbolExists:

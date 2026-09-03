@@ -113,8 +113,10 @@ def file_exists(conn: sqlite3.Connection, ref: str) -> bool:
 
     A repo-qualified ref (`polaris-app/app/adk`) -- the form multi-repo facts
     naturally cite -- is bridged by re-validating the remainder within that
-    repo: files.path is repo-relative, so the qualified form never matches
-    literally.
+    repo: files.path is repo-relative under the current scanner contract, so
+    the qualified form never matches literally (legacy absolute-path stores
+    may match it as a mid-path prefix -- harmless, the bridge is then
+    redundant).
     """
     ref = ref.strip("/")
     if not ref:

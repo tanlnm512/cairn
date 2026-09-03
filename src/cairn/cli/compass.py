@@ -97,7 +97,10 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
             from ..llm.tasks import create_task
 
             facts = _gather_facts(conn, module, repo)
-            t = create_task(bundle, "compass-synthesize", module, facts=facts)
+            # Task resource = the normalized module path, so completion-time
+            # concept derivation matches the deterministic generator's
+            # identity for the same module.
+            t = create_task(bundle, "compass-synthesize", facts["module"], facts=facts)
             click.echo(f"Queued compass task: {t.id}")
             click.echo("Any agent with the cairn skill can process it:")
             click.echo(f"  cairn task show {t.id}        # view the task + facts")
