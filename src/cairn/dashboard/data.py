@@ -590,31 +590,20 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     }
 
 
-# ANN internals: sqlite-vec ``vec0`` virtual tables and everything their
-# prefixes produce (the ``vec_<model>`` virtual table, its shadow tables
-# ``vec_<model>_info``/``_chunks``/``_rowids``/``_vector_chunksNN``, and the
-# ``vecmv_*`` mv-index tables). Their module is not loaded on the
-# dashboard's connection.
+# sqlite-vec ANN internals (``vec0`` virtual tables, shadows, ``vecmv_*``):
+# their module is not loaded on the dashboard's connection.
 _ANN_TABLE_PREFIXES = ("vec_", "vecmv_")
 
 
 def get_database_schema(conn: sqlite3.Connection) -> Dict:
-    """Store schema as a relationship graph for the database view.
+    """Store schema as a relationship graph for the /database view.
 
-    Every user table becomes a node carrying row/column counts and its
-    primary-key columns; edges come from two sources — declared foreign
-    keys (authoritative, kind ``fk``) and ``*_id`` columns whose base name
-    names another table (kind ``inferred``, e.g. ``build_runs.repo_id``
-    without a declared FK). A column already covered by a declared FK is
-    never re-inferred. Read-only introspection; internal ``sqlite_%`` and
-    FTS shadow tables are excluded, and so are the sqlite-vec ANN internals
-    (``vec_*``/``vecmv_*``): stores with embeddings carry ``vec0`` virtual
-    tables whose module is not loaded on the dashboard's plain read-only
-    connection, and introspecting them would fail the whole view. Per-table
-    introspection is never fatal for the same reason — a table that cannot
-    be introspected (module unavailable, transient lock, ...) is skipped,
-    not an error, and every skip is reported in the returned ``skipped``
-    list so the omission stays observable.
+    - nodes: user tables (row/column counts, pk columns)
+    - edges: declared foreign keys (``fk``); ``*_id`` columns naming
+      another table (``inferred``; never re-inferred over a declared FK)
+    - excluded: ``sqlite_%``, FTS shadows, sqlite-vec internals
+    - a table that cannot be introspected is skipped and reported in
+      ``skipped`` as ``{name, reason}``
     """
     tables = sorted(
         row[0]

@@ -37,32 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
-- Compass generation in multi-repo workspaces: the critic's file-ref
-  check rejected backtick-quoted *directory* paths (`app/adk`,
-  `tests/unit`) as hallucinated — directories are never graph rows, they
-  exist only as prefixes of `files.path`, so `refs.file_exists` now also
-  matches segment-boundary directory prefixes and bridges repo-qualified
-  refs (`polaris-app/app/adk`) by re-validating the remainder within the
-  named repo (every consumer — critic, memory scoring, wiki
-  sources/refine, task gate, workflow validation — inherits this via the
-  one function, and LIKE wildcards in refs are escaped). A bare module name (`app`) no longer
-  mixes same-named directories across repos into one compass: module
-  matching is segment-anchored (an unanchored `%app%` also matched
-  unrelated paths like `trapper/…`), a bare name resolves via the repos
-  that actually contain it and raises a clear "pass --repo" error when
-  ambiguous, cross-module-dependency sources are repo-scoped (a
-  same-named directory in another repo counts as a cross-module target,
-  with its repo-qualified label now critic-valid), and repo-prefixed
-  module paths (`polaris-app/app`) normalize to repo-relative.
-- Dashboard database view: stores with embeddings carry sqlite-vec
-  `vec0` virtual tables whose module is not loaded on the dashboard's
-  plain read-only connection — introspecting them crashed the whole view
-  with "no such module: vec0". The ANN internals (`vec_*`, `vecmv_*`,
-  and shadow tables) are excluded like the FTS shadows, and per-table
-  introspection is never fatal: a table that cannot be introspected
-  (module unavailable, transient lock, ...) is skipped, not an error —
-  and every skip is reported (a one-line banner in the view) so the
-  omission stays observable.
+- Compass critic file refs (`refs.file_exists`):
+  - directory paths resolve (`app/adk`): a directory is valid iff an
+    indexed file lives under it
+  - repo-qualified refs (`repo/app/adk`) re-validate within that repo
+  - LIKE wildcards in refs are escaped
+  - inherited by every consumer (critic, memory scoring, wiki
+    sources/refine, task gate, workflow validation)
+- Compass module resolution (multi-repo workspaces):
+  - module matching is segment-anchored; no substring matches
+  - bare names resolve via the repos containing them; ambiguity raises a
+    `--repo` hint instead of mixing repos
+  - `repo/module` paths normalize to repo-relative; all generation paths
+    (deterministic, LLM, task queue) produce one concept identity
+  - cross-dep sources are repo-scoped; a same-named directory in another
+    repo is a cross-module target (repo-qualified label)
+- Dashboard `/database` view:
+  - sqlite-vec internals (`vec_*`, `vecmv_*`) are excluded
+  - unintrospectable tables are skipped and reported (banner), never
+    fatal
 
 ## [0.18.0] - 2026-09-02
 

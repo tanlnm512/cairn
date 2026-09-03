@@ -898,13 +898,9 @@ def test_database_route_empty_store_renders_empty_state(tmp_path):
 
 
 def test_database_route_excludes_vec_ann_internals(tmp_path):
-    """Stores with embeddings carry sqlite-vec ``vec0`` virtual tables
-    (``vec_<model>`` + shadows) whose module is not loaded on the
-    dashboard's plain read-only connection — introspecting them crashed
-    the whole view with "no such module: vec0". The ANN internals are
-    excluded by name like the FTS shadows. (The fts5 tables stand in for
-    the vec0 shapes only; the never-fatal introspection skip is covered by
-    test_database_schema_reports_skipped_tables.)"""
+    """sqlite-vec internals (``vec_*``) are excluded by name like the FTS
+    shadows. Introspection-skip coverage:
+    test_database_schema_reports_skipped_tables."""
     db = tmp_path / "vectors.db"
     conn = sqlite3.connect(db)
     conn.executescript(
@@ -926,11 +922,8 @@ def test_database_route_excludes_vec_ann_internals(tmp_path):
 
 
 def test_database_schema_reports_skipped_tables(tmp_path):
-    """A table whose introspection raises (module unavailable, transient
-    lock, ...) is skipped without killing the view AND is reported in the
-    ``skipped`` payload — the omission is observable, never silent. A
-    connection factory stands in for the un-loadable module, since a
-    module-less virtual table cannot be created in-process."""
+    """An unintrospectable table is skipped (never fatal) and reported in
+    ``skipped``. The connection factory simulates an unloadable module."""
     from cairn.dashboard.data import get_database_schema
 
     db = tmp_path / "broken.db"

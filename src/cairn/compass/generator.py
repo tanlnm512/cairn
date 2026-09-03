@@ -30,21 +30,12 @@ from ..okf.concept import OKFConcept
 # Cap revise cycles to bound the generator->critic->revise loop.
 from ..llm.tasks import MAX_REVISE_CYCLES
 
-# Escape char for LIKE pattern matching. We escape the user-supplied
-# module_path so its literal '%' and '_' characters are treated as literals,
-# not wildcards (otherwise module_path="%" dumps the whole repo into one
-# compass file). The parameterization ('?') already prevents SQL injection;
-# this closes the separate wildcard-injection gap.
+# LIKE escape char: literal '%'/'_' in module paths must not act as wildcards.
 LIKE_ESCAPE_CHAR = "\\"
 
 
 def _escape_like(value: str, escape: str = LIKE_ESCAPE_CHAR) -> str:
-    """Escape LIKE wildcard metacharacters in `value` for safe use inside a
-    `... LIKE ? ESCAPE '<escape>'` clause.
-
-    Escapes the escape char itself first, then '%' and '_'. Returns the input
-    unchanged when it is empty/None.
-    """
+    """Escape LIKE wildcard metacharacters for `LIKE ? ESCAPE '<escape>'`."""
     if not value:
         return ""
     return (
@@ -55,23 +46,17 @@ def _escape_like(value: str, escape: str = LIKE_ESCAPE_CHAR) -> str:
 
 
 class ModuleResolutionError(ValueError):
-    """The module argument could not be resolved to a single repo.
-
-    Raised when a bare module name (e.g. `app`) names directories in more
-    than one repo and no --repo was given: silently dropping the repo filter
-    would mix both repos' facts into one compass.
-    """
+    """Module argument is ambiguous across repos or empty."""
 
 
 def _module_match_sql(alias: str = "path") -> str:
-    """SQL fragment matching a files.path column to a module directory on
-    segment boundaries, taking 3 params via _module_match_params: the
-    module path itself (a module pointing at a file), a root-anchored
-    module prefix (`app/...` for module `app`), or a mid-path module
-    prefix (`src/app/...`).
+    """SQL fragment matching a files.path column to a module directory
+    (3 params, via _module_match_params):
+    1. the module path itself
+    2. root-anchored module prefix (`app/...`)
+    3. mid-path module prefix (`src/app/...`)
 
-    Anchored on purpose: an unanchored `%app%` substring matches unrelated
-    paths (`trapper/utils.py`) and same-named directories in every repo.
+    Segment-anchored only — never a bare substring match.
     """
     return (
         f"({alias} = ? OR {alias} LIKE ? ESCAPE '\\' "
@@ -85,12 +70,7 @@ def _module_match_params(module_path: str) -> tuple:
 
 
 def _normalize_module_path(module_path: str, repo: Optional[str]) -> str:
-    """Strip a `{repo}/` prefix from a module path.
-
-    `cairn compass generate polaris-app/app` names the `app` module of the
-    polaris-app repo; files.path is repo-relative, so queries must use the
-    stripped form.
-    """
+    """Strip a leading `{repo}/` prefix (queries use repo-relative paths)."""
     if repo and module_path.startswith(repo + "/"):
         return module_path[len(repo) + 1:]
     return module_path
@@ -99,11 +79,8 @@ def _normalize_module_path(module_path: str, repo: Optional[str]) -> str:
 def _resolve_module(
     conn: sqlite3.Connection, module_path: str, repo: Optional[str],
 ) -> tuple:
-    """Resolve the (repo, repo-relative module path) pair for generation.
-
-    Raises ModuleResolutionError when the module is ambiguous across repos
-    (or empty after slash-stripping).
-    """
+    """Resolve (repo, repo-relative module path). Raises
+    ModuleResolutionError on ambiguity or empty input."""
     module_path = module_path.strip("/")
     if not module_path:
         raise ModuleResolutionError("module path is empty")
@@ -121,8 +98,8 @@ def generate_compass(
     """Generate a compass OKF concept for a module path.
 
     Args:
-        module_path: repo-relative module path; a `{repo}/`-prefixed path
-            (``polaris-app/app``) is normalized to repo-relative.
+        module_path: repo-relative module path (`{repo}/`-prefixed forms
+            are normalized).
         conn: graph DB connection.
         bundle: OKF bundle to write into (used for concept_id derivation).
         repo: optional repo name; if None, inferred from the path.
@@ -169,16 +146,12 @@ def generate_compass(
 def _infer_repo(conn, module_path: str) -> Optional[str]:
     cur = conn.cursor()
     for r in cur.execute("SELECT id, path FROM repos"):
-        # Match on repo id (stable basename) as a path segment of module_path.
-        # repos.path is workspace-relative (e.g. "." or a repo name), so the id
-        # is the durable identity.
+        # Repo id (stable basename) as a path segment of module_path.
         rid = r["id"]
         if module_path.startswith(rid + "/") or ("/" + rid + "/") in module_path \
                 or module_path == rid:
             return rid
-    # Bare module name: which repos actually contain it? A directory named
-    # `app` can exist in several repos -- without a repo filter the fact
-    # queries would mix them into one compass, so make ambiguity loud.
+    # Bare module name: infer from the repos that contain it; ambiguous -> raise.
     rows = cur.execute(
         f"SELECT DISTINCT repo_id FROM files WHERE {_module_match_sql()}",
         _module_match_params(module_path),
@@ -191,9 +164,7 @@ def _infer_repo(conn, module_path: str) -> Optional[str]:
         )
     if len(rows) == 1:
         return rows[0]["repo_id"]
-    # Fallback: single-repo workspace — there's only one repo. This keeps a
-    # no-match module (typo, empty dir) reporting "(no symbols detected in
-    # this module)" instead of crossing repos.
+    # Fallback: single-repo workspace infers its only repo.
     repos = cur.execute("SELECT id FROM repos").fetchall()
     if len(repos) == 1:
         return repos[0]["id"]
@@ -237,19 +208,15 @@ def _rank_key_files(conn, symbols: List[dict], top: int = 5) -> List[dict]:
 def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]:
     """Outgoing edges from this module's symbols to symbols in other modules.
 
-    The source side is segment-anchored to `module_path` and scoped to `repo`
-    when known (a bare directory name can exist in many repos). "Outside the
-    module" is repo-aware too: a same-named directory in ANOTHER repo is a
-    distinct module, so its files count as cross-module targets. All target
-    labels are repo-qualified (`{repo}/{top-two-segments}`); for cross-repo
-    targets that qualification is exactly what the critic's repo bridge
-    validates.
+    - source: segment-anchored to `module_path`, repo-scoped when known
+    - "outside the module" is repo-aware: a same-named directory in
+      another repo is a different module
+    - labels: `{repo}/{top-two-segments}` (repo-qualified refs are
+      critic-valid via the refs repo bridge)
     """
     cur = conn.cursor()
     mods = set()
-    # files.path is repo-relative (portable), so target paths need no repo-root
-    # stripping. We fetch repos.path only to strip it should an absolute path
-    # appear (paths stored before the current contract).
+    # Legacy stores may carry absolute paths; strip the repo root if present.
     legacy_repo_root = ""
     if repo:
         row = cur.execute("SELECT path FROM repos WHERE id = ?", (repo,)).fetchone()
@@ -383,10 +350,7 @@ def generate_compass_with_llm(
         client: an LLMClient (synthesize/revise). If None or unavailable, the
                 function falls back to the deterministic generator.
     """
-    # 1. Resolve the module the same way the deterministic path does (repo
-    # inference + repo-prefix normalization), then gather facts. Resolving
-    # here keeps this path's concept identity (resource/concept_id/tags)
-    # identical to the deterministic path's for the same module.
+    # 1. Resolve module, then gather facts (single source of truth).
     repo, module_path = _resolve_module(conn, module_path, repo)
     facts = _gather_facts(conn, module_path, repo)
 

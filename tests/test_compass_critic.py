@@ -116,9 +116,7 @@ class TestFileExists:
         assert _file_exists(conn, "src/DoesNotExist.kt") is False
 
     def test_directory_ref_resolves_via_prefix(self, fresh_db):
-        # The graph stores files only; a directory exists iff some indexed
-        # file lives under it. Reported bug: `app/adk`-style directory refs
-        # were rejected as "hallucinated file path" even off a fresh build.
+        # Directories exist only as prefixes of stored file paths.
         conn = _conn_with_fixture(fresh_db)
         assert _file_exists(conn, "src/graph") is True
         assert _file_exists(conn, "other/unrelated") is True
@@ -133,12 +131,8 @@ class TestFileExists:
         assert _file_exists(conn, "src/grap") is False
 
     def test_repo_qualified_ref_bridges_to_repo(self, fresh_db):
-        # Under the current repo-relative storage contract a repo-qualified
-        # ref never matches literally (files.path carries no repo prefix),
-        # so only the bridge -- re-validating the remainder within the
-        # named repo -- can resolve it. The pkg/inner row below is seeded
-        # repo-relative; no suffix/prefix arm can reach it without the
-        # bridge.
+        # files.path is repo-relative here, so only the repo bridge can
+        # resolve `repo/path` refs (the pkg/inner row is repo-relative).
         conn = _conn_with_fixture(fresh_db)
         conn.execute(
             "INSERT INTO files (id, repo_id, path, language) VALUES "
@@ -151,9 +145,7 @@ class TestFileExists:
         assert _file_exists(conn, "r2/pkg/inner/util.py") is False
 
     def test_like_wildcards_in_ref_are_literal(self, fresh_db):
-        # A ref's '%'/'_' must not act as wildcards: unescaped,
-        # `app/services_extra` would match `app/services/extra/...` ('_'
-        # matches '/') and `app/%` would match everything.
+        # '%'/'_' in refs are literals, not wildcards.
         conn = _conn_with_fixture(fresh_db)
         conn.execute(
             "INSERT INTO files (id, repo_id, path, language) VALUES "

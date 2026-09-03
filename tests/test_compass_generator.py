@@ -1,18 +1,10 @@
 """Module resolution for `cairn compass generate` in multi-repo workspaces.
 
-Reported symptoms (2026-09-03, polaris workspace) — two root causes, three
-surfaces:
-1. A bare module name (`app`) matched same-named directories in EVERY repo
-   via an unanchored `%app%` path LIKE, mixing both repos' facts into one
-   compass (polaris-app + polaris-api both have `app/`).
-2. The unanchored LIKE also matched unrelated paths that merely contain the
-   module name as a substring (`trapper/...` for module `app`).
-3. The deterministic template's repo-qualified cross-dep labels
-   (`polaris-api/app/adk`) were rejected by the critic's file_exists, so the
-   generator failed its own gate whenever cross-module deps existed.
-
-files.path is repo-relative in these fixtures (the current scanner contract);
-test_compass_critic.py covers the legacy absolute-path storage form.
+- bare module names resolve to one repo; ambiguity raises
+- matching is segment-anchored, never substring
+- one concept identity across all generation paths
+- files.path is repo-relative here; test_compass_critic.py covers the
+  legacy absolute-path form
 """
 from __future__ import annotations
 
@@ -87,8 +79,7 @@ def conn(fresh_db) -> sqlite3.Connection:
 
 class TestModuleResolution:
     def test_bare_ambiguous_module_raises(self, conn):
-        # The reported bug: bare `app` silently dropped the repo filter and
-        # mixed polaris-app + polaris-api facts. It must now fail loudly.
+        # Ambiguous bare name fails loudly instead of mixing repos.
         with pytest.raises(ModuleResolutionError) as exc:
             generate_compass("app", conn, OKFBundle("/tmp/k"))
         msg = str(exc.value)
@@ -101,19 +92,17 @@ class TestModuleResolution:
         assert _infer_repo(conn, "trapper") == "polaris-app"
 
     def test_repo_prefixed_module_infers_and_normalizes(self, conn):
-        # `polaris-app/app` names polaris-app's app module; queries must use
-        # the repo-relative form.
+        # `repo/module` resolves to (repo, repo-relative module).
         assert _resolve_module(conn, "polaris-app/app", None) == ("polaris-app", "app")
 
     def test_substring_path_not_matched(self, conn):
-        # `app` must not match `trapper/decoy.py` (unanchored `%app%` did).
+        # `app` must not match `trapper/decoy.py`.
         syms = _symbols_in_module(conn, "app", "polaris-app")
         names = {s["name"] for s in syms}
         assert names == {"agent_run"}
 
     def test_module_like_wildcards_are_literal(self, conn):
-        # A module's '%'/'_' must not act as wildcards: unescaped,
-        # `%/graph_core/%` would match `graph/core/...` ('_' matches '/').
+        # '%'/'_' in a module name are literals.
         _row(conn, "files", id="f9", repo_id="polaris-app", path="graph/core/mod.py", language="python")
         _row(conn, "symbols", id="s9", file_id="f9", name="core_fn", qualified_name="core.core_fn", kind="function", line_start=1, line_end=5)
         conn.commit()
@@ -144,10 +133,7 @@ class TestGenerateCompass:
         assert "api_handler" not in concept.body
 
     def test_llm_path_identity_matches_deterministic(self, conn, tmp_path):
-        # The LLM path must derive its concept identity (resource,
-        # concept_id, tags) from the resolved repo + repo-relative module,
-        # so one module gets ONE compass file whichever path generated it
-        # (a diverged identity also never satisfies detect_gaps coverage).
+        # One module, one concept identity, regardless of generation path.
         bundle = OKFBundle(str(tmp_path / "k"))
         det = generate_compass("polaris-app/app", conn, bundle)
         fallback = generate_compass_with_llm("polaris-app/app", conn, bundle, client=None)
@@ -166,9 +152,7 @@ class TestGenerateCompass:
 
 
 def test_no_match_module_reports_empty_not_cross_repo(fresh_db, tmp_path):
-    # Single-repo workspace, module matching nothing: the only repo is
-    # still inferred so the compass reports "(no symbols detected ...)"
-    # rather than silently querying across repos.
+    # Single-repo workspace: a no-match module still infers the repo.
     _row(fresh_db, "repos", id="solo", name="solo", path="/work/solo")
     _row(fresh_db, "files", id="sf1", repo_id="solo", path="app/agent.py", language="python")
     _row(fresh_db, "symbols", id="ss1", file_id="sf1", name="solo_fn", qualified_name="solo.solo_fn", kind="function", line_start=1, line_end=5)
@@ -221,9 +205,7 @@ class TestCompassGenerateCLI:
             assert not list(Path(know).rglob("compass/*.md"))
 
     def test_use_llm_queue_path_ambiguity_fails_at_enqueue(self):
-        # Default file-queue backend: ambiguity must fail at ENQUEUE time
-        # (the except covers the _gather_facts call), not later during
-        # task completion.
+        # File-queue backend: ambiguity fails at enqueue time.
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             db, know = self._setup(tmp)

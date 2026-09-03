@@ -18,9 +18,7 @@ from typing import List, Tuple
 
 BACKTICK_RE = re.compile(r"`([^`]+)`")
 
-# Escape char for LIKE pattern matching. Refs come from generated prose, so
-# literal '%'/'_' in a path (e.g. `app/services_extra`) must not act as
-# wildcards.
+# LIKE escape char: literal '%'/'_' in refs must not act as wildcards.
 LIKE_ESCAPE_CHAR = "\\"
 
 
@@ -88,9 +86,13 @@ def extract_symbol_refs(body: str) -> List[str]:
 # --- graph existence checks ----------------------------------------------
 
 def _path_match_sql(alias: str = "path") -> str:
-    """SQL fragment matching a column to a path ref on any of:
-    exact file, file-suffix, root-anchored directory prefix, or mid-path
-    directory prefix. Takes 4 params via _path_match_params."""
+    """SQL fragment matching a column to a path ref (4 params, via
+    _path_match_params):
+    1. exact file path
+    2. file-path suffix
+    3. root-anchored directory prefix
+    4. mid-path directory prefix
+    """
     return (
         f"({alias} = ? OR {alias} LIKE ? ESCAPE '\\' "
         f"OR {alias} LIKE ? ESCAPE '\\' OR {alias} LIKE ? ESCAPE '\\')"
@@ -103,20 +105,14 @@ def _path_match_params(ref: str) -> Tuple[str, str, str, str]:
 
 
 def file_exists(conn: sqlite3.Connection, ref: str) -> bool:
-    """True if `ref` names a real file OR directory in the graph.
+    """True if `ref` resolves to a real file or directory.
 
-    The graph stores files only, so a directory exists iff some indexed file
-    lives under it: `src/graph` resolves via a segment-boundary prefix
-    (`src/graph/queries.py`), never a bare substring. A file ref matches
-    exactly or as a path suffix -- `queries.py` can't be satisfied by an
-    unrelated path that merely contains it.
-
-    A repo-qualified ref (`polaris-app/app/adk`) -- the form multi-repo facts
-    naturally cite -- is bridged by re-validating the remainder within that
-    repo: files.path is repo-relative under the current scanner contract, so
-    the qualified form never matches literally (legacy absolute-path stores
-    may match it as a mid-path prefix -- harmless, the bridge is then
-    redundant).
+    Directories exist only as prefixes of stored file paths. Match arms
+    (segment-boundary only, never bare substring):
+    1. exact file path
+    2. file-path suffix (`src/graph/queries.py`)
+    3. directory prefix (`src/graph`)
+    4. repo-qualified (`repo/...`) re-validated within that repo
     """
     ref = ref.strip("/")
     if not ref:
