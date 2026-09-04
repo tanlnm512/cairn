@@ -2,7 +2,14 @@
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 Status reflects code state per [survey.md](survey.md), not intent.
-**Before-audit**: pending — the orchestrator writes `passed @ <sha>` here
+**Before-audit**: passed @ 50894faac0aa14f8b10c5d1bc2d77ced1202073b (2026-09-04)
+- Preconditions: task.md phase order internally consistent (check.py: 0 fail, 4 benign warn — see below)
+- Fresh baseline: `pytest -m core -q --ignore=tests/test_vector_scan.py` → 26 passed, 1 skipped; the 9 files this plan's tasks touch (`test_memory_lifecycle.py`, `test_doctor.py`, `test_status_resource_health.py`, `test_mcp_wiki_tool.py`, `test_agent_surface.py`, `test_mcp_connection_leaks.py`, `test_import_validation.py`) → 119 passed. `test_vector_scan.py` fails at collection on a pre-existing local numpy ABI mismatch in `~/.cairn/lib` (compiled for cpython-314, venv is 3.11) — unrelated to this repo's code or this plan (same class of issue as the live tribal memory "pip --target dir shared across interpreter ABIs corrupts unrepairably"), excluded from this baseline and out of scope to fix here.
+- Clean tree: confirmed after stashing two pre-existing unrelated modifications (`specs/context/structure.md`, `specs/context/tech.md` — present before this session started) and committing the spec doc set alone at 50894fa.
+- Already-done sweep: survey.md shows every FR as TODO/PARTIAL with no passing verify — nothing to skip.
+- Branch: `fix/tribal-memory-loop-closure` cut from `main` @ 7663989.
+- Constitution gate: C-01 (workflow) — pre-commit passed on the spec-doc commit; C-02 (test-first) — every task pairs a failing test with its implementation; C-03 (dependency gate) — tech-spec confirms no new runtime dependency; C-04 (test isolation) — cited in every hook-touching task (lazy imports, Popen patched at call site, explicit tmp_path db/knowledge overrides).
+- `check.py` remaining WARNs (all benign, reviewed): FR-012/FR-013 "2 milestone rows" is the checker matching plan.md's ASCII dependency diagram text alongside the real table row (only one actual milestone row exists); the `<date>` placeholder flag is the Conventions section's illustrative example syntax; the `recurrence.py` citation-not-found is the new file T006 creates (doesn't exist yet by design).
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
@@ -36,7 +43,9 @@ Status reflects code state per [survey.md](survey.md), not intent.
   `_bundle()`, `_server_core.py:222`) returning
   `f"mcp-{os.getpid()}-{date.today().isoformat()}"` and use it in both
   `explore` (new) and `recall_memory` (replacing the hardcoded `"mcp"`
-  literal, `tools_memory.py:94`); inside `explore`'s existing `try:` block,
+  literal, `tools_memory.py:94` — this reaches beyond FR-002's literal text
+  into `recall_memory`; justified and disclosed in D-002, cited here per
+  reviewer NIT for traceability); inside `explore`'s existing `try:` block,
   after `result = queries.explore(conn, query)`, compute
   `seed_names = [s["name"] for s in result["seeds"] if s.get("name")][:5]`,
   call `search_memory(conn, _bundle(), " ".join(seed_names), tier="tribal",
@@ -59,9 +68,17 @@ Status reflects code state per [survey.md](survey.md), not intent.
   pinning the new `WEIGHTS` (no `critic_score`/`authority` keys; values
   `graph_verification=0.357`, `cross_session_refs=0.286`,
   `agent_confidence=0.214`, `freshness=0.0715`, `reinforcement=0.0715`, sum
-  == 1.0 within 1e-9) and a synthetic-signals spread test (US3/AC2, TC-011)
+  == 1.0 within 1e-9); a synthetic-signals spread test (US3/AC2, TC-011)
   showing more than 2 distinct scores across varying `cross_session_refs`
-  inputs; update the pinned literal-value tests
+  inputs; **and a concrete promotion-threshold test (US3/AC2, TC-010,
+  reviewer BLOCK finding)**: two fixed signal dicts — Memory A with high
+  `graph_verification` and `cross_session_refs`, Memory B with only
+  `agent_confidence` set and `cross_session_refs=0` — asserting
+  `compute_score(A) `materially` `>` `compute_score(B)` and that
+  `tier_for_score(A's score)` reaches `tribal` while `tier_for_score(B's
+  score)` does not (this is the concrete "A promotes, B doesn't" case
+  TC-011's spread test does not itself assert). Update the pinned
+  literal-value tests
   `TestScoringWeights::test_freshness_weight_reduced` (`:185-186`) and
   `TestSevenSignalScore::test_compute_score_includes_reinforcement`
   (`expected` at `:277`, new value `0.607`, computed per tech-spec A3) in
@@ -102,8 +119,21 @@ Status reflects code state per [survey.md](survey.md), not intent.
   `_HOOK_ENTRYPOINTS` test asserting `"post_tool_failure"` is present and
   written to a fixture client config, with `cairn.hooks.claude_hooks
   subprocess.Popen` patched at the call site (lazy import inside the test
-  function, per survey § Test isolation conventions). Red before T006.
-  (FR-006, FR-007)
+  function, per survey § Test isolation conventions); **the wiring itself
+  (reviewer WARN)**: a test that calls `post_tool_failure()` with a fixture
+  tool-failure payload and asserts the patched `Popen` was invoked with
+  `--recurrence-key <sig>` where `<sig>` matches
+  `failure_signature(tool_name, safe_error)` computed independently in the
+  test — the one link connecting the hook to the gate that no other test in
+  this task exercises; **and a merge-idempotency re-check (reviewer WARN,
+  tech-spec D-013)**: locate the existing `install-agents`
+  already-installed/idempotency test(s) in `tests/` covering
+  `_HOOK_ENTRYPOINTS`/`_already_installed`, add a fixture client config
+  containing the new `post_tool_failure` entrypoint (and `session_start`
+  once T009/T010 lands — a second pass over the same test is acceptable),
+  and confirm "already installed → no write" still holds; if no such test
+  exists today, note that explicitly rather than silently skipping it. Red
+  before T006. (FR-006, FR-007)
 - [ ] T006 (after T005) Implement the recurrence gate per tech-spec
   A4/D-005: append the additive-only
   `CREATE TABLE IF NOT EXISTS memory_failure_signatures (sig TEXT PRIMARY
@@ -156,8 +186,11 @@ Status reflects code state per [survey.md](survey.md), not intent.
   `"No tribal memories yet."`; a coupling test pinning that exact sentinel
   string against `cli/memory.py`'s `memory_digest` on an empty bundle; a
   `_HOOK_ENTRYPOINTS`/`_hook_markers()` test for `"session_start"`; a
-  `claude_hooks_block()` test asserting a `SessionStart` block with no
-  matcher is written. Red before T010. (FR-004)
+  `claude_hooks_block()` test asserting a `SessionStart` block with
+  `matcher: "startup"` (D-014, post-review ruling — not "no matcher") is
+  written; a negative case asserting a `resume`/`clear`/`compact`/`fork`
+  event does not trigger the digest (TC-006's "once per session" scope
+  note). Red before T010. (FR-004)
 - [ ] T010 (after T009) Implement `session_start()` in
   `src/cairn/hooks/claude_hooks.py` per tech-spec A2 (G1 resolved — event
   key is exactly `"SessionStart"`, no matcher required, stdout becomes
@@ -168,7 +201,9 @@ Status reflects code state per [survey.md](survey.md), not intent.
   contract; add `"session_start"` to `_HOOK_ENTRYPOINTS`, both
   `cairn.hooks.claude_hooks session_start` and legacy
   `src.hooks.claude_hooks session_start` markers to `_hook_markers()`, and
-  register the `"SessionStart"` event block (no matcher) in
+  register the `"SessionStart"` event block with `matcher: "startup"`
+  (D-014 — not "no matcher": `resume`/`clear`/`compact`/`fork` are
+  deliberately excluded since they can fire mid-session) in
   `claude_hooks_block()`; Cursor is explicitly out of scope for this FR
   (no session-start-shaped event exists in `cursor_hooks.py`/`cursor.py`
   per survey — do not add one). Turns T009 green. (FR-004)

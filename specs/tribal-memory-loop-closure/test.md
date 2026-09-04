@@ -77,8 +77,13 @@ has an observable pass condition. No implementation details.
   emitted as additional context to the agent, once for that session
 - **Pass condition**: the session-start output/context includes tribal
   memory content, and the memories present are the highest-scored ones for
-  that workspace (not an arbitrary or unscored subset); a second
-  session-start event in the same session does not re-emit them.
+  that workspace (not an arbitrary or unscored subset). Scope note (ruling
+  D-014, tech-spec.md): "once for that session" is satisfied by firing only
+  on the `startup` source — `resume`/`clear`/`compact`/`fork` are excluded,
+  since `compact`/`clear` occur mid-session and a Claude Code session has no
+  narrower "did this already fire" signal available to a stateless hook. No
+  re-fire-suppression behavior is tested or required beyond that matcher
+  restriction.
 
 ## TC-007 — Session-start memory context stays within a token budget
 - **Story**: US2 (boundary) · **Traces to**: FR-004, AC1
@@ -123,7 +128,11 @@ has an observable pass condition. No implementation details.
   that A is eligible for tribal-tier promotion while B is not
 - **Pass condition**: Memory A's computed score is materially higher than
   Memory B's (not within the same narrow cluster the old formula produced),
-  and only Memory A crosses the tribal-tier promotion threshold.
+  and only Memory A crosses the tribal-tier promotion threshold. This case
+  must be implemented as a concrete unit test (two fixed signal dicts, both
+  scores computed, `tier_for_score` called on both) — not merely implied by
+  TC-011's synthetic spread test, which shows spread without asserting
+  either side of a promotion boundary.
 
 ## TC-011 — Scores show wider spread than the old two-cluster distribution
 - **Story**: US3 (boundary) · **Traces to**: FR-005, AC2

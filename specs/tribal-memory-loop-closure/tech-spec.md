@@ -625,8 +625,9 @@ verbs (`evolve`, `digest`, `promote`, `decay`, `demote`, **`forget`**) still wor
   `recall_memory`'s no-results string, which currently steers agents to
   `memory_digest() (no query)` — a phantom tool after this change
   (session-grep, `tools_memory.py:106-108`).
-- **Exact doc lines to update (FR-013)** — the four survey-cited files plus
-  seven more this session's grep found, three of which are **test-enforced**:
+- **Exact doc lines to update (FR-013)** — survey.md cites 2 files
+  (`README.md`, `docs/mcp-tools.md`); this session's grep found 9 more, of
+  which 3 are **test-enforced** (11 files total):
 
   | File:line | Current text | Enforced by |
   |---|---|---|
@@ -901,6 +902,24 @@ this session.
   This is a small scope addition beyond FR-012's literal "registration-surface
   change only" wording, justified precisely because that wording claims no
   behavior change.
+
+### D-014: `session_start` registers under `SessionStart` with `matcher: "startup"` only (orchestrator ruling, post-review)
+- **Context**: reviewer flagged that G1's "omit the matcher to fire on every
+  source" conflicts with FR-004/TC-006's "once per session" — `SessionStart`
+  fires on `startup|resume|clear|compact|fork`, and `compact`/`clear` are
+  mid-session events, not new sessions; a stateless hook has no cheap way to
+  suppress a re-fire within one session.
+- **Decision**: register the block with `matcher: "startup"` only. No
+  de-duplication mechanism is built.
+- **Consequences**: `resume`/`clear`/`compact`/`fork` never re-emit the
+  digest — the narrower matcher is what makes "once per session" true by
+  construction rather than by an unbuilt guard. Cost: a resumed session
+  (`resume`) gets no digest even though it's arguably "starting" from the
+  agent's perspective; accepted, since `resume` already carries prior
+  transcript context a fresh `startup` wouldn't have, making the tribal
+  digest comparatively less needed there. Revisit if usage shows `resume`
+  sessions want it too — that's an argument for an actual per-session dedup
+  mechanism, a bigger change than this spec's scope.
 
 ### D-013: adding hook entrypoints deliberately re-triggers `install-agents` merges
 - **Context**: `_already_installed` returns `_HOOK_ENTRYPOINTS <= found`
