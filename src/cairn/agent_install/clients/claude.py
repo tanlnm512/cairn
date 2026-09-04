@@ -108,7 +108,8 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
                     argv += ["-e", f"{key}={value}"]
                 argv += ["--", *resolve_cg_command(), "serve"]
             try:
-                proc = subprocess.run(argv, capture_output=True, timeout=15, check=False)
+                proc = subprocess.run(argv, capture_output=True, timeout=15, check=False,
+                                      text=True, errors="replace")
             except (subprocess.SubprocessError, OSError) as e:
                 res.notes.append(
                     f"WARNING: `claude mcp add --scope user` failed ({e}); "
