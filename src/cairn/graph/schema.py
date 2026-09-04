@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -784,7 +785,17 @@ def get_db(
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if not read_only:
-        conn.execute("PRAGMA journal_mode = WAL")
+        # Changing journal mode requires brief exclusive access to the file;
+        # two threads opening a fresh store race it (busy_timeout does not
+        # cover the pragma), so retry bounded before giving up.
+        for _attempt in range(3):
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                break
+            except sqlite3.OperationalError:
+                if _attempt == 2:
+                    raise
+                time.sleep(0.05)
     conn.execute("PRAGMA mmap_size = 268435456")
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
     # The schema work + commit and marking the path initialized must be atomic
