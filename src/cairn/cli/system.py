@@ -9,7 +9,7 @@ import sqlite3
 import time
 import click
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import __version__
@@ -491,7 +491,7 @@ def status(db, knowledge):
 @main.command(name="eval")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--knowledge", default=DEFAULT_KNOWLEDGE_PATH, help="Knowledge directory path.")
-@click.option("--corpus", type=click.Choice(["L1", "L5", "all"]), default="all", help="Corpus filter.")
+@click.option("--corpus", type=click.Choice(["L1", "L4", "L5", "all"]), default="all", help="Corpus filter.")
 @click.option("--queries", "queries_path", default=None,
               help="Path to eval queries.yaml OR a ground-truth directory "
                    "(queries.jsonl + expectations.tsv); default: bundled tests/eval/queries.yaml.")
@@ -515,7 +515,7 @@ def eval_cmd(db, knowledge, corpus, queries_path, as_json):
 
     from . import display
     rows = []
-    for c_key in ["L1", "L5"]:
+    for c_key in ["L1", "L4", "L5"]:
         if corpus != "all" and c_key != corpus:
             continue
         data = report.get(c_key, {})
@@ -629,7 +629,7 @@ def sync(workspace, db):
 # --------------------------------------------------------------------------
 # cairn doctor (spec observability-telemetry §6.5)
 # --------------------------------------------------------------------------
-# 10 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
+# 11 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
 # one informational line unless a server backend is configured, D-012; the
 # environment wiring audit is appended to both return paths, FR-007/D-007).
 # Read-only -- doctor never writes to
@@ -648,6 +648,7 @@ _FAIL = "FAIL"
 # Thresholds (assertable; each documented at its check). Chosen so a healthy
 # store stays PASS/WARN and only genuine breakage FAILs.
 STALE_BUILD_DAYS = 7             # last build_runs row older than this -> WARN
+MEMORY_REF_WINDOW_DAYS = 30      # tribal memories older than this, 0 refs in window -> WARN
 CONTENTION_WINDOW_DAYS = 7       # lock_contention / stray_swept lookback
 TOOL_HEALTH_WINDOW_DAYS = 7      # tool_metrics lookback window
 TOOL_ERROR_RATE_WARN = 0.10      # a tool with >10% errors -> WARN
@@ -1292,8 +1293,60 @@ def _knob_source(name: str, default: str) -> tuple[str, str]:
     return default, "default"
 
 
+def _check_memory_staleness(conn, db: str) -> dict:
+    """9. Memory staleness: tribal memories nobody references.
+
+    Counts tribal memory files older than ``MEMORY_REF_WINDOW_DAYS`` by file
+    mtime over ``<bundle>/memory/tribal/*.md`` (a stat per file, no YAML
+    parse), and ``memory_refs`` rows recorded inside the window. WARN when old
+    memories exist and zero references were recorded in that window (the tier
+    is write-only); PASS otherwise, reporting the reference count. The bundle
+    resolves from ``db``'s parent so the check audits the store ``--db``
+    names. Read-only and never raising: a missing tribal directory is a
+    fresh-install PASS; an unreadable bundle degrades to WARN with the reason.
+    """
+    tribal_dir = Path(db).parent / ".knowledge" / "memory" / "tribal"
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MEMORY_REF_WINDOW_DAYS)
+    try:
+        tribal = sorted(tribal_dir.glob("*.md")) if tribal_dir.is_dir() else []
+        old = [
+            p
+            for p in tribal
+            if datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc) < cutoff
+        ]
+    except OSError as e:
+        return _result("memory_staleness", _WARN, f"cannot read memory bundle: {e}")
+    row = conn.execute(
+        "SELECT COUNT(*) FROM memory_refs WHERE referenced_at >= ?",
+        (cutoff.isoformat(),),
+    ).fetchone()
+    refs = row[0] if row is not None else 0
+    if not old:
+        return _result(
+            "memory_staleness",
+            _PASS,
+            f"no tribal memories older than {MEMORY_REF_WINDOW_DAYS}d "
+            f"({len(tribal)} total, {refs} reference(s) in that window)",
+        )
+    if refs == 0:
+        return _result(
+            "memory_staleness",
+            _WARN,
+            f"{len(old)} tribal memories older than {MEMORY_REF_WINDOW_DAYS}d, "
+            "0 references recorded in that window — memory is write-only",
+            hint="read memories through explore / recall_memory so lookups record "
+            "memory_refs; check wiring with the environment check",
+        )
+    return _result(
+        "memory_staleness",
+        _PASS,
+        f"{len(old)} tribal memories older than {MEMORY_REF_WINDOW_DAYS}d, "
+        f"{refs} reference(s) recorded in that window",
+    )
+
+
 def _check_config() -> dict:
-    """9. Config echo: the CAIRN_* knobs that alter behavior (informational).
+    """10. Config echo: the CAIRN_* knobs that alter behavior (informational).
 
     Always PASS -- a transparency echo, not a health verdict. Lists the
     effective runtime knobs so a doctor snapshot is self-describing. The
@@ -1567,7 +1620,7 @@ def _registration_findings(
 
 
 def _check_environment(db: str) -> dict:
-    """10. Environment wiring: store / registrations / platform / binary.
+    """11. Environment wiring: store / registrations / platform / binary.
 
     Status is the worst sub-audit (FAIL over WARN over PASS):
 
@@ -1673,12 +1726,13 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
         _result("parse_errors", _WARN, "database unavailable (see schema)"),
         _result("concurrency", _WARN, "database unavailable (see schema)"),
         _result("tool_health", _WARN, "database unavailable (see schema)"),
+        _result("memory_staleness", _WARN, "database unavailable (see schema)"),
         _check_config(),
     ]
 
 
 def _run_doctor(db: str) -> list[dict]:
-    """Execute the 10 checks against ``db``. Never raises.
+    """Execute the 11 checks against ``db``. Never raises.
 
     A store that can't be opened FAILs the schema check and degrades the
     remaining DB-dependent checks to WARN. A store whose path doesn't EXIST
@@ -1715,6 +1769,7 @@ def _run_doctor(db: str) -> list[dict]:
             _check_parse_errors(conn),
             _check_concurrency(conn),
             _check_tool_health(conn),
+            _check_memory_staleness(conn, db),
             _check_config(),
             _check_environment(db),
         ]
@@ -1751,12 +1806,13 @@ def _render_doctor(results: list[dict], display) -> None:
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def doctor(db, as_json):
-    """Run 10 system health checks (PASS/WARN/FAIL each).
+    """Run 11 system health checks (PASS/WARN/FAIL each).
 
     Surfaces silent degradations: schema integrity, embedding/ANN backend
     fallbacks, embed-server health (probe/model/parity/latency when a server
     backend is configured), graph freshness, parse errors, lock contention,
-    per-tool error/latency health, and environment wiring (store resolution,
+    per-tool error/latency health, tribal-memory reference staleness, and
+    environment wiring (store resolution,
     registrations, platform/transport, binary coherence). Read-only -- never
     writes to the
     store. Exit code is

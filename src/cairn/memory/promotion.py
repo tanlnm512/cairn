@@ -1,8 +1,9 @@
 """Memory promotion, critic, decay, and search."""
-from __future__ import annotations
 
 import logging
+import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -78,6 +79,9 @@ def capture_memory(
         signals = score_memory(concept, conn, bundle)
         apply_score(concept, signals)
         tier = store_mod.tier_for_score(signals["score"])
+        if _is_session_bookkeeping(title, body):
+            tier = "raw"
+            concept.extensions["memory_triage"] = "session-bookkeeping"
         path = store_mod.store_memory(concept, bundle, tier=tier)
 
         # Flip the old memory to is_latest=false AFTER the new one is safely on disk.
@@ -92,6 +96,39 @@ def capture_memory(
         "concept": concept,
         "superseded": superseded_id,
     }
+
+
+_TASK_ID_RE = re.compile(r"\bT\d{3}\b")
+_BRANCH_RE = re.compile(
+    r"(?<![\w/])(?:feature|feat|fix|bugfix|hotfix|chore|release|docs|refactor|spec)"
+    r"/[A-Za-z0-9._-]+"
+)
+_DATED_COUNT_RE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b(?=.*\b\d+\s+(?:commits?|files?|prs?|tasks?|modules?|specs?|tests?)\b)"
+    r"|\b\d+\s+(?:commits?|files?|prs?|tasks?|modules?|specs?|tests?)\b(?=.*\b\d{4}-\d{2}-\d{2}\b)"
+)
+_PROGRESS_COUNT_RE = re.compile(
+    r"\b\d+\s+(?:[\w'-]+\s+){0,3}(?:done|left|remaining|pending|complete|completed|to go)\b"
+)
+
+
+def _is_session_bookkeeping(title: str, body: str) -> bool:
+    """Match session-bookkeeping content: task IDs, branch refs, and dated
+    or progress counts.
+
+    The task-ID, branch, and dated-count patterns run against the title
+    and body; the progress-count pattern runs against the title only,
+    since bodies legitimately contain sentences like "3 callers
+    remaining".
+    """
+    combined = f"{title}\n{body}"
+    if (
+        _TASK_ID_RE.search(combined)
+        or _BRANCH_RE.search(combined)
+        or _DATED_COUNT_RE.search(combined)
+    ):
+        return True
+    return bool(_PROGRESS_COUNT_RE.search(title))
 
 
 def _sanitize_ref_context(context: str) -> str:
@@ -163,12 +200,19 @@ def record_references_batch(
         for memory_path, context in refs
     ]
     try:
-        conn.executemany(
-            "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) "
-            "VALUES (?, ?, ?, ?, ?)",
-            rows,
-        )
-        conn.commit()
+        for attempt in range(3):
+            try:
+                conn.executemany(
+                    "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    rows,
+                )
+                conn.commit()
+                break
+            except sqlite3.OperationalError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.05)
     except sqlite3.OperationalError as e:
         note_contention("promotion.record_references_batch", error=e)
         # Lock contention or read-only connection -- ref counting is analytics.
@@ -627,9 +671,9 @@ def evolve_memory(
     from the old memory.
 
     The new body AND title are redacted via :func:`strip_private_data`
-    before storage, mirroring ``capture_memory``'s floor -- the MCP
-    ``memory_evolve`` tool and the CLI both reach this function, so without
-    redaction here a secret in an evolved body or the new title would
+    before storage, mirroring ``capture_memory``'s floor -- the CLI
+    ``cairn memory evolve`` verb and any other caller reach this function, so
+    without redaction here a secret in an evolved body or the new title would
     persist verbatim (the same two-codepath divergence that once left
     ``record_memory`` unredacted; titles additionally leak into the
     description field and the slugified filename, audit F3). ``new_body``

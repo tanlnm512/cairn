@@ -16,6 +16,6 @@ bulk mutations via CLI.
 4. Run `cairn memory batch-critic` to process pending drafts (bulk mutation — CLI only)
 5. If any memory scored above 0.7, suggest:
    `cairn memory promote <path>` (bulk tier change — CLI only)
-   Or via MCP: `memory_promote("<path>")` for a single promotion.
+   Or via CLI: `cairn memory promote "<path>"` for a single promotion.
 
 Report what was captured and any memories worth promoting.

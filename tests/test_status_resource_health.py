@@ -4,7 +4,7 @@ last-build age, 24h tool error rate.
 The status resource is a read-only text surface (not a tool), so this exercises
 it end-to-end via a file-backed fixture DB and asserts the ``health:`` block is
 present and reflects seeded state. No new MCP tool is registered -- a tool-count
-smoke (``verify_tool_count``) pins the 27-tool contract (acceptance criterion).
+smoke (``verify_tool_count``) pins the 22-tool contract (acceptance criterion).
 
 Fixture DB is file-backed rather than ``:memory:`` because ``status_resource``
 opens and closes ``_conn()`` twice (stats, then staleness+health); an in-memory
@@ -267,18 +267,18 @@ def test_health_block_survives_unmigrated_db(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Tool-count gate (count pinned at 28)
+# Tool-count gate (count pinned at 22)
 # ---------------------------------------------------------------------------
 
 
-def test_tool_count_at_28():
-    """The 28-tool contract (server.py) holds.
+def test_tool_count_at_22():
+    """The 22-tool contract (server.py) holds.
 
     ``verify_tool_count`` is the boot guard; calling it here proves the status
     resource (a @mcp.resource, not @mcp.tool) did not register a new tool.
     """
     verify_tool_count()  # raises AssertionError on drift
-    assert _EXPECTED_TOOL_COUNT == 28
+    assert _EXPECTED_TOOL_COUNT == 22
 
 
 def test_health_block_flags_drift_unindexed(status_db, monkeypatch):

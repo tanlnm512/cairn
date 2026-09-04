@@ -7,7 +7,7 @@ tool aggregates this; the CLI is the right surface). Show:
 - Memory distribution (by tier)
 - Any warnings or issues
 
-For a quick MCP-side read of the knowledge layers (no CLI): `memory_digest()`
+For a quick MCP-side read of the knowledge layers (no CLI): `recall_memory()`
 for top tribal memories, and `search_knowledge(query, type_filter="Compass")`
 to spot-check compass coverage of a specific module.
 

@@ -173,7 +173,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
     fallback retries the raw path, which can resolve compass/wiki/knowledge
     concepts (audit F8) -- without this guard ``cairn memory forget
     compass/foo`` would unlink a compass doc. Mirrors the scope check the
-    MCP ``memory_delete`` tool enforces, at the store chokepoint so the CLI
+    CLI enforces upstream, at the store chokepoint so the CLI
     and every other caller inherit it.
     """
     cid = memory_path

@@ -1,7 +1,8 @@
 """Ground-truth evaluation harness for cairn.
 
-Evaluates recall@10 and MRR (Mean Reciprocal Rank) for code (L1) and
-knowledge (L5) retrieval pipelines against ground-truth query datasets.
+Evaluates recall@10 and MRR (Mean Reciprocal Rank) for code (L1),
+knowledge (L5), and tribal-memory (L4) retrieval pipelines against
+ground-truth query datasets.
 
 Two query sources (D-008): the legacy yaml fixture via ``load_eval_queries``
 (bundled test data, kept as-is) and the maintained graded pair via
@@ -86,13 +87,13 @@ def load_eval_queries(path: Optional[Path] = None) -> List[Dict[str, Any]]:
 # stays as-is. The maintained ground truth lives as a file pair:
 #
 #   queries.jsonl     one JSON object per line:
-#                     {query_id, level: "L1"|"L5", kind, text, rationale}
+#                     {query_id, level: "L1"|"L4"|"L5", kind, text, rationale}
 #   expectations.tsv  TSV with header (query_id, symbol_id, grade) where
 #                     symbol_id is "file#symbol" and grade is 1 (must-return)
 #                     or 2 (primary target).
 # --------------------------------------------------------------------------
 
-VALID_LEVELS = frozenset({"L1", "L5"})
+VALID_LEVELS = frozenset({"L1", "L4", "L5"})
 VALID_GRADES = frozenset({1, 2})
 
 
@@ -321,6 +322,31 @@ def evaluate_l5_query(conn: sqlite3.Connection, bundle_root: Optional[str], quer
     return 0.0, 0.0
 
 
+def evaluate_l4_query(
+    conn: sqlite3.Connection,
+    bundle_root: Optional[str],
+    query: str,
+    expect: List[str],
+    k: int = 10,
+) -> Tuple[float, float]:
+    """Evaluate L4 query using tribal memory search.
+
+    Returns (recall_at_k, reciprocal_rank).
+    """
+    results = _retrieve_l4(conn, bundle_root, query, k)
+    retrieved_ids = [r["name"] for r in results]
+
+    rank = 0
+    for idx, cid in enumerate(retrieved_ids, start=1):
+        if any(exp.lower() in cid.lower() for exp in expect):
+            rank = idx
+            break
+
+    if rank > 0 and rank <= k:
+        return 1.0, 1.0 / rank
+    return 0.0, 0.0
+
+
 # --------------------------------------------------------------------------
 # Graded matching + scoring (two-tier identity-first rule, D-008)
 # --------------------------------------------------------------------------
@@ -448,6 +474,31 @@ def _retrieve_l5(bundle_root: Optional[str], query: str, k: int) -> List[Any]:
     return [{"name": c.concept_id, "file_path": ""} for c in bundle.search(query, limit=k)]
 
 
+def _retrieve_l4(
+    conn: sqlite3.Connection,
+    bundle_root: Optional[str],
+    query: str,
+    k: int,
+) -> List[Any]:
+    """L4 retrieval pipeline (tribal memory search), normalized like L5.
+
+    Memory concepts carry no file path, so graded matching against them
+    always takes the substring tier (see ``match_rank``). ``session_id``
+    stays ``None``: an eval sweep must not write ``memory_refs`` and inflate
+    the ``cross_session_refs`` signal being measured.
+    """
+    from cairn.memory.promotion import search_memory
+    from cairn.okf.bundle import OKFBundle
+
+    if not bundle_root or not Path(bundle_root).exists():
+        return []
+    bundle = OKFBundle(bundle_root)
+    return [
+        {"name": c.concept_id, "file_path": ""}
+        for c in search_memory(conn, bundle, query, tier="tribal", session_id=None)[:k]
+    ]
+
+
 def evaluate_graded_query(
     conn: sqlite3.Connection,
     bundle_root: Optional[str],
@@ -457,11 +508,13 @@ def evaluate_graded_query(
 ) -> Tuple[float, float]:
     """Evaluate one graded query through its level's retrieval pipeline.
 
-    ``params`` (D-008) applies to the L1 (semantic) leg only -- L5 retrieval
-    is bundle search with no retrieval tunables.
+    ``params`` (D-008) applies to the L1 (semantic) leg only -- L4/L5
+    retrieval pass no retrieval tunables.
     """
     if graded.level == "L1":
         results = _retrieve_l1(conn, graded.text, k, params=params)
+    elif graded.level == "L4":
+        results = _retrieve_l4(conn, bundle_root, graded.text, k)
     else:
         results = _retrieve_l5(bundle_root, graded.text, k)
     return score_graded_query(results, graded.expectations, k)
@@ -477,15 +530,16 @@ def _run_graded_evaluation(
 ) -> Dict[str, Any]:
     """Graded counterpart of the yaml loop in ``run_evaluation``.
 
-    Report shape mirrors the yaml one — ``{"L1": {...}, "L5": {...}}`` with
-    ``count``/``recall_at_10``/``mrr`` — plus additive ``n_queries`` and
-    ``n_expectations`` keys for dataset-size visibility. ``params`` (D-008)
-    threads through to every retrieval call.
+    Report shape mirrors the yaml one — ``{"L1": {...}, "L4": {...},
+    "L5": {...}}`` with ``count``/``recall_at_10``/``mrr`` — plus additive
+    ``n_queries`` and ``n_expectations`` keys for dataset-size visibility.
+    ``params`` (D-008) threads through to every retrieval call.
     """
     queries = load_ground_truth(graded_dir)
 
     stats = {
         "L1": {"count": 0, "recall": 0.0, "mrr": 0.0, "n_expectations": 0},
+        "L4": {"count": 0, "recall": 0.0, "mrr": 0.0, "n_expectations": 0},
         "L5": {"count": 0, "recall": 0.0, "mrr": 0.0, "n_expectations": 0},
     }
 
@@ -500,7 +554,7 @@ def _run_graded_evaluation(
         bucket["n_expectations"] += len(graded.expectations)
 
     report: Dict[str, Any] = {}
-    for c_key in ["L1", "L5"]:
+    for c_key in ["L1", "L4", "L5"]:
         cnt = stats[c_key]["count"]
         if cnt > 0:
             report[c_key] = {
@@ -529,7 +583,7 @@ def run_evaluation(
     k: int = 10,
     params: Optional["RetrievalParams"] = None,
 ) -> Dict[str, Any]:
-    """Run full evaluation harness across specified corpus ("L1", "L5", or "all").
+    """Run full evaluation harness across specified corpus ("L1", "L4", "L5", or "all").
 
     ``queries_path`` selects the query source (D-008 — two loaders, one
     harness): a *directory* holding the graded D-004 pair
@@ -561,6 +615,7 @@ def run_evaluation(
 
     stats = {
         "L1": {"count": 0, "recall": 0.0, "mrr": 0.0},
+        "L4": {"count": 0, "recall": 0.0, "mrr": 0.0},
         "L5": {"count": 0, "recall": 0.0, "mrr": 0.0},
     }
 

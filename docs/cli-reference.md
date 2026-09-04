@@ -89,7 +89,7 @@ Group: `cairn memory …`
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 10 checks: the 9 store-internal ones plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable SSE endpoint, WARN on stale missing-env registrations), platform/transport supportability (SSE on non-macOS ⇒ WARN), binary coherence. Emitted last, also on the db-unavailable degraded path. |
+| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 11 checks: the 10 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable SSE endpoint, WARN on stale missing-env registrations), platform/transport supportability (SSE on non-macOS ⇒ WARN), binary coherence. Emitted last, also on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool-metrics and health reports |
 | `cairn validate` / `validate-paths` / `verify` | store integrity checks |
 | `cairn bench` | performance suites |

@@ -1,62 +1,19 @@
-"""L4 memory MCP tools: recall_memory, record_memory, memory_promote,
-memory_demote, memory_delete, memory_decay.
+"""L4 memory MCP tools: recall_memory, record_memory.
 
-Each builds an OKFBundle via the shared ``_bundle()`` helper.
+Each builds an OKFBundle via the shared ``_bundle()`` helper. Memory lifecycle
+operations (digest, evolve, promote, demote, forget, decay) are CLI-only:
+``cairn memory <verb>``.
 """
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _append_embed_degradation_footnote, _bundle, _conn, _rw_conn, mcp
+from ._server_core import _append_embed_degradation_footnote, _bundle, _conn, _session_id, mcp
 from .metric_buffering import instrument
-from .tools_graph import _clamp
 
 logger = logging.getLogger(__name__)
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
-@instrument
-def memory_digest(limit: int = 10) -> str:
-    """Top tribal memories by score -- call this once for session orientation
-    before reaching for recall_memory(query), which needs a specific query.
-
-    Each result shows a live-recomputed refs-verified fraction (backtick-quoted
-    file/symbol refs in the body that still exist in the graph right now). A low
-    value flags a memory citing a file/symbol that was since renamed or removed;
-    verify before relying on it.
-    """
-    from cairn.memory.promotion import tribal_digest
-    from cairn.memory.scoring import _graph_verification
-
-    limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
-    bundle = _bundle()
-    mems = tribal_digest(bundle, limit=limit)
-    if not mems:
-        return "No tribal memories yet."
-    out = [f"Top {len(mems)} tribal memories:"]
-    # One read-only conn for all verification lookups.
-    conn = _conn()
-    try:
-        for c in mems:
-            score = c.extensions.get("memory_score", "?")
-            refs_verified: float | str
-            try:
-                refs_verified = round(_graph_verification(c, conn), 3)
-            except Exception:
-                refs_verified = "?"
-            out.append(f"  [{score}, refs-verified={refs_verified}] {c.title}")
-            if c.description:
-                out.append(f"    {c.description}")
-        from cairn.graph.embeddings import unembedded_memory_hint
-        hint = unembedded_memory_hint(conn, bundle)
-        if hint:
-            out.append(hint)
-    finally:
-        conn.close()
-    return "\n".join(out)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -91,7 +48,7 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
     conn = _conn()
     try:
         results = search_memory(
-            conn, bundle, query, tier=tier or None, session_id="mcp",
+            conn, bundle, query, tier=tier or None, session_id=_session_id(),
             include_superseded=include_superseded,
         )
     except Exception:
@@ -103,9 +60,9 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
         return (
             f"No memories matching '{query}'. Nothing was recorded under those "
             f"tokens. Try broader/fewer keywords, a symbol name instead of prose, "
-            f"or memory_digest() (no query) to see top tribal memories for "
-            f"orientation. If you expected a memory here, it may not have been "
-            f"captured -- see the Memory Capture Workflow in the skill."
+            f"or `cairn memory digest` (via the CLI, no query) to see top tribal "
+            f"memories for orientation. If you expected a memory here, it may not "
+            f"have been captured -- see the Memory Capture Workflow in the skill."
         )
     out = [f"{len(results)} memories matching '{query}':"]
     # If any hit involved the semantic/fused ranking, surface the backend
@@ -211,164 +168,3 @@ def record_memory(
     if superseded:
         msg += f" [superseded {superseded}]"
     return msg
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
-@instrument
-def memory_evolve(memory_path: str, title: str = "", body: str = "") -> str:
-    """Revise an existing memory by creating a new version that supersedes it.
-
-    The old memory is marked superseded (hidden from recall_memory unless
-    include_superseded=true) and its version chain is inherited, so the full
-    decision history is preserved. Use this when you know a decision/pattern
-    has changed and want to record the revision explicitly rather than letting
-    record_memory's automatic near-dup detection handle it.
-
-    At least one of title or body must be provided (and differ from the old).
-    """
-    from cairn.memory.promotion import evolve_memory
-    from . import embed_buffering
-
-    bundle = _bundle()
-    conn = _conn()
-    try:
-        result = evolve_memory(
-            conn, bundle, memory_path,
-            new_title=title or None,
-            new_body=body or None,
-        )
-    finally:
-        conn.close()
-    if result is None:
-        return f"Error: could not find memory at '{memory_path}'."
-    embed_buffering.enqueue(result["path"])
-    signals = result["signals"]
-    return (
-        f"Evolved '{memory_path}' -> {result['path']} "
-        f"(score={signals['score']}, tier={result['tier']}, superseded {result['superseded']})"
-    )
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
-@instrument
-def memory_promote(memory_path: str) -> str:
-    """Force-promote a memory to canonical (compass/wiki). Moves it into
-    compass/ (decisions/patterns/mistakes/workarounds) or wiki/features/
-    (architecture), bypassing the raw→drafts→tribal tiers entirely."""
-    from cairn.graph.embeddings import memory_is_embedded
-    from cairn.memory.promotion import promote_memory
-    from . import embed_buffering
-
-    bundle = _bundle()
-    conn = _rw_conn()
-    try:
-        new_id = promote_memory(bundle, memory_path, conn=conn)
-        if new_id is None:
-            return f"Error: could not find memory at '{memory_path}'."
-        conn.commit()
-        # promote_memory renamed the embedding row in place (content unchanged),
-        # so only enqueue a fresh embed when the memory had no embedding yet.
-        already_embedded = memory_is_embedded(conn, new_id)
-    finally:
-        conn.close()
-    if not already_embedded:
-        embed_buffering.enqueue(new_id)
-    return f"Promoted '{memory_path}' -> {new_id}"
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
-@instrument
-def memory_demote(memory_path: str, tier: str = "raw") -> str:
-    """Demote a memory to a lower tier (tribal→drafts→raw→archived).
-    Validates downward-only; rejects promotions via this tool — use
-    memory_promote instead."""
-    from cairn.graph.embeddings import memory_is_embedded
-    from cairn.memory.store import demote_memory
-    from . import embed_buffering
-
-    bundle = _bundle()
-    conn = _rw_conn()
-    try:
-        new_path = demote_memory(bundle, memory_path, target_tier=tier, conn=conn)
-        already_embedded = False
-        if new_path is not None:
-            conn.commit()
-            # demote_memory renamed the embedding row in place (content
-            # unchanged), so only enqueue a fresh embed when the memory had no
-            # embedding yet.
-            already_embedded = memory_is_embedded(conn, new_path)
-    finally:
-        conn.close()
-    if new_path is not None and not already_embedded:
-        embed_buffering.enqueue(new_path)
-    if new_path is None:
-        return (
-            f"Error: cannot demote '{memory_path}' to '{tier}'. "
-            "Target tier must be strictly lower than current tier, or "
-            "memory not found."
-        )
-    return f"Demoted '{memory_path}' -> {new_path} (tier → {tier})"
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True))
-@instrument
-def memory_delete(memory_path: str) -> str:
-    """Permanently delete a memory and its cross-session refs. Irreversible."""
-    from cairn.memory.store import delete_memory as dm
-    from cairn.memory.store import get_memory
-
-    bundle = _bundle()
-    # Scope check: confirm the resolved concept_id stays inside the memory/
-    # namespace before deleting. get_memory() has a fallback that can resolve
-    # paths outside memory/, so a bare concept_id could otherwise let an LLM
-    # client point this tool at a compass/wiki/knowledge doc. Refuse here so
-    # the destructive op can't escape its namespace.
-    concept = get_memory(bundle, memory_path)
-    if concept is not None:
-        # read_concept -> _validate_concept_path -> OKFConcept.from_file sets a
-        # *resolved* absolute concept_id; normalize to bundle-relative before the
-        # namespace prefix check (resolve both sides so symlinked /var vs
-        # /private/var roots don't trip relative_to).
-        resolved = concept.concept_id
-        try:
-            resolved = str(Path(resolved).resolve().relative_to(Path(bundle.root).resolve()))
-        except ValueError:
-            pass
-        if not (resolved == "memory/" or resolved.startswith("memory/")):
-            logger.warning(
-                "memory_delete refused out-of-namespace target: requested=%r resolved=%r",
-                memory_path, resolved,
-            )
-            return (
-                f"Refused: '{memory_path}' resolves outside the memory/ namespace "
-                f"(resolved to '{resolved}'). memory_delete only removes memories."
-            )
-    conn = _rw_conn()
-    try:
-        ok = dm(bundle, memory_path, conn=conn)
-        conn.commit()
-    finally:
-        conn.close()
-    if not ok:
-        return f"Memory not found: '{memory_path}'."
-    logger.warning("memory_delete: deleted memory concept_id=%r", concept.concept_id if concept else memory_path)
-    return f"Deleted memory: '{memory_path}'."
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
-@instrument
-def memory_decay(raw_max_days: int = 7, tribal_max_stale: int = 90) -> str:
-    """Run time-based memory archival. Expires raw memories older than
-    raw_max_days; archives tribal memories older than tribal_max_stale days.
-    Returns counts of expired/archived memories."""
-    from cairn.memory.promotion import decay
-
-    # Bound LLM-supplied values at the boundary (cap at ~10 years).
-    raw_max_days = _clamp(raw_max_days, 1, 3650)
-    tribal_max_stale = _clamp(tribal_max_stale, 1, 3650)
-    bundle = _bundle()
-    result = decay(bundle, raw_max_days=raw_max_days, tribal_max_stale=tribal_max_stale)
-    return (
-        f"Decay complete: {result['expired_raw']} raw expired, "
-        f"{result['archived_tribal']} tribal archived."
-    )

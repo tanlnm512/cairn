@@ -1,0 +1,4 @@
+query_id	symbol_id	grade
+L4-M01	memory/tribal#never-evict-numpy-from-sys-modules-mid-process-e52eeb	2
+L4-M02	memory/tribal#daemon-config-merge-needs-explicit-restart-3fa21c	2
+L4-M03	memory/tribal#promotion-never-drops-tags-abc123	2

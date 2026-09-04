@@ -10,10 +10,8 @@ The 12 leaky tools are:
 - tools_memory.py: recall_memory, record_memory
 - tools_compass.py: ask_compass
 
-The 5 correct tools already use try/finally:
+The 3 correct tools already use try/finally:
 - tools_graph.py: semantic_search
-- tools_memory.py: memory_delete
-- tools_memory.py: memory_promote, memory_demote (no DB, so no leak)
 - tools_compass.py: get_compass, search_knowledge (no DB, so no leak)
 
 Note (pruned 2026-07-31): this file previously had 22 tests -- one exception

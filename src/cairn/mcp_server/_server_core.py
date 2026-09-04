@@ -2,8 +2,9 @@
 
 Holds the single ``FastMCP("cairn")`` instance every tools_*.py module
 decorates, plus helpers: ``_conn`` (graph DB connection), ``_store`` (workspace
-store resolution), ``_bundle`` (the OKFBundle for the current workspace), and
-``_repo_of`` (symbol -> repo lookup).
+store resolution), ``_bundle`` (the OKFBundle for the current workspace),
+``_session_id`` (memory_refs session id), and ``_repo_of`` (symbol -> repo
+lookup).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import sqlite3
 import threading
 import warnings
 from contextlib import asynccontextmanager
+from datetime import date
 
 from mcp.server.fastmcp import FastMCP
 
@@ -223,6 +225,12 @@ def _bundle() -> OKFBundle:
     """Build an OKFBundle for the current workspace's .knowledge/ dir."""
     knowledge = os.environ.get("CAIRN_KNOWLEDGE") or str(_store().knowledge)
     return OKFBundle(knowledge)
+
+
+def _session_id() -> str:
+    """Session id recorded into memory_refs by MCP recall paths:
+    ``mcp-<pid>-<YYYY-MM-DD>``."""
+    return f"mcp-{os.getpid()}-{date.today().isoformat()}"
 
 
 def _repo_of(conn, name: str) -> str:

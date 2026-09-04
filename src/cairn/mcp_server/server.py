@@ -1,6 +1,6 @@
 """cairn MCP server: exposes graph query tools to AI agents.
 
-Implements 28 tools across 4 layers (graph, knowledge base + compass,
+Implements 22 tools across 4 layers (graph, knowledge base + compass,
 memory, knowledge). Transport: stdio (default) or SSE, via the mcp SDK (FastMCP).
 
 This file owns boot (sys.path bootstrap shim, boot catch-up, parent-pid
@@ -53,7 +53,7 @@ from . import tools_memory   # noqa: F401
 from . import tools_wiki     # noqa: F401
 
 # Expected tool count - assertion fires if tools are missing due to import issues
-_EXPECTED_TOOL_COUNT = 28
+_EXPECTED_TOOL_COUNT = 22
 
 
 def _drain_buffered_telemetry() -> None:

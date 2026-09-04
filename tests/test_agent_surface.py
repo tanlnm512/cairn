@@ -447,15 +447,15 @@ def test_skill_tool_index_lists_all_registered_tools():
     """The SKILL.md name index and references/tools.md must each list exactly
     the set of tools the MCP server registers -- no missing tools, no phantoms.
 
-    Catches drift like a new tool (e.g. ``memory_digest``, ``trace_workflow``)
+    Catches drift like a new tool (e.g. ``wiki_generate``, ``trace_workflow``)
     being registered but never added to the docs, or a doc lingering after a
     tool is removed. The authoritative set is scraped from ``@mcp.tool()``
     decorators so the test needs no model/embedding deps.
     """
     registered = _scrape_mcp_tool_names()
     assert registered, "no @mcp.tool() functions scraped from tools_*.py"
-    assert len(registered) == 28, (
-        f"expected 28 registered tools, scraper found {len(registered)}: "
+    assert len(registered) == 22, (
+        f"expected 22 registered tools, scraper found {len(registered)}: "
         f"{sorted(registered)}"
     )
 
@@ -529,13 +529,8 @@ _LIVE_TOOL_MODULES = {
     "search_knowledge": "cairn.mcp_server.tools_compass",
     "get_compass": "cairn.mcp_server.tools_compass",
     "ask_compass": "cairn.mcp_server.tools_compass",
-    "memory_digest": "cairn.mcp_server.tools_memory",
     "recall_memory": "cairn.mcp_server.tools_memory",
     "record_memory": "cairn.mcp_server.tools_memory",
-    "memory_promote": "cairn.mcp_server.tools_memory",
-    "memory_demote": "cairn.mcp_server.tools_memory",
-    "memory_delete": "cairn.mcp_server.tools_memory",
-    "memory_decay": "cairn.mcp_server.tools_memory",
     "knowledge_add": "cairn.mcp_server.tools_knowledge",
     "knowledge_search": "cairn.mcp_server.tools_knowledge",
     "knowledge_delete": "cairn.mcp_server.tools_knowledge",
@@ -737,7 +732,7 @@ def test_empty_result_strings_offer_a_next_step():
         ("src/cairn/mcp_server/tools_graph.py", "_render_search_symbols",
          "semantic_search"),
         ("src/cairn/mcp_server/tools_memory.py", "recall_memory",
-         "memory_digest"),
+         "cairn memory digest"),
         ("src/cairn/mcp_server/tools_knowledge.py", "knowledge_search",
          "broader"),
     ]

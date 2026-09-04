@@ -127,8 +127,8 @@ def test_every_decorator_has_annotations_kwarg():
             all_tools[m.group("name")] = f.name
 
     assert all_tools, "no @mcp.tool(...) decorators found in tools_*.py"
-    assert len(all_tools) == 28, (
-        f"expected 28 @mcp.tool(...) registrations, found {len(all_tools)}: "
+    assert len(all_tools) == 22, (
+        f"expected 22 @mcp.tool(...) registrations, found {len(all_tools)}: "
         f"{sorted(all_tools)}"
     )
 

@@ -172,14 +172,19 @@ def _hook_markers() -> list[str]:
     return [
         "cairn.hooks.claude_hooks post_edit",
         "cairn.hooks.claude_hooks session_end",
+        "cairn.hooks.claude_hooks post_tool_failure",
+        "cairn.hooks.claude_hooks session_start",
         # Legacy markers (kept so uninstall-agents can still strip hooks written
         # by older installs).
         "src.hooks.claude_hooks post_edit",
         "src.hooks.claude_hooks session_end",
+        "src.hooks.claude_hooks post_tool_failure",
+        "src.hooks.claude_hooks session_start",
     ]
 
 
-_HOOK_ENTRYPOINTS = {"post_edit", "session_end"}
+_HOOK_ENTRYPOINTS = {"post_edit", "session_end", "post_tool_failure",
+                     "session_start"}
 
 
 # --------------------------------------------------------------------------
@@ -437,7 +442,7 @@ def _agents_instructions(transport: str = "stdio", sse_url: str | None = None) -
         "## MCP Server\n"
         "- Name: `cairn` (auto-connected at session start)\n"
         f"{_transport_note(transport, sse_url)}\n"
-        "- 28 tools across 4 layers: graph (9), knowledge base + compass (5), memory (8), knowledge (6)\n"
+        "- 22 tools across 4 layers: graph (9), knowledge base + compass (5), memory (2), knowledge (6)\n"
         "  (`explore` is the recommended first call -- it aggregates the graph layer)\n"
         "\n"
     ) + _INSTRUCTIONS_BODY

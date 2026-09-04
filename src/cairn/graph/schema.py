@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -126,6 +127,21 @@ CREATE TABLE IF NOT EXISTS memory_refs (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_refs_path ON memory_refs(memory_path);
 CREATE INDEX IF NOT EXISTS idx_memory_refs_session ON memory_refs(session_id);
+
+-- post_tool_failure auto-capture recurrence gate: one row per normalized
+-- (tool_name, error) signature, keyed by the truncated sha256 of both.
+-- `cairn memory record --recurrence-key` counts occurrences and captures only
+-- when the signature was already present. Additive-only: plain CREATE TABLE IF
+-- NOT EXISTS rides the idempotent executescript in _apply_schema with NO
+-- MIGRATIONS entry, so existing DBs gain the table on next connect -- the
+-- same pattern term_df used.
+CREATE TABLE IF NOT EXISTS memory_failure_signatures (
+    sig         TEXT PRIMARY KEY,
+    tool_name   TEXT NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    first_seen  TIMESTAMP NOT NULL,
+    last_seen   TIMESTAMP NOT NULL
+);
 
 -- cross-repo dependency records (namespace/import based)
 CREATE TABLE IF NOT EXISTS repo_deps (
@@ -769,7 +785,17 @@ def get_db(
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if not read_only:
-        conn.execute("PRAGMA journal_mode = WAL")
+        # Changing journal mode requires brief exclusive access to the file;
+        # two threads opening a fresh store race it (busy_timeout does not
+        # cover the pragma), so retry bounded before giving up.
+        for _attempt in range(3):
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                break
+            except sqlite3.OperationalError:
+                if _attempt == 2:
+                    raise
+                time.sleep(0.05)
     conn.execute("PRAGMA mmap_size = 268435456")
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
     # The schema work + commit and marking the path initialized must be atomic
