@@ -2,7 +2,9 @@
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 Status reflects code state per [survey.md](survey.md), not intent.
-**Before-audit**: passed @ 50894faac0aa14f8b10c5d1bc2d77ced1202073b (2026-09-04)
+**Before-audit**: passed @ 94c270e (2026-09-04) — updated from 50894fa after
+folding the reviewer's findings (still pre-implementation, doc-only commit;
+baseline test/branch/tree facts below are unchanged)
 - Preconditions: task.md phase order internally consistent (check.py: 0 fail, 4 benign warn — see below)
 - Fresh baseline: `pytest -m core -q --ignore=tests/test_vector_scan.py` → 26 passed, 1 skipped; the 9 files this plan's tasks touch (`test_memory_lifecycle.py`, `test_doctor.py`, `test_status_resource_health.py`, `test_mcp_wiki_tool.py`, `test_agent_surface.py`, `test_mcp_connection_leaks.py`, `test_import_validation.py`) → 119 passed. `test_vector_scan.py` fails at collection on a pre-existing local numpy ABI mismatch in `~/.cairn/lib` (compiled for cpython-314, venv is 3.11) — unrelated to this repo's code or this plan (same class of issue as the live tribal memory "pip --target dir shared across interpreter ABIs corrupts unrepairably"), excluded from this baseline and out of scope to fix here.
 - Clean tree: confirmed after stashing two pre-existing unrelated modifications (`specs/context/structure.md`, `specs/context/tech.md` — present before this session started) and committing the spec doc set alone at 50894fa.
