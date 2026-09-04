@@ -310,7 +310,7 @@ class TestRunEvaluationDispatch:
             conn.close()
 
         # Legacy keys preserved...
-        assert set(report) == {"L1", "L5"}
+        assert set(report) == {"L1", "L4", "L5"}
         for bucket in report.values():
             for key in ("count", "recall_at_10", "mrr"):
                 assert key in bucket
@@ -413,7 +413,7 @@ class TestEvalCli:
         assert "L5" in result.output
 
         payload = json.loads(result.stdout)
-        assert set(payload) == {"L1", "L5"}
+        assert set(payload) == {"L1", "L4", "L5"}
         # Both queries ran (retrieval over an empty index scores 0, but the
         # buckets count them) and the additive keys ride along.
         assert payload["L1"]["count"] == 1

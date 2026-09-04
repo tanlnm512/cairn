@@ -1,0 +1,3 @@
+{"query_id": "L4-M01", "level": "L4", "kind": "mistake", "text": "evicting numpy from sys.modules mid-process crashes native extensions", "rationale": "the tribal mistake memory naming this exact failure mode is the right hit"}
+{"query_id": "L4-M02", "level": "L4", "kind": "decision", "text": "restarting the daemon is required after hand-editing the merged config", "rationale": "the tribal decision memory recording the restart requirement is the right hit"}
+{"query_id": "L4-M03", "level": "L4", "kind": "pattern", "text": "promoting a draft memory to canonical drops its tags", "rationale": "the tribal pattern memory for this promotion pitfall is the right hit"}

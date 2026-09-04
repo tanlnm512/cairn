@@ -65,13 +65,13 @@ def wiki_env(tmp_path: Path, fresh_db, monkeypatch):
     return bundle
 
 
-def test_wiki_generate_is_the_28th_registered_tool():
+def test_wiki_generate_is_registered_on_the_22_tool_surface():
     import cairn.mcp_server.server as server_mod
     from cairn.mcp_server._server_core import mcp
 
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
     assert "wiki_generate" in tools
-    assert server_mod._EXPECTED_TOOL_COUNT == 28
+    assert server_mod._EXPECTED_TOOL_COUNT == 22
     # The same boot guard run() calls: raises on any registration drift.
     server_mod.verify_tool_count()
 

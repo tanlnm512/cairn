@@ -20,9 +20,13 @@ def memory():
 @click.option("--body", default="", help="Memory body text.")
 @click.option("--resource", default=None, help="Related file path.")
 @click.option("--confidence", default=0.7, type=float, help="Agent confidence 0.0-1.0.")
+@click.option("--recurrence-key", default=None,
+              help="Failure signature from the post_tool_failure hook. The "
+                   "capture happens only when this signature was already "
+                   "seen once before; a first occurrence exits quietly.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_record(mtype, title, body, resource, confidence, db, knowledge):
+def memory_record(mtype, title, body, resource, confidence, recurrence_key, db, knowledge):
     """Record a learning: decision|pattern|mistake|workaround.
 
     For decision/mistake/workaround, structure --body as the fact/rule
@@ -37,6 +41,15 @@ def memory_record(mtype, title, body, resource, confidence, db, knowledge):
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
+    if recurrence_key:
+        from ..memory.recurrence import note_failure_signature
+
+        tool_name = (title[len("Tool failure: "):]
+                     if title.startswith("Tool failure: ") else mtype)
+        if note_failure_signature(conn, recurrence_key, tool_name) == 0:
+            conn.commit()
+            conn.close()
+            return
     bundle = OKFBundle(knowledge)
     result = capture_memory(
         conn, bundle, type_=mtype, title=title, body=body or title,
@@ -426,14 +439,24 @@ def memory_forget(memory_path, db, knowledge):
 @memory.command("demote")
 @click.argument("memory_path")
 @click.option("--tier", "target_tier", default="raw", help="Target tier (raw or archived).")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_demote(memory_path, target_tier, knowledge):
+def memory_demote(memory_path, target_tier, db, knowledge):
     """Demote a memory to a lower tier (rejects promotions)."""
     from ..memory.store import demote_memory
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    new_path = demote_memory(bundle, memory_path, target_tier=target_tier)
+    # Pass a writable conn so demote_memory renames the persisted embedding
+    # row to the new concept_id in place (content is unchanged by a demote),
+    # instead of orphaning it.
+    conn = get_db(db)
+    try:
+        new_path = demote_memory(bundle, memory_path, target_tier=target_tier, conn=conn)
+        if new_path is not None:
+            conn.commit()
+    finally:
+        conn.close()
     if new_path is None:
         click.echo(
             f"Cannot demote '{memory_path}' to '{target_tier}'. "

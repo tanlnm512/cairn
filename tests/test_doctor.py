@@ -4,7 +4,8 @@ Doctor surfaces silent degradations (spec observability-telemetry §6.5): schema
 integrity, embedding/ANN backend fallbacks, embed-server health (probe /
 model-listing / parity sample / latency when a server backend is configured,
 otherwise one informational line -- D-012), graph freshness, parse errors,
-lock contention, per-tool error/latency health, and a config echo, plus the
+lock contention, per-tool error/latency health, tribal-memory reference
+staleness, and a config echo, plus the
 environment-wiring audit (FR-007/D-007: store resolution, client
 registration consistency, platform/transport, binary coherence). It is
 read-only and crash-proof (a missing/corrupt store degrades to WARN/FAIL,
@@ -21,6 +22,7 @@ from __future__ import annotations
 import http.server
 import json
 import math
+import os
 import sqlite3
 import struct
 import threading
@@ -119,6 +121,7 @@ def test_eight_checks_always_emitted(tmp_path):
         "parse_errors",
         "concurrency",
         "tool_health",
+        "memory_staleness",
         "config",
         "environment",
     ]
@@ -923,6 +926,7 @@ def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
         "parse_errors",
         "concurrency",
         "tool_health",
+        "memory_staleness",
         "config",
         "environment",
     ]
@@ -1260,3 +1264,77 @@ def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
     row = _by_name(json.loads(result.stdout), "environment")
     assert row["status"] == "WARN"
     assert "install-agents" in (row.get("hint") or "")
+
+
+# ---------------------------------------------------------------------------
+# Memory staleness (T015, FR-011 / TC-022 / TC-023): the write-only-memory
+# detector. Tribal memories whose mtime is older than the reference window
+# with zero memory_refs rows inside it draw a WARN; a recent reference turns
+# it PASS. The bundle is resolved from the --db path's directory (a tmp_path
+# workspace, never the real ~/.cairn), and the check is read-only.
+# ---------------------------------------------------------------------------
+
+
+def _seed_tribal_memory(db, name="stale-note.md", age_days=None):
+    """Write one tribal OKF file into the bundle beside ``db``, optionally
+    mtime-aged ``age_days`` into the past (no YAML parsing needed -- the check
+    stats files only)."""
+    tribal = Path(db).parent / ".knowledge" / "memory" / "tribal"
+    tribal.mkdir(parents=True, exist_ok=True)
+    f = tribal / name
+    f.write_text("---\ntitle: stale note\n---\nbody\n", encoding="utf-8")
+    if age_days is not None:
+        stamp = time.time() - age_days * 86400
+        os.utime(f, (stamp, stamp))
+    return f
+
+
+def _record_ref(db, memory_path, age_days):
+    """Insert one memory_refs row ``age_days`` old for ``memory_path``."""
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute(
+            "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                str(uuid.uuid4()),
+                str(memory_path),
+                "session-doctor-test",
+                (datetime.now(timezone.utc) - timedelta(days=age_days)).isoformat(),
+                "test",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_memory_staleness_warns_on_write_only_memory(tmp_path):
+    """TC-022: a tribal memory mtime-aged past the 30d window with zero
+    memory_refs rows in that window -> memory_staleness WARN whose detail
+    names write-only memory; WARN keeps the doctor exit code at 0."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    _seed_tribal_memory(db, age_days=40)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "memory_staleness")
+    assert row["status"] == "WARN"
+    assert "write-only" in row["detail"]
+    assert row["hint"], "the WARN carries a remediation hint"
+
+
+def test_memory_staleness_passes_when_memories_referenced(tmp_path):
+    """TC-023: the tribal memory is old but holds a memory_refs row inside the
+    window -> PASS (no WARN) reporting the reference count."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    stale = _seed_tribal_memory(db, age_days=40)
+    _record_ref(db, stale, age_days=1)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "memory_staleness")
+    assert row["status"] == "PASS"
+    assert "1 reference" in row["detail"]

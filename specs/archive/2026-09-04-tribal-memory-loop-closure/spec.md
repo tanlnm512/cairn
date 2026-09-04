@@ -1,6 +1,6 @@
 # Spec: tribal-memory-loop-closure
 
-**Status**: draft
+**Status**: done (2026-09-04 — 19/19 tasks, closing audit passed: scope diff adjudicated, cleanliness clean, full regression 2697 passed)
 **Created**: 2026-09-04
 **Branch**: `fix/tribal-memory-loop-closure`
 

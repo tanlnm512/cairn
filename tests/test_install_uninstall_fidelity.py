@@ -143,7 +143,7 @@ class TestHookIdempotency:
         install(str(ws), clients=["claude"], transport="stdio")
         healed = json.loads(p.read_text(encoding="utf-8"))
         assert len(healed["hooks"]["Stop"]) == 1
-        assert len(healed["hooks"]["PostToolUse"]) == 1
+        assert len(healed["hooks"]["PostToolUse"]) == 2
 
 
 # --------------------------------------------------------------------------
@@ -223,8 +223,20 @@ class TestHookCairnHomePrefix:
         install(str(ws), clients=["claude", "cursor"], transport="stdio")
 
         claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        assert len(claude["hooks"]["PostToolUse"]) == 1
+        post_tool_use = claude["hooks"]["PostToolUse"]
+        assert len(post_tool_use) == 2
+        entrypoints = [
+            h["command"].rsplit(" ", 1)[-1]
+            for entry in post_tool_use
+            for h in entry["hooks"]
+        ]
+        assert sorted(entrypoints) == ["post_edit", "post_tool_failure"]
         assert len(claude["hooks"]["Stop"]) == 1
+        session_start = claude["hooks"]["SessionStart"]
+        assert len(session_start) == 1
+        assert session_start[0]["matcher"] == "startup"
+        assert (session_start[0]["hooks"][0]["command"]
+                .endswith("claude_hooks session_start"))
         cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         assert len(cursor["hooks"]["afterFileEdit"]) == 1
         assert len(cursor["hooks"]["afterSessionEnd"]) == 1
@@ -251,7 +263,7 @@ class TestHookCairnHomePrefix:
             f"{sys.executable} -m cairn.hooks.claude_hooks session_end")
 
         claude = claude_hooks_block()
-        for event in ("PostToolUse", "Stop"):
+        for event in ("PostToolUse", "Stop", "SessionStart"):
             for entry in claude[event]:
                 for h in entry["hooks"]:
                     assert "CAIRN_HOME" not in h["command"]
@@ -381,6 +393,21 @@ class TestDryRunFidelity:
         ws = tmp_path / "ws"
         ws.mkdir()
         install(str(ws), clients=["cursor"], transport="stdio")
+
+        from cairn.agent_install._common import _claude_hook_command
+
+        # Cursor's own hook content covers only post_edit/session_end; seed the
+        # remaining _HOOK_ENTRYPOINTS entrypoints so the fixture reads as a
+        # fully-wired install (a partially-wired one must re-merge).
+        p = ws / ".cursor" / "hooks.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        data["hooks"]["afterFileEdit"].append(
+            {"command": _claude_hook_command("post_tool_failure"),
+             "timeout": 10000})
+        data["hooks"]["afterFileEdit"].append(
+            {"command": _claude_hook_command("session_start"), "timeout": 10000})
+        p.write_text(json.dumps(data))
+
         rep = install(str(ws), clients=["cursor"], transport="stdio", dry_run=True)
         cur = next(r for r in rep.results if r.client == "cursor")
         assert not any("would" in w for w in cur.written), cur.written

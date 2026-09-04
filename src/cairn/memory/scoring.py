@@ -1,11 +1,11 @@
-"""Memory scoring engine: 7-signal weighted score.
+"""Memory scoring engine: 8 computed signals, 5 weighted terms.
 
-score = 0.25*graph_verification + 0.20*cross_session_refs
-      + 0.15*agent_confidence + 0.20*critic_score + 0.05*freshness
-      + 0.05*reinforcement + 0.10*authority
+score = 0.357*graph_verification + 0.286*cross_session_refs
+      + 0.214*agent_confidence + 0.0715*freshness + 0.0715*reinforcement
 
-Freshness uses exponential decay (exp(-λ·age)); reinforcement rewards memories
-that are accessed frequently.
+`critic_score` and `authority` are computed and persisted as unweighted
+diagnostics; they do not affect `score`. Freshness uses exponential decay
+(exp(-λ·age)); reinforcement rewards memories that are accessed frequently.
 """
 from __future__ import annotations
 
@@ -19,13 +19,11 @@ from ..okf.concept import OKFConcept
 from ..okf.bundle import OKFBundle
 
 WEIGHTS = {
-    "graph_verification": 0.25,
-    "cross_session_refs": 0.20,
-    "agent_confidence": 0.15,
-    "critic_score": 0.20,
-    "freshness": 0.05,
-    "reinforcement": 0.05,
-    "authority": 0.10,
+    "graph_verification": 0.357,
+    "cross_session_refs": 0.286,
+    "agent_confidence": 0.214,
+    "freshness": 0.0715,
+    "reinforcement": 0.0715,
 }
 
 # Neutral default critic score used when no LLM critic value is available.
@@ -75,10 +73,8 @@ def compute_score(signals: Dict) -> float:
         WEIGHTS["graph_verification"] * signals["graph_verification"]
         + WEIGHTS["cross_session_refs"] * signals["cross_session_refs_signal"]
         + WEIGHTS["agent_confidence"] * signals["agent_confidence"]
-        + WEIGHTS["critic_score"] * signals["critic_score"]
         + WEIGHTS["freshness"] * signals["freshness"]
         + WEIGHTS["reinforcement"] * signals.get("reinforcement", 0.0)
-        + WEIGHTS["authority"] * signals.get("authority", 0.5)
     )
 
 

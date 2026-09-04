@@ -3,7 +3,7 @@
 Covers the three features adapted from the agentmemory comparison:
   1. Supersession: insert-time near-dup detection, evolve_memory, version
      chains, search filtering of superseded memories.
-  2. Exponential freshness + reinforcement signal: 7-signal scoring with
+  2. Exponential freshness + reinforcement signal: weighted scoring with
      exp(-λ·age) decay and reinforcement boost from recall refs.
   3. Privacy filter: strip_private_data regex redaction (used by the
      post_tool_failure auto-capture hook).
@@ -30,6 +30,7 @@ from cairn.memory.scoring import (
     compute_score,
     score_memory,
 )
+from cairn.memory.store import tier_for_score
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 
@@ -171,19 +172,31 @@ class TestEvolveMemory:
 # ---------------------------------------------------------------------------
 
 class TestScoringWeights:
-    """The 7-signal weight table sums to 1.0 and includes reinforcement."""
+    """The 5-signal weight table sums to 1.0 and includes reinforcement."""
 
     def test_weights_sum_to_one(self):
         assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+
+    def test_dropped_signals_not_weighted(self):
+        assert "critic_score" not in WEIGHTS
+        assert "authority" not in WEIGHTS
 
     def test_reinforcement_weight_exists(self):
         assert "reinforcement" in WEIGHTS
         assert WEIGHTS["reinforcement"] > 0
 
     def test_freshness_weight_reduced(self):
-        """Freshness weight dropped from 0.10 to 0.05 to make room for reinforcement."""
-        assert WEIGHTS["freshness"] == 0.05
-        assert WEIGHTS["reinforcement"] == 0.05
+        assert WEIGHTS["freshness"] == 0.0715
+        assert WEIGHTS["reinforcement"] == 0.0715
+
+    def test_weight_values_pinned(self):
+        assert WEIGHTS == {
+            "graph_verification": 0.357,
+            "cross_session_refs": 0.286,
+            "agent_confidence": 0.214,
+            "freshness": 0.0715,
+            "reinforcement": 0.0715,
+        }
 
 
 class TestExponentialFreshness:
@@ -252,7 +265,7 @@ class TestReinforcement:
 
 
 class TestSevenSignalScore:
-    """score_memory returns 7 signals including reinforcement."""
+    """score_memory returns per-signal values including reinforcement."""
 
     def test_signals_include_reinforcement(self, db, bundle):
         r = capture_memory(db, bundle, type_="decision", title="sig test", body="x", confidence=0.8)
@@ -273,9 +286,51 @@ class TestSevenSignalScore:
             "authority": 0.5,
         }
         score = compute_score(signals)
-        # Manually verify: 0.25*1 + 0 + 0.15*0.5 + 0.20*0.5 + 0.05*1 + 0.05*1 + 0.10*0.5
-        expected = 0.25 + 0.075 + 0.10 + 0.05 + 0.05 + 0.05
+        # critic_score/authority keys are ignored (unweighted diagnostics).
+        expected = 0.357 * 1.0 + 0.286 * 0.0 + 0.214 * 0.5 + 0.0715 * 1.0 + 0.0715 * 1.0
         assert abs(score - expected) < 1e-6
+
+
+class TestScoreSpread:
+    """The weighted formula spreads scores across cross_session_refs levels
+    and separates tribal-promotable memories from raw ones."""
+
+    def test_cross_session_refs_levels_spread_scores(self):
+        base = {
+            "graph_verification": 1.0,
+            "cross_session_refs_signal": 0.0,
+            "agent_confidence": 0.5,
+            "freshness": 1.0,
+            "reinforcement": 0.0,
+        }
+        scores = [
+            round(compute_score({**base, "cross_session_refs_signal": refs}), 3)
+            for refs in (0.0, 0.25, 0.5, 0.75, 1.0)
+        ]
+        assert len(set(scores)) > 2
+
+    def test_promotion_threshold_split(self):
+        """High graph_verification + cross_session_refs reaches tribal tier;
+        a memory scoring only on agent_confidence does not."""
+        memory_a = {
+            "graph_verification": 1.0,
+            "cross_session_refs_signal": 1.0,
+            "agent_confidence": 0.5,
+            "freshness": 0.5,
+            "reinforcement": 0.0,
+        }
+        memory_b = {
+            "graph_verification": 0.0,
+            "cross_session_refs_signal": 0.0,
+            "agent_confidence": 0.5,
+            "freshness": 0.5,
+            "reinforcement": 0.0,
+        }
+        score_a = compute_score(memory_a)
+        score_b = compute_score(memory_b)
+        assert score_a - score_b > 0.3
+        assert tier_for_score(score_a) == "tribal"
+        assert tier_for_score(score_b) != "tribal"
 
 
 # ---------------------------------------------------------------------------

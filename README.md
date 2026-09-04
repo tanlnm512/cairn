@@ -19,7 +19,7 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
 graph** (14 languages), fuses it with **code-grounded tribal memory**, compass,
-and wiki, and serves all of it through one MCP server (28 tools) + a `cairn`
+and wiki, and serves all of it through one MCP server (22 tools) + a `cairn`
 CLI. The product is a **verification contract**: every `exact` edge is actually
 resolved, every symbol in a synthesized doc is graph-verified by a
 deterministic critic, and the LLM never sits in the query path.
@@ -196,7 +196,7 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   gating CI.
 - **100% local** — one SQLite store under `~/.cairn`; no network calls, no
   telemetry egress (OTLP export is opt-in and best-effort).
-- **Agent-first surfaces** — the same store backs 28 MCP tools and the CLI;
+- **Agent-first surfaces** — the same store backs 22 MCP tools and the CLI;
   `cairn install-agents` wires every detected client in one command.
 - **Local dashboard** — `cairn dashboard` opens a loopback web console at
   `127.0.0.1:8765`: interactive graph with symbol search, recorded
@@ -289,13 +289,13 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## MCP Tools
 
-28 tools across four layers — same store as the CLI:
+22 tools across four layers — same store as the CLI:
 
 | Layer | Tools |
 |-------|-------|
 | **graph** (9) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `explore` (the aggregator — recommended first call), `visualize_graph` |
 | **compass + knowledge base** (5) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
-| **memory** (8) | tribal memory: recall / record / lifecycle (promote, demote, evolve, decay, delete, digest) |
+| **memory** (2) | tribal memory: `recall_memory`, `record_memory` (lifecycle verbs are CLI-only: `cairn memory digest|evolve|promote|demote|forget|decay`) |
 | **knowledge** (6) | OKF business docs / workflows: add / search / status / delete / `trace_workflow` / `wiki_generate` |
 
 Per-tool shapes and examples: [docs/mcp-tools.md](docs/mcp-tools.md).

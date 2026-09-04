@@ -83,9 +83,54 @@ def post_edit():
 
 
 def session_end():
-    """Called when Claude Code session ends. Captures memories from the transcript."""
+    """Called when Claude Code session ends. Captures memories from the transcript.
+
+    Reads the JSONL transcript at the payload's ``transcript_path``, reduces it
+    to text-only ``user``/``assistant`` messages (tail window of ~80), and
+    pipes them to ``memory capture``. A missing/unreadable/empty transcript
+    degrades to a quiet no-capture return -- the hook never raises.
+    """
     data = _read_stdin()
-    messages = data.get("messages", [])
+    messages: list = []
+    path = data.get("transcript_path") or ""
+    if path:
+        # The transcript is append-only and may be mid-write: parse line by
+        # line, skipping partial/malformed lines. Any read failure degrades to
+        # the no-transcript path rather than raising out of the hook.
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get("type") not in ("user", "assistant"):
+                        continue
+                    msg = rec.get("message")
+                    if not isinstance(msg, dict):
+                        continue
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        text = content
+                    else:
+                        blocks = content if isinstance(content, list) else []
+                        text = "\n".join(
+                            block.get("text", "") for block in blocks
+                            if isinstance(block, dict)
+                            and block.get("type") == "text"
+                        )
+                    if not text:
+                        continue
+                    messages.append(
+                        {"role": msg.get("role", ""), "content": text})
+        except Exception:
+            messages = []
+        messages = messages[-80:]
     if not messages:
         # Even without a transcript, queue a capture so an agent can process it.
         sys.stdout.write("(no transcript; nothing to capture)")
@@ -95,18 +140,36 @@ def session_end():
     # (~256KB on macOS) and would yield E2BIG on the subprocess exec. The
     # `memory capture` command reads it when --session-transcript-stdin is set.
     transcript = json.dumps(messages)
+    session_id = str(data.get("session_id") or "claude")
     out = _run_cg(
-        ["memory", "capture", "--session-transcript-stdin", "--session-id", "claude"],
+        ["memory", "capture", "--session-transcript-stdin",
+         "--session-id", session_id],
         timeout=60,
         stdin=transcript,
     )
     sys.stdout.write(out or "(no memories captured)")
 
 
+def session_start():
+    """Called when Claude Code starts a session. Emits the top score-ranked
+    tribal memories for the workspace as plain-text context.
+
+    Reuses the CLI's digest command so the ranking lives in one place and this
+    module stays path-free (no ``cairn.*`` import). Emits nothing when the
+    store is empty, so no placeholder or error reaches the agent's context.
+    """
+    out = _run_cg(["memory", "digest", "--limit", "5"], timeout=15)
+    text = (out or "").strip()
+    if not text or text == "No tribal memories yet.":
+        return
+    sys.stdout.write(out)
+
+
 def post_tool_failure():
     """Called after a tool use fails. Auto-captures the failure as a raw
-    ``mistake`` memory so the agent (and future sessions) can recall what went
-    wrong without the agent having to explicitly call record_memory.
+    ``mistake`` memory when the same ``(tool_name, normalized_error)``
+    signature has already occurred once before; a first occurrence only
+    registers its signature and captures nothing.
 
     This is the highest-signal auto-capture: failures the agent didn't bother
     to record. The captured memory lands in the ``raw`` tier at low confidence
@@ -146,6 +209,15 @@ def post_tool_failure():
     safe_error = strip_private_data(str(error)[:4000])
     title = f"Tool failure: {tool_name}"
 
+    # Recurrence gate: the signature comes from the already-filtered error,
+    # and the child CLI process captures only when this signature was seen
+    # before (first occurrence registers quietly).
+    try:
+        from cairn.memory.recurrence import failure_signature
+    except ImportError:
+        return
+    recurrence_key = failure_signature(tool_name, safe_error)
+
     # Build the memory body with the Why/How structure record_memory expects.
     body = (
         f"{tool_name} failed during use.\n\n"
@@ -163,6 +235,7 @@ def post_tool_failure():
                 "memory", "record", "mistake", title,
                 "--body", body,
                 "--confidence", "0.3",  # low: raw capture, unreviewed
+                "--recurrence-key", recurrence_key,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -180,6 +253,8 @@ if __name__ == "__main__":
         session_end()
     elif hook_type == "post_tool_failure":
         post_tool_failure()
+    elif hook_type == "session_start":
+        session_start()
     else:
         sys.stderr.write(f"unknown hook: {hook_type}\n")
         sys.exit(1)

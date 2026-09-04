@@ -127,6 +127,21 @@ CREATE TABLE IF NOT EXISTS memory_refs (
 CREATE INDEX IF NOT EXISTS idx_memory_refs_path ON memory_refs(memory_path);
 CREATE INDEX IF NOT EXISTS idx_memory_refs_session ON memory_refs(session_id);
 
+-- post_tool_failure auto-capture recurrence gate: one row per normalized
+-- (tool_name, error) signature, keyed by the truncated sha256 of both.
+-- `cairn memory record --recurrence-key` counts occurrences and captures only
+-- when the signature was already present. Additive-only: plain CREATE TABLE IF
+-- NOT EXISTS rides the idempotent executescript in _apply_schema with NO
+-- MIGRATIONS entry, so existing DBs gain the table on next connect -- the
+-- same pattern term_df used.
+CREATE TABLE IF NOT EXISTS memory_failure_signatures (
+    sig         TEXT PRIMARY KEY,
+    tool_name   TEXT NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    first_seen  TIMESTAMP NOT NULL,
+    last_seen   TIMESTAMP NOT NULL
+);
+
 -- cross-repo dependency records (namespace/import based)
 CREATE TABLE IF NOT EXISTS repo_deps (
     id TEXT PRIMARY KEY,

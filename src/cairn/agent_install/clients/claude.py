@@ -52,13 +52,29 @@ def claude_hooks_block() -> dict:
                 "hooks": [
                     {"type": "command", "command": _claude_hook_command("post_edit")}
                 ],
-            }
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": _claude_hook_command("post_tool_failure"),
+                    }
+                ],
+            },
         ],
         "Stop": [
             {
                 "hooks": [
                     {"type": "command", "command": _claude_hook_command("session_end")}
                 ]
+            }
+        ],
+        "SessionStart": [
+            {
+                "matcher": "startup",
+                "hooks": [
+                    {"type": "command", "command": _claude_hook_command("session_start")}
+                ],
             }
         ],
     }

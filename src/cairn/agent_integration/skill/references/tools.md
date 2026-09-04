@@ -21,14 +21,11 @@ server. SKILL.md keeps only a name index — come here for the details.
 - `generate_flow(entry, as_workflow=False, max_steps=20)` -- Generate a flow compass from a call-graph trace (critic-gated). With `as_workflow=True`, also generates a Knowledge-workflow doc with ordered, editable procedural steps.
 
 ## Layer 4: Memory
-- `memory_digest(limit=10)` -- Top tribal memories for session orientation (the recommended first memory call in a new session)
 - `recall_memory(query, tier?)` -- Search past decisions, patterns, mistakes (symbol/title-keyed; see `references/tool-behaviors.md`)
 - `record_memory(type, title, body, resource?, confidence?)` -- Capture a learning (auto-supersedes near-duplicates of the same type)
-- `memory_evolve(memory_path, title?, body?)` -- Revise a memory: create a new version that supersedes the old, inheriting the version chain
-- `memory_promote(memory_path)` -- Promote a memory to a higher tier (raw→drafts→tribal)
-- `memory_demote(memory_path, tier="raw")` -- Demote a memory to a lower tier (rejects promotions)
-- `memory_delete(memory_path)` -- Permanently delete a memory and its refs (irreversible)
-- `memory_decay(raw_max_days=7, tribal_max_stale=90)` -- Auto-expire old raw, archive stale tribal
+
+Lifecycle verbs (digest, evolve, promote, demote, forget, decay) are CLI-only:
+`cairn memory <verb>`.
 
 ## Router
 - `ask_compass(query, file_path="")` -- Natural language across all layers (the entry point). Pass `file_path` alone for auto-context loading (compass + wiki + memory for a file).

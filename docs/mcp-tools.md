@@ -1,6 +1,6 @@
 # MCP Tools
 
-Read this when you need the tool surface: what the 28 tools are, how they're
+Read this when you need the tool surface: what the 22 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
 "Tool Quirks" table in [AGENTS.md](../AGENTS.md) — it is kept there so every
 agent session loads it.
@@ -10,7 +10,7 @@ agent session loads it.
 - Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
 - Transports: **stdio** (default, one process per client) or **SSE daemon**
   on `:9876` (`cairn serve start|stop|status|restart`, `run` for foreground).
-- Boot sequence (`server.py:run`): verify exactly 28 tools registered →
+- Boot sequence (`server.py:run`): verify exactly 22 tools registered →
   parent-death watchdog (stdio) → boot catch-up reindex (`ensure_fresh_force`)
   → memory decay → live file watcher (`[watch]` extra).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
@@ -18,7 +18,7 @@ agent session loads it.
 - `CAIRN_READ_ONLY=1` makes the server refuse write tools.
 - Resource `cairn://status` exposes live server status.
 
-## The 28 tools by layer
+## The 22 tools by layer
 
 **L1 — Graph** (`tools_graph.py`, 9):
 
@@ -43,16 +43,15 @@ agent session loads it.
 | `trace_flow` | execution-order trace through the graph |
 | `generate_flow` | write a flow compass (the one non-read-only tool here) |
 
-**L4 — Memory** (`tools_memory.py`, 8):
+**L4 — Memory** (`tools_memory.py`, 2):
 
 | Tool | Purpose |
 |---|---|
 | `record_memory` | capture decision / pattern / mistake / workaround (redacted + scored) |
 | `recall_memory` | symbol/title-keyed hybrid recall |
-| `memory_digest` | recent-memory digest |
-| `memory_evolve` / `memory_promote` / `memory_demote` | version, raise, lower a memory |
-| `memory_decay` | run the decay cycle |
-| `memory_delete` | remove a memory (destructive) |
+
+Lifecycle verbs are CLI-only: `cairn memory <verb>` where verb is
+`digest`, `evolve`, `promote`, `demote`, `forget` (delete), or `decay`.
 
 **L5 — Knowledge documents** (`tools_knowledge.py` + `tools_wiki.py`, 6):
 

@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from mcp.types import ToolAnnotations
 
 from ._server_core import (
     _append_embed_degradation_footnote,
+    _bundle,
     _conn,
+    _read_only_mode,
     _repo_of,
+    _session_id,
     _staleness_banner,
     mcp,
 )
@@ -404,9 +408,11 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
 def explore(query: str) -> str:
     """Answer 'how does X work' in one call. Returns matching symbols' verbatim
     source grouped by file, the call paths between them (including ambiguous
-    dispatch hops), and a blast-radius summary. Recommended first move for any
-    structural question; reach for get_callers/impact_analysis/search_knowledge to
-    drill down when this is thin.
+    dispatch hops), a blast-radius summary, and any matching tribal memory
+    (past decisions/mistakes from this workspace's memory store). Recommended
+    first move for any structural question; reach for
+    get_callers/impact_analysis/search_knowledge to drill down when this is
+    thin.
 
     Example:
         explore("how does ApiFactory create clients")
@@ -426,12 +432,32 @@ def explore(query: str) -> str:
 
             === Ambiguous dispatch ===
               (none — all call edges were precisely resolved)
+
+            === Tribal memory (1) ===
+              Never evict numpy from sys.modules mid-process
+                How to apply: keep numpy loaded until the interpreter exits
     """
     from cairn.graph import queries
 
     conn = _conn()
+    tribal: list = []
     try:
         result = queries.explore(conn, query)
+        if result["seeds"]:
+            from cairn.memory.promotion import record_references_batch, search_memory
+
+            seed_names = [s["name"] for s in result["seeds"] if s.get("name")][:5]
+            mems = search_memory(
+                conn, _bundle(), " ".join(seed_names),
+                tier="tribal", session_id=None,
+            )
+            tribal = mems[:3]
+            if not _read_only_mode():
+                # Refs are recorded here (not via search_memory's session_id)
+                # so only the memories actually rendered above are credited.
+                record_references_batch(
+                    conn, [(c.concept_id, query) for c in tribal], _session_id()
+                )
     finally:
         conn.close()
 
@@ -524,6 +550,18 @@ def explore(query: str) -> str:
             out.append(f'  "{tgt}" could dispatch to: {cands}')
     else:
         out.append("  (none — all call edges were precisely resolved)")
+
+    # --- Tribal memory section ---
+    out.append(f"=== Tribal memory ({len(tribal)}) ===")
+    if tribal:
+        for c in tribal:
+            out.append(f"  {c.title or c.concept_id}")
+            m = re.search(r"^How to apply:\s*(.+)$", c.body, re.M)
+            apply_line = m.group(1).strip() if m else (c.description or "").strip()
+            if apply_line:
+                out.append(f"    How to apply: {apply_line}")
+    else:
+        out.append("  (none)")
     return _append_embed_degradation_footnote("\n".join(out))
 
 

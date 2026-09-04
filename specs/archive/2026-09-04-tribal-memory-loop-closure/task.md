@@ -17,12 +17,12 @@ baseline test/branch/tree facts below are unchanged)
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 2     | 0    |
-| 2     | 2     | 0    |
-| 3     | 8     | 0    |
-| 4     | 4     | 0    |
-| 5     | 3     | 0    |
-| **Σ** | 19    | 0    |
+| 1     | 2     | 2    |
+| 2     | 2     | 2    |
+| 3     | 8     | 8    |
+| 4     | 4     | 4    |
+| 5     | 3     | 3    |
+| **Σ** | 19    | 19   |
 
 ## Phase 1: Explore memory integration (FR-001, FR-002, FR-003)
 <!-- Checkpoint: explore()'s MCP response contains a `=== Tribal memory ===`
@@ -31,7 +31,7 @@ baseline test/branch/tree facts below are unchanged)
      via a real per-session id. Verify: `grep -n "Tribal memory"
      src/cairn/mcp_server/tools_graph.py` (baseline 0 matches → expect ≥1)
      plus the new pytest passing. -->
-- [ ] T001 [P] Add failing tests for explore's tribal-memory section and
+- [x] T001  [P] Add failing tests for explore's tribal-memory section and
   reference recording in a new/existing `tests/test_*explore*memory*.py` (or
   alongside `tools_graph.py`'s existing explore tests): assert the
   `=== Tribal memory ===` header appears (populated with title + "How to
@@ -39,7 +39,8 @@ baseline test/branch/tree facts below are unchanged)
   a `memory_refs` row is recorded only for the ≤3 rendered memories and not
   for unshown matches (TC-003/TC-005), and a concurrent-call case for
   TC-005's no-corruption boundary. Red before T002. (FR-001, FR-002, FR-003)
-- [ ] T002 [P] Implement the tribal-memory section + reference recording in
+  done 2026-09-04 — pytest tests/test_explore_memory.py -q — red 5 failed (no Tribal memory section) → green 5 passed
+- [x] T002  [P] Implement the tribal-memory section + reference recording in
   `src/cairn/mcp_server/tools_graph.py::explore` per tech-spec A1/D-001/D-002:
   add `_session_id()` to `src/cairn/mcp_server/_server_core.py` (beside
   `_bundle()`, `_server_core.py:222`) returning
@@ -60,13 +61,14 @@ baseline test/branch/tree facts below are unchanged)
   `re.search(r"^How to apply:\s*(.+)$", body, re.M)` with a fallback to
   `c.description`; update `explore`'s tool docstring example section list.
   Turns T001 green. (FR-001, FR-002, FR-003)
+  done 2026-09-04 — pytest tests/test_explore_memory.py -q green + grep 'Tribal memory' tools_graph.py = 3; memory_refs rows asserted for rendered memories only
 
 ## Phase 2: Scoring formula rebalance (FR-005)
 <!-- Checkpoint: WEIGHTS drops critic_score/authority, remaining 5 terms
      renormalize to sum 1.0 (÷0.7, D-003); synthetic-signal test shows wider
      spread than today's two-cluster distribution. Verify:
      `python3 -m pytest tests/test_memory_lifecycle.py -k "weight or formula" -q` -->
-- [ ] T003 [P] Add/update failing tests in `tests/test_memory_lifecycle.py`
+- [x] T003  [P] Add/update failing tests in `tests/test_memory_lifecycle.py`
   pinning the new `WEIGHTS` (no `critic_score`/`authority` keys; values
   `graph_verification=0.357`, `cross_session_refs=0.286`,
   `agent_confidence=0.214`, `freshness=0.0715`, `reinforcement=0.0715`, sum
@@ -85,7 +87,8 @@ baseline test/branch/tree facts below are unchanged)
   `TestSevenSignalScore::test_compute_score_includes_reinforcement`
   (`expected` at `:277`, new value `0.607`, computed per tech-spec A3) in
   the same task. Red before T004. (FR-005)
-- [ ] T004 [P] Implement the renormalized `WEIGHTS` and `compute_score` in
+  done 2026-09-04 — pytest tests/test_memory_lifecycle.py -k 'weight or formula' — red 3 failed (stale 0.05/full-dict/dropped-key asserts)
+- [x] T004  [P] Implement the renormalized `WEIGHTS` and `compute_score` in
   `src/cairn/memory/scoring.py` per tech-spec A3/D-003/D-004: drop
   `WEIGHTS["critic_score"]`/`WEIGHTS["authority"]`, set the 5 surviving
   weights to the ÷0.7 values above, remove `compute_score`'s two dropped
@@ -96,6 +99,7 @@ baseline test/branch/tree facts below are unchanged)
   `tests/test_import_validation.py:16,55-57`); rewrite `scoring.py`'s module
   docstring (lines 1-8, "7-signal" → "8 computed, 5 weighted"). Turns T003
   green. (FR-005)
+  done 2026-09-04 — pytest tests/test_memory_lifecycle.py -k 'weight or formula' 5 passed; full file 36 passed; tests/test_import_validation.py 6 passed (_authority intact)
 
 ## Phase 3: Hook lifecycle — session-start + auto-capture correctness (FR-004, FR-006, FR-007, FR-008, FR-009)
 <!-- Checkpoint: post_tool_failure captures only on 2nd occurrence of a
@@ -110,7 +114,7 @@ baseline test/branch/tree facts below are unchanged)
      plan.md (shared-file ownership on claude_hooks.py/_common.py, not data
      dependency): FR-006 → FR-007 → FR-009 → FR-004. FR-008 is
      line-disjoint in promotion.py from Phase 2's FR-005 writes — [P]. -->
-- [ ] T005 Add failing tests for the recurrence gate (TC-012/TC-013/TC-014)
+- [x] T005  Add failing tests for the recurrence gate (TC-012/TC-013/TC-014)
   and hook registration round-trip (TC-015): a `failure_signature()`
   normalizer test in a new `tests/test_memory_recurrence.py` (lowercase,
   digit-run collapse, path/hex/UUID stripping); a `note_failure_signature`
@@ -136,7 +140,8 @@ baseline test/branch/tree facts below are unchanged)
   and confirm "already installed → no write" still holds; if no such test
   exists today, note that explicitly rather than silently skipping it. Red
   before T006. (FR-006, FR-007)
-- [ ] T006 (after T005) Implement the recurrence gate per tech-spec
+  done 2026-09-04 — pytest tests/test_memory_recurrence.py -q — red 7 failed (missing module/option/entrypoint/argv)
+- [x] T006  (after T005) Implement the recurrence gate per tech-spec
   A4/D-005: append the additive-only
   `CREATE TABLE IF NOT EXISTS memory_failure_signatures (sig TEXT PRIMARY
   KEY, tool_name TEXT NOT NULL, occurrences INTEGER NOT NULL DEFAULT 1,
@@ -157,7 +162,8 @@ baseline test/branch/tree facts below are unchanged)
   its markers (legacy + current) to `_hook_markers()` (`_common.py:170`),
   and wire a `PostToolUse` entry in `claude_hooks_block()`
   (`clients/claude.py:46-60`). Turns T005 green. (FR-006, FR-007)
-- [ ] T007 (after T006) Add failing tests for FR-009's session_end fix
+  done 2026-09-04 — pytest tests/test_memory_recurrence.py -q — 50 passed
+- [x] T007  (after T006) Add failing tests for FR-009's session_end fix
   (TC-018/TC-019): a JSONL fixture at a `transcript_path`-shaped file mixing
   `user`/`assistant`/other record types (per tech-spec A6's observed shapes)
   asserting `session_end` queues a `memory-extract` task with the payload's
@@ -166,7 +172,8 @@ baseline test/branch/tree facts below are unchanged)
   raised; patch `cairn.hooks.claude_hooks.subprocess.Popen` at the call
   site with an explicit `tmp_path` db/knowledge override (C-04). Red before
   T008. (FR-009)
-- [ ] T008 (after T007) Implement the `transcript_path` fix in
+  done 2026-09-04 — red 2 failed (capture never reached — production bug reproduced)
+- [x] T008  (after T007) Implement the `transcript_path` fix in
   `src/cairn/hooks/claude_hooks.py::session_end` (`:85-104`) per tech-spec
   A6/D-007: replace `data.get("messages", [])` with reading
   `data.get("transcript_path") or ""`; on missing/unreadable path, keep
@@ -181,7 +188,8 @@ baseline test/branch/tree facts below are unchanged)
   call, passing the payload's real `session_id` (fallback `"claude"`)
   instead of the hardcoded literal; wrap the whole read/parse in a broad
   guard so the hook never raises. Turns T007 green. (FR-009)
-- [ ] T009 (after T008) Add failing tests for FR-004's session-start hook
+  done 2026-09-04 — 10 passed (transcript_path JSONL → memory-extract queued with real session_id)
+- [x] T009  (after T008) Add failing tests for FR-004's session-start hook
   (TC-006/TC-007/TC-008): a populated-store case asserting `session_start()`
   emits `cairn memory digest --limit 5`'s output; an empty-store case
   asserting nothing is emitted when the CLI's output is empty or equals
@@ -193,7 +201,8 @@ baseline test/branch/tree facts below are unchanged)
   written; a negative case asserting a `resume`/`clear`/`compact`/`fork`
   event does not trigger the digest (TC-006's "once per session" scope
   note). Red before T010. (FR-004)
-- [ ] T010 (after T009) Implement `session_start()` in
+  done 2026-09-04 — red 4 failed (no session_start/entrypoint/SessionStart block); sentinel coupling pin green
+- [x] T010  (after T009) Implement `session_start()` in
   `src/cairn/hooks/claude_hooks.py` per tech-spec A2 (G1 resolved — event
   key is exactly `"SessionStart"`, no matcher required, stdout becomes
   plain-text context automatically): call `_run_cg(["memory", "digest",
@@ -209,7 +218,8 @@ baseline test/branch/tree facts below are unchanged)
   `claude_hooks_block()`; Cursor is explicitly out of scope for this FR
   (no session-start-shaped event exists in `cursor_hooks.py`/`cursor.py`
   per survey — do not add one). Turns T009 green. (FR-004)
-- [ ] T011 [P] Add failing tests for FR-008's capture-time triage
+  done 2026-09-04 — 58 passed + 31 adjacent (agent_surface/clients/cli_smoke/auto_decay_hook/build_hints)
+- [x] T011  [P] Add failing tests for FR-008's capture-time triage
   (TC-016/TC-017): the 4 real bookkeeping titles from survey.md
   (`T007 pins get_repo_head display seam for T008`, `...landed on
   feature/arch-review-improvements`, `polaris compass campaign: 240
@@ -222,7 +232,8 @@ baseline test/branch/tree facts below are unchanged)
   asserting they are **not** force-routed (negative fixtures are mandatory
   per plan.md § Risks) — using an explicit `tmp_path` db/knowledge
   override, never `~/.cairn`. Red before T012. (FR-008)
-- [ ] T012 [P] Implement `_is_session_bookkeeping(title, body)` in
+  done 2026-09-04 — pytest tests/test_memory_triage.py -q — red 4 failed (positives 'tribal' != 'raw')
+- [x] T012  [P] Implement `_is_session_bookkeeping(title, body)` in
   `src/cairn/memory/promotion.py` per tech-spec A5/D-006: add the module-
   level regexes `_TASK_ID_RE`, `_BRANCH_RE`, `_DATED_COUNT_RE`,
   `_PROGRESS_COUNT_RE` exactly as specified in tech-spec A5 (first three
@@ -233,6 +244,7 @@ baseline test/branch/tree facts below are unchanged)
   triage on the already-redacted (`strip_private_data`) text so it can
   never disagree with scoring; no signature change to `capture_memory`.
   Turns T011 green. (FR-008)
+  done 2026-09-04 — pytest tests/test_memory_triage.py -q — 9 passed (4 positives → raw + memory_triage tag; 5 durable negatives untouched)
 
 ## Phase 4: Observability — L4 eval + doctor check (FR-010, FR-011)
 <!-- Checkpoint: eval.py accepts "L4" in VALID_LEVELS with
@@ -242,14 +254,15 @@ baseline test/branch/tree facts below are unchanged)
      zero memory_refs in that window. Verify: `grep -n "VALID_LEVELS"
      src/cairn/eval.py` shows "L4"; `grep -n "^def _check_"
      src/cairn/cli/system.py` shows the new check. -->
-- [ ] T013 [P] Add failing tests for the L4 eval level (TC-021): a
+- [x] T013  [P] Add failing tests for the L4 eval level (TC-021): a
   `tests/eval/memory/ground_truth/queries.jsonl` + `expectations.tsv` pair
   (D-008 shape, `symbol_id` written as `memory/tribal#<slug>` so
   `parse_symbol_id` validates) seeded against a `tmp_path` bundle, and a
   test asserting running the evaluation at `"L4"` reports numeric recall@k
   and MRR without routing through `_retrieve_l5` and without raising
   `KeyError` from the stats dict. Red before T014. (FR-010)
-- [ ] T014 [P] Implement the L4 eval level in `src/cairn/eval.py` per
+  done 2026-09-04 — pytest tests/test_eval_l4.py -q — red 5 failed (loader ValueError/_retrieve_l4/CLI choice)
+- [x] T014  [P] Implement the L4 eval level in `src/cairn/eval.py` per
   tech-spec A7/D-008: `VALID_LEVELS = frozenset({"L1", "L4", "L5"})`; add
   `_retrieve_l4(conn, bundle_root, query, k)` mirroring `_retrieve_l5`'s
   normalization via `search_memory(conn, OKFBundle(bundle_root), query,
@@ -264,7 +277,8 @@ baseline test/branch/tree facts below are unchanged)
   `eval_cmd`'s `--corpus` `Choice(["L1", "L5"])` to include `"L4"` and the
   `["L1", "L5"]` render loop to include `"L4"`. Turns T013 green.
   (FR-010)
-- [ ] T015 [P] Add failing tests for the doctor memory-staleness check
+  done 2026-09-04 — pytest tests/test_eval_l4.py -q — 5 passed (recall@10=MRR=2/3; memory_refs 0 proves session_id=None)
+- [x] T015 [P] Add failing tests for the doctor memory-staleness check
   (TC-022/TC-023): a `tmp_path` workspace fixture with ≥1 tribal memory
   file mtime-aged past 30 days and 0 `memory_refs` rows in that window
   asserting `cairn doctor` reports WARN with a detail mentioning
@@ -273,7 +287,8 @@ baseline test/branch/tree facts below are unchanged)
   result-name lists in `tests/test_doctor.py` (`expected` at `:125`, the
   inline list at `:917`) to include the new check name in the same task.
   Red before T016. (FR-011)
-- [ ] T016 (after T014) Implement `_check_memory_staleness(conn, db)` in
+  done 2026-09-04 — pytest tests/test_doctor.py -q — red 4 failed (no memory_staleness row)
+- [x] T016 (after T014) Implement `_check_memory_staleness(conn, db)` in
   `src/cairn/cli/system.py` per tech-spec A8/D-009 (chained after T014 only
   for file ownership — T014 edits `eval_cmd`'s `--corpus`/render loop, this
   task adds a wholly new `_check_memory_staleness`-shaped function; no data dependency, own
@@ -294,6 +309,7 @@ baseline test/branch/tree facts below are unchanged)
   filesystem walk); update the "10 health checks" banner (`:632-637`),
   `doctor`'s docstring, and `docs/cli-reference.md:92`'s "10 checks" line
   to reflect 11. Turns T015 green. (FR-011)
+  done 2026-09-04 — pytest tests/test_doctor.py -q — 46 passed; degraded path emits …tool_health, memory_staleness, config, environment
 
 ## Phase 5: MCP surface trim + docs (FR-012, FR-013)
 <!-- Checkpoint (tech-spec D-010 supersedes plan.md's original
@@ -308,7 +324,7 @@ baseline test/branch/tree facts below are unchanged)
      memory_evolve\|memory_decay\|memory_delete\|memory_digest"
      src/cairn/mcp_server/tools_memory.py` shows 0 matches; `grep -n
      "28 tools\|22 tools" README.md docs/mcp-tools.md` shows 22, not 28. -->
-- [ ] T017 Add failing tests for the MCP tool trim + D-012's demote fix
+- [x] T017 Add failing tests for the MCP tool trim + D-012's demote fix
   (TC-024/TC-025): update `tests/test_status_resource_health.py:281`
   (`_EXPECTED_TOOL_COUNT == 28` → `22`); rename/retarget
   `tests/test_mcp_wiki_tool.py::test_wiki_generate_is_the_28th_registered_tool`
@@ -325,7 +341,8 @@ baseline test/branch/tree facts below are unchanged)
   `memory_embeddings` stays coherent after MCP removal; assert the six CLI
   verbs (`evolve`, `digest`, `promote`, `decay`, `demote`, `forget`) still
   work. Red before T018. (FR-012)
-- [ ] T018 (after T017) Implement the MCP tool trim + D-012's demote fix
+  done 2026-09-04 — red 7 failed/33 passed (count asserts, registry scrape, hint string, six-still-registered, demote --db)
+- [x] T018 (after T017) Implement the MCP tool trim + D-012's demote fix
   per tech-spec A9/D-010/D-011/D-012, landing the three test-enforced doc
   files in this same task per tech-spec's explicit instruction: delete
   `memory_digest` (`:22`), `memory_evolve` (`:218`), `memory_promote`
@@ -345,7 +362,8 @@ baseline test/branch/tree facts below are unchanged)
   (memory tool list → `recall_memory, record_memory` only), and
   `src/cairn/agent_integration/skill/references/tools.md:24,27-31` (remove
   the six bullets). Turns T017 green. (FR-012)
-- [ ] T019 [P] Update the remaining 8 doc/prose files to the 22-tool count
+  done 2026-09-04 — 55 passed across status_resource_health/mcp_wiki_tool/agent_surface/connection_leaks + trim/recurrence; six-name grep in tools_memory.py = 0
+- [x] T019 [P] Update the remaining 8 doc/prose files to the 22-tool count
   per tech-spec A9's full table (landing right after T018 — no test
   enforces these, but they complete FR-013's doc-count claim):
   `README.md:22,199,292` ("28 tools" → "22 tools" in all three spots,
@@ -367,6 +385,7 @@ baseline test/branch/tree facts below are unchanged)
   and regenerated by a separate process; every doc names the delete verb
   as `cairn memory forget`, never `cairn memory delete` (D-011). Do not
   edit `src/cairn_intel.egg-info/PKG-INFO` (build output). (FR-013)
+  done 2026-09-04 — grep '28 tools' across README/mcp-tools/AGENTS/architecture/server/__init__ = 0; '22 tools' present; no 'memory delete' anywhere (D-011)
 
 ## Conventions
 - `- [ ]` todo · `(in-progress)` claimed · `- [x]` done + proof note:
