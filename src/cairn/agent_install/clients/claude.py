@@ -97,22 +97,35 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
                 argv = ["claude", "mcp", "add", "--transport", "sse",
                         "--scope", "user", "cairn", url]
             else:
-                cmd = resolve_cg_command()
-                argv = ["claude", "mcp", "add", "cairn", "--scope", "user", *cmd, "serve"]
-                # `claude mcp add` persists -e/--env KEY=value into the
-                # user-scope registration; a non-default home must ride along
-                # or the spawned server resolves the default store.
+                # `claude mcp add <name> [-e KEY=value] -- <command> [args...]`:
+                # `--` ends option parsing; everything after it is the server
+                # command stored verbatim as the registration argv. `-e`
+                # entries persist into the user-scope registration's env
+                # block; a non-default home must ride along or the spawned
+                # server resolves the default store.
+                argv = ["claude", "mcp", "add", "cairn", "--scope", "user"]
                 for key, value in cairn_home_env().items():
                     argv += ["-e", f"{key}={value}"]
+                argv += ["--", *resolve_cg_command(), "serve"]
             try:
-                subprocess.run(argv, capture_output=True, timeout=15, check=False)
-                res.notes.append("Registered MCP globally via `claude mcp add --scope user`.")
+                proc = subprocess.run(argv, capture_output=True, timeout=15, check=False)
             except (subprocess.SubprocessError, OSError) as e:
                 res.notes.append(
                     f"WARNING: `claude mcp add --scope user` failed ({e}); "
                     "MCP not registered globally. Re-run with the claude CLI on PATH "
                     "or install per-workspace (scope=workspace)."
                 )
+            else:
+                if proc.returncode == 0:
+                    res.notes.append("Registered MCP globally via `claude mcp add --scope user`.")
+                else:
+                    err = (proc.stderr or proc.stdout or "").strip()
+                    res.notes.append(
+                        f"WARNING: `claude mcp add --scope user` exited "
+                        f"{proc.returncode}: {err[:200]}; MCP not registered "
+                        "globally. Re-run with the claude CLI on PATH or install "
+                        "per-workspace (scope=workspace)."
+                    )
         else:
             res.notes.append(
                 "WARNING: global MCP requires the `claude` CLI on PATH "

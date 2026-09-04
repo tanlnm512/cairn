@@ -17,7 +17,8 @@ Scope of this module:
 Safety: every global-scope test monkeypatches Path.home to a throwaway dir
 and every subprocess-spawning CLI (claude/droid) is mocked -- the real
 ~/.claude, ~/.cursor, ~/.zcode are never touched and no real `mcp add/remove`
-ever executes.
+ever executes. The one opt-in CLI integration test runs the real `claude`
+binary with HOME pointed at a throwaway dir (same guarantees).
 """
 from __future__ import annotations
 
@@ -647,7 +648,10 @@ class TestTransportDefault:
 
         add = [c for c in calls if c[:3] == ["claude", "mcp", "add"]]
         assert len(add) == 2
-        assert add[1][-2:] == ["-e", f"CAIRN_HOME={custom_home}"]
+        # -e entries precede the `--` separator; the server command follows it.
+        assert f"CAIRN_HOME={custom_home}" in add[1]
+        assert add[1].index(f"CAIRN_HOME={custom_home}") < add[1].index("--")
+        assert add[1][-1] == "serve"
 
 
 # --------------------------------------------------------------------------
@@ -874,3 +878,143 @@ class TestInstallVerification:
             assert str(resolved) in res.verification_detail, (
                 f"{res.client}: FAIL must name the store it actually "
                 f"resolved ({resolved})")
+
+
+# --------------------------------------------------------------------------
+# Claude Code global MCP registration (`claude mcp add --scope user`)
+# --------------------------------------------------------------------------
+
+# Pristine shutil.which, captured at import time -- before the hermetic
+# fixture swaps in its agent-CLI-blocking replacement.
+_PRISTINE_WHICH = shutil.which
+
+
+class TestClaudeGlobalMcpRegistration:
+    """`install-agents --scope global` registers Claude Code's MCP via the
+    `claude` CLI (Claude Code reads no global ~/.mcp.json file). The spawned
+    argv must survive the CLI's own option parser and the outcome must be
+    reported honestly."""
+
+    def test_stdio_argv_ends_option_parsing_before_server_command(
+            self, fake_home, tmp_path, monkeypatch):
+        """Module-fallback command shape (`python -m cairn.cli.main serve`):
+        `--` must separate it from claude's own options, or the CLI parses
+        the server command's flags as its own and the add fails."""
+        from cairn.agent_install.clients import claude as claude_mod
+
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        _cli_at(monkeypatch, "claude")
+        calls = _spy_subprocess(monkeypatch)
+        monkeypatch.setattr(claude_mod, "resolve_cg_command",
+                            lambda: ["/usr/bin/python3", "-m", "cairn.cli.main"])
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        rep = install(str(ws), clients=["claude"], scope="global", transport="stdio")
+
+        assert calls == [["claude", "mcp", "add", "cairn", "--scope", "user",
+                          "--", "/usr/bin/python3", "-m", "cairn.cli.main",
+                          "serve"]]
+        res = next(r for r in rep.results if r.client == "claude")
+        assert any("Registered MCP globally" in n for n in res.notes)
+
+    def test_stdio_argv_pins_home_env_before_separator(
+            self, fake_home, tmp_path, monkeypatch):
+        """A non-default home rides along as -e entries placed before `--`;
+        everything after `--` is the server command verbatim."""
+        from cairn.agent_install.clients import claude as claude_mod
+
+        _cli_at(monkeypatch, "claude")
+        calls = _spy_subprocess(monkeypatch)
+        monkeypatch.setattr(claude_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
+        monkeypatch.setattr(claude_mod, "cairn_home_env",
+                            lambda: {"CAIRN_HOME": "/custom/home"})
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+
+        assert calls == [["claude", "mcp", "add", "cairn", "--scope", "user",
+                          "-e", "CAIRN_HOME=/custom/home",
+                          "--", "/fake/cairn", "serve"]]
+
+    def test_stdio_nonzero_exit_reports_warning_not_success(
+            self, fake_home, tmp_path, monkeypatch):
+        """A failed `claude mcp add` (non-zero exit) must surface as a
+        WARNING naming the exit code and the CLI's stderr -- never as the
+        success note."""
+        from cairn.agent_install.clients import claude as claude_mod
+
+        _cli_at(monkeypatch, "claude")
+        monkeypatch.setattr(claude_mod, "resolve_cg_command",
+                            lambda: ["/usr/bin/python3", "-m", "cairn.cli.main"])
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "error: unknown option '-m'"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        rep = install(str(ws), clients=["claude"], scope="global", transport="stdio")
+
+        res = next(r for r in rep.results if r.client == "claude")
+        assert not any("Registered MCP globally" in n for n in res.notes)
+        assert any("exited 1" in n and "unknown option '-m'" in n
+                   for n in res.notes)
+
+    def test_doctor_reads_claude_user_scope_registration(
+            self, fake_home, tmp_path):
+        """The user-scope file `claude mcp add --scope user` writes
+        (~/.claude.json) is one of the configs the registration audit reads,
+        and it alone marks claude installed."""
+        from cairn.agent_install import check_installed
+        from cairn.cli.system import _enumerate_registrations
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        entry = {"type": "stdio", "command": "/bin/echo", "args": ["serve"]}
+        user_cfg = fake_home / ".claude.json"
+        user_cfg.write_text(json.dumps({"mcpServers": {"cairn": entry}}),
+                            encoding="utf-8")
+
+        assert check_installed(str(ws))["claude"] is True
+
+        claude_hits = [(c, d, e) for c, d, e in _enumerate_registrations()
+                       if c == "claude"]
+        assert ("claude", "~/.claude.json", entry) in claude_hits
+
+    @pytest.mark.skipif(
+        not os.environ.get("CAIRN_TEST_CLAUDE_CLI") or not shutil.which("claude"),
+        reason="opt-in end-to-end probe (CAIRN_TEST_CLAUDE_CLI=1); needs the real claude CLI",
+    )
+    def test_claude_cli_global_registration_end_to_end(
+            self, tmp_path, monkeypatch):
+        """The real `claude mcp add` accepts the spawned argv and stores the
+        full server command (with its flags) as the registration. HOME is
+        pointed at a throwaway dir, so the real ~/.claude is never touched."""
+        from cairn.agent_install._common import resolve_cg_command
+
+        # Unblock the hermetic fixture's which() for claude only; the
+        # throwaway-HOME sandbox still applies to everything else.
+        monkeypatch.setattr(
+            shutil, "which",
+            lambda name, *a, **k: _PRISTINE_WHICH(name, *a, **k) if name == "claude" else None)
+
+        home = tmp_path / "claude_home"
+        home.mkdir()
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        monkeypatch.setattr(Path, "home", lambda *a, **k: home)
+        monkeypatch.setenv("HOME", str(home))
+
+        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+
+        cfg = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+        entry = cfg["mcpServers"]["cairn"]
+        cmd = resolve_cg_command()
+        assert entry["type"] == "stdio"
+        assert entry["command"] == cmd[0]
+        assert entry["args"] == [*cmd[1:], "serve"]

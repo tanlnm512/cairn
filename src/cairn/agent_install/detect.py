@@ -158,11 +158,13 @@ def check_installed(workspace: str) -> dict[str, bool]:
     home = Path.home()
     result: dict[str, bool] = {}
 
-    # claude: .mcp.json has cairn OR .claude/skills/cairn/ exists
+    # claude: .mcp.json has cairn OR .claude/skills/cairn/ exists OR the
+    # user-scope ~/.claude.json registration has cairn
     result["claude"] = (
         _json_has_cairn(ws / ".mcp.json")
         or (ws / ".claude" / "skills" / "cairn" / "SKILL.md").exists()
         or _json_has_cairn(home / ".claude" / "settings.json")
+        or _json_has_cairn(home / ".claude.json")
     )
 
     # claude-desktop: global config has cairn in mcpServers

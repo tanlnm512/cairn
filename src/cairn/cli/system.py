@@ -1347,9 +1347,11 @@ def _check_config() -> dict:
 # Per-client MCP registration files the doctor audits -- exactly the config
 # paths ``check_installed`` consults (agent_install/detect.py), i.e. the files
 # ``install-agents`` writes. Workspace files are cwd-relative; home files are
-# relative to Path.home(). Registrations made through external CLIs without a
-# file this installer wrote (droid via ``droid mcp add``) stay outside these
-# files, matching D-006: the audit covers what check_installed can read.
+# relative to Path.home(). claude's user-scope registration is written by
+# `claude mcp add --scope user` into ~/.claude.json and is read here like any
+# home-level config. Registrations made through external CLIs into files that
+# hold no readable cairn entry (droid via ``droid mcp add``) stay outside
+# these files, matching D-006: the audit covers what check_installed can read.
 _REG_WS_FILES: dict[str, str] = {
     "claude": ".mcp.json",
     "cursor": ".cursor/mcp.json",
@@ -1360,6 +1362,7 @@ _REG_WS_FILES: dict[str, str] = {
     "omp": ".omp/mcp.json",
 }
 _REG_HOME_FILES: dict[str, tuple[str, ...]] = {
+    "claude": ("~/.claude.json",),
     "cursor": ("~/.cursor/mcp.json",),
     "zcode": ("~/.zcode/config.json", "~/.zcode/cli/config.json"),
     "agy": ("~/.gemini/config/mcp_config.json",),

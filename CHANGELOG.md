@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- Agent install (`install-agents --scope global`, Claude Code): the
+  `claude mcp add` registration places `-e` entries before a `--`
+  separator so server commands carrying flags (the
+  `python -m cairn.cli.main` fallback) register instead of being
+  rejected as unknown options, and a non-zero CLI exit is reported as a
+  WARNING naming the exit code and stderr instead of a success note.
+  The user-scope registration file (`~/.claude.json`) is now read by
+  `check_installed` and the doctor's registration audit (env-staleness
+  check + spawn probe), matching the other clients' global configs.
 - Server boot (`cairn serve` / MCP stdio): non-actionable third-party
   output suppressed — HF Hub unauthenticated-request warnings, MCP
   pre-initialization request warnings, model-loading progress bars.
