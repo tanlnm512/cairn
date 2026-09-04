@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- Agent install (droid): `droid mcp add` matches the documented stdio
+  shape (the full server command as one argument, `--type stdio`) and
+  pins a non-default home via the CLI's `--env` flag (replacing the
+  "no verified env mechanism" warning). A non-zero CLI exit is reported
+  as a WARNING naming the exit code and stderr, and falls back to the
+  `.factory/mcp.json` file registration; `droid mcp remove` reports
+  non-zero exits instead of staying silent. The user-scope
+  registration file (`~/.factory/mcp.json`) is now read by
+  `check_installed` and the doctor's registration audit, matching the
+  other clients' global configs.
 - Agent install (`install-agents --scope global`, Claude Code): the
   `claude mcp add` registration places `-e` entries before a `--`
   separator so server commands carrying flags (the

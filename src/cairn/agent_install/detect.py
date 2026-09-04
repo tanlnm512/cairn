@@ -177,8 +177,13 @@ def check_installed(workspace: str) -> dict[str, bool]:
         or _json_has_cairn(home / ".cursor" / "mcp.json")
     )
 
-    # droid: .factory/skills/cairn/ exists
-    result["droid"] = (ws / ".factory" / "skills" / "cairn" / "SKILL.md").exists()
+    # droid: .factory/skills/cairn/ or .factory/mcp.json in the workspace, or
+    # the user-scope ~/.factory/mcp.json registration (`droid mcp add`)
+    result["droid"] = (
+        (ws / ".factory" / "skills" / "cairn" / "SKILL.md").exists()
+        or _json_has_cairn(ws / ".factory" / "mcp.json")
+        or _json_has_cairn(home / ".factory" / "mcp.json")
+    )
 
     # zcode: .zcode/config.json (workspace) or ~/.zcode/cli/config.json
     # (global, current) has cairn entry; ~/.zcode/config.json is legacy global.
