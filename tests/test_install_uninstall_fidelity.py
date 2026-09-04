@@ -986,6 +986,28 @@ class TestClaudeGlobalMcpRegistration:
                        if c == "claude"]
         assert ("claude", "~/.claude.json", entry) in claude_hits
 
+    def test_doctor_reads_droid_user_scope_registration(
+            self, fake_home, tmp_path):
+        """The user-scope file `droid mcp add` writes (~/.factory/mcp.json)
+        is one of the configs the registration audit reads, and it alone
+        marks droid installed."""
+        from cairn.agent_install import check_installed
+        from cairn.cli.system import _enumerate_registrations
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        entry = {"type": "stdio", "command": "/bin/echo", "args": ["serve"]}
+        user_cfg = fake_home / ".factory" / "mcp.json"
+        user_cfg.parent.mkdir(parents=True)
+        user_cfg.write_text(json.dumps({"mcpServers": {"cairn": entry}}),
+                            encoding="utf-8")
+
+        assert check_installed(str(ws))["droid"] is True
+
+        droid_hits = [(c, d, e) for c, d, e in _enumerate_registrations()
+                      if c == "droid"]
+        assert ("droid", "~/.factory/mcp.json", entry) in droid_hits
+
     @pytest.mark.skipif(
         not os.environ.get("CAIRN_TEST_CLAUDE_CLI") or not shutil.which("claude"),
         reason="opt-in end-to-end probe (CAIRN_TEST_CLAUDE_CLI=1); needs the real claude CLI",
@@ -1018,3 +1040,96 @@ class TestClaudeGlobalMcpRegistration:
         assert entry["type"] == "stdio"
         assert entry["command"] == cmd[0]
         assert entry["args"] == [*cmd[1:], "serve"]
+
+
+# --------------------------------------------------------------------------
+# Droid CLI registration (`droid mcp add`)
+# --------------------------------------------------------------------------
+
+class TestDroidCliRegistration:
+    """`droid mcp add` is a subprocess whose outcome must be reported
+    honestly and whose argv must match the documented stdio shape (the full
+    server command as ONE argument). A failed add falls back to the
+    .factory/mcp.json file so the registration lands either way."""
+
+    def test_stdio_argv_passes_server_command_as_one_argument(
+            self, tmp_path, monkeypatch):
+        from cairn.agent_install.clients import droid as droid_mod
+
+        _cli_at(monkeypatch, "droid")
+        calls = _spy_subprocess(monkeypatch)
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        monkeypatch.setattr(droid_mod, "resolve_cg_command",
+                            lambda: ["/usr/bin/python3", "-m", "cairn.cli.main"])
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["droid"], transport="stdio")
+
+        assert calls == [["droid", "mcp", "add", "cairn",
+                          "/usr/bin/python3 -m cairn.cli.main serve",
+                          "--type", "stdio"]]
+        assert not (ws / ".factory" / "mcp.json").exists()
+
+    def test_stdio_argv_pins_home_env(self, tmp_path, monkeypatch):
+        from cairn.agent_install.clients import droid as droid_mod
+
+        _cli_at(monkeypatch, "droid")
+        calls = _spy_subprocess(monkeypatch)
+        monkeypatch.setattr(droid_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
+        monkeypatch.setattr(droid_mod, "cairn_home_env",
+                            lambda: {"CAIRN_HOME": "/custom/home"})
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["droid"], transport="stdio")
+
+        add = calls[0]
+        assert add[-2:] == ["--env", "CAIRN_HOME=/custom/home"]
+
+    def test_failed_add_warns_and_falls_back_to_file(
+            self, tmp_path, monkeypatch):
+        import cairn.agent_install._common as common_mod
+        from cairn.agent_install.clients import droid as droid_mod
+
+        _cli_at(monkeypatch, "droid")
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        # Both argv build and file fallback resolve the command independently.
+        monkeypatch.setattr(common_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
+        monkeypatch.setattr(droid_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "error: server cairn already exists"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        rep = install(str(ws), clients=["droid"], transport="stdio")
+
+        res = next(r for r in rep.results if r.client == "droid")
+        assert not any("Registered MCP via" in n for n in res.notes)
+        assert any("exited 1" in n and "already exists" in n for n in res.notes)
+        fallback = json.loads((ws / ".factory" / "mcp.json").read_text(encoding="utf-8"))
+        assert fallback["mcpServers"]["cairn"]["command"] == "/fake/cairn"
+
+    def test_remove_nonzero_exit_reports_warning(
+            self, fake_home, tmp_path, monkeypatch):
+        _cli_at(monkeypatch, "droid")
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "error: server cairn not found"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        rep = uninstall(str(ws), clients=["droid"])
+
+        res = next(r for r in rep.results if r.client == "droid")
+        assert not any("Removed MCP registration" in n for n in res.notes)
+        assert any("exited 1" in n and "not found" in n for n in res.notes)

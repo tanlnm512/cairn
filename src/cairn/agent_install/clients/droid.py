@@ -2,7 +2,7 @@
 
 Droid reads the ``.factory/`` tree (skills, commands, droids) and registers
 MCP via ``droid mcp add`` when the CLI is present, falling back to a
-``.factory/mcp.json`` file otherwise.
+``.factory/mcp.json`` file when the CLI is absent or the add fails.
 """
 from __future__ import annotations
 
@@ -50,29 +50,45 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
     _write_file(ws / ".factory" / "droids" / "knowledge-steward.md",
                 _claude_agent_md("cursor/knowledge-steward.json"), force, res, dry_run=dry_run)
 
-    # MCP: prefer `droid mcp add` if the CLI is available; else write a config file.
+    # MCP: prefer `droid mcp add` if the CLI is available; a failed CLI add
+    # falls back to the .factory/mcp.json file so the registration lands
+    # either way (droid reads both; uninstall strips both).
     if shutil.which("droid") and not dry_run:
-        home_env: dict[str, str] = {}
         if transport == "sse":
             url = default_sse_url(sse_url)
             argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
         else:
-            cmd = resolve_cg_command()
-            argv = ["droid", "mcp", "add", "cairn", *cmd, "serve"]
-            home_env = cairn_home_env()
+            # Documented stdio shape: the full server command arrives as ONE
+            # argument (droid splits it), so server-command flags are never
+            # parsed as droid options. `--env` entries persist into the
+            # registration; a non-default home must ride along or the
+            # spawned server resolves the default store.
+            argv = ["droid", "mcp", "add", "cairn",
+                    " ".join([*resolve_cg_command(), "serve"]),
+                    "--type", "stdio"]
+            for key, value in cairn_home_env().items():
+                argv += ["--env", f"{key}={value}"]
+        registered = False
         try:
-            subprocess.run(argv, capture_output=True, timeout=10, check=False)
-            res.notes.append("Registered MCP via `droid mcp add`.")
-            if home_env:
+            proc = subprocess.run(argv, capture_output=True, timeout=10, check=False,
+                                  text=True, errors="replace")
+            registered = proc.returncode == 0
+            if registered:
+                res.notes.append("Registered MCP via `droid mcp add`.")
+            else:
+                err = (proc.stderr or proc.stdout or "").strip()
                 res.notes.append(
-                    "WARNING: the `droid mcp add` registration embeds no CAIRN_HOME "
-                    "env (the CLI has no verified env mechanism), so on a custom "
-                    "home the registered server may resolve the default store; a "
-                    "workspace-scope install writes a .factory/mcp.json registration "
-                    "that embeds the environment instead."
-                )
-        except (subprocess.SubprocessError, OSError):
-            res.notes.append("`droid mcp add` failed; no config file written for MCP.")
+                    f"WARNING: `droid mcp add` exited {proc.returncode}: "
+                    f"{err[:200]}.")
+        except (subprocess.SubprocessError, OSError) as e:
+            res.notes.append(f"WARNING: `droid mcp add` failed ({e}).")
+        if not registered:
+            _merge_json_file(ws / ".factory" / "mcp.json",
+                             mcp_config_json(transport, sse_url), force, res,
+                             dry_run=False)
+            res.notes.append(
+                "Wrote .factory/mcp.json so the registration is present on "
+                "the next droid run.")
     elif not shutil.which("droid"):
         # No droid CLI: write a .factory/mcp.json so it's present when droid is installed.
         _merge_json_file(ws / ".factory" / "mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
@@ -94,13 +110,21 @@ def _mcp_remove_droid(res: InstallResult) -> None:
     if not shutil.which("droid"):
         return
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["droid", "mcp", "remove", "cairn"],
             capture_output=True, timeout=10, check=False,
+            text=True, errors="replace",
         )
+    except (subprocess.SubprocessError, OSError) as e:
+        res.notes.append(f"WARNING: `droid mcp remove cairn` failed ({e}); the registration may remain.")
+        return
+    if proc.returncode == 0:
         res.notes.append("Removed MCP registration via `droid mcp remove cairn`.")
-    except (subprocess.SubprocessError, OSError):
-        res.notes.append("`droid mcp remove cairn` failed; the registration may remain.")
+    else:
+        err = (proc.stderr or proc.stdout or "").strip()
+        res.notes.append(
+            f"WARNING: `droid mcp remove cairn` exited {proc.returncode}: "
+            f"{err[:200]}; the registration may remain.")
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
