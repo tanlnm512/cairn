@@ -357,8 +357,8 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 | `ask_compass` | Routes correctly but returns empty body skeletons when wiki/compass coverage is thin. | Drill down with the specific layer tool; don't treat empty response as "no info exists". |
 | `recall_memory` | Multi-token lexical matching, with a semantic fallback when lexical search comes up empty. | Natural-language and multi-token queries ("backoff retry policy") work, not just single symbol tokens. |
 | `impact_analysis` | Within-repo by default, but includes cross-repo consumer reach in its output. Precise mode only follows resolved edges, so common names can under-report. | Pair with `cross_repo_deps(repo)` for the full picture. Use `fuzzy=True` when precise impact looks suspiciously small for a widely-used symbol. |
-| `search_symbols` | FTS5 + phrase splitting handles underscored tokens (`*core_ui_v4*` matches correctly). For camelCase or non-prefix substring patterns, unions in a LIKE-based substring pass (FTS5's `*` is prefix-only; unicode61 doesn't split camelCase). | Wildcards and substring queries both work, on underscored and camelCase names alike. |
-| `get_callers`/`impact_analysis` on a Kotlin class invoked via `operator fun invoke` | A bare `someUseCase(params)` call (DI-injected property, the standard Android UseCase idiom) resolves the call edge to the *local property* in the calling file, not the class. The parser retargets these bare-call edges to the callee's declared type. | Both bare `someUseCase(params)` and explicit-receiver `this.someUseCase(params)` shapes retarget correctly (regression-tested). |
+| `search_symbols` | FTS5 + phrase splitting handles underscored tokens (`*core_ui_v4*` matches). Substring and camelCase patterns also match via a LIKE-based pass (the FTS5 `*` wildcard is prefix-only and the tokenizer doesn't split camelCase, so non-prefix queries fall back to LIKE). | Wildcards and substring queries both work, on underscored and camelCase names. |
+| `get_callers`/`impact_analysis` on a Kotlin class invoked via `operator fun invoke` | Bare calls of the standard Android UseCase idiom (`someUseCase(params)` against a DI-injected property) resolve to the callee's declared type. | Both bare `someUseCase(params)` and explicit-receiver `this.someUseCase(params)` shapes retarget correctly (regression-tested). |
 | `semantic_search` | Defaults to RRF fusion (BM25 + vector, `CAIRN_FUSION=1` default): the returned `score` is a rank-fusion number (~0.01-0.02), not cosine similarity, regardless of the `threshold` argument. Real cosine scores (0.3-0.6+ for genuinely on-topic hits with `local`/`BAAI/bge-m3`) only show when fusion is off. | Rank order is meaningful either way. Set `CAIRN_FUSION=0` if you need the score to reflect actual match strength (e.g. deciding how confident a hit is), not just relative order. |
 | `ann_backend_enabled` | On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. It degrades silently to the brute-force cosine scan if the extension fails to load. | Set `CAIRN_ANN_BACKEND=off` to force the brute-force scan. |
 
@@ -374,7 +374,7 @@ task first with `--refine-catalog`); work them through the task queue:
 - `cairn task claim <id>` -> write the page -> `cairn task complete <id> --result-file <path>`;
   the result body must end with a `## Sources` footer -- the deterministic critic
   fact-checks it against the graph before the page is promoted.
-- `cairn wiki status` -- per-page state (queued / in-progress / promoted / failed) with counts
+- `cairn wiki status` -- per-page state, derived at read time (planned / queued / in-progress / promoted / failed / dropped) with counts
 - `cairn wiki retry` -- re-queue failed pages as fresh task chains
 - `cairn wiki export --dir DIR` -- write every promoted page out as markdown
 - `cairn wiki enrich [<page-id>]` -- queue an append-only extension of a promoted page
