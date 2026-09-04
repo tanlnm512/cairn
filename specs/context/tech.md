@@ -1,13 +1,13 @@
 # Tech stack & conventions: cairn
 
 **Created**: 2026-08-28 | **Baseline**: 0.16.0 @ fe7a7f09edb015d6a8fb12cd5d0f1b06ed07f5c3
-**Refreshed**: 2026-08-31 @ 264647ae4cf286e7efed52afc87d98589b81258a (wiki-generation survey — test-runner line only)
+**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey — mypy promoted from advisory to a hard gate in CI; test-runner line unchanged); re-verified @ 7663989 (2026-09-04 — ci.yml/pyproject/system.py line refs re-anchored)
 Stack, build/test runners, and gates. Cited from pyproject.toml,
 .pre-commit-config.yaml, and .github/workflows/ci.yml read at baseline.
 
 ## Stack
 - Python >= 3.10 (classifiers cover 3.10-3.14; CI matrix runs all five,
-  ci.yml:155). setuptools build backend, src-layout.
+  ci.yml:143). setuptools build backend, src-layout.
 - Core deps (pyproject.toml:28-63): click >=8.0, rich >=13.0, questionary >=2.0,
   `mcp>=0.9.0,<2.0.0` (FastMCP; SSE/uvicorn/starlette are core in mcp>=0.9),
   pydantic >=2.0, pyyaml, pathspec, packaging, numpy >=1.24, sqlite-vec >=0.1.0,
@@ -27,10 +27,10 @@ Stack, build/test runners, and gates. Cited from pyproject.toml,
   keeps embedding/lib-probe paths hermetic; use the canonical form.
   `uv run pre-commit install` / `uv run pre-commit run --all-files` for the
   local gate (.pre-commit-config.yaml:9-11).
-- Install for dev: `pip install -e ".[dev,ingest]"` (CI test job, ci.yml:166-169).
+- Install for dev: `pip install -e ".[dev,ingest]"` (CI test job, ci.yml:163-165).
 - Release: `cz bump` updates pyproject `version` + `src/cairn/__init__.py:__version__`
   and tags `v$version`; CHANGELOG.md stays hand-maintained
-  (pyproject.toml:208-237).
+  (pyproject.toml:215-241).
 
 ## Tests
 - pytest; `testpaths = ["tests"]` so bare runs never collect the vendored
@@ -58,16 +58,17 @@ Stack, build/test runners, and gates. Cited from pyproject.toml,
 - ruff, pyflakes-only (`select = ["F"]`, pyproject.toml:184-206) — a deliberate
   conservative gate; style rules excluded. Excludes tests/fixtures and the
   vendored benchmark corpora.
-- mypy ==2.3.0, advisory (`continue-on-error` in CI, ~52 known errors,
-  ci.yml:49-76). bandit advisory (`-ii -ll -s B608`). pip-audit is a HARD gate
-  (ci.yml:43-44).
+- mypy ==2.3.0, HARD gate (`mypy --ignore-missing-imports src`, ci.yml:67-68 —
+  no `continue-on-error`; runs clean at default settings, ci.yml:50).
+  bandit advisory (`continue-on-error: true`, ci.yml:46; `-ii -ll -s B608`).
+  pip-audit is a HARD gate (ci.yml:43-44).
 - pre-commit (Layer 0, .pre-commit-config.yaml:16-51): ruff (no --fix),
   gitleaks, check-yaml, check-toml, check-merge-conflict,
   check-added-large-files (500kb), debug-statements.
 
 ## CI (ci.yml, on push/PR to main)
-Jobs: `security` (pip-audit hard + bandit advisory), `typecheck` (mypy
-advisory), `pr-title` (conventional-commit title gate — types feat fix chore
+Jobs: `security` (pip-audit hard + bandit advisory), `typecheck` (mypy hard
+gate), `pr-title` (conventional-commit title gate — types feat fix chore
 docs ci refactor perf test build style revert, ci.yml:93-105),
 `pre-commit` (server-side run of all Layer-0 hooks),
 `dependency-review` (PR delta vs GitHub Advisory DB),
@@ -88,8 +89,9 @@ comparison, continue-on-error).
 
 ## Runtime contracts worth knowing when adding commands
 - Doctor/status/report are read-only diagnostics: doctor exits 0 when every
-  check is PASS/WARN and 1 on any FAIL (system.py:1519-1528); a missing store
-  is FAILed, never created (system.py:1440-1454).
+  check is PASS/WARN and 1 on any FAIL (doctor command system.py:1750, exit
+  at 1774); a missing store is FAILed, never created
+  (`_db_unavailable_results` system.py:1657, `_run_doctor` 1680).
 - `cairn doctor --json` emits the raw `_result` list
   (`{name, status, detail, hint}`); the check-name sequence is pinned by
   test_doctor.py:96-124 — adding a check means updating that test.
