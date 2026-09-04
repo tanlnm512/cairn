@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sqlite3
 
 from mcp.types import ToolAnnotations
 
@@ -444,6 +445,7 @@ def explore(query: str) -> str:
     try:
         result = queries.explore(conn, query)
         if result["seeds"]:
+            from cairn.graph import note_contention
             from cairn.memory.promotion import record_references_batch, search_memory
 
             seed_names = [s["name"] for s in result["seeds"] if s.get("name")][:5]
@@ -455,9 +457,14 @@ def explore(query: str) -> str:
             if not _read_only_mode():
                 # Refs are recorded here (not via search_memory's session_id)
                 # so only the memories actually rendered above are credited.
-                record_references_batch(
-                    conn, [(c.concept_id, query) for c in tribal], _session_id()
-                )
+                try:
+                    record_references_batch(
+                        conn, [(c.concept_id, query) for c in tribal], _session_id()
+                    )
+                except sqlite3.OperationalError:
+                    # Ref counting is analytics -- a lock collision degrades to
+                    # an uncredited surface, never a failed tool call.
+                    note_contention("tools_graph.explore memory refs")
     finally:
         conn.close()
 

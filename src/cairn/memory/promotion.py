@@ -1,9 +1,9 @@
 """Memory promotion, critic, decay, and search."""
-from __future__ import annotations
 
 import logging
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -200,12 +200,19 @@ def record_references_batch(
         for memory_path, context in refs
     ]
     try:
-        conn.executemany(
-            "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) "
-            "VALUES (?, ?, ?, ?, ?)",
-            rows,
-        )
-        conn.commit()
+        for attempt in range(3):
+            try:
+                conn.executemany(
+                    "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    rows,
+                )
+                conn.commit()
+                break
+            except sqlite3.OperationalError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.05)
     except sqlite3.OperationalError as e:
         note_contention("promotion.record_references_batch", error=e)
         # Lock contention or read-only connection -- ref counting is analytics.
