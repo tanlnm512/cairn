@@ -68,7 +68,7 @@ Group: `cairn memory …`
 |---|---|
 | `cairn serve run|start|stop|status|restart` | MCP server (stdio foreground / SSE daemon `:9876`). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. On Linux these exit 1 — run `cairn serve --port 9876` under a process supervisor, or prefer stdio. |
 | `cairn dashboard [--db] [--port]` | loopback dashboard `:8765` (read-only views + Settings) |
-| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy, claude-desktop). With a custom `CAIRN_HOME`, generated stdio registrations embed `env.CAIRN_HOME` (claude global scope via `claude mcp add -e`), hook commands embed the assignment, and each written stdio registration is spawn-verified — the report shows per-client `verify: PASS/FAIL` naming both stores on mismatch. SSE and CLI-registered clients are skipped with a note; `--dry-run` never spawns. |
+| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy, claude-desktop). With a custom `CAIRN_HOME`, generated stdio registrations embed `env.CAIRN_HOME` (CLI-registered clients carry it too: claude global scope via `claude mcp add -e`, droid via `droid mcp add --env`), hook commands embed the assignment, and each written stdio registration is spawn-verified — the report shows per-client `verify: PASS/FAIL` naming both stores on mismatch. SSE and CLI-registered clients are skipped with a note; `--dry-run` never spawns. |
 
 ## Compass / wiki / tasks / dataflow
 
