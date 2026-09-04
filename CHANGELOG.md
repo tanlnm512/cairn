@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Tribal-memory loop closure: `explore` surfaces a tribal-memory section
+  (≤3 entries, title + "How to apply" line) and records `memory_refs` rows
+  for rendered memories; `session_start` hook emits the top tribal-memory
+  digest once per session; `post_tool_failure` captures mistake memories on
+  the second occurrence of a normalized failure signature
+  (`memory_failure_signatures` table + `cairn memory record
+  --recurrence-key`) and joins the installed hook set; `capture_memory`
+  force-routes session-bookkeeping-shaped content to the 7-day `raw` tier;
+  `session_end` reads the Claude Code `transcript_path` JSONL and queues
+  `memory-extract` (the capture path was previously unreachable); memory
+  scoring drops the constant `critic_score`/`authority` terms and
+  renormalizes the five live signals; new L4 eval level (recall@k/MRR for
+  `search_memory`) and a `cairn doctor` `memory_staleness` check WARNing on
+  write-only tribal memory; six memory lifecycle tools leave the MCP
+  surface (28 → 22 tools) remaining available via `cairn memory` CLI verbs
+  (`cairn memory demote` gains `--db`).
+
 ### Changed
 - Wiki two-kind contract: the wiki's two stored kinds have disjoint,
   structurally separated purposes — the plan manifest records pipeline
