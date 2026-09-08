@@ -5,9 +5,10 @@ rebuildable cache over it. Every :func:`rebuild_knowledge_index` call
 recomputes both tables from the current bundle contents:
 
 - declared edges: the ``relates_to`` extension, relation/kind as declared
-- derived edges: tag / affects_modules overlap (what ``search_knowledge``
-  computes at query time), materialized as ``kind: derived`` rows in both
-  directions
+- derived edges: tag / affects_modules overlap, materialized as ``kind:
+  derived`` rows in both directions (the edges ``search_knowledge``
+  expansion boosts, alongside declared extracted edges; inferred edges
+  never boost)
 - doc refs: entries carrying a ``ref`` in the ``sources``/``verified``
   families
 

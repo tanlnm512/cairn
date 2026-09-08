@@ -52,7 +52,7 @@ def search_knowledge(
     include_archived=True to see them anyway (e.g. an explicit audit).
     """
     # 1. Lexical search (substring across title/description/body/tags)
-    results = _lexical_search(bundle, query, limit, include_archived)
+    results = _lexical_search(conn, bundle, query, limit, include_archived)
 
     # 2. Semantic fallback when lexical finds nothing
     if not results:
@@ -67,12 +67,13 @@ def search_knowledge(
     return results
 
 
-def _lexical_search(bundle, query, limit, include_archived=False):
+def _lexical_search(conn, bundle, query, limit, include_archived=False):
     """Multi-token lexical search scoped to knowledge/ concepts.
 
     Tokenizes the query, scores each knowledge document per-token with field
-    weighting (title > description/tags > body), then expands results via
-    cross-doc linkage (shared affects_modules or tags).
+    weighting (title > description/tags > body), then expands results along
+    the stored relationship edges (``knowledge_edges``: extracted/derived
+    neighbors of each hit; inferred edges never boost).
     """
     # Tokenize: split on non-alphanumeric, filter stop words, keep >=3 chars.
     tokens = simple_tokenize(query, stop_words=_STOP_WORDS)
@@ -133,10 +134,11 @@ def _lexical_search(bundle, query, limit, include_archived=False):
             "chunk": (concept.description or "") + "\n" + (concept.body or "")[:200],
         })
 
-        # Cross-doc expansion: find related docs sharing affects_modules or tags.
+        # Cross-doc expansion: stored knowledge_edges neighbors -- only
+        # extracted/derived edges boost; inferred never does (low-trust).
         if expansion_budget > 0:
             related = _find_related(
-                bundle, knowledge_cids, concept, score, scored, expanded_ids, include_archived
+                conn, bundle, cid, score, scored, expanded_ids, include_archived
             )
             for rel_cid, rel_score, rel_concept in related[:expansion_budget]:
                 rel_doc_type = rel_cid.split("/")[1] if "/" in rel_cid else "unknown"
@@ -187,39 +189,75 @@ def _lexical_search_substring(bundle, query, limit, include_archived=False):
     return out[:limit]
 
 
+#: Edge kinds eligible for the related-expansion boost. Inferred edges
+#: (critic-approved LLM proposals) are low-trust and never boost (D1).
+_EXPANSION_KINDS = ("extracted", "derived")
+
+#: Expansion scoring: a neighbor earns this fraction of its parent's score,
+#: floored so a minimal-scoring parent still lifts its neighbor above
+#: unrelated noise.
+_EXPANSION_FACTOR = 0.5
+_EXPANSION_FLOOR = 0.5
+
+
 def _find_related(
-    bundle, knowledge_cids, parent_concept, parent_score, scored, already_in_results,
+    conn, bundle, parent_id, parent_score, scored, already_in_results,
     include_archived=False,
 ):
-    """Find related knowledge docs sharing affects_modules or tags.
+    """Stored-edge neighbors of ``parent_id`` eligible for expansion.
 
-    Returns [(cid, score, concept), ...] sorted by relevance. Score is 50% of
-    the parent's score, boosted if multiple fields overlap.
+    Reads the relationship index (``knowledge_edges``, rebuilt after
+    ingest) instead of recomputing tag/module overlap at query time: every
+    extracted/derived edge boosts its neighbor to >=50% of the parent's
+    score, in both edge directions. Inferred edges are excluded --
+    low-trust links never elevate a doc beyond its own merit. Docs already
+    in the results (by their own lexical merit or another expansion) are
+    skipped, and the caller's visibility rules still apply. Ties order by
+    doc id.
     """
-    parent_modules = set(parent_concept.extensions.get("affects_modules", []))
-    parent_tags = set(parent_concept.tags or [])
-    if not parent_modules and not parent_tags:
+    if conn is None:
         return []
 
     related = []
-    for cid in knowledge_cids:
-        if cid in already_in_results or cid in scored:
+    seen: set = set()
+    neighbors = _neighbors_or_empty(conn, bundle, parent_id)
+    for neighbor in neighbors:
+        if neighbor["kind"] not in _EXPANSION_KINDS:
             continue
+        cid = neighbor["doc_id"]
+        # One expansion entry per neighbor: the index stores both edge
+        # directions, and the caller's already-expanded check only sees
+        # expansions of earlier parents.
+        if cid in seen or cid in already_in_results or cid in scored:
+            continue
+        seen.add(cid)
         try:
             concept = bundle.read_concept(cid)
         except Exception:
             continue
         if not _visible(concept, include_archived):
             continue
-        c_modules = set(concept.extensions.get("affects_modules", []))
-        c_tags = set(concept.tags or [])
-        overlap = len(parent_modules & c_modules) + len(parent_tags & c_tags)
-        if overlap > 0:
-            score = max(parent_score * 0.5 + overlap, 0.5)
-            related.append((cid, score, concept))
+        score = max(parent_score * _EXPANSION_FACTOR, _EXPANSION_FLOOR)
+        related.append((cid, score, concept))
 
-    related.sort(key=lambda x: -x[1])
+    related.sort(key=lambda x: (-x[1], x[0]))
     return related
+
+
+def _neighbors_or_empty(conn, bundle, parent_id):
+    """Stored neighbors of ``parent_id``; empty on any index read failure.
+
+    The expansion is a bonus layer over lexical hits, so a missing or
+    unreadable index degrades to no expansion instead of failing the
+    search (same never-crash convention as the semantic path).
+    """
+    from cairn.knowledge.index import related_docs
+
+    try:
+        return related_docs(conn, bundle, parent_id)
+    except Exception:
+        logger.debug("knowledge_edges read failed for %s", parent_id, exc_info=True)
+        return []
 
 
 def _semantic_search(conn, bundle, query, limit, threshold, include_archived=False):

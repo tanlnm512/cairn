@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Stored-edge search expansion: `search_knowledge`'s related-doc expansion
+  reads the `knowledge_edges` relationship index instead of recomputing
+  tag/module overlap at query time. Neighbors connected by `extracted` or
+  `derived` edges surface with a >=50%-of-parent-score boost (both edge
+  directions, one entry per neighbor, still respecting each doc's own
+  lexical hits and visibility); `inferred` edges never boost — low-trust
+  links do not elevate a doc beyond its own merit. Stores without a rebuilt
+  index simply get no expansion.
 - Doc-to-code reference verification at ingest: backticked file paths and
   symbols in a staged document's body resolve against the L1 graph via
   `cairn.refs` (`file_exists`/`symbol_exists`, the wiki verified-sources
