@@ -47,11 +47,24 @@ def execute_manifest(manifest: dict, conn) -> dict:
         summary = emb.embed_knowledge(conn, bundle, batch_size=32)
         embedded = summary["embedded"]
 
+    # Derived-index refresh (D1): after every approved write the
+    # knowledge_edges / knowledge_doc_refs tables are rebuilt from the
+    # bundle so declared and overlap edges are queryable immediately. The
+    # rebuild leaves its rows uncommitted (caller-owned boundary); this
+    # connection is closed by the caller right after, which would roll the
+    # rows back, so commit here.
+    from cairn.knowledge.index import rebuild_knowledge_index
+
+    index = rebuild_knowledge_index(conn, bundle)
+    conn.commit()
+
     report = {
         "written": written,
         "embedded": embedded,
         "accepted": len(accepted),
         "skipped": manifest.get("counts", {}).get("skipped", 0),
+        "index_edges": index["edges"],
+        "index_doc_refs": index["doc_refs"],
     }
     report.update(verify_manifest(manifest, conn))
     return report

@@ -39,8 +39,15 @@ def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
     return out
 
 
-def _normalized_concept_id(bundle: OKFBundle, concept_id: str) -> str:
-    """Normalize a (possibly absolute or ``.md``-suffixed) id to bundle-relative.
+def normalize_doc_id(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize any doc id shape to the bare bundle-relative concept_id.
+
+    Accepts bare ids (``knowledge/spec/foo``), ``.md``-suffixed ids, and
+    path-shaped ids (absolute paths as returned by ``OKFBundle`` reads,
+    whose ``concept_id`` attribute is the file path, not the bare id).
+    This is the ONE normalization point shared by the derived-index
+    rebuild and the CLI/dashboard consumers that correlate frontmatter
+    pointers with bundle reads.
 
     Best-effort: on any path that can't be normalized (escapes the bundle
     root, OS error), the input minus a ``.md`` suffix is returned as-is so
@@ -48,11 +55,14 @@ def _normalized_concept_id(bundle: OKFBundle, concept_id: str) -> str:
     """
     cid = concept_id[:-3] if concept_id.endswith(".md") else concept_id
     try:
-        return str(
+        rel = str(
             (bundle.root / f"{cid}.md").resolve().relative_to(bundle.root.resolve())
         )
     except (ValueError, OSError):
         return cid
+    # The probe path carries the .md suffix; the normalized id is bare,
+    # matching the knowledge_embeddings.doc_id convention.
+    return rel[:-3] if rel.endswith(".md") else rel
 
 
 def _refuse_out_of_namespace(
@@ -72,9 +82,9 @@ def _refuse_out_of_namespace(
     "not found" branch relies on.
     """
     if concept is not None:
-        resolved = _normalized_concept_id(bundle, concept.concept_id)
+        resolved = normalize_doc_id(bundle, concept.concept_id)
     else:
-        resolved = _normalized_concept_id(bundle, doc_id)
+        resolved = normalize_doc_id(bundle, doc_id)
         try:
             file_path = bundle._validate_concept_path(resolved)
         except ValueError:

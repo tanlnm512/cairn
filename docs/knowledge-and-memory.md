@@ -52,6 +52,44 @@ for the full-size version. Pipeline: `src/cairn/knowledge/ingest/__init__.py:run
 
 Docs land in `knowledge/<doc_type>/<slug>.md` ("doc families").
 
+## Doc relationships and the derived index
+
+Frontmatter is the durable record; SQLite (`knowledge_edges`,
+`knowledge_doc_refs`) is a rebuildable cache over it.
+
+**Authoring links** — a source doc declares relationships in frontmatter:
+
+```yaml
+relates_to:
+  - concept_id: knowledge/decision/0006-raw-logs
+    relation: relates-to   # relates-to | supersedes | superseded-by | references
+    kind: extracted        # extracted | inferred | derived
+```
+
+`supersedes:` / `superseded-by:` keys are accepted as shorthand. Pointers
+name concept ids; a pointer may also name the source document by path
+(ingest stores that path as the promoted doc's `resource`, and the index
+resolves it). ADR-style chains need no frontmatter: `decisions/`/`adr/`
+docs numbered `NNNN-` are linked by body/status markers ("Supersedes
+ADR-0001") in both directions.
+
+**The index** — two tables in the graph DB, one row per directed edge:
+
+- `knowledge_edges(doc_id, related_id, relation, kind, provenance, created_at)`
+  — declared edges (any relation/kind as frontmatter declares) plus
+  recomputed tag/`affects_modules` overlap materialized as `kind: derived`
+  rows in both directions. Both ids are bare concept ids
+  (`knowledge/<type>/<slug>`), matching `knowledge_embeddings.doc_id`.
+  Dangling pointers stay in frontmatter and never reach the index; a pair
+  with a declared edge gets no derived duplicate.
+- `knowledge_doc_refs(doc_id, ref, ref_kind, verified)` — entries with a
+  `ref` in the doc's `sources`/`verified` families.
+
+**Rebuild** — `cairn knowledge rebuild` (also run automatically after
+`knowledge ingest --ingest`) recomputes both tables from the bundle.
+Idempotent: an unchanged bundle rebuilds to identical contents, including
+`created_at` stamps.
+
 ## Memory tiers
 
 Memories (`src/cairn/memory/`) are OKF concepts under `.knowledge/memory/`:

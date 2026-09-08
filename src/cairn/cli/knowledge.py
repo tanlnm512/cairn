@@ -167,6 +167,38 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
     click.echo(f"Outbox: {manifest['workspace']}")
 
 
+@knowledge.command("rebuild")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_rebuild(db):
+    """Rebuild the derived knowledge_edges / knowledge_doc_refs index.
+
+    Recomputes both tables from the .knowledge bundle: declared
+    relationships (relates_to frontmatter), verified doc->code refs
+    (sources/verified families), and tag/affects_modules overlap
+    materialized as kind=derived edges. Idempotent: running it twice on an
+    unchanged bundle leaves the tables (including timestamps) identical.
+    Runs automatically after `knowledge ingest --ingest`.
+    """
+    from cairn.knowledge.index import rebuild_knowledge_index
+    from cairn.okf.bundle import OKFBundle
+    from ..paths import resolve_store
+
+    store = resolve_store()
+    store.ensure()
+    bundle = OKFBundle(str(store.knowledge))
+    conn = get_db(db)
+    try:
+        report = rebuild_knowledge_index(conn, bundle)
+        conn.commit()
+    finally:
+        conn.close()
+    click.echo(
+        f"Rebuilt knowledge index: {report['docs']} doc(s), "
+        f"{report['edges']} edge(s) ({report['derived']} derived), "
+        f"{report['doc_refs']} ref(s)."
+    )
+
+
 @knowledge.command("search")
 @click.argument("query")
 @click.option("--limit", default=20, type=int)

@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Derived knowledge-relationship index: `knowledge_edges(doc_id, related_id,
+  relation, kind, provenance, created_at)` and `knowledge_doc_refs(doc_id,
+  ref, ref_kind, verified)` tables (additive, idempotent schema) rebuilt from
+  the OKF bundle by `cairn knowledge rebuild` and automatically after
+  `knowledge ingest --ingest`. Declared `relates_to` pointers index as their
+  declared relation/kind (bare concept-id, path-shaped, and source-path
+  pointers all resolve; unresolved pointers stay frontmatter-only); doc pairs
+  sharing tags or `affects_modules` materialize symmetric `kind: derived`
+  edges; `sources`/`verified` entries with a `ref` become `knowledge_doc_refs`
+  rows. Rebuilds are idempotent — unchanged bundles reproduce identical table
+  contents including `created_at` stamps. `normalize_doc_id` (in
+  `knowledge/store.py`) is the single id-normalization point for the rebuild
+  and later CLI/dashboard consumers.
 - ADR supersede-chain detection at ingest: `decisions/`/`adr/` documents
   with `NNNN-` numbered filenames gain `supersedes` / `superseded-by`
   relationship entries from body or status-line markers ("Supersedes

@@ -1,0 +1,294 @@
+"""Derived knowledge index (D1): rebuild knowledge_edges / knowledge_doc_refs.
+
+OKF frontmatter is the durable record; these two SQLite tables are a
+rebuildable cache over it. Every :func:`rebuild_knowledge_index` call
+recomputes both tables from the current bundle contents:
+
+- declared edges: the ``relates_to`` extension, relation/kind as declared
+- derived edges: tag / affects_modules overlap (what ``search_knowledge``
+  computes at query time), materialized as ``kind: derived`` rows in both
+  directions
+- doc refs: entries carrying a ``ref`` in the ``sources``/``verified``
+  families
+
+Only declared edges whose target resolves to an existing knowledge concept
+are indexed; dangling frontmatter pointers stay in the frontmatter (the
+durable record) but never reach the index. A pointer that is not a concept
+id may still name its target by source path: ingest records that path as
+the promoted doc's ``resource``, so such pointers resolve through the
+bundle's resource map. A pair that already has a
+declared edge in either direction gets no derived rows -- the explicit
+record wins.
+
+All ids are normalized to the bare bundle-relative concept_id shape via
+:func:`cairn.knowledge.store.normalize_doc_id` before storage, matching the
+``knowledge_embeddings.doc_id`` convention, so path-shaped bundle reads and
+bare frontmatter pointers correlate.
+
+Rebuild is idempotent: identical bundle contents produce identical table
+contents, including ``created_at`` stamps (preserved for pre-existing edge
+keys). The function writes on the caller's connection and never commits --
+callers own the transaction boundary.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Dict, List, Set, Tuple
+
+from cairn.knowledge.relationships import DEFAULT_RELATION, EXTRACTED
+from cairn.knowledge.store import normalize_doc_id
+from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
+
+logger = logging.getLogger(__name__)
+
+#: Relation used for materialized tag/module-overlap edges.
+DERIVED_RELATION = "relates-to"
+
+#: Kind for recomputed (non-declared) overlap edges.
+DERIVED_KIND = "derived"
+
+#: Provenance of edges scanned from frontmatter.
+PROVENANCE_FRONTMATTER = "frontmatter:relates_to"
+
+#: Provenance values for derived edges, by what overlapped.
+PROVENANCE_TAG_OVERLAP = "tag-overlap"
+PROVENANCE_MODULE_OVERLAP = "module-overlap"
+PROVENANCE_TAG_MODULE_OVERLAP = "tag+module-overlap"
+
+#: ref_kind assumed for verified-family entries that carry no kind.
+DEFAULT_REF_KIND = "file"
+
+
+def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, int]:
+    """Recompute knowledge_edges + knowledge_doc_refs from the bundle.
+
+    Wipes and repopulates both tables in one transaction-less pass on
+    ``conn`` (the caller commits). Idempotent on an unchanged bundle:
+    identical rows, identical created_at stamps. Returns counts:
+    ``{docs, edges, derived, doc_refs}``.
+    """
+    docs = _load_docs(bundle)
+    doc_ids = {doc_id for doc_id, _ in docs}
+    declared = _frontmatter_edges(bundle, docs, doc_ids)
+    derived = _derived_edges(docs, {(e["doc_id"], e["related_id"]) for e in declared})
+    edges = _write_edges(conn, declared + derived)
+    refs = _write_refs(conn, _doc_ref_rows(docs))
+    return {
+        "docs": len(docs),
+        "edges": edges,
+        "derived": len(derived),
+        "doc_refs": refs,
+    }
+
+
+def related_docs(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
+    """Stored neighbors of one doc, bare-id in / normalized-dict out.
+
+    Reads both edge directions (doc_id and related_id sides) and normalizes
+    the neighbor id with :func:`normalize_doc_id` for callers. Rows the
+    bundle no longer resolves are skipped, so a deleted doc never surfaces
+    as a phantom neighbor between rebuilds.
+    """
+    normalized = normalize_doc_id(bundle, doc_id)
+    neighbors: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, str, str, str]] = set()
+    for direction, column in (("outgoing", "doc_id"), ("incoming", "related_id")):
+        for row in conn.execute(
+            f"SELECT doc_id, related_id, relation, kind, provenance, created_at "
+            f"FROM knowledge_edges WHERE {column} = ?",
+            (normalized,),
+        ):
+            neighbor = row[1] if column == "doc_id" else row[0]
+            key = (row[0], row[1], row[2], row[3])
+            if key in seen:
+                continue
+            try:
+                bundle.read_concept(neighbor)
+            except Exception:
+                continue  # deleted between rebuilds: never a phantom neighbor
+            seen.add(key)
+            neighbors.append({
+                "doc_id": neighbor,
+                "relation": row[2],
+                "kind": row[3],
+                "provenance": row[4],
+                "created_at": row[5],
+                "direction": direction,
+            })
+    return neighbors
+
+
+def _load_docs(bundle: OKFBundle) -> List[Tuple[str, OKFConcept]]:
+    """(bare concept_id, concept) for every parsable knowledge doc."""
+    docs: List[Tuple[str, OKFConcept]] = []
+    for cid in bundle.list_concepts(prefix="knowledge/"):
+        try:
+            docs.append((cid, bundle.read_concept(cid)))
+        except Exception as e:
+            logger.warning("Skipping unparsable knowledge doc %s: %s", cid, e)
+    return docs
+
+
+def _frontmatter_edges(
+    bundle: OKFBundle,
+    docs: List[Tuple[str, OKFConcept]],
+    doc_ids: Set[str],
+) -> List[Dict[str, Any]]:
+    """One edge per declared relates_to entry whose target resolves.
+
+    A pointer resolves as a bare/path-shaped concept_id; failing that, as
+    the source document named by a promoted doc's ``resource`` path
+    (ingest stores the source path there), so author-declared links written
+    before concept ids existed still index as declared edges.
+    """
+    from cairn.knowledge.relationships import normalize_relationships
+
+    resources = _resource_index(docs)
+    edges: List[Dict[str, Any]] = []
+    for doc_id, concept in docs:
+        for entry in normalize_relationships(
+            concept.extensions.get("relates_to")
+        ):
+            pointer = str(entry.get("concept_id") or "").strip()
+            related = normalize_doc_id(bundle, pointer)
+            if related not in doc_ids or related == doc_id:
+                # Fallback: the pointer may name the source document by path
+                # (ingest records that path as the promoted doc's resource).
+                candidate = resources.get(pointer.lstrip("/"))
+                if candidate is not None:
+                    related = candidate
+            if related not in doc_ids or related == doc_id:
+                continue
+            edges.append({
+                "doc_id": doc_id,
+                "related_id": related,
+                "relation": str(entry.get("relation") or DEFAULT_RELATION),
+                "kind": str(entry.get("kind") or EXTRACTED),
+                "provenance": PROVENANCE_FRONTMATTER,
+            })
+    return edges
+
+
+def _resource_index(docs: List[Tuple[str, OKFConcept]]) -> Dict[str, str]:
+    """``{resource path: doc_id}`` for promoted docs carrying one.
+
+    Keys are leading-slash-stripped so workspace-relative and absolute
+    spellings of the same source path match. First doc wins per resource
+    (sorted iteration order keeps it deterministic).
+    """
+    index: Dict[str, str] = {}
+    for doc_id, concept in docs:
+        resource = (concept.resource or "").strip()
+        if not resource:
+            continue
+        index.setdefault(resource.lstrip("/"), doc_id)
+    return index
+
+
+def _derived_edges(
+    docs: List[Tuple[str, OKFConcept]],
+    declared_pairs: Set[Tuple[str, str]],
+) -> List[Dict[str, Any]]:
+    """Symmetric kind=derived edges for docs sharing tags or modules.
+
+    Pairs with a declared edge in either direction are skipped (the
+    explicit record already connects them).
+    """
+    meta = [
+        (
+            doc_id,
+            set(concept.tags or []),
+            set(concept.extensions.get("affects_modules") or []),
+        )
+        for doc_id, concept in docs
+    ]
+    edges: List[Dict[str, Any]] = []
+    for i in range(len(meta)):
+        doc_a, tags_a, mods_a = meta[i]
+        for j in range(i + 1, len(meta)):
+            doc_b, tags_b, mods_b = meta[j]
+            if (doc_a, doc_b) in declared_pairs or (doc_b, doc_a) in declared_pairs:
+                continue
+            tag_hit = bool(tags_a & tags_b)
+            mod_hit = bool(mods_a & mods_b)
+            if not (tag_hit or mod_hit):
+                continue
+            provenance = (
+                PROVENANCE_TAG_MODULE_OVERLAP if tag_hit and mod_hit
+                else PROVENANCE_TAG_OVERLAP if tag_hit
+                else PROVENANCE_MODULE_OVERLAP
+            )
+            for src, dst in ((doc_a, doc_b), (doc_b, doc_a)):
+                edges.append({
+                    "doc_id": src,
+                    "related_id": dst,
+                    "relation": DERIVED_RELATION,
+                    "kind": DERIVED_KIND,
+                    "provenance": provenance,
+                })
+    return edges
+
+
+def _doc_ref_rows(docs: List[Tuple[str, OKFConcept]]) -> List[Dict[str, Any]]:
+    """knowledge_doc_refs rows from sources/verified family entries."""
+    rows: List[Dict[str, Any]] = []
+    for doc_id, concept in docs:
+        for family in (concept.verified, concept.sources):
+            for entry in family or []:
+                if not isinstance(entry, dict):
+                    continue
+                ref = str(entry.get("ref") or "").strip()
+                if not ref:
+                    continue
+                rows.append({
+                    "doc_id": doc_id,
+                    "ref": ref,
+                    "ref_kind": str(entry.get("kind") or DEFAULT_REF_KIND),
+                    "verified": 1 if entry.get("verified") else 0,
+                })
+    return rows
+
+
+def _write_edges(conn, edges: List[Dict[str, Any]]) -> int:
+    """Replace the edge table contents, preserving created_at for keys
+    that already exist (rebuild idempotency includes the timestamps)."""
+    existing = {
+        (r[0], r[1], r[2], r[3]): r[4]
+        for r in conn.execute(
+            "SELECT doc_id, related_id, relation, kind, created_at "
+            "FROM knowledge_edges"
+        ).fetchall()
+    }
+    conn.execute("DELETE FROM knowledge_edges")
+    now = time.time()
+    rows = []
+    seen: Set[Tuple[str, str, str, str]] = set()
+    for e in edges:
+        key = (e["doc_id"], e["related_id"], e["relation"], e["kind"])
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((*key, e["provenance"], existing.get(key, now)))
+    conn.executemany(
+        "INSERT INTO knowledge_edges "
+        "(doc_id, related_id, relation, kind, provenance, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    return len(rows)
+
+
+def _write_refs(conn, rows: List[Dict[str, Any]]) -> int:
+    """Replace the doc-refs table contents (no timestamp to preserve)."""
+    conn.execute("DELETE FROM knowledge_doc_refs")
+    unique = sorted({
+        (r["doc_id"], r["ref"], r["ref_kind"], r["verified"]) for r in rows
+    })
+    conn.executemany(
+        "INSERT INTO knowledge_doc_refs (doc_id, ref, ref_kind, verified) "
+        "VALUES (?, ?, ?, ?)",
+        unique,
+    )
+    return len(unique)
