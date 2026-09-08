@@ -36,6 +36,9 @@ def execute_manifest(manifest: dict, conn) -> dict:
                 resource=row.get("resource") or None,
                 description=row.get("description") or None,
                 doc_source="imported",
+                relationships=list(row["relationships"])
+                if row.get("relationships")
+                else None,
             )
         )
 

@@ -17,7 +17,9 @@ frontmatter key order; the YAML is never hand-rolled) plus
   documents only
 * rows sorted by (repo, relpath); accepted rows carry every
   add_document argument plus origin/repo/source_path, the body with its
-  ``Source:`` provenance line, and the staged-file path; skipped rows
+  ``Source:`` provenance line, and the staged-file path; rows also carry
+  ``relationships`` (normalized relates_to/supersedes/superseded-by
+  frontmatter, D1.1) whenever the source declares any; skipped rows
   carry source_path + skip reason and stage no file
 * each staged file's frontmatter title/type is cross-checked against
   its row at staging time (D-009) -- a mismatch raises
@@ -38,11 +40,12 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Any, Iterable
 
 from cairn.knowledge.ingest.classifier import Classification
 from cairn.knowledge.ingest.identity import DocIdentity
 from cairn.knowledge.ingest.parser import ParsedDoc
+from cairn.knowledge.relationships import extract_relationships
 from cairn.memory.privacy import strip_private_data
 from cairn.okf.concept import OKFConcept
 from cairn.okf.provenance import Tier
@@ -150,6 +153,20 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
     # body it is handed, and strip_private_data is idempotent.
     body = strip_private_data(body)
     tags = _merged_tags(identity.tags, entry.classification.extra_tags)
+    # Author-declared relationships (D1.1), normalized to
+    # {concept_id, relation, kind}: identifiers, not free text -- kept
+    # verbatim like the other provenance fields.
+    relationships = extract_relationships(entry.parsed.extensions)
+    extensions: dict[str, Any] = {
+        "tier": Tier.ASSERTED.value,
+        "doc_status": "active",
+        "doc_source": "imported",
+        "affects_modules": list(identity.affects_modules),
+        "affects_repos": list(identity.affects_repos),
+    }
+    if relationships:
+        # The staged file shows what an approved run would keep.
+        extensions["relates_to"] = relationships
     concept = OKFConcept(
         type=f"Knowledge-{doc_type}",
         title=title,
@@ -158,17 +175,11 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
         tags=tags,
         concept_id=concept_id,
         body=body,
-        extensions={
-            "tier": Tier.ASSERTED.value,
-            "doc_status": "active",
-            "doc_source": "imported",
-            "affects_modules": list(identity.affects_modules),
-            "affects_repos": list(identity.affects_repos),
-        },
+        extensions=extensions,
     )
     concept.to_file(str(outbox_dir / staged_path))
     _cross_check(outbox_dir / staged_path, title, doc_type, staged_path)
-    return {
+    row: dict[str, Any] = {
         "concept_id": concept_id,
         "title": title,
         "doc_type": doc_type,
@@ -183,6 +194,9 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
         "body": body,
         "staged_path": staged_path,
     }
+    if relationships:
+        row["relationships"] = relationships
+    return row
 
 
 def _merged_tags(base: list[str], extra: list[str]) -> list[str]:

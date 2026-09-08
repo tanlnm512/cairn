@@ -158,6 +158,12 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
     for row in manifest["rows"]:
         if "skip" in row:
             click.echo(f"  skipped: {row['source_path']} ({row['skip']})")
+        else:
+            click.echo(f"  staged: {row['source_path']} -> {row['concept_id']}")
+            for rel in row.get("relationships") or []:
+                click.echo(
+                    f"    {rel['relation']}: {rel['concept_id']} ({rel['kind']})"
+                )
     click.echo(f"Outbox: {manifest['workspace']}")
 
 

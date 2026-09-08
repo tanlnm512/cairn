@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Author-declared document relationships survive ingest: the source parser
+  keeps unknown frontmatter keys on `ParsedDoc.extensions` instead of
+  discarding them; `relates_to`/`supersedes`/`superseded-by` frontmatter
+  normalizes into a `relates_to` extension (`{concept_id, relation, kind}`,
+  kind defaulting to `extracted`) that rides the staged OKF file, the
+  dry-run manifest row, and the promoted `.knowledge` frontmatter;
+  `add_document` gains an optional `relationships` parameter; dry-run
+  `cairn knowledge ingest` output lists each staged doc's relationships
+  before `--ingest` writes anything.
 - Tribal-memory loop closure: `explore` surfaces a tribal-memory section
   (≤3 entries, title + "How to apply" line) and records `memory_refs` rows
   for rendered memories; `session_start` hook emits the top tribal-memory

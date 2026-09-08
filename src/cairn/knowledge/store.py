@@ -13,6 +13,7 @@ from cairn.okf.concept import OKFConcept
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.provenance import Tier
 from cairn.okf.utils import slugify
+from cairn.knowledge.relationships import normalize_relationships
 from ..memory.privacy import strip_private_data
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ def add_document(
     steps: Optional[List[dict]] = None,
     description: Optional[str] = None,  # one-line summary; defaults to title
     doc_source: str = "manual",    # "manual" or "imported"
+    relationships: Optional[List[dict]] = None,  # {concept_id, relation, kind}
 ) -> str:
     """Ingest a document. Returns the concept_id.
 
@@ -112,6 +114,12 @@ def add_document(
     ``steps`` is an optional ordered list of step dicts stored under the
     ``steps`` extension (intended for ``doc_type="workflow"``; see
     ``src/knowledge/workflow.py``).
+
+    ``relationships`` is an optional list of relationship entries stored
+    verbatim under the ``relates_to`` extension (D1.1), each normalized
+    to ``{concept_id, relation, kind}`` with kind defaulting to
+    ``extracted``; entries are identifiers, not free text, so they are
+    never redacted.
 
     Privacy floor (audit F1): title, body, description, and step
     descriptions are routed through :func:`strip_private_data` at this
@@ -149,6 +157,9 @@ def add_document(
     # Only add the steps key when actually given.
     if steps:
         extensions["steps"] = steps
+    # Author-declared relationships (D1.1) ride under relates_to.
+    if relationships:
+        extensions["relates_to"] = normalize_relationships(relationships)
 
     concept = OKFConcept(
         type=f"Knowledge-{doc_type}",
