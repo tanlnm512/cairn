@@ -1,38 +1,23 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_filters.html" as forms with context %}
+{% import "_cards.html" as cards with context %}
 {% block title %}History — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <div id="refresh-region">
   <h1>History</h1>
-  <div class="stat-row">
-    <div class="stat-tile">
-      <div class="stat-value">{{ calls | length }}</div>
-      <div class="stat-label">calls shown</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ window }}</div>
-      <div class="stat-label">time window</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ calls | selectattr('status', 'equalto', 'error') | list | length }}</div>
-      <div class="stat-label">error calls</div>
-    </div>
-  </div>
-  <form class="graph-controls" method="get" action="/history">
-    <label>Tool
-      <input type="text" name="tool" value="{{ tool }}">
-    </label>
-    <label>Session
-      <input type="text" name="session" value="{{ session }}">
-    </label>
-    <label>Source
-      <input type="text" name="source" value="{{ source }}">
-    </label>
-    <input type="hidden" name="window" value="{{ window }}">
-    {{ links.store_field() }}
-    <button type="submit">Apply</button>
-  </form>
+  {{ cards.stat_row([
+    {"value": calls | length, "label": "calls shown"},
+    {"value": window, "label": "time window"},
+    {"value": calls | selectattr('status', 'equalto', 'error') | list | length, "label": "error calls"},
+  ]) }}
+  {{ forms.form_open('/history', {'window': window}) }}
+  {{ forms.field('text', 'tool', 'Tool', tool) }}
+  {{ forms.field('text', 'session', 'Session', session) }}
+  {{ forms.field('text', 'source', 'Source', source) }}
+  {{ forms.form_close() }}
   {% include "window_control.html" %}
   {#- FR-005: exports ride the view's current filters (the selected store
       rides links.url); before/after are page cursors, not filters. -#}
@@ -47,20 +32,7 @@
     <a class="btn-secondary" href="{{ links.url('/history.json', export_q) }}">JSON</a>
   </p>
   {% if calls %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Tool</th>
-        <th>Timestamp</th>
-        <th>Duration</th>
-        <th>Status</th>
-        <th>Session</th>
-        <th>Source</th>
-        <th>Est. tokens (req/resp)</th>
-        <th>Arguments</th>
-      </tr>
-    </thead>
-    <tbody>
+  {% call tables.table(['Tool', 'Timestamp', 'Duration', 'Status', 'Session', 'Source', 'Est. tokens (req/resp)', 'Arguments']) %}
       {% for h in calls %}
       <tr>
         <td>{{ h.tool_name }}</td>
@@ -73,8 +45,7 @@
         <td>{{ h.args_summary or "—" }}</td>
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+  {% endcall %}
   {% if prev_cursor or next_cursor %}
   {#- FR-003/FR-006: paging links keep the active filters AND the selected
       store (links.url); empty selection keeps the bare hrefs. -#}
@@ -99,7 +70,7 @@
   </p>
   {% endif %}
   {% else %}
-  <p class="empty-state">No matching calls{% if not tool and not session and not source %} recorded yet{% endif %}.</p>
+  {{ tables.empty_state('No matching calls' ~ (' recorded yet' if not tool and not session and not source else '')) }}
   {% endif %}
   </div>
 </section>

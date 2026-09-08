@@ -98,12 +98,12 @@
     return k;
   }
   function colorForKey(k) {
-    var c = kindPalette()[k] || cssVar("--muted");
+    var c = kindPalette()[k] || cssVar("--text-3");
     return {
       background: c,
       border: c,
-      highlight: { background: c, border: cssVar("--text") },
-      hover: { background: c, border: cssVar("--text") }
+      highlight: { background: c, border: cssVar("--text-1") },
+      hover: { background: c, border: cssVar("--text-1") }
     };
   }
 
@@ -247,21 +247,21 @@
           border: accent,
           highlight: {
             background: accent,
-            border: cssVar("--text")
+            border: cssVar("--text-1")
           },
-          hover: { background: accent, border: cssVar("--text") }
+          hover: { background: accent, border: cssVar("--text-1") }
         },
         font: {
           face: cssVar("--font-sans"),
           size: 12,
-          color: cssVar("--muted"),
-          strokeColor: cssVar("--canvas"),
+          color: cssVar("--text-3"),
+          strokeColor: cssVar("--bg-0"),
           strokeWidth: 3
         }
       },
       edges: {
         color: {
-          color: cssVar("--border"),
+          color: cssVar("--line-1"),
           highlight: cssVar("--accent"),
           hover: cssVar("--accent")
         },
@@ -396,7 +396,7 @@
         item.title = "toggle " + k + " nodes";
         var dot = document.createElement("span");
         dot.className = "legend-dot";
-        dot.style.background = kindPalette()[k] || cssVar("--muted");
+        dot.style.background = kindPalette()[k] || cssVar("--text-3");
         var name = document.createElement("span");
         name.className = "legend-name";
         name.textContent = k;

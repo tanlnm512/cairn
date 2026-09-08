@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_cards.html" as cards with context %}
 {% block title %}Health — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -8,12 +9,10 @@
     <code>{{ db_path }}</code>
   </p>
   <div class="card-grid">
-    <div class="card">
-      <h2>Database</h2>
-      <p class="card-value">{{ health.db_size_bytes | filesize }}</p>
-    </div>
-    <div class="card">
-      <h2>Retention</h2>
+    {% call cards.card('Database') %}
+    <p class="card-value">{{ health.db_size_bytes | filesize }}</p>
+    {% endcall %}
+    {% call cards.card('Retention') %}
       {% if health.tool_metrics_rows is none %}
       <p class="card-value">unknown</p>
       <p class="muted">no tool_metrics table</p>
@@ -33,9 +32,8 @@
       {% else %}
       <p class="muted">age bound {{ health.tool_metrics_max_age_seconds }}s</p>
       {% endif %}
-    </div>
-    <div class="card">
-      <h2>Index freshness</h2>
+    {% endcall %}
+    {% call cards.card('Index freshness') %}
       {% if health.last_build_age %}
       <p class="card-value">{{ health.last_build_age }}</p>
       <p class="muted">last build {{ health.last_build_at | isots }}</p>
@@ -43,20 +41,18 @@
       <p class="card-value">never</p>
       <p class="muted">no build_runs recorded</p>
       {% endif %}
-    </div>
-    <div class="card">
-      <h2>Embedding backend</h2>
-      <p class="card-value">{{ health.embed_backend }}</p>
+    {% endcall %}
+    {% call cards.card('Embedding backend') %}
+    <p class="card-value">{{ health.embed_backend }}</p>
       {% if health.hash_fallback %}
       <span class="badge badge-warn">hash fallback</span>
       {% else %}
       <span class="badge badge-ok">model backend</span>
       {% endif %}
-    </div>
-    <div class="card">
-      <h2>Vector index</h2>
-      <p class="card-value">{{ health.ann_configured }}{% if not health.ann_backend_enabled %} (unavailable){% endif %}</p>
-      <p class="muted">{{ health.ann_embedding_rows }} embeddings · model {{ health.ann_model }}</p>
+    {% endcall %}
+    {% call cards.card('Vector index') %}
+    <p class="card-value">{{ health.ann_configured }}{% if not health.ann_backend_enabled %} (unavailable){% endif %}</p>
+    <p class="muted">{{ health.ann_embedding_rows }} embeddings · model {{ health.ann_model }}</p>
       {% if health.ann_index_exists is none %}
       <p class="muted">no embeddings to index yet</p>
       {% elif health.ann_index_exists %}
@@ -71,15 +67,14 @@
       {% else %}
       <p class="muted">no vec0 index built</p>
       {% endif %}
-    </div>
-    <div class="card">
-      <h2>Reranker</h2>
+    {% endcall %}
+    {% call cards.card('Reranker') %}
       {% if health.reranker_available %}
       <p class="card-value"><span class="badge badge-ok">available</span></p>
       {% else %}
       <p class="card-value"><span class="badge badge-warn">unavailable</span></p>
       {% endif %}
-    </div>
+    {% endcall %}
   </div>
 </section>
 {% endblock %}

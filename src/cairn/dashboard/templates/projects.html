@@ -1,42 +1,19 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_cards.html" as cards with context %}
 {% block title %}Projects — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Projects</h1>
   {% if projects %}
-  <div class="stat-row">
-    <div class="stat-tile">
-      <div class="stat-value">{{ projects | length }}</div>
-      <div class="stat-label">projects</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ projects | sum(attribute='file_count') }}</div>
-      <div class="stat-label">files</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ projects | sum(attribute='symbol_count') }}</div>
-      <div class="stat-label">symbols</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ projects | sum(attribute='edge_count') }}</div>
-      <div class="stat-label">edges</div>
-    </div>
-  </div>
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Project</th>
-        <th>Language</th>
-        <th>Path</th>
-        <th>Files</th>
-        <th>Symbols</th>
-        <th>Edges</th>
-        <th>Last indexed</th>
-        <th>Embeddings</th>
-      </tr>
-    </thead>
-    <tbody>
+  {{ cards.stat_row([
+    {"value": projects | length, "label": "projects"},
+    {"value": projects | sum(attribute='file_count'), "label": "files"},
+    {"value": projects | sum(attribute='symbol_count'), "label": "symbols"},
+    {"value": projects | sum(attribute='edge_count'), "label": "edges"},
+  ]) }}
+  {% call tables.table(['Project', 'Language', 'Path', 'Files', 'Symbols', 'Edges', 'Last indexed', 'Embeddings']) %}
       {% for p in projects %}
       {#- FR-003: the repo-scoped graph anchor keeps the selected store
           (links.url); empty selection keeps the bare href. -#}
@@ -55,10 +32,9 @@
         </td>
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+  {% endcall %}
   {% else %}
-  <p class="empty-state">No projects indexed yet — run <code>cairn build</code> first.</p>
+  {{ tables.empty_state('No projects indexed yet — run', code='cairn build') }}
   {% endif %}
 </section>
 {% endblock %}

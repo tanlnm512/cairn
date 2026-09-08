@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{#- aliased `forms`: the wiki route's context itself carries a `filters`
+    dict (the catalog's q/state/repo values). -#}
+{% import "_filters.html" as forms with context %}
 {% block title %}Wiki — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Wiki</h1>
   <p class="muted">Generated wiki pages and their promotion state.</p>
-  <form class="graph-controls wiki-controls" method="get" action="/wiki">
-    <label>Search
-      <input type="text" name="q" value="{{ filters.q }}" placeholder="title, page id, or description">
-    </label>
-    {{ links.store_field() }}
-    <button type="submit">Search</button>
-  </form>
+  {{ forms.form_open('/wiki') }}
+  {{ forms.field('text', 'q', 'Search', filters.q, placeholder='title, page id, or description') }}
+  {{ forms.form_close('Search') }}
   <p class="window-control wiki-state-filter">
     State:
     {%- set base_q = {} %}
@@ -28,14 +28,7 @@
     <a href="{{ links.url('/wiki', dict(base_q, repo=repo)) }}">{{ repo }}</a>
     <span class="muted">({{ rows | length }})</span>
   </h2>
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Page</th>
-        <th>State</th>
-      </tr>
-    </thead>
-    <tbody>
+  {% call tables.table(['Page', 'State']) %}
       {% for p in rows %}
       <tr>
         <td>
@@ -48,13 +41,11 @@
         </td>
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+  {% endcall %}
   {% endfor %}
   {% else %}
-  <p class="empty-state">
-    {%- if filters.q or filters.state or filters.repo %}No wiki pages match the current filters.{% else %}No wiki pages yet — generate some with <code>cairn wiki generate</code>.{% endif %}
-  </p>
+  {%- set filtered = filters.q or filters.state or filters.repo %}
+  {{ tables.empty_state('No wiki pages match the current filters' if filtered else 'No wiki pages yet — generate some with', code='' if filtered else 'cairn wiki generate') }}
   {% endif %}
 </section>
 {% endblock %}

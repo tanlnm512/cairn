@@ -1,0 +1,37 @@
+{#-
+  Shared filter-form macros for the list views. GET filter forms render
+  through form_open / field / form_close so the control row, the hidden
+  store field (FR-003), and any preserved params stay uniform across
+  views. POST forms keep the action-URL store transport (settings) and
+  reuse only the field macros.
+-#}
+{% import "_links.html" as links with context %}
+
+{% macro form_open(action, hidden={}) -%}
+<form class="filter-bar" method="get" action="{{ action }}">
+  {{ links.store_field() }}
+  {%- for key, value in hidden.items() %}
+  <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {%- endfor %}
+{%- endmacro %}
+
+{#- One labeled control: `kind` is an input type ("text", "number", ...)
+    or "select" (with `options` as plain values, the active one marked). -#}
+{% macro field(kind, name, label, value='', options=(), placeholder='') -%}
+  <label>{{ label }}
+    {%- if kind == 'select' %}
+    <select name="{{ name }}">
+      {%- for option in options %}
+      <option value="{{ option }}"{% if option == value %} selected{% endif %}>{{ option }}</option>
+      {%- endfor %}
+    </select>
+    {%- else %}
+    <input type="{{ kind or 'text' }}" name="{{ name }}" value="{{ value }}"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}>
+    {%- endif %}
+  </label>
+{%- endmacro %}
+
+{% macro form_close(submit='Apply') -%}
+  <button type="submit">{{ submit }}</button>
+</form>
+{%- endmacro %}

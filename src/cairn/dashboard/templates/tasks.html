@@ -1,36 +1,16 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_filters.html" as forms with context %}
 {% block title %}Tasks — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Tasks</h1>
-  <form class="graph-controls" method="get" action="/tasks">
-    {{ links.store_field() }}
-    <label>Status
-      <select name="status">
-        <option value="all"{% if status == "all" %} selected{% endif %}>all</option>
-        {% for s in statuses %}
-        <option value="{{ s }}"{% if s == status %} selected{% endif %}>{{ s }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <button type="submit">Apply</button>
-  </form>
+  {{ forms.form_open('/tasks') }}
+  {{ forms.field('select', 'status', 'Status', status, options=['all'] + (statuses | list)) }}
+  {{ forms.form_close() }}
   {% if tasks %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Kind</th>
-        <th>Status</th>
-        <th>Resource</th>
-        <th>Assigned to</th>
-        <th>Created</th>
-        <th>Claimed</th>
-        <th>Completed</th>
-      </tr>
-    </thead>
-    <tbody>
+  {% call tables.table(['ID', 'Kind', 'Status', 'Resource', 'Assigned to', 'Created', 'Claimed', 'Completed']) %}
       {% for t in tasks %}
       <tr>
         <td class="cell-id"><code title="{{ t.id }}">{{ t.id }}</code></td>
@@ -43,10 +23,9 @@
         <td class="ts">{{ t.completed_at or "—" }}</td>
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+  {% endcall %}
   {% else %}
-  <p class="empty-state">No tasks{% if status != "all" %} with status “{{ status }}”{% endif %} in the queue.</p>
+  {{ tables.empty_state('No tasks' ~ (' with status “' ~ status ~ '”' if status != 'all' else '') ~ ' in the queue') }}
   {% endif %}
 </section>
 {% endblock %}

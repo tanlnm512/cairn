@@ -1,0 +1,22 @@
+{#-
+  Shared card markup. stat_row lays out the summary-number tiles the
+  traffic and project views open with; card renders one titled card from
+  the caller's body (the health grid).
+-#}
+{% macro stat_row(stats) -%}
+<div class="stat-row">
+  {%- for stat in stats %}
+  <div class="stat-tile">
+    <div class="stat-value">{{ stat.value }}</div>
+    <div class="stat-label">{{ stat.label }}</div>
+  </div>
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{% macro card(title) -%}
+<div class="card">
+  <h2>{{ title }}</h2>
+  {{ caller() }}
+</div>
+{%- endmacro %}

@@ -3102,7 +3102,7 @@ def test_history_route_displays_source_column_with_mixed_source_rows(tmp_path):
     resp = _mixed_source_client(tmp_path, bulk=False).get("/history")
     assert resp.status_code == 200
 
-    assert "<th>Source</th>" in resp.text
+    assert '<th scope="col">Source</th>' in resp.text
     assert "<td>cli</td>" in resp.text and "<td>mcp</td>" in resp.text
     assert 'name="source"' in resp.text  # the filter input, like tool/session
 

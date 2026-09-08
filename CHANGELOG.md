@@ -120,6 +120,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cairn memory demote` gains `--db`).
 
 ### Changed
+- Dashboard views restyled onto the token system end to end: every view's
+  repeated markup renders through shared Jinja macro libraries
+  (`_table.html` data tables + empty states, `_filters.html` filter forms
+  carrying the hidden store field, `_cards.html` stat tiles + titled
+  cards), so table, filter-row, and summary-tile markup is identical
+  across views, and the legacy `graph-controls` form class is retired for
+  `filter-bar`. The pre-token alias vars are deleted: templates, the
+  scripts' `cssVar()` reads, and component CSS resolve the ladder names
+  (`--bg-0..3`, `--line-1/2`, `--text-1..4`, `--accent-hover`) directly —
+  inputs, chips, and floating controls sit on `--bg-2` over `--bg-1`
+  panels. Controls reach final density — `--control-h` 30px with 13px
+  text, 1.2 line-heights, and matched paddings on filter inputs, selects,
+  submit buttons, the workspace selector, the palette button, and the
+  live pause pill — and data tables densify to ~33px rows at the 13px
+  base. The chains view's inline style block moves into the stylesheet
+  under the same tokens.
 - Dashboard design tokens, dark-first: the stylesheet's theme layer is a
   near-black surface ladder (`--bg-0 #08090a` … `--bg-3 #18191a`), 1px
   hairlines (`--line-1/2`) instead of drop shadows (panels, dropdowns, and

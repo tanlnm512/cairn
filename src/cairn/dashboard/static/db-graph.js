@@ -25,7 +25,7 @@
   function edgeStyle(kind) {
     var fk = kind === "fk";
     return {
-      color: cssVar(fk ? "--accent" : "--muted"),
+      color: cssVar(fk ? "--accent" : "--text-3"),
       width: fk ? 1.5 : 1,
       dashes: fk ? false : [5, 5]
     };
@@ -40,20 +40,20 @@
         color: {
           background: accent,
           border: accent,
-          highlight: { background: accent, border: cssVar("--text") },
-          hover: { background: accent, border: cssVar("--text") }
+          highlight: { background: accent, border: cssVar("--text-1") },
+          hover: { background: accent, border: cssVar("--text-1") }
         },
         font: {
           face: cssVar("--font-sans"),
           size: 12,
-          color: cssVar("--muted"),
-          strokeColor: cssVar("--canvas"),
+          color: cssVar("--text-3"),
+          strokeColor: cssVar("--bg-0"),
           strokeWidth: 3
         }
       },
       edges: {
         color: {
-          color: cssVar("--border"),
+          color: cssVar("--line-1"),
           highlight: accent,
           hover: accent
         },
