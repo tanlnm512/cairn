@@ -539,6 +539,33 @@ class TestDocRefs:
             conn.close()
         assert rows == [("README.md", "file", 1)]
 
+    def test_same_ref_across_families_indexes_once_with_verified_max(
+        self, workspace
+    ):
+        """knowledge_doc_refs' primary key is (doc_id, ref, ref_kind): a
+        ref carried by BOTH the sources and verified families with
+        differing verified flags indexes as one row, verified=max (a ref
+        either family verifies is verified). Two rows would crash the
+        rebuild on the PK -- and the rebuild runs after every ingest."""
+        bundle = _bundle()
+        cid = self._doc_with_refs(
+            bundle,
+            verified=[{"ref": "src/shared.py", "kind": "file", "verified": True}],
+            sources=[{"ref": "src/shared.py", "kind": "file"}],
+        )
+        report = _rebuild()
+        conn = _conn()
+        try:
+            rows = [tuple(r) for r in conn.execute(
+                "SELECT ref, ref_kind, verified FROM knowledge_doc_refs "
+                "WHERE doc_id = ?",
+                (cid,),
+            ).fetchall()]
+        finally:
+            conn.close()
+        assert rows == [("src/shared.py", "file", 1)]
+        assert report["doc_refs"] == 1
+
     def test_entries_without_a_ref_are_skipped(self, workspace):
         bundle = _bundle()
         self._doc_with_refs(

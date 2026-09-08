@@ -345,6 +345,11 @@ def complete_task(
                 "quality": 0.0,
             }
         doc_link_edges, doc_link_errors = parse_doc_link_result(result)
+        if not doc_link_errors and not doc_link_edges:
+            # An empty/heading-only result must not promote vacuously: the
+            # task would go done without writing an edge, and the queue's
+            # any-status dedup would then never re-queue that island.
+            doc_link_errors = ["no proposed edges found"]
         if not doc_link_errors:
             doc_link_errors = validate_doc_link_edges(bundle, doc_link_edges)
         if doc_link_errors:

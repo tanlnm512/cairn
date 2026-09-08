@@ -173,6 +173,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - sqlite-vec internals (`vec_*`, `vecmv_*`) are excluded
   - unintrospectable tables are skipped and reported (banner), never
     fatal
+- Knowledge relationships hardening:
+  - the `knowledge_doc_refs` rebuild dedupes on its `(doc_id, ref,
+    ref_kind)` primary key keeping `verified=max`, so a ref carried by
+    both the `sources` and `verified` families with differing flags
+    indexes once instead of crashing the rebuild (which runs after
+    every `knowledge ingest --ingest`)
+  - a `doc-link` completion proposing zero edges is rejected ("no
+    proposed edges found") with the task left in-progress and
+    re-completable; empty/heading-only results can no longer promote
+    vacuously and permanently cover an island
+  - ingest staging accepts any `Iterable` of entries (generators
+    included) and the manifest serializes non-JSON extras (e.g. YAML
+    date values) via `default=str` instead of crashing the dry run
+  - `supersede_chain` documents its linear-chain assumption and asserts
+    the queried doc's membership in the result
 
 ## [0.18.0] - 2026-09-02
 

@@ -513,6 +513,44 @@ class TestDocLinkRejection:
         assert any("self-referential" in e for e in outcome["errors"])
         self._index_has_no_inferred_edges()
 
+    def test_zero_edge_result_rejected_and_task_stays_recompletable(
+        self, workspace
+    ):
+        """An empty result must not promote vacuously: a promoted zero-edge
+        completion would mark the task done without writing an edge, and
+        the any-status queue dedup would never re-queue the island."""
+        bundle = _bundle()
+        a, b, task = self._island_task(bundle)
+
+        outcome = _claim_and_complete(bundle, task.id, "")
+
+        assert outcome["promoted"] is False
+        assert outcome["revised"] is False
+        assert outcome["dropped"] is False
+        assert "no proposed edges found" in outcome["errors"]
+        assert get_task(bundle, task.id).status == "in-progress"
+        assert _relates_to(bundle, a) == []
+        assert _relates_to(bundle, b) == []
+        self._index_has_no_inferred_edges()
+
+        # The island is recoverable: the same task completes with a real
+        # proposal (still claimed, no re-claim needed).
+        retry = _complete(bundle, task.id, f"{a} relates-to {b}\n")
+        assert retry["promoted"] is True
+
+    def test_heading_only_result_rejected_too(self, workspace):
+        bundle = _bundle()
+        a, b, task = self._island_task(bundle)
+
+        outcome = _claim_and_complete(
+            bundle, task.id, "## Proposed edges\n\n```\n```\n"
+        )
+
+        assert outcome["promoted"] is False
+        assert "no proposed edges found" in outcome["errors"]
+        assert get_task(bundle, task.id).status == "in-progress"
+        self._index_has_no_inferred_edges()
+
     def test_completion_without_connection_refused(self, workspace):
         bundle = _bundle()
         a, b, task = self._island_task(bundle)

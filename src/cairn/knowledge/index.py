@@ -145,6 +145,14 @@ def supersede_chain(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]
     skipped (stale index between rebuilds). A doc with no supersede edges
     is a chain of one.
 
+    Chains are assumed linear: the writer records one successor per
+    superseded doc, so the forward walk resolves one successor per fork.
+    On a branched supersede DAG (one doc superseded by two successors)
+    the walk follows the sorted-first branch, and the start doc's
+    membership in the result is asserted rather than implied -- a walk
+    that drops the queried doc fails loudly instead of returning a
+    branch without it.
+
     Each member dict carries ``concept_id``, ``title``, ``doc_status`` and
     ``relation`` (this member's relation to the NEXT member; ``None`` on
     the last). Raises ``ValueError`` when ``doc_id`` resolves to no
@@ -179,6 +187,12 @@ def supersede_chain(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]
             (n for n in sorted(newer_of.get(current, ())) if n not in seen),
             None,
         )
+    # The queried doc must be in its own chain; on a branched DAG the
+    # sorted-first successor pick can diverge from it, so guard loudly.
+    assert start in chain_ids, (
+        f"supersede walk from {start} dropped the start doc: branched "
+        "supersede DAG (linear chains are the writer contract)"
+    )
 
     members: List[Dict[str, Any]] = []
     for pos, cid in enumerate(chain_ids):
@@ -447,11 +461,23 @@ def _write_edges(conn, edges: List[Dict[str, Any]]) -> int:
 
 
 def _write_refs(conn, rows: List[Dict[str, Any]]) -> int:
-    """Replace the doc-refs table contents (no timestamp to preserve)."""
+    """Replace the doc-refs table contents (no timestamp to preserve).
+
+    Dedupes on the table's primary key (doc_id, ref, ref_kind): a ref
+    carried by both the sources and verified families with differing
+    verified flags indexes as one row, verified=max -- a ref either
+    family verifies is verified. Deduping on the full 4-tuple instead
+    would attempt two rows per PK and crash the rebuild.
+    """
     conn.execute("DELETE FROM knowledge_doc_refs")
-    unique = sorted({
-        (r["doc_id"], r["ref"], r["ref_kind"], r["verified"]) for r in rows
-    })
+    verified_by_key: Dict[Tuple[str, str, str], int] = {}
+    for r in rows:
+        key = (r["doc_id"], r["ref"], r["ref_kind"])
+        verified_by_key[key] = max(verified_by_key.get(key, 0), r["verified"])
+    unique = sorted(
+        (doc_id, ref, ref_kind, verified)
+        for (doc_id, ref, ref_kind), verified in verified_by_key.items()
+    )
     conn.executemany(
         "INSERT INTO knowledge_doc_refs (doc_id, ref, ref_kind, verified) "
         "VALUES (?, ?, ?, ?)",

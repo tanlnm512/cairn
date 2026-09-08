@@ -82,6 +82,11 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
     outbox_dir = Path(outbox_dir)
     outbox_dir.mkdir(parents=True, exist_ok=True)
 
+    # The run's entries are iterated twice (the supersede-detection pass
+    # below, then the staging loop): materialize once up front so a
+    # generator argument still stages every document.
+    entries = list(entries)
+
     # ADR supersede detection (D1.2) resolves markers against the whole
     # run's accepted entries, so it runs once before per-doc staging.
     detected_rels = detect_supersede_relationships(entries)
@@ -120,7 +125,10 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
     }
     manifest_file = outbox_dir / MANIFEST_NAME
     with manifest_file.open("w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2, sort_keys=False)
+        # Relationship entries keep author extras verbatim, which may hold
+        # non-JSON types (e.g. a YAML date): default=str serializes them
+        # instead of crashing the dry run.
+        json.dump(manifest, fh, indent=2, sort_keys=False, default=str)
         fh.write("\n")
     return json.loads(manifest_file.read_text(encoding="utf-8"))
 

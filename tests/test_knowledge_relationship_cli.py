@@ -222,6 +222,24 @@ class TestSupersedeChain:
         with pytest.raises(ValueError, match="Unknown knowledge document"):
             self._chain(GHOST)
 
+    def test_branched_dag_asserts_start_doc_membership(self, workspace):
+        """Supersede chains are linear by writer contract (one successor
+        per superseded doc). A branched DAG is outside that contract: the
+        walk follows the sorted-first successor per fork, so the queried
+        doc dropping out of its own chain must fail loudly, not silently
+        return a chain without it. Titles pick ids so the non-start branch
+        sorts first (the walk would otherwise still pass through start)."""
+        bundle = _bundle()
+        base = _add_doc(bundle, "Fork base", tags=["adr"])
+        start = _add_doc(bundle, "Fork zulu")
+        other = _add_doc(bundle, "Fork alpha")
+        for newer in (start, other):
+            _declare(bundle, newer, base, "supersedes")
+            _declare(bundle, base, newer, "superseded-by")
+        _rebuild()
+        with pytest.raises(AssertionError):
+            self._chain(start)
+
 
 # --- related_docs store API: neighbors with relation, kind, title ---
 
