@@ -1,73 +1,122 @@
-/* Cairn dashboard — "Terrain" design system: warm sandstone light mode,
-   deep ink-brown dark mode, one burnt-amber primary (a cairn is a trail
-   marker — the palette reads geological, not tech-corporate).
-   Theme contract (pinned by tests/test_dashboard_theme.py — note that
-   test locates blocks by first substring match, so keep selector
-   spellings OUT of comments):
-   - The first root-variable block below holds every theme-varying
-     variable and NOTHING else; the dark-theme block that follows must
-     redefine each of them to a different value plus color-scheme. New
-     theme-dependent tokens go into BOTH blocks, never the constants one.
+/* Cairn dashboard — design tokens, dark-first: a near-black surface
+   ladder stepped through 1px hairlines (no drop shadows — elevation is
+   a surface step plus a hairline), one indigo accent, 13px density,
+   system fonts.
+   Theme contract (pinned by the dashboard theme test — that test
+   locates blocks by first substring match, so keep selector spellings
+   OUT of comments):
+   - The first variable block below holds the theme tokens (dark values)
+     and NOTHING else — no constants, no component declarations.
+   - Both theme blocks that follow redefine every theme token plus the
+     color scheme: the dark block restates the defaults verbatim, the
+     light block carries the light ladder. New theme-dependent tokens go
+     into ALL THREE blocks, never the constants one.
    - Theme resolution lives in base.html's inline head script — no
      system-color-scheme media query may appear in this file. */
 
 :root {
-  --bg: #f5f2ec;
-  --surface: #fffdf9;
-  --surface-2: #f0ebe1;
-  --sidebar: #ece5d8;
-  --canvas: #faf8f3;
-  --text: #23201b;
-  --muted: #6f675a;
-  --border: #dcd2c0;
-  --accent: #b45309;
-  --accent-2: #4f46e5;
-  --accent-contrast: #fffdf9;
-  --accent-soft: rgba(180, 83, 9, 0.12);
-  --ok: #166534;
-  --warn: #a16207;
-  --err: #b91c1c;
-  --shadow: rgba(35, 32, 27, 0.12);
-  --backdrop: rgba(35, 32, 27, 0.32);
-}
-
-[data-theme="dark"] {
-  --bg: #14110d;
-  --surface: #1c1813;
-  --surface-2: #241f18;
-  --sidebar: #171310;
-  --canvas: #100e0b;
-  --text: #ece7dd;
-  --muted: #a29885;
-  --border: #342c21;
-  --accent: #f59e0b;
-  --accent-2: #818cf8;
-  --accent-contrast: #1c1503;
-  --accent-soft: rgba(245, 158, 11, 0.14);
-  --ok: #4ade80;
-  --warn: #fde047;
-  --err: #f87171;
-  --shadow: rgba(0, 0, 0, 0.5);
-  --backdrop: rgba(0, 0, 0, 0.6);
+  --bg-0: #08090a;
+  --bg-1: #0f1011;
+  --bg-2: #141516;
+  --bg-3: #18191a;
+  --line-1: #23252a;
+  --line-2: #34343a;
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #5e6ad2;
+  --accent-hover: #828fff;
+  --ok: #27a644;
+  --warn: #f5a623;
+  --err: #ee5d5d;
   color-scheme: dark;
 }
 
+[data-theme="dark"] {
+  --bg-0: #08090a;
+  --bg-1: #0f1011;
+  --bg-2: #141516;
+  --bg-3: #18191a;
+  --line-1: #23252a;
+  --line-2: #34343a;
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #5e6ad2;
+  --accent-hover: #828fff;
+  --ok: #27a644;
+  --warn: #f5a623;
+  --err: #ee5d5d;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-0: #ffffff;
+  --bg-1: #f7f8f8;
+  --bg-2: #f2f3f4;
+  --bg-3: #ececee;
+  --line-1: #e6e7ea;
+  --line-2: #d0d3d8;
+  --text-1: #17181a;
+  --text-2: #3f4148;
+  --text-3: #6b6e78;
+  --text-4: #9a9da6;
+  --accent: #5260c9;
+  --accent-hover: #404db3;
+  --ok: #1a7f37;
+  --warn: #b45309;
+  --err: #cf222e;
+  color-scheme: light;
+}
+
 /* Theme-invariant design constants (NOT scanned by the theme test —
-   keep them out of the first :root block above). */
+   keep them out of the first variable block above). */
 :root {
-  --radius-s: 8px;
-  --radius: 12px;
-  --radius-l: 16px;
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  /* Radius scale */
+  --radius-xs: 4px;
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+  /* Type scale — 13px base */
+  --font-xs: 11px;
+  --font-s: 12px;
+  --font-m: 13px;
+  --font-l: 14px;
+  --font-xl: 16px;
+  --font-2xl: 20px;
+  /* Layout dims */
   --control-h: 38px;
-  --shadow-1: 0 1px 2px var(--shadow);
-  --shadow-2: 0 12px 32px -16px var(--shadow);
-  --shadow-3: 0 24px 64px -24px var(--shadow);
   --sidebar-w: 232px;
   --sidebar-w-collapsed: 60px;
   --topbar-h: 56px;
+  /* System font stacks */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  --font-sans: -apple-system, system-ui, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+  /* Derived theme-adaptive colors: tints and veils recomputed from the
+     active theme's own tokens. */
+  --accent-contrast: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --backdrop: color-mix(in srgb, var(--bg-0) 62%, transparent);
+  /* Pre-token component names, mapped onto the ladder; views migrate to
+     the token names directly and this list shrinks away. */
+  --bg: var(--bg-0);
+  --surface: var(--bg-1);
+  --surface-2: var(--bg-2);
+  --sidebar: var(--bg-1);
+  --canvas: var(--bg-0);
+  --text: var(--text-1);
+  --muted: var(--text-3);
+  --border: var(--line-1);
+  --accent-2: var(--accent-hover);
 }
 
 * {
@@ -81,8 +130,9 @@ html {
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background: var(--bg);
-  color: var(--text);
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-size: var(--font-m);
   line-height: 1.55;
 }
 
@@ -92,7 +142,7 @@ a {
 
 a:hover,
 a:focus {
-  color: var(--accent-2);
+  color: var(--accent-hover);
 }
 
 :focus-visible {
@@ -281,8 +331,8 @@ body.app-shell {
   gap: 1rem;
   min-height: var(--topbar-h);
   padding: 0 1.5rem;
-  background: var(--bg);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  background: var(--bg-0);
+  background: color-mix(in srgb, var(--bg-0) 78%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
@@ -374,7 +424,6 @@ body.app-shell {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-3);
   overflow: hidden;
 }
 
@@ -470,7 +519,6 @@ body.app-shell {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
   padding: 1.5rem 1.7rem;
   overflow-x: auto;
 }
@@ -1497,7 +1545,6 @@ a.code-ref:focus code {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: var(--shadow-2);
   padding: 4px 0;
 }
 

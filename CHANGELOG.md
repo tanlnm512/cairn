@@ -109,6 +109,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cairn memory demote` gains `--db`).
 
 ### Changed
+- Dashboard design tokens, dark-first: the stylesheet's theme layer is a
+  near-black surface ladder (`--bg-0 #08090a` … `--bg-3 #18191a`), 1px
+  hairlines (`--line-1/2`) instead of drop shadows (panels, dropdowns, and
+  the topbar carry no box-shadow — elevation is a surface step plus a
+  hairline), a text ramp (`--text-1..4`), one indigo accent
+  (`--accent #5e6ad2`, `--accent-hover`), and status colors (`--ok/warn/err`)
+  in the first variable block, with `[data-theme="light"]` carrying the
+  light ladder (`#ffffff` page, `#f7f8f8/#f2f3f4/#ececee` surfaces,
+  `#17181a` text) and `[data-theme="dark"]` restating the dark defaults;
+  both theme blocks redefine every token and set `color-scheme`. Constants
+  gain spacing (4/8/12/16/24), radius (4/6/10/14), and 13px-base type
+  scales on the system font stacks. Theme resolution is unchanged: the
+  inline pre-paint script still resolves stored choice → OS preference →
+  dark, and no `prefers-color-scheme` media query exists in CSS.
+  Pre-token component var names (`--bg`, `--surface`, `--border`, …) map
+  onto the ladder until views restyle onto the token names directly. The
+  theme test pins the new contract: first block holds the dark tokens and
+  nothing else, both theme blocks redefine every token, no system-color-
+  scheme media query.
 - Wiki two-kind contract: the wiki's two stored kinds have disjoint,
   structurally separated purposes — the plan manifest records pipeline
   intent only (identity, seeds, input hash, task linkage, queue attempts;

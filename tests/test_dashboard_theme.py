@@ -1,37 +1,55 @@
-"""Theme apply/persist tests (TC-008 / FR-006, spec ui-dashboard-polish).
+"""Theme token contract tests (D2 design-token system, M2 UI foundation).
 
-TC-008's pass condition is split: an automated half (the apply/persist
-machinery's unit test -- the toggle, the pre-paint script, the dark
-palette) and a manual half, recorded below.
+The stylesheet ships a dark-first token ladder: the first variable block
+holds the theme tokens with their dark values and nothing else, and BOTH
+theme blocks that follow redefine every one of those tokens plus the
+color scheme — the dark block restating the defaults, the light block
+carrying the light ladder. Theme resolution lives in base.html's inline
+head script (stored choice, then prefers-color-scheme, then dark) so a
+stored choice wins before first paint; a system-color-scheme media query
+in CSS could not honor that order and is therefore banned.
 
-Manual procedure (TC-008's manual half -- run by a human in a browser):
+Manual procedure (the browser half of the theme checks — run by a human
+or a browser validator):
 
-1. Start the dashboard (``cairn dashboard``) and click the theme toggle
-   until dark is active.
-2. Visit every view -- ``/``, ``/workspaces``, ``/projects``, ``/graph``,
-   ``/history``, ``/tokens``, ``/chains``, ``/health``, ``/memory``,
-   ``/tasks`` -- each must render dark, with no light flash on arrival.
-3. Reload each view -- the dark choice persists (localStorage key
-   ``cairn-theme``), applied before first paint.
-4. Close the browser entirely, reopen it, and visit the dashboard again
-   -- dark is still the applied theme.
-
-The automated half pins what that procedure exercises: every rendered
-page (base template) carries the toggle control and the inline head
-script that applies the theme synchronously -- before the body can
-paint -- reading the stored choice first and prefers-color-scheme only
-as the default; the stylesheet's ``[data-theme="dark"]`` block overrides
-every themed CSS variable the light ``:root`` defines. The
-prefers-color-scheme resolution deliberately lives in the script, not a
-CSS media query: only the script can let a stored choice win before
-paint.
+1. Start the dashboard (``cairn dashboard``) with an empty localStorage —
+   every view renders on the dark ladder (--bg-0 near-black) before
+   first paint, whatever the OS preference.
+2. Click ``#theme-toggle``: the page flips to the light ladder without a
+   reload; reload and navigate — light persists (localStorage key
+   ``cairn-theme``), with no flash of the wrong theme before paint.
+3. Clear the stored key and flip the OS preference — a fresh load
+   follows the OS; toggling again stores an explicit choice that beats
+   the OS on the next load.
 """
 from __future__ import annotations
 
 import pytest
 
 _THEME_STORAGE_KEY = "cairn-theme"
-_THEMED_VARS = ("--bg", "--surface", "--text", "--muted", "--border", "--accent")
+
+# Every theme-varying token: the surface ladder, the hairlines, the text
+# ramp, the accent pair, and the status colors. Each must appear in the
+# first variable block (dark values) and in BOTH theme blocks.
+_THEME_TOKENS = (
+    "--bg-0",
+    "--bg-1",
+    "--bg-2",
+    "--bg-3",
+    "--line-1",
+    "--line-2",
+    "--text-1",
+    "--text-2",
+    "--text-3",
+    "--text-4",
+    "--accent",
+    "--accent-hover",
+    "--ok",
+    "--warn",
+    "--err",
+)
+
+_DARK_BG_0 = "#08090a"
 
 
 def _client(tmp_path):
@@ -78,9 +96,15 @@ def _rule_block(css: str, selector: str) -> str:
     return css[brace + 1 : css.index("}", brace)]
 
 
+def _stylesheet(tmp_path) -> str:
+    resp = _client(tmp_path).get("/static/app.css")
+    assert resp.status_code == 200
+    return resp.text
+
+
 def test_rendered_page_carries_theme_toggle(tmp_path):
-    """TC-008 / FR-006: the base template renders the toggle button with
-    its stable id, and the script wires itself to that id."""
+    """The base template renders the toggle button with its stable id,
+    and the script wires itself to that id."""
     html = _rendered(tmp_path)
     assert 'id="theme-toggle"' in html
     assert 'class="theme-toggle"' in html
@@ -88,9 +112,9 @@ def test_rendered_page_carries_theme_toggle(tmp_path):
 
 
 def test_theme_script_is_inline_in_head_and_applies_before_paint(tmp_path):
-    """TC-008 / FR-006: the apply/persist script is inline in <head>
-    (before <body> can paint) and runs at parse time -- its first
-    ``applyTheme();`` call precedes any DOMContentLoaded deferral."""
+    """The apply/persist script is inline in <head> (before <body> can
+    paint) and runs at parse time -- its first ``applyTheme();`` call
+    precedes any DOMContentLoaded deferral."""
     html = _rendered(tmp_path)
     head_end = html.index("</head>")
     body_start = html.index("<body")
@@ -103,10 +127,10 @@ def test_theme_script_is_inline_in_head_and_applies_before_paint(tmp_path):
 
 
 def test_theme_script_carries_apply_and_persist_contract(tmp_path):
-    """TC-008 / FR-006: the script's contract markers -- the localStorage
-    key, both theme values, the prefers-color-scheme default via
-    matchMedia, persistence through setItem, application on the document
-    element's data-theme, and the global apply function."""
+    """The script's contract markers -- the localStorage key, both theme
+    values, the prefers-color-scheme default via matchMedia, persistence
+    through setItem, application on the document element's data-theme,
+    and the global apply function."""
     script = _head_script(_rendered(tmp_path))
     assert f'"{_THEME_STORAGE_KEY}"' in script
     assert '"dark"' in script and '"light"' in script
@@ -118,23 +142,44 @@ def test_theme_script_carries_apply_and_persist_contract(tmp_path):
     assert "documentElement.dataset.theme" in script
 
 
-def test_dark_palette_overrides_every_themed_variable(tmp_path):
-    """TC-008 / FR-006: the served stylesheet's ``[data-theme="dark"]``
-    block redefines every CSS variable the light ``:root`` defines (all
-    six themed variables, each to a different value) plus
-    ``color-scheme: dark``; no prefers-color-scheme media query exists in
-    CSS (the resolution lives in the head script so a stored choice wins
-    before paint)."""
-    css = _client(tmp_path).get("/static/app.css")
-    assert css.status_code == 200
+def test_first_root_block_holds_only_the_dark_theme_tokens(tmp_path):
+    """The first variable block holds every theme token with its dark
+    value and NOTHING else -- no constants, no component declarations.
+    Dark is the default the pre-paint script falls back to, so the block
+    must carry the dark ladder (bg-0 near-black) and the dark color
+    scheme."""
+    css = _stylesheet(tmp_path)
+    root = _declarations(_rule_block(css, ":root"))
 
-    root = _declarations(_rule_block(css.text, ":root"))
-    dark = _declarations(_rule_block(css.text, '[data-theme="dark"]'))
+    assert set(root) == set(_THEME_TOKENS) | {"color-scheme"}
+    assert root["--bg-0"] == _DARK_BG_0
+    assert root["color-scheme"] == "dark"
 
-    for var in _THEMED_VARS:
-        assert var in root  # a rename cannot silently shrink dark coverage
-    for var, light_value in root.items():
-        assert var in dark, var
-        assert dark[var] != light_value, var
+
+def test_both_theme_blocks_redefine_every_token(tmp_path):
+    """Both theme blocks redefine every theme token and set the color
+    scheme: the dark block restates the first block's dark values
+    verbatim (equal specificity, later block wins, so a stray first-block
+    edit cannot leave the dark block stale); the light block carries
+    theme-appropriate values -- every token differs from its dark
+    value."""
+    css = _stylesheet(tmp_path)
+    root = _declarations(_rule_block(css, ":root"))
+    dark = _declarations(_rule_block(css, '[data-theme="dark"]'))
+    light = _declarations(_rule_block(css, '[data-theme="light"]'))
+
+    for token in _THEME_TOKENS:
+        assert token in dark, token
+        assert dark[token] == root[token], token
+        assert token in light, token
+        assert light[token] != root[token], token
+
     assert dark.get("color-scheme") == "dark"
-    assert "@media (prefers-color-scheme" not in css.text
+    assert light.get("color-scheme") == "light"
+
+
+def test_no_system_color_scheme_media_query_in_css(tmp_path):
+    """Theme resolution lives in the head script (only the script can
+    let a stored choice win before paint), so no system-color-scheme
+    media query may appear in the stylesheet."""
+    assert "@media (prefers-color-scheme" not in _stylesheet(tmp_path)
