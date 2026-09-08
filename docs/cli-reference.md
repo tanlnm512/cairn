@@ -48,6 +48,7 @@ Group: `cairn knowledge …`
 | `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox` (see [knowledge-and-memory.md](knowledge-and-memory.md)) |
 | `add` / `import` / `remove` | manual document management |
 | `search` / `list` / `embed` / `export` | query and maintain the bundle |
+| `impact <query>` | knowledge-to-graph bridge: matching docs with affected repos and their cross-repo dependencies |
 | `status <doc_id> <new_status>` | lifecycle transitions |
 | `workflow add|trace|sync` | workflow definitions and traces |
 

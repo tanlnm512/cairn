@@ -20,6 +20,14 @@ agent session loads it.
 
 ## The 22 tools by layer
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-components-dark.png">
+  <img src="diagrams/c4-components.png" alt="MCP server components: boot and lifecycle verifies the 22-tool FastMCP surface; four tool groups dispatch to the graph engine, hybrid retrieval, and knowledge and memory">
+</picture>
+
+Open [diagrams/c4-components.html](diagrams/c4-components.html) for the
+full-size version.
+
 **L1 — Graph** (`tools_graph.py`, 9):
 
 | Tool | Purpose |

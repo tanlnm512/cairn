@@ -22,16 +22,19 @@ MIT License
   annotated-types, anyio, attrs, build, h11, httpx-sse, iniconfig, jsonschema,
   jsonschema-specifications, markdown-it-py, mcp, mdurl, pluggy, pydantic,
   pydantic-settings, pydantic_core, PyJWT, pyproject_hooks, pytest,
-  referencing, rich, rpds-py, ruff, PyYAML, tree-sitter, tree-sitter-dart,
+  questionary, referencing, rich, rpds-py, ruff, PyYAML, tree-sitter,
+  tree-sitter-c, tree-sitter-c-sharp, tree-sitter-cpp, tree-sitter-dart,
   tree-sitter-go, tree-sitter-java, tree-sitter-javascript, tree-sitter-objc,
-  tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
+  tree-sitter-php, tree-sitter-python, tree-sitter-ruby, tree-sitter-swift,
+  tree-sitter-typescript,
   typing-inspection, cffi (MIT-0)
 
 ----------------------------------------
 BSD License (BSD-2-Clause / BSD-3-Clause)
 ----------------------------------------
   click (BSD-3-Clause), httpcore (BSD-3-Clause), httpx (BSD-3-Clause),
-  idna (BSD-3-Clause), pycparser (BSD-3-Clause), Pygments (BSD-2-Clause),
+  idna (BSD-3-Clause), jinja2 (BSD-3-Clause), markupsafe (BSD-3-Clause),
+  numpy (BSD-3-Clause), pycparser (BSD-3-Clause), Pygments (BSD-2-Clause),
   python-dotenv (BSD-3-Clause), sse-starlette (BSD-3-Clause),
   starlette (BSD-3-Clause), uvicorn (BSD-3-Clause)
 
@@ -69,7 +72,7 @@ Dual: MIT License OR Apache License 2.0
 Optional extras
 ================================================================================
 
-The `[semantic]` extra (sentence-transformers, numpy) is not installed by
+The `[semantic]` extra (sentence-transformers) is not installed by
 default. On Linux it additionally pulls torch and its transitive NVIDIA CUDA
 runtime packages (e.g. nvidia-cublas, nvidia-cudnn, nvidia-cufft, triton),
 which are governed by NVIDIA's CUDA EULA / Apache-2.0 and torch's BSD-style
@@ -77,7 +80,7 @@ license. These are resolved and accepted by the end user; cairn does not
 bundle or redistribute them.
 
 The embedding model `BAAI/bge-m3` (referenced by name, downloaded on demand
-to ~/.cairn/lib/ when a user runs `cg embed --install-deps`) is released
+to ~/.cairn/lib/ when a user runs `cairn embed --install-deps`) is released
 under the MIT License on Hugging Face. cairn does not redistribute the
 model weights.
 
