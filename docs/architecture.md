@@ -11,6 +11,16 @@ lives, and which module owns which job.
 Open [diagrams/system-architecture.html](diagrams/system-architecture.html)
 for the full-size version.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-containers-dark.png">
+  <img src="diagrams/c4-containers.png" alt="C4 container view: the MCP server, CLI, and dashboard surfaces drive the graph engine, knowledge and memory, and hybrid retrieval over one SQLite store; the LLM runs off-path">
+</picture>
+
+The same system as a [C4 container view](diagrams/c4-containers.html); the
+full [C4 model](diagrams/c4.html) adds the [system
+context](diagrams/c4-context.html) and the MCP server's
+[components](diagrams/c4-components.html).
+
 ## What cairn is
 
 Cairn (`cairn-intel` on PyPI) is a local codebase-intelligence system for AI
@@ -68,12 +78,13 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `hooks/` | git hooks and lifecycle hooks |
 | `knowledge/` | document knowledge: staged ingestion (`knowledge/ingest/`) + semantic retrieval |
 | `llm/` | agent-decoupled LLM task queue |
-| `mcp_server/` | the 28-tool MCP surface |
+| `mcp_server/` | the 22-tool MCP surface |
 | `memory/` | tiered agent memory (raw → drafts → tribal → archived) |
 | `okf/` | Open Knowledge Format concept model and bundle |
 | `parsers/` | tree-sitter parsers (14 languages) + SCIP importer |
-| `retrieval/` | composable Retriever / Fusion / Reranker stages |
+| `retrieval/` | retrieval protocols + the batched vector scan (the Retriever / Fusion / Reranker stages live in `graph/`) |
 | `telemetry/` | best-effort local telemetry sink + optional OTLP export |
+| `utils/` | shared helpers (git inspection, logging) |
 | `viz/` | Mermaid / DOT / JSON graph renderers |
 | `wiki/` | the wiki's page-plan pipeline (plan → refine → queue) and the lifecycle module that derives promotion/state/staleness from the two stored kinds (plan manifest + promoted articles) |
 
@@ -99,8 +110,8 @@ The `.kg` SQLite database (`src/cairn/graph/schema.py`) holds:
 ## Runtime model
 
 - The MCP server boots with: tool-count verification → parent-death watchdog
-  (stdio) → boot catch-up reindex (`ensure_fresh_force`) → memory decay →
-  live file watcher (`[watch]` extra).
+  (stdio) → background model warm-up → boot catch-up reindex
+  (`ensure_fresh_force`) → memory decay → live file watcher (`[watch]` extra).
 - One writer at a time: builds take `build_lock` (flock, non-blocking) around
   the write phase; full-workspace builds write to a temp DB and atomically
   swap (`swap_db_file`).

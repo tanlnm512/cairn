@@ -4,7 +4,7 @@ All cairn functionality is exposed via the `cairn` command.
 Run `cairn --help` for the full command list, or `cairn version` to check
 the installed version.
 
-Public entry point: ``main`` (the Click group). The 49 commands live in
+Public entry point: ``main`` (the Click group). Commands live in
 split modules under this package and register on ``main`` via @main.command()
 decorators when the modules are imported below.
 """

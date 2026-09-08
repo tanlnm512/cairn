@@ -66,7 +66,7 @@ def print_impact(result: dict) -> None:
 
 def try_dataflow_fallback(symbol: str) -> None:
     print("Trying the precomputed dataflow index instead (cached=True equivalent)...")
-    df = run_cg(["dataflow", "dataflow-lookup", symbol, "--json"])
+    df = run_cg(["dataflow", "lookup", symbol, "--json"])
     if df.returncode != 0:
         print("  (no precomputed dataflow entry -- run `cairn dataflow build` first, "
               "or re-run impact_guard.py with a more specific qualified name)")

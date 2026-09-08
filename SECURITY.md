@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-cairn is pre-1.0 beta software. Only the **latest `0.10.x` release line**
-receives security fixes. Older versions are not supported — please upgrade.
+cairn is pre-1.0 beta software. Only the **latest release line** receives
+security fixes. Older versions are not supported — please upgrade.
 
 | Version | Supported |
 |---------|-----------|
-| 0.10.x  | Yes       |
-| < 0.9   | No        |
+| Latest release line | Yes |
+| Older lines | No |
 
 ## Reporting a vulnerability
 

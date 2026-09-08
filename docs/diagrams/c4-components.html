@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>cairn C4 — MCP server components</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #f5f5f5; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 1040 600" width="1040" height="600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="c4cmp-title c4cmp-desc">
+        <title id="c4cmp-title">cairn C4 — MCP server components</title>
+        <desc id="c4cmp-desc">Component diagram of the MCP server container: a boot and lifecycle module verifies the 22-tool FastMCP surface, whose four tool groups call the graph engine, hybrid retrieval, and knowledge and memory containers.</desc>
+        <defs>
+          <marker id="cmp-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="cmp-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- zone: the MCP server container boundary -->
+        <rect x="24" y="64" width="680" height="452" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="32" y="68" width="248" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="36" y="77" fill="rgba(45,49,66,0.40)" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">MCP SERVER · src/cairn/mcp_server</text>
+
+        <!-- arrows (before nodes) -->
+        <!-- boot -> surface -->
+        <line x1="188" y1="168" x2="188" y2="228" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> graph tools -->
+        <path d="M 320,248 H 328 Q 336,248 336,240 V 140 Q 336,132 344,132 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> compass + KB tools -->
+        <path d="M 320,264 H 344 Q 352,264 352,256 V 232 Q 352,224 360,224 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> knowledge + wiki tools -->
+        <path d="M 320,280 H 376 Q 384,280 384,288 V 400 Q 384,408 392,408 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> memory tools -->
+        <path d="M 320,296 H 360 Q 368,296 368,304 V 308 Q 368,316 376,316 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- graph tools -> graph engine -->
+        <line x1="664" y1="132" x2="772" y2="132" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- graph tools -> hybrid retrieval -->
+        <path d="M 664,156 H 700 Q 708,156 708,164 V 216 Q 708,224 716,224 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- compass + KB tools -> knowledge & memory -->
+        <path d="M 664,240 H 716 Q 724,240 724,248 V 316 Q 724,324 732,324 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- memory tools -> knowledge & memory -->
+        <path d="M 664,296 H 676 Q 684,296 684,304 V 336 Q 684,344 692,344 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- knowledge + wiki tools -> knowledge & memory -->
+        <path d="M 664,408 H 692 Q 700,408 700,400 V 372 Q 700,364 708,364 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+
+        <!-- arrow labels -->
+        <rect x="196" y="192" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="198" y="202" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">VERIFY 22</text>
+        <rect x="718" y="204" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="740" y="213" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">SEARCH</text>
+
+        <!-- nodes -->
+        <!-- Boot & lifecycle (component) -->
+        <rect x="56" y="96" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="56" y="96" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="64" y="102" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="83" y="111" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">BOOT</text>
+        <text x="188" y="134" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Boot &amp; lifecycle</text>
+        <text x="188" y="152" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">verify 22 · watchdog · reindex · watch</text>
+
+        <!-- FastMCP tool surface (focal component) -->
+        <rect x="56" y="232" width="264" height="96" rx="6" fill="#f5f5f5"/>
+        <rect x="56" y="232" width="264" height="96" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+        <rect x="64" y="238" width="54" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.40)" stroke-width="0.8"/>
+        <text x="91" y="247" fill="rgba(178,84,36,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">SURFACE</text>
+        <text x="188" y="272" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">FastMCP tool surface</text>
+        <text x="188" y="290" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">server.py · _server_core.py</text>
+        <text x="188" y="308" fill="#b25424" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">22 tools · count verified at boot</text>
+
+        <!-- Graph tools -->
+        <rect x="400" y="96" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="96" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="102" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="111" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="134" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Graph tools</text>
+        <text x="532" y="152" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">9 · def · callers · impact · explore</text>
+
+        <!-- Compass + KB tools -->
+        <rect x="400" y="188" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="188" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="194" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="203" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="226" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Compass + KB tools</text>
+        <text x="532" y="244" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">5 · compass · ask · flows</text>
+
+        <!-- Memory tools -->
+        <rect x="400" y="280" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="280" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="286" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="295" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="318" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Memory tools</text>
+        <text x="532" y="336" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">2 · recall · record</text>
+
+        <!-- Knowledge + wiki tools -->
+        <rect x="400" y="372" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="372" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="378" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="387" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="410" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Knowledge + wiki tools</text>
+        <text x="532" y="428" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">6 · OKF · workflows · wiki</text>
+
+        <!-- Graph engine (container ref) -->
+        <rect x="776" y="96" width="240" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="96" width="240" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="784" y="102" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="797" y="111" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="896" y="134" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Graph engine</text>
+        <text x="896" y="152" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref</text>
+
+        <!-- Hybrid retrieval (container ref) -->
+        <rect x="776" y="188" width="240" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="188" width="240" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="784" y="194" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="797" y="203" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="896" y="226" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Hybrid retrieval</text>
+        <text x="896" y="244" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref</text>
+
+        <!-- Knowledge & memory (container ref) -->
+        <rect x="776" y="280" width="240" height="88" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="280" width="240" height="88" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="784" y="286" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="797" y="295" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="896" y="324" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Knowledge &amp; memory</text>
+        <text x="896" y="344" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref</text>
+
+        <!-- legend -->
+        <line x1="56" y1="548" x2="1016" y2="548" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="56" y="568" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="180" y="556" width="16" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="0.8"/>
+        <text x="204" y="566" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">component</text>
+        <rect x="340" y="556" width="16" height="12" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="0.8"/>
+        <text x="364" y="566" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">the verified surface</text>
+        <rect x="580" y="556" width="16" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8" stroke-dasharray="4,3"/>
+        <text x="604" y="566" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref (from level 2)</text>
+      </svg>
+</body>
+</html>

@@ -27,8 +27,8 @@ MSVC) is required for development installs; released wheels ship the
 extension prebuilt, so end-user installs stay toolchain-free.
 
 Optional extras (see `pyproject.toml`): `[watch]` (file watching),
-`[semantic]` (sentence-transformers + numpy; pulls torch, large),
-`[ann]` (sqlite-vec native ANN index).
+`[semantic]` (sentence-transformers; pulls torch, large — numpy and
+sqlite-vec are already core).
 
 Install the dev pre-commit hook (runs `ruff` on staged `.py` files; aborts
 on any unused-import / undefined-name / redefinition error so it's caught

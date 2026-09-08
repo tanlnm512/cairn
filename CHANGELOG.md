@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- CLI (`cairn dataflow lookup`): the subcommand registers under its documented
+  name (Click had derived `dataflow-lookup` from the function name, so the
+  documented `cairn dataflow lookup` form was not invokable); the shipped
+  `impact_guard.py` skill helper and its eval rule call the corrected name.
 - Agent install (droid): `droid mcp add` matches the documented stdio
   shape (the full server command as one argument, `--type stdio`) and
   pins a non-default home via the CLI's `--env` flag (replacing the

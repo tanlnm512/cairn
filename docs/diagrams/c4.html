@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cairn — C4 Model</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1200px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: var(--color-muted);
+      margin-bottom: 2.5rem;
+    }
+    section { margin-bottom: 3rem; }
+    h2 {
+      font-family: var(--font-serif);
+      font-size: 1.25rem;
+      font-weight: 400;
+      color: var(--color-ink);
+      margin: 0.25rem 0 1rem;
+    }
+    .caption {
+      font-size: 0.78rem;
+      color: var(--color-muted);
+      margin-top: 0.75rem;
+      max-width: 72ch;
+    }
+    .colophon {
+      border-top: 1px solid rgba(45,49,66,0.10);
+      padding-top: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Cairn · C4 Model</p>
+    <h1>Cairn in three C4 levels</h1>
+    <p class="subtitle">System context, containers, and the MCP server's components. Every arrow shown is deterministic and local — the LLM sits off the query path.</p>
+
+    <!-- ============ LEVEL 1 — SYSTEM CONTEXT ============ -->
+    <section>
+      <p class="eyebrow">Level 1 · System Context</p>
+      <h2>Who uses cairn, and what it talks to</h2>
+
+      <svg viewBox="0 0 1120 416" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="c4ctx-title c4ctx-desc">
+        <title id="c4ctx-title">cairn C4 — system context</title>
+        <desc id="c4ctx-desc">System context diagram: AI coding agents and developers use cairn, which parses the local code workspace with tree-sitter and calls an LLM only off-path, through a critic gate, for document synthesis.</desc>
+        <defs>
+          <marker id="ctx-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="ctx-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- arrows (before nodes) -->
+        <line x1="296" y1="140" x2="450" y2="140" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctx-arrow)"/>
+        <line x1="296" y1="252" x2="450" y2="252" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctx-arrow)"/>
+        <path d="M 712,164 H 764 Q 772,164 772,156 V 132 Q 772,124 780,124 H 828" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctx-arrow)"/>
+        <path d="M 712,244 H 764 Q 772,244 772,252 V 260 Q 772,268 780,268 H 828" fill="none" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ctx-arrow-link)"/>
+
+        <!-- arrow labels -->
+        <rect x="334" y="118" width="84" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="376" y="127" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">22 MCP TOOLS</text>
+        <rect x="330" y="230" width="92" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="376" y="239" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">CLI · CONSOLE</text>
+        <rect x="724" y="142" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="746" y="151" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">PARSES</text>
+
+        <!-- nodes -->
+        <!-- AI coding agents (person) -->
+        <rect x="64" y="104" width="232" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="64" y="104" width="232" height="72" rx="6" fill="rgba(79,93,117,0.10)" stroke="rgba(122,131,153,0.60)" stroke-width="1"/>
+        <rect x="72" y="110" width="46" height="12" rx="2" fill="transparent" stroke="rgba(122,131,153,0.40)" stroke-width="0.8"/>
+        <text x="95" y="119" fill="rgba(79,93,117,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">PERSON</text>
+        <text x="180" y="142" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">AI coding agents</text>
+        <text x="180" y="160" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">Claude Code · Cursor · Droid · omp</text>
+
+        <!-- Developer (person) -->
+        <rect x="64" y="216" width="232" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="64" y="216" width="232" height="72" rx="6" fill="rgba(79,93,117,0.10)" stroke="rgba(122,131,153,0.60)" stroke-width="1"/>
+        <rect x="72" y="222" width="46" height="12" rx="2" fill="transparent" stroke="rgba(122,131,153,0.40)" stroke-width="0.8"/>
+        <text x="95" y="231" fill="rgba(79,93,117,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">PERSON</text>
+        <text x="180" y="254" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Developer</text>
+        <text x="180" y="272" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">builds · inspects · doctors the store</text>
+
+        <!-- cairn (focal software system) -->
+        <rect x="456" y="132" width="256" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="456" y="132" width="256" height="144" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+        <rect x="464" y="138" width="50" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.40)" stroke-width="0.8"/>
+        <text x="489" y="147" fill="rgba(178,84,36,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">SYSTEM</text>
+        <text x="584" y="204" fill="#2d3142" font-size="16" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">cairn</text>
+        <text x="584" y="228" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">verifiable codebase memory</text>
+        <text x="584" y="248" fill="#b25424" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">SQLite graph + OKF · 100% local</text>
+
+        <!-- Code workspace (external data) -->
+        <rect x="832" y="88" width="232" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="832" y="88" width="232" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+        <rect x="840" y="94" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="853" y="103" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="948" y="126" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Code workspace</text>
+        <text x="948" y="144" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tree-sitter · 14 languages · SCIP</text>
+
+        <!-- LLM (external, off-path) -->
+        <rect x="832" y="232" width="232" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="832" y="232" width="232" height="72" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="840" y="238" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="853" y="247" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="948" y="270" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">LLM</text>
+        <text x="948" y="288" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">doc synthesis · off-path</text>
+
+        <!-- legend -->
+        <line x1="64" y1="376" x2="1064" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="64" y="396" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="160" y="384" width="16" height="12" rx="2" fill="rgba(79,93,117,0.10)" stroke="rgba(122,131,153,0.60)" stroke-width="0.8"/>
+        <text x="184" y="394" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">person</text>
+        <rect x="300" y="384" width="16" height="12" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="0.8"/>
+        <text x="324" y="394" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">cairn — the system</text>
+        <rect x="520" y="384" width="16" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="544" y="394" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">external system</text>
+        <rect x="720" y="384" width="16" height="12" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8" stroke-dasharray="4,3"/>
+        <text x="744" y="394" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">off-path (critic-gated)</text>
+      </svg>
+
+      <p class="caption">Agents and developers are the only actors. Cairn reads the workspace and never serves an answer that an LLM produced — synthesis happens off-path and must pass the critic.</p>
+    </section>
+
+    <!-- ============ LEVEL 2 — CONTAINERS ============ -->
+    <section>
+      <p class="eyebrow">Level 2 · Containers</p>
+      <h2>Three surfaces, three engines, one store</h2>
+
+      <svg viewBox="0 0 1200 792" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="c4ctr-title c4ctr-desc">
+        <title id="c4ctr-title">cairn C4 — containers</title>
+        <desc id="c4ctr-desc">Container diagram: the MCP server, CLI, and dashboard surfaces drive the graph engine, knowledge and memory, and hybrid retrieval, all persisting into one local SQLite store; an external LLM runs off-path through a critic gate.</desc>
+        <defs>
+          <marker id="ctr-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="ctr-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+          <marker id="ctr-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- zones (painted first) -->
+        <rect x="16" y="128" width="888" height="596" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="668" y="132" width="228" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="892" y="141" fill="rgba(45,49,66,0.40)" font-size="8" text-anchor="end" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">CAIRN · PYTHON · 100% LOCAL</text>
+
+        <rect x="32" y="560" width="736" height="136" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="40" y="564" width="232" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="44" y="573" fill="rgba(45,49,66,0.40)" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">STORAGE · ~/.CAIRN/&lt;WORKSPACE&gt;</text>
+
+        <!-- arrows (before nodes) -->
+        <!-- agent -> MCP server -->
+        <line x1="172" y1="112" x2="172" y2="148" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- MCP -> graph engine -->
+        <line x1="140" y1="224" x2="140" y2="348" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- MCP -> hybrid retrieval (hop over CLI->K&M vertical at 456) -->
+        <path d="M 280,224 V 244 Q 280,252 288,252 H 448 a 8,8 0 0 1 16,0 H 708 Q 716,252 716,260 V 348" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- MCP -> knowledge & memory -->
+        <path d="M 248,224 V 308 Q 248,316 256,316 H 420 Q 428,316 428,324 V 348" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- CLI -> graph engine (hop over MCP->K&M vertical at 248) -->
+        <path d="M 364,224 V 276 Q 364,284 356,284 H 256 a 8,8 0 0 0 -16,0 H 212 Q 204,284 204,292 V 348" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- CLI -> knowledge & memory -->
+        <line x1="456" y1="224" x2="456" y2="348" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- dashboard -> SQLite (right corridor, hop over K&M->LLM at 388) -->
+        <path d="M 864,188 H 888 Q 896,188 896,196 V 380 a 8,8 0 0 0 0,16 V 620 Q 896,628 888,628 H 740" fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ctr-arrow)"/>
+        <!-- graph engine -> SQLite -->
+        <line x1="140" y1="424" x2="140" y2="596" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- knowledge & memory -> SQLite -->
+        <line x1="420" y1="424" x2="420" y2="596" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- hybrid retrieval -> SQLite -->
+        <line x1="688" y1="424" x2="688" y2="596" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ctr-arrow)"/>
+        <!-- knowledge & memory -> LLM (off-path) -->
+        <line x1="580" y1="388" x2="924" y2="388" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ctr-arrow-link)"/>
+
+        <!-- arrow labels -->
+        <rect x="148" y="278" width="92" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="150" y="288" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">QUERY · IMPACT</text>
+        <rect x="516" y="230" width="88" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="560" y="240" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">HYBRID SEARCH</text>
+        <rect x="292" y="294" width="96" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="340" y="304" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">COMPASS·MEMORY</text>
+        <rect x="270" y="262" width="92" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="316" y="272" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">BUILD · UPDATE</text>
+        <rect x="464" y="274" width="72" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="466" y="284" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">TASK · WIKI</text>
+        <rect x="772" y="606" width="88" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="816" y="616" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">READ-ONLY SQL</text>
+        <rect x="148" y="496" width="76" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="150" y="506" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">WRITE GRAPH</text>
+        <rect x="428" y="496" width="84" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="430" y="506" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">EMBED · REFS</text>
+        <rect x="696" y="496" width="100" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="698" y="506" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">BM25 + VECTORS</text>
+        <rect x="708" y="366" width="88" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="752" y="376" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">CRITIC-GATED</text>
+
+        <!-- nodes -->
+        <!-- AI coding agents (person) -->
+        <rect x="48" y="48" width="248" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="48" width="248" height="64" rx="6" fill="rgba(79,93,117,0.10)" stroke="rgba(122,131,153,0.60)" stroke-width="1"/>
+        <rect x="56" y="54" width="46" height="12" rx="2" fill="transparent" stroke="rgba(122,131,153,0.40)" stroke-width="0.8"/>
+        <text x="79" y="63" fill="rgba(79,93,117,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">PERSON</text>
+        <text x="172" y="84" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">AI coding agents</text>
+        <text x="172" y="100" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">Claude Code · Cursor · ZCode · Droid</text>
+
+        <!-- MCP server (surface) -->
+        <rect x="48" y="152" width="248" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="152" width="248" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="56" y="158" width="54" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="83" y="167" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">SURFACE</text>
+        <text x="172" y="190" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">MCP server</text>
+        <text x="172" y="208" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">FastMCP · stdio / SSE :9876 · 22 tools</text>
+
+        <!-- CLI (surface) -->
+        <rect x="332" y="152" width="248" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="332" y="152" width="248" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="340" y="158" width="54" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="367" y="167" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">SURFACE</text>
+        <text x="456" y="190" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">CLI</text>
+        <text x="456" y="208" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">Click · build · update · query</text>
+
+        <!-- Dashboard (surface) -->
+        <rect x="616" y="152" width="248" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="616" y="152" width="248" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="624" y="158" width="54" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="651" y="167" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">SURFACE</text>
+        <text x="740" y="190" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Dashboard</text>
+        <text x="740" y="208" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">Starlette · loopback :8765 · read-only</text>
+
+        <!-- Graph engine -->
+        <rect x="48" y="352" width="248" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="352" width="248" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="56" y="358" width="50" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="81" y="367" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">ENGINE</text>
+        <text x="172" y="390" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Graph engine</text>
+        <text x="172" y="408" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tree-sitter ×14 · resolver · incremental</text>
+
+        <!-- Knowledge & memory engine -->
+        <rect x="332" y="352" width="248" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="332" y="352" width="248" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="340" y="358" width="50" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="365" y="367" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">ENGINE</text>
+        <text x="456" y="390" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Knowledge &amp; memory</text>
+        <text x="456" y="408" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">OKF · tribal memory · compass · wiki</text>
+
+        <!-- Hybrid retrieval engine -->
+        <rect x="616" y="352" width="248" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="616" y="352" width="248" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="624" y="358" width="50" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="649" y="367" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">ENGINE</text>
+        <text x="740" y="390" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Hybrid retrieval</text>
+        <text x="740" y="408" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">BM25 + vectors · RRF · gated rerank</text>
+
+        <!-- SQLite store (focal) -->
+        <rect x="48" y="600" width="688" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="600" width="688" height="72" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+        <rect x="56" y="606" width="40" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.40)" stroke-width="0.8"/>
+        <text x="76" y="615" fill="rgba(178,84,36,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">STORE</text>
+        <text x="392" y="638" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">SQLite store</text>
+        <text x="392" y="656" fill="#b25424" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">.kg — symbols · labeled edges · FTS5 · vectors · telemetry</text>
+
+        <!-- LLM (external, off-path) -->
+        <rect x="928" y="352" width="232" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="928" y="352" width="232" height="72" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="936" y="358" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="949" y="367" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="1044" y="390" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">LLM</text>
+        <text x="1044" y="408" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">synthesis only · critic-gated</text>
+
+        <!-- legend -->
+        <line x1="48" y1="740" x2="1160" y2="740" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="48" y="760" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="160" y="748" width="16" height="12" rx="2" fill="rgba(79,93,117,0.10)" stroke="rgba(122,131,153,0.60)" stroke-width="0.8"/>
+        <text x="184" y="758" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">person</text>
+        <rect x="280" y="748" width="16" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="0.8"/>
+        <text x="304" y="758" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container</text>
+        <rect x="424" y="748" width="16" height="12" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="0.8"/>
+        <text x="448" y="758" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">the one store</text>
+        <rect x="592" y="748" width="16" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="616" y="758" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">external system</text>
+        <rect x="772" y="748" width="16" height="12" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8" stroke-dasharray="4,3"/>
+        <text x="796" y="758" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">off-path / read-only</text>
+      </svg>
+
+      <p class="caption">Every surface reads and writes the same <code>.kg</code> SQLite store under <code>~/.cairn/&lt;workspace&gt;</code>. The dashboard opens read-only connections; the LLM never sits on any of these query paths.</p>
+    </section>
+
+    <!-- ============ LEVEL 3 — COMPONENTS (MCP SERVER) ============ -->
+    <section>
+      <p class="eyebrow">Level 3 · Components — MCP Server</p>
+      <h2>Inside the 22-tool surface</h2>
+
+      <svg viewBox="0 0 1040 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="c4cmp-title c4cmp-desc">
+        <title id="c4cmp-title">cairn C4 — MCP server components</title>
+        <desc id="c4cmp-desc">Component diagram of the MCP server container: a boot and lifecycle module verifies the 22-tool FastMCP surface, whose four tool groups call the graph engine, hybrid retrieval, and knowledge and memory containers.</desc>
+        <defs>
+          <marker id="cmp-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="cmp-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- zone: the MCP server container boundary -->
+        <rect x="24" y="64" width="680" height="452" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="32" y="68" width="248" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="36" y="77" fill="rgba(45,49,66,0.40)" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">MCP SERVER · src/cairn/mcp_server</text>
+
+        <!-- arrows (before nodes) -->
+        <!-- boot -> surface -->
+        <line x1="188" y1="168" x2="188" y2="228" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> graph tools -->
+        <path d="M 320,248 H 328 Q 336,248 336,240 V 140 Q 336,132 344,132 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> compass + KB tools -->
+        <path d="M 320,264 H 344 Q 352,264 352,256 V 232 Q 352,224 360,224 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> knowledge + wiki tools -->
+        <path d="M 320,280 H 376 Q 384,280 384,288 V 400 Q 384,408 392,408 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- surface -> memory tools -->
+        <path d="M 320,296 H 360 Q 368,296 368,304 V 308 Q 368,316 376,316 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- graph tools -> graph engine -->
+        <line x1="664" y1="132" x2="772" y2="132" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- graph tools -> hybrid retrieval -->
+        <path d="M 664,156 H 700 Q 708,156 708,164 V 216 Q 708,224 716,224 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- compass + KB tools -> knowledge & memory -->
+        <path d="M 664,240 H 716 Q 724,240 724,248 V 316 Q 724,324 732,324 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- memory tools -> knowledge & memory -->
+        <path d="M 664,296 H 676 Q 684,296 684,304 V 336 Q 684,344 692,344 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+        <!-- knowledge + wiki tools -> knowledge & memory -->
+        <path d="M 664,408 H 692 Q 700,408 700,400 V 372 Q 700,364 708,364 H 772" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#cmp-arrow)"/>
+
+        <!-- arrow labels -->
+        <rect x="196" y="192" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="198" y="202" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">VERIFY 22</text>
+        <rect x="718" y="204" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="740" y="213" fill="#7a8399" font-size="8" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">SEARCH</text>
+
+        <!-- nodes -->
+        <!-- Boot & lifecycle (component) -->
+        <rect x="56" y="96" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="56" y="96" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="64" y="102" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="83" y="111" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">BOOT</text>
+        <text x="188" y="134" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Boot &amp; lifecycle</text>
+        <text x="188" y="152" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">verify 22 · watchdog · reindex · watch</text>
+
+        <!-- FastMCP tool surface (focal component) -->
+        <rect x="56" y="232" width="264" height="96" rx="6" fill="#f5f5f5"/>
+        <rect x="56" y="232" width="264" height="96" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+        <rect x="64" y="238" width="54" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.40)" stroke-width="0.8"/>
+        <text x="91" y="247" fill="rgba(178,84,36,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">SURFACE</text>
+        <text x="188" y="272" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">FastMCP tool surface</text>
+        <text x="188" y="290" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">server.py · _server_core.py</text>
+        <text x="188" y="308" fill="#b25424" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">22 tools · count verified at boot</text>
+
+        <!-- Graph tools -->
+        <rect x="400" y="96" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="96" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="102" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="111" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="134" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Graph tools</text>
+        <text x="532" y="152" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">9 · def · callers · impact · explore</text>
+
+        <!-- Compass + KB tools -->
+        <rect x="400" y="188" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="188" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="194" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="203" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="226" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Compass + KB tools</text>
+        <text x="532" y="244" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">5 · compass · ask · flows</text>
+
+        <!-- Memory tools -->
+        <rect x="400" y="280" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="280" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="286" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="295" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="318" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Memory tools</text>
+        <text x="532" y="336" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">2 · recall · record</text>
+
+        <!-- Knowledge + wiki tools -->
+        <rect x="400" y="372" width="264" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="400" y="372" width="264" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="408" y="378" width="38" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="427" y="387" fill="rgba(45,49,66,0.80)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">TOOLS</text>
+        <text x="532" y="410" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Knowledge + wiki tools</text>
+        <text x="532" y="428" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">6 · OKF · workflows · wiki</text>
+
+        <!-- Graph engine (container ref) -->
+        <rect x="776" y="96" width="240" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="96" width="240" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="784" y="102" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="797" y="111" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="896" y="134" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Graph engine</text>
+        <text x="896" y="152" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref</text>
+
+        <!-- Hybrid retrieval (container ref) -->
+        <rect x="776" y="188" width="240" height="72" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="188" width="240" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="784" y="194" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="797" y="203" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="896" y="226" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Hybrid retrieval</text>
+        <text x="896" y="244" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref</text>
+
+        <!-- Knowledge & memory (container ref) -->
+        <rect x="776" y="280" width="240" height="88" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="280" width="240" height="88" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="784" y="286" width="26" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="797" y="295" fill="rgba(45,49,66,0.60)" font-size="7" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.08em">EXT</text>
+        <text x="896" y="324" fill="#2d3142" font-size="12" font-weight="600" text-anchor="middle" font-family="'Geist', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Knowledge &amp; memory</text>
+        <text x="896" y="344" fill="#4f5d75" font-size="9" text-anchor="middle" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref</text>
+
+        <!-- legend -->
+        <line x1="56" y1="548" x2="1016" y2="548" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="56" y="568" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="180" y="556" width="16" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="0.8"/>
+        <text x="204" y="566" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">component</text>
+        <rect x="340" y="556" width="16" height="12" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="0.8"/>
+        <text x="364" y="566" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">the verified surface</text>
+        <rect x="580" y="556" width="16" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8" stroke-dasharray="4,3"/>
+        <text x="604" y="566" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace">container ref (from level 2)</text>
+      </svg>
+
+      <p class="caption">Tool counts are verified at boot — exactly 22. The four groups are thin dispatch layers; every answer comes from the engines behind them.</p>
+    </section>
+
+    <p class="colophon">Cairn · C4 model — L1 context · L2 containers · L3 components (MCP server) · docs/diagrams/c4.html</p>
+  </div>
+</body>
+</html>

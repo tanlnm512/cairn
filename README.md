@@ -192,7 +192,7 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   dry-run manifest before anything lands in the store; classification,
   redaction, and collision-safe identities included.
 - **Always fresh** — incremental `cairn update` (git-diff-driven), optional
-  live watch with staleness banners, and `cairn doctor`'s 8 health checks
+  live watch with staleness banners, and `cairn doctor`'s 11 health checks
   gating CI.
 - **100% local** — one SQLite store under `~/.cairn`; no network calls, no
   telemetry egress (OTLP export is opt-in and best-effort).
@@ -282,7 +282,7 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
 | `cairn upgrade` | In-place update from PyPI (`--check` to preview) |
 | `cairn eval` / `cairn bench` | Retrieval-quality / performance harnesses |
-| `cairn doctor` | 8 health checks (PASS/WARN/FAIL; exit code gates CI) |
+| `cairn doctor` | 11 health checks (PASS/WARN/FAIL; exit code gates CI) |
 | `cairn report` | Redacted diagnostic bundle for bug reports (never uploads) |
 
 Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
@@ -306,8 +306,8 @@ The default install is dependency-light and network-free. Opt in with extras:
 
 | Extra | Adds | Key env var |
 |-------|------|-------------|
-| `[semantic]` | `sentence-transformers` + `numpy` — real embeddings and CrossEncoder reranking | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
-| `[ann]` | `sqlite-vec` — native ANN index for large corpora | `CAIRN_ANN_BACKEND=sqlite-vec` |
+| `[semantic]` | `sentence-transformers` — real embeddings and rerank (torch-based, large) | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
+| `[ann]` | `sqlite-vec` — explicit ANN install (core since 0.14) | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion for `cairn knowledge ingest` | `cairn.json` `ingest` key (classification rules) |
 | `[scip]` | `protobuf` — consume pre-built [SCIP](docs/indexing.md) indexes for compiler-grade exact edges | declare indexes in `cairn.json` |
 | `[watch]` | `watchdog` — live rebuilds while `cairn serve` runs | `CAIRN_WATCH=0` disables |
@@ -339,14 +339,14 @@ Full index: [docs/README.md](docs/README.md). The short map:
 | [docs/configuration.md](docs/configuration.md) | `cairn.json`, env vars, install extras |
 
 Visual overviews (standalone HTML) live in
-[docs/diagrams/](docs/diagrams): system architecture, indexing, retrieval,
-and doc-ingestion pipelines. Contribution and release procedures:
+[docs/diagrams/](docs/diagrams): system architecture, the C4 model, indexing,
+retrieval, and doc-ingestion pipelines. Contribution and release procedures:
 [docs/review-checklist.md](docs/review-checklist.md) ·
 [docs/release-checklist.md](docs/release-checklist.md).
 
 ## Troubleshooting
 
-- `cairn doctor` — 8 health checks with PASS/WARN/FAIL each; non-zero exit
+- `cairn doctor` — 11 health checks with PASS/WARN/FAIL each; non-zero exit
   means an active degradation (agents can gate on it).
 - `cairn report` — redacted diagnostic bundle for bug reports; it never
   uploads anything.
@@ -358,7 +358,8 @@ and doc-ingestion pipelines. Contribution and release procedures:
 ## Development
 
 ```bash
-pip install -e ".[dev]"   # pytest + watchdog + build + ruff
+pip install -e ".[dev]"   # full review gate: pytest, ruff, mypy, bandit,
+                            # pip-audit, pre-commit, commitizen
                             # (compiles the vendored Kotlin grammar — needs a C toolchain)
 pytest -m core            # fast <3s smoke subset (one test per core function)
 pytest                    # full suite (default gate + infra tier; CI splits them)
@@ -383,7 +384,7 @@ time; the `BAAI/bge-m3` embedding model (MIT) downloads on demand to
 
 ## Status
 
-**Beta — pre-1.0 (v0.13.0).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.18.0).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 

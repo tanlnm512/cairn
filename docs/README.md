@@ -24,6 +24,7 @@ verbatim from the source.
 Standalone HTML, open in any browser:
 
 - [system-architecture.html](diagrams/system-architecture.html) — surfaces → core engines → storage.
+- [c4.html](diagrams/c4.html) — the C4 model: [context](diagrams/c4-context.html) · [containers](diagrams/c4-containers.html) · [MCP server components](diagrams/c4-components.html).
 - [indexing-pipeline.html](diagrams/indexing-pipeline.html) — scan to atomic `.kg` swap.
 - [retrieval-pipeline.html](diagrams/retrieval-pipeline.html) — hybrid retrieval and the rerank gate.
 - [doc-ingestion-pipeline.html](diagrams/doc-ingestion-pipeline.html) — staged doc ingestion with dry-run default.
