@@ -69,9 +69,11 @@ relates_to:
 `supersedes:` / `superseded-by:` keys are accepted as shorthand. Pointers
 name concept ids; a pointer may also name the source document by path
 (ingest stores that path as the promoted doc's `resource`, and the index
-resolves it). ADR-style chains need no frontmatter: `decisions/`/`adr/`
-docs numbered `NNNN-` are linked by body/status markers ("Supersedes
-ADR-0001") in both directions.
+resolves it) — as the exact path, or as a basename that matches exactly
+one resource. A basename shared by several resources resolves to
+nothing: no target is guessed. ADR-style chains need no frontmatter:
+`decisions/`/`adr/` docs numbered `NNNN-` are linked by body/status
+markers ("Supersedes ADR-0001") in both directions.
 
 **The index** — two tables in the graph DB, one row per directed edge:
 
@@ -84,16 +86,18 @@ ADR-0001") in both directions.
   are not silent: the ingest dry run and `cairn knowledge rebuild` each
   warn, naming the document and the pointer that matched no concept id or
   resource path (`knowledge ingest --ingest` carries the same warning
-  from its post-write rebuild). A pair with a declared edge gets no
-  derived duplicate.
+  from its post-write rebuild). A pointer whose basename matches several
+  resources warns the same way as an `ambiguous pointer`, naming the
+  candidate paths. A pair with a declared edge gets no derived duplicate.
 - `knowledge_doc_refs(doc_id, ref, ref_kind, verified)` — entries with a
   `ref` in the doc's `sources`/`verified` families.
 
 **Rebuild** — `cairn knowledge rebuild` (also run automatically after
 `knowledge ingest --ingest`) recomputes both tables from the bundle.
 Idempotent: an unchanged bundle rebuilds to identical contents, including
-`created_at` stamps. Declared pointers that resolve to nothing are listed
-as warnings (document + pointer) instead of disappearing.
+`created_at` stamps. Declared pointers that index nothing — no match, or
+an ambiguous basename match — are listed as warnings (document + pointer,
+with the candidates named) instead of disappearing.
 
 **Island detection and LLM linking** — connected components over the doc
 graph surface pair-units detached from the corpus: two-doc components,

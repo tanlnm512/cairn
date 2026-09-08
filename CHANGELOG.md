@@ -132,6 +132,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- `relates_to` basename pointers resolve only a UNIQUE resource match: a
+  pointer like `target.md` whose basename matches several promoted
+  resources (`docs/target.md`, `archive/target.md`, …) previously
+  resolved to the single shortest one, indexing a wrong-but-existing
+  edge with no warning. Now nothing is picked — the pointer indexes
+  nothing and surfaces through the dangling-warning channel (ingest
+  dry-run, `knowledge ingest --ingest`, `cairn knowledge rebuild`) as an
+  `ambiguous pointer` naming the candidate paths. Unique-basename
+  pointers, exact resource paths, and concept-id pointers resolve
+  exactly as before.
 - The knowledge-ingest count verify leg compares the post-write store
   against the full expected population (`pre_existing + accepted -
   overwritten`, with `add_document` writing over existing docs in

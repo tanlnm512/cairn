@@ -94,14 +94,26 @@ _EXECUTOR_SUMMARY_KEYS = frozenset(
 
 
 def _echo_dangling_warnings(items) -> None:
-    """Surface declared relates_to pointers that matched no knowledge
-    document or resource path: they stay frontmatter-only, never index."""
+    """Surface declared relates_to pointers that indexed to no single
+    knowledge document: they stay frontmatter-only, never index. A
+    pointer whose basename matched several resources names the
+    candidates; one matching nothing at all says so plainly."""
+    from cairn.knowledge.index import AMBIGUOUS_POINTER_REASON
+
     for item in items or []:
-        click.echo(
-            f"  warning: {item['doc_id']} declares relates_to "
-            f"'{item['concept_id']}' matching no knowledge document or "
-            f"resource path; kept in frontmatter, not indexed."
-        )
+        if item.get("reason") == AMBIGUOUS_POINTER_REASON:
+            click.echo(
+                f"  warning: {item['doc_id']} declares relates_to "
+                f"'{item['concept_id']}' matching multiple knowledge documents "
+                f"({', '.join(item['candidates'])}); ambiguous pointer, kept "
+                f"in frontmatter, not indexed."
+            )
+        else:
+            click.echo(
+                f"  warning: {item['doc_id']} declares relates_to "
+                f"'{item['concept_id']}' matching no knowledge document or "
+                f"resource path; kept in frontmatter, not indexed."
+            )
 
 
 @knowledge.command("ingest")

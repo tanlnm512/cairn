@@ -22,9 +22,12 @@ id may still name its target by source path: ingest records that path as
 the promoted doc's ``resource``, so such pointers resolve through the
 bundle's resource map -- as the bare path, or in its resource-prefixed
 form (fed documents promote ``workspace/<relpath>`` resources, so a bare
-repo-relative pointer names the same file). A pair that already has a
-declared edge in either direction gets no derived rows -- the explicit
-record wins.
+repo-relative pointer names the same file). The prefixed form must match
+a UNIQUE basename: several resources sharing the pointer's basename
+cannot be told apart, so nothing is picked and the pointer is reported
+through the same dangling channel with reason ``ambiguous pointer`` and
+the candidate paths. A pair that already has a declared edge in either
+direction gets no derived rows -- the explicit record wins.
 
 All ids are normalized to the bare bundle-relative concept_id shape via
 :func:`cairn.knowledge.store.normalize_doc_id` before storage, matching the
@@ -66,6 +69,10 @@ PROVENANCE_TAG_MODULE_OVERLAP = "tag+module-overlap"
 #: ref_kind assumed for verified-family entries that carry no kind.
 DEFAULT_REF_KIND = "file"
 
+#: Reason stamped on dangling entries whose basename matched several
+#: resources, so no single target could be picked.
+AMBIGUOUS_POINTER_REASON = "ambiguous pointer"
+
 
 def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, Any]:
     """Recompute knowledge_edges + knowledge_doc_refs from the bundle.
@@ -74,9 +81,11 @@ def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, Any]:
     ``conn`` (the caller commits). Idempotent on an unchanged bundle:
     identical rows, identical created_at stamps. Returns counts:
     ``{docs, edges, derived, doc_refs}`` plus ``dangling`` -- the declared
-    ``relates_to`` pointers that matched neither a concept id nor a
-    resource path (each ``{doc_id, concept_id}``; they stay
-    frontmatter-only and never index).
+    ``relates_to`` pointers that indexed nothing (each ``{doc_id,
+    concept_id}``; they stay frontmatter-only). Entries carry ``reason:
+    ambiguous pointer`` plus the ``candidates`` paths when several
+    resources shared the pointer's basename; other entries matched no
+    concept id or resource path at all.
     """
     docs = _load_docs(bundle)
     doc_ids = {doc_id for doc_id, _ in docs}
@@ -258,31 +267,35 @@ def _frontmatter_edges(
     bundle: OKFBundle,
     docs: List[Tuple[str, OKFConcept]],
     doc_ids: Set[str],
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Declared edges for the relates_to entries whose target resolves,
-    plus the dangling pointers that matched nothing (returned so callers
-    can surface the failed index instead of leaving it silent).
+    plus the pointers that indexed nothing (returned so callers can
+    surface the failed index instead of leaving it silent).
 
     Pointer resolution is shared with the ingest dry-run
     (:func:`_resolve_pointer`), so a link the dry run resolves is the link
     the rebuild indexes. A pointer that resolves to the declaring doc
-    itself produces no edge and is not dangling.
+    itself produces no edge and is not dangling; one whose basename
+    matches several resources produces no edge and a dangling warning
+    naming the candidates.
     """
     from cairn.knowledge.relationships import normalize_relationships
 
     resources = _resource_index(docs)
     edges: List[Dict[str, Any]] = []
-    dangling: List[Dict[str, str]] = []
+    dangling: List[Dict[str, Any]] = []
     for doc_id, concept in docs:
         for entry in normalize_relationships(
             concept.extensions.get("relates_to")
         ):
             pointer = str(entry.get("concept_id") or "").strip()
-            related = _resolve_pointer(
+            related, ambiguous = _resolve_pointer(
                 bundle, pointer, doc_ids, resources, doc_id
             )
             if related is None:
-                dangling.append({"doc_id": doc_id, "concept_id": pointer})
+                dangling.append(
+                    _pointer_warning(doc_id, pointer, ambiguous)
+                )
                 continue
             if related == doc_id:
                 continue
@@ -296,55 +309,89 @@ def _frontmatter_edges(
     return edges, dangling
 
 
+def _pointer_warning(
+    doc_id: str,
+    pointer: str,
+    ambiguous: Optional[List[str]],
+) -> Dict[str, Any]:
+    """The dangling-warning record for an unresolved pointer.
+
+    Plain ``{doc_id, concept_id}`` when nothing matched; a basename
+    ambiguity adds ``reason: ambiguous pointer`` and the ``candidates``
+    resource paths (sorted shortest-first) that contended for it.
+    """
+    warning: Dict[str, Any] = {"doc_id": doc_id, "concept_id": pointer}
+    if ambiguous is not None:
+        warning["reason"] = AMBIGUOUS_POINTER_REASON
+        warning["candidates"] = ambiguous
+    return warning
+
+
 def _resolve_pointer(
     bundle: OKFBundle,
     pointer: str,
     doc_ids: Set[str],
     resources: Dict[str, str],
     self_id: str,
-) -> Optional[str]:
-    """Resolved doc id for one relates_to pointer; None when dangling.
+) -> Tuple[Optional[str], Optional[List[str]]]:
+    """Resolved doc id for one relates_to pointer, plus its ambiguity.
 
     Resolution tries, in order: the pointer as a concept id, the pointer
     as a recorded resource path (ingest records the source path as the
     promoted doc's ``resource``), and resource-prefixed forms of the
     pointer -- fed documents promote ``workspace/<relpath>`` resources,
     so a bare repo-relative pointer names the same file as its prefixed
-    resource; the shortest matching resource wins. A pointer resolving
-    to the declaring doc itself returns ``self_id``: the caller records
-    neither an edge nor a dangling warning for it.
+    resource. The prefixed form fires only on a UNIQUE basename match:
+    several resources sharing the pointer's basename cannot be told
+    apart, so none is picked and the contention is reported instead. A
+    pointer resolving to the declaring doc itself returns ``self_id``:
+    the caller records neither an edge nor a dangling warning for it.
+
+    Returns ``(related, ambiguous)``: ``related`` is the resolved doc id
+    (``self_id`` for a self-pointer) or None, and ``ambiguous`` lists the
+    contending resource paths -- set only when ``related`` is None and
+    the basename matched several resources.
     """
     related = normalize_doc_id(bundle, pointer)
+    ambiguous: Optional[List[str]] = None
     if related not in doc_ids or related == self_id:
         candidate = resources.get(pointer.lstrip("/"))
         if candidate is None:
             bare = pointer.lstrip("/")
-            prefixed = sorted(
+            matches = sorted(
                 (resource for resource in resources if resource.endswith(f"/{bare}")),
                 key=lambda resource: (len(resource), resource),
             )
-            if prefixed:
-                candidate = resources[prefixed[0]]
+            # A unique basename match extends the pointer; picking among
+            # two or more would index a guess.
+            if len(matches) == 1:
+                candidate = resources[matches[0]]
+            elif matches:
+                ambiguous = matches
         if candidate is not None:
             related = candidate
-    return related if related in doc_ids else None
+    if related in doc_ids:
+        return related, None
+    return None, ambiguous
 
 
 def dangling_manifest_pointers(
     bundle: OKFBundle, rows: List[Dict[str, Any]]
-) -> List[Dict[str, str]]:
-    """Dangling relates_to pointers across staged manifest rows (dry run).
+) -> List[Dict[str, Any]]:
+    """relates_to pointers across staged manifest rows that will index
+    nothing (dry run).
 
     Applies the rebuild's resolution (:func:`_resolve_pointer`) to a
     not-yet-written manifest: a pointer resolves when its normalized id
     names a knowledge concept -- promoted in the store, or staged by this
     same run -- or when it names a source document by path (a promoted
     doc's recorded ``resource``, a staged row's ``source_path`` which
-    becomes the promoted doc's resource, or that path in resource-
-    prefixed form). Anything else is dangling: it stays frontmatter-only
+    becomes the promoted doc's resource, or that path's unique basename
+    extension). Anything else indexes nothing: it stays frontmatter-only
     and never indexes. Each row carries ``{doc_id, concept_id}`` with
-    ``doc_id`` the row's source_path. Deterministic: manifest row order,
-    declaration order within a row.
+    ``doc_id`` the row's source_path; a basename ambiguity adds
+    ``reason: ambiguous pointer`` naming the candidate paths.
+    Deterministic: manifest row order, declaration order within a row.
     """
     from cairn.knowledge.relationships import normalize_relationships
 
@@ -362,7 +409,7 @@ def dangling_manifest_pointers(
                 str(row["source_path"]).lstrip("/"),
                 str(row["concept_id"]),
             )
-    dangling: List[Dict[str, str]] = []
+    dangling: List[Dict[str, Any]] = []
     for row in rows:
         self_id = str(row.get("concept_id") or "")
         if not self_id:
@@ -370,11 +417,13 @@ def dangling_manifest_pointers(
         source = str(row.get("source_path") or self_id)
         for entry in normalize_relationships(list(row.get("relationships") or [])):
             pointer = str(entry.get("concept_id") or "").strip()
-            related = _resolve_pointer(
+            related, ambiguous = _resolve_pointer(
                 bundle, pointer, doc_ids, resources, self_id
             )
             if related is None:
-                dangling.append({"doc_id": source, "concept_id": pointer})
+                dangling.append(
+                    _pointer_warning(source, pointer, ambiguous)
+                )
     return dangling
 
 
