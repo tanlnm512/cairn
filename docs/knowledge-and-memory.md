@@ -90,6 +90,25 @@ ADR-0001") in both directions.
 Idempotent: an unchanged bundle rebuilds to identical contents, including
 `created_at` stamps.
 
+**Island detection and LLM linking** — connected components over the doc
+graph surface pair-units detached from the corpus: two-doc components,
+and singleton docs paired in id order (an odd singleton stays unpaired).
+Each pair-unit queues one `doc-link` task whose facts carry the member
+concept_ids and titles; queueing is deduped per member set, so re-ingests
+and rebuilds never duplicate tasks. The task's output spec asks for one
+proposed edge per line (`<concept_id> <relation> <related_id>`,
+`<relation>` from the closed vocabulary). Completing the task via
+`cairn task claim` / `cairn task complete --result-file` runs a
+deterministic critic that accepts only edges referencing EXISTING
+knowledge concept_ids. An accepted result is written back as `kind:
+inferred` `relates_to` entries on both docs' frontmatter (the durable
+record; `supersedes` mirrors to `superseded-by` on the other doc) and,
+through the rebuild, as `kind: inferred` rows in `knowledge_edges`. A
+completion referencing a nonexistent concept_id is rejected with no
+writes: the task stays in-progress and re-completable, and the rejection
+names the invalid reference. `cairn knowledge islands` lists islands and
+their task state (read-only).
+
 ## Memory tiers
 
 Memories (`src/cairn/memory/`) are OKF concepts under `.knowledge/memory/`:

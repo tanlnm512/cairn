@@ -69,6 +69,13 @@ def execute_manifest(manifest: dict, conn) -> dict:
     index = rebuild_knowledge_index(conn, bundle)
     conn.commit()
 
+    # Island detection (D1): doc components detached from the corpus queue
+    # doc-link tasks for critic-gated LLM linking. Idempotent per member
+    # set, so re-ingests never duplicate tasks.
+    from cairn.knowledge.islands import queue_doc_link_tasks
+
+    doc_link_tasks = queue_doc_link_tasks(conn, bundle)
+
     report = {
         "written": written,
         "embedded": embedded,
@@ -77,6 +84,7 @@ def execute_manifest(manifest: dict, conn) -> dict:
         "index_edges": index["edges"],
         "index_doc_refs": index["doc_refs"],
         "verified_refs": verified_refs_total,
+        "doc_link_tasks": doc_link_tasks,
     }
     report.update(verify_manifest(manifest, conn))
     return report

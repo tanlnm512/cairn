@@ -28,6 +28,9 @@ KINDS = ("extracted", "inferred", "derived")
 #: Kind for author-declared (frontmatter) relationships.
 EXTRACTED = "extracted"
 
+#: Kind for critic-approved LLM-proposed relationships (doc-link tasks).
+INFERRED = "inferred"
+
 #: Relation used when an entry declares none.
 DEFAULT_RELATION = "relates-to"
 

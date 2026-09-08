@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Island detection behind the LLM task queue: connected components over the
+  `knowledge_edges` doc graph surface pair-units detached from the corpus —
+  two-doc components and id-ordered singleton pairs — and queue one
+  `doc-link` task per pair via `knowledge ingest --ingest` and `cairn
+  knowledge rebuild`; task facts carry the member concept_ids and titles,
+  and queueing is deduped per member set so re-runs never duplicate tasks.
+  Completing a `doc-link` task through `cairn task claim`/`task complete
+  --result-file` is gated by a deterministic critic that verifies every
+  proposed edge references existing knowledge concept_ids. A valid result
+  is written back as `kind: inferred` `relates_to` entries on both docs'
+  frontmatter (`supersedes` mirrors to `superseded-by`) and, through the
+  index rebuild, as `kind: inferred` `knowledge_edges` rows. A completion
+  referencing a nonexistent concept_id is rejected with no writes: the task
+  stays in-progress and re-completable, and the rejection names the invalid
+  reference. New `cairn knowledge islands` verb lists islands and their
+  task state (read-only).
 - Stored-edge search expansion: `search_knowledge`'s related-doc expansion
   reads the `knowledge_edges` relationship index instead of recomputing
   tag/module overlap at query time. Neighbors connected by `extracted` or

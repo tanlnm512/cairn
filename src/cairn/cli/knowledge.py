@@ -177,9 +177,12 @@ def knowledge_rebuild(db):
     (sources/verified families), and tag/affects_modules overlap
     materialized as kind=derived edges. Idempotent: running it twice on an
     unchanged bundle leaves the tables (including timestamps) identical.
-    Runs automatically after `knowledge ingest --ingest`.
+    Runs automatically after `knowledge ingest --ingest`. Island detection
+    then queues one doc-link task per unlinked island pair (deduped per
+    member set across runs).
     """
     from cairn.knowledge.index import rebuild_knowledge_index
+    from cairn.knowledge.islands import queue_doc_link_tasks
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
 
@@ -190,6 +193,7 @@ def knowledge_rebuild(db):
     try:
         report = rebuild_knowledge_index(conn, bundle)
         conn.commit()
+        queued = queue_doc_link_tasks(conn, bundle)
     finally:
         conn.close()
     click.echo(
@@ -197,6 +201,62 @@ def knowledge_rebuild(db):
         f"{report['edges']} edge(s) ({report['derived']} derived), "
         f"{report['doc_refs']} ref(s)."
     )
+    click.echo(f"Island detection: queued {queued} doc-link task(s).")
+
+
+@knowledge.command("islands")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_islands(as_json, db):
+    """List isolated doc components (islands) and their doc-link tasks.
+
+    Islands are doc-graph components detached from the corpus: two-doc
+    components and singleton docs (paired in id order). Read-only; the
+    queueing itself runs on `knowledge ingest --ingest`.
+    """
+    from cairn.knowledge.islands import DOC_LINK_KIND, doc_islands
+    from cairn.llm.tasks import list_tasks
+
+    bundle = _require_store_bundle()
+    if not bundle.root.exists():
+        click.echo("No knowledge store; nothing to inspect.")
+        return
+    conn = get_db(db)
+    try:
+        islands = doc_islands(conn, bundle)
+        queued = {
+            frozenset((t.facts or {}).get("members") or []): t
+            for t in list_tasks(bundle, kind_prefix=DOC_LINK_KIND)
+            if (t.facts or {}).get("members")
+        }
+    finally:
+        conn.close()
+
+    if as_json:
+        rows = []
+        for members in islands:
+            task = queued.get(frozenset(members))
+            rows.append(
+                {
+                    "members": members,
+                    "task_id": task.id if task else None,
+                    "task_status": task.status if task else None,
+                }
+            )
+        click.echo(json.dumps(rows, indent=2, default=str))
+        return
+    if not islands:
+        click.echo("No islands: every knowledge doc is connected.")
+        return
+    click.echo(f"{len(islands)} island(s) worth linking:")
+    for members in islands:
+        task = queued.get(frozenset(members))
+        state = (
+            f"doc-link task {task.id} ({task.status})"
+            if task
+            else "no doc-link task yet"
+        )
+        click.echo(f"  {' + '.join(members)}  [{state}]")
 
 
 def _require_store_bundle():
