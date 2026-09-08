@@ -619,22 +619,27 @@ def create_app(
             )
         finally:
             conn.close()
-        return render(
-            request,
-            "history.html",
-            {
-                "calls": result["rows"],
-                "tool": tool or "",
-                "session": session or "",
-                "source": source or "",
-                "before": before or "",
-                "after": after or "",
-                "window": window,
-                "next_cursor": result["next"],
-                "prev_cursor": result["prev"],
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "calls": result["rows"],
+            "tool": tool or "",
+            "session": session or "",
+            "source": source or "",
+            "before": before or "",
+            "after": after or "",
+            "window": window,
+            "next_cursor": result["next"],
+            "prev_cursor": result["prev"],
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the polled region only — one cheap region
+            # render, never the full page (the shell rides the page load).
+            # The filter form's live fields ride the request, so the
+            # fragment re-renders exactly the slice the page shows.
+            return templates.TemplateResponse(
+                request, "history_region.html", context
+            )
+        return render(request, "history.html", context)
 
     def tokens(request: Request) -> Response:
         window, since = _resolve_window(request.query_params.get("window"))
@@ -646,11 +651,13 @@ def create_app(
             rows = get_tool_tokens(conn, since=since)
         finally:
             conn.close()
-        return render(
-            request,
-            "tokens.html",
-            {"tools": rows, "window": window, "store_key": store_key},
-        )
+        context = {"tools": rows, "window": window, "store_key": store_key}
+        if is_hx_request(request):
+            # htmx fragment: the polled region only (see history).
+            return templates.TemplateResponse(
+                request, "tokens_region.html", context
+            )
+        return render(request, "tokens.html", context)
 
     # FR-005 exports ride the same seams the views ride: resolve_selection
     # for the store, _resolve_window for the window, the view's filter
@@ -741,20 +748,22 @@ def create_app(
             )
         finally:
             conn.close()
-        return render(
-            request,
-            "chains.html",
-            {
-                "chains": result["chains"],
-                "chains_truncated": result["truncated"],
-                "total_chains": result["total_chains"],
-                "expand": expand or "",
-                "gap_minutes": SESSION_GAP_S // 60,
-                "session": session or "",
-                "window": window,
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "chains": result["chains"],
+            "chains_truncated": result["truncated"],
+            "total_chains": result["total_chains"],
+            "expand": expand or "",
+            "gap_minutes": SESSION_GAP_S // 60,
+            "session": session or "",
+            "window": window,
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the polled region only (see history).
+            return templates.TemplateResponse(
+                request, "chains_region.html", context
+            )
+        return render(request, "chains.html", context)
 
     def memory(request: Request) -> Response:
         # Type filter, read like every other view's param: absent or blank
@@ -791,16 +800,18 @@ def create_app(
         entries = get_task_queue(
             selected_knowledge, status=None if status == "all" else status
         )
-        return render(
-            request,
-            "tasks.html",
-            {
-                "tasks": entries,
-                "statuses": TASK_STATUSES,
-                "status": status,
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "tasks": entries,
+            "statuses": TASK_STATUSES,
+            "status": status,
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the status select's results region only.
+            return templates.TemplateResponse(
+                request, "tasks_results.html", context
+            )
+        return render(request, "tasks.html", context)
 
     def wiki(request: Request) -> Response:
         # Catalog filters, read like every other view's params: absent or
@@ -827,16 +838,18 @@ def create_app(
                 or needle in p["page_id"].lower()
                 or needle in (p.get("description") or "").lower()
             ]
-        return render(
-            request,
-            "wiki.html",
-            {
-                "pages": pages,
-                "page_states": PAGE_STATES,
-                "filters": {"repo": repo or "", "state": state or "", "q": query},
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "pages": pages,
+            "page_states": PAGE_STATES,
+            "filters": {"repo": repo or "", "state": state or "", "q": query},
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the search input's results region only.
+            return templates.TemplateResponse(
+                request, "wiki_results.html", context
+            )
+        return render(request, "wiki.html", context)
 
     def _wiki_not_found() -> Response:
         from starlette.responses import HTMLResponse

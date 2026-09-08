@@ -139,7 +139,7 @@
     })();
   </script>
 </head>
-<body class="app-shell">
+<body class="app-shell" hx-ext="alpine-morph">
   {%- set shell_ctx = shell if shell is defined else none %}
   {%- set nav_sections = (shell_ctx.nav.sections if shell_ctx else none) or [] %}
   {%- set selector = (shell_ctx.selector if shell_ctx else none) %}

@@ -1,0 +1,44 @@
+{#-
+  The results region of /wiki (#wiki-results): the search input in
+  wiki.html hx-gets the route on input and the alpine-morph extension
+  morphs the fresh fragment over this region in place — a query is a
+  fragment, never a navigation. The route renders THIS template alone on
+  an HX-Request. The state-filter links and the form stay outside the
+  region (state filters are URL-carrying navigations by contract). The
+  region is not polled (no hx-trigger), so no live chrome arms here.
+-#}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{#- The repo headings keep the other catalog filters on their links; the
+    q/repo values come from the route context (the state links in
+    wiki.html compute the same base for their own row). -#}
+{%- set base_q = {} %}
+{%- if filters.q %}{% set _ = base_q.update({'q': filters.q}) %}{% endif %}
+{%- if filters.repo %}{% set _ = base_q.update({'repo': filters.repo}) %}{% endif %}
+<div id="wiki-results" aria-live="polite">
+  {% if pages %}
+  {% for repo, rows in pages | groupby("repo") %}
+  <h2 class="wiki-repo-heading">
+    <a href="{{ links.url('/wiki', dict(base_q, repo=repo)) }}">{{ repo }}</a>
+    <span class="muted">({{ rows | length }})</span>
+  </h2>
+  {% call tables.table(['Page', 'State']) %}
+      {% for p in rows %}
+      <tr>
+        <td>
+          <a href="{{ links.url('/wiki/' ~ p.repo ~ '/' ~ p.page_id) }}">{{ p.title }}</a>
+          {%- if p.description %} <span class="muted">— {{ p.description }}</span>{% endif %}
+        </td>
+        <td>
+          <span class="badge badge-{{ p.state }}">{{ p.state }}</span>
+          <span class="badge badge-{{ p.staleness }}">{{ p.staleness }}</span>
+        </td>
+      </tr>
+      {% endfor %}
+  {% endcall %}
+  {% endfor %}
+  {% else %}
+  {%- set filtered = filters.q or filters.state or filters.repo %}
+  {{ tables.empty_state('No wiki pages match the current filters' if filtered else 'No wiki pages yet — generate some with', code='' if filtered else 'cairn wiki generate') }}
+  {% endif %}
+</div>

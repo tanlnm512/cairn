@@ -4,55 +4,12 @@
 {% block title %}Chains — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
-  <div id="refresh-region">
   <h1>Session chains</h1>
   <p class="muted">
     Tool calls grouped per session, in call order; a new chain starts after
     {{ gap_minutes }} minutes of inactivity.
   </p>
-  {% if chains_truncated %}
-  <p class="muted">showing {{ chains | length }} of {{ total_chains }} chains</p>
-  {% endif %}
-  {% include "window_control.html" %}
-  {% if chains %}
-  <div class="chain-list">
-    {% for chain in chains %}
-    <div class="chain" data-session="{{ chain.session_id }}">
-      <div class="chain-head">
-        <code>{{ chain.session_id }}</code>
-        <span class="muted">
-          {{ chain.call_count }} call{{ "s" if chain.call_count != 1 }} ·
-          {{ chain.started_at | epoch }}{% if chain.call_count > 1 %} → {{ chain.ended_at | epoch }} · span {{ (chain.ended_at - chain.started_at) | span }}{% endif %}
-        </span>
-      </div>
-      <ol class="chain-calls">
-        {% for c in chain.calls %}
-        <li class="chain-call">
-          <span class="call-node">
-            <span class="call-tool">{{ c.tool_name }}</span>
-            <span class="badge badge-{{ c.status }}">{{ c.status }}</span>
-            <span class="muted">{{ c.invoked_at | offset(chain.started_at) }} · {{ c.duration_ms | duration }}</span>
-          </span>
-        </li>
-        {% endfor %}
-      </ol>
-      {% if chain.truncated_calls %}
-      {#- FR-003: the expand anchor keeps the window AND the selected store
-          (links.url); empty selection keeps the bare href. -#}
-      {% set q = {'expand': chain.session_id} %}
-      {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
-      <p class="muted">
-        showing {{ chain.shown_calls }} of {{ chain.call_count }} calls ·
-        <a href="{{ links.url('/chains', q) }}">expand</a>
-      </p>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  {{ tables.empty_state('No tool calls recorded yet') }}
-  {% endif %}
-  </div>
+  {% include "chains_region.html" %}
 </section>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}

@@ -1799,23 +1799,14 @@ def test_tokens_refetch_shifts_call_count_and_displayed_totals(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Loop-module state machine (live-updates FR-004 / FR-005, TC-005 /
-# TC-006): this repo has no JS test harness -- pytest only, and app.js is
-# browser-global IIFEs, not importable modules -- so the loop's state
-# behavior is pinned in its server-visible and structural halves: the
-# chrome contract the loop reads and writes (the rendered state hooks plus
-# exactly one app.js load, so the loop can never double-arm), and static
-# analysis of the live-refresh IIFE's source asserting the control-flow
-# ordering that makes paused-issues-no-fetch and rejected-then-resolved
-# hold (the paused guard ahead of the visibility guard and the fetch, the
-# setState words, the arm pattern). Every assertion anchors on those
-# stable tokens only -- never exact surrounding strings -- so concurrent
-# banner/styling work inside app.js cannot break them. The interactive
-# halves (a real click, a really-dead server) are the LIVE_TC005 /
-# LIVE_TC006 manual procedures at the section's end; those constants carry
-# a LIVE_ prefix because this file already defines graph-nav's
-# TC005_MANUAL_PROCEDURE -- each spec numbers its test cases
-# independently, and ruff's F811 forbids the bare redefinition.
+# Loop-module state machine, server-visible half (live-updates FR-004 /
+# FR-005, TC-005 / TC-006): the poll loop itself is htmx-owned — the
+# #refresh-region trigger lives in the region templates and the chrome
+# module's structural pins live in tests/test_dashboard_htmx_lists.py.
+# What stays pinned here is the chrome contract beneath the loop: the
+# rendered state hooks (#live-controls data-state, #live-state word
+# slot, #live-pause toggle) plus exactly one app.js load per traffic
+# view, so the module can never double-arm.
 # ---------------------------------------------------------------------------
 
 
@@ -1827,23 +1818,6 @@ def _app_js_source() -> str:
     return (
         Path(cairn.dashboard.__file__).resolve().parent / "static" / "app.js"
     ).read_text(encoding="utf-8")
-
-
-_IIFE_OPEN_RE = re.compile(r"(?<![.\w])\(\s*function\s*\(\s*\)\s*\{")
-_LIVE_REGION_RE = re.compile(r'getElementById\(\s*["\']refresh-region["\']')
-
-
-def _live_loop_js() -> str:
-    """The source following the live-refresh IIFE's opener -- the poll
-    loop's home. The opener pattern excludes zero-arg promise handlers
-    (.catch(function () {...})), which are not IIFEs; the segment is then
-    identified by its getElementById("refresh-region") CODE call, not the
-    region name in prose -- a neighboring IIFE's comments mention the
-    region too."""
-    for segment in _IIFE_OPEN_RE.split(_app_js_source())[1:]:
-        if _LIVE_REGION_RE.search(segment):
-            return segment
-    raise AssertionError("app.js carries no #refresh-region poll loop")
 
 
 def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
@@ -1864,105 +1838,6 @@ def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
 
     loads = re.findall(r'<script[^>]*\ssrc="[^"]*app\.js[?"]', resp.text)
     assert len(loads) == 1  # the loop module loads once, never twice
-
-
-def test_loop_tick_paused_guard_precedes_hidden_guard_and_fetch():
-    """TC-005 auto half (FR-004 / US3-AC1): inside tick the paused guard
-    leads -- ahead of the document.hidden guard and ahead of the fetch --
-    so a paused loop issues no fetch regardless of tab state; and unlike
-    a hidden tab it does not re-arm, so only the user's resume restarts
-    the loop (no arm() between the paused guard and the hidden one)."""
-    loop = _live_loop_js()
-    tick = re.search(r"function\s+tick\s*\(\s*\)\s*\{", loop)
-    assert tick, "tick function missing from the poll loop"
-    body = loop[tick.end():]
-
-    paused_guard = re.search(r"if\s*\(\s*paused\s*\)", body)
-    hidden_guard = re.search(r"if\s*\(\s*document\.hidden\s*\)", body)
-    fetch_call = re.search(r"\bfetch\s*\(", body)
-    assert paused_guard, "tick lacks the paused guard"
-    assert hidden_guard, "tick lacks the document.hidden guard"
-    assert fetch_call, "tick never fetches"
-    assert paused_guard.start() < hidden_guard.start() < fetch_call.start()
-
-    # A paused tick must not re-arm -- that is what distinguishes it from
-    # the hidden-tab skip just below it, which re-arms and stays alive.
-    between = body[paused_guard.end():hidden_guard.start()]
-    assert not re.search(r"\barm\s*\(", between)
-
-
-def test_loop_pause_clears_timer_resume_restores_running_and_rearms():
-    """TC-005 auto half (FR-004 / US3-AC1): the pause toggle's click
-    handler is the state machine's pause half -- pausing clears the
-    pending timer (so no already-armed tick can fetch) and lands the
-    'paused' state word; the resume half restores 'running' and re-arms,
-    so the loop returns on the normal schedule rather than never."""
-    loop = _live_loop_js()
-
-    toggle = re.search(r"addEventListener\(\s*[\"']click[\"']\s*,", loop)
-    assert toggle, "the pause control's click handler is missing"
-
-    set_paused = re.search(r"setState\(\s*[\"']paused[\"']\s*\)", loop)
-    assert set_paused, "the loop never sets the 'paused' state"
-
-    clear = re.search(r"clearTimeout\s*\(", loop[: set_paused.start()])
-    assert clear, "pausing without clearing the timer -- a tick could fetch"
-    assert toggle.start() < clear.start() < set_paused.start()
-
-    after = loop[set_paused.end():]
-    set_running = re.search(r"setState\(\s*[\"']running[\"']\s*\)", after)
-    assert set_running, "the resume path never restores the 'running' state"
-    running_at = set_paused.end() + set_running.start()
-    assert re.search(r"\barm\s*\(", loop[running_at:]), (
-        "the resume path does not re-arm -- the loop would never resume"
-    )
-
-
-def test_loop_failure_sets_disconnected_success_restores_running_live():
-    """TC-006 auto half (FR-005 / US3-AC2): the loop's rejected-then-
-    resolved transitions -- the fetch chain's rejection handler sets the
-    distinct 'disconnected' state and still re-arms (self-healing: the
-    next cycle retries), while the success handler restores 'running',
-    whose visible word is 'live' per the STATE_WORDS table the state slot
-    renders from."""
-    loop = _live_loop_js()
-
-    # The visible vocabulary: running shows as "live"; the disconnected
-    # and paused words are their own states.
-    words = re.search(r"STATE_WORDS\s*=\s*\{(.*?)\}", loop, re.S)
-    assert words, "the loop's STATE_WORDS table is missing"
-    for key, word in (
-        ("running", "live"),
-        ("disconnected", "disconnected"),
-        ("paused", "paused"),
-    ):
-        assert re.search(rf"{key}\s*:\s*[\"']{word}[\"']", words.group(1)), (
-            f"STATE_WORDS lost the {key} -> {word!r} mapping"
-        )
-
-    # Rejected: downstream of the fetch, the catch handler sets
-    # 'disconnected' -- and re-arms, so recovery needs no reload.
-    fetch = re.search(r"\bfetch\s*\(", loop)
-    assert fetch, "the loop never fetches"
-    catch = re.search(r"\.catch\s*\(", loop)
-    assert catch, "the fetch chain has no rejection handler"
-    set_disconnected = re.search(
-        r"setState\(\s*[\"']disconnected[\"']\s*\)", loop
-    )
-    assert set_disconnected, "a failed cycle never sets 'disconnected'"
-    assert fetch.start() < catch.start() < set_disconnected.start()
-    assert re.search(r"\barm\s*\(", loop[set_disconnected.end():]), (
-        "the disconnected path does not re-arm -- no self-healing recovery"
-    )
-
-    # Resolved: the success handler restores 'running' (the 'live' word),
-    # ahead of the rejection handler in the chain's source order.
-    set_running = re.search(
-        r"setState\(\s*[\"']running[\"']\s*\)", loop[fetch.end():]
-    )
-    assert set_running, "a successful cycle never restores 'running'"
-    running_at = fetch.end() + set_running.start()
-    assert running_at < catch.start()
 
 
 # TC-005/TC-006 interactive halves -- a real click on a live page, and a

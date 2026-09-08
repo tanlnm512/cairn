@@ -1,0 +1,61 @@
+{#-
+  The polled region of /chains (#refresh-region): htmx re-fetches the
+  view every 5s and the alpine-morph extension morphs the fresh fragment
+  over the region in place. The route renders THIS template alone on an
+  HX-Request (a poll is a cheap region render, never a full page). There
+  is no filter form here, so the view's current params (window, session,
+  expand) are baked into the region's hx-get URL — each poll re-requests
+  exactly the slice the page rendered.
+-#}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{%- set chain_q = {} %}
+{%- if expand %}{% set _ = chain_q.update({'expand': expand}) %}{% endif %}
+{%- if session %}{% set _ = chain_q.update({'session': session}) %}{% endif %}
+{%- if window != "all" %}{% set _ = chain_q.update({'window': window}) %}{% endif %}
+<div id="refresh-region"
+     hx-get="{{ links.url('/chains', chain_q) }}" hx-trigger="every 5s"
+     hx-swap="morph" aria-live="polite">
+  {% if chains_truncated %}
+  <p class="muted">showing {{ chains | length }} of {{ total_chains }} chains</p>
+  {% endif %}
+  {% include "window_control.html" %}
+  {% if chains %}
+  <div class="chain-list">
+    {% for chain in chains %}
+    <div class="chain" data-session="{{ chain.session_id }}">
+      <div class="chain-head">
+        <code>{{ chain.session_id }}</code>
+        <span class="muted">
+          {{ chain.call_count }} call{{ "s" if chain.call_count != 1 }} ·
+          {{ chain.started_at | epoch }}{% if chain.call_count > 1 %} → {{ chain.ended_at | epoch }} · span {{ (chain.ended_at - chain.started_at) | span }}{% endif %}
+        </span>
+      </div>
+      <ol class="chain-calls">
+        {% for c in chain.calls %}
+        <li class="chain-call">
+          <span class="call-node">
+            <span class="call-tool">{{ c.tool_name }}</span>
+            <span class="badge badge-{{ c.status }}">{{ c.status }}</span>
+            <span class="muted">{{ c.invoked_at | offset(chain.started_at) }} · {{ c.duration_ms | duration }}</span>
+          </span>
+        </li>
+        {% endfor %}
+      </ol>
+      {% if chain.truncated_calls %}
+      {#- FR-003: the expand anchor keeps the window AND the selected store
+          (links.url); empty selection keeps the bare href. -#}
+      {% set q = {'expand': chain.session_id} %}
+      {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
+      <p class="muted">
+        showing {{ chain.shown_calls }} of {{ chain.call_count }} calls ·
+        <a href="{{ links.url('/chains', q) }}">expand</a>
+      </p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  {{ tables.empty_state('No tool calls recorded yet') }}
+  {% endif %}
+</div>

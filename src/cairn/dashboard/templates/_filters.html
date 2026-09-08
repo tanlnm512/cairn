@@ -4,11 +4,20 @@
   store field (FR-003), and any preserved params stay uniform across
   views. POST forms keep the action-URL store transport (settings) and
   reuse only the field macros.
+
+  `hx` turns the form into an htmx trigger: the form hx-gets its own
+  action, serializing its fields (store and hidden filters ride the
+  body), and morph-swaps the results region named by hx.target — so
+  filtering is a fragment, never a navigation. `hx.trigger` carries the
+  debounce ("input changed delay:300ms" for text fields, "change
+  delay:300ms" for selects). The form element is only the trigger; it
+  must live OUTSIDE the region it swaps or every swap would destroy the
+  fields being typed into.
 -#}
 {% import "_links.html" as links with context %}
 
-{% macro form_open(action, hidden={}) -%}
-<form class="filter-bar" method="get" action="{{ action }}">
+{% macro form_open(action, hidden={}, hx=None, form_id='') -%}
+<form class="filter-bar" method="get" action="{{ action }}"{% if form_id %} id="{{ form_id }}"{% endif %}{% if hx %} hx-get="{{ action }}" hx-target="{{ hx.target }}" hx-swap="morph" hx-sync="this:replace" hx-trigger="{{ hx.trigger }}"{% endif %}>
   {{ links.store_field() }}
   {%- for key, value in hidden.items() %}
   <input type="hidden" name="{{ key }}" value="{{ value }}">

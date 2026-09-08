@@ -6,26 +6,13 @@
 {% block content %}
 <section class="panel">
   <h1>Tasks</h1>
-  {{ forms.form_open('/tasks') }}
+  {#- The status select is an htmx trigger: a change hx-gets the route
+      (delay:300ms) and morph-swaps the results region below — no page
+      reload. The form stays OUTSIDE #tasks-results so the swap can never
+      touch the control; Apply remains the no-htmx fallback. -#}
+  {{ forms.form_open('/tasks', hx={'target': '#tasks-results', 'trigger': 'change delay:300ms'}, form_id='tasks-filters') }}
   {{ forms.field('select', 'status', 'Status', status, options=['all'] + (statuses | list)) }}
   {{ forms.form_close() }}
-  {% if tasks %}
-  {% call tables.table(['ID', 'Kind', 'Status', 'Resource', 'Assigned to', 'Created', 'Claimed', 'Completed']) %}
-      {% for t in tasks %}
-      <tr>
-        <td class="cell-id"><code title="{{ t.id }}">{{ t.id }}</code></td>
-        <td>{{ t.kind }}</td>
-        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
-        <td class="cell-id"><code title="{{ t.resource }}">{{ t.resource }}</code></td>
-        <td>{{ t.assigned_to or "—" }}</td>
-        <td class="ts">{{ t.created_at or "—" }}</td>
-        <td class="ts">{{ t.claimed_at or "—" }}</td>
-        <td class="ts">{{ t.completed_at or "—" }}</td>
-      </tr>
-      {% endfor %}
-  {% endcall %}
-  {% else %}
-  {{ tables.empty_state('No tasks' ~ (' with status “' ~ status ~ '”' if status != 'all' else '') ~ ' in the queue') }}
-  {% endif %}
+  {% include "tasks_results.html" %}
 </section>
 {% endblock %}

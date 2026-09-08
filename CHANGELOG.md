@@ -14,7 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- The command palette is a native `<dialog>` element driven by an Alpine
+- The dashboard's list views filter and live-refresh through htmx
+  fragments. Filter forms on `/history`, `/tasks`, and `/wiki` are htmx
+  triggers (`input changed delay:300ms`; the tasks select on `change`)
+  that morph-swap only the results region — no page navigation, the URL
+  and in-progress filter input are untouched, and the form lives outside
+  the swapped region so a swap can never destroy a field. The
+  `#refresh-region` live refresh on `/history`, `/tokens`, and `/chains`
+  is now an htmx poll (`hx-trigger="every 5s"`): each cycle re-fetches
+  the view's `HX-Request` branch as a cheap region fragment and
+  alpine-morphs it over the region in place, replacing the old
+  full-page re-fetch/DOMParse swap; the live chrome (state word, pause
+  toggle, disconnect banner) is driven from the htmx event lifecycle —
+  pause refuses the poll's request via `htmx:beforeRequest` while the
+  timer keeps its schedule, and window scroll is re-anchored around each
+  swap. The same routes serve full page or fragment from one handler
+  via the `HX-Request` header. The command palette is a native
+  `<dialog>` element driven by an Alpine
   component: `showModal()` provides the focus trap and Esc-to-close, and
   focus returns to the launching element on every close path. Rows come
   from the same two sources as before — the server-rendered seed JSON

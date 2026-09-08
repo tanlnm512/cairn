@@ -9,7 +9,12 @@
 <section class="panel">
   <h1>Wiki</h1>
   <p class="muted">Generated wiki pages and their promotion state.</p>
-  {{ forms.form_open('/wiki') }}
+  {#- The search input is an htmx trigger: typing (input changed
+      delay:300ms) hx-gets the route and morph-swaps the results region
+      below — no page reload. The form stays OUTSIDE #wiki-results so the
+      swap can never touch the field; Search remains the no-htmx
+      fallback. -#}
+  {{ forms.form_open('/wiki', hx={'target': '#wiki-results', 'trigger': 'input changed delay:300ms'}, form_id='wiki-filters') }}
   {{ forms.field('text', 'q', 'Search', filters.q, placeholder='title, page id, or description') }}
   {{ forms.form_close('Search') }}
   <p class="window-control wiki-state-filter">
@@ -22,30 +27,6 @@
     {% if not loop.first %} · {% endif %}{% if s == (filters.state or "all") %}<strong>{{ s }}</strong>{% else %}<a href="{{ links.url('/wiki', q) }}">{{ s }}</a>{% endif %}
     {%- endfor %}
   </p>
-  {% if pages %}
-  {% for repo, rows in pages | groupby("repo") %}
-  <h2 class="wiki-repo-heading">
-    <a href="{{ links.url('/wiki', dict(base_q, repo=repo)) }}">{{ repo }}</a>
-    <span class="muted">({{ rows | length }})</span>
-  </h2>
-  {% call tables.table(['Page', 'State']) %}
-      {% for p in rows %}
-      <tr>
-        <td>
-          <a href="{{ links.url('/wiki/' ~ p.repo ~ '/' ~ p.page_id) }}">{{ p.title }}</a>
-          {%- if p.description %} <span class="muted">— {{ p.description }}</span>{% endif %}
-        </td>
-        <td>
-          <span class="badge badge-{{ p.state }}">{{ p.state }}</span>
-          <span class="badge badge-{{ p.staleness }}">{{ p.staleness }}</span>
-        </td>
-      </tr>
-      {% endfor %}
-  {% endcall %}
-  {% endfor %}
-  {% else %}
-  {%- set filtered = filters.q or filters.state or filters.repo %}
-  {{ tables.empty_state('No wiki pages match the current filters' if filtered else 'No wiki pages yet — generate some with', code='' if filtered else 'cairn wiki generate') }}
-  {% endif %}
+  {% include "wiki_results.html" %}
 </section>
 {% endblock %}
