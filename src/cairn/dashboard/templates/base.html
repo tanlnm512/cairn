@@ -216,21 +216,37 @@
     </main>
   </div>
   {% if palette %}
-  {#- Command palette overlay: body-level so live-refresh region swaps
-      (which replace only #refresh-region's children) never touch it.
-      The seed JSON carries the view list (store-carrying hrefs, composed
-      server-side from the same NAV_SECTIONS the sidebar renders) and the
-      workspace options; symbols arrive live from /graph/suggest. -#}
-  <div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Search" hidden>
-    <div class="palette-backdrop" data-palette-close></div>
-    <div class="palette-card">
-      <input id="palette-input" type="text" placeholder="Jump to a view, workspace, or symbol…"
-             autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
-      <ul id="palette-list" role="listbox"></ul>
-      <p class="palette-hint muted">↑ ↓ navigate · ↵ open · esc close</p>
-    </div>
+  {#- Command palette: a native <dialog> (showModal() provides the focus
+      trap and Esc-to-close) driven by the Alpine "palette" component in
+      shell.js — Ctrl/Cmd+K toggle, active-row highlight, focus restored
+      to the launching element on close. Rows come from two sources: the
+      seed JSON below draws the initial unfiltered list the moment the
+      palette opens, and typing re-fetches filtered rows as an htmx
+      fragment from /palette/results (the same seed composition plus the
+      /graph/suggest symbol matches, decided server-side). The dialog
+      sits at body level so live-refresh region swaps never touch it. -#}
+  <div x-data="palette">
+    <dialog id="palette" class="palette" x-ref="dialog" aria-label="Search"
+            @click="maybeDismiss($event)" @mousedown="pressTarget = $event.target"
+            @close="onClosed()">
+      <div class="palette-card">
+        <input id="palette-input" x-ref="input" type="text" name="q"
+               placeholder="Jump to a view, workspace, or symbol…"
+               autocomplete="off" role="combobox" aria-expanded="true"
+               aria-controls="palette-list" aria-autocomplete="list"
+               {% if store_key %}hx-get="/palette/results?store={{ store_key | urlencode }}"{% else %}hx-get="/palette/results"{% endif %}
+               hx-target="#palette-list"
+               hx-swap="innerHTML" hx-sync="this:replace"
+               hx-trigger="input changed delay:200ms"
+               @keydown.arrow-down.prevent="move(1)"
+               @keydown.arrow-up.prevent="move(-1)"
+               @keydown.enter.prevent="choose()">
+        <ul id="palette-list" x-ref="list" role="listbox" @click="pick($event)"></ul>
+        <p class="palette-hint muted">↑ ↓ navigate · ↵ open · esc close</p>
+      </div>
+    </dialog>
+    <script id="palette-data" type="application/json">{{ palette | tojson }}</script>
   </div>
-  <script id="palette-data" type="application/json">{{ palette | tojson }}</script>
   {% endif %}
   <script src="{{ url_for('static', path='/shell.js') }}?v={{ asset_version }}"></script>
   {% block scripts %}{% endblock %}

@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -478,6 +479,63 @@ def create_app(
         finally:
             conn.close()
         return JSONResponse(result)
+
+    def palette_results(request: Request) -> Response:
+        """The command palette's filtered rows as an HTML fragment (the
+        palette input's ``hx-get`` target, swapped into the listbox).
+
+        ``q`` filters the palette's two seed sources the way the old
+        client-side filter did — case-insensitive substring over view and
+        workspace labels, composed from the same shell_context the seed
+        JSON rides — and from two characters up merges ``symbol_suggest``
+        (the /graph/suggest data function, same 8-row cap and truncation
+        notice) after them, each symbol row linking into /graph's symbol
+        scope with the focus (and selected store) params. Rows carry
+        their action as a data attribute; this route decides content, the
+        palette component decides focus and activation."""
+        query = request.query_params.get("q", "").strip()
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        palette = shell_context(
+            enumerate_stores(Path(paths.CAIRN_HOME)), store_key, "/"
+        )["palette"]
+        lowered = query.lower()
+        rows = [
+            {"label": view["label"], "hint": "view", "href": view["href"]}
+            for view in palette["views"]
+            if not lowered or lowered in view["label"].lower()
+        ]
+        rows += [
+            {
+                "label": workspace["label"],
+                "hint": "workspace",
+                "store_key": workspace["key"],
+            }
+            for workspace in palette["workspaces"]
+            if not lowered or lowered in (workspace["label"] or "").lower()
+        ]
+        if len(query) >= 2:
+            conn = get_read_only_db(selected_db)
+            try:
+                suggested = symbol_suggest(conn, query)
+            finally:
+                conn.close()
+            for match in suggested["matches"][:8]:
+                href = "/graph?scope=symbol&focus=" + quote(match["name"], safe="")
+                if store_key:
+                    href += "&store=" + quote(store_key, safe="")
+                hint = match["kind"] or ""
+                if match.get("file"):
+                    hint += " — " + match["file"]
+                rows.append({"label": match["name"], "hint": hint, "href": href})
+            if suggested["truncated"]:
+                rows.append(
+                    {"label": "more matches…", "hint": "keep typing to narrow"}
+                )
+        return templates.TemplateResponse(
+            request, "palette_results.html", {"rows": rows}
+        )
 
     def graph_neighbors(request: Request) -> Response:
         # Repeatable ``name`` param (FR-003): strip each, drop empties,
@@ -1110,6 +1168,10 @@ def create_app(
         Route("/graph/suggest", graph_suggest, name="graph_suggest"),
         Route("/graph/neighbors", graph_neighbors, name="graph_neighbors"),
         Route("/graph/inspect", graph_inspect, name="graph_inspect"),
+        # The command palette's filtered-rows fragment (the input's
+        # hx-get target); inherently fragment-only, like the JSON routes
+        # above.
+        Route("/palette/results", palette_results, name="palette_results"),
         Route("/history", history, name="history"),
         Route("/history.csv", history_csv, name="history_csv"),
         Route("/history.json", history_json, name="history_json"),

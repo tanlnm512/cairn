@@ -68,249 +68,222 @@
     });
   })();
 
-  /* ---- Command palette (Ctrl/Cmd+K) ----
-     Views and workspaces come from the server-rendered seed
-     (store-carrying hrefs); symbols arrive live from /graph/suggest on
-     the current store — the same endpoint and guarded store param the
-     graph typeahead uses. */
-  (function () {
-    var overlay = document.getElementById("palette");
-    var input = document.getElementById("palette-input");
-    var list = document.getElementById("palette-list");
-    var openButton = document.getElementById("palette-open");
-    var dataEl = document.getElementById("palette-data");
-    if (!overlay || !input || !list || !dataEl) {
+  /* ---- Command palette (Ctrl/Cmd+K, Alpine component) ----
+     A native <dialog>: showModal() provides the focus trap and
+     Esc-to-close, and its close event (any path: Esc, click-outside,
+     programmatic) restores focus to the element that launched the
+     palette. This component owns the client state — open/toggle, the
+     active row's highlight, keyboard navigation — while rows come from
+     two sources: the server-rendered seed JSON (#palette-data) draws
+     the initial unfiltered list the moment the palette opens, and
+     typing re-fetches filtered rows as an htmx fragment
+     (/palette/results — the same seed composition plus the server's
+     symbol-suggest matches, decided server-side; never fetched here).
+     Both row kinds carry their action as a data attribute, so
+     activation is one code path. */
+  function paletteRow(label, hint, attrs) {
+    var li = document.createElement("li");
+    li.className = "palette-row";
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", "false");
+    if (attrs.href) {
+      li.setAttribute("data-href", attrs.href);
+    }
+    if (attrs.storeKey) {
+      li.setAttribute("data-store-key", attrs.storeKey);
+    }
+    var labelEl = document.createElement("span");
+    labelEl.className = "palette-row-label";
+    labelEl.textContent = label;
+    li.appendChild(labelEl);
+    if (hint) {
+      var hintEl = document.createElement("span");
+      hintEl.className = "palette-row-hint";
+      hintEl.textContent = hint;
+      li.appendChild(hintEl);
+    }
+    return li;
+  }
+
+  document.addEventListener("alpine:init", function () {
+    if (!window.Alpine) {
       return;
     }
+    window.Alpine.data("palette", function () {
+      return {
+        active: -1,
+        lastFocus: null,
+        pressTarget: null,
 
-    var views = [];
-    var workspaces = [];
-    try {
-      var seed = JSON.parse(dataEl.textContent || "{}");
-      views = seed.views || [];
-      workspaces = seed.workspaces || [];
-    } catch (err) {
-      /* unparsable seed: views/workspaces stay empty; symbols still work */
-    }
-
-    var rows = []; // {label, hint, action}
-    var active = -1;
-    var seq = 0; // symbol-fetch sequence: stale responses never render
-    var timer = null;
-    var lastFocus = null;
-
-    // Platform-correct kbd hint (cosmetic; both modifiers always work).
-    var kbd = document.getElementById("palette-kbd");
-    if (kbd && /Mac/i.test(navigator.platform || "")) {
-      kbd.textContent = "\u2318K";
-    }
-
-    function isOpen() {
-      return !overlay.hidden;
-    }
-
-    function currentStore() {
-      return new URL(window.location.href).searchParams.get("store") || "";
-    }
-
-    function symbolHref(name) {
-      var store = currentStore();
-      return (
-        "/graph?scope=symbol&focus=" + encodeURIComponent(name) +
-        (store ? "&store=" + encodeURIComponent(store) : "")
-      );
-    }
-
-    function renderRows() {
-      list.textContent = "";
-      if (!rows.length) {
-        var empty = document.createElement("li");
-        empty.className = "palette-row palette-row-empty";
-        empty.textContent = "no matches";
-        list.appendChild(empty);
-        list.removeAttribute("aria-activedescendant");
-        return;
-      }
-      rows.forEach(function (row, i) {
-        var li = document.createElement("li");
-        li.id = "palette-row-" + i;
-        li.className = "palette-row" + (i === active ? " active" : "");
-        li.setAttribute("role", "option");
-        li.setAttribute("aria-selected", i === active ? "true" : "false");
-        var label = document.createElement("span");
-        label.className = "palette-row-label";
-        label.textContent = row.label;
-        li.appendChild(label);
-        if (row.hint) {
-          var hint = document.createElement("span");
-          hint.className = "palette-row-hint";
-          hint.textContent = row.hint;
-          li.appendChild(hint);
-        }
-        li.addEventListener("click", function () {
-          row.action();
-        });
-        list.appendChild(li);
-      });
-      list.setAttribute(
-        "aria-activedescendant",
-        active >= 0 ? "palette-row-" + active : ""
-      );
-      var current = document.getElementById("palette-row-" + active);
-      if (current && current.scrollIntoView) {
-        current.scrollIntoView({ block: "nearest" });
-      }
-    }
-
-    function fetchSymbols(query) {
-      var mySeq = seq;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      timer = setTimeout(function () {
-        var url = "/graph/suggest?name=" + encodeURIComponent(query);
-        var store = currentStore();
-        if (store) {
-          url += "&store=" + encodeURIComponent(store);
-        }
-        fetch(url)
-          .then(function (resp) {
-            if (!resp.ok) {
-              throw new Error("suggest fetch failed");
+        init: function () {
+          var self = this;
+          // Platform-correct kbd hint (cosmetic; both modifiers work).
+          var kbd = document.getElementById("palette-kbd");
+          if (kbd && /Mac/i.test(navigator.platform || "")) {
+            kbd.textContent = "\u2318K";
+          }
+          this.keyHandler = function (event) {
+            if (
+              (event.metaKey || event.ctrlKey) &&
+              (event.key === "k" || event.key === "K")
+            ) {
+              event.preventDefault();
+              self.toggle();
             }
-            return resp.json();
-          })
-          .then(function (data) {
-            if (mySeq !== seq) {
-              return; // a newer keystroke owns the list now
-            }
-            var matches = (data && data.matches) || [];
-            matches.slice(0, 8).forEach(function (m) {
-              rows.push({
-                label: m.name,
-                hint: m.kind + (m.file ? " — " + m.file : ""),
-                action: function () {
-                  window.location.assign(symbolHref(m.name));
-                },
-              });
+          };
+          document.addEventListener("keydown", this.keyHandler);
+          // An htmx swap replaces the rows under the highlight; the
+          // fresh list starts over at its first row.
+          this.$refs.list.addEventListener("htmx:afterSwap", function () {
+            self.active = self.rowEls().length ? 0 : -1;
+            self.applyActive();
+          });
+          var openButton = document.getElementById("palette-open");
+          if (openButton) {
+            openButton.addEventListener("click", function () {
+              self.show();
             });
-            if (data && data.truncated) {
-              rows.push({
-                label: "more matches…",
-                hint: "keep typing to narrow",
-                action: function () {},
-              });
+          }
+        },
+
+        destroy: function () {
+          document.removeEventListener("keydown", this.keyHandler);
+        },
+
+        toggle: function () {
+          if (this.$refs.dialog.open) {
+            this.$refs.dialog.close();
+          } else {
+            this.show();
+          }
+        },
+
+        show: function () {
+          if (this.$refs.dialog.open) {
+            return;
+          }
+          this.lastFocus = document.activeElement;
+          this.renderSeed();
+          this.$refs.input.value = "";
+          this.active = this.rowEls().length ? 0 : -1;
+          this.applyActive();
+          this.$refs.dialog.showModal();
+          this.$refs.input.focus();
+        },
+
+        // Runs on the dialog's close event — every close path, Escape
+        // included — so the launching element gets focus back.
+        onClosed: function () {
+          if (window.htmx && this.$refs.input) {
+            window.htmx.trigger(this.$refs.input, "htmx:abort");
+          }
+          if (this.lastFocus && this.lastFocus.focus) {
+            this.lastFocus.focus();
+          }
+          this.lastFocus = null;
+        },
+
+        // Click-outside dismiss: both press and release must land on the
+        // dialog itself (a drag starting inside the card must not close).
+        maybeDismiss: function (event) {
+          if (
+            event.target === this.$refs.dialog &&
+            event.target === this.pressTarget
+          ) {
+            this.$refs.dialog.close();
+          }
+        },
+
+        renderSeed: function () {
+          var seed = {};
+          try {
+            seed = JSON.parse(
+              document.getElementById("palette-data").textContent || "{}"
+            );
+          } catch (err) {
+            /* unparsable seed: views/workspaces stay empty */
+          }
+          var list = this.$refs.list;
+          list.textContent = "";
+          (seed.views || []).forEach(function (view) {
+            list.appendChild(
+              paletteRow(view.label, "view", { href: view.href })
+            );
+          });
+          (seed.workspaces || []).forEach(function (workspace) {
+            list.appendChild(
+              paletteRow(workspace.label, "workspace", {
+                storeKey: workspace.key,
+              })
+            );
+          });
+        },
+
+        rowEls: function () {
+          return this.$refs.list.querySelectorAll(".palette-row");
+        },
+
+        move: function (delta) {
+          var rows = this.rowEls();
+          if (!rows.length) {
+            return;
+          }
+          this.active = (this.active + delta + rows.length) % rows.length;
+          this.applyActive();
+        },
+
+        applyActive: function () {
+          var rows = this.rowEls();
+          rows.forEach(function (row, i) {
+            var on = i === this.active;
+            row.classList.toggle("active", on);
+            row.setAttribute("aria-selected", on ? "true" : "false");
+            if (!row.id) {
+              row.id = "palette-row-" + i;
             }
-            if (active < 0 && rows.length) {
-              active = 0;
+          }, this);
+          var current = rows[this.active];
+          if (current) {
+            this.$refs.list.setAttribute(
+              "aria-activedescendant",
+              current.id
+            );
+            if (current.scrollIntoView) {
+              current.scrollIntoView({ block: "nearest" });
             }
-            renderRows();
-          })
-          .catch(function () {
-            /* fetch failed: views/workspaces still listed */
-          });
-      }, 160);
-    }
+          } else {
+            this.$refs.list.removeAttribute("aria-activedescendant");
+          }
+        },
 
-    function refresh(query) {
-      seq += 1; // any in-flight symbol response is stale now
-      rows = [];
-      var q = (query || "").toLowerCase();
-      views.forEach(function (v) {
-        if (!q || v.label.toLowerCase().indexOf(q) !== -1) {
-          rows.push({
-            label: v.label,
-            hint: "view",
-            action: function () {
-              window.location.assign(v.href);
-            },
-          });
-        }
-      });
-      workspaces.forEach(function (w) {
-        if (!q || (w.label || "").toLowerCase().indexOf(q) !== -1) {
-          rows.push({
-            label: w.label,
-            hint: "workspace",
-            action: function () {
-              switchStore(w.key);
-            },
-          });
-        }
-      });
-      active = rows.length ? 0 : -1;
-      renderRows();
-      if (q.length >= 2) {
-        fetchSymbols(query);
-      }
-    }
+        pick: function (event) {
+          var row = event.target.closest(".palette-row");
+          if (row) {
+            this.activateRow(row);
+          }
+        },
 
-    function open() {
-      lastFocus = document.activeElement;
-      overlay.hidden = false;
-      input.value = "";
-      refresh("");
-      input.focus();
-    }
+        choose: function () {
+          var row = this.rowEls()[this.active];
+          if (row) {
+            this.activateRow(row);
+          }
+        },
 
-    function close() {
-      overlay.hidden = true;
-      seq += 1;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      if (lastFocus && lastFocus.focus) {
-        lastFocus.focus();
-      }
-    }
-
-    if (openButton) {
-      openButton.addEventListener("click", open);
-    }
-    overlay.addEventListener("click", function (event) {
-      var target = event.target;
-      if (target && target.getAttribute && target.getAttribute("data-palette-close") !== null) {
-        close();
-      }
+        activateRow: function (row) {
+          var key = row.getAttribute("data-store-key");
+          if (key) {
+            this.$refs.dialog.close();
+            switchStore(key);
+            return;
+          }
+          var href = row.getAttribute("data-href");
+          if (href) {
+            this.$refs.dialog.close();
+            window.location.assign(href);
+          }
+        },
+      };
     });
-    input.addEventListener("input", function () {
-      refresh(input.value);
-    });
-    input.addEventListener("keydown", function (event) {
-      var key = event.key || "";
-      if (key === "ArrowDown") {
-        event.preventDefault();
-        if (rows.length) {
-          active = (active + 1) % rows.length;
-          renderRows();
-        }
-      } else if (key === "ArrowUp") {
-        event.preventDefault();
-        if (rows.length) {
-          active = (active - 1 + rows.length) % rows.length;
-        }
-        renderRows();
-      } else if (key === "Enter") {
-        event.preventDefault();
-        if (active >= 0 && rows[active]) {
-          rows[active].action();
-        }
-      }
-    });
-    document.addEventListener("keydown", function (event) {
-      var key = event.key || "";
-      if ((event.metaKey || event.ctrlKey) && (key === "k" || key === "K")) {
-        event.preventDefault();
-        if (isOpen()) {
-          close();
-        } else {
-          open();
-        }
-      } else if (key === "Escape" && isOpen()) {
-        event.preventDefault();
-        close();
-      }
-    });
-  })();
+  });
 })();

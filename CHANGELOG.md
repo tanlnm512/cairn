@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The command palette is a native `<dialog>` element driven by an Alpine
+  component: `showModal()` provides the focus trap and Esc-to-close, and
+  focus returns to the launching element on every close path. Rows come
+  from the same two sources as before — the server-rendered seed JSON
+  draws the initial list, and typing fetches filtered rows as an htmx
+  fragment from the new `/palette/results` route (the same view/workspace
+  seed composition plus the `/graph/suggest` symbol data function, with
+  the selected store riding the request). Keyboard behavior is
+  unchanged: Ctrl/Cmd+K toggles, arrows move the active row, Enter
+  navigates.
+
 ### Added
 - Vendored the dashboard's interaction stack as static assets (zero CDN,
   zero build step): htmx 2.0.10 (`htmx.min.js`, 0BSD), Alpine.js 3.17.1

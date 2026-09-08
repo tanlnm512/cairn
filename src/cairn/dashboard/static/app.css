@@ -406,15 +406,26 @@ body.app-shell {
   color: var(--text-3);
 }
 
+/* Native <dialog>: showModal() provides the focus trap and Esc-to-close.
+   The dialog itself is a full-viewport click-catcher (click-outside
+   dismisses; the card carries the surface) and ::backdrop dims the page
+   through the theme's backdrop token. */
 .palette {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: none;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  overflow: hidden;
 }
 
-.palette-backdrop {
-  position: absolute;
-  inset: 0;
+.palette::backdrop {
   background: var(--backdrop);
 }
 

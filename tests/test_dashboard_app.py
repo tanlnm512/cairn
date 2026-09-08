@@ -2926,8 +2926,10 @@ def test_shell_js_switch_contract_is_pinned_at_source_level():
 # Grouped sidebar + command palette (shell chrome): the sidebar renders
 # from shell.NAV_SECTIONS (same href shape as the hand-written anchors it
 # replaced), collapse persists pre-paint like the theme, and the palette
-# seeds from server JSON — views with store-carrying hrefs, workspaces,
-# symbols live from /graph/suggest. JS contracts are source-pinned.
+# opens as an Alpine <dialog> over two row sources — the server-rendered
+# seed JSON draws the initial list, typing fetches /palette/results
+# fragments (the same seed composition plus /graph/suggest's symbol
+# matches, decided server-side). JS contracts are source-pinned.
 # ---------------------------------------------------------------------------
 
 
@@ -3015,19 +3017,154 @@ def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
     assert [w["key"] for w in seed["workspaces"]] == [_SW_KEY_A, _SW_KEY_B]
 
 
+def test_command_palette_dialog_markup_with_htmx_input(tmp_path, monkeypatch):
+    """The palette is a native <dialog> driven by the Alpine "palette"
+    component: the input fetches filtered rows from /palette/results as
+    an htmx fragment into the listbox, and the seed JSON block still
+    rides the page. Esc and the focus trap are the dialog's own, so the
+    old click-catcher backdrop is gone."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/projects")
+    assert resp.status_code == 200
+    assert '<dialog id="palette"' in resp.text
+    assert 'x-data="palette"' in resp.text
+    assert 'id="palette-input"' in resp.text
+    assert 'name="q"' in resp.text
+    assert 'hx-get="/palette/results"' in resp.text
+    assert 'hx-target="#palette-list"' in resp.text
+    assert 'hx-trigger="input changed delay:200ms"' in resp.text
+    assert 'id="palette-list"' in resp.text and 'role="listbox"' in resp.text
+    assert "data-palette-close" not in resp.text
+    assert 'id="palette-data"' in resp.text
+    # The fragment request carries the selected store (htmx sends only the
+    # input's own value, so the store rides the server-rendered hx-get
+    # URL) — filtered rows keep the selection, never drop it.
+    assert 'hx-get="/palette/results"' in client.get("/projects").text
+    selected = client.get("/projects", params={"store": _SW_KEY_A})
+    assert f'hx-get="/palette/results?store={_SW_KEY_A}"' in selected.text
+
+
+def test_palette_results_empty_query_serves_the_seed_rows(tmp_path, monkeypatch):
+    """An empty query returns the unfiltered list the palette opens with:
+    the 13 views first (store-carrying hrefs, exactly the seed
+    composition), then the populated workspaces keyed for the switch;
+    no symbols without a real query (store A has a seeded symbol)."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/palette/results", params={"store": _SW_KEY_A, "q": ""})
+    assert resp.status_code == 200
+    assert 'id="palette-row-0"' in resp.text
+    assert f'data-href="/graph?store={_SW_KEY_A}"' in resp.text
+    assert f'data-store-key="{_SW_KEY_A}"' in resp.text
+    assert f'data-store-key="{_SW_KEY_B}"' in resp.text
+    # 13 views + 2 populated workspaces, consecutively numbered.
+    for i in range(15):
+        assert f'id="palette-row-{i}"' in resp.text
+    assert 'id="palette-row-15"' not in resp.text
+    assert "no matches" not in resp.text
+    assert "store_a_fn" not in resp.text
+
+
+def test_palette_results_filters_rows_by_substring(tmp_path, monkeypatch):
+    """Typing filters the way the old client-side filter did:
+    case-insensitive substring over the view/workspace labels, views
+    before workspaces."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+
+    graph = client.get("/palette/results", params={"store": _SW_KEY_A, "q": "graph"})
+    assert f'data-href="/graph?store={_SW_KEY_A}"' in graph.text
+    assert "Projects" not in graph.text  # the substring filter dropped it
+    assert "data-store-key" not in graph.text
+
+    ws = client.get("/palette/results", params={"store": _SW_KEY_A, "q": "alpha"})
+    assert f'data-store-key="{_SW_KEY_A}"' in ws.text
+    assert "Graph" not in ws.text  # no view label matches "alpha"
+
+
+def test_palette_results_symbols_come_from_the_suggest_source(tmp_path, monkeypatch):
+    """From two characters up the fragment merges the /graph/suggest data
+    function's matches: the store's seeded symbol row navigates to
+    /graph's symbol scope with focus (and selected store) params, hinted
+    kind — file."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/palette/results", params={"store": _SW_KEY_A, "q": "store"})
+    assert (
+        'data-href="/graph?scope=symbol&amp;focus=storeA_fn'
+        f"&amp;store={_SW_KEY_A}\"" in resp.text
+    )
+    assert "function — src/storeA/core.py" in resp.text
+
+
+def test_palette_results_caps_symbol_rows_and_flags_truncation(
+    tmp_path, monkeypatch
+):
+    """The symbol block keeps the palette's cap: 8 rows even when suggest
+    returns more, plus the keep-typing notice when suggest reports
+    truncation."""
+    from cairn.dashboard import data as dash_data
+
+    def fake_suggest(conn, prefix, limit=dash_data.SUGGEST_LIMIT):
+        return {
+            "matches": [
+                {
+                    "name": f"sym{i:02d}",
+                    "kind": "function",
+                    "file": f"src/m{i}.py",
+                    "repo_id": "demo",
+                }
+                for i in range(12)
+            ],
+            "truncated": True,
+        }
+
+    monkeypatch.setattr(dash_data, "symbol_suggest", fake_suggest)
+    client = _client(tmp_path, seed=True)
+
+    resp = client.get("/palette/results", params={"q": "sym"})
+    for i in range(8):
+        assert f"focus=sym{i:02d}" in resp.text
+    assert "focus=sym08" not in resp.text
+    assert "more matches…" in resp.text
+    assert "keep typing to narrow" in resp.text
+
+
+def test_palette_results_no_matches_renders_the_empty_state(tmp_path, monkeypatch):
+    """A query matching nothing renders the explicit empty-state row, not
+    a bare listbox — and no actionable rows hide inside it."""
+    client = _client(tmp_path, seed=True)
+
+    resp = client.get("/palette/results", params={"q": "zzzz"})
+    assert "no matches" in resp.text
+    assert "palette-row-empty" in resp.text
+    assert "data-href" not in resp.text
+    assert "data-store-key" not in resp.text
+
+
 def test_command_palette_js_contract_is_pinned_at_source_level():
-    """The palette reuses /graph/suggest with the store param guarded from
-    the current URL, and switches workspaces through the same URL-rewrite
-    behavior as the selector."""
+    """The palette is an Alpine component over a native <dialog>:
+    showModal/close own opening and Esc, focus restores to the element
+    that launched it, Cmd/Ctrl+K toggles, rows activate off the server
+    fragment's data attributes, swapped-in rows regain the highlight,
+    and symbols are never fetched client-side (the /palette/results
+    fragment serves them)."""
     import cairn.dashboard
 
     src = (
         Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
     ).read_text(encoding="utf-8")
-    assert "/graph/suggest?name=" in src
-    assert 'searchParams.get("store")' in src
-    assert "metaKey" in src  # Cmd/Ctrl+K opens
+    assert 'Alpine.data("palette"' in src
+    assert "showModal()" in src
+    assert "lastFocus.focus()" in src
+    assert "metaKey" in src  # Cmd/Ctrl+K toggles
     assert "keyCode" not in src  # key names, not deprecated codes
+    assert "data-store-key" in src and "data-href" in src
+    assert "/graph/suggest" not in src  # symbol rows come from the fragment
+    assert "htmx:afterSwap" in src
 
 
 # ---------------------------------------------------------------------------
