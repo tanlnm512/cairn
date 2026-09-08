@@ -227,6 +227,27 @@ def get_document(bundle: OKFBundle, doc_id: str) -> Optional[OKFConcept]:
         return None
 
 
+def resolve_knowledge_doc(bundle: OKFBundle, doc_id: str) -> OKFConcept:
+    """Resolve a knowledge-namespaced document, or raise ``ValueError``.
+
+    Shared guard for the relationship query surface (``related``/``chain``
+    CLI and dashboard consumers): raises when ``doc_id`` matches no
+    concept, and applies the same namespace refusal as the mutating
+    chokepoints (``_refuse_out_of_namespace``) when it resolves to a
+    compass/wiki/memory concept. The returned concept keeps the bundle's
+    path-shaped ``concept_id``; callers normalize via
+    :func:`normalize_doc_id` when they need the bare id.
+    """
+    concept = get_document(bundle, doc_id)
+    if concept is None:
+        raise ValueError(
+            f"Unknown knowledge document: '{doc_id}'. "
+            "Run `cairn knowledge list` for stored doc ids."
+        )
+    _refuse_out_of_namespace(bundle, doc_id, concept)
+    return concept
+
+
 # The valid status values, enforced as a forward-only lifecycle.
 DOC_STATUSES = ("active", "superseded", "archived")
 

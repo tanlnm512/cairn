@@ -34,10 +34,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from cairn.knowledge.relationships import DEFAULT_RELATION, EXTRACTED
-from cairn.knowledge.store import normalize_doc_id
+from cairn.knowledge.store import normalize_doc_id, resolve_knowledge_doc
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 
@@ -89,15 +89,19 @@ def related_docs(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
     Reads both edge directions (doc_id and related_id sides) and normalizes
     the neighbor id with :func:`normalize_doc_id` for callers. Rows the
     bundle no longer resolves are skipped, so a deleted doc never surfaces
-    as a phantom neighbor between rebuilds.
+    as a phantom neighbor between rebuilds. Output is deterministic:
+    outgoing rows first, each direction ordered by neighbor id.
     """
     normalized = normalize_doc_id(bundle, doc_id)
     neighbors: List[Dict[str, Any]] = []
     seen: Set[Tuple[str, str, str, str]] = set()
-    for direction, column in (("outgoing", "doc_id"), ("incoming", "related_id")):
+    for direction, column, order in (
+        ("outgoing", "doc_id", "related_id"),
+        ("incoming", "related_id", "doc_id"),
+    ):
         for row in conn.execute(
             f"SELECT doc_id, related_id, relation, kind, provenance, created_at "
-            f"FROM knowledge_edges WHERE {column} = ?",
+            f"FROM knowledge_edges WHERE {column} = ? ORDER BY {order}",
             (normalized,),
         ):
             neighbor = row[1] if column == "doc_id" else row[0]
@@ -105,12 +109,13 @@ def related_docs(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
             if key in seen:
                 continue
             try:
-                bundle.read_concept(neighbor)
+                concept = bundle.read_concept(neighbor)
             except Exception:
                 continue  # deleted between rebuilds: never a phantom neighbor
             seen.add(key)
             neighbors.append({
                 "doc_id": neighbor,
+                "title": concept.title,
                 "relation": row[2],
                 "kind": row[3],
                 "provenance": row[4],
@@ -118,6 +123,100 @@ def related_docs(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
                 "direction": direction,
             })
     return neighbors
+
+
+def supersede_chain(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
+    """The supersede chain containing ``doc_id``, ordered oldest -> newest.
+
+    Follows the stored ``supersedes`` / ``superseded-by`` edges (both
+    directions declare the same newer/older fact, so either half alone
+    walks the full chain). Any chain member may be the entry point: every
+    member appears exactly once, positioned causally. Walks are
+    visited-set-guarded, so a cyclic edge set terminates instead of
+    looping, and edges naming docs the bundle no longer resolves are
+    skipped (stale index between rebuilds). A doc with no supersede edges
+    is a chain of one.
+
+    Each member dict carries ``concept_id``, ``title``, ``doc_status`` and
+    ``relation`` (this member's relation to the NEXT member; ``None`` on
+    the last). Raises ``ValueError`` when ``doc_id`` resolves to no
+    knowledge concept (see ``resolve_knowledge_doc``).
+    """
+    concept = resolve_knowledge_doc(bundle, doc_id)
+    start = normalize_doc_id(bundle, concept.concept_id)
+    newer_of, older_of, concepts = _supersede_facts(conn, bundle)
+    concepts.setdefault(start, concept)  # a chain of one is never an edge endpoint
+
+    # Walk back to the oldest member (deterministic on branched chains).
+    visited = {start}
+    oldest = start
+    while True:
+        older = next(
+            (c for c in sorted(older_of.get(oldest, ())) if c not in visited),
+            None,
+        )
+        if older is None:
+            break
+        visited.add(older)
+        oldest = older
+
+    # Walk forward collecting members oldest -> newest.
+    chain_ids: List[str] = []
+    seen: Set[str] = set()
+    current: Optional[str] = oldest
+    while current is not None and current not in seen:
+        seen.add(current)
+        chain_ids.append(current)
+        current = next(
+            (n for n in sorted(newer_of.get(current, ())) if n not in seen),
+            None,
+        )
+
+    members: List[Dict[str, Any]] = []
+    for pos, cid in enumerate(chain_ids):
+        member = concepts[cid]
+        members.append({
+            "concept_id": cid,
+            "title": member.title,
+            "doc_status": member.extensions.get("doc_status", "active"),
+            "relation": "superseded-by" if pos + 1 < len(chain_ids) else None,
+        })
+    return members
+
+
+def _supersede_facts(conn, bundle: OKFBundle):
+    """Supersede adjacency from the edge index, endpoints resolvable.
+
+    Returns ``(newer_of, older_of, concepts)``: ``newer_of[older]`` is the
+    set of docs superseding it, ``older_of[newer]`` the set it supersedes,
+    and ``concepts`` caches the resolved concept per id (``None`` for
+    unresolvable ids, whose rows are dropped).
+    """
+    newer_of: Dict[str, Set[str]] = {}
+    older_of: Dict[str, Set[str]] = {}
+    concepts: Dict[str, Optional[OKFConcept]] = {}
+
+    def concept_for(cid: str) -> Optional[OKFConcept]:
+        if cid not in concepts:
+            try:
+                concepts[cid] = bundle.read_concept(cid)
+            except Exception:
+                concepts[cid] = None
+        return concepts[cid]
+
+    for doc_id, related_id, relation in conn.execute(
+        "SELECT doc_id, related_id, relation FROM knowledge_edges "
+        "WHERE relation IN ('supersedes', 'superseded-by')"
+    ).fetchall():
+        newer, older = (
+            (doc_id, related_id) if relation == "supersedes"
+            else (related_id, doc_id)
+        )
+        if concept_for(newer) is None or concept_for(older) is None:
+            continue
+        newer_of.setdefault(older, set()).add(newer)
+        older_of.setdefault(newer, set()).add(older)
+    return newer_of, older_of, concepts
 
 
 def _load_docs(bundle: OKFBundle) -> List[Tuple[str, OKFConcept]]:

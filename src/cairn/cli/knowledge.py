@@ -199,6 +199,107 @@ def knowledge_rebuild(db):
     )
 
 
+def _require_store_bundle():
+    """The knowledge bundle for a read command."""
+    from cairn.okf.bundle import OKFBundle
+    from ..paths import resolve_store
+
+    return OKFBundle(str(resolve_store().knowledge))
+
+
+def _resolve_or_exit(bundle, doc_id: str):
+    """Resolve a doc id before the DB is opened, so an unknown id writes
+    nothing at all (not even creating the store directories, which a
+    failed bundle read would otherwise do as a lookup side effect)."""
+    from cairn.knowledge.store import resolve_knowledge_doc
+
+    if not bundle.root.exists():
+        click.echo(
+            f"Error: unknown knowledge document: '{doc_id}'. No knowledge "
+            f"store at {bundle.root} -- ingest (`cairn knowledge ingest "
+            "--ingest`) or add documents first.",
+            err=True,
+        )
+        sys.exit(1)
+    try:
+        resolve_knowledge_doc(bundle, doc_id)
+    except ValueError as e:
+        # Unknown or out-of-namespace id: clean error, no traceback,
+        # no partial output, no store writes (VAL-INGEST-011).
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@knowledge.command("related")
+@click.argument("doc_id")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_related(doc_id, as_json, db):
+    """List a doc's relationship neighbors (relation + kind per row).
+
+    Reads the derived knowledge_edges index in both directions; refresh it
+    with `cairn knowledge rebuild` if the bundle changed outside ingest.
+    """
+    from cairn.knowledge.index import related_docs
+
+    bundle = _require_store_bundle()
+    _resolve_or_exit(bundle, doc_id)
+    conn = get_db(db)
+    try:
+        neighbors = related_docs(conn, bundle, doc_id)
+    finally:
+        conn.close()
+
+    if as_json:
+        click.echo(json.dumps(neighbors, indent=2, default=str))
+        return
+    if not neighbors:
+        click.echo(f"No stored relationships for '{doc_id}'.")
+        return
+    click.echo(f"{len(neighbors)} related doc(s) for '{doc_id}':")
+    for n in neighbors:
+        title = n.get("title") or ""
+        suffix = f" ({title})" if title else ""
+        click.echo(
+            f"  {n['relation']} ({n['kind']}) [{n['direction']}]"
+            f" {n['doc_id']}{suffix}"
+        )
+
+
+@knowledge.command("chain")
+@click.argument("doc_id")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_chain(doc_id, as_json, db):
+    """Print the supersede chain containing a doc (oldest -> newest).
+
+    Any chain member may be the argument: every member appears exactly
+    once, positioned causally (each member is superseded-by the next).
+    """
+    from cairn.knowledge.index import supersede_chain
+
+    bundle = _require_store_bundle()
+    _resolve_or_exit(bundle, doc_id)
+    conn = get_db(db)
+    try:
+        chain = supersede_chain(conn, bundle, doc_id)
+    finally:
+        conn.close()
+
+    if as_json:
+        click.echo(json.dumps(chain, indent=2, default=str))
+        return
+    click.echo(
+        f"Supersede chain for '{doc_id}' ({len(chain)} doc(s), oldest -> newest):"
+    )
+    for pos, member in enumerate(chain, start=1):
+        title = member.get("title") or ""
+        suffix = f" ({title})" if title else ""
+        click.echo(f"  {pos}. {member['concept_id']}{suffix}")
+        if member.get("relation"):
+            click.echo(f"     -> {member['relation']}")
+
+
 @knowledge.command("search")
 @click.argument("query")
 @click.option("--limit", default=20, type=int)
