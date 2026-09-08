@@ -163,6 +163,15 @@ def _resolve_window(window: str | None) -> tuple[str, float | None]:
     return preset, time.time() - seconds if seconds is not None else None
 
 
+def is_hx_request(request: "Request") -> bool:
+    """True when htmx issued this request (its HX-Request: true header
+    rides every htmx-initiated call). The full-page-vs-fragment seam:
+    handlers render the complete template on a page load and the fragment
+    variant — a template extending no base, covering only the swapped
+    region — on an htmx call, sharing one route and one data fetch."""
+    return (request.headers.get("HX-Request") or "").strip().lower() == "true"
+
+
 # Exports fetch the filtered set in one unpaginated call (FR-005): a single
 # list_history page large enough to cover it — never a cursor-following
 # duplicate of the view's paging.

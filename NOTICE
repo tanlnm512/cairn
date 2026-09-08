@@ -119,6 +119,35 @@ src/cairn/dashboard/static/vis-network.min.js, and is dual licensed under the
 Apache License 2.0 OR MIT License. The upstream copyright and license notice
 are retained unmodified in the file's leading banner comment.
 
+htmx (https://htmx.org / https://github.com/bigskysoftware/htmx), by Big Sky
+Software. The official minified browser build is vendored at pinned version
+2.0.10 (jsDelivr npm dist file, sha256
+71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de) at
+src/cairn/dashboard/static/htmx.min.js, licensed under Zero-Clause BSD (0BSD)
+per the htmx project license.
+
+Alpine.js (https://alpinejs.dev / https://github.com/alpinejs/alpine),
+Copyright Caleb Porzio and Alpine.js contributors. The official CDN build is
+vendored at pinned version 3.17.1 (jsDelivr npm dist file, sha256
+b30997fc126d808b1a9b20ab3f504ded88df957818c02d6249bba3ec114eb0ec) at
+src/cairn/dashboard/static/alpine.min.js, licensed under the MIT License.
+
+@alpinejs/morph (https://alpinejs.dev/plugins/morph), Copyright Caleb Porzio
+and Alpine.js contributors. The official CDN build is vendored at pinned
+version 3.17.1 (jsDelivr npm dist file, sha256
+40741b6d946e9c7e01787d8fefead1c1537a20cf7203726be648cda9d2c9f375) at
+src/cairn/dashboard/static/alpinejs-morph.min.js, licensed under the MIT
+License.
+
+htmx-ext-alpine-morph
+(https://github.com/bigskysoftware/htmx-extensions), by Big Sky Software.
+The extension source is vendored at pinned version 2.0.1 (jsDelivr npm dist
+file, sha256
+762a87ecc98f76558b7d6384c37400ab61e5ab1626196cb7d093fceb89c13b67) at
+src/cairn/dashboard/static/alpine-morph.js. The extension ships with the
+htmx project; its package manifest declares no separate license, and the
+htmx project license (Zero-Clause BSD) governs upstream.
+
 ================================================================================
 Vendored content (Kotlin grammar)
 ================================================================================

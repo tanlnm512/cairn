@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Cairn Dashboard{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}?v={{ asset_version }}">
+  <meta name="htmx-config" content='{"allowEval":false}'>
+  {#- Vendored interaction stack (no CDN, no build step): htmx serves
+      fragments, Alpine owns client state. All four load deferred and
+      execute in this order before DOMContentLoaded: htmx core, its
+      alpine-morph extension (defineExtension needs the htmx global),
+      Alpine's morph plugin (registers Alpine.morph on alpine:init),
+      Alpine core. -#}
+  <script defer src="{{ url_for('static', path='/htmx.min.js') }}?v={{ asset_version }}"></script>
+  <script defer src="{{ url_for('static', path='/alpine-morph.js') }}?v={{ asset_version }}"></script>
+  <script defer src="{{ url_for('static', path='/alpinejs-morph.min.js') }}?v={{ asset_version }}"></script>
+  <script defer src="{{ url_for('static', path='/alpine.min.js') }}?v={{ asset_version }}"></script>
   <script>
     (function () {
       "use strict";

@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Vendored the dashboard's interaction stack as static assets (zero CDN,
+  zero build step): htmx 2.0.10 (`htmx.min.js`, 0BSD), Alpine.js 3.17.1
+  (`alpine.min.js`, deferred, MIT), its morph plugin (`alpinejs-morph.min.js`,
+  MIT), and the `alpine-morph` htmx extension (`alpine-morph.js`). The shell
+  loads all four from `/static/` with the `?v=` cache-buster, runs htmx with
+  `allowEval` disabled via the `htmx-config` meta, and ships the
+  `[x-cloak] { display: none }` rule so Alpine-managed DOM never flashes
+  pre-init. Route handlers gain the `is_hx_request` seam (the `HX-Request`
+  header) for serving full pages vs fragments from one route.
+
+### Added
 - `cairn knowledge list --json` emits one machine-readable row per
   document — `concept_id` (bare bundle-relative id), `title`, `doc_type`,
   `doc_status` — so callers and validators can pin document ids without
