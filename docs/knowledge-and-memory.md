@@ -80,15 +80,20 @@ ADR-0001") in both directions.
   recomputed tag/`affects_modules` overlap materialized as `kind: derived`
   rows in both directions. Both ids are bare concept ids
   (`knowledge/<type>/<slug>`), matching `knowledge_embeddings.doc_id`.
-  Dangling pointers stay in frontmatter and never reach the index; a pair
-  with a declared edge gets no derived duplicate.
+  Dangling pointers stay in frontmatter and never reach the index — and
+  are not silent: the ingest dry run and `cairn knowledge rebuild` each
+  warn, naming the document and the pointer that matched no concept id or
+  resource path (`knowledge ingest --ingest` carries the same warning
+  from its post-write rebuild). A pair with a declared edge gets no
+  derived duplicate.
 - `knowledge_doc_refs(doc_id, ref, ref_kind, verified)` — entries with a
   `ref` in the doc's `sources`/`verified` families.
 
 **Rebuild** — `cairn knowledge rebuild` (also run automatically after
 `knowledge ingest --ingest`) recomputes both tables from the bundle.
 Idempotent: an unchanged bundle rebuilds to identical contents, including
-`created_at` stamps.
+`created_at` stamps. Declared pointers that resolve to nothing are listed
+as warnings (document + pointer) instead of disappearing.
 
 **Island detection and LLM linking** — connected components over the doc
 graph surface pair-units detached from the corpus: two-doc components,

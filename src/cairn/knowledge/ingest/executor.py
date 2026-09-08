@@ -85,6 +85,7 @@ def execute_manifest(manifest: dict, conn) -> dict:
         "index_doc_refs": index["doc_refs"],
         "verified_refs": verified_refs_total,
         "doc_link_tasks": doc_link_tasks,
+        "dangling_pointers": index.get("dangling", []),
     }
     report.update(verify_manifest(manifest, conn))
     return report

@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dangling relationship pointers are surfaced instead of silently
+  skipped: a declared `relates_to` pointer matching neither a knowledge
+  concept id nor a recorded resource path warns by name — in the ingest
+  dry-run output (before any write, checked against the store plus the
+  staged run), in `knowledge ingest --ingest` output (from its post-write
+  index rebuild), and in `cairn knowledge rebuild` output. The pointer
+  stays in the frontmatter (the durable record) and still never reaches
+  `knowledge_edges`; relationship-free documents ingest and embed exactly
+  as before, and the `knowledge ingest` flag set and the 22-tool MCP
+  surface are unchanged.
 - Island detection behind the LLM task queue: connected components over the
   `knowledge_edges` doc graph surface pair-units detached from the corpus —
   two-doc components and id-ordered singleton pairs — and queue one

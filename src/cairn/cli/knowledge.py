@@ -86,9 +86,22 @@ def knowledge_import(dir_path, doc_type, tags, affects):
 
 
 # execute_manifest()'s report keys the CLI already renders itself ("Wrote N
-# ... embedded M"); every other report key is a verify leg and is printed
-# verbatim after the write (see knowledge_ingest).
-_EXECUTOR_SUMMARY_KEYS = frozenset({"written", "embedded", "accepted", "skipped"})
+# ... embedded M", dangling-pointer warnings); every other report key is a
+# verify leg and is printed verbatim after the write (see knowledge_ingest).
+_EXECUTOR_SUMMARY_KEYS = frozenset(
+    {"written", "embedded", "accepted", "skipped", "dangling_pointers"}
+)
+
+
+def _echo_dangling_warnings(items) -> None:
+    """Surface declared relates_to pointers that matched no knowledge
+    document or resource path: they stay frontmatter-only, never index."""
+    for item in items or []:
+        click.echo(
+            f"  warning: {item['doc_id']} declares relates_to "
+            f"'{item['concept_id']}' matching no knowledge document or "
+            f"resource path; kept in frontmatter, not indexed."
+        )
 
 
 @knowledge.command("ingest")
@@ -120,6 +133,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
         # ("Fed path does not exist: ...", "Repo root does not exist: ...").
         click.echo(f"Error: {e}.", err=True)
         sys.exit(1)
+    dangling = []
     if do_ingest:
         from cairn.knowledge.ingest.executor import execute_manifest
         from ..paths import resolve_store
@@ -130,6 +144,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
             report = execute_manifest(manifest, conn)
         finally:
             conn.close()
+        dangling = report.get("dangling_pointers") or []
         embed_note = (
             f", embedded {report['embedded']}" if report["embedded"] is not None else ""
         )
@@ -151,6 +166,15 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
                 err=True,
             )
             sys.exit(1)
+    else:
+        # Dry run: predict which declared pointers will never index, so a
+        # link that fails to resolve is visible before anything is written.
+        from cairn.knowledge.index import dangling_manifest_pointers
+        from cairn.okf.bundle import OKFBundle
+        from ..paths import resolve_store
+
+        bundle = OKFBundle(str(resolve_store().knowledge))
+        dangling = dangling_manifest_pointers(bundle, manifest["rows"])
     counts = manifest["counts"]
     click.echo(
         f"Staged {counts['accepted']} document(s), skipped {counts['skipped']}."
@@ -164,6 +188,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
                 click.echo(
                     f"    {rel['relation']}: {rel['concept_id']} ({rel['kind']})"
                 )
+    _echo_dangling_warnings(dangling)
     click.echo(f"Outbox: {manifest['workspace']}")
 
 
@@ -201,6 +226,7 @@ def knowledge_rebuild(db):
         f"{report['edges']} edge(s) ({report['derived']} derived), "
         f"{report['doc_refs']} ref(s)."
     )
+    _echo_dangling_warnings(report.get("dangling"))
     click.echo(f"Island detection: queued {queued} doc-link task(s).")
 
 

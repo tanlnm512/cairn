@@ -14,7 +14,10 @@ recomputes both tables from the current bundle contents:
 
 Only declared edges whose target resolves to an existing knowledge concept
 are indexed; dangling frontmatter pointers stay in the frontmatter (the
-durable record) but never reach the index. A pointer that is not a concept
+durable record) but never reach the index -- and are reported back by the
+rebuild (``dangling`` in the return dict) and by the ingest dry-run
+(:func:`dangling_manifest_pointers`) so a declared link that fails to
+index is visible instead of silent. A pointer that is not a concept
 id may still name its target by source path: ingest records that path as
 the promoted doc's ``resource``, so such pointers resolve through the
 bundle's resource map. A pair that already has a
@@ -62,17 +65,20 @@ PROVENANCE_TAG_MODULE_OVERLAP = "tag+module-overlap"
 DEFAULT_REF_KIND = "file"
 
 
-def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, int]:
+def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, Any]:
     """Recompute knowledge_edges + knowledge_doc_refs from the bundle.
 
     Wipes and repopulates both tables in one transaction-less pass on
     ``conn`` (the caller commits). Idempotent on an unchanged bundle:
     identical rows, identical created_at stamps. Returns counts:
-    ``{docs, edges, derived, doc_refs}``.
+    ``{docs, edges, derived, doc_refs}`` plus ``dangling`` -- the declared
+    ``relates_to`` pointers that matched neither a concept id nor a
+    resource path (each ``{doc_id, concept_id}``; they stay
+    frontmatter-only and never index).
     """
     docs = _load_docs(bundle)
     doc_ids = {doc_id for doc_id, _ in docs}
-    declared = _frontmatter_edges(bundle, docs, doc_ids)
+    declared, dangling = _frontmatter_edges(bundle, docs, doc_ids)
     derived = _derived_edges(docs, {(e["doc_id"], e["related_id"]) for e in declared})
     edges = _write_edges(conn, declared + derived)
     refs = _write_refs(conn, _doc_ref_rows(docs))
@@ -81,6 +87,7 @@ def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, int]:
         "edges": edges,
         "derived": len(derived),
         "doc_refs": refs,
+        "dangling": dangling,
     }
 
 
@@ -235,18 +242,24 @@ def _frontmatter_edges(
     bundle: OKFBundle,
     docs: List[Tuple[str, OKFConcept]],
     doc_ids: Set[str],
-) -> List[Dict[str, Any]]:
-    """One edge per declared relates_to entry whose target resolves.
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    """Declared edges for the relates_to entries whose target resolves,
+    plus the dangling pointers that matched neither a concept id nor a
+    resource path (returned so callers can surface the failed index
+    instead of leaving it silent).
 
     A pointer resolves as a bare/path-shaped concept_id; failing that, as
     the source document named by a promoted doc's ``resource`` path
     (ingest stores the source path there), so author-declared links written
-    before concept ids existed still index as declared edges.
+    before concept ids existed still index as declared edges. A pointer
+    that resolves to the declaring doc itself produces no edge and is not
+    dangling.
     """
     from cairn.knowledge.relationships import normalize_relationships
 
     resources = _resource_index(docs)
     edges: List[Dict[str, Any]] = []
+    dangling: List[Dict[str, str]] = []
     for doc_id, concept in docs:
         for entry in normalize_relationships(
             concept.extensions.get("relates_to")
@@ -259,7 +272,10 @@ def _frontmatter_edges(
                 candidate = resources.get(pointer.lstrip("/"))
                 if candidate is not None:
                     related = candidate
-            if related not in doc_ids or related == doc_id:
+            if related not in doc_ids:
+                dangling.append({"doc_id": doc_id, "concept_id": pointer})
+                continue
+            if related == doc_id:
                 continue
             edges.append({
                 "doc_id": doc_id,
@@ -268,7 +284,57 @@ def _frontmatter_edges(
                 "kind": str(entry.get("kind") or EXTRACTED),
                 "provenance": PROVENANCE_FRONTMATTER,
             })
-    return edges
+    return edges, dangling
+
+
+def dangling_manifest_pointers(
+    bundle: OKFBundle, rows: List[Dict[str, Any]]
+) -> List[Dict[str, str]]:
+    """Dangling relates_to pointers across staged manifest rows (dry run).
+
+    Applies the rebuild's resolution to a not-yet-written manifest: a
+    pointer resolves when its normalized id names a knowledge concept --
+    promoted in the store, or staged by this same run -- or when it names
+    a source document by path (a promoted doc's recorded ``resource``, or
+    a staged row's ``source_path``, which becomes the promoted doc's
+    resource). Anything else is dangling: it stays frontmatter-only and
+    never indexes. Each row carries ``{doc_id, concept_id}`` with
+    ``doc_id`` the row's source_path. Deterministic: manifest row order,
+    declaration order within a row.
+    """
+    from cairn.knowledge.relationships import normalize_relationships
+
+    docs = _load_docs(bundle) if bundle.root.exists() else []
+    doc_ids = {doc_id for doc_id, _ in docs}
+    doc_ids.update(
+        str(row.get("concept_id"))
+        for row in rows
+        if row.get("concept_id")
+    )
+    resources = _resource_index(docs)
+    for row in rows:
+        if row.get("source_path") and row.get("concept_id"):
+            resources.setdefault(
+                str(row["source_path"]).lstrip("/"),
+                str(row["concept_id"]),
+            )
+    dangling: List[Dict[str, str]] = []
+    for row in rows:
+        self_id = str(row.get("concept_id") or "")
+        if not self_id:
+            continue  # a skipped row stages no doc and carries no pointers
+        source = str(row.get("source_path") or self_id)
+        for entry in normalize_relationships(list(row.get("relationships") or [])):
+            pointer = str(entry.get("concept_id") or "").strip()
+            related = normalize_doc_id(bundle, pointer)
+            if related not in doc_ids or related == self_id:
+                # Fallback: the pointer may name a source document by path.
+                candidate = resources.get(pointer.lstrip("/"))
+                if candidate is not None:
+                    related = candidate
+            if related not in doc_ids:
+                dangling.append({"doc_id": source, "concept_id": pointer})
+    return dangling
 
 
 def _resource_index(docs: List[Tuple[str, OKFConcept]]) -> Dict[str, str]:
