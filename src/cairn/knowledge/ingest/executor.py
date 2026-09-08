@@ -1,6 +1,7 @@
 """Approved-run execution: manifest rows -> store -> embeddings (D-003)."""
 from __future__ import annotations
 
+from cairn.knowledge.ingest.refs import resolve_doc_refs
 from cairn.knowledge.store import add_document
 from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
@@ -14,6 +15,12 @@ def execute_manifest(manifest: dict, conn) -> dict:
     in sorted (repo, relpath) order so re-runs are deterministic.
     ``conn`` is an open graph database connection (the caller owns it);
     embedding runs only when the semantic backend is installed.
+
+    Doc-to-code refs (D1.3) resolve here rather than at staging: the
+    body's backticked tokens are verified against this connection (the
+    wiki verified-sources pattern), and only resolvable ones reach the
+    promoted concept's ``verified`` family -- and from there the
+    ``knowledge_doc_refs`` index via the post-write rebuild.
     """
     from cairn.graph import embeddings as emb
 
@@ -23,7 +30,10 @@ def execute_manifest(manifest: dict, conn) -> dict:
 
     accepted = [row for row in manifest.get("rows", []) if "skip" not in row]
     written: list[str] = []
+    verified_refs_total = 0
     for row in sorted(accepted, key=lambda r: (r.get("repo", ""), r.get("source_path", ""))):
+        verified_refs = resolve_doc_refs(conn, row["body"])
+        verified_refs_total += len(verified_refs)
         written.append(
             add_document(
                 bundle,
@@ -39,6 +49,7 @@ def execute_manifest(manifest: dict, conn) -> dict:
                 relationships=list(row["relationships"])
                 if row.get("relationships")
                 else None,
+                verified_refs=verified_refs,
             )
         )
 
@@ -65,6 +76,7 @@ def execute_manifest(manifest: dict, conn) -> dict:
         "skipped": manifest.get("counts", {}).get("skipped", 0),
         "index_edges": index["edges"],
         "index_doc_refs": index["doc_refs"],
+        "verified_refs": verified_refs_total,
     }
     report.update(verify_manifest(manifest, conn))
     return report

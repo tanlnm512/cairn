@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Doc-to-code reference verification at ingest: backticked file paths and
+  symbols in a staged document's body resolve against the L1 graph via
+  `cairn.refs` (`file_exists`/`symbol_exists`, the wiki verified-sources
+  pattern); only resolvable refs are stored — as `{ref, kind: file|symbol,
+  verified: true}` entries in the promoted concept's OKF `verified` family
+  and, through the post-ingest rebuild, as `knowledge_doc_refs` rows. Bogus
+  refs appear nowhere; docs without resolvable refs gain no `verified`
+  family. `add_document` gains an optional `verified_refs` parameter and the
+  ingest report/CLI output carries a `verified_refs` count.
 - Derived knowledge-relationship index: `knowledge_edges(doc_id, related_id,
   relation, kind, provenance, created_at)` and `knowledge_doc_refs(doc_id,
   ref, ref_kind, verified)` tables (additive, idempotent schema) rebuilt from

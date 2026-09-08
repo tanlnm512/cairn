@@ -116,6 +116,7 @@ def add_document(
     description: Optional[str] = None,  # one-line summary; defaults to title
     doc_source: str = "manual",    # "manual" or "imported"
     relationships: Optional[List[dict]] = None,  # {concept_id, relation, kind}
+    verified_refs: Optional[List[dict]] = None,  # {ref, kind: file|symbol, verified}
 ) -> str:
     """Ingest a document. Returns the concept_id.
 
@@ -130,6 +131,13 @@ def add_document(
     to ``{concept_id, relation, kind}`` with kind defaulting to
     ``extracted``; entries are identifiers, not free text, so they are
     never redacted.
+
+    ``verified_refs`` is an optional list of verified doc-to-code refs
+    (D1.3) stored as the concept's ``verified`` family (OKF v0.2, the
+    wiki pattern), each ``{ref, kind: file|symbol, verified: true}``;
+    callers pass pre-resolved entries (``knowledge/ingest/refs.py``).
+    Refs are graph identifiers and are never redacted; the family is
+    omitted entirely when nothing (or nothing resolvable) is passed.
 
     Privacy floor (audit F1): title, body, description, and step
     descriptions are routed through :func:`strip_private_data` at this
@@ -180,6 +188,8 @@ def add_document(
         concept_id=concept_id,
         body=body,
         extensions=extensions,
+        # Verified doc->code refs (D1.3): OKF v0.2 family, wiki pattern.
+        verified=list(verified_refs) if verified_refs else None,
     )
     bundle.write_concept(concept)
     return concept_id
