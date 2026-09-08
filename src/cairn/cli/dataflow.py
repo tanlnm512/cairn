@@ -26,7 +26,7 @@ def dataflow_build(db):
     click.echo(f"Dataflow index built: {count} public symbols indexed.")
 
 
-@dataflow.command()
+@dataflow.command(name="lookup")
 @click.argument("symbol")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")

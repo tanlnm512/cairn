@@ -235,7 +235,7 @@ def resolve_tool(
         grp, cmd = parts
         if grp in cli_commands and cmd in cli_commands[grp]:
             return True, f"CLI command (cairn {grp} {cmd})"
-        # dataflow-lookup style (hyphenated) sometimes written with space
+        # hyphenated subcommands are sometimes written with a space
         hyphen = f"{grp}-{cmd}"
         if grp in cli_commands and hyphen in cli_commands[grp]:
             return True, f"CLI command (cairn {grp} {hyphen})"
