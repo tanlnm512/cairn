@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ADR supersede-chain detection at ingest: `decisions/`/`adr/` documents
+  with `NNNN-` numbered filenames gain `supersedes` / `superseded-by`
+  relationship entries from body or status-line markers ("Supersedes
+  ADR-0001") with no explicit frontmatter; both directions are written
+  (new doc supersedes, old doc superseded-by), resolution stays within
+  one ingest run and directory family, and unresolved or self-referential
+  markers are dropped rather than staged as dangling pointers.
 - Author-declared document relationships survive ingest: the source parser
   keeps unknown frontmatter keys on `ParsedDoc.extensions` instead of
   discarding them; `relates_to`/`supersedes`/`superseded-by` frontmatter
