@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn knowledge list --json` emits one machine-readable row per
+  document — `concept_id` (bare bundle-relative id), `title`, `doc_type`,
+  `doc_status` — so callers and validators can pin document ids without
+  `search --json` or sqlite. Human output and the `--type`/`--status`/
+  `--tag` filters are unchanged.
 - Dangling relationship pointers are surfaced instead of silently
   skipped: a declared `relates_to` pointer matching neither a knowledge
   concept id nor a recorded resource path warns by name — in the ingest
@@ -127,6 +132,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- The knowledge-ingest count verify leg compares the post-write store
+  against the full expected population (`pre_existing + accepted -
+  overwritten`, with `add_document` writing over existing docs in
+  place), so an incremental `knowledge ingest --ingest` into a non-empty
+  store — new documents added, or the same documents re-ingested —
+  verifies and exits 0 exactly like a first-into-empty run. A dropped
+  write still fails the leg, and standalone pre-write `verify_manifest`
+  use keeps comparing the batch alone against the store as it stands.
+- Re-ingesting a document preserves its promoted `kind: inferred`
+  `relates_to` entries: the ingest executor merges the existing
+  frontmatter's critic-approved doc-link entries into the rewritten
+  concept (declared source entries first, deduped on
+  `(concept_id, relation, kind)`), so the durable record — and the
+  rebuilt `knowledge_edges` rows — keep approved LLM links across
+  re-scans.
+- `relates_to` pointer resolution tries resource-prefixed forms: fed
+  documents promote `workspace/<relpath>` resources, so a bare
+  repo-relative pointer (e.g. `docs/adr-0001-postgres.md` or a sibling
+  fed file's name) resolves through its prefixed resource and indexes as
+  a declared edge — in the rebuild and in the ingest dry-run alike —
+  instead of dangling silently; genuinely unresolvable pointers still
+  warn by name.
 - CLI (`cairn dataflow lookup`): the subcommand registers under its documented
   name (Click had derived `dataflow-lookup` from the function name, so the
   documented `cairn dataflow lookup` form was not invokable); the shipped

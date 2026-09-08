@@ -421,14 +421,31 @@ def knowledge_search(query, limit, threshold, as_json, db):
 @click.option("--type", "doc_type", default=None)
 @click.option("--status", default=None)
 @click.option("--tag", default=None)
-def knowledge_list(doc_type, status, tag):
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit JSON rows (concept_id, title, doc_type, doc_status).")
+def knowledge_list(doc_type, status, tag, as_json):
     """List knowledge documents."""
-    from cairn.knowledge.store import list_documents
+    from cairn.knowledge.store import list_documents, normalize_doc_id
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
 
     bundle = OKFBundle(str(resolve_store().knowledge))
     docs = list_documents(bundle, doc_type=doc_type, status=status, tag=tag)
+    if as_json:
+        rows = []
+        for c in docs:
+            concept_id = normalize_doc_id(bundle, c.concept_id)
+            parts = concept_id.split("/")
+            rows.append(
+                {
+                    "concept_id": concept_id,
+                    "title": c.title,
+                    "doc_type": parts[1] if len(parts) > 2 else "",
+                    "doc_status": c.extensions.get("doc_status"),
+                }
+            )
+        click.echo(json.dumps(rows, indent=2, default=str))
+        return
     if not docs:
         click.echo("No knowledge documents found.")
         return

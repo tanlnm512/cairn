@@ -20,7 +20,9 @@ rebuild (``dangling`` in the return dict) and by the ingest dry-run
 index is visible instead of silent. A pointer that is not a concept
 id may still name its target by source path: ingest records that path as
 the promoted doc's ``resource``, so such pointers resolve through the
-bundle's resource map. A pair that already has a
+bundle's resource map -- as the bare path, or in its resource-prefixed
+form (fed documents promote ``workspace/<relpath>`` resources, so a bare
+repo-relative pointer names the same file). A pair that already has a
 declared edge in either direction gets no derived rows -- the explicit
 record wins.
 
@@ -258,16 +260,13 @@ def _frontmatter_edges(
     doc_ids: Set[str],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
     """Declared edges for the relates_to entries whose target resolves,
-    plus the dangling pointers that matched neither a concept id nor a
-    resource path (returned so callers can surface the failed index
-    instead of leaving it silent).
+    plus the dangling pointers that matched nothing (returned so callers
+    can surface the failed index instead of leaving it silent).
 
-    A pointer resolves as a bare/path-shaped concept_id; failing that, as
-    the source document named by a promoted doc's ``resource`` path
-    (ingest stores the source path there), so author-declared links written
-    before concept ids existed still index as declared edges. A pointer
-    that resolves to the declaring doc itself produces no edge and is not
-    dangling.
+    Pointer resolution is shared with the ingest dry-run
+    (:func:`_resolve_pointer`), so a link the dry run resolves is the link
+    the rebuild indexes. A pointer that resolves to the declaring doc
+    itself produces no edge and is not dangling.
     """
     from cairn.knowledge.relationships import normalize_relationships
 
@@ -279,14 +278,10 @@ def _frontmatter_edges(
             concept.extensions.get("relates_to")
         ):
             pointer = str(entry.get("concept_id") or "").strip()
-            related = normalize_doc_id(bundle, pointer)
-            if related not in doc_ids or related == doc_id:
-                # Fallback: the pointer may name the source document by path
-                # (ingest records that path as the promoted doc's resource).
-                candidate = resources.get(pointer.lstrip("/"))
-                if candidate is not None:
-                    related = candidate
-            if related not in doc_ids:
+            related = _resolve_pointer(
+                bundle, pointer, doc_ids, resources, doc_id
+            )
+            if related is None:
                 dangling.append({"doc_id": doc_id, "concept_id": pointer})
                 continue
             if related == doc_id:
@@ -301,18 +296,53 @@ def _frontmatter_edges(
     return edges, dangling
 
 
+def _resolve_pointer(
+    bundle: OKFBundle,
+    pointer: str,
+    doc_ids: Set[str],
+    resources: Dict[str, str],
+    self_id: str,
+) -> Optional[str]:
+    """Resolved doc id for one relates_to pointer; None when dangling.
+
+    Resolution tries, in order: the pointer as a concept id, the pointer
+    as a recorded resource path (ingest records the source path as the
+    promoted doc's ``resource``), and resource-prefixed forms of the
+    pointer -- fed documents promote ``workspace/<relpath>`` resources,
+    so a bare repo-relative pointer names the same file as its prefixed
+    resource; the shortest matching resource wins. A pointer resolving
+    to the declaring doc itself returns ``self_id``: the caller records
+    neither an edge nor a dangling warning for it.
+    """
+    related = normalize_doc_id(bundle, pointer)
+    if related not in doc_ids or related == self_id:
+        candidate = resources.get(pointer.lstrip("/"))
+        if candidate is None:
+            bare = pointer.lstrip("/")
+            prefixed = sorted(
+                (resource for resource in resources if resource.endswith(f"/{bare}")),
+                key=lambda resource: (len(resource), resource),
+            )
+            if prefixed:
+                candidate = resources[prefixed[0]]
+        if candidate is not None:
+            related = candidate
+    return related if related in doc_ids else None
+
+
 def dangling_manifest_pointers(
     bundle: OKFBundle, rows: List[Dict[str, Any]]
 ) -> List[Dict[str, str]]:
     """Dangling relates_to pointers across staged manifest rows (dry run).
 
-    Applies the rebuild's resolution to a not-yet-written manifest: a
-    pointer resolves when its normalized id names a knowledge concept --
-    promoted in the store, or staged by this same run -- or when it names
-    a source document by path (a promoted doc's recorded ``resource``, or
-    a staged row's ``source_path``, which becomes the promoted doc's
-    resource). Anything else is dangling: it stays frontmatter-only and
-    never indexes. Each row carries ``{doc_id, concept_id}`` with
+    Applies the rebuild's resolution (:func:`_resolve_pointer`) to a
+    not-yet-written manifest: a pointer resolves when its normalized id
+    names a knowledge concept -- promoted in the store, or staged by this
+    same run -- or when it names a source document by path (a promoted
+    doc's recorded ``resource``, a staged row's ``source_path`` which
+    becomes the promoted doc's resource, or that path in resource-
+    prefixed form). Anything else is dangling: it stays frontmatter-only
+    and never indexes. Each row carries ``{doc_id, concept_id}`` with
     ``doc_id`` the row's source_path. Deterministic: manifest row order,
     declaration order within a row.
     """
@@ -340,13 +370,10 @@ def dangling_manifest_pointers(
         source = str(row.get("source_path") or self_id)
         for entry in normalize_relationships(list(row.get("relationships") or [])):
             pointer = str(entry.get("concept_id") or "").strip()
-            related = normalize_doc_id(bundle, pointer)
-            if related not in doc_ids or related == self_id:
-                # Fallback: the pointer may name a source document by path.
-                candidate = resources.get(pointer.lstrip("/"))
-                if candidate is not None:
-                    related = candidate
-            if related not in doc_ids:
+            related = _resolve_pointer(
+                bundle, pointer, doc_ids, resources, self_id
+            )
+            if related is None:
                 dangling.append({"doc_id": source, "concept_id": pointer})
     return dangling
 

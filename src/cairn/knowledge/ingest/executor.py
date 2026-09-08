@@ -29,9 +29,16 @@ def execute_manifest(manifest: dict, conn) -> dict:
     bundle = OKFBundle(str(store.knowledge))
 
     accepted = [row for row in manifest.get("rows", []) if "skip" not in row]
+    # Pre-write state for the count verify leg and the inferred-link merge:
+    # add_document overwrites in place, so the post-write store holds the
+    # pre-existing docs not rewritten by this batch plus the accepted rows.
+    pre_ids = _pre_existing_docs(bundle)
     written: list[str] = []
+    overwritten = 0
     verified_refs_total = 0
     for row in sorted(accepted, key=lambda r: (r.get("repo", ""), r.get("source_path", ""))):
+        if row["concept_id"] in pre_ids:
+            overwritten += 1
         verified_refs = resolve_doc_refs(conn, row["body"])
         verified_refs_total += len(verified_refs)
         written.append(
@@ -46,9 +53,9 @@ def execute_manifest(manifest: dict, conn) -> dict:
                 resource=row.get("resource") or None,
                 description=row.get("description") or None,
                 doc_source="imported",
-                relationships=list(row["relationships"])
-                if row.get("relationships")
-                else None,
+                relationships=_merge_existing_inferred(
+                    bundle, row["concept_id"], row.get("relationships")
+                ),
                 verified_refs=verified_refs,
             )
         )
@@ -87,31 +94,98 @@ def execute_manifest(manifest: dict, conn) -> dict:
         "doc_link_tasks": doc_link_tasks,
         "dangling_pointers": index.get("dangling", []),
     }
-    report.update(verify_manifest(manifest, conn))
+    report.update(
+        verify_manifest(
+            manifest, conn,
+            pre_existing=len(pre_ids), overwritten=overwritten,
+        )
+    )
     return report
 
 
-def verify_manifest(manifest: dict, conn=None) -> dict:
+def _pre_existing_docs(bundle: OKFBundle) -> set:
+    """Bare concept_ids in the bundle before this run writes (empty when
+    the store is fresh)."""
+    from cairn.knowledge.store import normalize_doc_id
+
+    if not bundle.root.exists():
+        return set()
+    return {
+        normalize_doc_id(bundle, cid)
+        for cid in bundle.list_concepts(prefix="knowledge/")
+    }
+
+
+def _merge_existing_inferred(
+    bundle: OKFBundle, concept_id: str, declared
+) -> list:
+    """Declared relationships plus the concept's existing ``kind: inferred``
+    entries.
+
+    ``add_document`` rewrites the promoted concept from source, so a
+    re-ingest without this merge would wipe critic-approved inferred
+    links -- frontmatter is the durable record, and the merge keeps it
+    intact across re-scans (the post-write rebuild re-indexes the entries
+    from the merged frontmatter). Declared entries come first, so a pair
+    the source declares keeps its source kind; dedupe is on
+    ``(concept_id, relation, kind)``. A concept the store does not have
+    yet merges nothing.
+    """
+    from cairn.knowledge.relationships import INFERRED, normalize_relationships
+
+    merged = normalize_relationships(list(declared or []))
+    if not bundle.root.exists():
+        return merged
+    try:
+        existing = bundle.read_concept(concept_id)
+    except Exception:
+        return merged
+    inferred = [
+        entry
+        for entry in normalize_relationships(
+            existing.extensions.get("relates_to")
+        )
+        if entry.get("kind") == INFERRED
+    ]
+    return normalize_relationships(merged + inferred)
+
+
+def verify_manifest(
+    manifest: dict,
+    conn=None,
+    pre_existing: int | None = None,
+    overwritten: int = 0,
+) -> dict:
     """Post-write checks: count vs manifest, OKF validation, smoke search.
 
     Three verify legs (FR-008/TC-024): the store's document count must
-    EQUAL the manifest's accepted count, the ``cairn validate`` OKF-
-    conformance check must pass (run in-process, no subprocess), and a
-    smoke search must hit. Safe to run before any write: an absent store
-    reports zeros, a failed validation, and no smoke hit rather than
-    creating anything.
+    EQUAL the expected population -- ``pre_existing + accepted -
+    overwritten`` when the caller supplies the executor's pre-write state
+    (``add_document`` overwrites in place, so a fully-successful run
+    leaves the store holding exactly that many docs, incremental or not),
+    or the manifest's accepted count alone when they are absent
+    (standalone, pre-write use: a store not holding exactly the batch is
+    a mismatch). The ``cairn validate`` OKF-conformance check must pass
+    (run in-process, no subprocess), and a smoke search must hit. Safe to
+    run before any write: an absent store reports zeros, a failed
+    validation, and no smoke hit rather than creating anything.
     """
     from cairn.knowledge.store import list_documents
     from cairn.okf.bundle import OKFBundle
     from cairn.paths import resolve_store
 
     accepted = [row for row in manifest.get("rows", []) if "skip" not in row]
+    expected = (
+        len(accepted)
+        if pre_existing is None
+        else pre_existing + len(accepted) - overwritten
+    )
     store = resolve_store()
     validated = _validate_leg(store)
     if not store.knowledge.exists():
         return {
             "store_count": 0,
-            "expected_count": len(accepted),
+            "expected_count": expected,
             # Equality contract (TC-024): an absent store under-wrote.
             "count_ok": False,
             "smoke_search_hit": False,
@@ -129,10 +203,11 @@ def verify_manifest(manifest: dict, conn=None) -> dict:
 
     return {
         "store_count": len(docs),
-        "expected_count": len(accepted),
-        # Strict equality (US5-AC1/TC-024): `>=` would mask an under-write
-        # on a pre-populated store.
-        "count_ok": len(docs) == len(accepted),
+        "expected_count": expected,
+        # Strict equality against the whole-store expectation: `>=` would
+        # mask an under-write, and a batch-only figure would fail every
+        # fully-successful run into a store that already holds documents.
+        "count_ok": len(docs) == expected,
         "smoke_search_hit": smoke_hit,
         **validated,
     }
