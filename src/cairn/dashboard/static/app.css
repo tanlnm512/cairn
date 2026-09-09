@@ -145,7 +145,6 @@ a:focus {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /* ---- App shell: sidebar + topbar + main ---- */
@@ -450,8 +449,11 @@ body.app-shell {
   font-size: 0.95rem;
 }
 
-.palette-card input:focus {
-  outline: none;
+/* The card's overflow clips an outward ring, so the input's ring sits
+   inside its own box. */
+.palette-card input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .palette-card ul {
@@ -750,9 +752,10 @@ body.app-shell {
   color: var(--text-3);
 }
 
+/* Intent tint only — the focus outline itself is never removed (the
+   global :focus-visible ring is the keyboard location feedback). */
 .filter-bar input:focus,
 .filter-bar select:focus {
-  outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
@@ -1637,4 +1640,34 @@ a.code-ref:focus code {
   padding: 6px 12px;
   color: var(--text-3);
   font-size: 0.8rem;
+}
+
+/* ---- Reduced motion ---- */
+
+/* prefers-reduced-motion: reduce collapses the UI's motion to ~zero —
+   scrolling stops smoothing, every transition/animation completes in
+   0s with no delay, loops do not repeat — while the underlying
+   behavior (toggles, hovers, htmx swaps) is unchanged. The !important
+   guards are load-bearing: a bare universal rule loses to any
+   single-class transition/animation declaration. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* The live-refresh pulse loops forever by design; stop it outright
+     instead of running a zero-length loop. */
+  #live-controls:not([hidden])::before {
+    animation: none !important;
+  }
 }

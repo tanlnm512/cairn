@@ -49,6 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the selected store riding the request). Keyboard behavior is
   unchanged: Ctrl/Cmd+K toggles, arrows move the active row, Enter
   navigates.
+- Accessibility pass over the dashboard shell and views. Keyboard focus
+  is always visible: the global `:focus-visible` ring (2px accent
+  outline) stands everywhere, the shared filter-bar inputs keep the ring
+  alongside their focus tint, the palette search input carries an inset
+  ring (the card clips an outward one) plus an `aria-label`, and no
+  stylesheet rule removes the focus outline. Every icon-only button
+  exposes a non-empty accessible name (theme toggle and sidebar collapse
+  already flip their labels with state), pinned by a hermetic sweep over
+  all fourteen main views. `prefers-reduced-motion: reduce` collapses
+  motion to ~zero — transitions/animations run at 0s, smooth scrolling
+  stops, the live-refresh pulse stops outright — while toggles, palette,
+  and htmx swaps behave as before. The shared table macro's real table
+  semantics (`thead`/`tbody`, `<th scope="col">`) are pinned by test.
 
 ### Added
 - Vendored the dashboard's interaction stack as static assets (zero CDN,
