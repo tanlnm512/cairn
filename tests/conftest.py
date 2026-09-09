@@ -46,6 +46,11 @@ def _hermetic_env(monkeypatch, tmp_path):
 
     * HOME/CAIRN_HOME point into the test's tmp sandbox (Path.home patched).
     * No CAIRN_* env leaks between tests (all cleared each run).
+    * paths.py's import-time stores layout (CAIRN_HOME, REGISTRY_FILE,
+      CONFIG_FILE, SHARED_LIB) is re-pointed into the sandbox as a group, so
+      call-time readers of those attributes (the dashboard's store
+      enumeration, register_workspace's registry writes) never see or touch
+      the real machine's stores.
     * Agent CLIs are invisible to shutil.which (detection then depends only on
       what the test explicitly creates).
     * The macOS /Applications/Cursor.app probe (agent_install.detect) resolves
@@ -64,12 +69,19 @@ def _hermetic_env(monkeypatch, tmp_path):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("CAIRN_HOME", str(sandbox_cairn))
 
-    # The config-file layer binds its path at import (the CAIRN_HOME
-    # import-time binding pit): re-point it into the sandbox so a real
-    # ~/.cairn/config.json on a dev machine cannot leak into suites.
+    # paths.py derives its whole stores layout from the import-time
+    # CAIRN_HOME binding (the same pit CONFIG_FILE patches below). Every
+    # derived attribute is re-pointed as a group: consumers read them at
+    # call time (the dashboard enumerates stores via paths.CAIRN_HOME on
+    # every render; _save_registry writes REGISTRY_FILE), so leaving any
+    # one bound to the real home leaks the machine's real stores into
+    # rendered pages or redirects a test's registry write into ~/.cairn.
     from cairn import paths as _paths
 
+    monkeypatch.setattr(_paths, "CAIRN_HOME", sandbox_cairn)
+    monkeypatch.setattr(_paths, "REGISTRY_FILE", sandbox_cairn / "workspaces.json")
     monkeypatch.setattr(_paths, "CONFIG_FILE", sandbox_cairn / "config.json")
+    monkeypatch.setattr(_paths, "SHARED_LIB", sandbox_cairn / "lib")
     _paths.reset_config_cache()
 
     real_which = shutil.which

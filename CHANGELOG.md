@@ -215,6 +215,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- The suite-wide hermetic test fixture re-points cairn.paths' import-time
+  stores-root bindings (`CAIRN_HOME`, `REGISTRY_FILE`, `SHARED_LIB` along
+  with the already-patched `CONFIG_FILE`) into the per-test sandbox. paths
+  consumers read these module attributes at call time, so unpatched, tests
+  running on a developer machine rendered the real `~/.cairn` stores into
+  dashboard pages (store switcher, `/workspaces`) and a workspace
+  registration wrote the real registry; renders and writes now enumerate
+  and land only in the test sandbox. A regression test pins the contract:
+  rendered dashboard pages carry exactly the sandbox's store keys.
 - `relates_to` basename pointers resolve only a UNIQUE resource match: a
   pointer like `target.md` whose basename matches several promoted
   resources (`docs/target.md`, `archive/target.md`, …) previously
