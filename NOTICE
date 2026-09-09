@@ -148,6 +148,18 @@ src/cairn/dashboard/static/alpine-morph.js. The extension ships with the
 htmx project; its package manifest declares no separate license, and the
 htmx project license (Zero-Clause BSD) governs upstream.
 
+Mermaid (https://mermaid.js.org / https://github.com/mermaid-js/mermaid),
+Copyright (c) 2014-2026 Knut Sveidqvist and mermaid contributors. The
+official ESM browser distribution is vendored at pinned version 11.17.2
+(jsDelivr npm dist files, downloaded 2026-09-09) at
+src/cairn/dashboard/static/mermaid.min.js (the mermaid.esm.min.mjs entry,
+sha256
+462d6f73fc9833044bca6dc08e62e0ee83f5a2b09583f588f95d5fd91b1960ed) together
+with its content-hash-named chunk files under
+src/cairn/dashboard/static/chunks/mermaid.esm.min/ (the entry's relative
+imports resolve there; the chunks are carried unmodified). Licensed under
+the MIT License.
+
 ================================================================================
 Vendored content (Kotlin grammar)
 ================================================================================

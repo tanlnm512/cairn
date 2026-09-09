@@ -4236,8 +4236,10 @@ def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     assert '<pre class="mermaid">' in resp.text
     assert "src/demo/core.py" in resp.text  # the sources list
     assert "demo_main" in resp.text
-    # Live mermaid: the detail view loads mermaid.js client-side.
-    assert 'cdn.jsdelivr.net/npm/mermaid@11' in resp.text
+    # Live mermaid: the fence page dynamic-imports the vendored bundle —
+    # exactly one loader, zero CDN references.
+    assert resp.text.count("/static/mermaid.min.js?v=") == 1
+    assert "jsdelivr" not in resp.text
     # Breadcrumb + prev/next navigation (viz-module is the next promoted
     # page in manifest order; overview is first, so no prev).
     assert 'href="/wiki?repo=demo"' in resp.text
@@ -4249,6 +4251,43 @@ def test_wiki_page_route_unknown_page_returns_404(tmp_path):
     client = _wiki_client(tmp_path)
     assert client.get("/wiki/no-such-page").status_code == 404
     assert client.get("/wiki/demo/no-such-page").status_code == 404
+
+
+def test_wiki_page_without_fences_skips_the_mermaid_loader(tmp_path):
+    """A fence-free wiki page carries no mermaid asset reference — the
+    vendored bundle is requested only by pages holding a mermaid fence."""
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    client = _wiki_client(tmp_path)
+    kdir = tmp_path / "knowledge"
+    # Re-promote viz-module with a fence-free body (same input_hash as the
+    # manifest row keeps it non-stale).
+    (kdir / "wiki" / "pages" / "demo" / "viz-module.md").unlink()
+    OKFBundle(str(kdir)).write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki: viz-module",
+            description="Wiki article for demo/viz-module",
+            resource="viz-module",
+            tags=["demo", "wiki"],
+            timestamp="2026-08-30T10:00:00Z",
+            concept_id="wiki/pages/demo/viz-module",
+            sources=_WIKI_SOURCES,
+            body="Plain prose only; this page has no diagram fence.\n",
+            extensions={
+                "page_id": "viz-module",
+                "input_hash": "hash-viz-module",
+            },
+        )
+    )
+
+    resp = client.get("/wiki/demo/viz-module")
+
+    assert resp.status_code == 200
+    assert "no diagram fence" in resp.text  # the fence-free body rendered
+    assert "mermaid.min.js" not in resp.text
+    assert "jsdelivr" not in resp.text
 
 
 # --- wiki staleness badges (FR-007 / TC-019 / TC-020) -------------------------

@@ -112,6 +112,84 @@ def test_static_mount_serves_vendored_assets(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Vendored mermaid (wiki fence rendering) — pinned build + lazy-load guard
+# ---------------------------------------------------------------------------
+
+_MERMAID_VERSION = "11.17.2"
+# The ESM distribution's entry point; the chunks are content-hash-named by
+# the upstream build and pinned by the version-marker scan.
+_MERMAID_SHA256 = (
+    "462d6f73fc9833044bca6dc08e62e0ee83f5a2b09583f588f95d5fd91b1960ed"
+)
+
+
+def test_vendored_mermaid_is_the_pinned_build():
+    """The mermaid ESM entry is present and is the pinned build, and the
+    pinned version marker survives in the vendored tree — a swapped or
+    truncated file fails here, not in the browser."""
+    import hashlib
+
+    static = _static_dir()
+    entry = static / "mermaid.min.js"
+    assert entry.is_file()
+    assert entry.read_bytes().startswith(b"import")  # ESM, not the UMD build
+    assert hashlib.sha256(entry.read_bytes()).hexdigest() == _MERMAID_SHA256
+    chunks = static / "chunks" / "mermaid.esm.min"
+    assert chunks.is_dir() and any(chunks.iterdir())
+    marker = f'version:"{_MERMAID_VERSION}"'
+    vendored = [entry, *chunks.iterdir()]
+    assert any(
+        marker in p.read_text(encoding="utf-8", errors="replace")
+        for p in vendored
+    )
+
+
+def test_vendored_mermaid_has_no_external_imports():
+    """Zero-network at the source level: the entry and every chunk import
+    only relative paths — no import specifier targets another host."""
+    import re
+
+    static = _static_dir()
+    paths = [static / "mermaid.min.js",
+             *(static / "chunks" / "mermaid.esm.min").iterdir()]
+    for path in paths:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        specs = re.findall(r'(?:from|import)"([^"]+)"', text)
+        for spec in specs:
+            assert not spec.startswith(("http:", "https:")), (path.name, spec)
+
+
+def test_vendored_mermaid_served_from_static(tmp_path):
+    """The entry and the chunk tree the entry imports both serve from
+    /static/ as JavaScript — a missing chunk breaks the import at runtime,
+    not at build time."""
+    client = _client(tmp_path)
+    resp = client.get("/static/mermaid.min.js")
+    assert resp.status_code == 200
+    assert "javascript" in resp.headers["content-type"]
+    assert len(resp.content) > 0
+    chunks = sorted(
+        p.name for p in
+        (_static_dir() / "chunks" / "mermaid.esm.min").iterdir()
+    )
+    assert chunks
+    for name in chunks[:3]:
+        chunk = client.get(f"/static/chunks/mermaid.esm.min/{name}")
+        assert chunk.status_code == 200, name
+        assert "javascript" in chunk.headers["content-type"], name
+
+
+def test_mermaid_is_lazy_never_a_shell_asset(tmp_path):
+    """The shell never loads mermaid — the bundle is requested only by
+    fence-bearing wiki detail pages, so the landing view must not
+    reference the asset at all (page DATA may legitimately contain the
+    word, e.g. a workspace path — only asset references are pinned)."""
+    html = _client(tmp_path).get("/").text
+    assert "mermaid.min.js" not in html
+    assert "jsdelivr" not in html
+
+
+# ---------------------------------------------------------------------------
 # Local-only script graph across every main view
 # ---------------------------------------------------------------------------
 

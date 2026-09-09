@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Vendored Mermaid 11.17.2 (`mermaid.min.js`, MIT) as the dashboard's last
+  external asset: the wiki detail view now loads it from `/static/` via a
+  lazy dynamic `import()` that ships only on pages holding a mermaid fence
+  (replacing the jsDelivr CDN import), so fence-free wiki pages make no
+  mermaid request and the dashboard is fully offline at runtime. Fences
+  render explicitly via `mermaid.run()` after the late import (startOnLoad
+  off), with the code block kept as the no-JS/unavailable fallback.
+
 ### Changed
 - The dashboard's list views filter and live-refresh through htmx
   fragments. Filter forms on `/history`, `/tasks`, and `/wiki` are htmx

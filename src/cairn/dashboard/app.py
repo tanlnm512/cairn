@@ -920,6 +920,9 @@ def create_app(
             {
                 "page": page,
                 "prev": prev_page,
+                # The renderer emits <pre class="mermaid"> for mermaid
+                # fences; only those pages ship the client-side loader.
+                "has_mermaid": 'class="mermaid"' in page["html"],
                 "next": next_page,
                 "store_key": store_key,
             },
