@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-# The fourteen main views (same inventory the asset tests crawl).
+# The fifteen main views (same inventory the asset tests crawl).
 _MAIN_VIEWS = (
     "/",
     "/workspaces",
@@ -30,6 +30,7 @@ _MAIN_VIEWS = (
     "/tokens",
     "/chains",
     "/health",
+    "/knowledge",
     "/memory",
     "/tasks",
     "/wiki",
@@ -186,11 +187,12 @@ def test_filter_bar_controls_carry_matched_line_height(tmp_path):
 
 
 def test_filter_forms_render_the_shared_filter_bar(tmp_path):
-    """The hand-rolled filter forms are gone: history, tasks, and wiki
-    render their controls from the shared filter bar class, and the
-    legacy graph-controls class no longer appears on any main view."""
+    """The hand-rolled filter forms are gone: history, tasks, wiki, and
+    the knowledge catalog render their controls from the shared filter
+    bar class, and the legacy graph-controls class no longer appears on
+    any main view."""
     client = _seeded_client(tmp_path)
-    for path in ("/history", "/tasks", "/wiki"):
+    for path in ("/history", "/tasks", "/wiki", "/knowledge"):
         resp = client.get(path)
         assert resp.status_code == 200, path
         assert 'class="filter-bar"' in resp.text, path
@@ -262,7 +264,7 @@ def test_main_views_carry_no_inline_style_blocks(tmp_path):
 
 
 def test_every_main_view_renders_the_restyled_shell(tmp_path):
-    """All fourteen main views return 200 and render the shared shell —
+    """All fifteen main views return 200 and render the shared shell —
     sidebar, topbar, and a non-empty main region — on the token-driven
     stylesheet (no blank or unstyled views)."""
     client = _client(tmp_path)

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% import "_links.html" as links with context %}
+{% block title %}{{ doc.title }} — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <nav class="wiki-breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ links.url('/knowledge') }}">Knowledge</a> /
+    <span>{{ doc.title }}</span>
+  </nav>
+  <h1>{{ doc.title }}</h1>
+  <p>
+    {% if doc.family %}<span class="badge badge-{{ doc.family }}">{{ doc.family }}</span> {% endif %}
+    <span class="badge badge-{{ doc.status }}">{{ doc.status }}</span>
+  </p>
+  <div class="wiki-body">
+    {{ doc.html | safe }}
+  </div>
+</section>
+{% endblock %}

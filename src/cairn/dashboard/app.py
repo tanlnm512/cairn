@@ -46,6 +46,13 @@ TASK_STATUSES = ("pending", "in-progress", "done", "failed")
 # filter's allowed values.
 MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
 
+# The ingest classifier's doc families (knowledge/ingest/classifier.py)
+# — the /knowledge family filter's seed vocabulary. Rows carry whatever
+# family their concept id names (knowledge/<family>/<slug>), so a doc
+# under a custom type still lists; the route extends the options with
+# any family the corpus actually contains.
+KNOWLEDGE_FAMILIES = ("business-rule", "decision", "spec", "workflow")
+
 # Traffic-view time-window presets (FR-002) — the ``window`` param's
 # allowed values; "all" is the unbounded default.
 WINDOW_PRESETS = ("24h", "7d", "30d", "all")
@@ -267,6 +274,7 @@ def create_app(
         get_database_schema,
         get_graph,
         get_health,
+        get_knowledge_doc,
         get_read_only_db,
         get_recent_memories,
         get_session_chains,
@@ -276,6 +284,7 @@ def create_app(
         get_wiki_pages,
         inspect_symbol,
         list_history,
+        list_knowledge_docs,
         list_projects,
         prewarm_probes,
         symbol_candidates,
@@ -285,6 +294,7 @@ def create_app(
     from .shell import shell_context
     from .. import paths
     from ..graph import embed_ladder, embeddings
+    from ..knowledge.store import DOC_STATUSES
     from ..paths import default_knowledge_path
     from ..viz import query as viz_query
 
@@ -836,6 +846,83 @@ def create_app(
             )
         return render(request, "tasks.html", context)
 
+    def knowledge_catalog(request: Request) -> Response:
+        """The knowledge catalog: every stored doc once, filterable by
+        family/status/tag. Filters, read like every other view's params:
+        absent or blank means no filter; a value outside the vocabulary
+        (the classifier's families + the corpus's statuses) falls back to
+        no filter (silent fallback, matching the tasks/wiki filters).
+        The options always offer every family/status the corpus contains,
+        so a doc under a custom type stays reachable from the filter."""
+        family = request.query_params.get("family", "all").strip() or "all"
+        status = request.query_params.get("status", "all").strip() or "all"
+        tag = request.query_params.get("tag", "").strip()
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            result = list_knowledge_docs(
+                conn,
+                selected_knowledge,
+                family=None if family == "all" else family,
+                status=None if status == "all" else status,
+                tag=tag or None,
+            )
+        finally:
+            conn.close()
+        context = {
+            "docs": result["docs"],
+            "families": result["families"],
+            "statuses": result["statuses"],
+            "total": result["total"],
+            "family": family,
+            "status": status,
+            "tag": tag,
+            "family_options": sorted(
+                set(KNOWLEDGE_FAMILIES) | set(result["families"])
+            ),
+            "status_options": sorted(set(DOC_STATUSES) | set(result["statuses"])),
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the filter form's results region only.
+            return templates.TemplateResponse(
+                request, "knowledge_results.html", context
+            )
+        return render(request, "knowledge.html", context)
+
+    def knowledge_doc(request: Request) -> Response:
+        """One doc's detail page at /knowledge/{family}/{slug} — the bare
+        concept id's two variable segments. The doc's identity + rendered
+        body come from get_knowledge_doc (None = the plain not-found
+        page, out-of-namespace resolutions included); the relationship
+        panel rides the same store the catalog's counts read."""
+        from starlette.responses import HTMLResponse
+
+        doc_id = "knowledge/{family}/{slug}".format(
+            family=request.path_params["family"],
+            slug=request.path_params["slug"],
+        )
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        doc = get_knowledge_doc(selected_knowledge, doc_id)
+        if doc is None:
+            return HTMLResponse(
+                "<html><head><title>cairn dashboard</title></head><body>"
+                "<h1>Knowledge document not found</h1>"
+                "<p>No knowledge document exists at this id.</p>"
+                '<p><a href="/knowledge">Back to the catalog</a></p>'
+                "</body></html>",
+                status_code=404,
+            )
+        return render(
+            request,
+            "knowledge_doc.html",
+            {"doc": doc, "store_key": store_key},
+        )
+
     def wiki(request: Request) -> Response:
         # Catalog filters, read like every other view's params: absent or
         # blank means no filter; ``state`` outside the derived vocabulary
@@ -1222,6 +1309,16 @@ def create_app(
         Route("/health", health, name="health"),
         Route("/memory", memory, name="memory"),
         Route("/tasks", tasks, name="tasks"),
+        # The knowledge catalog; /knowledge/{family}/{slug} is the bare
+        # concept id's two variable segments — a single path param never
+        # matches "/", so a sibling one-segment route (/knowledge/graph)
+        # can never shadow these and vice versa.
+        Route("/knowledge", knowledge_catalog, name="knowledge"),
+        Route(
+            "/knowledge/{family}/{slug}",
+            knowledge_doc,
+            name="knowledge_doc",
+        ),
         Route("/wiki", wiki, name="wiki"),
         # Repo-qualified canonical URL first; the one-segment legacy route
         # follows as a redirect (a single path param never matches two

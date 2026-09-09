@@ -1130,14 +1130,16 @@ code {
 }
 
 .badge-ok,
-.badge-done {
+.badge-done,
+.badge-active {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 32%, transparent);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
 
 .badge-warn,
-.badge-partial {
+.badge-partial,
+.badge-superseded {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 32%, transparent);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
@@ -1157,15 +1159,32 @@ code {
   background: var(--accent-soft);
 }
 
-/* Memory/knowledge types (decision, pattern, mistake, workaround):
-   purple distinguishes them from operational statuses. */
+/* Memory/knowledge concept types (memories: decision, pattern, mistake,
+   workaround; knowledge doc families: decision, spec, workflow,
+   business-rule): purple distinguishes them from operational statuses. */
 .badge-decision,
+.badge-spec,
+.badge-workflow,
+.badge-business-rule,
 .badge-pattern,
 .badge-mistake,
 .badge-workaround {
   color: var(--accent-hover);
   border-color: color-mix(in srgb, var(--accent-hover) 32%, transparent);
   background: color-mix(in srgb, var(--accent-hover) 12%, transparent);
+}
+
+/* Knowledge catalog rows link wholesale: the title anchor's hit area
+   stretches over its row, so a click anywhere on the row opens the doc;
+   the keyboard focus ring stays on the anchor's own box. */
+#knowledge-results .data-table tbody tr {
+  position: relative;
+}
+
+#knowledge-results .data-table tbody tr td:first-child a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
 }
 
 /* ---- Cards & stat tiles ---- */

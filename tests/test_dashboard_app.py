@@ -96,10 +96,10 @@ def test_create_app_serves_landing_and_static(tmp_path):
     assert "Cairn Dashboard" in landing.text
     assert db_path in landing.text
     # Every sidebar view is reachable from the launcher grid, including
-    # the two newest sections.
+    # the newest sections.
     for href in ("/workspaces", "/projects", "/graph", "/history", "/tokens",
-                 "/chains", "/health", "/memory", "/wiki", "/tasks",
-                 "/embeddings", "/settings"):
+                 "/chains", "/health", "/knowledge", "/memory", "/wiki",
+                 "/tasks", "/embeddings", "/settings"):
         assert f'href="{href}"' in landing.text, href
 
     css = client.get("/static/app.css")
@@ -2821,6 +2821,7 @@ def test_sidebar_renders_grouped_nav_from_shell_sections(tmp_path, monkeypatch):
     for view_id, label in (
         ("projects", "Projects"),
         ("graph", "Graph"),
+        ("knowledge", "Knowledge"),
         ("wiki", "Wiki"),
         ("memory", "Memory"),
         ("tasks", "Tasks"),
@@ -2887,8 +2888,12 @@ def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
         ).group(1)
     )
     by_label = {v["label"]: v["href"] for v in seed["views"]}
-    assert len(by_label) == 13
+    assert len(by_label) == 15  # 14 nav views + the palette-only graph view
     assert by_label["Graph"] == f"/graph?store={_SW_KEY_A}"
+    # The knowledge family: the catalog in the sidebar, the graph view
+    # palette-only (one sidebar entry per surface family).
+    assert by_label["Knowledge"] == f"/knowledge?store={_SW_KEY_A}"
+    assert by_label["Knowledge Graph"] == f"/knowledge/graph?store={_SW_KEY_A}"
     assert [w["key"] for w in seed["workspaces"]] == [_SW_KEY_A, _SW_KEY_B]
 
 
@@ -2922,21 +2927,23 @@ def test_command_palette_dialog_markup_with_htmx_input(tmp_path, monkeypatch):
 
 def test_palette_results_empty_query_serves_the_seed_rows(tmp_path, monkeypatch):
     """An empty query returns the unfiltered list the palette opens with:
-    the 13 views first (store-carrying hrefs, exactly the seed
-    composition), then the populated workspaces keyed for the switch;
-    no symbols without a real query (store A has a seeded symbol)."""
+    the 14 nav views + the palette-only knowledge graph view first
+    (store-carrying hrefs, exactly the seed composition), then the
+    populated workspaces keyed for the switch; no symbols without a real
+    query (store A has a seeded symbol)."""
     client, _ = _switch_client(tmp_path, monkeypatch)
 
     resp = client.get("/palette/results", params={"store": _SW_KEY_A, "q": ""})
     assert resp.status_code == 200
     assert 'id="palette-row-0"' in resp.text
     assert f'data-href="/graph?store={_SW_KEY_A}"' in resp.text
+    assert f'data-href="/knowledge/graph?store={_SW_KEY_A}"' in resp.text
     assert f'data-store-key="{_SW_KEY_A}"' in resp.text
     assert f'data-store-key="{_SW_KEY_B}"' in resp.text
-    # 13 views + 2 populated workspaces, consecutively numbered.
-    for i in range(15):
+    # 15 view rows + 2 populated workspaces, consecutively numbered.
+    for i in range(17):
         assert f'id="palette-row-{i}"' in resp.text
-    assert 'id="palette-row-15"' not in resp.text
+    assert 'id="palette-row-17"' not in resp.text
     assert "no matches" not in resp.text
     assert "store_a_fn" not in resp.text
 

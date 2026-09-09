@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_filters.html" as forms with context %}
+{% block title %}Knowledge — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Knowledge</h1>
+  <p class="muted">Ingested documents — decisions, specs, workflows, business rules — and their relationships.</p>
+  {#- The filter form is an htmx trigger, not a page reload: a change or
+      keystroke (delay:300ms) hx-gets the route and morph-swaps the
+      results region below. It stays OUTSIDE #knowledge-results so a swap
+      can never destroy the fields being used; Apply remains the no-htmx
+      fallback. -#}
+  {{ forms.form_open('/knowledge', hx={'target': '#knowledge-results', 'trigger': 'input changed delay:300ms, change delay:300ms'}, form_id='knowledge-filters') }}
+  {{ forms.field('select', 'family', 'Family', family, options=['all'] + (family_options | list)) }}
+  {{ forms.field('select', 'status', 'Status', status, options=['all'] + (status_options | list)) }}
+  {{ forms.field('text', 'tag', 'Tag', tag, placeholder='tag') }}
+  {{ forms.form_close() }}
+  {% include "knowledge_results.html" %}
+</section>
+{% endblock %}

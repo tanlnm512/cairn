@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The dashboard gained a `/knowledge` catalog over the ingested
+  knowledge docs: every stored doc lists exactly once with its family
+  (decision / spec / workflow / business-rule), status, related-doc
+  count (from the derived `knowledge_edges` index), tags, and last
+  update. Family/status/tag filters morph-swap the results region as
+  htmx fragments (no page reload), rows link wholesale to
+  `/knowledge/{family}/{slug}` — a detail page rendering the doc's
+  title, badges, and markdown body (relationship panel follows in the
+  next knowledge view) — an empty workspace renders an explicit
+  empty state naming `cairn knowledge ingest`, and a store predating
+  the relationship index still catalogs with zero link counts. The
+  sidebar's Knowledge section leads with the catalog entry, the landing
+  grid carries a Knowledge card, and the command palette offers both
+  the catalog and a palette-only Knowledge Graph destination.
 - Vendored Mermaid 11.17.2 (`mermaid.min.js`, MIT) as the dashboard's last
   external asset: the wiki detail view now loads it from `/static/` via a
   lazy dynamic `import()` that ships only on pages holding a mermaid fence

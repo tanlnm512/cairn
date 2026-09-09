@@ -36,6 +36,7 @@ from cairn.graph.embeddings import (
 )
 from cairn.graph.reranker import reranker_available
 from cairn.graph.schema import get_db
+from cairn.knowledge.store import normalize_doc_id, resolve_knowledge_doc
 from cairn.llm.tasks import list_tasks
 from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
@@ -728,6 +729,147 @@ def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dic
         }
         for t in list_tasks(OKFBundle(knowledge_dir), status=status)
     ]
+
+
+# The ingest classifier's doc families (knowledge/ingest/classifier.py)
+# live in app.py's constants block (the app's filter vocabularies): the
+# catalog filter's seed vocabulary. Rows carry whatever family their
+# concept id names (knowledge/<family>/<slug>), so a doc added under a
+# custom type still lists — the route extends the options with any
+# family the corpus actually contains.
+
+
+def _knowledge_link_counts(conn: Optional[sqlite3.Connection]) -> Dict[str, int]:
+    """Distinct related-doc counts per bare doc id from knowledge_edges.
+
+    Both edge directions count both endpoints (a neighbor is a neighbor
+    either way). A store predating the relationship index (no
+    knowledge_edges table) counts as zero links everywhere — the catalog
+    renders, never fails, on an old DB.
+    """
+    if conn is None:
+        return {}
+    present = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'knowledge_edges'"
+    ).fetchone()[0]
+    if not present:
+        return {}
+    neighbors: Dict[str, set] = {}
+    for doc_id, related_id in conn.execute(
+        "SELECT doc_id, related_id FROM knowledge_edges"
+    ).fetchall():
+        neighbors.setdefault(doc_id, set()).add(related_id)
+        neighbors.setdefault(related_id, set()).add(doc_id)
+    return {doc_id: len(seen) for doc_id, seen in neighbors.items()}
+
+
+def _split_doc_id(doc_id: str) -> Tuple[str, str]:
+    """``knowledge/<family>/<slug>`` -> ``("<family>", "<slug>")``; a
+    two-segment id (malformed for this namespace) keeps its tail as the
+    family and an empty slug, so the row still renders."""
+    parts = doc_id.split("/")
+    if len(parts) < 3:
+        return parts[-1], ""
+    return parts[1], "/".join(parts[2:])
+
+
+def list_knowledge_docs(
+    conn: Optional[sqlite3.Connection],
+    knowledge_dir: str,
+    family: Optional[str] = None,
+    status: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> Dict:
+    """The /knowledge catalog's rows: every stored knowledge doc, once.
+
+    Joins the OKF bundle's ``knowledge/`` subtree with the derived
+    relationship index (``_knowledge_link_counts``); an unreadable
+    concept file is skipped, never fatal. Each row carries ``id`` (the
+    bare concept id), ``family``/``slug`` (the
+    ``/knowledge/{family}/{slug}`` detail href's parts), ``title``,
+    ``status``, ``tags``, ``links`` (distinct related-doc count),
+    ``source`` (the doc_source extension) and ``updated`` (concept
+    timestamp, "" when none). ``family`` / ``status`` narrow to one
+    value (None = all); ``tag`` keeps docs carrying it. ``families`` /
+    ``statuses`` total the corpus BEFORE filtering so the filters render
+    stable counts, and ``total`` is the unfiltered doc count. Rows sort
+    by family, then title.
+    """
+    bundle = OKFBundle(knowledge_dir)
+    link_counts = _knowledge_link_counts(conn)
+    docs: List[dict] = []
+    families: Dict[str, int] = {}
+    statuses: Dict[str, int] = {}
+    for cid in bundle.list_concepts(prefix="knowledge/"):
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue
+        doc_id = normalize_doc_id(bundle, cid)
+        doc_family, slug = _split_doc_id(doc_id)
+        doc_status = concept.extensions.get("doc_status") or "active"
+        families[doc_family] = families.get(doc_family, 0) + 1
+        statuses[doc_status] = statuses.get(doc_status, 0) + 1
+        if family is not None and doc_family != family:
+            continue
+        if status is not None and doc_status != status:
+            continue
+        if tag is not None and tag not in concept.tags:
+            continue
+        docs.append(
+            {
+                "id": doc_id,
+                "family": doc_family,
+                "slug": slug,
+                "title": concept.title or doc_id,
+                "status": doc_status,
+                "tags": list(concept.tags),
+                "links": link_counts.get(doc_id, 0),
+                "source": concept.extensions.get("doc_source", ""),
+                "updated": concept.timestamp or "",
+            }
+        )
+    docs.sort(key=lambda d: (d["family"], d["title"]))
+    return {
+        "docs": docs,
+        "families": families,
+        "statuses": statuses,
+        "total": sum(families.values()),
+    }
+
+
+def get_knowledge_doc(knowledge_dir: str, doc_id: str) -> Optional[dict]:
+    """One knowledge doc for the ``/knowledge/{family}/{slug}`` detail
+    page: the concept's identity plus its body through the escape-first
+    markdown renderer (``html`` + ``toc``, the wiki page's pair). None
+    when ``doc_id`` resolves to no knowledge-namespaced concept —
+    compass/wiki/memory ids resolve nothing here, the store guard's
+    namespace refusal included. The related-docs/chain panel is the
+    relationship index's job (``related_docs``/``supersede_chain``) and
+    is joined on by the caller, not here.
+    """
+    bundle = OKFBundle(knowledge_dir)
+    try:
+        concept = resolve_knowledge_doc(bundle, doc_id)
+    except ValueError:
+        return None
+    html, toc = render_markdown_with_toc(concept.body or "")
+    bare_id = normalize_doc_id(bundle, concept.concept_id)
+    family, slug = _split_doc_id(bare_id)
+    return {
+        "id": bare_id,
+        "family": family,
+        "slug": slug,
+        "title": concept.title or bare_id,
+        "status": concept.extensions.get("doc_status") or "active",
+        "tags": list(concept.tags),
+        "source": concept.extensions.get("doc_source", ""),
+        "resource": concept.resource or "",
+        "updated": concept.timestamp or "",
+        "html": html,
+        "toc": toc,
+    }
 
 
 HISTORY_PAGE_SIZE = 50
