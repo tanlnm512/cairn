@@ -3470,6 +3470,22 @@ def test_settings_get_renders_effective_values_and_env_markers(
     assert ">not set<" in resp.text
 
 
+def test_settings_numeric_knobs_carry_the_keep_current_value_hint(tmp_path):
+    """Each numeric knob row (timeout, batch) annotates that a blank
+    submit keeps the current value: the no-change semantics of an empty
+    field are visible on the page instead of silent."""
+    client = _settings_client(tmp_path)
+
+    resp = client.get("/settings")
+    assert resp.status_code == 200
+    hint = "leave empty to keep the current value"
+    # Exactly the two numeric rows carry it — no other knob does.
+    assert resp.text.count(hint) == 2
+    for knob in ("CAIRN_EMBED_TIMEOUT", "CAIRN_EMBED_SERVER_BATCH"):
+        _, _, after = resp.text.partition(f'name="{knob}"')
+        assert hint in after[:300], knob
+
+
 def test_settings_save_persists_to_config_file_and_reflects_state(
     tmp_path, monkeypatch, _isolated_embed_state
 ):

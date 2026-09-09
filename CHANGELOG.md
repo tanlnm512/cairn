@@ -244,6 +244,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- The /history tool filter narrows rows again: the filter matched the
+  stored `tool_name` column exactly, but CLI rows are stored namespaced
+  (`cli:<command_path>`, e.g. `cli:cairn build`), so every non-empty
+  value a user types — including the bare family (`cli`) — matched
+  nothing and rendered "No matching calls" while the session filter
+  worked. The filter is now a literal prefix match on the stored value
+  (exact = the whole value), so both the family and the full stored name
+  narrow rows, wildcard characters (`%`, `_`) in a typed value match
+  literally, and the `.csv`/`.json` exports ride the same semantics.
+  No-match values still render the empty state, never an error.
+- The settings page annotates its numeric knobs (timeout, server batch)
+  with "leave empty to keep the current value", making the blank-submit
+  no-change behavior visible instead of silent.
 - The suite-wide hermetic test fixture re-points cairn.paths' import-time
   stores-root bindings (`CAIRN_HOME`, `REGISTRY_FILE`, `SHARED_LIB` along
   with the already-patched `CONFIG_FILE`) into the per-test sandbox. paths

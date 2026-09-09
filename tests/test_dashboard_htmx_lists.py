@@ -101,6 +101,25 @@ def test_history_fragment_honors_filters(tmp_path):
     assert "legacy_tool" not in region
 
 
+def test_history_fragment_tool_filter_matches_prefix_of_stored_names(tmp_path):
+    """The tool filter narrows by prefix on the stored tool_name values
+    (exact = the whole value): stored CLI rows are namespaced
+    ``cli:<command_path>``, so the value a user types — the family or the
+    full stored name — must narrow the fragment's rows, never the empty
+    state."""
+    from tests.test_dashboard_app import _history_client, _refresh_region
+
+    client = _history_client(tmp_path, seed=True)
+    fragment = client.get("/history", params={"tool": "exp"}, headers=HX)
+    assert fragment.status_code == 200
+    region = _refresh_region(fragment.text)
+    assert region is not None
+    assert "explore" in region
+    assert "ask_compass" not in region
+    assert "legacy_tool" not in region
+    assert "No matching calls" not in region
+
+
 def test_tokens_and_chains_fragments_serve_their_regions(tmp_path):
     """Both remaining traffic views fragment the same way: an HX-Request
     renders #refresh-region with the view's data and none of the shell."""

@@ -926,7 +926,11 @@ def list_history(
 ) -> Dict:
     """One bounded page of tool-invocation history, newest-first (FR-001).
 
-    ``tool_name`` / ``session_id`` / ``source`` are exact-match filters
+    ``tool_name`` is a prefix match on the stored name (exact = the whole
+    value): stored names are namespaced (``cli:<command_path>`` for CLI
+    rows), so a family prefix (``cli``) and the full stored name both
+    narrow rows, and the typed value matches literally (no wildcard
+    characters). ``session_id`` / ``source`` are exact-match filters
     (None = no filter); a no-match filter is an empty page, never an
     error.
     ``since`` (epoch seconds, None = all time) windows the page — and the
@@ -959,8 +963,12 @@ def list_history(
     filter_clauses: List[str] = []
     filter_params: List[object] = []
     if tool_name is not None:
-        filter_clauses.append("tool_name = ?")
-        filter_params.append(tool_name)
+        # Prefix match, exact = the whole value: stored names are
+        # namespaced ("cli:<command_path>" for CLI rows), so the family
+        # and the full stored name both narrow rows. substr compares the
+        # typed value literally — no LIKE wildcard characters.
+        filter_clauses.append("substr(tool_name, 1, length(?)) = ?")
+        filter_params.extend([tool_name, tool_name])
     if session_id is not None:
         filter_clauses.append("session_id = ?")
         filter_params.append(session_id)

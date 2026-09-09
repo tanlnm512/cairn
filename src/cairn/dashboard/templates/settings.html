@@ -51,10 +51,12 @@
     <label>Timeout (s)
       <input type="text" name="CAIRN_EMBED_TIMEOUT" value="{{ cfg['CAIRN_EMBED_TIMEOUT'].prefill }}">
     </label>
+    <span class="muted">leave empty to keep the current value</span>
     {{ env_pin(cfg['CAIRN_EMBED_TIMEOUT']) }}
     <label>Server batch
       <input type="text" name="CAIRN_EMBED_SERVER_BATCH" value="{{ cfg['CAIRN_EMBED_SERVER_BATCH'].prefill }}">
     </label>
+    <span class="muted">leave empty to keep the current value</span>
     {{ env_pin(cfg['CAIRN_EMBED_SERVER_BATCH']) }}
     <label>Migration alias (model stamp)
       <input type="text" name="CAIRN_EMBED_MODEL_STAMP" value="{{ cfg['CAIRN_EMBED_MODEL_STAMP'].prefill }}">

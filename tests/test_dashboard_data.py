@@ -998,6 +998,47 @@ def test_list_history_filters_tool_session_combined_and_nonsense(fresh_db):
     assert list_history(fresh_db, tool_name="no_such_tool", session_id="x") == empty_page
 
 
+def test_list_history_tool_filter_matches_exact_and_prefix_of_stored_names(fresh_db):
+    """The tool filter matches the stored ``tool_metrics.tool_name`` values
+    by prefix, exact = the whole value: CLI rows are stored namespaced as
+    ``cli:<command_path>``, so both the family (``cli``) and the full
+    stored name narrow rows, an underscore in a typed name matches
+    literally (never as a wildcard), and a value that is nobody's prefix
+    stays an empty page."""
+    from cairn.dashboard.data import list_history
+
+    _seed_metrics(
+        fresh_db,
+        rows=[
+            (2, "cli:cairn build", "sess-a", 1755500000.0, 12.5, "ok", 400, 1600),
+            (4, "cli:cairn build", "sess-b", 1755500060.5, 40.0, "ok", 80, 3200),
+            (1, "cli:cairn knowledge", "sess-b", 1755500120.25, 55.5, "ok", 200, 800),
+            (3, "ask_compass", "sess-a", 1755500180.0, 7.0, "error", 80, 0),
+            (5, "askXcompass", "sess-a", 1755500240.0, 7.0, "ok", 80, 0),
+        ],
+    )
+
+    # The bare family prefix narrows to every CLI row (newest-first).
+    cli = list_history(fresh_db, tool_name="cli")["rows"]
+    assert [h["id"] for h in cli] == [1, 4, 2]
+
+    # The exact stored tool value narrows to exactly its own rows.
+    exact = list_history(fresh_db, tool_name="cli:cairn build")["rows"]
+    assert [h["id"] for h in exact] == [4, 2]
+
+    # Underscores match literally: the wildcard-lookalike row is excluded.
+    underscore = list_history(fresh_db, tool_name="ask_compass")["rows"]
+    assert [h["id"] for h in underscore] == [3]
+
+    # Wildcard characters stay literal too — no widening, no error.
+    empty_page = {"rows": [], "next": None, "prev": None}
+    assert list_history(fresh_db, tool_name="%") == empty_page
+
+    # A mid-value prefix keeps every value it heads.
+    mid = list_history(fresh_db, tool_name="cli:cairn")["rows"]
+    assert [h["id"] for h in mid] == [1, 4, 2]
+
+
 def test_list_history_pre_migration_null_sizes_stay_unknown(fresh_db):
     from cairn.dashboard.data import list_history
 
