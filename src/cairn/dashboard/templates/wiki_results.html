@@ -16,7 +16,9 @@
 {%- if filters.q %}{% set _ = base_q.update({'q': filters.q}) %}{% endif %}
 {%- if filters.repo %}{% set _ = base_q.update({'repo': filters.repo}) %}{% endif %}
 <div id="wiki-results" aria-live="polite">
-  {% if pages %}
+  {% if manifest_error %}
+  <p class="empty-state">Cannot read the wiki manifest: <code>{{ manifest_error }}</code>.</p>
+  {% elif pages %}
   {% for repo, rows in pages | groupby("repo") %}
   <h2 class="wiki-repo-heading">
     <a href="{{ links.url('/wiki', dict(base_q, repo=repo)) }}">{{ repo }}</a>

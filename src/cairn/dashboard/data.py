@@ -1201,7 +1201,9 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
     compares the content's recorded commit sha with the repo's current
     HEAD (fresh/stale/unknown) — a page with no content is always
     ``unknown``. A missing manifest (or knowledge dir) yields an empty
-    list; ``repo`` selects one repo's rows. Row order is manifest order
+    list; a manifest that cannot be parsed raises ``ValueError`` (the
+    routes render the explicit unreadable state from it); ``repo``
+    selects one repo's rows. Row order is manifest order
     (plan order) — the catalog groups by ``repo`` on top of it.
     """
     from cairn.wiki.lifecycle import derived_state, staleness as wiki_staleness
@@ -1272,8 +1274,9 @@ def get_wiki_page(
     sources list linkify through it, with the selected store riding when
     ``store_key`` is set. ``sources`` is the concept's frontmatter list
     verbatim; ``staleness`` compares the recorded commit sha with the
-    repo's current HEAD (fresh/stale/unknown). None when no manifest row
-    for ``page_id`` (``repo`` narrows the match when several repos plan
+    repo's current HEAD (fresh/stale/unknown). A manifest that cannot be
+    parsed raises ``ValueError``. None when no manifest row for
+    ``page_id`` (``repo`` narrows the match when several repos plan
     the same page id) has a readable concept. The returned ``repo`` names
     the owning repo — the caller needs it for the repo-qualified URL
     ``/wiki/{repo}/{page_id}``.

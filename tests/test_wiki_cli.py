@@ -368,6 +368,38 @@ def test_generate_llm_force_requeues_unchanged_promoted_page(cli_env, tmp_path):
     assert len(ids) == 2 and queued[0].id in ids
 
 
+def test_generate_llm_malformed_manifest_errors_clean(cli_env, tmp_path):
+    """`generate --llm` over a malformed manifest (list-shaped pages) prints
+    the unreadable-manifest error once on stderr and exits 1 — the loader's
+    ValueError never surfaces as a traceback (the escaping exception is the
+    clean path's SystemExit, never the ValueError itself)."""
+    db = tmp_path / "graph.db"
+    conn = get_db(str(db))
+    try:
+        _seed_indexed_repo(conn)
+    finally:
+        conn.close()
+    manifest_dir = cli_env / "_wiki"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps({"schema": MANIFEST_SCHEMA, "pages": [{"page_id": "overview"}]}),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        wiki,
+        ["generate", "--llm", "--pages", "1",
+         "--db", str(db), "--knowledge", str(cli_env)],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    err_lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(err_lines) == 1
+    assert "Cannot read wiki manifest" in err_lines[0]
+    assert "mapping keyed by" in err_lines[0]
+
+
 # --- wiki status staleness column (TC-019 / TC-020, FR-007) -------------------
 
 SHA_A = "abc1234a"

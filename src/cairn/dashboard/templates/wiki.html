@@ -13,7 +13,9 @@
       delay:300ms) hx-gets the route and morph-swaps the results region
       below — no page reload. The form stays OUTSIDE #wiki-results so the
       swap can never touch the field; Search remains the no-htmx
-      fallback. -#}
+      fallback. An unreadable manifest renders the explicit error state
+      alone: the filters would filter nothing. -#}
+  {% if not manifest_error %}
   {{ forms.form_open('/wiki', hx={'target': '#wiki-results', 'trigger': 'input changed delay:300ms'}, form_id='wiki-filters') }}
   {{ forms.field('text', 'q', 'Search', filters.q, placeholder='title, page id, or description') }}
   {{ forms.form_close('Search') }}
@@ -27,6 +29,7 @@
     {% if not loop.first %} · {% endif %}{% if s == (filters.state or "all") %}<strong>{{ s }}</strong>{% else %}<a href="{{ links.url('/wiki', q) }}">{{ s }}</a>{% endif %}
     {%- endfor %}
   </p>
+  {% endif %}
   {% include "wiki_results.html" %}
 </section>
 {% endblock %}

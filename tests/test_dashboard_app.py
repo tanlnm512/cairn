@@ -4153,6 +4153,7 @@ def test_wiki_routes_registered_with_pinned_names(tmp_path):
 def test_wiki_templates_ship_with_the_dashboard():
     assert (_templates_dir() / "wiki.html").is_file()
     assert (_templates_dir() / "wiki_page.html").is_file()
+    assert (_templates_dir() / "wiki_unreadable.html").is_file()
 
 
 def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
@@ -4295,6 +4296,76 @@ def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
     resp = client.get("/wiki")
     assert resp.status_code == 200
     assert "No wiki pages" in resp.text
+
+
+def _seed_malformed_manifest(knowledge_dir):
+    """A manifest whose ``pages`` section is a list — the external-edit
+    shape the loader refuses with ``ValueError``."""
+    wiki_dir = knowledge_dir / "_wiki"
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    (wiki_dir / "manifest.json").write_text(
+        json.dumps(
+            {"schema": "cairn-wiki-manifest-3", "pages": [{"page_id": "overview"}]}
+        ),
+        encoding="utf-8",
+    )
+
+
+def _malformed_wiki_client(tmp_path):
+    kdir = tmp_path / "knowledge"
+    _seed_malformed_manifest(kdir)
+    return _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
+
+
+def test_wiki_catalog_renders_unreadable_manifest_state_not_500(tmp_path):
+    """A malformed manifest (list-shaped ``pages`` from an external edit)
+    renders the explicit unreadable state naming the problem — the
+    dashboard mirror of the CLI's clean error, never a 500."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki")
+
+    assert resp.status_code == 200
+    assert "Cannot read the wiki manifest" in resp.text
+    assert "mapping keyed by" in resp.text  # the problem, named
+    assert "manifest.json" in resp.text     # the file, named
+    assert "No wiki pages yet" not in resp.text  # not the empty state
+
+
+def test_wiki_fragment_renders_unreadable_manifest_state(tmp_path):
+    """The htmx fragment branch carries the same unreadable state inside
+    the #wiki-results region (a morph swap renders it, not an error)."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki", headers={"HX-Request": "true"})
+
+    assert resp.status_code == 200
+    assert 'id="wiki-results"' in resp.text
+    assert "Cannot read the wiki manifest" in resp.text
+    assert "mapping keyed by" in resp.text
+
+
+def test_wiki_page_route_renders_unreadable_manifest_state_not_500(tmp_path):
+    """The repo-qualified detail route over a malformed manifest renders
+    the unreadable state instead of a 500."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki/demo/overview")
+
+    assert resp.status_code == 200
+    assert "Cannot read the wiki manifest" in resp.text
+    assert "mapping keyed by" in resp.text
+
+
+def test_wiki_legacy_route_renders_unreadable_manifest_state(tmp_path):
+    """The legacy one-segment URL hits the same manifest load: it renders
+    the unreadable state instead of a 500 (and does not redirect)."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki/overview", follow_redirects=False)
+
+    assert resp.status_code == 200
+    assert "Cannot read the wiki manifest" in resp.text
 
 
 def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):

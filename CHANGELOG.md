@@ -460,8 +460,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A wiki manifest whose `pages` section is not a mapping (e.g. a list
   from an external edit) fails with a clear `ValueError` naming the
   expected `{repo}/{page_id}`-keyed mapping instead of a bare
-  `AttributeError` from row normalization; the manifest-reading CLI
-  commands catch it and report the manifest as unopenable with exit 1.
+  `AttributeError` from row normalization. The wiki commands that read
+  the manifest (`status`, `retry`, `export`, `enrich`, and
+  `generate --llm`) report it as unopenable — one stderr line naming the
+  problem, exit 1, no traceback — and the dashboard's `/wiki` catalog
+  and page views render an explicit unreadable-manifest state naming
+  the problem instead of a 500.
 
 ## [0.18.0] - 2026-09-02
 

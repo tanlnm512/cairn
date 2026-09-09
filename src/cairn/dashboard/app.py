@@ -1038,7 +1038,25 @@ def create_app(
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        pages = get_wiki_pages(selected_knowledge, repo=repo)
+        try:
+            pages = get_wiki_pages(selected_knowledge, repo=repo)
+        except ValueError as exc:
+            # A malformed manifest renders the explicit unreadable state —
+            # the CLI's clean error mirrored, never a 500. The context keeps
+            # the catalog's shape (pages empty, manifest_error set) so both
+            # templates branch on the error alone.
+            context: dict = {
+                "pages": [],
+                "page_states": PAGE_STATES,
+                "filters": {"repo": repo or "", "state": state or "", "q": query},
+                "store_key": store_key,
+                "manifest_error": str(exc),
+            }
+            if is_hx_request(request):
+                return templates.TemplateResponse(
+                    request, "wiki_results.html", context
+                )
+            return render(request, "wiki.html", context)
         if state in PAGE_STATES:
             pages = [p for p in pages if p["state"] == state]
         if query:
@@ -1086,7 +1104,14 @@ def create_app(
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
+        try:
+            page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
+        except ValueError as exc:
+            return render(
+                request,
+                "wiki_unreadable.html",
+                {"manifest_error": str(exc), "store_key": store_key},
+            )
         if page is None:
             return _wiki_not_found()
         target = "/wiki/{}/{}".format(
@@ -1107,16 +1132,23 @@ def create_app(
         )
         repo = request.path_params["repo"]
         page_id = request.path_params["page_id"]
-        page = get_wiki_page(
-            selected_knowledge, page_id, repo=repo, store_key=store_key
-        )
+        try:
+            page = get_wiki_page(
+                selected_knowledge, page_id, repo=repo, store_key=store_key
+            )
+            promoted = [
+                p
+                for p in get_wiki_pages(selected_knowledge, repo=repo)
+                if p["promoted"]
+            ]
+        except ValueError as exc:
+            return render(
+                request,
+                "wiki_unreadable.html",
+                {"manifest_error": str(exc), "store_key": store_key},
+            )
         if page is None:
             return _wiki_not_found()
-        promoted = [
-            p
-            for p in get_wiki_pages(selected_knowledge, repo=repo)
-            if p["promoted"]
-        ]
         index = next(
             (i for i, p in enumerate(promoted) if p["page_id"] == page_id), None
         )
