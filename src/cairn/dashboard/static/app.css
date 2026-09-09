@@ -30,6 +30,13 @@
   --ok: #27a644;
   --warn: #f5a623;
   --err: #ee5d5d;
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
   color-scheme: dark;
 }
 
@@ -49,6 +56,13 @@
   --ok: #27a644;
   --warn: #f5a623;
   --err: #ee5d5d;
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
   color-scheme: dark;
 }
 
@@ -68,6 +82,13 @@
   --ok: #1a7f37;
   --warn: #b45309;
   --err: #cf222e;
+  --kind-function: #0d9488;
+  --kind-method: #16a34a;
+  --kind-class: #7c3aed;
+  --kind-interface: #2563eb;
+  --kind-enum: #db2777;
+  --kind-module: #b45309;
+  --kind-external: #6b7280;
   color-scheme: light;
 }
 

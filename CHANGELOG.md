@@ -21,8 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mermaid request and the dashboard is fully offline at runtime. Fences
   render explicitly via `mermaid.run()` after the late import (startOnLoad
   off), with the code block kept as the no-JS/unavailable fallback.
+- The dashboard serves its own icon: the shell head links the vendored
+  `favicon.svg`, and the conventional `/favicon.ico` path serves the same
+  file, so the browser's automatic icon probe is a 200 instead of a 404
+  on every page load.
 
 ### Changed
+- The graph and database canvases re-theme live through CSS variables.
+  The per-kind node palette moved from hardcoded JS color tables into the
+  theme blocks as `--kind-*` tokens, and the shell broadcasts a single
+  `cairn:theme-changed` event on a theme flip (one `data-theme` observer
+  app-wide, in shell.js); both canvas scripts re-read every color through
+  the getComputedStyle token proxy on that event, so toggling the theme
+  re-colors the live canvas in place — no reload, no new graph requests.
+- The /graph physics simulation is disabled under
+  `prefers-reduced-motion: reduce` — JS-driven motion the CSS media
+  query cannot reach. The graph then lays out on the deterministic
+  spiral (a static constellation, no stabilization animation), and the
+  canvas zoom/fit controls skip their eased animation.
 - The dashboard's list views filter and live-refresh through htmx
   fragments. Filter forms on `/history`, `/tasks`, and `/wiki` are htmx
   triggers (`input changed delay:300ms`; the tasks select on `change`)

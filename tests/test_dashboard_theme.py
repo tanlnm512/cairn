@@ -29,8 +29,9 @@ import pytest
 _THEME_STORAGE_KEY = "cairn-theme"
 
 # Every theme-varying token: the surface ladder, the hairlines, the text
-# ramp, the accent pair, and the status colors. Each must appear in the
-# first variable block (dark values) and in BOTH theme blocks.
+# ramp, the accent pair, the status colors, and the graph canvas's
+# per-kind palette. Each must appear in the first variable block (dark
+# values) and in BOTH theme blocks.
 _THEME_TOKENS = (
     "--bg-0",
     "--bg-1",
@@ -47,6 +48,13 @@ _THEME_TOKENS = (
     "--ok",
     "--warn",
     "--err",
+    "--kind-function",
+    "--kind-method",
+    "--kind-class",
+    "--kind-interface",
+    "--kind-enum",
+    "--kind-module",
+    "--kind-external",
 )
 
 _DARK_BG_0 = "#08090a"

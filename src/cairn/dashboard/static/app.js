@@ -24,11 +24,20 @@
      constellation instead of a center clump.
    - Node size scales with degree (vis `value` scaling) so hubs read as
      hubs.
-   - Theming: edge/font options derive from the stylesheet's CSS
-     variables; a MutationObserver on <html data-theme> re-applies them
-     and re-colors every node from the active palette (light palettes
-     are the dark hues' saturated-dark counterparts). Layout and physics
-     state are never touched by a theme flip. */
+   - Theming: every canvas color — edge/font options and the per-kind
+     node palette — derives from the stylesheet's CSS variables through
+     the getComputedStyle token proxy (cssVar), so the palette ships
+     with the theme, never with this script. shell.js broadcasts
+     cairn:theme-changed on a data-theme flip; re-applying the
+     theme-derived options and re-coloring every node from the tokens
+     rides that event. Layout and physics state are never touched by a
+     theme flip.
+   - Reduced motion: the physics simulation is JS-driven motion the
+     CSS media query cannot reach, so a matching
+     prefers-reduced-motion: reduce disables physics outright and lays
+     the graph out on the deterministic spiral (a static constellation,
+     no stabilization animation); overlay zoom/fit skip their eased
+     animation too. */
 (function () {
   "use strict";
   var block = document.getElementById("graph-data");
@@ -45,41 +54,42 @@
   if (!data.nodes || !data.nodes.length) {
     return;
   }
+  /* The token proxy: colors resolve from the live stylesheet at read
+     time, so a theme flip re-reads to the new palette with no JS-side
+     color state to keep in sync. */
   function cssVar(name) {
     var v = getComputedStyle(document.documentElement).getPropertyValue(
       name
     );
     return v ? v.trim() : "";
   }
-  function isDark() {
-    return document.documentElement.dataset.theme !== "light";
+  function prefersReducedMotion() {
+    return !!(
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
   }
 
   /* ---- Kind coloring & filters ---- */
 
-  var KIND_DARK = {
-    function: "#2dd4bf",
-    method: "#4ade80",
-    class: "#a78bfa",
-    interface: "#60a5fa",
-    enum: "#f472b6",
-    module: "#fbbf24",
-    external: "#8b9bb4"
+  /* Kind colors are theme tokens: each kind maps to a --kind-* variable
+     declared in both theme blocks, and unknown kinds fall back to the
+     muted text token (the pre-token palettes' shared default). */
+  var KIND_TOKENS = {
+    function: "--kind-function",
+    method: "--kind-method",
+    class: "--kind-class",
+    interface: "--kind-interface",
+    enum: "--kind-enum",
+    module: "--kind-module",
+    external: "--kind-external"
   };
-  var KIND_LIGHT = {
-    function: "#0d9488",
-    method: "#16a34a",
-    class: "#7c3aed",
-    interface: "#2563eb",
-    enum: "#db2777",
-    module: "#b45309",
-    external: "#6b7280"
-  };
-  function kindPalette() {
-    return isDark() ? KIND_DARK : KIND_LIGHT;
+  function kindColor(kind) {
+    var token = KIND_TOKENS[kind];
+    return (token && cssVar(token)) || cssVar("--text-3");
   }
   function kindOf(n) {
-    return n.kind && kindPalette()[n.kind] ? n.kind : "other";
+    return n.kind && KIND_TOKENS[n.kind] ? n.kind : "other";
   }
 
   var idKind = {};
@@ -98,7 +108,7 @@
     return k;
   }
   function colorForKey(k) {
-    var c = kindPalette()[k] || cssVar("--text-3");
+    var c = kindColor(k);
     return {
       background: c,
       border: c,
@@ -161,6 +171,13 @@
   }
   var edgeless = !data.edges.length;
 
+  /* A static layout (no simulation): edgeless graphs always, and any
+     graph under prefers-reduced-motion — the physics simulation is
+     JS-driven motion the CSS media query cannot collapse. Nodes take
+     deterministic spiral positions either way, so the physics-off
+     canvas is a spread constellation instead of a center clump. */
+  var staticLayout = edgeless || prefersReducedMotion();
+
   function nodeView(n) {
     var kind = registerKind(n);
     var view = {
@@ -172,7 +189,7 @@
       /* merged nodes of an already-filtered kind arrive hidden */
       hidden: !!hiddenKinds[kind]
     };
-    if (edgeless) {
+    if (staticLayout) {
       var p = spiralPosition();
       view.x = p.x;
       view.y = p.y;
@@ -294,9 +311,10 @@
     if (kind === "hier") {
       options.layout = layoutOptions(kind);
       options.physics = { enabled: false };
-    } else if (edgeless) {
+    } else if (staticLayout || prefersReducedMotion()) {
       /* Spiral positions are final; physics would only drag the
-         constellation back into a clump. */
+         constellation back into a clump — and under reduced motion the
+         simulation is motion, so it never runs at all. */
       options.physics = { enabled: false };
     } else {
       options.physics = {
@@ -359,7 +377,10 @@
         return;
       }
       var action = btn.getAttribute("data-graph-action");
-      var animation = { duration: 250, easingFunction: "easeInOutQuad" };
+      /* The eased camera move is animation; reduced motion snaps. */
+      var animation = prefersReducedMotion()
+        ? false
+        : { duration: 250, easingFunction: "easeInOutQuad" };
       if (action === "zoom-in") {
         network.moveTo({
           scale: network.getScale() * 1.35,
@@ -396,7 +417,7 @@
         item.title = "toggle " + k + " nodes";
         var dot = document.createElement("span");
         dot.className = "legend-dot";
-        dot.style.background = kindPalette()[k] || cssVar("--text-3");
+        dot.style.background = kindColor(k);
         var name = document.createElement("span");
         name.className = "legend-name";
         name.textContent = k;
@@ -431,10 +452,11 @@
   }
   renderLegend();
 
-  /* Theme toggle re-colors the live network: theme-derived options via
-     setOptions, node colors via a single batched update, then the
-     legend re-renders from the new palette. Layout/physics/camera
-     state survives untouched. */
+  /* A theme flip re-colors the live network: theme-derived options via
+     setOptions, node colors via a single batched update from the token
+     palette, then the legend re-renders. The flip arrives as the shell's
+     cairn:theme-changed broadcast — this file owns no observer. Layout,
+     physics, and camera state survive untouched. */
   function applyTheme() {
     network.setOptions(themeOptions());
     var updates = [];
@@ -449,14 +471,7 @@
     }
     renderLegend();
   }
-  if (typeof MutationObserver !== "undefined") {
-    new MutationObserver(function () {
-      applyTheme();
-    }).observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"]
-    });
-  }
+  document.addEventListener("cairn:theme-changed", applyTheme);
   var pending = {};
 
   function refreshCounts(truncated) {
@@ -802,8 +817,9 @@
       var scale = network.getScale();
       /* Full option swap: the layout change rides the physics change it
          implies (hier disables physics, force re-enables barnesHut with
-         a fresh stabilization — unless the graph is edgeless, where
-         force stays physics-off on spiral positions). */
+         a fresh stabilization — unless the graph is edgeless or under
+         reduced motion, where force stays physics-off on spiral
+         positions). */
       network.setOptions(optionsFor(kind));
       network.once("afterDrawing", function () {
         network.moveTo({ position: position, scale: scale });

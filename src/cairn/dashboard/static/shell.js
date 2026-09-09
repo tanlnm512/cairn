@@ -1,10 +1,37 @@
 /* Cairn dashboard shell chrome: the behaviors every page shares — the
-   topbar workspace selector, the sidebar collapse, and the command
-   palette. app.js (the per-view graph/live-refresh logic) is a separate
-   file with separate element ids; the two never touch.
+   topbar workspace selector, the sidebar collapse, the command palette,
+   and the theme-change broadcast. app.js (the per-view graph/live-refresh
+   logic) is a separate file with separate element ids; the two never
+   touch.
    One outer IIFE keeps every helper file-local. */
 (function () {
   "use strict";
+
+  /* ---- Theme broadcast ----
+     The app's single data-theme observer: base.html's inline script owns
+     applying the theme, and this observer turns each actual flip into one
+     cairn:theme-changed event on document. Consumers — the vis-network
+     canvases and any future themed panel — subscribe to the event instead
+     of each observing on their own. The unchanged-value guard skips the
+     head script's redundant DOMContentLoaded re-apply. */
+  (function () {
+    if (typeof MutationObserver === "undefined") {
+      return;
+    }
+    var last = document.documentElement.getAttribute("data-theme") || "";
+    new MutationObserver(function () {
+      var current =
+        document.documentElement.getAttribute("data-theme") || "";
+      if (current === last) {
+        return;
+      }
+      last = current;
+      document.dispatchEvent(new CustomEvent("cairn:theme-changed"));
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+  })();
 
   /* Switch the global workspace: rewrite the ?store= param on the
      current URL and reload — the tab stays and every view re-renders on

@@ -385,6 +385,17 @@ def create_app(
             {"db_path": db_path or "central store", "store_key": store_key},
         )
 
+    def favicon(request: Request) -> Response:
+        """The shell's icon, served at the conventional /favicon.ico path
+        browsers probe when no <link rel="icon"> matched — a 200 here
+        keeps the icon off the network log's error column. Same file the
+        shell links; reread per request so a swapped icon needs no
+        restart."""
+        return Response(
+            (static_dir / "favicon.svg").read_bytes(),
+            media_type="image/svg+xml",
+        )
+
     # Plain-def handlers on purpose: Starlette runs them in a threadpool, so
     # the blocking read-only SQL below never stalls the event loop.
 
@@ -1177,6 +1188,7 @@ def create_app(
 
     routes = [
         Route("/", landing, name="index"),
+        Route("/favicon.ico", favicon, name="favicon"),
         Route("/workspaces", workspaces_overview, name="workspaces"),
         Route("/projects", projects, name="projects"),
         Route("/graph", graph, name="graph"),

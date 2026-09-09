@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Cairn Dashboard{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}?v={{ asset_version }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}?v={{ asset_version }}">
   <meta name="htmx-config" content='{"allowEval":false}'>
   {#- Vendored interaction stack (no CDN, no build step): htmx serves
       fragments, Alpine owns client state. All four load deferred and
