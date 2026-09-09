@@ -224,6 +224,35 @@ def test_history_page_polls_region_and_filter_form_swaps_it(tmp_path):
     assert "window-control" in region
 
 
+def test_history_poll_url_bakes_the_active_cursor(tmp_path):
+    """A cursor-paged slice survives the poll cycle: the region's hx-get
+    bakes the active before/after cursor at render time (page cursors
+    ride the poll URL; the form's live fields carry filters, never
+    cursors), so each poll re-requests the page being read instead of
+    reverting to page 1. A cursorless page keeps the bare URL."""
+    from tests.test_dashboard_app import _history_client
+
+    client = _history_client(tmp_path, seed=True)
+
+    older = client.get("/history", params={"before": "1755654000.125"})
+    assert older.status_code == 200
+    tag = re.search(r'<div id="refresh-region"[^>]*>', older.text)
+    assert tag, "the polled region div is missing"
+    assert 'hx-get="/history?before=1755654000.125"' in tag.group(0)
+
+    newer = client.get("/history", params={"after": "1755650400.0"})
+    assert newer.status_code == 200
+    tag = re.search(r'<div id="refresh-region"[^>]*>', newer.text)
+    assert tag, "the polled region div is missing"
+    assert 'hx-get="/history?after=1755650400.0"' in tag.group(0)
+
+    bare = client.get("/history")
+    assert bare.status_code == 200
+    tag = re.search(r'<div id="refresh-region"[^>]*>', bare.text)
+    assert tag, "the polled region div is missing"
+    assert 'hx-get="/history"' in tag.group(0)  # no empty cursor params
+
+
 def test_tokens_and_chains_regions_poll_their_own_url(tmp_path):
     """The formless traffic views bake the view's current params into the
     region's poll URL (no form to include): ?window=24h on /tokens and

@@ -154,6 +154,30 @@ def test_favicon_route_serves_the_svg(tmp_path):
     assert b"<svg" in resp.content
 
 
+def test_favicon_route_404s_when_the_icon_is_missing(tmp_path, monkeypatch):
+    """A missing vendored icon is a 404, not a 500: the route serves
+    whatever ships beside the app, and nothing shipped is not-found —
+    the browser's icon probe degrades, the page never errors."""
+    import cairn.dashboard.app as dashboard_app
+
+    bare = tmp_path / "bare"
+    (bare / "static").mkdir(parents=True)
+    (bare / "templates").mkdir()
+    monkeypatch.setattr(dashboard_app, "_PACKAGE_DIR", bare)
+
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    client = TestClient(
+        dashboard_app.create_app(
+            db_path=str(tmp_path / "missing.db"),
+            knowledge_dir=str(tmp_path / "missing"),
+        )
+    )
+    resp = client.get("/favicon.ico")
+    assert resp.status_code == 404
+
+
 def test_static_favicon_serves_from_assets(tmp_path):
     """The icon ships as a static asset next to the scripts it sits
     beside, served as SVG."""

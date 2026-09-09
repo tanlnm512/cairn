@@ -9,13 +9,19 @@
   cheap region render, never a full page. Each request's params ride
   from the form's live fields (hx-include on the region serializes the
   form; the hidden store and window fields come with it), so the region
-  always re-renders exactly the slice the page is showing.
+  always re-renders exactly the slice the page is showing. The page
+  cursor (before/after — paging state, not a filter) rides the region's
+  hx-get URL, baked at render time, so a poll of a cursor-paged slice
+  re-requests that page instead of reverting to page 1.
 -#}
 {% import "_links.html" as links with context %}
 {% import "_table.html" as tables with context %}
 {% import "_cards.html" as cards with context %}
+{%- set poll_q = {} %}
+{%- if before %}{% set _ = poll_q.update({'before': before}) %}{% endif %}
+{%- if after %}{% set _ = poll_q.update({'after': after}) %}{% endif %}
 <div id="refresh-region"
-     hx-get="/history" hx-trigger="every 5s" hx-swap="morph"
+     hx-get="{{ links.url('/history', poll_q) }}" hx-trigger="every 5s" hx-swap="morph"
      hx-include="#history-filters" aria-live="polite">
   <h1>History</h1>
   {{ cards.stat_row([

@@ -254,10 +254,15 @@ def test_alpine_loads_deferred(tmp_path):
 def test_htmx_extension_loads_after_htmx_core(tmp_path):
     """Deferred scripts execute in document order, so the alpine-morph
     extension's defineExtension call sees the htmx global only if its tag
-    follows htmx core's."""
+    follows htmx core's — and the @alpinejs/morph plugin registers
+    Alpine.morph on alpine:init, so its tag must precede Alpine core's
+    (a late plugin tag silently leaves hx-swap="morph" on the fallback)."""
     html = _client(tmp_path).get("/").text
     assert html.index("/static/htmx.min.js") < html.index(
         "/static/alpine-morph.js"
+    )
+    assert html.index("/static/alpinejs-morph.min.js") < html.index(
+        "/static/alpine.min.js"
     )
 
 
@@ -310,9 +315,19 @@ def _request(headers):
 
 
 def test_is_hx_request_tells_htmx_calls_from_page_loads():
-    """The fragment/full-page branch rides exactly the header htmx sends:
-    HX-Request: true is a fragment request, its absence a page load."""
+    """The fragment/full-page branch rides exactly the headers htmx
+    sends: HX-Request: true is a fragment request, its absence a page
+    load — and a history restore (back/forward under hx-push-url) is a
+    full-page request even though htmx stamps HX-Request on it too."""
     from cairn.dashboard.app import is_hx_request
 
     assert is_hx_request(_request({"HX-Request": "true"})) is True
     assert is_hx_request(_request({})) is False
+    assert (
+        is_hx_request(
+            _request(
+                {"HX-Request": "true", "HX-History-Restore-Request": "true"}
+            )
+        )
+        is False
+    )

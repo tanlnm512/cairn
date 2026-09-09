@@ -165,11 +165,21 @@ def _resolve_window(window: str | None) -> tuple[str, float | None]:
 
 
 def is_hx_request(request: "Request") -> bool:
-    """True when htmx issued this request (its HX-Request: true header
-    rides every htmx-initiated call). The full-page-vs-fragment seam:
-    handlers render the complete template on a page load and the fragment
-    variant — a template extending no base, covering only the swapped
-    region — on an htmx call, sharing one route and one data fetch."""
+    """True when htmx issued this request and wants a fragment (its
+    HX-Request: true header rides every htmx-initiated call). The
+    full-page-vs-fragment seam: handlers render the complete template on
+    a page load and the fragment variant — a template extending no base,
+    covering only the swapped region — on an htmx call, sharing one
+    route and one data fetch. HX-History-Restore-Request vetoes the
+    fragment: a back/forward restore must re-render the whole page,
+    though htmx stamps HX-Request on that request too."""
+    if (
+        (request.headers.get("HX-History-Restore-Request") or "")
+        .strip()
+        .lower()
+        == "true"
+    ):
+        return False
     return (request.headers.get("HX-Request") or "").strip().lower() == "true"
 
 
@@ -390,11 +400,12 @@ def create_app(
         browsers probe when no <link rel="icon"> matched — a 200 here
         keeps the icon off the network log's error column. Same file the
         shell links; reread per request so a swapped icon needs no
-        restart."""
-        return Response(
-            (static_dir / "favicon.svg").read_bytes(),
-            media_type="image/svg+xml",
-        )
+        restart. A missing file is a plain 404, not a 500."""
+        try:
+            body = (static_dir / "favicon.svg").read_bytes()
+        except FileNotFoundError:
+            return Response("Not Found", status_code=404)
+        return Response(body, media_type="image/svg+xml")
 
     # Plain-def handlers on purpose: Starlette runs them in a threadpool, so
     # the blocking read-only SQL below never stalls the event loop.
@@ -645,8 +656,9 @@ def create_app(
         if is_hx_request(request):
             # htmx fragment: the polled region only — one cheap region
             # render, never the full page (the shell rides the page load).
-            # The filter form's live fields ride the request, so the
-            # fragment re-renders exactly the slice the page shows.
+            # The filter form's live fields ride the request and the page
+            # cursor rides the region's hx-get URL, so the fragment
+            # re-renders exactly the slice the page shows.
             return templates.TemplateResponse(
                 request, "history_region.html", context
             )

@@ -346,6 +346,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     date values) via `default=str` instead of crashing the dry run
   - `supersede_chain` documents its linear-chain assumption and asserts
     the queried doc's membership in the result
+- Built wheels ship the dashboard's whole asset tree: the package-data
+  glob for `static/` is recursive (`static/**/*`), so nested asset
+  subtrees reach wheel installs — a flat `static/*` omitted every file
+  below the top level (the vendored mermaid chunk tree among them), and
+  on a wheel install each chunk import 404'd, silently degrading wiki
+  fences to code blocks. A packaging-coverage test replays setuptools'
+  glob matching over `templates/` and `static/`, so a data file the
+  globs miss fails the suite instead of surfacing as a runtime 404 on
+  installs.
+- `/history` polls hold the active page: the polled region bakes its
+  `before`/`after` cursor into the poll URL at render time, so a
+  cursor-paged slice re-renders itself across the 5s poll cycles instead
+  of silently reverting to page 1 (filters still ride the form's live
+  fields, and a filter change still resets paging).
+- htmx back/forward history restores (`HX-History-Restore-Request`)
+  render the full page rather than a region fragment: htmx stamps
+  `HX-Request` on restores too, so every fragment-branched route would
+  otherwise serve a bare region to a restore once any view adopts
+  `hx-push-url`. The shell's script-order test also pins the full load
+  sequence — htmx core, alpine-morph extension, morph plugin, Alpine
+  core.
+- `/favicon.ico` answers a missing vendored icon with 404 instead of an
+  unhandled 500.
 
 ## [0.18.0] - 2026-09-02
 
