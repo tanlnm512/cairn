@@ -1169,7 +1169,8 @@ code {
 
 .badge-warn,
 .badge-partial,
-.badge-superseded {
+.badge-superseded,
+.badge-archived {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 32%, transparent);
   background: color-mix(in srgb, var(--warn) 12%, transparent);

@@ -103,6 +103,14 @@ The `.kg` SQLite database (`src/cairn/graph/schema.py`) holds:
   tables (`vec_*`, `vecmv_*`) via the `sqlite-vec` extension, same file.
 - **Derived**: `dataflow` (precomputed impact), `transitive_edges` (O(1)
   multi-hop calls).
+- **Knowledge relationships**: `knowledge_edges` (doc↔doc rows:
+  `doc_id`, `related_id`, `relation`, `kind` = `extracted`/`inferred`/
+  `derived`, `provenance`, `created_at` — supersede pairs store both
+  directions) and `knowledge_doc_refs` (doc→code refs with
+  `ref_kind` = `file`/`symbol` and a `verified` flag). Both are rebuilt
+  from OKF frontmatter by `cairn knowledge rebuild`; the frontmatter is
+  the durable record, these tables a rebuildable index (see
+  [knowledge-and-memory.md](knowledge-and-memory.md)).
 - **Ops/telemetry**: `build_runs`, `tool_metrics`, `events`, `skipped_files`,
   `parse_errors`, `pending_sync`, `repo_build_state`, `repo_deps`,
   `schema_meta`, `memory_refs`.

@@ -4030,6 +4030,28 @@ def test_graph_inspect_hx_request_renders_panel_fragment(tmp_path):
     assert bare.json()["found"] is True
 
 
+def test_inspect_fetch_wiring_aborts_superseded_requests():
+    """app.js inspect wiring (source contract, no JS runtime): a new
+    inspect fetch aborts its in-flight predecessor (htmx:beforeSend
+    carries the live xhr), and the failure wiring covers response/send
+    errors only — htmx never fires htmx:timeout without a configured
+    timeout, so that listener is dead code."""
+    src = _app_js_source()
+
+    assert re.search(r"addEventListener\(\s*[\"']htmx:beforeSend[\"']", src), (
+        "no htmx:beforeSend listener: a superseded inspect fetch is never aborted"
+    )
+    assert re.search(r"htmx:beforeSend[\s\S]{0,600}?\.abort\(\)", src), (
+        "the beforeSend listener never aborts the in-flight inspect xhr"
+    )
+    assert "htmx:timeout" not in src, (
+        "dead htmx:timeout listener (htmx fires it only with a configured timeout)"
+    )
+    # The genuine failure paths keep their failure note.
+    assert "htmx:responseError" in src
+    assert "htmx:sendError" in src
+
+
 # ---------------------------------------------------------------------------
 # Dashboard wiki view (FR-009 / US6): /wiki list with state badges,
 # /wiki/{page_id} rendered detail, and the stdlib markdown renderer (D-002).

@@ -433,6 +433,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core.
 - `/favicon.ico` answers a missing vendored icon with 404 instead of an
   unhandled 500.
+- **`cairn build` exits non-zero when it produces no store.** A build
+  whose persist phase had nothing to write (a workspace with no
+  indexable files) left the db's parent directory uncreated, the
+  derived-index open then failed with `store parent directory does not
+  exist`, and the failure surfaced only as a `dataflow skipped` note in
+  the summary panel while the command still exited 0 — scripting keying
+  on the exit code for "the store exists" saw a silent skip. The
+  no-store outcome now fails the command with a named error and exit 1;
+  a build over an openable store is unchanged.
+- `/knowledge` out-of-vocabulary filter values fall back to no filter,
+  matching the `/tasks` `/memory` `/wiki` convention (and the route's
+  documented contract): a `?family=`/`?status=` value the selects can't
+  offer previously rendered a filter-empty results region while the
+  select read `all`. The vocabulary is the classifier's families / the
+  doc statuses, each unioned with what the corpus actually contains, so
+  a doc under a custom type stays reachable from the filter.
+- The `/knowledge` archived status badge renders in the warn palette
+  like its sibling statuses instead of the unstyled base badge, and the
+  doc-detail provenance payload drops an `origin` key no template read.
+- The graph canvases' inspect fetches abort their superseded
+  predecessors (`htmx:beforeSend` carries the live xhr) instead of
+  letting stale responses complete in the background, and the dead
+  `htmx:timeout` listeners are gone — htmx fires that event only with a
+  configured timeout, which no request in the dashboard sets.
 
 ## [0.18.0] - 2026-09-02
 

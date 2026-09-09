@@ -515,3 +515,32 @@ def test_knowledge_graph_inspect_unknown_doc_renders_note(tmp_path):
     blank = client.get("/knowledge/graph/inspect")
     assert blank.status_code == 200
     assert "no knowledge document" in blank.text
+
+
+def test_knowledge_graph_inspect_wiring_aborts_superseded_requests():
+    """knowledge-graph.js inspect wiring (source contract, no JS
+    runtime): a new inspect fetch aborts its in-flight predecessor
+    (htmx:beforeSend carries the live xhr), and the failure wiring covers
+    response/send errors only — htmx never fires htmx:timeout without a
+    configured timeout, so that listener is dead code."""
+    import cairn.dashboard
+    from pathlib import Path
+
+    src = (
+        Path(cairn.dashboard.__file__).resolve().parent
+        / "static"
+        / "knowledge-graph.js"
+    ).read_text(encoding="utf-8")
+
+    assert re.search(r"addEventListener\(\s*[\"']htmx:beforeSend[\"']", src), (
+        "no htmx:beforeSend listener: a superseded inspect fetch is never aborted"
+    )
+    assert re.search(r"htmx:beforeSend[\s\S]{0,600}?\.abort\(\)", src), (
+        "the beforeSend listener never aborts the in-flight inspect xhr"
+    )
+    assert "htmx:timeout" not in src, (
+        "dead htmx:timeout listener (htmx fires it only with a configured timeout)"
+    )
+    # The genuine failure paths keep their failure note.
+    assert "htmx:responseError" in src
+    assert "htmx:sendError" in src

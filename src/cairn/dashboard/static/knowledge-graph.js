@@ -426,9 +426,33 @@
     htmx.ajax("GET", latestInspectUrl, { target: panel, swap: "innerHTML" });
   }
 
-  /* One selection owns the panel: htmx swaps inside ajax(), so a stale
-     response (an earlier selection completing late) is cancelled at
-     htmx:beforeSwap — only the latest inspect request may swap. */
+  /* One selection owns the panel: a superseded inspect fetch is aborted
+     outright (htmx:beforeSend carries the live xhr), and htmx swaps
+     inside ajax(), so a stale response completing late is cancelled at
+     htmx:beforeSwap too — only the latest inspect request may swap. */
+  var inFlightInspect = null;
+  function abortInFlightInspect() {
+    if (inFlightInspect) {
+      try {
+        inFlightInspect.abort();
+      } catch (err) {
+        /* abort() on an already-settled xhr is a no-op; nothing to free */
+      }
+      inFlightInspect = null;
+    }
+  }
+  document.body.addEventListener("htmx:beforeSend", function (event) {
+    var detail = event.detail || {};
+    var path =
+      detail.requestConfig && typeof detail.requestConfig.path === "string"
+        ? detail.requestConfig.path
+        : "";
+    if (path.indexOf("/knowledge/graph/inspect") !== 0) {
+      return;
+    }
+    abortInFlightInspect();
+    inFlightInspect = detail.xhr;
+  });
   document.body.addEventListener("htmx:beforeSwap", function (event) {
     var path =
       event.detail && event.detail.requestConfig
@@ -444,8 +468,9 @@
   });
 
   /* A failed inspect (HTTP error status or dead server) replaces the
-     loading text with the failure note — htmx swaps only on 2xx. */
-  ["htmx:responseError", "htmx:sendError", "htmx:timeout"].forEach(
+     loading text with the failure note — htmx swaps only on 2xx, and an
+     aborted predecessor fires neither event. */
+  ["htmx:responseError", "htmx:sendError"].forEach(
     function (name) {
       document.body.addEventListener(name, function (event) {
         var detail = event.detail || {};
@@ -475,6 +500,7 @@
     if (!panel) {
       return;
     }
+    abortInFlightInspect();
     latestInspectUrl = "";
     panel.hidden = true;
     panel.textContent = "";

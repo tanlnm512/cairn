@@ -283,6 +283,7 @@ def build(repo, workspace, db, verbose, staging):
 
     target_db = db + ".tmp" if staging else db
 
+    import sqlite3
     import time
     t0 = time.time()
 
@@ -354,6 +355,14 @@ def build(repo, workspace, db, verbose, staging):
             conn = None
             try:
                 conn = get_db(target_db)
+            except sqlite3.OperationalError as e:
+                # An unopenable store here means the persist phase had
+                # nothing to write: the build produced no store. Fail the
+                # command — the exit code is the "store exists" contract
+                # scripting keys on; reporting it as a "dataflow skipped"
+                # note with exit 0 makes that skip silent.
+                raise click.ClickException(f"build produced no store: {e}") from e
+            try:
                 from ..graph.dataflow import build_dataflow_index, build_transitive_closure
 
                 # Count public symbols first so the sub-step ticks are meaningful.

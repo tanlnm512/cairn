@@ -860,12 +860,14 @@ def create_app(
         """The knowledge catalog: every stored doc once, filterable by
         family/status/tag. Filters, read like every other view's params:
         absent or blank means no filter; a value outside the vocabulary
-        (the classifier's families + the corpus's statuses) falls back to
-        no filter (silent fallback, matching the tasks/wiki filters).
-        The options always offer every family/status the corpus contains,
-        so a doc under a custom type stays reachable from the filter."""
-        family = request.query_params.get("family", "all").strip() or "all"
-        status = request.query_params.get("status", "all").strip() or "all"
+        the selects offer (the classifier's families + the doc statuses,
+        each unioned with what this corpus actually contains) falls back
+        to no filter (silent fallback, matching the tasks/memory/wiki
+        filters). The options always offer every family/status the corpus
+        contains, so a doc under a custom type stays reachable from the
+        filter."""
+        family_param = request.query_params.get("family", "all").strip() or "all"
+        status_param = request.query_params.get("status", "all").strip() or "all"
         tag = request.query_params.get("tag", "").strip()
         selected_db, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
@@ -875,10 +877,32 @@ def create_app(
             result = list_knowledge_docs(
                 conn,
                 selected_knowledge,
-                family=None if family == "all" else family,
-                status=None if status == "all" else status,
+                family=None if family_param == "all" else family_param,
+                status=None if status_param == "all" else status_param,
                 tag=tag or None,
             )
+            # The corpus values ride the result's pre-filter counts, so
+            # the vocabulary is complete after the fetch; a fallback
+            # re-reads with the reset value so the rows match the select
+            # the page renders.
+            family = family_param
+            if family != "all" and family not in (
+                set(KNOWLEDGE_FAMILIES) | set(result["families"])
+            ):
+                family = "all"
+            status = status_param
+            if status != "all" and status not in (
+                set(DOC_STATUSES) | set(result["statuses"])
+            ):
+                status = "all"
+            if (family, status) != (family_param, status_param):
+                result = list_knowledge_docs(
+                    conn,
+                    selected_knowledge,
+                    family=None if family == "all" else family,
+                    status=None if status == "all" else status,
+                    tag=tag or None,
+                )
         finally:
             conn.close()
         context = {

@@ -372,6 +372,96 @@ def test_knowledge_catalog_status_and_tag_filters_narrow(tmp_path):
     assert "Storage spec" not in fragment.text
 
 
+def test_knowledge_catalog_out_of_vocab_filters_fall_back(tmp_path):
+    """A ?family=/&status= value the selects can't offer falls back to no
+    filter — silent, like the tasks/memory/wiki filters: every doc
+    renders and both selects read 'all'. In-vocab values keep narrowing
+    (the control half)."""
+    client, _ = _seeded_client(tmp_path)
+
+    bogus_family = client.get("/knowledge", params={"family": "bogus"})
+    assert bogus_family.status_code == 200
+    for title in ("Old decision", "Storage spec", "Deploy gate"):
+        assert title in bogus_family.text
+    assert '<select name="family">' in bogus_family.text
+    assert '<option value="all" selected>' in bogus_family.text
+    assert '<option value="bogus"' not in bogus_family.text
+
+    bogus_status = client.get("/knowledge", params={"status": "bogus"})
+    assert bogus_status.status_code == 200
+    assert "Old decision" in bogus_status.text
+    assert "Storage spec" in bogus_status.text
+    assert '<option value="all" selected>' in bogus_status.text
+
+    both = client.get(
+        "/knowledge", params={"family": "bogus", "status": "nope"}
+    )
+    assert both.status_code == 200
+    assert "Storage spec" in both.text
+    assert "Deploy gate" in both.text
+
+    # Control: in-vocab values still narrow — the fallback never weakens
+    # a real filter.
+    filtered = client.get("/knowledge", params={"family": "decision"})
+    assert "Old decision" in filtered.text
+    assert "Storage spec" not in filtered.text
+    assert '<option value="decision" selected>' in filtered.text
+
+
+def test_knowledge_catalog_custom_family_stays_filterable(tmp_path):
+    """A corpus doc whose family sits outside the classifier's vocabulary
+    stays reachable from the family filter: the option is offered and
+    selecting it narrows to that doc (the vocabulary is the classifier's
+    families plus what the corpus contains)."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+    from cairn.knowledge.index import rebuild_knowledge_index
+    from cairn.knowledge.store import add_document
+    from cairn.graph.schema import get_db
+    from cairn.okf.bundle import OKFBundle
+    from tests.test_dashboard_app import _graph_db_file
+
+    db = _graph_db_file(tmp_path, seed=False)
+    kdir = tmp_path / "knowledge"
+    _seed_docs(kdir)
+    runbook = add_document(
+        OKFBundle(str(kdir)), "Key rotation runbook", "Rotate the keys.",
+        "runbook", tags=["ops"],
+    )
+    conn = get_db(db)
+    try:
+        rebuild_knowledge_index(conn, OKFBundle(str(kdir)))
+        conn.commit()
+    finally:
+        conn.close()
+    client = TestClient(create_app(db_path=db, knowledge_dir=str(kdir)))
+
+    page = client.get("/knowledge", params={"family": "runbook"})
+    assert page.status_code == 200
+    assert "Key rotation runbook" in page.text
+    assert "Storage spec" not in page.text
+    assert '<option value="runbook" selected>' in page.text
+    # The row still links to the detail page under the custom namespace.
+    assert f'href="/knowledge/runbook/{runbook.rsplit("/", 1)[1]}"' in page.text
+
+
+def test_knowledge_status_badges_style_every_status():
+    """Every doc status a knowledge row can render (DOC_STATUSES) has a
+    badge color rule in app.css — no status falls through to the
+    unstyled base badge."""
+    import cairn.dashboard
+    from cairn.knowledge.store import DOC_STATUSES
+    from pathlib import Path
+
+    css = (
+        Path(cairn.dashboard.__file__).resolve().parent / "static" / "app.css"
+    ).read_text(encoding="utf-8")
+    for status in DOC_STATUSES:
+        assert f".badge-{status}" in css, status
+
+
 def test_knowledge_catalog_empty_state(tmp_path):
     """VAL-KNOW-005: a doc-less workspace renders an explicit empty state
     naming the ingest command — not a blank page or a bare table shell."""

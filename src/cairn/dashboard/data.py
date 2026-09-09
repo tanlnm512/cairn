@@ -988,7 +988,6 @@ def _doc_provenance(doc: dict, workspace: Optional[str]) -> dict:
         "doc_source": doc.get("source") or "",
         "repo": repo,
         "source_path": source_path,
-        "origin": str(row.get("origin") or "") if row else "",
         "manifest": manifest,
         "staged": bool(resource or row),
     }
