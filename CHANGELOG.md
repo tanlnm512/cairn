@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-09
+
 ### Added
 - The dashboard gained a `/knowledge` catalog over the ingested
   knowledge docs: every stored doc lists exactly once with its family
