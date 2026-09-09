@@ -394,7 +394,7 @@
      stays on that store. Empty/absent = the launch store. */
   var storeKey = (block.getAttribute("data-store") || "").trim();
   var panel = document.getElementById("knowledge-graph-panel");
-  var panelRequest = 0;
+  var latestInspectUrl = "";
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
@@ -415,48 +415,67 @@
     );
   }
 
-  network.on("selectNode", function (event) {
-    if (!panel) {
+  function inspectPanel(id) {
+    if (!panel || typeof htmx === "undefined") {
       return;
     }
-    var id = event.nodes && event.nodes.length ? event.nodes[0] : null;
-    if (!id) {
-      return;
-    }
-    panelRequest += 1;
-    var seq = panelRequest;
+    latestInspectUrl = inspectUrl(id);
     panel.hidden = false;
     panel.textContent = "";
     panel.appendChild(el("p", "panel-empty", "loading '" + id + "'…"));
-    fetch(inspectUrl(id))
-      .then(function (resp) {
-        if (!resp.ok) {
-          throw new Error("inspect request failed");
-        }
-        return resp.text();
-      })
-      .then(function (html) {
-        if (seq !== panelRequest) {
-          return; /* a newer selection already owns the panel */
-        }
-        /* The fragment is server-authored template markup (the same
-           seam htmx swaps) — identify the doc, never inject node data. */
-        panel.innerHTML = html;
-      })
-      .catch(function () {
-        if (seq !== panelRequest) {
+    htmx.ajax("GET", latestInspectUrl, { target: panel, swap: "innerHTML" });
+  }
+
+  /* One selection owns the panel: htmx swaps inside ajax(), so a stale
+     response (an earlier selection completing late) is cancelled at
+     htmx:beforeSwap — only the latest inspect request may swap. */
+  document.body.addEventListener("htmx:beforeSwap", function (event) {
+    var path =
+      event.detail && event.detail.requestConfig
+        ? event.detail.requestConfig.path
+        : "";
+    if (
+      typeof path === "string" &&
+      path.indexOf("/knowledge/graph/inspect") === 0 &&
+      path !== latestInspectUrl
+    ) {
+      event.detail.shouldSwap = false;
+    }
+  });
+
+  /* A failed inspect (HTTP error status or dead server) replaces the
+     loading text with the failure note — htmx swaps only on 2xx. */
+  ["htmx:responseError", "htmx:sendError", "htmx:timeout"].forEach(
+    function (name) {
+      document.body.addEventListener(name, function (event) {
+        var detail = event.detail || {};
+        var path = detail.requestConfig ? detail.requestConfig.path : "";
+        if (
+          !panel ||
+          typeof path !== "string" ||
+          path.indexOf("/knowledge/graph/inspect") !== 0 ||
+          path !== latestInspectUrl
+        ) {
           return;
         }
         panel.textContent = "";
         panel.appendChild(el("p", "panel-empty", "inspect request failed"));
       });
+    }
+  );
+
+  network.on("selectNode", function (event) {
+    var id = event.nodes && event.nodes.length ? event.nodes[0] : null;
+    if (id) {
+      inspectPanel(id);
+    }
   });
 
   network.on("deselectNode", function () {
     if (!panel) {
       return;
     }
-    panelRequest += 1;
+    latestInspectUrl = "";
     panel.hidden = true;
     panel.textContent = "";
   });

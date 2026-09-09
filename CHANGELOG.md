@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `favicon.svg`, and the conventional `/favicon.ico` path serves the same
   file, so the browser's automatic icon probe is a 200 instead of a 404
   on every page load.
+- The `/graph` symbol inspect panel loads as an htmx fragment: the
+  node-click fetch rides `htmx.ajax` (the `HX-Request` header keys the
+  route's fragment branch) and swaps the server-rendered panel —
+  identity, callers, callees, impact with affected tests, neighbor rows
+  deep-linking into the symbol-focused view — into `#graph-panel` with
+  no page navigation (sidebar/topbar persist by node identity). A stale
+  response from an earlier selection is cancelled at `htmx:beforeSwap`;
+  requests without the header keep the JSON payload. The
+  `/knowledge/graph` inspect fetch rides the same `htmx.ajax` seam.
 
 ### Changed
 - The graph and database canvases re-theme live through CSS variables.

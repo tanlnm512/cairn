@@ -3997,6 +3997,39 @@ def test_graph_inspect_route_returns_json_payload(tmp_path):
     assert missing.json()["found"] is False
 
 
+def test_graph_inspect_hx_request_renders_panel_fragment(tmp_path):
+    """VAL-KNOW-017 (server half): the node-click fetch carries htmx's
+    HX-Request header, so the route answers with the side-panel fragment
+    alone — server-rendered panel content, no document shell. The JSON
+    payload stays the answer without the header (the API seam the panel
+    predates)."""
+    client = _client(tmp_path, seed=True)
+    headers = {"HX-Request": "true"}
+
+    frag = client.get(
+        "/graph/inspect", params={"name": "demo_main"}, headers=headers
+    )
+    assert frag.status_code == 200
+    assert "<html" not in frag.text
+    assert "<aside" not in frag.text
+    assert "panel-title" in frag.text
+    assert "demo_main" in frag.text
+    assert "src/demo/core.py" in frag.text
+    # Neighbor rows deep-link into the symbol-focused graph view.
+    assert "scope=symbol&amp;focus=demo_helper" in frag.text
+
+    missing = client.get(
+        "/graph/inspect", params={"name": "missing_symbol"}, headers=headers
+    )
+    assert missing.status_code == 200
+    assert "no definition of" in missing.text
+    assert "missing_symbol" in missing.text
+
+    bare = client.get("/graph/inspect", params={"name": "demo_main"})
+    assert bare.status_code == 200
+    assert bare.json()["found"] is True
+
+
 # ---------------------------------------------------------------------------
 # Dashboard wiki view (FR-009 / US6): /wiki list with state badges,
 # /wiki/{page_id} rendered detail, and the stdlib markdown renderer (D-002).

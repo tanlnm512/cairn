@@ -118,6 +118,13 @@ writes: the task stays in-progress and re-completable, and the rejection
 names the invalid reference. `cairn knowledge islands` lists islands and
 their task state (read-only).
 
+**Where it renders** — the dashboard reads the same index: the `/knowledge`
+catalog lists every doc with its link count and family/status/tag filters,
+`/knowledge/{family}/{slug}` renders the relationship panel, supersede chain,
+and linked code refs per doc (the same tuples `cairn knowledge related`
+prints), and `/knowledge/graph` draws the doc graph with inferred edges
+dashed.
+
 ## Memory tiers
 
 Memories (`src/cairn/memory/`) are OKF concepts under `.knowledge/memory/`:

@@ -601,14 +601,22 @@ def create_app(
         # Side-panel payload for one symbol (identity + callers + callees +
         # impact with affected tests). Missing/blank names hit the data
         # function's not-found contract (200 with found=False), never an
-        # error — the panel just stays empty.
+        # error — the panel just stays empty. The canvas node-click fetch
+        # rides htmx (HX-Request header) and gets the server-rendered panel
+        # fragment; other callers keep the JSON payload.
         name = request.query_params.get("name", "")
-        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        selected_db, _, store_key = resolve_selection(request, db_path, knowledge_dir)
         conn = get_read_only_db(selected_db)
         try:
             result = inspect_symbol(conn, name)
         finally:
             conn.close()
+        if is_hx_request(request):
+            context = dict(result)
+            context["store_key"] = store_key
+            return templates.TemplateResponse(
+                request, "graph_inspect_panel.html", context
+            )
         return JSONResponse(result)
 
     def health(request: Request) -> Response:

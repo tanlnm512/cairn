@@ -1,0 +1,76 @@
+{#- Inspect-panel fragment for the /graph canvas's node click: one
+    symbol's identity, callers, callees, and the impact view with
+    affected tests, fetched by app.js via htmx.ajax (HX-Request rides
+    the call) and swapped into #graph-panel. Extends no base — the
+    canvas script is the only client; a request without the header
+    still gets the JSON payload the panel predates. Neighbor rows
+    deep-link into the symbol-focused graph view. -#}
+{% import "_links.html" as links with context %}
+{% if found %}
+<div class="panel-head-row">
+  <span class="panel-kind">{{ symbol.kind or "?" }}</span>
+  <span class="panel-title">{{ symbol.name }}</span>
+</div>
+{% set where = (symbol.file or "") ~ (":" ~ symbol.line_start if symbol.line_start else "") %}
+{% if where %}<p class="panel-sub">{{ where }}</p>{% endif %}
+{% if same_name_count and same_name_count > 1 %}
+<p class="panel-note">{{ same_name_count }} same-name definitions — showing the first</p>
+{% endif %}
+{% if symbol.docstring %}<p class="panel-doc">{{ symbol.docstring }}</p>{% endif %}
+<section class="panel-section">
+  <h3 class="panel-head">Callers ({{ callers | length }})</h3>
+  <ul class="panel-list">
+    {% for n in callers %}
+    <li class="panel-row">
+      <a class="panel-name" href="{{ links.url('/graph', {'scope': 'symbol', 'focus': n.name}) }}">{{ n.name }}</a>
+      {% if n.file %}<span class="panel-sub">{{ n.file }}</span>{% endif %}
+    </li>
+    {% else %}
+    <li class="panel-empty">none</li>
+    {% endfor %}
+  </ul>
+</section>
+{% if callers_truncated %}<p class="panel-note">more callers not shown</p>{% endif %}
+<section class="panel-section">
+  <h3 class="panel-head">Callees ({{ callees | length }})</h3>
+  <ul class="panel-list">
+    {% for n in callees %}
+    <li class="panel-row">
+      <a class="panel-name" href="{{ links.url('/graph', {'scope': 'symbol', 'focus': n.name}) }}">{{ n.name }}</a>
+      {% if n.file %}<span class="panel-sub">{{ n.file }}</span>{% endif %}
+    </li>
+    {% else %}
+    <li class="panel-empty">none</li>
+    {% endfor %}
+  </ul>
+</section>
+{% if callees_truncated %}<p class="panel-note">more callees not shown</p>{% endif %}
+<section class="panel-section">
+  <h3 class="panel-head">Impact — {{ impact.total }} symbol{{ 's' if impact.total != 1 }} affected{% if impact.truncated %} (capped){% endif %}</h3>
+  <ul class="panel-list">
+    {% for r in impact.top %}
+    <li class="panel-row">
+      <a class="panel-name" href="{{ links.url('/graph', {'scope': 'symbol', 'focus': r.symbol}) }}">{{ r.symbol }}</a>
+      <span class="panel-sub">depth {{ r.depth }}{% if r.file %} — {{ r.file }}{% endif %}</span>
+    </li>
+    {% else %}
+    <li class="panel-empty">none</li>
+    {% endfor %}
+  </ul>
+</section>
+<section class="panel-section">
+  <h3 class="panel-head">Affected tests{% if impact.affected_tests_total > (impact.affected_tests | length) %} — {{ impact.affected_tests_total }} total{% else %} ({{ impact.affected_tests | length }}){% endif %}</h3>
+  <ul class="panel-list">
+    {% for t in impact.affected_tests %}
+    <li class="panel-row">
+      <a class="panel-name" href="{{ links.url('/graph', {'scope': 'symbol', 'focus': t.symbol}) }}">{{ t.symbol }}</a>
+      {% if t.file %}<span class="panel-sub">{{ t.file }}</span>{% endif %}
+    </li>
+    {% else %}
+    <li class="panel-empty">none</li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<p class="panel-empty">no definition of '{{ name }}' in the index</p>
+{% endif %}
