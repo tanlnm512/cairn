@@ -40,7 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `extends`/`implements` in the receiver-dispatch ancestor index, and
     the new kinds stay outside `STRUCTURAL_EDGE_KINDS` so impact/trace
     radius is unchanged. Requires a rebuild (`cairn build`) to take
-    effect.
+    effect. The DS-v2 ground-truth seal's recorded per-corpus build
+    facts are re-pinned to the new deterministic counts (558/558
+    expectations and tree_hash pins unchanged).
 
 ### Fixed
 - The doc-link completion gate now confines proposed edges to the
