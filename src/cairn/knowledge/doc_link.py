@@ -1,8 +1,10 @@
 """doc-link task results: parse, critic-check, apply inferred edges (D1).
 
 The deterministic gate for doc-link completions verifies that every
-proposed edge names concept_ids resolving to EXISTING knowledge docs
-(existence only; un-backticked prose is not checked). A rejected result
+proposed edge names concept_ids resolving to EXISTING knowledge docs,
+confines endpoints to the completing task's island members when the
+caller supplies them, and rejects self-referential edges
+(un-backticked prose is not checked). A rejected result
 performs no writes: the caller leaves the task in-progress and
 re-completable, with each error naming the offending reference.
 
@@ -84,13 +86,21 @@ def parse_doc_link_result(
 def validate_doc_link_edges(
     bundle: OKFBundle,
     proposed: List[Tuple[str, str, str]],
+    members: Optional[List[str]] = None,
 ) -> List[str]:
     """Critic check: every referenced concept_id must exist and edges
-    must not be self-referential. Errors name the invalid reference."""
+    must not be self-referential. When ``members`` is provided, each
+    edge endpoint must additionally be one of those ids (the completing
+    task's island). Errors name the invalid reference."""
     from cairn.knowledge.islands import knowledge_doc_ids
     from cairn.knowledge.store import normalize_doc_id
 
     known = set(knowledge_doc_ids(bundle))
+    member_ids = (
+        {normalize_doc_id(bundle, m) for m in members}
+        if members is not None
+        else None
+    )
     errors: List[str] = []
     for src, relation, dst in proposed:
         norm_src = normalize_doc_id(bundle, src)
@@ -99,6 +109,12 @@ def validate_doc_link_edges(
             errors.append(f"unknown concept_id: '{src}' (edge source)")
         if norm_dst not in known:
             errors.append(f"unknown concept_id: '{dst}' (edge target)")
+        if member_ids is not None:
+            for raw, norm in ((src, norm_src), (dst, norm_dst)):
+                if norm not in member_ids:
+                    errors.append(
+                        f"edge endpoint outside task members: '{raw}'"
+                    )
         if norm_src == norm_dst:
             errors.append(f"self-referential edge: '{src} {relation} {dst}'")
     return errors

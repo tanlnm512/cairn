@@ -513,6 +513,33 @@ class TestDocLinkRejection:
         assert any("self-referential" in e for e in outcome["errors"])
         self._index_has_no_inferred_edges()
 
+    def test_existing_doc_outside_members_rejected(self, workspace):
+        """Existence alone is not enough: a proposal naming an EXISTING
+        doc that is not one of the task's island members is rejected."""
+        bundle = _bundle()
+        a, b, task = self._island_task(bundle)
+        outsider = _add_doc(bundle, "Outsider doc", tags=["outsider"])
+        before_a, before_b = _relates_to(bundle, a), _relates_to(bundle, b)
+
+        outcome = _claim_and_complete(
+            bundle, task.id, f"{a} relates-to {outsider}\n"
+        )
+
+        assert outcome["promoted"] is False
+        assert outcome["revised"] is False
+        assert outcome["dropped"] is False
+        assert any(
+            "edge endpoint outside task members" in e and outsider in e
+            for e in outcome["errors"]
+        )
+        assert get_task(bundle, task.id).status == "in-progress"
+        assert _relates_to(bundle, a) == before_a
+        assert _relates_to(bundle, b) == before_b
+        self._index_has_no_inferred_edges()
+
+        retry = _complete(bundle, task.id, f"{a} relates-to {b}\n")
+        assert retry["promoted"] is True
+
     def test_zero_edge_result_rejected_and_task_stays_recompletable(
         self, workspace
     ):

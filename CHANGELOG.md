@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The doc-link completion gate now confines proposed edges to the
+  completing task's island members: a result naming an existing doc
+  outside `facts.members` is rejected with no writes (the task stays
+  in-progress and re-completable), instead of writing `kind: inferred`
+  edges between arbitrary knowledge docs.
+
 ## [0.19.0] - 2026-09-09
 
 ### Added

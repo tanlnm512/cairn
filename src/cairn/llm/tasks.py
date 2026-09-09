@@ -325,10 +325,11 @@ def complete_task(
         }
 
     # doc-link completions are gate-checked by the dedicated doc-link
-    # critic (proposed edges must reference existing concept_ids) BEFORE
-    # anything is consumed or written. A rejected result performs no
-    # writes: the task stays in-progress and re-completable, and every
-    # error names the offending reference.
+    # critic (proposed edges must reference existing concept_ids and
+    # confine endpoints to the task's island members) BEFORE anything
+    # is consumed or written. A rejected result performs no writes: the
+    # task stays in-progress and re-completable, and every error names
+    # the offending reference.
     doc_link_edges: List[Tuple[str, str, str]] = []
     if task.task_kind == "doc-link":
         from cairn.knowledge.doc_link import parse_doc_link_result, validate_doc_link_edges
@@ -351,7 +352,14 @@ def complete_task(
             # any-status dedup would then never re-queue that island.
             doc_link_errors = ["no proposed edges found"]
         if not doc_link_errors:
-            doc_link_errors = validate_doc_link_edges(bundle, doc_link_edges)
+            facts_members = task.facts.get("members")
+            doc_link_errors = validate_doc_link_edges(
+                bundle,
+                doc_link_edges,
+                members=(
+                    facts_members if isinstance(facts_members, list) else None
+                ),
+            )
         if doc_link_errors:
             return {
                 "task_id": task_id,
