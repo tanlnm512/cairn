@@ -1,8 +1,8 @@
 """Tree-sitter Go parser.
 
 Extracts structs, interfaces, type aliases, functions, methods (with their
-receiver type as ``parent_scope``), call expressions, and imports into the
-shared ParsedFile model.
+receiver type as ``parent_scope``), call expressions, struct/interface
+embedding (``embeds`` edges), and imports into the shared ParsedFile model.
 
 Go-specific shape notes:
 
@@ -74,6 +74,10 @@ class GoParser(BaseParser, TreeSitterParserBase):
                 sym = self._parse_type_spec(spec, source)
                 if sym:
                     pf.symbols.append(sym)
+                    # Embedding: anonymous struct fields and interface
+                    # type elements become `embeds` edges.
+                    for embed_edge in self._parse_embeds(spec, source, sym.name):
+                        pf.edges.append(embed_edge)
                     # Push scope and walk inside (e.g. struct fields, methods).
                     self._scope.append(sym.name)
                     self._walk(spec, source, pf)
@@ -138,6 +142,50 @@ class GoParser(BaseParser, TreeSitterParserBase):
             column_start=node.start_point[1],
             column_end=node.end_point[1],
         )
+
+    def _parse_embeds(self, node: Node, source: bytes, owner: str) -> List[Edge]:
+        """`embeds` edges for one ``type_spec``.
+
+        Struct embedding: a ``field_declaration`` with no ``field_identifier``
+        (``*Base``, ``pkg.Config``, ``Base``). Interface embedding: a
+        ``type_elem`` among the interface's elements (``io.Writer``). Named
+        fields and method elements are members, not embeds, and are skipped.
+        Qualified and pointer embeds contribute their bare type name (the same
+        convention call targets use).
+        """
+        edges: List[Edge] = []
+        struct = self._child_of_type(node, _STRUCT_TYPE)
+        iface = self._child_of_type(node, _INTERFACE_TYPE)
+        if struct is not None:
+            fdl = self._child_of_type(struct, "field_declaration_list")
+            if fdl is None:
+                return edges
+            candidates = [
+                f
+                for f in fdl.children
+                if f.type == "field_declaration"
+                and self._child_of_type(f, "field_identifier") is None
+            ]
+        elif iface is not None:
+            candidates = [
+                c for c in iface.children if c.type in ("type_elem", "type_identifier", "qualified_type")
+            ]
+        else:
+            return edges
+        for elem in candidates:
+            target = self._first_descendant_of_type(
+                elem, "type_identifier", source
+            )
+            if target:
+                edges.append(
+                    Edge(
+                        source_name=owner,
+                        kind="embeds",
+                        target_name=target,
+                        line=elem.start_point[0] + 1,
+                    )
+                )
+        return edges
 
     # ------------------------------------------------------- function parsing
 
@@ -354,6 +402,18 @@ class GoParser(BaseParser, TreeSitterParserBase):
 
     def _has_child(self, node: Node, *types: str) -> bool:
         return any(c.type in types for c in node.children)
+
+    def _first_descendant_of_type(
+        self, node: Node, type_: str, source: bytes
+    ) -> Optional[str]:
+        """Text of the first descendant of ``type_`` (breadth-first), if any."""
+        stack = list(node.children)
+        while stack:
+            cur = stack.pop(0)
+            if cur.type == type_:
+                return self._node_text(cur, source).strip()
+            stack.extend(cur.children)
+        return None
 
 
 # Tree-sitter node kinds that represent a type reference in Go. Used by the

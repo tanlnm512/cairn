@@ -2066,6 +2066,44 @@ def test_inspect_target_url_renders_symbol_neighborhood(tmp_path):
     }
 
 
+@requires_vis_network
+def test_graph_page_renders_edge_kind_legend_and_passthrough(tmp_path):
+    """Edge-kind enrichment: the /graph page carries the edge-legend element
+    app.js fills with per-kind filter chips, and the symbol scope passes the
+    DB's real edge kind through (an extends edge renders as extends, not the
+    pre-enrichment hardcoded calls)."""
+    db_path = _graph_db_file(tmp_path, seed=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES ('s4', 'f1', 'Base', 'demo.core.Base', 'class')"
+    )
+    conn.execute(
+        "INSERT INTO edges (id, source_id, target_id, kind) "
+        "VALUES ('e3', 's1', 's4', 'extends')"
+    )
+    conn.commit()
+    conn.close()
+
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+
+    client = TestClient(create_app(db_path=db_path))
+
+    page = client.get("/graph")
+    assert page.status_code == 200
+    assert 'id="edge-legend"' in page.text
+
+    payload = _embedded_graph(
+        client.get("/graph?scope=symbol&focus=demo_main").text
+    )
+    kinds = {(e["source"], e["target"], e["kind"]) for e in payload["edges"]}
+    assert ("demo_main", "demo_helper", "calls") in kinds
+    assert ("demo_main", "Base", "extends") in kinds
+
+
 def test_nav_and_landing_page_each_link_to_graph(tmp_path):
     """FR-006 / US3 / TC-006: /graph is no orphan — the shared nav carries
     it on every page (base.html) and the landing page's link list repeats

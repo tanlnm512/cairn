@@ -196,7 +196,12 @@ def inspect_symbol(conn: sqlite3.Connection, name: str) -> Dict:
         truncated = len(fetched) > INSPECT_NEIGHBOR_CAP
         return (
             [
-                {"name": r["name"], "kind": r["kind"], "file": r["file"]}
+                {
+                    "name": r["name"],
+                    "kind": r["kind"],
+                    "file": r["file"],
+                    "edge_kind": r["ekind"],
+                }
                 for r in fetched[:INSPECT_NEIGHBOR_CAP]
             ],
             truncated,
@@ -204,13 +209,13 @@ def inspect_symbol(conn: sqlite3.Connection, name: str) -> Dict:
 
     cap = INSPECT_NEIGHBOR_CAP + 1
     callers, callers_truncated = _neighbors(
-        f"SELECT s.name, s.kind, f.path AS file "
+        f"SELECT s.name, s.kind, f.path AS file, e.kind AS ekind "
         f"FROM edges e JOIN symbols s ON e.source_id = s.id "
         f"JOIN files f ON s.file_id = f.id "
         f"WHERE e.target_id = ? LIMIT {cap}"
     )
     callees, callees_truncated = _neighbors(
-        f"SELECT t.name, t.kind, f.path AS file "
+        f"SELECT t.name, t.kind, f.path AS file, e.kind AS ekind "
         f"FROM edges e JOIN symbols t ON e.target_id = t.id "
         f"JOIN files f ON t.file_id = f.id "
         f"WHERE e.source_id = ? LIMIT {cap}"

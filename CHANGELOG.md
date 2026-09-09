@@ -13,6 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Relationship-kind enrichment across extraction and display. The graph's
+  canonical edge-kind vocabulary is now `calls`, `extends`, `implements`,
+  `embeds`, `with`, `references`, `decorates`, `imports`, `contains`.
+  - Python base classes emit `extends` (was `implements`); decorators emit
+    `decorates`; signature type annotations emit `references`. Swift splits
+    a class's first inheritance target to `extends` (the superclass) from
+    protocol conformances (`implements`). Go struct/interface embedding
+    emits `embeds`. Kotlin type annotations emit `references`.
+  - Every build synthesizes one `module` symbol per file (dotted
+    repo-relative qualified name), derives `contains` edges for nesting
+    (module → top-level, parent → nested), gives module-level code an edge
+    owner, and materializes `imports` module-to-module edges from the
+    imports table by longest-suffix path matching (ambiguous and external
+    imports are skipped). Incremental syncs refresh the affected repo's
+    `imports` edges.
+  - The dashboard graph canvas colors and dash-patterns edges by kind from
+    new `--edge-*` theme tokens, renders an edge-kind legend whose chips
+    filter whole kinds, and the symbol/neighbors/inspect views pass the
+    stored edge kind through verbatim (previously every edge rendered and
+    labeled as `calls`).
+  - Resolution semantics preserved: module symbols are excluded from the
+    resolver's candidate indexes (a file named after its single class
+    would otherwise make same-name references ambiguous), `embeds` joins
+    `extends`/`implements` in the receiver-dispatch ancestor index, and
+    the new kinds stay outside `STRUCTURAL_EDGE_KINDS` so impact/trace
+    radius is unchanged. Requires a rebuild (`cairn build`) to take
+    effect.
+
 ### Fixed
 - The doc-link completion gate now confines proposed edges to the
   completing task's island members: a result naming an existing doc
