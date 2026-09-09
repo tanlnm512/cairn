@@ -457,6 +457,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   letting stale responses complete in the background, and the dead
   `htmx:timeout` listeners are gone — htmx fires that event only with a
   configured timeout, which no request in the dashboard sets.
+- A wiki manifest whose `pages` section is not a mapping (e.g. a list
+  from an external edit) fails with a clear `ValueError` naming the
+  expected `{repo}/{page_id}`-keyed mapping instead of a bare
+  `AttributeError` from row normalization; the manifest-reading CLI
+  commands catch it and report the manifest as unopenable with exit 1.
 
 ## [0.18.0] - 2026-09-02
 

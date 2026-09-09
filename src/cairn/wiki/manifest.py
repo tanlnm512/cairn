@@ -126,7 +126,8 @@ def load_manifest(bundle_or_knowledge_root: Any) -> Dict[str, Any]:
     sections are preserved. A document in a schema older than
     :data:`MANIFEST_SCHEMA` is upgraded in memory (never written back) --
     an ``OKFBundle`` source also lets the row's task facts identify the
-    repo. Malformed JSON raises ``ValueError``.
+    repo. Malformed JSON, a non-JSON-object document, or a ``pages``
+    section that is not a mapping raise ``ValueError``.
     """
     path = _manifest_path(_root_of(bundle_or_knowledge_root))
     if not path.is_file():
@@ -140,6 +141,11 @@ def load_manifest(bundle_or_knowledge_root: Any) -> Dict[str, Any]:
     doc.setdefault("pages", {})
     if doc.get("schema") != MANIFEST_SCHEMA:
         _migrate_v1(doc, bundle_or_knowledge_root)
+    if not isinstance(doc.get("pages"), dict):
+        raise ValueError(
+            f"wiki manifest {path} pages must be a mapping keyed by "
+            "{repo}/{page_id}"
+        )
     _normalize_rows(doc)
     return doc
 
