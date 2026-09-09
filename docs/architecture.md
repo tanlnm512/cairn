@@ -38,7 +38,7 @@ through a decoupled task queue.
 |---|---|---|
 | MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 22 tools (verified at boot); `cairn://status` resource |
 | CLI | `src/cairn/cli/` | Click; entry point `cairn` → `cairn.cli:main`; see [cli-reference.md](cli-reference.md) |
-| Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json` |
+| Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json`; knowledge views — `/knowledge` catalog, `/knowledge/{family}/{slug}` detail with relationship panels, `/knowledge/graph` relationship canvas — render from the OKF bundle + derived `knowledge_edges` index |
 
 ### Core engines
 
@@ -103,6 +103,14 @@ The `.kg` SQLite database (`src/cairn/graph/schema.py`) holds:
   tables (`vec_*`, `vecmv_*`) via the `sqlite-vec` extension, same file.
 - **Derived**: `dataflow` (precomputed impact), `transitive_edges` (O(1)
   multi-hop calls).
+- **Knowledge relationships**: `knowledge_edges` (doc↔doc rows:
+  `doc_id`, `related_id`, `relation`, `kind` = `extracted`/`inferred`/
+  `derived`, `provenance`, `created_at` — supersede pairs store both
+  directions) and `knowledge_doc_refs` (doc→code refs with
+  `ref_kind` = `file`/`symbol` and a `verified` flag). Both are rebuilt
+  from OKF frontmatter by `cairn knowledge rebuild`; the frontmatter is
+  the durable record, these tables a rebuildable index (see
+  [knowledge-and-memory.md](knowledge-and-memory.md)).
 - **Ops/telemetry**: `build_runs`, `tool_metrics`, `events`, `skipped_files`,
   `parse_errors`, `pending_sync`, `repo_build_state`, `repo_deps`,
   `schema_meta`, `memory_refs`.

@@ -52,6 +52,79 @@ for the full-size version. Pipeline: `src/cairn/knowledge/ingest/__init__.py:run
 
 Docs land in `knowledge/<doc_type>/<slug>.md` ("doc families").
 
+## Doc relationships and the derived index
+
+Frontmatter is the durable record; SQLite (`knowledge_edges`,
+`knowledge_doc_refs`) is a rebuildable cache over it.
+
+**Authoring links** — a source doc declares relationships in frontmatter:
+
+```yaml
+relates_to:
+  - concept_id: knowledge/decision/0006-raw-logs
+    relation: relates-to   # relates-to | supersedes | superseded-by | references
+    kind: extracted        # extracted | inferred | derived
+```
+
+`supersedes:` / `superseded-by:` keys are accepted as shorthand. Pointers
+name concept ids; a pointer may also name the source document by path
+(ingest stores that path as the promoted doc's `resource`, and the index
+resolves it) — as the exact path, or as a basename that matches exactly
+one resource. A basename shared by several resources resolves to
+nothing: no target is guessed. ADR-style chains need no frontmatter:
+`decisions/`/`adr/` docs numbered `NNNN-` are linked by body/status
+markers ("Supersedes ADR-0001") in both directions.
+
+**The index** — two tables in the graph DB, one row per directed edge:
+
+- `knowledge_edges(doc_id, related_id, relation, kind, provenance, created_at)`
+  — declared edges (any relation/kind as frontmatter declares) plus
+  recomputed tag/`affects_modules` overlap materialized as `kind: derived`
+  rows in both directions. Both ids are bare concept ids
+  (`knowledge/<type>/<slug>`), matching `knowledge_embeddings.doc_id`.
+  Dangling pointers stay in frontmatter and never reach the index — and
+  are not silent: the ingest dry run and `cairn knowledge rebuild` each
+  warn, naming the document and the pointer that matched no concept id or
+  resource path (`knowledge ingest --ingest` carries the same warning
+  from its post-write rebuild). A pointer whose basename matches several
+  resources warns the same way as an `ambiguous pointer`, naming the
+  candidate paths. A pair with a declared edge gets no derived duplicate.
+- `knowledge_doc_refs(doc_id, ref, ref_kind, verified)` — entries with a
+  `ref` in the doc's `sources`/`verified` families.
+
+**Rebuild** — `cairn knowledge rebuild` (also run automatically after
+`knowledge ingest --ingest`) recomputes both tables from the bundle.
+Idempotent: an unchanged bundle rebuilds to identical contents, including
+`created_at` stamps. Declared pointers that index nothing — no match, or
+an ambiguous basename match — are listed as warnings (document + pointer,
+with the candidates named) instead of disappearing.
+
+**Island detection and LLM linking** — connected components over the doc
+graph surface pair-units detached from the corpus: two-doc components,
+and singleton docs paired in id order (an odd singleton stays unpaired).
+Each pair-unit queues one `doc-link` task whose facts carry the member
+concept_ids and titles; queueing is deduped per member set, so re-ingests
+and rebuilds never duplicate tasks. The task's output spec asks for one
+proposed edge per line (`<concept_id> <relation> <related_id>`,
+`<relation>` from the closed vocabulary). Completing the task via
+`cairn task claim` / `cairn task complete --result-file` runs a
+deterministic critic that accepts only edges referencing EXISTING
+knowledge concept_ids. An accepted result is written back as `kind:
+inferred` `relates_to` entries on both docs' frontmatter (the durable
+record; `supersedes` mirrors to `superseded-by` on the other doc) and,
+through the rebuild, as `kind: inferred` rows in `knowledge_edges`. A
+completion referencing a nonexistent concept_id is rejected with no
+writes: the task stays in-progress and re-completable, and the rejection
+names the invalid reference. `cairn knowledge islands` lists islands and
+their task state (read-only).
+
+**Where it renders** — the dashboard reads the same index: the `/knowledge`
+catalog lists every doc with its link count and family/status/tag filters,
+`/knowledge/{family}/{slug}` renders the relationship panel, supersede chain,
+and linked code refs per doc (the same tuples `cairn knowledge related`
+prints), and `/knowledge/graph` draws the doc graph with inferred edges
+dashed.
+
 ## Memory tiers
 
 Memories (`src/cairn/memory/`) are OKF concepts under `.knowledge/memory/`:

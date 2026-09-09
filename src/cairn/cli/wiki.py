@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 import sys
+from typing import NoReturn
 
 from .main import DEFAULT_DB_PATH, get_db, main
 from ..utils.git import get_repo_head
@@ -64,10 +65,13 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
             skipped_total = 0
             catalog_total = 0
             for r, _ in plans:
-                result = run_wiki_generate(conn, bundle, r, pages_cap=pages,
-                                           force=force,
-                                           diagrams=diagrams,
-                                           refine_catalog=refine_catalog)
+                try:
+                    result = run_wiki_generate(conn, bundle, r, pages_cap=pages,
+                                               force=force,
+                                               diagrams=diagrams,
+                                               refine_catalog=refine_catalog)
+                except ValueError as exc:
+                    _unreadable_manifest_exit(exc)
                 catalog_id = result.get("catalog_task_id")
                 if catalog_id:
                     catalog_total += 1
@@ -84,7 +88,10 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
                     click.echo(f"  cairn task complete {catalog_id} --result-file <path>   # submit result")
                     continue
                 queued_ids = set(result["queued_task_ids"])
-                rows = load_manifest(bundle).get("pages", {})
+                try:
+                    rows = load_manifest(bundle).get("pages", {})
+                except ValueError as exc:
+                    _unreadable_manifest_exit(exc)
                 for page in result["plan"]:
                     task_id = rows.get(f"{r}/{page['page_id']}", {}).get("task_id")
                     if task_id in queued_ids:
@@ -163,6 +170,13 @@ def wiki_search(query, knowledge):
             click.echo(f"      {c.description}")
 
 
+def _unreadable_manifest_exit(exc: ValueError) -> NoReturn:
+    """The single clean unreadable-manifest exit: one stderr line naming
+    the loader's problem, exit 1 — never a traceback."""
+    click.echo(f"Cannot read wiki manifest: {exc}", err=True)
+    sys.exit(1)
+
+
 def _load_manifest_or_exit(knowledge):
     from ..okf.bundle import OKFBundle
     from ..wiki.manifest import load_manifest
@@ -171,8 +185,7 @@ def _load_manifest_or_exit(knowledge):
     try:
         return bundle, load_manifest(bundle)
     except ValueError as exc:
-        click.echo(f"Cannot read wiki manifest: {exc}", err=True)
-        sys.exit(1)
+        _unreadable_manifest_exit(exc)
 
 
 def _split_page_key(key: str) -> tuple:

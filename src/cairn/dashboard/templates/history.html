@@ -1,107 +1,24 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_filters.html" as forms with context %}
+{% import "_cards.html" as cards with context %}
 {% block title %}History — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
-  <div id="refresh-region">
-  <h1>History</h1>
-  <div class="stat-row">
-    <div class="stat-tile">
-      <div class="stat-value">{{ calls | length }}</div>
-      <div class="stat-label">calls shown</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ window }}</div>
-      <div class="stat-label">time window</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-value">{{ calls | selectattr('status', 'equalto', 'error') | list | length }}</div>
-      <div class="stat-label">error calls</div>
-    </div>
-  </div>
-  <form class="graph-controls" method="get" action="/history">
-    <label>Tool
-      <input type="text" name="tool" value="{{ tool }}">
-    </label>
-    <label>Session
-      <input type="text" name="session" value="{{ session }}">
-    </label>
-    <label>Source
-      <input type="text" name="source" value="{{ source }}">
-    </label>
-    <input type="hidden" name="window" value="{{ window }}">
-    {{ links.store_field() }}
-    <button type="submit">Apply</button>
-  </form>
-  {% include "window_control.html" %}
-  {#- FR-005: exports ride the view's current filters (the selected store
-      rides links.url); before/after are page cursors, not filters. -#}
-  {%- set export_q = {} %}
-  {%- if tool %}{% set _ = export_q.update({'tool': tool}) %}{% endif %}
-  {%- if session %}{% set _ = export_q.update({'session': session}) %}{% endif %}
-  {%- if source %}{% set _ = export_q.update({'source': source}) %}{% endif %}
-  {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
-  <p class="muted">
-    Export:
-    <a class="btn-secondary" href="{{ links.url('/history.csv', export_q) }}">CSV</a>
-    <a class="btn-secondary" href="{{ links.url('/history.json', export_q) }}">JSON</a>
-  </p>
-  {% if calls %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Tool</th>
-        <th>Timestamp</th>
-        <th>Duration</th>
-        <th>Status</th>
-        <th>Session</th>
-        <th>Source</th>
-        <th>Est. tokens (req/resp)</th>
-        <th>Arguments</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for h in calls %}
-      <tr>
-        <td>{{ h.tool_name }}</td>
-        <td class="ts">{{ h.invoked_at | epoch }}</td>
-        <td class="num">{{ h.duration_ms | duration }}</td>
-        <td><span class="badge badge-{{ h.status }}">{{ h.status }}</span></td>
-        <td class="cell-id"><code title="{{ h.session_id }}">{{ links.view_link('chains', 'session', h.session_id, window) }}</code></td>
-        <td>{{ h.source }}</td>
-        <td class="num">{{ h | tokens }}</td>
-        <td>{{ h.args_summary or "—" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if prev_cursor or next_cursor %}
-  {#- FR-003/FR-006: paging links keep the active filters AND the selected
-      store (links.url); empty selection keeps the bare hrefs. -#}
-  <p class="muted">
-    {%- if prev_cursor %}
-    {%- set q = {'after': prev_cursor} %}
-    {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
-    {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
-    {%- if source %}{% set _ = q.update({'source': source}) %}{% endif %}
-    {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
-    <a href="{{ links.url('/history', q) }}">Newer</a>
-    {%- endif %}
-    {%- if prev_cursor and next_cursor %} · {% endif %}
-    {%- if next_cursor %}
-    {%- set q = {'before': next_cursor} %}
-    {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
-    {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
-    {%- if source %}{% set _ = q.update({'source': source}) %}{% endif %}
-    {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
-    <a href="{{ links.url('/history', q) }}">Older</a>
-    {%- endif %}
-  </p>
-  {% endif %}
-  {% else %}
-  <p class="empty-state">No matching calls{% if not tool and not session and not source %} recorded yet{% endif %}.</p>
-  {% endif %}
-  </div>
+  {#- The filter form is an htmx trigger, not a page reload: typing
+      (input changed delay:300ms) hx-gets the route and morph-swaps the
+      results region below. It must stay OUTSIDE #refresh-region so the
+      region's swaps — filter fragments and the 5s poll alike — can never
+      destroy the fields being typed into (the #refresh-region contract:
+      in-progress filter input survives every swap). The Apply submit
+      stays as the no-htmx fallback and the URL-carrying apply. -#}
+  {{ forms.form_open('/history', {'window': window}, hx={'target': '#refresh-region', 'trigger': 'input changed delay:300ms'}, form_id='history-filters') }}
+  {{ forms.field('text', 'tool', 'Tool', tool) }}
+  {{ forms.field('text', 'session', 'Session', session) }}
+  {{ forms.field('text', 'source', 'Source', source) }}
+  {{ forms.form_close() }}
+  {% include "history_region.html" %}
 </section>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}

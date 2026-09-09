@@ -1,22 +1,11 @@
 {% extends "base.html" %}
+{% import "_table.html" as tables with context %}
 {% block title %}Workspaces — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Workspaces</h1>
   {% if stores %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Workspace</th>
-        <th>Store</th>
-        <th>State</th>
-        <th>Size</th>
-        <th>Last modified</th>
-        <th>Recorded calls</th>
-        <th>Open</th>
-      </tr>
-    </thead>
-    <tbody>
+  {% call tables.table(['Workspace', 'Store', 'State', 'Size', 'Last modified', 'Recorded calls', 'Open']) %}
       {% for s in stores %}
       <tr>
         <td>{% if s.path %}<code>{{ s.path }}</code>{% else %}— (unregistered){% endif %}</td>
@@ -28,13 +17,12 @@
         <td><a href="/projects?store={{ s.key | urlencode }}">Open</a></td>
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+  {% endcall %}
   {% if stores | selectattr("counts_capped") | list %}
   <p class="muted">counts unavailable for some stores (probe cap)</p>
   {% endif %}
   {% else %}
-  <p class="empty-state">No cairn stores found — run <code>cairn init</code> in a workspace to register one.</p>
+  {{ tables.empty_state('No cairn stores found — run', code='cairn init') }}
   {% endif %}
 </section>
 {% endblock %}

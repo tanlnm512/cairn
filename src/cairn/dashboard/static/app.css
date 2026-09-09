@@ -1,77 +1,144 @@
-/* Cairn dashboard — "Terrain" design system: warm sandstone light mode,
-   deep ink-brown dark mode, one burnt-amber primary (a cairn is a trail
-   marker — the palette reads geological, not tech-corporate).
-   Theme contract (pinned by tests/test_dashboard_theme.py — note that
-   test locates blocks by first substring match, so keep selector
-   spellings OUT of comments):
-   - The first root-variable block below holds every theme-varying
-     variable and NOTHING else; the dark-theme block that follows must
-     redefine each of them to a different value plus color-scheme. New
-     theme-dependent tokens go into BOTH blocks, never the constants one.
+/* Cairn dashboard — design tokens, dark-first: a near-black surface
+   ladder stepped through 1px hairlines (no drop shadows — elevation is
+   a surface step plus a hairline), one indigo accent, 13px density,
+   system fonts.
+   Theme contract (pinned by the dashboard theme test — that test
+   locates blocks by first substring match, so keep selector spellings
+   OUT of comments):
+   - The first variable block below holds the theme tokens (dark values)
+     and NOTHING else — no constants, no component declarations.
+   - Both theme blocks that follow redefine every theme token plus the
+     color scheme: the dark block restates the defaults verbatim, the
+     light block carries the light ladder. New theme-dependent tokens go
+     into ALL THREE blocks, never the constants one.
    - Theme resolution lives in base.html's inline head script — no
      system-color-scheme media query may appear in this file. */
 
 :root {
-  --bg: #f5f2ec;
-  --surface: #fffdf9;
-  --surface-2: #f0ebe1;
-  --sidebar: #ece5d8;
-  --canvas: #faf8f3;
-  --text: #23201b;
-  --muted: #6f675a;
-  --border: #dcd2c0;
-  --accent: #b45309;
-  --accent-2: #4f46e5;
-  --accent-contrast: #fffdf9;
-  --accent-soft: rgba(180, 83, 9, 0.12);
-  --ok: #166534;
-  --warn: #a16207;
-  --err: #b91c1c;
-  --shadow: rgba(35, 32, 27, 0.12);
-  --backdrop: rgba(35, 32, 27, 0.32);
-}
-
-[data-theme="dark"] {
-  --bg: #14110d;
-  --surface: #1c1813;
-  --surface-2: #241f18;
-  --sidebar: #171310;
-  --canvas: #100e0b;
-  --text: #ece7dd;
-  --muted: #a29885;
-  --border: #342c21;
-  --accent: #f59e0b;
-  --accent-2: #818cf8;
-  --accent-contrast: #1c1503;
-  --accent-soft: rgba(245, 158, 11, 0.14);
-  --ok: #4ade80;
-  --warn: #fde047;
-  --err: #f87171;
-  --shadow: rgba(0, 0, 0, 0.5);
-  --backdrop: rgba(0, 0, 0, 0.6);
+  --bg-0: #08090a;
+  --bg-1: #0f1011;
+  --bg-2: #141516;
+  --bg-3: #18191a;
+  --line-1: #23252a;
+  --line-2: #34343a;
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #5e6ad2;
+  --accent-hover: #828fff;
+  --ok: #27a644;
+  --warn: #f5a623;
+  --err: #ee5d5d;
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
   color-scheme: dark;
 }
 
+[data-theme="dark"] {
+  --bg-0: #08090a;
+  --bg-1: #0f1011;
+  --bg-2: #141516;
+  --bg-3: #18191a;
+  --line-1: #23252a;
+  --line-2: #34343a;
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #5e6ad2;
+  --accent-hover: #828fff;
+  --ok: #27a644;
+  --warn: #f5a623;
+  --err: #ee5d5d;
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-0: #ffffff;
+  --bg-1: #f7f8f8;
+  --bg-2: #f2f3f4;
+  --bg-3: #ececee;
+  --line-1: #e6e7ea;
+  --line-2: #d0d3d8;
+  --text-1: #17181a;
+  --text-2: #3f4148;
+  --text-3: #6b6e78;
+  --text-4: #9a9da6;
+  --accent: #5260c9;
+  --accent-hover: #404db3;
+  --ok: #1a7f37;
+  --warn: #b45309;
+  --err: #cf222e;
+  --kind-function: #0d9488;
+  --kind-method: #16a34a;
+  --kind-class: #7c3aed;
+  --kind-interface: #2563eb;
+  --kind-enum: #db2777;
+  --kind-module: #b45309;
+  --kind-external: #6b7280;
+  color-scheme: light;
+}
+
 /* Theme-invariant design constants (NOT scanned by the theme test —
-   keep them out of the first :root block above). */
+   keep them out of the first variable block above). */
 :root {
-  --radius-s: 8px;
-  --radius: 12px;
-  --radius-l: 16px;
-  --control-h: 38px;
-  --shadow-1: 0 1px 2px var(--shadow);
-  --shadow-2: 0 12px 32px -16px var(--shadow);
-  --shadow-3: 0 24px 64px -24px var(--shadow);
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  /* Radius scale */
+  --radius-xs: 4px;
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+  /* Type scale — 13px base */
+  --font-xs: 11px;
+  --font-s: 12px;
+  --font-m: 13px;
+  --font-l: 14px;
+  --font-xl: 16px;
+  --font-2xl: 20px;
+  /* Layout dims — control height is the dense 30px row; the shared
+     filter-bar pairs it with 1.2 line-heights and slim paddings so
+     13px control text fits unclipped. */
+  --control-h: 30px;
   --sidebar-w: 232px;
   --sidebar-w-collapsed: 60px;
   --topbar-h: 56px;
+  /* System font stacks */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  --font-sans: -apple-system, system-ui, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+  /* Derived theme-adaptive colors: tints and veils recomputed from the
+     active theme's own tokens. */
+  --accent-contrast: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --backdrop: color-mix(in srgb, var(--bg-0) 62%, transparent);
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Alpine-managed DOM marked x-cloak stays hidden until Alpine
+   initializes and strips the attribute. */
+[x-cloak] {
+  display: none !important;
 }
 
 html {
@@ -81,8 +148,9 @@ html {
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background: var(--bg);
-  color: var(--text);
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-size: var(--font-m);
   line-height: 1.55;
 }
 
@@ -92,13 +160,12 @@ a {
 
 a:hover,
 a:focus {
-  color: var(--accent-2);
+  color: var(--accent-hover);
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /* ---- App shell: sidebar + topbar + main ---- */
@@ -117,8 +184,8 @@ body.app-shell {
   flex-direction: column;
   gap: 0.25rem;
   padding: 1rem 0 0;
-  background: var(--sidebar);
-  border-right: 1px solid var(--border);
+  background: var(--bg-1);
+  border-right: 1px solid var(--line-1);
   overflow-y: auto;
 }
 
@@ -127,7 +194,7 @@ body.app-shell {
   align-items: center;
   gap: 0.55rem;
   padding: 0.35rem 0.6rem 0.9rem;
-  color: var(--text);
+  color: var(--text-1);
   text-decoration: none;
   font-weight: 700;
   font-size: 1.1rem;
@@ -140,7 +207,7 @@ body.app-shell {
 
 .brand:hover,
 .brand:focus {
-  color: var(--text);
+  color: var(--text-1);
 }
 
 .side-nav {
@@ -162,7 +229,7 @@ body.app-shell {
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-3);
   opacity: 0.75;
 }
 
@@ -172,7 +239,7 @@ body.app-shell {
   gap: 0.6rem;
   padding: 0.48rem 0.65rem;
   border-radius: var(--radius-s);
-  color: var(--muted);
+  color: var(--text-3);
   text-decoration: none;
   font-size: 0.92rem;
   transition: background 120ms ease, color 120ms ease;
@@ -185,7 +252,7 @@ body.app-shell {
 
 .side-nav a:hover,
 .side-nav a:focus {
-  color: var(--text);
+  color: var(--text-1);
   background: var(--accent-soft);
 }
 
@@ -209,8 +276,8 @@ body.app-shell {
   bottom: 0;
   margin-top: auto;
   padding: 0.75rem;
-  background: var(--sidebar);
-  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-1);
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -224,17 +291,17 @@ body.app-shell {
   width: 32px;
   height: 32px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-3);
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
 
 .sidebar-collapse:hover,
 .sidebar-collapse:focus {
-  color: var(--text);
+  color: var(--text-1);
   background: var(--accent-soft);
 }
 
@@ -281,11 +348,11 @@ body.app-shell {
   gap: 1rem;
   min-height: var(--topbar-h);
   padding: 0 1.5rem;
-  background: var(--bg);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  background: var(--bg-0);
+  background: color-mix(in srgb, var(--bg-0) 78%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line-1);
 }
 
 .topbar-title {
@@ -293,7 +360,7 @@ body.app-shell {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 /* ---- Topbar actions: workspace selector + live chrome ---- */
@@ -307,13 +374,15 @@ body.app-shell {
 
 .store-picker select {
   max-width: 260px;
-  padding: 0.34rem 0.6rem;
-  border: 1px solid var(--border);
+  height: var(--control-h);
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
-  background: var(--surface);
-  color: var(--text);
+  background: var(--bg-2);
+  color: var(--text-1);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   cursor: pointer;
 }
 
@@ -328,42 +397,55 @@ body.app-shell {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.36rem 0.65rem;
-  border: 1px solid var(--border);
+  height: var(--control-h);
+  padding: 0 0.65rem;
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--bg-2);
+  color: var(--text-3);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
 
 .palette-open:hover,
 .palette-open:focus {
-  color: var(--text);
+  color: var(--text-1);
   background: var(--accent-soft);
 }
 
 .palette-open kbd {
   padding: 0.05rem 0.35rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: 4px;
-  background: var(--surface-2);
+  background: var(--bg-2);
   font-family: var(--font-mono);
   font-size: 0.68rem;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
+/* Native <dialog>: showModal() provides the focus trap and Esc-to-close.
+   The dialog itself is a full-viewport click-catcher (click-outside
+   dismisses; the card carries the surface) and ::backdrop dims the page
+   through the theme's backdrop token. */
 .palette {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: none;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  overflow: hidden;
 }
 
-.palette-backdrop {
-  position: absolute;
-  inset: 0;
+.palette::backdrop {
   background: var(--backdrop);
 }
 
@@ -371,10 +453,9 @@ body.app-shell {
   position: relative;
   max-width: 560px;
   margin: 12vh auto 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-3);
   overflow: hidden;
 }
 
@@ -382,15 +463,18 @@ body.app-shell {
   width: 100%;
   padding: 0.85rem 1rem;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line-1);
   background: transparent;
-  color: var(--text);
+  color: var(--text-1);
   font: inherit;
   font-size: 0.95rem;
 }
 
-.palette-card input:focus {
-  outline: none;
+/* The card's overflow clips an outward ring, so the input's ring sits
+   inside its own box. */
+.palette-card input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .palette-card ul {
@@ -428,20 +512,20 @@ body.app-shell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--muted);
+  color: var(--text-3);
   font-size: 0.78rem;
 }
 
 .palette-row-empty {
   justify-content: center;
   cursor: default;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 .palette-hint {
   margin: 0;
   padding: 0.5rem 1rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line-1);
   font-size: 0.75rem;
 }
 
@@ -467,10 +551,9 @@ body.app-shell {
 /* ---- Panels (the per-view card container) ---- */
 
 .panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
   padding: 1.5rem 1.7rem;
   overflow-x: auto;
 }
@@ -483,7 +566,7 @@ body.app-shell {
 }
 
 .muted {
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 .link-list {
@@ -505,10 +588,10 @@ body.app-shell {
   width: 32px;
   height: 32px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-3);
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
@@ -529,7 +612,7 @@ body.app-shell {
 
 .theme-toggle:hover,
 .theme-toggle:focus {
-  color: var(--text);
+  color: var(--text-1);
   background: var(--accent-soft);
 }
 
@@ -580,19 +663,21 @@ body.app-shell {
 }
 
 #live-controls:not([hidden]) #live-pause {
-  padding: 0.18rem 0.7rem;
-  border: 1px solid var(--border);
+  height: var(--control-h);
+  padding: 0 0.7rem;
+  border: 1px solid var(--line-1);
   border-radius: 999px;
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--bg-2);
+  color: var(--text-3);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   cursor: pointer;
 }
 
 #live-controls:not([hidden]) #live-pause:hover,
 #live-controls:not([hidden]) #live-pause:focus {
-  color: var(--text);
+  color: var(--text-1);
   border-color: var(--accent);
 }
 
@@ -606,16 +691,14 @@ body.app-shell {
   }
 }
 
-/* ---- Graph view ---- */
+/* ---- Filter bar (the shared control row) ---- */
 
-.graph-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 0.9rem;
-}
-
-.graph-controls {
+/* One fixed row height for every control (--control-h): selects, text
+   inputs, and buttons carry different intrinsic widget heights, which
+   bottom-aligned rows turn into ragged label baselines. The fixed height
+   pairs with line-height 1.2 and slim vertical padding so 13px control
+   text sits unclipped inside the 30px row. */
+.filter-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -623,42 +706,40 @@ body.app-shell {
   margin: 0.6rem 0;
 }
 
-.graph-controls label {
+.filter-bar label {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
   font-size: 0.74rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.07em;
 }
 
-/* One fixed row height for every control: selects, text inputs, and
-   buttons carry different intrinsic widget heights, which bottom-aligned
-   rows turn into ragged label baselines. */
-.graph-controls input[type="text"],
-.graph-controls input[type="number"],
-.graph-controls input[type="password"],
-.graph-controls select {
+.filter-bar input[type="text"],
+.filter-bar input[type="number"],
+.filter-bar input[type="password"],
+.filter-bar select {
   min-width: 0;
   height: var(--control-h);
-  padding: 0.42rem 0.65rem;
-  border: 1px solid var(--border);
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--bg-2);
+  color: var(--text-1);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   letter-spacing: normal;
   transition: border-color 120ms ease;
 }
 
-.graph-controls input[type="number"] {
+.filter-bar input[type="number"] {
   width: 7.5rem;
 }
 
-.graph-controls input[type="checkbox"] {
+.filter-bar input[type="checkbox"] {
   width: 15px;
   height: 15px;
   margin: 0;
@@ -669,8 +750,7 @@ body.app-shell {
    centers against the neighboring inputs/buttons instead of stacking the
    checkbox above its caption (column direction inherited from the label
    rule above). */
-.graph-controls .graph-tests-toggle,
-.graph-controls .confirm-base-url {
+.filter-bar .filter-check {
   flex-direction: row;
   align-items: center;
   height: var(--control-h);
@@ -680,42 +760,44 @@ body.app-shell {
 /* Bare inline items interleaved in the row (env-pin markers, the API-key
    status chip) must meet the same bottom line as the controls they
    annotate. */
-.graph-controls .env-pin,
-.graph-controls > .muted {
+.filter-bar .env-pin,
+.filter-bar > .muted {
   display: inline-flex;
   align-items: center;
   height: var(--control-h);
   gap: 0.35rem;
 }
 
-.graph-controls .env-pin {
+.filter-bar .env-pin {
   font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
-.graph-controls input:focus,
-.graph-controls select:focus {
-  outline: none;
+/* Intent tint only — the focus outline itself is never removed (the
+   global :focus-visible ring is the keyboard location feedback). */
+.filter-bar input:focus,
+.filter-bar select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.graph-controls button[type="submit"] {
+.filter-bar button[type="submit"] {
   height: var(--control-h);
-  padding: 0 1.1rem;
+  padding: 0 0.9rem;
   border: 0;
   border-radius: var(--radius-s);
   background: var(--accent);
   color: var(--accent-contrast);
   font: inherit;
-  font-size: 0.88rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   font-weight: 600;
   letter-spacing: normal;
   cursor: pointer;
   transition: filter 120ms ease;
 }
 
-.graph-controls button[type="submit"]:hover {
+.filter-bar button[type="submit"]:hover {
   filter: brightness(1.08);
 }
 
@@ -730,8 +812,8 @@ body.app-shell {
 .graph-canvas {
   height: min(72vh, 780px);
   min-height: 480px;
-  background: var(--canvas);
-  border: 1px solid var(--border);
+  background: var(--bg-0);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
 }
 
@@ -752,8 +834,8 @@ body.app-shell {
   max-height: min(72vh, 780px);
   overflow-y: auto;
   padding: 0.75rem 0.85rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
   font-size: 0.86rem;
 }
@@ -784,20 +866,20 @@ body.app-shell {
 
 .panel-sub {
   margin: 0.2rem 0 0;
-  color: var(--muted);
+  color: var(--text-3);
   overflow-wrap: anywhere;
 }
 
 .panel-doc {
   margin: 0.45rem 0 0;
   padding-left: 0.6rem;
-  border-left: 2px solid var(--border);
-  color: var(--muted);
+  border-left: 2px solid var(--line-1);
+  color: var(--text-3);
 }
 
 .panel-note {
   margin: 0.25rem 0 0;
-  color: var(--muted);
+  color: var(--text-3);
   font-size: 0.78rem;
 }
 
@@ -808,7 +890,7 @@ body.app-shell {
 .panel-head {
   margin: 0 0 0.25rem;
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--text-3);
   font-weight: 600;
 }
 
@@ -822,7 +904,7 @@ body.app-shell {
   display: flex;
   flex-direction: column;
   padding: 0.22rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line-1) 55%, transparent);
 }
 
 .panel-row:last-child {
@@ -847,7 +929,14 @@ body.app-shell {
 
 .panel-empty {
   margin: 0.15rem 0;
-  color: var(--muted);
+  color: var(--text-3);
+}
+
+/* The inspect panel's exit link to the doc's full detail page. */
+.panel-open {
+  display: inline-block;
+  margin-top: 0.7rem;
+  font-weight: 500;
 }
 
 @media (max-width: 900px) {
@@ -873,12 +962,12 @@ body.app-shell {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  color: var(--muted);
+  color: var(--text-3);
   cursor: pointer;
   transition: color 120ms ease, border-color 120ms ease;
 }
@@ -927,7 +1016,7 @@ body.app-shell {
 }
 
 .legend-count {
-  color: var(--muted);
+  color: var(--text-3);
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
 }
@@ -939,44 +1028,67 @@ body.app-shell {
   flex: none;
 }
 
+/* Knowledge-graph legend groups: a "kind" / "relation" word heads each
+   chip run, and the kind chips' swatch previews the exact edge line
+   style (solid extracted/derived, dashed inferred) with the color set
+   from the token palette by the canvas script. */
+.legend-group-label {
+  align-self: center;
+  padding-right: 0.2rem;
+  color: var(--text-4);
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 14px;
+  border-top: 2px solid;
+  flex: none;
+}
+
+.legend-line-dashed {
+  border-top-style: dashed;
+}
+
 #graph-counts strong {
   color: var(--accent);
 }
 
 .empty-state {
   padding: 2.4rem 1rem;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--line-1);
   border-radius: var(--radius);
-  color: var(--muted);
+  color: var(--text-3);
   text-align: center;
 }
 
-/* ---- Data tables ---- */
+/* ---- Data tables (dense: ~33px rows at the 13px base) ---- */
 
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.92rem;
+  font-size: 0.8125rem;
 }
 
 /* Transparent header row with a strong rule under it — the header reads
    as typography, not a filled strip. */
 .data-table th {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 2px solid color-mix(in srgb, var(--text) 16%, transparent);
+  padding: 0.35rem 0.7rem;
+  border-bottom: 2px solid color-mix(in srgb, var(--text-1) 16%, transparent);
   background: none;
   text-align: left;
-  font-size: 0.72rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--muted);
+  color: var(--text-3);
   white-space: nowrap;
 }
 
 .data-table td {
-  padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-1) 55%, transparent);
   vertical-align: top;
 }
 
@@ -1013,9 +1125,9 @@ td.num {
 
 code {
   padding: 0.08rem 0.42rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius-s);
-  background: var(--canvas);
+  background: var(--bg-2);
   font-family: var(--font-mono);
   font-size: 0.84em;
   word-break: break-all;
@@ -1028,10 +1140,10 @@ code {
   align-items: center;
   gap: 0.38rem;
   padding: 0.08rem 0.6rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--bg-2);
+  color: var(--text-3);
   font-size: 0.76rem;
   font-weight: 600;
   line-height: 1.55;
@@ -1048,14 +1160,17 @@ code {
 }
 
 .badge-ok,
-.badge-done {
+.badge-done,
+.badge-active {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 32%, transparent);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
 
 .badge-warn,
-.badge-partial {
+.badge-partial,
+.badge-superseded,
+.badge-archived {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 32%, transparent);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
@@ -1075,15 +1190,32 @@ code {
   background: var(--accent-soft);
 }
 
-/* Memory/knowledge types (decision, pattern, mistake, workaround):
-   purple distinguishes them from operational statuses. */
+/* Memory/knowledge concept types (memories: decision, pattern, mistake,
+   workaround; knowledge doc families: decision, spec, workflow,
+   business-rule): purple distinguishes them from operational statuses. */
 .badge-decision,
+.badge-spec,
+.badge-workflow,
+.badge-business-rule,
 .badge-pattern,
 .badge-mistake,
 .badge-workaround {
-  color: var(--accent-2);
-  border-color: color-mix(in srgb, var(--accent-2) 32%, transparent);
-  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+  color: var(--accent-hover);
+  border-color: color-mix(in srgb, var(--accent-hover) 32%, transparent);
+  background: color-mix(in srgb, var(--accent-hover) 12%, transparent);
+}
+
+/* Knowledge catalog rows link wholesale: the title anchor's hit area
+   stretches over its row, so a click anywhere on the row opens the doc;
+   the keyboard focus ring stays on the anchor's own box. */
+#knowledge-results .data-table tbody tr {
+  position: relative;
+}
+
+#knowledge-results .data-table tbody tr td:first-child a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
 }
 
 /* ---- Cards & stat tiles ---- */
@@ -1096,8 +1228,8 @@ code {
 }
 
 .card {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
   padding: 1rem 1.1rem;
 }
@@ -1108,7 +1240,7 @@ code {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 .card-value {
@@ -1131,8 +1263,8 @@ code {
 }
 
 .stat-tile {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
   padding: 0.8rem 1rem;
 }
@@ -1150,7 +1282,7 @@ code {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 /* ---- Secondary button / export chips ---- */
@@ -1158,10 +1290,10 @@ code {
 .btn-secondary {
   display: inline-block;
   padding: 0.3rem 0.85rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--bg-2);
+  color: var(--text-3);
   font-size: 0.84rem;
   text-decoration: none;
   transition: color 120ms ease, border-color 120ms ease;
@@ -1195,21 +1327,73 @@ code {
   padding: 0.16rem 0.72rem;
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--muted);
+  color: var(--text-3);
   text-decoration: none;
 }
 
 .window-control a:hover,
 .window-control a:focus {
-  color: var(--text);
-  border-color: var(--border);
-  background: var(--surface-2);
+  color: var(--text-1);
+  border-color: var(--line-1);
+  background: var(--bg-2);
 }
 
 /* Memory view's type filter rides the window-control pills; same margin
    as the wiki state filter so both sit identically above their tables. */
 .memory-type-filter {
   margin: 0.45rem 0 0.2rem;
+}
+
+/* ---- Session chains (the chains view's call sequences) ---- */
+
+/* CSS-only chain connection — the view itself stays JS-free; app.js
+   only drives the shared live-refresh region swap. */
+.chain {
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  padding: 0.6rem 1rem;
+  margin: 0.7rem 0;
+  background: var(--bg-1);
+}
+
+.chain-head {
+  margin-bottom: 0.4rem;
+}
+
+.chain-calls {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.chain-call {
+  display: flex;
+  align-items: center;
+}
+
+.chain-call:not(:last-child)::after {
+  content: "→";
+  color: var(--accent);
+  margin: 0 0.45rem;
+  font-weight: 700;
+}
+
+.call-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  padding: 0.12rem 0.7rem;
+}
+
+.call-tool {
+  font-weight: 600;
+  font-size: 0.8125rem;
 }
 
 /* ---- Launcher (landing page) ---- */
@@ -1226,10 +1410,10 @@ code {
   flex-direction: column;
   gap: 0.45rem;
   padding: 1rem 1.05rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--bg-2);
+  color: var(--text-1);
   text-decoration: none;
   transition: border-color 120ms ease, transform 120ms ease;
 }
@@ -1242,7 +1426,7 @@ code {
 .launcher-card:focus {
   border-color: var(--accent);
   transform: translateY(-2px);
-  color: var(--text);
+  color: var(--text-1);
 }
 
 .launcher-title {
@@ -1252,7 +1436,7 @@ code {
 
 .launcher-blurb {
   font-size: 0.82rem;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 /* ---- Responsive: sidebar collapses to a horizontal bar ---- */
@@ -1269,7 +1453,7 @@ code {
     gap: 0.5rem;
     padding: 0.6rem 0.9rem;
     border-right: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line-1);
     overflow-x: auto;
     overflow-y: hidden;
   }
@@ -1295,7 +1479,7 @@ code {
     margin-left: auto;
     padding: 0 0.75rem;
     border-top: 0;
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--line-1);
   }
 
   .topbar {
@@ -1309,10 +1493,6 @@ code {
 
 /* ---- Wiki: catalog, article prose, and page navigation ---- */
 
-.wiki-controls {
-  margin-bottom: 0.4rem;
-}
-
 .wiki-state-filter {
   margin: 0.45rem 0 0.2rem;
 }
@@ -1320,7 +1500,7 @@ code {
 .wiki-repo-heading {
   margin: 1.7rem 0 0.55rem;
   padding-bottom: 0.35rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line-1);
   font-size: 1.02rem;
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -1334,11 +1514,11 @@ code {
 .wiki-breadcrumb {
   margin-bottom: 0.5rem;
   font-size: 0.82rem;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 .wiki-breadcrumb a {
-  color: var(--muted);
+  color: var(--text-3);
   text-decoration: none;
 }
 
@@ -1376,7 +1556,7 @@ code {
 .wiki-body h2 {
   margin-top: 1.9rem;
   padding-top: 0.9rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line-1);
 }
 
 .wiki-body h2:first-child {
@@ -1393,8 +1573,8 @@ code {
   display: flex;
   justify-content: center;
   padding: 0.9rem;
-  background: var(--canvas);
-  border: 1px solid var(--border);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
 }
 
@@ -1407,7 +1587,7 @@ code {
 .wiki-body th,
 .wiki-body td {
   padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line-1) 55%, transparent);
   text-align: left;
 }
 
@@ -1416,7 +1596,7 @@ code {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 /* Backtick refs that link into the graph: the code chip is the anchor —
@@ -1433,9 +1613,9 @@ a.code-ref:focus code {
 
 .wiki-toc {
   padding: 0.85rem 0.95rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
-  background: var(--surface-2);
+  background: var(--bg-2);
   font-size: 0.82rem;
 }
 
@@ -1445,7 +1625,7 @@ a.code-ref:focus code {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: var(--text-3);
 }
 
 .wiki-toc ul {
@@ -1463,7 +1643,7 @@ a.code-ref:focus code {
 }
 
 .wiki-toc a {
-  color: var(--muted);
+  color: var(--text-3);
   text-decoration: none;
 }
 
@@ -1475,8 +1655,183 @@ a.code-ref:focus code {
 .wiki-pager {
   margin-top: 1.9rem;
   padding-top: 0.85rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line-1);
   font-size: 0.9rem;
+}
+
+/* ---- Knowledge doc detail: chain, relationships, refs, provenance ---- */
+
+.doc-subpanel {
+  max-width: 46rem;
+  margin-top: 1.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line-1);
+}
+
+.doc-subpanel h2 {
+  margin: 0 0 0.7rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+/* Supersede chain: ordered oldest -> newest, one labeled hop (relation
+   + direction arrow) between neighbors; the viewed doc reads accent. */
+.supersede-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.75rem;
+  font-size: 0.86rem;
+}
+
+.chain-member {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.chain-member.chain-current > a {
+  color: var(--accent);
+}
+
+.chain-id {
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  word-break: break-all;
+}
+
+.chain-hop {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+}
+
+.chain-relation {
+  color: var(--text-3);
+}
+
+.chain-arrow {
+  color: var(--accent);
+}
+
+.rel-group {
+  margin-bottom: 0.9rem;
+}
+
+.rel-group:last-child {
+  margin-bottom: 0;
+}
+
+.rel-relation {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.rel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+}
+
+.rel-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rel-direction {
+  color: var(--text-4);
+  font-size: 0.74rem;
+}
+
+/* Relationship kind labels: extracted reads accent (the trusted record),
+   inferred warns with a dashed border (low-trust, dashed like the
+   graph's inferred edges), derived keeps the neutral badge look. */
+.badge-kind-extracted {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.badge-kind-inferred {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-style: dashed;
+}
+
+.doc-refs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.doc-refs li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.doc-refs a {
+  text-decoration: none;
+}
+
+.doc-refs a:hover code,
+.doc-refs a:focus code {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ref-kind {
+  color: var(--text-4);
+  font-size: 0.74rem;
+}
+
+.prov-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  font-size: 0.86rem;
+}
+
+.prov-item {
+  display: contents;
+}
+
+.prov-item dt {
+  padding-top: 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.prov-item dd {
+  margin: 0;
+  min-width: 0;
 }
 
 /* ---- Symbol-search typeahead dropdown ---- */
@@ -1494,10 +1849,9 @@ a.code-ref:focus code {
   margin-top: 4px;
   max-height: 18rem;
   overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
   border-radius: 10px;
-  box-shadow: var(--shadow-2);
   padding: 4px 0;
 }
 
@@ -1521,7 +1875,7 @@ a.code-ref:focus code {
 }
 
 .suggest-ctx {
-  color: var(--muted);
+  color: var(--text-3);
   font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1530,6 +1884,36 @@ a.code-ref:focus code {
 
 .suggest-empty {
   padding: 6px 12px;
-  color: var(--muted);
+  color: var(--text-3);
   font-size: 0.8rem;
+}
+
+/* ---- Reduced motion ---- */
+
+/* prefers-reduced-motion: reduce collapses the UI's motion to ~zero —
+   scrolling stops smoothing, every transition/animation completes in
+   0s with no delay, loops do not repeat — while the underlying
+   behavior (toggles, hovers, htmx swaps) is unchanged. The !important
+   guards are load-bearing: a bare universal rule loses to any
+   single-class transition/animation declaration. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* The live-refresh pulse loops forever by design; stop it outright
+     instead of running a zero-length loop. */
+  #live-controls:not([hidden])::before {
+    animation: none !important;
+  }
 }

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
 {% block title %}Memory — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -15,17 +16,7 @@
   </p>
   {% endif %}
   {% if memories %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Type</th>
-        <th>Title</th>
-        <th>Tier</th>
-        <th>Recorded</th>
-        <th>ID</th>
-      </tr>
-    </thead>
-    <tbody>
+  {% call tables.table(['Type', 'Title', 'Tier', 'Recorded', 'ID']) %}
       {% for m in memories %}
       <tr>
         <td><span class="badge badge-{{ m.type }}">{{ m.type }}</span></td>
@@ -35,10 +26,9 @@
         <td class="cell-id"><code title="{{ m.id }}">{{ m.id }}</code></td>
       </tr>
       {% endfor %}
-    </tbody>
-  </table>
+  {% endcall %}
   {% else %}
-  <p class="empty-state">{% if memory_type != "all" %}No {{ memory_type }} memories recorded.{% else %}No memories recorded yet — capture one with <code>cairn memory record</code>.{% endif %}</p>
+  {{ tables.empty_state('No ' ~ memory_type ~ ' memories recorded' if memory_type != 'all' else 'No memories recorded yet — capture one with', code='' if memory_type != 'all' else 'cairn memory record') }}
   {% endif %}
 </section>
 {% endblock %}

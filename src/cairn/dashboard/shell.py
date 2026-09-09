@@ -35,7 +35,7 @@ LAUNCH_LABEL = "Launch workspace"
 NAV_SECTIONS: tuple = (
     (None, ("workspaces",)),
     ("Explore", ("projects", "graph")),
-    ("Knowledge", ("wiki", "memory", "tasks")),
+    ("Knowledge", ("knowledge", "wiki", "memory", "tasks")),
     ("Activity", ("history", "tokens", "chains")),
     ("System", ("health", "embeddings", "database", "settings")),
 )
@@ -49,12 +49,19 @@ NAV_LABELS: dict = {
     "chains": "Chains",
     "health": "Health",
     "memory": "Memory",
+    "knowledge": "Knowledge",
     "wiki": "Wiki",
     "tasks": "Tasks",
     "embeddings": "Embeddings",
     "database": "Database",
     "settings": "Settings",
 }
+
+# Palette-only destinations: reachable from the command palette but not
+# sidebar items (one sidebar entry per surface family; the family's
+# sub-views stay palette-only). ``(href path, label)`` tuples — the same
+# store-param composition the nav views' hrefs get.
+PALETTE_EXTRA_VIEWS: tuple = (("/knowledge/graph", "Knowledge Graph"),)
 
 
 def workspace_label(path: Optional[str], key: str) -> str:
@@ -126,6 +133,8 @@ def shell_context(
             )
             palette_views.append({"label": label, "href": href})
         sections.append({"label": section_label, "items": items})
+    for extra_href, extra_label in PALETTE_EXTRA_VIEWS:
+        palette_views.append({"label": extra_label, "href": extra_href + nav_query})
     return {
         "selector": {
             "options": options,

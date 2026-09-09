@@ -252,6 +252,47 @@ CREATE TABLE IF NOT EXISTS knowledge_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_embeddings_model ON knowledge_embeddings(model);
 
+-- derived doc-relationship index (D1). knowledge_edges holds one row per
+-- directed doc->doc edge: declared relationships read from OKF frontmatter
+-- (the relates_to extension, relation/kind as declared) plus recomputed
+-- tag/affects_modules overlap materialized as kind='derived' rows (stored
+-- in both directions so either endpoint can list its neighbors). Both id
+-- columns are BARE concept_ids ("knowledge/{type}/{slug}" -- the
+-- knowledge_embeddings.doc_id convention, never the absolute path shape
+-- OKFBundle reads return), so pointers from different sources join. No FK:
+-- rows are a rebuildable cache and can outlive a deleted doc until the
+-- next rebuild. Recomputed from the bundle by `cairn knowledge rebuild`
+-- and automatically after `knowledge ingest --ingest`; idempotent,
+-- including created_at stamps (preserved for unchanged edges).
+-- Additive-only: plain CREATE TABLE IF NOT EXISTS rides the idempotent
+-- executescript in _apply_schema with NO MIGRATIONS entry -- the same
+-- pattern knowledge_embeddings used.
+CREATE TABLE IF NOT EXISTS knowledge_edges (
+    doc_id TEXT NOT NULL,          -- bare concept_id of the source doc
+    related_id TEXT NOT NULL,      -- bare concept_id of the neighbor doc
+    relation TEXT NOT NULL,        -- relates-to|supersedes|superseded-by|references
+    kind TEXT NOT NULL,            -- extracted|inferred|derived
+    provenance TEXT,               -- origin: frontmatter:relates_to | tag-overlap | module-overlap | tag+module-overlap
+    created_at REAL,               -- unix timestamp; preserved across rebuilds
+    PRIMARY KEY (doc_id, related_id, relation, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_edges_doc ON knowledge_edges(doc_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_edges_related ON knowledge_edges(related_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_edges_relation ON knowledge_edges(relation);
+
+-- doc->code references carried by knowledge-doc frontmatter (entries with a
+-- ref in the sources/verified families). REBUILDABLE like knowledge_edges;
+-- same bare-concept_id doc_id convention; no FK for the same reason.
+CREATE TABLE IF NOT EXISTS knowledge_doc_refs (
+    doc_id TEXT NOT NULL,          -- bare concept_id
+    ref TEXT NOT NULL,             -- file path or symbol name
+    ref_kind TEXT NOT NULL,        -- file|symbol
+    verified INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (doc_id, ref, ref_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_doc_refs_doc ON knowledge_doc_refs(doc_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_doc_refs_ref ON knowledge_doc_refs(ref);
+
 -- semantic embeddings for memory concepts (decisions/patterns/mistakes under
 -- memory/). doc_id is a concept_id path on disk (NOT a DB row, and NOT
 -- stable -- promote/demote/decay move a memory to a new concept_id), so

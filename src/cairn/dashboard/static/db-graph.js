@@ -1,9 +1,10 @@
 /* Database view: the store's schema as a relationship network. Tables are
    nodes sized by row count; edges are declared foreign keys (solid) or
    *_id references implied by column naming (dashed). Theme-derived colors
-   come from CSS variables, so a theme flip re-applies them through
-   setOptions without touching layout or camera state — same contract as
-   the graph view. */
+   come from CSS variables through the getComputedStyle proxy, and a theme
+   flip re-applies them via the shell's cairn:theme-changed broadcast —
+   no observer here — without touching layout or camera state. Same
+   contract as the graph view. */
 (function () {
   "use strict";
 
@@ -25,7 +26,7 @@
   function edgeStyle(kind) {
     var fk = kind === "fk";
     return {
-      color: cssVar(fk ? "--accent" : "--muted"),
+      color: cssVar(fk ? "--accent" : "--text-3"),
       width: fk ? 1.5 : 1,
       dashes: fk ? false : [5, 5]
     };
@@ -40,20 +41,20 @@
         color: {
           background: accent,
           border: accent,
-          highlight: { background: accent, border: cssVar("--text") },
-          hover: { background: accent, border: cssVar("--text") }
+          highlight: { background: accent, border: cssVar("--text-1") },
+          hover: { background: accent, border: cssVar("--text-1") }
         },
         font: {
           face: cssVar("--font-sans"),
           size: 12,
-          color: cssVar("--muted"),
-          strokeColor: cssVar("--canvas"),
+          color: cssVar("--text-3"),
+          strokeColor: cssVar("--bg-0"),
           strokeWidth: 3
         }
       },
       edges: {
         color: {
-          color: cssVar("--border"),
+          color: cssVar("--line-1"),
           highlight: accent,
           hover: accent
         },
@@ -123,9 +124,11 @@
 
   var network = new vis.Network(canvas, { nodes: nodes, edges: edges }, options);
 
-  /* Theme toggle re-colors the live network: theme-derived options via
+  /* A theme flip re-colors the live network: theme-derived options via
      setOptions, then edge colors/dashes rebatched from the new palette
-     (edge kind lives on the schema payload, not the edge objects). */
+     (edge kind lives on the schema payload, not the edge objects). The
+     flip arrives as the shell's cairn:theme-changed broadcast — this
+     file owns no observer. */
   function applyTheme() {
     network.setOptions(themeOptions());
     var updates = schema.edges.map(function (e, i) {
@@ -139,14 +142,7 @@
     });
     edges.update(updates);
   }
-  if (typeof MutationObserver !== "undefined") {
-    new MutationObserver(function () {
-      applyTheme();
-    }).observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"]
-    });
-  }
+  document.addEventListener("cairn:theme-changed", applyTheme);
 
   var panel = document.getElementById("db-panel");
 

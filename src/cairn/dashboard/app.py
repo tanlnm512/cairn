@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -44,6 +45,13 @@ TASK_STATUSES = ("pending", "in-progress", "done", "failed")
 # Agent-memory type vocabulary (cairn memory record) — the /memory
 # filter's allowed values.
 MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
+
+# The ingest classifier's doc families (knowledge/ingest/classifier.py)
+# — the /knowledge family filter's seed vocabulary. Rows carry whatever
+# family their concept id names (knowledge/<family>/<slug>), so a doc
+# under a custom type still lists; the route extends the options with
+# any family the corpus actually contains.
+KNOWLEDGE_FAMILIES = ("business-rule", "decision", "spec", "workflow")
 
 # Traffic-view time-window presets (FR-002) — the ``window`` param's
 # allowed values; "all" is the unbounded default.
@@ -163,6 +171,25 @@ def _resolve_window(window: str | None) -> tuple[str, float | None]:
     return preset, time.time() - seconds if seconds is not None else None
 
 
+def is_hx_request(request: "Request") -> bool:
+    """True when htmx issued this request and wants a fragment (its
+    HX-Request: true header rides every htmx-initiated call). The
+    full-page-vs-fragment seam: handlers render the complete template on
+    a page load and the fragment variant — a template extending no base,
+    covering only the swapped region — on an htmx call, sharing one
+    route and one data fetch. HX-History-Restore-Request vetoes the
+    fragment: a back/forward restore must re-render the whole page,
+    though htmx stamps HX-Request on that request too."""
+    if (
+        (request.headers.get("HX-History-Restore-Request") or "")
+        .strip()
+        .lower()
+        == "true"
+    ):
+        return False
+    return (request.headers.get("HX-Request") or "").strip().lower() == "true"
+
+
 # Exports fetch the filtered set in one unpaginated call (FR-005): a single
 # list_history page large enough to cover it — never a cursor-following
 # duplicate of the view's paging.
@@ -247,6 +274,9 @@ def create_app(
         get_database_schema,
         get_graph,
         get_health,
+        get_knowledge_doc_detail,
+        get_knowledge_graph,
+        get_knowledge_graph_inspect,
         get_read_only_db,
         get_recent_memories,
         get_session_chains,
@@ -256,6 +286,7 @@ def create_app(
         get_wiki_pages,
         inspect_symbol,
         list_history,
+        list_knowledge_docs,
         list_projects,
         prewarm_probes,
         symbol_candidates,
@@ -265,6 +296,7 @@ def create_app(
     from .shell import shell_context
     from .. import paths
     from ..graph import embed_ladder, embeddings
+    from ..knowledge.store import DOC_STATUSES
     from ..paths import default_knowledge_path
     from ..viz import query as viz_query
 
@@ -375,6 +407,18 @@ def create_app(
             {"db_path": db_path or "central store", "store_key": store_key},
         )
 
+    def favicon(request: Request) -> Response:
+        """The shell's icon, served at the conventional /favicon.ico path
+        browsers probe when no <link rel="icon"> matched — a 200 here
+        keeps the icon off the network log's error column. Same file the
+        shell links; reread per request so a swapped icon needs no
+        restart. A missing file is a plain 404, not a 500."""
+        try:
+            body = (static_dir / "favicon.svg").read_bytes()
+        except FileNotFoundError:
+            return Response("Not Found", status_code=404)
+        return Response(body, media_type="image/svg+xml")
+
     # Plain-def handlers on purpose: Starlette runs them in a threadpool, so
     # the blocking read-only SQL below never stalls the event loop.
 
@@ -470,6 +514,63 @@ def create_app(
             conn.close()
         return JSONResponse(result)
 
+    def palette_results(request: Request) -> Response:
+        """The command palette's filtered rows as an HTML fragment (the
+        palette input's ``hx-get`` target, swapped into the listbox).
+
+        ``q`` filters the palette's two seed sources the way the old
+        client-side filter did — case-insensitive substring over view and
+        workspace labels, composed from the same shell_context the seed
+        JSON rides — and from two characters up merges ``symbol_suggest``
+        (the /graph/suggest data function, same 8-row cap and truncation
+        notice) after them, each symbol row linking into /graph's symbol
+        scope with the focus (and selected store) params. Rows carry
+        their action as a data attribute; this route decides content, the
+        palette component decides focus and activation."""
+        query = request.query_params.get("q", "").strip()
+        selected_db, _, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        palette = shell_context(
+            enumerate_stores(Path(paths.CAIRN_HOME)), store_key, "/"
+        )["palette"]
+        lowered = query.lower()
+        rows = [
+            {"label": view["label"], "hint": "view", "href": view["href"]}
+            for view in palette["views"]
+            if not lowered or lowered in view["label"].lower()
+        ]
+        rows += [
+            {
+                "label": workspace["label"],
+                "hint": "workspace",
+                "store_key": workspace["key"],
+            }
+            for workspace in palette["workspaces"]
+            if not lowered or lowered in (workspace["label"] or "").lower()
+        ]
+        if len(query) >= 2:
+            conn = get_read_only_db(selected_db)
+            try:
+                suggested = symbol_suggest(conn, query)
+            finally:
+                conn.close()
+            for match in suggested["matches"][:8]:
+                href = "/graph?scope=symbol&focus=" + quote(match["name"], safe="")
+                if store_key:
+                    href += "&store=" + quote(store_key, safe="")
+                hint = match["kind"] or ""
+                if match.get("file"):
+                    hint += " — " + match["file"]
+                rows.append({"label": match["name"], "hint": hint, "href": href})
+            if suggested["truncated"]:
+                rows.append(
+                    {"label": "more matches…", "hint": "keep typing to narrow"}
+                )
+        return templates.TemplateResponse(
+            request, "palette_results.html", {"rows": rows}
+        )
+
     def graph_neighbors(request: Request) -> Response:
         # Repeatable ``name`` param (FR-003): strip each, drop empties,
         # dedupe preserving first-seen order (dict.fromkeys is ordered).
@@ -500,14 +601,22 @@ def create_app(
         # Side-panel payload for one symbol (identity + callers + callees +
         # impact with affected tests). Missing/blank names hit the data
         # function's not-found contract (200 with found=False), never an
-        # error — the panel just stays empty.
+        # error — the panel just stays empty. The canvas node-click fetch
+        # rides htmx (HX-Request header) and gets the server-rendered panel
+        # fragment; other callers keep the JSON payload.
         name = request.query_params.get("name", "")
-        selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
+        selected_db, _, store_key = resolve_selection(request, db_path, knowledge_dir)
         conn = get_read_only_db(selected_db)
         try:
             result = inspect_symbol(conn, name)
         finally:
             conn.close()
+        if is_hx_request(request):
+            context = dict(result)
+            context["store_key"] = store_key
+            return templates.TemplateResponse(
+                request, "graph_inspect_panel.html", context
+            )
         return JSONResponse(result)
 
     def health(request: Request) -> Response:
@@ -552,22 +661,28 @@ def create_app(
             )
         finally:
             conn.close()
-        return render(
-            request,
-            "history.html",
-            {
-                "calls": result["rows"],
-                "tool": tool or "",
-                "session": session or "",
-                "source": source or "",
-                "before": before or "",
-                "after": after or "",
-                "window": window,
-                "next_cursor": result["next"],
-                "prev_cursor": result["prev"],
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "calls": result["rows"],
+            "tool": tool or "",
+            "session": session or "",
+            "source": source or "",
+            "before": before or "",
+            "after": after or "",
+            "window": window,
+            "next_cursor": result["next"],
+            "prev_cursor": result["prev"],
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the polled region only — one cheap region
+            # render, never the full page (the shell rides the page load).
+            # The filter form's live fields ride the request and the page
+            # cursor rides the region's hx-get URL, so the fragment
+            # re-renders exactly the slice the page shows.
+            return templates.TemplateResponse(
+                request, "history_region.html", context
+            )
+        return render(request, "history.html", context)
 
     def tokens(request: Request) -> Response:
         window, since = _resolve_window(request.query_params.get("window"))
@@ -579,11 +694,13 @@ def create_app(
             rows = get_tool_tokens(conn, since=since)
         finally:
             conn.close()
-        return render(
-            request,
-            "tokens.html",
-            {"tools": rows, "window": window, "store_key": store_key},
-        )
+        context = {"tools": rows, "window": window, "store_key": store_key}
+        if is_hx_request(request):
+            # htmx fragment: the polled region only (see history).
+            return templates.TemplateResponse(
+                request, "tokens_region.html", context
+            )
+        return render(request, "tokens.html", context)
 
     # FR-005 exports ride the same seams the views ride: resolve_selection
     # for the store, _resolve_window for the window, the view's filter
@@ -674,20 +791,22 @@ def create_app(
             )
         finally:
             conn.close()
-        return render(
-            request,
-            "chains.html",
-            {
-                "chains": result["chains"],
-                "chains_truncated": result["truncated"],
-                "total_chains": result["total_chains"],
-                "expand": expand or "",
-                "gap_minutes": SESSION_GAP_S // 60,
-                "session": session or "",
-                "window": window,
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "chains": result["chains"],
+            "chains_truncated": result["truncated"],
+            "total_chains": result["total_chains"],
+            "expand": expand or "",
+            "gap_minutes": SESSION_GAP_S // 60,
+            "session": session or "",
+            "window": window,
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the polled region only (see history).
+            return templates.TemplateResponse(
+                request, "chains_region.html", context
+            )
+        return render(request, "chains.html", context)
 
     def memory(request: Request) -> Response:
         # Type filter, read like every other view's param: absent or blank
@@ -724,15 +843,186 @@ def create_app(
         entries = get_task_queue(
             selected_knowledge, status=None if status == "all" else status
         )
+        context = {
+            "tasks": entries,
+            "statuses": TASK_STATUSES,
+            "status": status,
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the status select's results region only.
+            return templates.TemplateResponse(
+                request, "tasks_results.html", context
+            )
+        return render(request, "tasks.html", context)
+
+    def knowledge_catalog(request: Request) -> Response:
+        """The knowledge catalog: every stored doc once, filterable by
+        family/status/tag. Filters, read like every other view's params:
+        absent or blank means no filter; a value outside the vocabulary
+        the selects offer (the classifier's families + the doc statuses,
+        each unioned with what this corpus actually contains) falls back
+        to no filter (silent fallback, matching the tasks/memory/wiki
+        filters). The options always offer every family/status the corpus
+        contains, so a doc under a custom type stays reachable from the
+        filter."""
+        family_param = request.query_params.get("family", "all").strip() or "all"
+        status_param = request.query_params.get("status", "all").strip() or "all"
+        tag = request.query_params.get("tag", "").strip()
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            result = list_knowledge_docs(
+                conn,
+                selected_knowledge,
+                family=None if family_param == "all" else family_param,
+                status=None if status_param == "all" else status_param,
+                tag=tag or None,
+            )
+            # The corpus values ride the result's pre-filter counts, so
+            # the vocabulary is complete after the fetch; a fallback
+            # re-reads with the reset value so the rows match the select
+            # the page renders.
+            family = family_param
+            if family != "all" and family not in (
+                set(KNOWLEDGE_FAMILIES) | set(result["families"])
+            ):
+                family = "all"
+            status = status_param
+            if status != "all" and status not in (
+                set(DOC_STATUSES) | set(result["statuses"])
+            ):
+                status = "all"
+            if (family, status) != (family_param, status_param):
+                result = list_knowledge_docs(
+                    conn,
+                    selected_knowledge,
+                    family=None if family == "all" else family,
+                    status=None if status == "all" else status,
+                    tag=tag or None,
+                )
+        finally:
+            conn.close()
+        context = {
+            "docs": result["docs"],
+            "families": result["families"],
+            "statuses": result["statuses"],
+            "total": result["total"],
+            "family": family,
+            "status": status,
+            "tag": tag,
+            "family_options": sorted(
+                set(KNOWLEDGE_FAMILIES) | set(result["families"])
+            ),
+            "status_options": sorted(set(DOC_STATUSES) | set(result["statuses"])),
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the filter form's results region only.
+            return templates.TemplateResponse(
+                request, "knowledge_results.html", context
+            )
+        return render(request, "knowledge.html", context)
+
+    def knowledge_doc(request: Request) -> Response:
+        """One doc's detail page at /knowledge/{family}/{slug} — the bare
+        concept id's two variable segments. get_knowledge_doc_detail
+        assembles identity, rendered body, the relationship panels
+        (related docs, supersede chain, code refs) and ingest provenance;
+        None = the plain not-found page, out-of-namespace resolutions
+        included."""
+        from starlette.responses import HTMLResponse
+
+        doc_id = "knowledge/{family}/{slug}".format(
+            family=request.path_params["family"],
+            slug=request.path_params["slug"],
+        )
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        # The staged-ingest manifest lives under the workspace root (the
+        # outbox is a workspace artifact, not a store one).
+        try:
+            workspace = str(paths.resolve_workspace())
+        except OSError:
+            workspace = None
+        conn = get_read_only_db(selected_db)
+        try:
+            doc = get_knowledge_doc_detail(
+                conn,
+                selected_knowledge,
+                doc_id,
+                workspace=workspace,
+                store_key=store_key,
+            )
+        finally:
+            conn.close()
+        if doc is None:
+            return HTMLResponse(
+                "<html><head><title>cairn dashboard</title></head><body>"
+                "<h1>Knowledge document not found</h1>"
+                "<p>No knowledge document exists at this id.</p>"
+                '<p><a href="/knowledge">Back to the catalog</a></p>'
+                "</body></html>",
+                status_code=404,
+            )
         return render(
             request,
-            "tasks.html",
-            {
-                "tasks": entries,
-                "statuses": TASK_STATUSES,
-                "status": status,
-                "store_key": store_key,
-            },
+            "knowledge_doc.html",
+            {"doc": doc, "store_key": store_key},
+        )
+
+    def knowledge_graph(request: Request) -> Response:
+        """The knowledge relationship canvas at /knowledge/graph: every
+        stored doc as a node, every indexed relationship as a directed
+        edge. The graph JSON rides the #knowledge-graph-data script tag
+        (the /graph machinery's DataSet-from-script-tag pattern) and
+        knowledge-graph.js owns the canvas: legend chips filter edge
+        kinds/relations client-side (no reload, no refetch), and a node
+        click fetches the doc's inspect fragment into the side panel.
+        Full-page only — the filters live in the client, so there is no
+        filter param for a fragment branch to serve."""
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            graph = get_knowledge_graph(conn, selected_knowledge)
+        finally:
+            conn.close()
+        return render(
+            request,
+            "knowledge_graph.html",
+            {"graph": graph, "store_key": store_key},
+        )
+
+    def knowledge_graph_inspect(request: Request) -> Response:
+        """One doc's inspect-panel fragment (the canvas's node-click
+        fetch target): identity plus the same grouped ``related_docs``
+        rows the detail panels render. Inherently fragment-only — the
+        canvas script is the only client, no UI links the bare path (the
+        documented exception to the full-page/fragment seam) — and an
+        unknown doc renders the panel's not-found note at 200, matching
+        /graph/inspect's found=False contract."""
+        doc_id = request.query_params.get("doc", "").strip()
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            doc = (
+                get_knowledge_graph_inspect(conn, selected_knowledge, doc_id)
+                if doc_id
+                else None
+            )
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request,
+            "knowledge_graph_panel.html",
+            {"doc": doc, "doc_id": doc_id, "store_key": store_key},
         )
 
     def wiki(request: Request) -> Response:
@@ -748,7 +1038,25 @@ def create_app(
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        pages = get_wiki_pages(selected_knowledge, repo=repo)
+        try:
+            pages = get_wiki_pages(selected_knowledge, repo=repo)
+        except ValueError as exc:
+            # A malformed manifest renders the explicit unreadable state —
+            # the CLI's clean error mirrored, never a 500. The context keeps
+            # the catalog's shape (pages empty, manifest_error set) so both
+            # templates branch on the error alone.
+            context: dict = {
+                "pages": [],
+                "page_states": PAGE_STATES,
+                "filters": {"repo": repo or "", "state": state or "", "q": query},
+                "store_key": store_key,
+                "manifest_error": str(exc),
+            }
+            if is_hx_request(request):
+                return templates.TemplateResponse(
+                    request, "wiki_results.html", context
+                )
+            return render(request, "wiki.html", context)
         if state in PAGE_STATES:
             pages = [p for p in pages if p["state"] == state]
         if query:
@@ -760,16 +1068,18 @@ def create_app(
                 or needle in p["page_id"].lower()
                 or needle in (p.get("description") or "").lower()
             ]
-        return render(
-            request,
-            "wiki.html",
-            {
-                "pages": pages,
-                "page_states": PAGE_STATES,
-                "filters": {"repo": repo or "", "state": state or "", "q": query},
-                "store_key": store_key,
-            },
-        )
+        context = {
+            "pages": pages,
+            "page_states": PAGE_STATES,
+            "filters": {"repo": repo or "", "state": state or "", "q": query},
+            "store_key": store_key,
+        }
+        if is_hx_request(request):
+            # htmx fragment: the search input's results region only.
+            return templates.TemplateResponse(
+                request, "wiki_results.html", context
+            )
+        return render(request, "wiki.html", context)
 
     def _wiki_not_found() -> Response:
         from starlette.responses import HTMLResponse
@@ -794,7 +1104,14 @@ def create_app(
         _, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
+        try:
+            page = get_wiki_page(selected_knowledge, request.path_params["page_id"])
+        except ValueError as exc:
+            return render(
+                request,
+                "wiki_unreadable.html",
+                {"manifest_error": str(exc), "store_key": store_key},
+            )
         if page is None:
             return _wiki_not_found()
         target = "/wiki/{}/{}".format(
@@ -815,16 +1132,23 @@ def create_app(
         )
         repo = request.path_params["repo"]
         page_id = request.path_params["page_id"]
-        page = get_wiki_page(
-            selected_knowledge, page_id, repo=repo, store_key=store_key
-        )
+        try:
+            page = get_wiki_page(
+                selected_knowledge, page_id, repo=repo, store_key=store_key
+            )
+            promoted = [
+                p
+                for p in get_wiki_pages(selected_knowledge, repo=repo)
+                if p["promoted"]
+            ]
+        except ValueError as exc:
+            return render(
+                request,
+                "wiki_unreadable.html",
+                {"manifest_error": str(exc), "store_key": store_key},
+            )
         if page is None:
             return _wiki_not_found()
-        promoted = [
-            p
-            for p in get_wiki_pages(selected_knowledge, repo=repo)
-            if p["promoted"]
-        ]
         index = next(
             (i for i, p in enumerate(promoted) if p["page_id"] == page_id), None
         )
@@ -840,6 +1164,9 @@ def create_app(
             {
                 "page": page,
                 "prev": prev_page,
+                # The renderer emits <pre class="mermaid"> for mermaid
+                # fences; only those pages ship the client-side loader.
+                "has_mermaid": 'class="mermaid"' in page["html"],
                 "next": next_page,
                 "store_key": store_key,
             },
@@ -1094,6 +1421,7 @@ def create_app(
 
     routes = [
         Route("/", landing, name="index"),
+        Route("/favicon.ico", favicon, name="favicon"),
         Route("/workspaces", workspaces_overview, name="workspaces"),
         Route("/projects", projects, name="projects"),
         Route("/graph", graph, name="graph"),
@@ -1101,6 +1429,10 @@ def create_app(
         Route("/graph/suggest", graph_suggest, name="graph_suggest"),
         Route("/graph/neighbors", graph_neighbors, name="graph_neighbors"),
         Route("/graph/inspect", graph_inspect, name="graph_inspect"),
+        # The command palette's filtered-rows fragment (the input's
+        # hx-get target); inherently fragment-only, like the JSON routes
+        # above.
+        Route("/palette/results", palette_results, name="palette_results"),
         Route("/history", history, name="history"),
         Route("/history.csv", history_csv, name="history_csv"),
         Route("/history.json", history_json, name="history_json"),
@@ -1111,6 +1443,25 @@ def create_app(
         Route("/health", health, name="health"),
         Route("/memory", memory, name="memory"),
         Route("/tasks", tasks, name="tasks"),
+        # The knowledge catalog; /knowledge/{family}/{slug} is the bare
+        # concept id's two variable segments — a single path param never
+        # matches "/", so a sibling one-segment route (/knowledge/graph)
+        # can never shadow these and vice versa. The canvas + its inspect
+        # fragment precede the two-param route on purpose: the fragment
+        # path (/knowledge/graph/inspect) WOULD match it as
+        # family=graph, slug=inspect if it followed.
+        Route("/knowledge", knowledge_catalog, name="knowledge"),
+        Route("/knowledge/graph", knowledge_graph, name="knowledge_graph"),
+        Route(
+            "/knowledge/graph/inspect",
+            knowledge_graph_inspect,
+            name="knowledge_graph_inspect",
+        ),
+        Route(
+            "/knowledge/{family}/{slug}",
+            knowledge_doc,
+            name="knowledge_doc",
+        ),
         Route("/wiki", wiki, name="wiki"),
         # Repo-qualified canonical URL first; the one-segment legacy route
         # follows as a redirect (a single path param never matches two

@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 
 import yaml
 
-# Frontmatter keys read from source documents; other keys are ignored.
+# Frontmatter keys read into typed ParsedDoc fields; every other key is
+# kept verbatim in ParsedDoc.extensions (relationships are extracted from
+# there -- see cairn.knowledge.relationships).
 _SOURCE_KEYS = ("title", "status", "tags", "description")
 
 _FENCE = "---"
@@ -33,6 +35,8 @@ class ParsedDoc:
     tags: list[str] = field(default_factory=list)
     description: str | None = None
     body: str = ""
+    # Frontmatter keys beyond _SOURCE_KEYS, verbatim.
+    extensions: dict = field(default_factory=dict)
 
 
 def parse_source_doc(text: str) -> ParsedDoc:
@@ -49,6 +53,9 @@ def parse_source_doc(text: str) -> ParsedDoc:
         tags=_as_tags(meta.get("tags")),
         description=_as_text(meta.get("description")),
         body=body,
+        extensions={
+            key: value for key, value in meta.items() if key not in _SOURCE_KEYS
+        },
     )
 
 
@@ -70,7 +77,8 @@ def _split_source_frontmatter(text: str) -> tuple[str | None, str]:
 
 
 def _frontmatter_metadata(block: str | None) -> dict:
-    """Map the source keys of a frontmatter block to raw values.
+    """Map a frontmatter block to raw values: the source keys plus every
+    unknown key (kept verbatim for extensions).
 
     Malformed YAML never raises: the minimal line-based fallback recovers
     the clean ``key: value`` pairs it can and drops the rest.
@@ -83,18 +91,18 @@ def _frontmatter_metadata(block: str | None) -> dict:
         return _minimal_frontmatter(block)
     if not isinstance(loaded, dict):
         return {}
-    return {key: loaded[key] for key in _SOURCE_KEYS if key in loaded}
+    return dict(loaded)
 
 
 def _minimal_frontmatter(block: str) -> dict:
-    """Recover clean ``key: value`` pairs from malformed YAML."""
+    """Recover clean ``key: value`` pairs (any key) from malformed YAML."""
     meta: dict[str, str] = {}
     for raw_line in block.splitlines():
         match = _MINIMAL_PAIR_RE.match(raw_line.strip())
         if match is None:
             continue
         key, value = match.group(1), match.group(2).strip()
-        if key not in _SOURCE_KEYS or not value:
+        if not value:
             continue
         if value[0] in "\"'":
             if len(value) < 2 or value[-1] != value[0]:

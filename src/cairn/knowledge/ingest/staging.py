@@ -17,8 +17,11 @@ frontmatter key order; the YAML is never hand-rolled) plus
   documents only
 * rows sorted by (repo, relpath); accepted rows carry every
   add_document argument plus origin/repo/source_path, the body with its
-  ``Source:`` provenance line, and the staged-file path; skipped rows
-  carry source_path + skip reason and stage no file
+  ``Source:`` provenance line, and the staged-file path; rows also carry
+  ``relationships`` -- normalized relates_to/supersedes/superseded-by
+  frontmatter (D1.1) plus detected ADR supersede markers (D1.2) --
+  whenever the source declares or its markers resolve to any; skipped
+  rows carry source_path + skip reason and stage no file
 * each staged file's frontmatter title/type is cross-checked against
   its row at staging time (D-009) -- a mismatch raises
 
@@ -38,11 +41,14 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Any, Iterable
 
+from cairn.knowledge.ingest.adr import detect_supersede_relationships
 from cairn.knowledge.ingest.classifier import Classification
 from cairn.knowledge.ingest.identity import DocIdentity
 from cairn.knowledge.ingest.parser import ParsedDoc
+from cairn.knowledge.relationships import extract_relationships
+from cairn.knowledge.relationships import normalize_relationships
 from cairn.memory.privacy import strip_private_data
 from cairn.okf.concept import OKFConcept
 from cairn.okf.provenance import Tier
@@ -76,6 +82,15 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
     outbox_dir = Path(outbox_dir)
     outbox_dir.mkdir(parents=True, exist_ok=True)
 
+    # The run's entries are iterated twice (the supersede-detection pass
+    # below, then the staging loop): materialize once up front so a
+    # generator argument still stages every document.
+    entries = list(entries)
+
+    # ADR supersede detection (D1.2) resolves markers against the whole
+    # run's accepted entries, so it runs once before per-doc staging.
+    detected_rels = detect_supersede_relationships(entries)
+
     rows: list[dict] = []
     by_type: dict[str, int] = {}
     by_repo: dict[str, int] = {}
@@ -89,7 +104,8 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
             )
             skipped += 1
             continue
-        rows.append(_stage_document(entry, source_path, outbox_dir))
+        detected = detected_rels.get((entry.repo, entry.relpath)) or []
+        rows.append(_stage_document(entry, source_path, outbox_dir, detected))
         accepted += 1
         doc_type = _safe_doc_type(entry.classification.doc_type)
         by_type[doc_type] = by_type.get(doc_type, 0) + 1
@@ -109,7 +125,10 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
     }
     manifest_file = outbox_dir / MANIFEST_NAME
     with manifest_file.open("w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2, sort_keys=False)
+        # Relationship entries keep author extras verbatim, which may hold
+        # non-JSON types (e.g. a YAML date): default=str serializes them
+        # instead of crashing the dry run.
+        json.dump(manifest, fh, indent=2, sort_keys=False, default=str)
         fh.write("\n")
     return json.loads(manifest_file.read_text(encoding="utf-8"))
 
@@ -132,7 +151,12 @@ def _safe_doc_type(doc_type: str) -> str:
     return slugify(doc_type) or "general"
 
 
-def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> dict:
+def _stage_document(
+    entry: StagedEntry,
+    source_path: str,
+    outbox_dir: Path,
+    detected: list[dict[str, Any]],
+) -> dict:
     """Write one accepted document's OKF file; return its manifest row."""
     doc_type = _safe_doc_type(entry.classification.doc_type)
     identity = entry.identity
@@ -150,6 +174,24 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
     # body it is handed, and strip_private_data is idempotent.
     body = strip_private_data(body)
     tags = _merged_tags(identity.tags, entry.classification.extra_tags)
+    # Author-declared relationships (D1.1), normalized to
+    # {concept_id, relation, kind}: identifiers, not free text -- kept
+    # verbatim like the other provenance fields. ADR supersede detection
+    # (D1.2) contributes the same shape from body/status markers; the
+    # union dedupes on (concept_id, relation, kind), declared first.
+    relationships = normalize_relationships(
+        extract_relationships(entry.parsed.extensions) + detected
+    )
+    extensions: dict[str, Any] = {
+        "tier": Tier.ASSERTED.value,
+        "doc_status": "active",
+        "doc_source": "imported",
+        "affects_modules": list(identity.affects_modules),
+        "affects_repos": list(identity.affects_repos),
+    }
+    if relationships:
+        # The staged file shows what an approved run would keep.
+        extensions["relates_to"] = relationships
     concept = OKFConcept(
         type=f"Knowledge-{doc_type}",
         title=title,
@@ -158,17 +200,11 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
         tags=tags,
         concept_id=concept_id,
         body=body,
-        extensions={
-            "tier": Tier.ASSERTED.value,
-            "doc_status": "active",
-            "doc_source": "imported",
-            "affects_modules": list(identity.affects_modules),
-            "affects_repos": list(identity.affects_repos),
-        },
+        extensions=extensions,
     )
     concept.to_file(str(outbox_dir / staged_path))
     _cross_check(outbox_dir / staged_path, title, doc_type, staged_path)
-    return {
+    row: dict[str, Any] = {
         "concept_id": concept_id,
         "title": title,
         "doc_type": doc_type,
@@ -183,6 +219,9 @@ def _stage_document(entry: StagedEntry, source_path: str, outbox_dir: Path) -> d
         "body": body,
         "staged_path": staged_path,
     }
+    if relationships:
+        row["relationships"] = relationships
+    return row
 
 
 def _merged_tags(base: list[str], extra: list[str]) -> list[str]:

@@ -1,52 +1,18 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_filters.html" as forms with context %}
 {% block title %}Tasks — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Tasks</h1>
-  <form class="graph-controls" method="get" action="/tasks">
-    {{ links.store_field() }}
-    <label>Status
-      <select name="status">
-        <option value="all"{% if status == "all" %} selected{% endif %}>all</option>
-        {% for s in statuses %}
-        <option value="{{ s }}"{% if s == status %} selected{% endif %}>{{ s }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <button type="submit">Apply</button>
-  </form>
-  {% if tasks %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Kind</th>
-        <th>Status</th>
-        <th>Resource</th>
-        <th>Assigned to</th>
-        <th>Created</th>
-        <th>Claimed</th>
-        <th>Completed</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in tasks %}
-      <tr>
-        <td class="cell-id"><code title="{{ t.id }}">{{ t.id }}</code></td>
-        <td>{{ t.kind }}</td>
-        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
-        <td class="cell-id"><code title="{{ t.resource }}">{{ t.resource }}</code></td>
-        <td>{{ t.assigned_to or "—" }}</td>
-        <td class="ts">{{ t.created_at or "—" }}</td>
-        <td class="ts">{{ t.claimed_at or "—" }}</td>
-        <td class="ts">{{ t.completed_at or "—" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="empty-state">No tasks{% if status != "all" %} with status “{{ status }}”{% endif %} in the queue.</p>
-  {% endif %}
+  {#- The status select is an htmx trigger: a change hx-gets the route
+      (delay:300ms) and morph-swaps the results region below — no page
+      reload. The form stays OUTSIDE #tasks-results so the swap can never
+      touch the control; Apply remains the no-htmx fallback. -#}
+  {{ forms.form_open('/tasks', hx={'target': '#tasks-results', 'trigger': 'change delay:300ms'}, form_id='tasks-filters') }}
+  {{ forms.field('select', 'status', 'Status', status, options=['all'] + (statuses | list)) }}
+  {{ forms.form_close() }}
+  {% include "tasks_results.html" %}
 </section>
 {% endblock %}

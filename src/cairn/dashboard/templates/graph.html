@@ -5,7 +5,7 @@
 {% block content %}
 <section class="panel">
   <h1>Graph</h1>
-  <form class="graph-controls">
+  <form class="filter-bar">
     <label>Symbol
       <span class="suggest-wrap">
         <input type="text" id="symbol-search" placeholder="type to search symbols"
@@ -16,7 +16,7 @@
     </label>
   </form>
   <div id="symbol-candidates"></div>
-  <form class="graph-controls graph-toolbar" method="get" action="/graph">
+  <form class="filter-bar" method="get" action="/graph">
     <label>Scope
       <select name="scope">
         {% for s in scopes %}
@@ -33,7 +33,7 @@
     <label>Depth
       <input type="number" name="depth" min="1" value="{{ depth }}">
     </label>
-    <label class="graph-tests-toggle">
+    <label class="filter-check">
       <input type="checkbox" name="tests" value="1"{% if include_tests %} checked{% endif %}>
       Include tests
     </label>

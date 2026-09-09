@@ -86,9 +86,34 @@ def knowledge_import(dir_path, doc_type, tags, affects):
 
 
 # execute_manifest()'s report keys the CLI already renders itself ("Wrote N
-# ... embedded M"); every other report key is a verify leg and is printed
-# verbatim after the write (see knowledge_ingest).
-_EXECUTOR_SUMMARY_KEYS = frozenset({"written", "embedded", "accepted", "skipped"})
+# ... embedded M", dangling-pointer warnings); every other report key is a
+# verify leg and is printed verbatim after the write (see knowledge_ingest).
+_EXECUTOR_SUMMARY_KEYS = frozenset(
+    {"written", "embedded", "accepted", "skipped", "dangling_pointers"}
+)
+
+
+def _echo_dangling_warnings(items) -> None:
+    """Surface declared relates_to pointers that indexed to no single
+    knowledge document: they stay frontmatter-only, never index. A
+    pointer whose basename matched several resources names the
+    candidates; one matching nothing at all says so plainly."""
+    from cairn.knowledge.index import AMBIGUOUS_POINTER_REASON
+
+    for item in items or []:
+        if item.get("reason") == AMBIGUOUS_POINTER_REASON:
+            click.echo(
+                f"  warning: {item['doc_id']} declares relates_to "
+                f"'{item['concept_id']}' matching multiple knowledge documents "
+                f"({', '.join(item['candidates'])}); ambiguous pointer, kept "
+                f"in frontmatter, not indexed."
+            )
+        else:
+            click.echo(
+                f"  warning: {item['doc_id']} declares relates_to "
+                f"'{item['concept_id']}' matching no knowledge document or "
+                f"resource path; kept in frontmatter, not indexed."
+            )
 
 
 @knowledge.command("ingest")
@@ -120,6 +145,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
         # ("Fed path does not exist: ...", "Repo root does not exist: ...").
         click.echo(f"Error: {e}.", err=True)
         sys.exit(1)
+    dangling = []
     if do_ingest:
         from cairn.knowledge.ingest.executor import execute_manifest
         from ..paths import resolve_store
@@ -130,6 +156,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
             report = execute_manifest(manifest, conn)
         finally:
             conn.close()
+        dangling = report.get("dangling_pointers") or []
         embed_note = (
             f", embedded {report['embedded']}" if report["embedded"] is not None else ""
         )
@@ -151,6 +178,15 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
                 err=True,
             )
             sys.exit(1)
+    else:
+        # Dry run: predict which declared pointers will never index, so a
+        # link that fails to resolve is visible before anything is written.
+        from cairn.knowledge.index import dangling_manifest_pointers
+        from cairn.okf.bundle import OKFBundle
+        from ..paths import resolve_store
+
+        bundle = OKFBundle(str(resolve_store().knowledge))
+        dangling = dangling_manifest_pointers(bundle, manifest["rows"])
     counts = manifest["counts"]
     click.echo(
         f"Staged {counts['accepted']} document(s), skipped {counts['skipped']}."
@@ -158,7 +194,208 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
     for row in manifest["rows"]:
         if "skip" in row:
             click.echo(f"  skipped: {row['source_path']} ({row['skip']})")
+        else:
+            click.echo(f"  staged: {row['source_path']} -> {row['concept_id']}")
+            for rel in row.get("relationships") or []:
+                click.echo(
+                    f"    {rel['relation']}: {rel['concept_id']} ({rel['kind']})"
+                )
+    _echo_dangling_warnings(dangling)
     click.echo(f"Outbox: {manifest['workspace']}")
+
+
+@knowledge.command("rebuild")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_rebuild(db):
+    """Rebuild the derived knowledge_edges / knowledge_doc_refs index.
+
+    Recomputes both tables from the .knowledge bundle: declared
+    relationships (relates_to frontmatter), verified doc->code refs
+    (sources/verified families), and tag/affects_modules overlap
+    materialized as kind=derived edges. Idempotent: running it twice on an
+    unchanged bundle leaves the tables (including timestamps) identical.
+    Runs automatically after `knowledge ingest --ingest`. Island detection
+    then queues one doc-link task per unlinked island pair (deduped per
+    member set across runs).
+    """
+    from cairn.knowledge.index import rebuild_knowledge_index
+    from cairn.knowledge.islands import queue_doc_link_tasks
+    from cairn.okf.bundle import OKFBundle
+    from ..paths import resolve_store
+
+    store = resolve_store()
+    store.ensure()
+    bundle = OKFBundle(str(store.knowledge))
+    conn = get_db(db)
+    try:
+        report = rebuild_knowledge_index(conn, bundle)
+        conn.commit()
+        queued = queue_doc_link_tasks(conn, bundle)
+    finally:
+        conn.close()
+    click.echo(
+        f"Rebuilt knowledge index: {report['docs']} doc(s), "
+        f"{report['edges']} edge(s) ({report['derived']} derived), "
+        f"{report['doc_refs']} ref(s)."
+    )
+    _echo_dangling_warnings(report.get("dangling"))
+    click.echo(f"Island detection: queued {queued} doc-link task(s).")
+
+
+@knowledge.command("islands")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_islands(as_json, db):
+    """List isolated doc components (islands) and their doc-link tasks.
+
+    Islands are doc-graph components detached from the corpus: two-doc
+    components and singleton docs (paired in id order). Read-only; the
+    queueing itself runs on `knowledge ingest --ingest`.
+    """
+    from cairn.knowledge.islands import DOC_LINK_KIND, doc_islands
+    from cairn.llm.tasks import list_tasks
+
+    bundle = _require_store_bundle()
+    if not bundle.root.exists():
+        click.echo("No knowledge store; nothing to inspect.")
+        return
+    conn = get_db(db)
+    try:
+        islands = doc_islands(conn, bundle)
+        queued = {
+            frozenset((t.facts or {}).get("members") or []): t
+            for t in list_tasks(bundle, kind_prefix=DOC_LINK_KIND)
+            if (t.facts or {}).get("members")
+        }
+    finally:
+        conn.close()
+
+    if as_json:
+        rows = []
+        for members in islands:
+            task = queued.get(frozenset(members))
+            rows.append(
+                {
+                    "members": members,
+                    "task_id": task.id if task else None,
+                    "task_status": task.status if task else None,
+                }
+            )
+        click.echo(json.dumps(rows, indent=2, default=str))
+        return
+    if not islands:
+        click.echo("No islands: every knowledge doc is connected.")
+        return
+    click.echo(f"{len(islands)} island(s) worth linking:")
+    for members in islands:
+        task = queued.get(frozenset(members))
+        state = (
+            f"doc-link task {task.id} ({task.status})"
+            if task
+            else "no doc-link task yet"
+        )
+        click.echo(f"  {' + '.join(members)}  [{state}]")
+
+
+def _require_store_bundle():
+    """The knowledge bundle for a read command."""
+    from cairn.okf.bundle import OKFBundle
+    from ..paths import resolve_store
+
+    return OKFBundle(str(resolve_store().knowledge))
+
+
+def _resolve_or_exit(bundle, doc_id: str):
+    """Resolve a doc id before the DB is opened, so an unknown id writes
+    nothing at all (not even creating the store directories, which a
+    failed bundle read would otherwise do as a lookup side effect)."""
+    from cairn.knowledge.store import resolve_knowledge_doc
+
+    if not bundle.root.exists():
+        click.echo(
+            f"Error: unknown knowledge document: '{doc_id}'. No knowledge "
+            f"store at {bundle.root} -- ingest (`cairn knowledge ingest "
+            "--ingest`) or add documents first.",
+            err=True,
+        )
+        sys.exit(1)
+    try:
+        resolve_knowledge_doc(bundle, doc_id)
+    except ValueError as e:
+        # Unknown or out-of-namespace id: clean error, no traceback,
+        # no partial output, no store writes (VAL-INGEST-011).
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@knowledge.command("related")
+@click.argument("doc_id")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_related(doc_id, as_json, db):
+    """List a doc's relationship neighbors (relation + kind per row).
+
+    Reads the derived knowledge_edges index in both directions; refresh it
+    with `cairn knowledge rebuild` if the bundle changed outside ingest.
+    """
+    from cairn.knowledge.index import related_docs
+
+    bundle = _require_store_bundle()
+    _resolve_or_exit(bundle, doc_id)
+    conn = get_db(db)
+    try:
+        neighbors = related_docs(conn, bundle, doc_id)
+    finally:
+        conn.close()
+
+    if as_json:
+        click.echo(json.dumps(neighbors, indent=2, default=str))
+        return
+    if not neighbors:
+        click.echo(f"No stored relationships for '{doc_id}'.")
+        return
+    click.echo(f"{len(neighbors)} related doc(s) for '{doc_id}':")
+    for n in neighbors:
+        title = n.get("title") or ""
+        suffix = f" ({title})" if title else ""
+        click.echo(
+            f"  {n['relation']} ({n['kind']}) [{n['direction']}]"
+            f" {n['doc_id']}{suffix}"
+        )
+
+
+@knowledge.command("chain")
+@click.argument("doc_id")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def knowledge_chain(doc_id, as_json, db):
+    """Print the supersede chain containing a doc (oldest -> newest).
+
+    Any chain member may be the argument: every member appears exactly
+    once, positioned causally (each member is superseded-by the next).
+    """
+    from cairn.knowledge.index import supersede_chain
+
+    bundle = _require_store_bundle()
+    _resolve_or_exit(bundle, doc_id)
+    conn = get_db(db)
+    try:
+        chain = supersede_chain(conn, bundle, doc_id)
+    finally:
+        conn.close()
+
+    if as_json:
+        click.echo(json.dumps(chain, indent=2, default=str))
+        return
+    click.echo(
+        f"Supersede chain for '{doc_id}' ({len(chain)} doc(s), oldest -> newest):"
+    )
+    for pos, member in enumerate(chain, start=1):
+        title = member.get("title") or ""
+        suffix = f" ({title})" if title else ""
+        click.echo(f"  {pos}. {member['concept_id']}{suffix}")
+        if member.get("relation"):
+            click.echo(f"     -> {member['relation']}")
 
 
 @knowledge.command("search")
@@ -196,14 +433,31 @@ def knowledge_search(query, limit, threshold, as_json, db):
 @click.option("--type", "doc_type", default=None)
 @click.option("--status", default=None)
 @click.option("--tag", default=None)
-def knowledge_list(doc_type, status, tag):
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit JSON rows (concept_id, title, doc_type, doc_status).")
+def knowledge_list(doc_type, status, tag, as_json):
     """List knowledge documents."""
-    from cairn.knowledge.store import list_documents
+    from cairn.knowledge.store import list_documents, normalize_doc_id
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
 
     bundle = OKFBundle(str(resolve_store().knowledge))
     docs = list_documents(bundle, doc_type=doc_type, status=status, tag=tag)
+    if as_json:
+        rows = []
+        for c in docs:
+            concept_id = normalize_doc_id(bundle, c.concept_id)
+            parts = concept_id.split("/")
+            rows.append(
+                {
+                    "concept_id": concept_id,
+                    "title": c.title,
+                    "doc_type": parts[1] if len(parts) > 2 else "",
+                    "doc_status": c.extensions.get("doc_status"),
+                }
+            )
+        click.echo(json.dumps(rows, indent=2, default=str))
+        return
     if not docs:
         click.echo("No knowledge documents found.")
         return

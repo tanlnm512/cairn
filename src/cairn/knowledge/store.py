@@ -13,6 +13,7 @@ from cairn.okf.concept import OKFConcept
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.provenance import Tier
 from cairn.okf.utils import slugify
+from cairn.knowledge.relationships import normalize_relationships
 from ..memory.privacy import strip_private_data
 
 logger = logging.getLogger(__name__)
@@ -38,8 +39,15 @@ def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
     return out
 
 
-def _normalized_concept_id(bundle: OKFBundle, concept_id: str) -> str:
-    """Normalize a (possibly absolute or ``.md``-suffixed) id to bundle-relative.
+def normalize_doc_id(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize any doc id shape to the bare bundle-relative concept_id.
+
+    Accepts bare ids (``knowledge/spec/foo``), ``.md``-suffixed ids, and
+    path-shaped ids (absolute paths as returned by ``OKFBundle`` reads,
+    whose ``concept_id`` attribute is the file path, not the bare id).
+    This is the ONE normalization point shared by the derived-index
+    rebuild and the CLI/dashboard consumers that correlate frontmatter
+    pointers with bundle reads.
 
     Best-effort: on any path that can't be normalized (escapes the bundle
     root, OS error), the input minus a ``.md`` suffix is returned as-is so
@@ -47,11 +55,14 @@ def _normalized_concept_id(bundle: OKFBundle, concept_id: str) -> str:
     """
     cid = concept_id[:-3] if concept_id.endswith(".md") else concept_id
     try:
-        return str(
+        rel = str(
             (bundle.root / f"{cid}.md").resolve().relative_to(bundle.root.resolve())
         )
     except (ValueError, OSError):
         return cid
+    # The probe path carries the .md suffix; the normalized id is bare,
+    # matching the knowledge_embeddings.doc_id convention.
+    return rel[:-3] if rel.endswith(".md") else rel
 
 
 def _refuse_out_of_namespace(
@@ -71,9 +82,9 @@ def _refuse_out_of_namespace(
     "not found" branch relies on.
     """
     if concept is not None:
-        resolved = _normalized_concept_id(bundle, concept.concept_id)
+        resolved = normalize_doc_id(bundle, concept.concept_id)
     else:
-        resolved = _normalized_concept_id(bundle, doc_id)
+        resolved = normalize_doc_id(bundle, doc_id)
         try:
             file_path = bundle._validate_concept_path(resolved)
         except ValueError:
@@ -104,6 +115,8 @@ def add_document(
     steps: Optional[List[dict]] = None,
     description: Optional[str] = None,  # one-line summary; defaults to title
     doc_source: str = "manual",    # "manual" or "imported"
+    relationships: Optional[List[dict]] = None,  # {concept_id, relation, kind}
+    verified_refs: Optional[List[dict]] = None,  # {ref, kind: file|symbol, verified}
 ) -> str:
     """Ingest a document. Returns the concept_id.
 
@@ -112,6 +125,19 @@ def add_document(
     ``steps`` is an optional ordered list of step dicts stored under the
     ``steps`` extension (intended for ``doc_type="workflow"``; see
     ``src/knowledge/workflow.py``).
+
+    ``relationships`` is an optional list of relationship entries stored
+    verbatim under the ``relates_to`` extension (D1.1), each normalized
+    to ``{concept_id, relation, kind}`` with kind defaulting to
+    ``extracted``; entries are identifiers, not free text, so they are
+    never redacted.
+
+    ``verified_refs`` is an optional list of verified doc-to-code refs
+    (D1.3) stored as the concept's ``verified`` family (OKF v0.2, the
+    wiki pattern), each ``{ref, kind: file|symbol, verified: true}``;
+    callers pass pre-resolved entries (``knowledge/ingest/refs.py``).
+    Refs are graph identifiers and are never redacted; the family is
+    omitted entirely when nothing (or nothing resolvable) is passed.
 
     Privacy floor (audit F1): title, body, description, and step
     descriptions are routed through :func:`strip_private_data` at this
@@ -149,6 +175,9 @@ def add_document(
     # Only add the steps key when actually given.
     if steps:
         extensions["steps"] = steps
+    # Author-declared relationships (D1.1) ride under relates_to.
+    if relationships:
+        extensions["relates_to"] = normalize_relationships(relationships)
 
     concept = OKFConcept(
         type=f"Knowledge-{doc_type}",
@@ -159,6 +188,8 @@ def add_document(
         concept_id=concept_id,
         body=body,
         extensions=extensions,
+        # Verified doc->code refs (D1.3): OKF v0.2 family, wiki pattern.
+        verified=list(verified_refs) if verified_refs else None,
     )
     bundle.write_concept(concept)
     return concept_id
@@ -194,6 +225,27 @@ def get_document(bundle: OKFBundle, doc_id: str) -> Optional[OKFConcept]:
         return bundle.read_concept(doc_id)
     except Exception:
         return None
+
+
+def resolve_knowledge_doc(bundle: OKFBundle, doc_id: str) -> OKFConcept:
+    """Resolve a knowledge-namespaced document, or raise ``ValueError``.
+
+    Shared guard for the relationship query surface (``related``/``chain``
+    CLI and dashboard consumers): raises when ``doc_id`` matches no
+    concept, and applies the same namespace refusal as the mutating
+    chokepoints (``_refuse_out_of_namespace``) when it resolves to a
+    compass/wiki/memory concept. The returned concept keeps the bundle's
+    path-shaped ``concept_id``; callers normalize via
+    :func:`normalize_doc_id` when they need the bare id.
+    """
+    concept = get_document(bundle, doc_id)
+    if concept is None:
+        raise ValueError(
+            f"Unknown knowledge document: '{doc_id}'. "
+            "Run `cairn knowledge list` for stored doc ids."
+        )
+    _refuse_out_of_namespace(bundle, doc_id, concept)
+    return concept
 
 
 # The valid status values, enforced as a forward-only lifecycle.

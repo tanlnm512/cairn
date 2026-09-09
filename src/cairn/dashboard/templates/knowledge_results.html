@@ -1,0 +1,31 @@
+{#-
+  The results region of /knowledge (#knowledge-results): the filter form
+  (knowledge.html) hx-gets the route on a change or keystroke and the
+  alpine-morph extension morphs the fresh fragment over this region in
+  place — a filter change is a fragment, never a navigation. The route
+  renders THIS template alone on an HX-Request. The region is not polled
+  (no hx-trigger), so no live chrome arms here.
+-#}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+<div id="knowledge-results" aria-live="polite">
+  {% if docs %}
+  <p class="muted">{{ docs | length }} of {{ total }} document{{ 's' if total != 1 }} shown.</p>
+  {% call tables.table(['Title', 'Family', 'Status', 'Links', 'Tags', 'Updated']) %}
+      {% for doc in docs %}
+      <tr>
+        <td><a href="{{ links.url('/knowledge/' ~ doc.family ~ '/' ~ doc.slug) }}">{{ doc.title }}</a></td>
+        <td>{% if doc.family %}<span class="badge badge-{{ doc.family }}">{{ doc.family }}</span>{% else %}—{% endif %}</td>
+        <td><span class="badge badge-{{ doc.status }}">{{ doc.status }}</span></td>
+        <td class="num">{{ doc.links }}</td>
+        <td>{%- for t in doc.tags %} <code>{{ t }}</code>{% endfor %}{% if not doc.tags %}—{% endif %}</td>
+        <td class="ts">{{ doc.updated or "—" }}</td>
+      </tr>
+      {% endfor %}
+  {% endcall %}
+  {% elif total == 0 %}
+  {{ tables.empty_state('No knowledge documents in this workspace yet — ingest some with', code='cairn knowledge ingest') }}
+  {% else %}
+  {{ tables.empty_state('No documents match the current filters') }}
+  {% endif %}
+</div>

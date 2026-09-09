@@ -24,11 +24,20 @@
      constellation instead of a center clump.
    - Node size scales with degree (vis `value` scaling) so hubs read as
      hubs.
-   - Theming: edge/font options derive from the stylesheet's CSS
-     variables; a MutationObserver on <html data-theme> re-applies them
-     and re-colors every node from the active palette (light palettes
-     are the dark hues' saturated-dark counterparts). Layout and physics
-     state are never touched by a theme flip. */
+   - Theming: every canvas color — edge/font options and the per-kind
+     node palette — derives from the stylesheet's CSS variables through
+     the getComputedStyle token proxy (cssVar), so the palette ships
+     with the theme, never with this script. shell.js broadcasts
+     cairn:theme-changed on a data-theme flip; re-applying the
+     theme-derived options and re-coloring every node from the tokens
+     rides that event. Layout and physics state are never touched by a
+     theme flip.
+   - Reduced motion: the physics simulation is JS-driven motion the
+     CSS media query cannot reach, so a matching
+     prefers-reduced-motion: reduce disables physics outright and lays
+     the graph out on the deterministic spiral (a static constellation,
+     no stabilization animation); overlay zoom/fit skip their eased
+     animation too. */
 (function () {
   "use strict";
   var block = document.getElementById("graph-data");
@@ -45,41 +54,42 @@
   if (!data.nodes || !data.nodes.length) {
     return;
   }
+  /* The token proxy: colors resolve from the live stylesheet at read
+     time, so a theme flip re-reads to the new palette with no JS-side
+     color state to keep in sync. */
   function cssVar(name) {
     var v = getComputedStyle(document.documentElement).getPropertyValue(
       name
     );
     return v ? v.trim() : "";
   }
-  function isDark() {
-    return document.documentElement.dataset.theme !== "light";
+  function prefersReducedMotion() {
+    return !!(
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
   }
 
   /* ---- Kind coloring & filters ---- */
 
-  var KIND_DARK = {
-    function: "#2dd4bf",
-    method: "#4ade80",
-    class: "#a78bfa",
-    interface: "#60a5fa",
-    enum: "#f472b6",
-    module: "#fbbf24",
-    external: "#8b9bb4"
+  /* Kind colors are theme tokens: each kind maps to a --kind-* variable
+     declared in both theme blocks, and unknown kinds fall back to the
+     muted text token (the pre-token palettes' shared default). */
+  var KIND_TOKENS = {
+    function: "--kind-function",
+    method: "--kind-method",
+    class: "--kind-class",
+    interface: "--kind-interface",
+    enum: "--kind-enum",
+    module: "--kind-module",
+    external: "--kind-external"
   };
-  var KIND_LIGHT = {
-    function: "#0d9488",
-    method: "#16a34a",
-    class: "#7c3aed",
-    interface: "#2563eb",
-    enum: "#db2777",
-    module: "#b45309",
-    external: "#6b7280"
-  };
-  function kindPalette() {
-    return isDark() ? KIND_DARK : KIND_LIGHT;
+  function kindColor(kind) {
+    var token = KIND_TOKENS[kind];
+    return (token && cssVar(token)) || cssVar("--text-3");
   }
   function kindOf(n) {
-    return n.kind && kindPalette()[n.kind] ? n.kind : "other";
+    return n.kind && KIND_TOKENS[n.kind] ? n.kind : "other";
   }
 
   var idKind = {};
@@ -98,12 +108,12 @@
     return k;
   }
   function colorForKey(k) {
-    var c = kindPalette()[k] || cssVar("--muted");
+    var c = kindColor(k);
     return {
       background: c,
       border: c,
-      highlight: { background: c, border: cssVar("--text") },
-      hover: { background: c, border: cssVar("--text") }
+      highlight: { background: c, border: cssVar("--text-1") },
+      hover: { background: c, border: cssVar("--text-1") }
     };
   }
 
@@ -161,6 +171,13 @@
   }
   var edgeless = !data.edges.length;
 
+  /* A static layout (no simulation): edgeless graphs always, and any
+     graph under prefers-reduced-motion — the physics simulation is
+     JS-driven motion the CSS media query cannot collapse. Nodes take
+     deterministic spiral positions either way, so the physics-off
+     canvas is a spread constellation instead of a center clump. */
+  var staticLayout = edgeless || prefersReducedMotion();
+
   function nodeView(n) {
     var kind = registerKind(n);
     var view = {
@@ -172,7 +189,7 @@
       /* merged nodes of an already-filtered kind arrive hidden */
       hidden: !!hiddenKinds[kind]
     };
-    if (edgeless) {
+    if (staticLayout) {
       var p = spiralPosition();
       view.x = p.x;
       view.y = p.y;
@@ -247,21 +264,21 @@
           border: accent,
           highlight: {
             background: accent,
-            border: cssVar("--text")
+            border: cssVar("--text-1")
           },
-          hover: { background: accent, border: cssVar("--text") }
+          hover: { background: accent, border: cssVar("--text-1") }
         },
         font: {
           face: cssVar("--font-sans"),
           size: 12,
-          color: cssVar("--muted"),
-          strokeColor: cssVar("--canvas"),
+          color: cssVar("--text-3"),
+          strokeColor: cssVar("--bg-0"),
           strokeWidth: 3
         }
       },
       edges: {
         color: {
-          color: cssVar("--border"),
+          color: cssVar("--line-1"),
           highlight: cssVar("--accent"),
           hover: cssVar("--accent")
         },
@@ -294,9 +311,10 @@
     if (kind === "hier") {
       options.layout = layoutOptions(kind);
       options.physics = { enabled: false };
-    } else if (edgeless) {
+    } else if (staticLayout || prefersReducedMotion()) {
       /* Spiral positions are final; physics would only drag the
-         constellation back into a clump. */
+         constellation back into a clump — and under reduced motion the
+         simulation is motion, so it never runs at all. */
       options.physics = { enabled: false };
     } else {
       options.physics = {
@@ -359,7 +377,10 @@
         return;
       }
       var action = btn.getAttribute("data-graph-action");
-      var animation = { duration: 250, easingFunction: "easeInOutQuad" };
+      /* The eased camera move is animation; reduced motion snaps. */
+      var animation = prefersReducedMotion()
+        ? false
+        : { duration: 250, easingFunction: "easeInOutQuad" };
       if (action === "zoom-in") {
         network.moveTo({
           scale: network.getScale() * 1.35,
@@ -396,7 +417,7 @@
         item.title = "toggle " + k + " nodes";
         var dot = document.createElement("span");
         dot.className = "legend-dot";
-        dot.style.background = kindPalette()[k] || cssVar("--muted");
+        dot.style.background = kindColor(k);
         var name = document.createElement("span");
         name.className = "legend-name";
         name.textContent = k;
@@ -431,10 +452,11 @@
   }
   renderLegend();
 
-  /* Theme toggle re-colors the live network: theme-derived options via
-     setOptions, node colors via a single batched update, then the
-     legend re-renders from the new palette. Layout/physics/camera
-     state survives untouched. */
+  /* A theme flip re-colors the live network: theme-derived options via
+     setOptions, node colors via a single batched update from the token
+     palette, then the legend re-renders. The flip arrives as the shell's
+     cairn:theme-changed broadcast — this file owns no observer. Layout,
+     physics, and camera state survive untouched. */
   function applyTheme() {
     network.setOptions(themeOptions());
     var updates = [];
@@ -449,14 +471,7 @@
     }
     renderLegend();
   }
-  if (typeof MutationObserver !== "undefined") {
-    new MutationObserver(function () {
-      applyTheme();
-    }).observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"]
-    });
-  }
+  document.addEventListener("cairn:theme-changed", applyTheme);
   var pending = {};
 
   function refreshCounts(truncated) {
@@ -565,12 +580,14 @@
   }
 
   /* Side panel (graph-tab info panel): selecting a node fetches
-     /graph/inspect and fills #graph-panel with the one-call answer —
-     identity, callers, callees, and the impact view with affected tests.
-     Deselecting hides the panel. Built with DOM APIs only (no innerHTML
-     with node data), mirroring the inspect hint above. */
+     /graph/inspect as an htmx fragment — htmx.ajax carries the
+     HX-Request header the route's fragment branch keys on — and swaps
+     the server-rendered panel (identity, callers, callees, impact view
+     with affected tests) into #graph-panel. Deselecting hides the
+     panel. The loading text is the only client-authored content; the
+     panel body is server-authored template markup. */
   var panel = document.getElementById("graph-panel");
-  var panelRequest = 0;
+  var latestInspectUrl = "";
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
@@ -583,156 +600,94 @@
     return node;
   }
 
-  /* Side-panel rows deep-link into the symbol-focused graph — the same
-     seam the inspect hint and the search box navigate with (full page
-     load, browser-back returns; the store rides the href). */
-  function panelFocusUrl(name) {
+  function inspectUrl(id) {
     return (
-      "/graph?scope=symbol&focus=" +
-      encodeURIComponent(name) +
+      "/graph/inspect?name=" +
+      encodeURIComponent(id) +
       (inspectStore ? "&store=" + encodeURIComponent(inspectStore) : "")
     );
-  }
-
-  function panelRows(list, items, nameKey, withDepth) {
-    if (!items.length) {
-      list.appendChild(el("li", "panel-empty", "none"));
-      return;
-    }
-    items.forEach(function (item) {
-      var row = el("li", "panel-row");
-      var name = el("a", "panel-name", item[nameKey]);
-      name.href = panelFocusUrl(item[nameKey]);
-      row.appendChild(name);
-      var sub = item.file || "";
-      if (withDepth && item.depth !== undefined && item.depth !== null) {
-        sub = "depth " + item.depth + (sub ? " — " + sub : "");
-      }
-      if (sub) {
-        row.appendChild(el("span", "panel-sub", sub));
-      }
-      list.appendChild(row);
-    });
-  }
-
-  function panelSection(title, items, nameKey, withDepth) {
-    var section = el("section", "panel-section");
-    var head = title + " (" + items.length + ")";
-    section.appendChild(el("h3", "panel-head", head));
-    var list = el("ul", "panel-list");
-    panelRows(list, items, nameKey, withDepth);
-    section.appendChild(list);
-    return section;
-  }
-
-  function renderPanel(data) {
-    panel.textContent = "";
-    var sym = data.symbol || {};
-    var head = el("div", "panel-head-row");
-    head.appendChild(el("span", "panel-kind", sym.kind || "?"));
-    head.appendChild(el("span", "panel-title", sym.name));
-    panel.appendChild(head);
-    var where = (sym.file || "") + (sym.line_start ? ":" + sym.line_start : "");
-    if (where) {
-      panel.appendChild(el("p", "panel-sub", where));
-    }
-    if (data.same_name_count > 1) {
-      panel.appendChild(
-        el("p", "panel-note", data.same_name_count + " same-name definitions — showing the first")
-      );
-    }
-    if (sym.docstring) {
-      panel.appendChild(el("p", "panel-doc", sym.docstring));
-    }
-    panel.appendChild(
-      panelSection("Callers", data.callers || [], "name", false)
-    );
-    if (data.callers_truncated) {
-      panel.appendChild(el("p", "panel-note", "more callers not shown"));
-    }
-    panel.appendChild(
-      panelSection("Callees", data.callees || [], "name", false)
-    );
-    if (data.callees_truncated) {
-      panel.appendChild(el("p", "panel-note", "more callees not shown"));
-    }
-    var impact = data.impact || {};
-    var impactSection = el("section", "panel-section");
-    impactSection.appendChild(
-      el(
-        "h3",
-        "panel-head",
-        "Impact — " + impact.total + " symbol" + (impact.total === 1 ? "" : "s") + " affected" +
-          (impact.truncated ? " (capped)" : "")
-      )
-    );
-    var topList = el("ul", "panel-list");
-    panelRows(topList, impact.top || [], "symbol", true);
-    impactSection.appendChild(topList);
-    panel.appendChild(impactSection);
-    var tests = impact.affected_tests || [];
-    var testsSection = el("section", "panel-section");
-    var testHead = "Affected tests";
-    if (impact.affected_tests_total > tests.length) {
-      testHead += " — " + impact.affected_tests_total + " total";
-    } else {
-      testHead += " (" + tests.length + ")";
-    }
-    testsSection.appendChild(el("h3", "panel-head", testHead));
-    var testList = el("ul", "panel-list");
-    panelRows(testList, tests, "symbol", false);
-    testsSection.appendChild(testList);
-    panel.appendChild(testsSection);
   }
 
   function inspectPanel(id) {
     if (!panel) {
       return;
     }
-    panelRequest += 1;
-    var seq = panelRequest;
-    if (!id) {
+    if (!id || typeof htmx === "undefined") {
+      abortInFlightInspect();
+      latestInspectUrl = "";
       panel.hidden = true;
       panel.textContent = "";
       return;
     }
+    latestInspectUrl = inspectUrl(id);
     panel.hidden = false;
     panel.textContent = "";
     panel.appendChild(el("p", "panel-empty", "loading '" + id + "'…"));
-    fetch(
-      "/graph/inspect?name=" +
-        encodeURIComponent(id) +
-        (inspectStore ? "&store=" + encodeURIComponent(inspectStore) : "")
-    )
-      .then(function (resp) {
-        if (!resp.ok) {
-          throw new Error("inspect request failed");
-        }
-        return resp.json();
-      })
-      .then(
-        function (data) {
-          if (seq !== panelRequest) {
-            return; /* a newer selection already owns the panel */
-          }
-          panel.textContent = "";
-          if (!data.found) {
-            panel.appendChild(
-              el("p", "panel-empty", "no definition of '" + id + "' in the index")
-            );
-            return;
-          }
-          renderPanel(data);
-        },
-        function () {
-          if (seq !== panelRequest) {
-            return;
-          }
-          panel.textContent = "";
-          panel.appendChild(el("p", "panel-empty", "inspect request failed"));
-        }
-      );
+    htmx.ajax("GET", latestInspectUrl, { target: panel, swap: "innerHTML" });
   }
+
+  /* One selection owns the panel: a superseded inspect fetch is aborted
+     outright (htmx:beforeSend carries the live xhr), and htmx swaps
+     inside ajax(), so a stale response completing late is cancelled at
+     htmx:beforeSwap too — only the latest inspect request may swap. */
+  var inFlightInspect = null;
+  function abortInFlightInspect() {
+    if (inFlightInspect) {
+      try {
+        inFlightInspect.abort();
+      } catch (err) {
+        /* abort() on an already-settled xhr is a no-op; nothing to free */
+      }
+      inFlightInspect = null;
+    }
+  }
+  document.body.addEventListener("htmx:beforeSend", function (event) {
+    var detail = event.detail || {};
+    var path =
+      detail.requestConfig && typeof detail.requestConfig.path === "string"
+        ? detail.requestConfig.path
+        : "";
+    if (path.indexOf("/graph/inspect") !== 0) {
+      return;
+    }
+    abortInFlightInspect();
+    inFlightInspect = detail.xhr;
+  });
+  document.body.addEventListener("htmx:beforeSwap", function (event) {
+    var path =
+      event.detail && event.detail.requestConfig
+        ? event.detail.requestConfig.path
+        : "";
+    if (
+      typeof path === "string" &&
+      path.indexOf("/graph/inspect") === 0 &&
+      path !== latestInspectUrl
+    ) {
+      event.detail.shouldSwap = false;
+    }
+  });
+
+  /* A failed inspect (HTTP error status or dead server) replaces the
+     loading text with the failure note — htmx swaps only on 2xx, and an
+     aborted predecessor fires neither event. */
+  ["htmx:responseError", "htmx:sendError"].forEach(
+    function (name) {
+      document.body.addEventListener(name, function (event) {
+        var detail = event.detail || {};
+        var path = detail.requestConfig ? detail.requestConfig.path : "";
+        if (
+          !panel ||
+          typeof path !== "string" ||
+          path.indexOf("/graph/inspect") !== 0 ||
+          path !== latestInspectUrl
+        ) {
+          return;
+        }
+        panel.textContent = "";
+        panel.appendChild(el("p", "panel-empty", "inspect request failed"));
+      });
+    }
+  );
 
   network.on("selectNode", function (event) {
     var id = event.nodes && event.nodes.length ? event.nodes[0] : null;
@@ -802,8 +757,9 @@
       var scale = network.getScale();
       /* Full option swap: the layout change rides the physics change it
          implies (hier disables physics, force re-enables barnesHut with
-         a fresh stabilization — unless the graph is edgeless, where
-         force stays physics-off on spiral positions). */
+         a fresh stabilization — unless the graph is edgeless or under
+         reduced motion, where force stays physics-off on spiral
+         positions). */
       network.setOptions(optionsFor(kind));
       network.once("afterDrawing", function () {
         network.moveTo({ position: position, scale: scale });
@@ -1085,65 +1041,42 @@
   });
 })();
 
-/* Live refresh (FR-001): on traffic views a #refresh-region element
-   marks the swappable body. This loop re-fetches the current URL on a
-   re-arming setTimeout — never setInterval, so background-tab
-   throttling cannot stack timers (D-001) — and swaps the region's
-   children for the fetched document's, built with importNode (never
-   innerHTML on the fetched text). The swap is atomic full-region
-   replacement: ordering is the server's ORDER BY, so re-fetching the
-   same data renders the same rows and idempotency holds by
-   construction (D-002). Hidden tabs skip fetches entirely (D-003).
-   FR-003: the filter form lives inside the region, so the wholesale
-   swap would wipe in-progress input and reset scroll — field values
-   and window scroll are captured immediately before the swap and
-   restored immediately after (a field-count mismatch skips field
-   restoration: the server changed the form shape). The interval is
-   LIVE_REFRESH_MS unless <body data-refresh-ms> (numeric, > 500)
-   overrides it.
-   Pages without #refresh-region are untouched. FR-004: #live-pause
-   toggles the loop — pause clears the pending timer and the state word
-   holds "paused" until the user resumes (pause is explicit user intent
-   and wins over visibility, D-003); a failed poll raises the
-   disconnected banner (FR-005), which clears on the next successful
-   one. */
+/* Live refresh (FR-001): on traffic views the #refresh-region element is
+   an htmx poll trigger (hx-trigger="every 5s", hx-swap="morph" in the
+   region templates): each cycle re-fetches the view as a cheap region
+   fragment — the route's HX-Request branch — and the alpine-morph
+   extension morphs it over the region in place. Nodes outside the region
+   (the filter form) are never touched, so in-progress filter input
+   survives every poll by construction; the region root itself survives
+   the morph, so the poller keeps ticking with no re-arming code here.
+   This module owns only the chrome around that loop, driven entirely by
+   the htmx event lifecycle:
+   - #live-controls (topbar): the state word + pause toggle. Pause is a
+     beforeRequest refusal: htmx's poll timer keeps its schedule but
+     every fetch is refused while paused (explicit user intent, and it
+     wins over tab visibility — paused means no fetch, period). A hidden
+     tab refuses its fetches the same way; the next visible tick catches
+     up. Resume simply stops refusing; the next scheduled tick fetches.
+   - FR-005: a failed poll (HTTP error or dead server) raises the
+     disconnected banner; the next successful poll clears it — self-heal
+     without a reload, since the timer never stopped.
+   - Window scroll is re-anchored around each region swap (captured in
+     beforeSwap, restored in afterSwap): a shrinking fragment must not
+     pull the page out from under the reader.
+   Pages without #refresh-region are untouched. */
 (function () {
   "use strict";
-  var LIVE_REFRESH_MS = 5000;
-  /* FR-001 "configurable interval": a numeric <body data-refresh-ms>
-     greater than 500 overrides the default; an absent, non-numeric,
-     or out-of-range value falls back. Read once, before the first
-     arm — history.html does not set the attribute, so the default
-     applies there. */
-  var configuredMs = document.body
-    ? parseInt(document.body.getAttribute("data-refresh-ms"), 10)
-    : NaN;
-  var refreshMs = configuredMs > 500 ? configuredMs : LIVE_REFRESH_MS;
   var region = document.getElementById("refresh-region");
   var controls = document.getElementById("live-controls");
-  if (!region) {
+  if (!region || !controls) {
     return;
   }
-  if (controls) {
-    controls.removeAttribute("hidden");
-  }
+  controls.removeAttribute("hidden");
   var stateText = document.getElementById("live-state");
-  /* FR-005: the disconnected banner (US3-AC2). Created once here —
-     after the state word, before the pause button — so ticks only
-     ever write its text: "connection lost — retrying" on a failure
-     while running, "" on the next successful poll (the self-heal).
-     Paused ticks fetch nothing, so the banner is untouched while
-     paused. */
-  var banner = null;
-  if (controls) {
-    banner = document.createElement("span");
-    banner.id = "live-banner";
-    controls.insertBefore(
-      banner,
-      document.getElementById("live-pause")
-    );
-  }
-  var timer = null;
+  var pauseButton = document.getElementById("live-pause");
+  var banner = document.createElement("span");
+  banner.id = "live-banner";
+  controls.insertBefore(banner, pauseButton);
 
   var STATE_WORDS = {
     running: "live",
@@ -1152,162 +1085,83 @@
   };
 
   function setState(state) {
-    if (controls) {
-      controls.dataset.state = state;
-    }
+    controls.dataset.state = state;
     if (stateText) {
       stateText.textContent = STATE_WORDS[state] || state;
     }
   }
 
-  function arm() {
-    timer = setTimeout(tick, refreshMs);
+  function fromRegion(event) {
+    return !!(event.detail && event.detail.elt === region);
   }
 
-  /* Pause/resume (FR-004, D-003): the #live-pause click is explicit
-     user intent and wins over visibility — while paused the loop is
-     fully stopped (pending timer cleared, ticks no-op), so no fetch
-     happens regardless of tab state, and the state word stays
-     "paused" until the user resumes (US3-AC1). Resume re-arms at
-     once, so the next tick arrives on the normal schedule rather
-     than never. */
-  var pauseButton = document.getElementById("live-pause");
+  /* Pause/resume (FR-004): the toggle only flips the refusal flag and
+     the visible word — htmx owns the schedule, so there is no timer to
+     clear and resume needs no re-arm. */
   var paused = false;
-
   if (pauseButton) {
     pauseButton.addEventListener("click", function () {
       paused = !paused;
       if (paused) {
-        if (timer !== null) {
-          clearTimeout(timer);
-          timer = null;
-        }
         setState("paused");
         pauseButton.textContent = "Resume";
       } else {
         setState("running");
         pauseButton.textContent = "Pause";
-        arm();
       }
     });
   }
 
-  /* FR-003: the swap replaces the region's children wholesale, which
-     would destroy whatever the user has typed into the filter form
-     (the fields live INSIDE the region) and drop the page scroll (the
-     region has no internal scroll container — window scroll is the
-     honest anchor). Harvest field state in DOM order immediately
-     before the swap; re-apply by DOM order immediately after. */
-  function harvestFields() {
-    var fields = region.querySelectorAll("input, select, textarea");
-    var state = [];
-    var i;
-    for (i = 0; i < fields.length; i += 1) {
-      state.push({
-        type: fields[i].type || fields[i].tagName.toLowerCase(),
-        checked: fields[i].checked,
-        value: fields[i].value
-      });
+  document.body.addEventListener("htmx:beforeRequest", function (event) {
+    if (!fromRegion(event)) {
+      return;
     }
-    return state;
-  }
+    if (paused || document.hidden) {
+      event.preventDefault();
+    }
+  });
 
-  function restoreFields(state) {
-    var fields = region.querySelectorAll("input, select, textarea");
-    var i;
-    if (fields.length !== state.length) {
-      /* The fresh fragment's field count differs from what was
-         harvested — the server changed the form shape; skip rather
-         than misapply stale values. */
+  document.body.addEventListener("htmx:afterRequest", function (event) {
+    if (!fromRegion(event) || paused || !event.detail.successful) {
       return;
     }
-    for (i = 0; i < fields.length; i += 1) {
-      if (state[i].type === "checkbox" || state[i].type === "radio") {
-        fields[i].checked = state[i].checked;
-      }
-      fields[i].value = state[i].value;
-    }
-  }
+    /* A successful poll is the recovery: the banner clears as the state
+       word returns to "live" (FR-005, US3-AC2). */
+    banner.textContent = "";
+    setState("running");
+  });
 
-  /* D-002: replace the region's children wholesale with the fetched
-     document's #refresh-region children (imported copies, so the
-     parsed document's iteration is never disturbed mid-loop). */
-  function swap(fetchedDoc) {
-    var fresh = fetchedDoc.getElementById("refresh-region");
-    if (!fresh) {
-      return;
-    }
-    var fieldState = harvestFields();
-    var scrollX = window.scrollX;
-    var scrollY = window.scrollY;
-    while (region.firstChild) {
-      region.removeChild(region.firstChild);
-    }
-    var child = fresh.firstChild;
-    while (child) {
-      region.appendChild(document.importNode(child, true));
-      child = child.nextSibling;
-    }
-    restoreFields(fieldState);
-    window.scrollTo(scrollX, scrollY);
-  }
-
-  function tick() {
-    timer = null;
-    if (paused) {
-      /* D-003: pause is explicit user intent and wins over visibility
-         — no fetch while paused regardless of tab state, and no
-         re-arm either: the resume handler restarts the loop. */
-      return;
-    }
-    if (document.hidden) {
-      /* D-003: a hidden tab fetches nothing this tick; the re-arm
-         keeps the loop alive so a visible tab refreshes again on a
-         later tick. */
-      arm();
-      return;
-    }
-    fetch(window.location.href)
-      .then(function (resp) {
-        if (!resp.ok) {
-          throw new Error("refresh request failed");
-        }
-        return resp.text();
-      })
-      .then(function (html) {
-        if (paused) {
-          /* Paused mid-flight: the response is dropped — no swap, no
-             state flip, no re-arm; resume's own cycle brings fresher
-             data. */
+  /* A failed poll (HTTP error status or dead server) is the disconnect:
+     the banner warns and the state word drops until a poll succeeds. */
+  ["htmx:responseError", "htmx:sendError"].forEach(
+    function (name) {
+      document.body.addEventListener(name, function (event) {
+        if (!fromRegion(event) || paused) {
           return;
         }
-        swap(new DOMParser().parseFromString(html, "text/html"));
-        /* FR-005: a successful poll is the recovery — the banner
-           clears as the state word returns to "live". */
-        if (banner) {
-          banner.textContent = "";
-        }
-        setState("running");
-        arm();
-      })
-      .catch(function () {
-        if (paused) {
-          /* Disconnected is only for failures while running (D-003):
-             a pause that landed mid-request must not overwrite the
-             paused word. */
-          return;
-        }
-        /* A failed cycle while running flips the state word and
-           raises the banner; the loop re-arms and both recover on
-           the first successful poll (FR-005, US3-AC2). */
-        if (banner) {
-          banner.textContent = "connection lost — retrying";
-        }
+        banner.textContent = "connection lost — retrying";
         setState("disconnected");
-        arm();
       });
-  }
+    }
+  );
+
+  /* The swap replaces the region's children, which can change the page
+     height; window scroll is the honest anchor (the region has no
+     internal scroll container). Capture immediately before the morph,
+     restore immediately after. */
+  var scrollX = 0;
+  var scrollY = 0;
+  document.body.addEventListener("htmx:beforeSwap", function (event) {
+    if (event.detail && event.detail.target === region) {
+      scrollX = window.scrollX;
+      scrollY = window.scrollY;
+    }
+  });
+  document.body.addEventListener("htmx:afterSwap", function (event) {
+    if (event.detail && event.detail.target === region) {
+      window.scrollTo(scrollX, scrollY);
+    }
+  });
 
   setState("running");
-  arm();
 })();

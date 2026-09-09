@@ -96,10 +96,10 @@ def test_create_app_serves_landing_and_static(tmp_path):
     assert "Cairn Dashboard" in landing.text
     assert db_path in landing.text
     # Every sidebar view is reachable from the launcher grid, including
-    # the two newest sections.
+    # the newest sections.
     for href in ("/workspaces", "/projects", "/graph", "/history", "/tokens",
-                 "/chains", "/health", "/memory", "/wiki", "/tasks",
-                 "/embeddings", "/settings"):
+                 "/chains", "/health", "/knowledge", "/memory", "/wiki",
+                 "/tasks", "/embeddings", "/settings"):
         assert f'href="{href}"' in landing.text, href
 
     css = client.get("/static/app.css")
@@ -1799,23 +1799,14 @@ def test_tokens_refetch_shifts_call_count_and_displayed_totals(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Loop-module state machine (live-updates FR-004 / FR-005, TC-005 /
-# TC-006): this repo has no JS test harness -- pytest only, and app.js is
-# browser-global IIFEs, not importable modules -- so the loop's state
-# behavior is pinned in its server-visible and structural halves: the
-# chrome contract the loop reads and writes (the rendered state hooks plus
-# exactly one app.js load, so the loop can never double-arm), and static
-# analysis of the live-refresh IIFE's source asserting the control-flow
-# ordering that makes paused-issues-no-fetch and rejected-then-resolved
-# hold (the paused guard ahead of the visibility guard and the fetch, the
-# setState words, the arm pattern). Every assertion anchors on those
-# stable tokens only -- never exact surrounding strings -- so concurrent
-# banner/styling work inside app.js cannot break them. The interactive
-# halves (a real click, a really-dead server) are the LIVE_TC005 /
-# LIVE_TC006 manual procedures at the section's end; those constants carry
-# a LIVE_ prefix because this file already defines graph-nav's
-# TC005_MANUAL_PROCEDURE -- each spec numbers its test cases
-# independently, and ruff's F811 forbids the bare redefinition.
+# Loop-module state machine, server-visible half (live-updates FR-004 /
+# FR-005, TC-005 / TC-006): the poll loop itself is htmx-owned — the
+# #refresh-region trigger lives in the region templates and the chrome
+# module's structural pins live in tests/test_dashboard_htmx_lists.py.
+# What stays pinned here is the chrome contract beneath the loop: the
+# rendered state hooks (#live-controls data-state, #live-state word
+# slot, #live-pause toggle) plus exactly one app.js load per traffic
+# view, so the module can never double-arm.
 # ---------------------------------------------------------------------------
 
 
@@ -1827,23 +1818,6 @@ def _app_js_source() -> str:
     return (
         Path(cairn.dashboard.__file__).resolve().parent / "static" / "app.js"
     ).read_text(encoding="utf-8")
-
-
-_IIFE_OPEN_RE = re.compile(r"(?<![.\w])\(\s*function\s*\(\s*\)\s*\{")
-_LIVE_REGION_RE = re.compile(r'getElementById\(\s*["\']refresh-region["\']')
-
-
-def _live_loop_js() -> str:
-    """The source following the live-refresh IIFE's opener -- the poll
-    loop's home. The opener pattern excludes zero-arg promise handlers
-    (.catch(function () {...})), which are not IIFEs; the segment is then
-    identified by its getElementById("refresh-region") CODE call, not the
-    region name in prose -- a neighboring IIFE's comments mention the
-    region too."""
-    for segment in _IIFE_OPEN_RE.split(_app_js_source())[1:]:
-        if _LIVE_REGION_RE.search(segment):
-            return segment
-    raise AssertionError("app.js carries no #refresh-region poll loop")
 
 
 def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
@@ -1864,105 +1838,6 @@ def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
 
     loads = re.findall(r'<script[^>]*\ssrc="[^"]*app\.js[?"]', resp.text)
     assert len(loads) == 1  # the loop module loads once, never twice
-
-
-def test_loop_tick_paused_guard_precedes_hidden_guard_and_fetch():
-    """TC-005 auto half (FR-004 / US3-AC1): inside tick the paused guard
-    leads -- ahead of the document.hidden guard and ahead of the fetch --
-    so a paused loop issues no fetch regardless of tab state; and unlike
-    a hidden tab it does not re-arm, so only the user's resume restarts
-    the loop (no arm() between the paused guard and the hidden one)."""
-    loop = _live_loop_js()
-    tick = re.search(r"function\s+tick\s*\(\s*\)\s*\{", loop)
-    assert tick, "tick function missing from the poll loop"
-    body = loop[tick.end():]
-
-    paused_guard = re.search(r"if\s*\(\s*paused\s*\)", body)
-    hidden_guard = re.search(r"if\s*\(\s*document\.hidden\s*\)", body)
-    fetch_call = re.search(r"\bfetch\s*\(", body)
-    assert paused_guard, "tick lacks the paused guard"
-    assert hidden_guard, "tick lacks the document.hidden guard"
-    assert fetch_call, "tick never fetches"
-    assert paused_guard.start() < hidden_guard.start() < fetch_call.start()
-
-    # A paused tick must not re-arm -- that is what distinguishes it from
-    # the hidden-tab skip just below it, which re-arms and stays alive.
-    between = body[paused_guard.end():hidden_guard.start()]
-    assert not re.search(r"\barm\s*\(", between)
-
-
-def test_loop_pause_clears_timer_resume_restores_running_and_rearms():
-    """TC-005 auto half (FR-004 / US3-AC1): the pause toggle's click
-    handler is the state machine's pause half -- pausing clears the
-    pending timer (so no already-armed tick can fetch) and lands the
-    'paused' state word; the resume half restores 'running' and re-arms,
-    so the loop returns on the normal schedule rather than never."""
-    loop = _live_loop_js()
-
-    toggle = re.search(r"addEventListener\(\s*[\"']click[\"']\s*,", loop)
-    assert toggle, "the pause control's click handler is missing"
-
-    set_paused = re.search(r"setState\(\s*[\"']paused[\"']\s*\)", loop)
-    assert set_paused, "the loop never sets the 'paused' state"
-
-    clear = re.search(r"clearTimeout\s*\(", loop[: set_paused.start()])
-    assert clear, "pausing without clearing the timer -- a tick could fetch"
-    assert toggle.start() < clear.start() < set_paused.start()
-
-    after = loop[set_paused.end():]
-    set_running = re.search(r"setState\(\s*[\"']running[\"']\s*\)", after)
-    assert set_running, "the resume path never restores the 'running' state"
-    running_at = set_paused.end() + set_running.start()
-    assert re.search(r"\barm\s*\(", loop[running_at:]), (
-        "the resume path does not re-arm -- the loop would never resume"
-    )
-
-
-def test_loop_failure_sets_disconnected_success_restores_running_live():
-    """TC-006 auto half (FR-005 / US3-AC2): the loop's rejected-then-
-    resolved transitions -- the fetch chain's rejection handler sets the
-    distinct 'disconnected' state and still re-arms (self-healing: the
-    next cycle retries), while the success handler restores 'running',
-    whose visible word is 'live' per the STATE_WORDS table the state slot
-    renders from."""
-    loop = _live_loop_js()
-
-    # The visible vocabulary: running shows as "live"; the disconnected
-    # and paused words are their own states.
-    words = re.search(r"STATE_WORDS\s*=\s*\{(.*?)\}", loop, re.S)
-    assert words, "the loop's STATE_WORDS table is missing"
-    for key, word in (
-        ("running", "live"),
-        ("disconnected", "disconnected"),
-        ("paused", "paused"),
-    ):
-        assert re.search(rf"{key}\s*:\s*[\"']{word}[\"']", words.group(1)), (
-            f"STATE_WORDS lost the {key} -> {word!r} mapping"
-        )
-
-    # Rejected: downstream of the fetch, the catch handler sets
-    # 'disconnected' -- and re-arms, so recovery needs no reload.
-    fetch = re.search(r"\bfetch\s*\(", loop)
-    assert fetch, "the loop never fetches"
-    catch = re.search(r"\.catch\s*\(", loop)
-    assert catch, "the fetch chain has no rejection handler"
-    set_disconnected = re.search(
-        r"setState\(\s*[\"']disconnected[\"']\s*\)", loop
-    )
-    assert set_disconnected, "a failed cycle never sets 'disconnected'"
-    assert fetch.start() < catch.start() < set_disconnected.start()
-    assert re.search(r"\barm\s*\(", loop[set_disconnected.end():]), (
-        "the disconnected path does not re-arm -- no self-healing recovery"
-    )
-
-    # Resolved: the success handler restores 'running' (the 'live' word),
-    # ahead of the rejection handler in the chain's source order.
-    set_running = re.search(
-        r"setState\(\s*[\"']running[\"']\s*\)", loop[fetch.end():]
-    )
-    assert set_running, "a successful cycle never restores 'running'"
-    running_at = fetch.end() + set_running.start()
-    assert running_at < catch.start()
 
 
 # TC-005/TC-006 interactive halves -- a real click on a live page, and a
@@ -2926,8 +2801,10 @@ def test_shell_js_switch_contract_is_pinned_at_source_level():
 # Grouped sidebar + command palette (shell chrome): the sidebar renders
 # from shell.NAV_SECTIONS (same href shape as the hand-written anchors it
 # replaced), collapse persists pre-paint like the theme, and the palette
-# seeds from server JSON — views with store-carrying hrefs, workspaces,
-# symbols live from /graph/suggest. JS contracts are source-pinned.
+# opens as an Alpine <dialog> over two row sources — the server-rendered
+# seed JSON draws the initial list, typing fetches /palette/results
+# fragments (the same seed composition plus /graph/suggest's symbol
+# matches, decided server-side). JS contracts are source-pinned.
 # ---------------------------------------------------------------------------
 
 
@@ -2944,6 +2821,7 @@ def test_sidebar_renders_grouped_nav_from_shell_sections(tmp_path, monkeypatch):
     for view_id, label in (
         ("projects", "Projects"),
         ("graph", "Graph"),
+        ("knowledge", "Knowledge"),
         ("wiki", "Wiki"),
         ("memory", "Memory"),
         ("tasks", "Tasks"),
@@ -3010,24 +2888,165 @@ def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
         ).group(1)
     )
     by_label = {v["label"]: v["href"] for v in seed["views"]}
-    assert len(by_label) == 13
+    assert len(by_label) == 15  # 14 nav views + the palette-only graph view
     assert by_label["Graph"] == f"/graph?store={_SW_KEY_A}"
+    # The knowledge family: the catalog in the sidebar, the graph view
+    # palette-only (one sidebar entry per surface family).
+    assert by_label["Knowledge"] == f"/knowledge?store={_SW_KEY_A}"
+    assert by_label["Knowledge Graph"] == f"/knowledge/graph?store={_SW_KEY_A}"
     assert [w["key"] for w in seed["workspaces"]] == [_SW_KEY_A, _SW_KEY_B]
 
 
+def test_command_palette_dialog_markup_with_htmx_input(tmp_path, monkeypatch):
+    """The palette is a native <dialog> driven by the Alpine "palette"
+    component: the input fetches filtered rows from /palette/results as
+    an htmx fragment into the listbox, and the seed JSON block still
+    rides the page. Esc and the focus trap are the dialog's own, so the
+    old click-catcher backdrop is gone."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/projects")
+    assert resp.status_code == 200
+    assert '<dialog id="palette"' in resp.text
+    assert 'x-data="palette"' in resp.text
+    assert 'id="palette-input"' in resp.text
+    assert 'name="q"' in resp.text
+    assert 'hx-get="/palette/results"' in resp.text
+    assert 'hx-target="#palette-list"' in resp.text
+    assert 'hx-trigger="input changed delay:200ms"' in resp.text
+    assert 'id="palette-list"' in resp.text and 'role="listbox"' in resp.text
+    assert "data-palette-close" not in resp.text
+    assert 'id="palette-data"' in resp.text
+    # The fragment request carries the selected store (htmx sends only the
+    # input's own value, so the store rides the server-rendered hx-get
+    # URL) — filtered rows keep the selection, never drop it.
+    assert 'hx-get="/palette/results"' in client.get("/projects").text
+    selected = client.get("/projects", params={"store": _SW_KEY_A})
+    assert f'hx-get="/palette/results?store={_SW_KEY_A}"' in selected.text
+
+
+def test_palette_results_empty_query_serves_the_seed_rows(tmp_path, monkeypatch):
+    """An empty query returns the unfiltered list the palette opens with:
+    the 14 nav views + the palette-only knowledge graph view first
+    (store-carrying hrefs, exactly the seed composition), then the
+    populated workspaces keyed for the switch; no symbols without a real
+    query (store A has a seeded symbol)."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/palette/results", params={"store": _SW_KEY_A, "q": ""})
+    assert resp.status_code == 200
+    assert 'id="palette-row-0"' in resp.text
+    assert f'data-href="/graph?store={_SW_KEY_A}"' in resp.text
+    assert f'data-href="/knowledge/graph?store={_SW_KEY_A}"' in resp.text
+    assert f'data-store-key="{_SW_KEY_A}"' in resp.text
+    assert f'data-store-key="{_SW_KEY_B}"' in resp.text
+    # 15 view rows + 2 populated workspaces, consecutively numbered.
+    for i in range(17):
+        assert f'id="palette-row-{i}"' in resp.text
+    assert 'id="palette-row-17"' not in resp.text
+    assert "no matches" not in resp.text
+    assert "store_a_fn" not in resp.text
+
+
+def test_palette_results_filters_rows_by_substring(tmp_path, monkeypatch):
+    """Typing filters the way the old client-side filter did:
+    case-insensitive substring over the view/workspace labels, views
+    before workspaces."""
+    client, home = _switch_client(tmp_path, monkeypatch)
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+
+    graph = client.get("/palette/results", params={"store": _SW_KEY_A, "q": "graph"})
+    assert f'data-href="/graph?store={_SW_KEY_A}"' in graph.text
+    assert "Projects" not in graph.text  # the substring filter dropped it
+    assert "data-store-key" not in graph.text
+
+    ws = client.get("/palette/results", params={"store": _SW_KEY_A, "q": "alpha"})
+    assert f'data-store-key="{_SW_KEY_A}"' in ws.text
+    assert "Graph" not in ws.text  # no view label matches "alpha"
+
+
+def test_palette_results_symbols_come_from_the_suggest_source(tmp_path, monkeypatch):
+    """From two characters up the fragment merges the /graph/suggest data
+    function's matches: the store's seeded symbol row navigates to
+    /graph's symbol scope with focus (and selected store) params, hinted
+    kind — file."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    resp = client.get("/palette/results", params={"store": _SW_KEY_A, "q": "store"})
+    assert (
+        'data-href="/graph?scope=symbol&amp;focus=storeA_fn'
+        f"&amp;store={_SW_KEY_A}\"" in resp.text
+    )
+    assert "function — src/storeA/core.py" in resp.text
+
+
+def test_palette_results_caps_symbol_rows_and_flags_truncation(
+    tmp_path, monkeypatch
+):
+    """The symbol block keeps the palette's cap: 8 rows even when suggest
+    returns more, plus the keep-typing notice when suggest reports
+    truncation."""
+    from cairn.dashboard import data as dash_data
+
+    def fake_suggest(conn, prefix, limit=dash_data.SUGGEST_LIMIT):
+        return {
+            "matches": [
+                {
+                    "name": f"sym{i:02d}",
+                    "kind": "function",
+                    "file": f"src/m{i}.py",
+                    "repo_id": "demo",
+                }
+                for i in range(12)
+            ],
+            "truncated": True,
+        }
+
+    monkeypatch.setattr(dash_data, "symbol_suggest", fake_suggest)
+    client = _client(tmp_path, seed=True)
+
+    resp = client.get("/palette/results", params={"q": "sym"})
+    for i in range(8):
+        assert f"focus=sym{i:02d}" in resp.text
+    assert "focus=sym08" not in resp.text
+    assert "more matches…" in resp.text
+    assert "keep typing to narrow" in resp.text
+
+
+def test_palette_results_no_matches_renders_the_empty_state(tmp_path, monkeypatch):
+    """A query matching nothing renders the explicit empty-state row, not
+    a bare listbox — and no actionable rows hide inside it."""
+    client = _client(tmp_path, seed=True)
+
+    resp = client.get("/palette/results", params={"q": "zzzz"})
+    assert "no matches" in resp.text
+    assert "palette-row-empty" in resp.text
+    assert "data-href" not in resp.text
+    assert "data-store-key" not in resp.text
+
+
 def test_command_palette_js_contract_is_pinned_at_source_level():
-    """The palette reuses /graph/suggest with the store param guarded from
-    the current URL, and switches workspaces through the same URL-rewrite
-    behavior as the selector."""
+    """The palette is an Alpine component over a native <dialog>:
+    showModal/close own opening and Esc, focus restores to the element
+    that launched it, Cmd/Ctrl+K toggles, rows activate off the server
+    fragment's data attributes, swapped-in rows regain the highlight,
+    and symbols are never fetched client-side (the /palette/results
+    fragment serves them)."""
     import cairn.dashboard
 
     src = (
         Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
     ).read_text(encoding="utf-8")
-    assert "/graph/suggest?name=" in src
-    assert 'searchParams.get("store")' in src
-    assert "metaKey" in src  # Cmd/Ctrl+K opens
+    assert 'Alpine.data("palette"' in src
+    assert "showModal()" in src
+    assert "lastFocus.focus()" in src
+    assert "metaKey" in src  # Cmd/Ctrl+K toggles
     assert "keyCode" not in src  # key names, not deprecated codes
+    assert "data-store-key" in src and "data-href" in src
+    assert "/graph/suggest" not in src  # symbol rows come from the fragment
+    assert "htmx:afterSwap" in src
 
 
 # ---------------------------------------------------------------------------
@@ -3102,7 +3121,7 @@ def test_history_route_displays_source_column_with_mixed_source_rows(tmp_path):
     resp = _mixed_source_client(tmp_path, bulk=False).get("/history")
     assert resp.status_code == 200
 
-    assert "<th>Source</th>" in resp.text
+    assert '<th scope="col">Source</th>' in resp.text
     assert "<td>cli</td>" in resp.text and "<td>mcp</td>" in resp.text
     assert 'name="source"' in resp.text  # the filter input, like tool/session
 
@@ -3456,6 +3475,22 @@ def test_settings_get_renders_effective_values_and_env_markers(
     assert "env-model" in resp.text
     # API key is write-only: status only, never a prefilled value.
     assert ">not set<" in resp.text
+
+
+def test_settings_numeric_knobs_carry_the_keep_current_value_hint(tmp_path):
+    """Each numeric knob row (timeout, batch) annotates that a blank
+    submit keeps the current value: the no-change semantics of an empty
+    field are visible on the page instead of silent."""
+    client = _settings_client(tmp_path)
+
+    resp = client.get("/settings")
+    assert resp.status_code == 200
+    hint = "leave empty to keep the current value"
+    # Exactly the two numeric rows carry it — no other knob does.
+    assert resp.text.count(hint) == 2
+    for knob in ("CAIRN_EMBED_TIMEOUT", "CAIRN_EMBED_SERVER_BATCH"):
+        _, _, after = resp.text.partition(f'name="{knob}"')
+        assert hint in after[:300], knob
 
 
 def test_settings_save_persists_to_config_file_and_reflects_state(
@@ -3962,6 +3997,61 @@ def test_graph_inspect_route_returns_json_payload(tmp_path):
     assert missing.json()["found"] is False
 
 
+def test_graph_inspect_hx_request_renders_panel_fragment(tmp_path):
+    """VAL-KNOW-017 (server half): the node-click fetch carries htmx's
+    HX-Request header, so the route answers with the side-panel fragment
+    alone — server-rendered panel content, no document shell. The JSON
+    payload stays the answer without the header (the API seam the panel
+    predates)."""
+    client = _client(tmp_path, seed=True)
+    headers = {"HX-Request": "true"}
+
+    frag = client.get(
+        "/graph/inspect", params={"name": "demo_main"}, headers=headers
+    )
+    assert frag.status_code == 200
+    assert "<html" not in frag.text
+    assert "<aside" not in frag.text
+    assert "panel-title" in frag.text
+    assert "demo_main" in frag.text
+    assert "src/demo/core.py" in frag.text
+    # Neighbor rows deep-link into the symbol-focused graph view.
+    assert "scope=symbol&amp;focus=demo_helper" in frag.text
+
+    missing = client.get(
+        "/graph/inspect", params={"name": "missing_symbol"}, headers=headers
+    )
+    assert missing.status_code == 200
+    assert "no definition of" in missing.text
+    assert "missing_symbol" in missing.text
+
+    bare = client.get("/graph/inspect", params={"name": "demo_main"})
+    assert bare.status_code == 200
+    assert bare.json()["found"] is True
+
+
+def test_inspect_fetch_wiring_aborts_superseded_requests():
+    """app.js inspect wiring (source contract, no JS runtime): a new
+    inspect fetch aborts its in-flight predecessor (htmx:beforeSend
+    carries the live xhr), and the failure wiring covers response/send
+    errors only — htmx never fires htmx:timeout without a configured
+    timeout, so that listener is dead code."""
+    src = _app_js_source()
+
+    assert re.search(r"addEventListener\(\s*[\"']htmx:beforeSend[\"']", src), (
+        "no htmx:beforeSend listener: a superseded inspect fetch is never aborted"
+    )
+    assert re.search(r"htmx:beforeSend[\s\S]{0,600}?\.abort\(\)", src), (
+        "the beforeSend listener never aborts the in-flight inspect xhr"
+    )
+    assert "htmx:timeout" not in src, (
+        "dead htmx:timeout listener (htmx fires it only with a configured timeout)"
+    )
+    # The genuine failure paths keep their failure note.
+    assert "htmx:responseError" in src
+    assert "htmx:sendError" in src
+
+
 # ---------------------------------------------------------------------------
 # Dashboard wiki view (FR-009 / US6): /wiki list with state badges,
 # /wiki/{page_id} rendered detail, and the stdlib markdown renderer (D-002).
@@ -4063,6 +4153,7 @@ def test_wiki_routes_registered_with_pinned_names(tmp_path):
 def test_wiki_templates_ship_with_the_dashboard():
     assert (_templates_dir() / "wiki.html").is_file()
     assert (_templates_dir() / "wiki_page.html").is_file()
+    assert (_templates_dir() / "wiki_unreadable.html").is_file()
 
 
 def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
@@ -4207,6 +4298,76 @@ def test_wiki_route_empty_manifest_renders_empty_state(tmp_path):
     assert "No wiki pages" in resp.text
 
 
+def _seed_malformed_manifest(knowledge_dir):
+    """A manifest whose ``pages`` section is a list — the external-edit
+    shape the loader refuses with ``ValueError``."""
+    wiki_dir = knowledge_dir / "_wiki"
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    (wiki_dir / "manifest.json").write_text(
+        json.dumps(
+            {"schema": "cairn-wiki-manifest-3", "pages": [{"page_id": "overview"}]}
+        ),
+        encoding="utf-8",
+    )
+
+
+def _malformed_wiki_client(tmp_path):
+    kdir = tmp_path / "knowledge"
+    _seed_malformed_manifest(kdir)
+    return _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
+
+
+def test_wiki_catalog_renders_unreadable_manifest_state_not_500(tmp_path):
+    """A malformed manifest (list-shaped ``pages`` from an external edit)
+    renders the explicit unreadable state naming the problem — the
+    dashboard mirror of the CLI's clean error, never a 500."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki")
+
+    assert resp.status_code == 200
+    assert "Cannot read the wiki manifest" in resp.text
+    assert "mapping keyed by" in resp.text  # the problem, named
+    assert "manifest.json" in resp.text     # the file, named
+    assert "No wiki pages yet" not in resp.text  # not the empty state
+
+
+def test_wiki_fragment_renders_unreadable_manifest_state(tmp_path):
+    """The htmx fragment branch carries the same unreadable state inside
+    the #wiki-results region (a morph swap renders it, not an error)."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki", headers={"HX-Request": "true"})
+
+    assert resp.status_code == 200
+    assert 'id="wiki-results"' in resp.text
+    assert "Cannot read the wiki manifest" in resp.text
+    assert "mapping keyed by" in resp.text
+
+
+def test_wiki_page_route_renders_unreadable_manifest_state_not_500(tmp_path):
+    """The repo-qualified detail route over a malformed manifest renders
+    the unreadable state instead of a 500."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki/demo/overview")
+
+    assert resp.status_code == 200
+    assert "Cannot read the wiki manifest" in resp.text
+    assert "mapping keyed by" in resp.text
+
+
+def test_wiki_legacy_route_renders_unreadable_manifest_state(tmp_path):
+    """The legacy one-segment URL hits the same manifest load: it renders
+    the unreadable state instead of a 500 (and does not redirect)."""
+    client = _malformed_wiki_client(tmp_path)
+
+    resp = client.get("/wiki/overview", follow_redirects=False)
+
+    assert resp.status_code == 200
+    assert "Cannot read the wiki manifest" in resp.text
+
+
 def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     """FR-009 / TC-026: the detail view renders headings and lists as HTML
     elements (never the raw markdown) with the sources listed, a breadcrumb
@@ -4224,8 +4385,10 @@ def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
     assert '<pre class="mermaid">' in resp.text
     assert "src/demo/core.py" in resp.text  # the sources list
     assert "demo_main" in resp.text
-    # Live mermaid: the detail view loads mermaid.js client-side.
-    assert 'cdn.jsdelivr.net/npm/mermaid@11' in resp.text
+    # Live mermaid: the fence page dynamic-imports the vendored bundle —
+    # exactly one loader, zero CDN references.
+    assert resp.text.count("/static/mermaid.min.js?v=") == 1
+    assert "jsdelivr" not in resp.text
     # Breadcrumb + prev/next navigation (viz-module is the next promoted
     # page in manifest order; overview is first, so no prev).
     assert 'href="/wiki?repo=demo"' in resp.text
@@ -4237,6 +4400,43 @@ def test_wiki_page_route_unknown_page_returns_404(tmp_path):
     client = _wiki_client(tmp_path)
     assert client.get("/wiki/no-such-page").status_code == 404
     assert client.get("/wiki/demo/no-such-page").status_code == 404
+
+
+def test_wiki_page_without_fences_skips_the_mermaid_loader(tmp_path):
+    """A fence-free wiki page carries no mermaid asset reference — the
+    vendored bundle is requested only by pages holding a mermaid fence."""
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    client = _wiki_client(tmp_path)
+    kdir = tmp_path / "knowledge"
+    # Re-promote viz-module with a fence-free body (same input_hash as the
+    # manifest row keeps it non-stale).
+    (kdir / "wiki" / "pages" / "demo" / "viz-module.md").unlink()
+    OKFBundle(str(kdir)).write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki: viz-module",
+            description="Wiki article for demo/viz-module",
+            resource="viz-module",
+            tags=["demo", "wiki"],
+            timestamp="2026-08-30T10:00:00Z",
+            concept_id="wiki/pages/demo/viz-module",
+            sources=_WIKI_SOURCES,
+            body="Plain prose only; this page has no diagram fence.\n",
+            extensions={
+                "page_id": "viz-module",
+                "input_hash": "hash-viz-module",
+            },
+        )
+    )
+
+    resp = client.get("/wiki/demo/viz-module")
+
+    assert resp.status_code == 200
+    assert "no diagram fence" in resp.text  # the fence-free body rendered
+    assert "mermaid.min.js" not in resp.text
+    assert "jsdelivr" not in resp.text
 
 
 # --- wiki staleness badges (FR-007 / TC-019 / TC-020) -------------------------

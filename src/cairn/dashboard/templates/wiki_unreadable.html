@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Wiki — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Wiki</h1>
+  <p class="muted">Generated wiki pages and their promotion state.</p>
+  {#- The store's wiki manifest cannot be loaded (malformed JSON or a
+      non-mapping pages section): the error state names the loader's
+      problem — the same clean error the wiki CLI prints. -#}
+  <p class="empty-state">Cannot read the wiki manifest: <code>{{ manifest_error }}</code>.</p>
+</section>
+{% endblock %}

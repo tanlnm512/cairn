@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
@@ -324,6 +324,52 @@ def complete_task(
             "quality": 0.0,
         }
 
+    # doc-link completions are gate-checked by the dedicated doc-link
+    # critic (proposed edges must reference existing concept_ids and
+    # confine endpoints to the task's island members) BEFORE anything
+    # is consumed or written. A rejected result performs no writes: the
+    # task stays in-progress and re-completable, and every error names
+    # the offending reference.
+    doc_link_edges: List[Tuple[str, str, str]] = []
+    if task.task_kind == "doc-link":
+        from cairn.knowledge.doc_link import parse_doc_link_result, validate_doc_link_edges
+
+        if conn is None:
+            return {
+                "task_id": task_id,
+                "promoted": False,
+                "revised": False,
+                "dropped": False,
+                "errors": [
+                    "doc-link completion requires a graph database connection"
+                ],
+                "quality": 0.0,
+            }
+        doc_link_edges, doc_link_errors = parse_doc_link_result(result)
+        if not doc_link_errors and not doc_link_edges:
+            # An empty/heading-only result must not promote vacuously: the
+            # task would go done without writing an edge, and the queue's
+            # any-status dedup would then never re-queue that island.
+            doc_link_errors = ["no proposed edges found"]
+        if not doc_link_errors:
+            facts_members = task.facts.get("members")
+            doc_link_errors = validate_doc_link_edges(
+                bundle,
+                doc_link_edges,
+                members=(
+                    facts_members if isinstance(facts_members, list) else None
+                ),
+            )
+        if doc_link_errors:
+            return {
+                "task_id": task_id,
+                "promoted": False,
+                "revised": False,
+                "dropped": False,
+                "errors": doc_link_errors,
+                "quality": 0.0,
+            }
+
     # Write the result as a sibling concept: it is the critic's subject and
     # is stamped with the verdict after the gate runs.
     result_concept = OKFConcept(
@@ -360,12 +406,14 @@ def complete_task(
 
             # Wiki pages are scored on the Sources footer, not compass
             # sections. The catalog outline is JSON validated
-            # deterministically by the pipeline's refine step, so it is
-            # critic-exempt — the vocab gate would fail every chain and
-            # reduce --refine-catalog to its deterministic fallback.
+            # deterministically by the pipeline's refine step, and doc-link
+            # results by the dedicated concept-id existence check above
+            # (both before this point), so both are critic-exempt — the
+            # vocab gate would fail every valid result.
             wiki_page = task.task_kind.startswith("wiki-page")
             catalog_task = task.task_kind == "wiki-catalog"
-            if catalog_task:
+            doc_link_task = task.task_kind == "doc-link"
+            if catalog_task or doc_link_task:
                 from ..compass.critic import CriticResult
 
                 critic_result = CriticResult(
@@ -532,6 +580,15 @@ def complete_task(
                             },
                         )
                     bundle.write_concept(wiki_concept)
+                    promoted = True
+
+                if doc_link_task:
+                    # The durable record is the frontmatter (kind=inferred
+                    # relates_to entries on both docs); the index rebuild
+                    # inside makes the edge queryable immediately.
+                    from cairn.knowledge.doc_link import apply_doc_link_edges
+
+                    apply_doc_link_edges(bundle, conn, doc_link_edges)
                     promoted = True
 
                 _finish_done()
@@ -728,6 +785,8 @@ def _render_body(task: Task) -> str:
 
 
 def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
+    from cairn.knowledge.doc_link import DOC_LINK_OUTPUT_SPEC
+
     specs = {
         "compass-synthesize": (
             "Write a 25-35 line compass file with exactly these 5 sections:\n"
@@ -780,6 +839,12 @@ def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
         ),
         "memory-critic": "For each draft memory in facts, judge accuracy/usefulness/specificity/non-redundancy. Output one JSON line per memory: {title, keep: bool, score: 0-1, reason}.",
         "memory-extract": "From the session transcript in facts.transcript, extract candidate memories. Output one JSON line per candidate: {type: decision|pattern|mistake|workaround, title, body, confidence}.",
+        "doc-link": DOC_LINK_OUTPUT_SPEC,
+        "doc-link-revise": (
+            "The previous doc-link proposal was rejected (facts.errors name "
+            "the invalid references). Rewrite the proposal fixing ONLY those "
+            "lines; keep valid edges. Same one-edge-per-line format."
+        ),
     }
     spec = specs.get(task_kind)
     if spec is None:

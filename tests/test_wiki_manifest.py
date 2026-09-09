@@ -10,7 +10,8 @@ Pins the contract of ``src/cairn/wiki/manifest.py``:
 - ``load_manifest(bundle_or_knowledge_root) -> dict`` returns
   ``{"schema": ..., "pages": {"{repo}/{page_id}": row}}``; a missing file
   is an empty pages dict, not an error; malformed JSON raises
-  ``ValueError``; a schema-1 document (keyed by page id alone) is
+  ``ValueError``; a non-mapping ``pages`` section raises ``ValueError``
+  naming the expected shape; a schema-1 document (keyed by page id alone) is
   upgraded in memory -- repo from the row task's facts, else the promoted
   concept path, else the row is dropped with a warning -- and never
   written back on load;
@@ -229,6 +230,14 @@ class TestLoadManifest:
         manifest_file.parent.mkdir(parents=True, exist_ok=True)
         manifest_file.write_text("{not json", encoding="utf-8")
         with pytest.raises(ValueError):
+            load_manifest(bundle.root)
+
+    def test_list_shaped_pages_raises_value_error_naming_shape(self, bundle):
+        """A non-mapping ``pages`` section fails loudly with the expected
+        shape (a clear ``ValueError``, never a bare ``AttributeError``)."""
+        doc = {"schema": MANIFEST_SCHEMA, "pages": [{"page_id": "p"}]}
+        assert save_manifest(bundle.root, doc) is True
+        with pytest.raises(ValueError, match="mapping keyed by"):
             load_manifest(bundle.root)
 
 

@@ -13,7 +13,221 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The doc-link completion gate now confines proposed edges to the
+  completing task's island members: a result naming an existing doc
+  outside `facts.members` is rejected with no writes (the task stays
+  in-progress and re-completable), instead of writing `kind: inferred`
+  edges between arbitrary knowledge docs.
+
+## [0.19.0] - 2026-09-09
+
 ### Added
+- The dashboard gained a `/knowledge` catalog over the ingested
+  knowledge docs: every stored doc lists exactly once with its family
+  (decision / spec / workflow / business-rule), status, related-doc
+  count (from the derived `knowledge_edges` index), tags, and last
+  update. Family/status/tag filters morph-swap the results region as
+  htmx fragments (no page reload), rows link wholesale to
+  `/knowledge/{family}/{slug}` — a detail page rendering the doc's
+  title, badges, and markdown body (relationship panel follows in the
+  next knowledge view) — an empty workspace renders an explicit
+  empty state naming `cairn knowledge ingest`, and a store predating
+  the relationship index still catalogs with zero link counts. The
+  sidebar's Knowledge section leads with the catalog entry, the landing
+  grid carries a Knowledge card, and the command palette offers both
+  the catalog and a palette-only Knowledge Graph destination.
+- The `/knowledge/{family}/{slug}` detail page gained the relationship
+  surfaces: a supersede chain widget (ordered oldest -> newest, each
+  member linking its detail page, the hop labeled with its relation and
+  a direction arrow, the viewed doc highlighted), a relationship panel
+  grouping every stored neighbor row under its relation with a kind
+  badge (`extracted` / `inferred` / `derived` — the same tuples
+  `cairn knowledge related` prints; inferred wears a dashed badge), an
+  explicit empty state for docs with no relationships, linked code refs
+  with their kind and per-ref resolution status (symbols deep-link into
+  the graph), and ingest provenance — source repo/path and the doc's row
+  in the workspace's staged `.cairn/ingest-outbox/manifest.json`, or an
+  explicit note when a doc was added directly to the store. A store
+  predating the relationship index renders empty panels, never an error.
+- The dashboard gained the `/knowledge/graph` relationship canvas (the
+  palette's Knowledge Graph destination, linked from the catalog):
+  every stored doc is a node and every indexed relationship a directed
+  edge drawn exactly as stored — a supersede pair reads as the two-way
+  link ("supersedes" on the newer doc, "superseded-by" on the older)
+  the related CLI and the detail panels report, with edges carrying
+  their `relation` + `kind` so inferred links render dashed and
+  extracted/derived links solid. The legend doubles as the filter:
+  kind/relation chips toggle whole edge groups client-side (no reload,
+  no refetch), the counts line tracks the visible share, and a node
+  click fetches the doc's inspect fragment (`/knowledge/graph/inspect`)
+  into the side panel — identity, relationships with kind badges, and
+  the full-detail link. The canvas re-themes live via the shell's
+  `cairn:theme-changed` broadcast and drops physics under
+  `prefers-reduced-motion: reduce` (the /graph machinery's conventions).
+- Vendored Mermaid 11.17.2 (`mermaid.min.js`, MIT) as the dashboard's last
+  external asset: the wiki detail view now loads it from `/static/` via a
+  lazy dynamic `import()` that ships only on pages holding a mermaid fence
+  (replacing the jsDelivr CDN import), so fence-free wiki pages make no
+  mermaid request and the dashboard is fully offline at runtime. Fences
+  render explicitly via `mermaid.run()` after the late import (startOnLoad
+  off), with the code block kept as the no-JS/unavailable fallback.
+- The dashboard serves its own icon: the shell head links the vendored
+  `favicon.svg`, and the conventional `/favicon.ico` path serves the same
+  file, so the browser's automatic icon probe is a 200 instead of a 404
+  on every page load.
+- The `/graph` symbol inspect panel loads as an htmx fragment: the
+  node-click fetch rides `htmx.ajax` (the `HX-Request` header keys the
+  route's fragment branch) and swaps the server-rendered panel —
+  identity, callers, callees, impact with affected tests, neighbor rows
+  deep-linking into the symbol-focused view — into `#graph-panel` with
+  no page navigation (sidebar/topbar persist by node identity). A stale
+  response from an earlier selection is cancelled at `htmx:beforeSwap`;
+  requests without the header keep the JSON payload. The
+  `/knowledge/graph` inspect fetch rides the same `htmx.ajax` seam.
+
+### Changed
+- The graph and database canvases re-theme live through CSS variables.
+  The per-kind node palette moved from hardcoded JS color tables into the
+  theme blocks as `--kind-*` tokens, and the shell broadcasts a single
+  `cairn:theme-changed` event on a theme flip (one `data-theme` observer
+  app-wide, in shell.js); both canvas scripts re-read every color through
+  the getComputedStyle token proxy on that event, so toggling the theme
+  re-colors the live canvas in place — no reload, no new graph requests.
+- The /graph physics simulation is disabled under
+  `prefers-reduced-motion: reduce` — JS-driven motion the CSS media
+  query cannot reach. The graph then lays out on the deterministic
+  spiral (a static constellation, no stabilization animation), and the
+  canvas zoom/fit controls skip their eased animation.
+- The dashboard's list views filter and live-refresh through htmx
+  fragments. Filter forms on `/history`, `/tasks`, and `/wiki` are htmx
+  triggers (`input changed delay:300ms`; the tasks select on `change`)
+  that morph-swap only the results region — no page navigation, the URL
+  and in-progress filter input are untouched, and the form lives outside
+  the swapped region so a swap can never destroy a field. The
+  `#refresh-region` live refresh on `/history`, `/tokens`, and `/chains`
+  is now an htmx poll (`hx-trigger="every 5s"`): each cycle re-fetches
+  the view's `HX-Request` branch as a cheap region fragment and
+  alpine-morphs it over the region in place, replacing the old
+  full-page re-fetch/DOMParse swap; the live chrome (state word, pause
+  toggle, disconnect banner) is driven from the htmx event lifecycle —
+  pause refuses the poll's request via `htmx:beforeRequest` while the
+  timer keeps its schedule, and window scroll is re-anchored around each
+  swap. The same routes serve full page or fragment from one handler
+  via the `HX-Request` header. The command palette is a native
+  `<dialog>` element driven by an Alpine
+  component: `showModal()` provides the focus trap and Esc-to-close, and
+  focus returns to the launching element on every close path. Rows come
+  from the same two sources as before — the server-rendered seed JSON
+  draws the initial list, and typing fetches filtered rows as an htmx
+  fragment from the new `/palette/results` route (the same view/workspace
+  seed composition plus the `/graph/suggest` symbol data function, with
+  the selected store riding the request). Keyboard behavior is
+  unchanged: Ctrl/Cmd+K toggles, arrows move the active row, Enter
+  navigates.
+- Accessibility pass over the dashboard shell and views. Keyboard focus
+  is always visible: the global `:focus-visible` ring (2px accent
+  outline) stands everywhere, the shared filter-bar inputs keep the ring
+  alongside their focus tint, the palette search input carries an inset
+  ring (the card clips an outward one) plus an `aria-label`, and no
+  stylesheet rule removes the focus outline. Every icon-only button
+  exposes a non-empty accessible name (theme toggle and sidebar collapse
+  already flip their labels with state), pinned by a hermetic sweep over
+  all fourteen main views. `prefers-reduced-motion: reduce` collapses
+  motion to ~zero — transitions/animations run at 0s, smooth scrolling
+  stops, the live-refresh pulse stops outright — while toggles, palette,
+  and htmx swaps behave as before. The shared table macro's real table
+  semantics (`thead`/`tbody`, `<th scope="col">`) are pinned by test.
+
+### Added
+- Vendored the dashboard's interaction stack as static assets (zero CDN,
+  zero build step): htmx 2.0.10 (`htmx.min.js`, 0BSD), Alpine.js 3.17.1
+  (`alpine.min.js`, deferred, MIT), its morph plugin (`alpinejs-morph.min.js`,
+  MIT), and the `alpine-morph` htmx extension (`alpine-morph.js`). The shell
+  loads all four from `/static/` with the `?v=` cache-buster, runs htmx with
+  `allowEval` disabled via the `htmx-config` meta, and ships the
+  `[x-cloak] { display: none }` rule so Alpine-managed DOM never flashes
+  pre-init. Route handlers gain the `is_hx_request` seam (the `HX-Request`
+  header) for serving full pages vs fragments from one route.
+
+### Added
+- `cairn knowledge list --json` emits one machine-readable row per
+  document — `concept_id` (bare bundle-relative id), `title`, `doc_type`,
+  `doc_status` — so callers and validators can pin document ids without
+  `search --json` or sqlite. Human output and the `--type`/`--status`/
+  `--tag` filters are unchanged.
+- Dangling relationship pointers are surfaced instead of silently
+  skipped: a declared `relates_to` pointer matching neither a knowledge
+  concept id nor a recorded resource path warns by name — in the ingest
+  dry-run output (before any write, checked against the store plus the
+  staged run), in `knowledge ingest --ingest` output (from its post-write
+  index rebuild), and in `cairn knowledge rebuild` output. The pointer
+  stays in the frontmatter (the durable record) and still never reaches
+  `knowledge_edges`; relationship-free documents ingest and embed exactly
+  as before, and the `knowledge ingest` flag set and the 22-tool MCP
+  surface are unchanged.
+- Island detection behind the LLM task queue: connected components over the
+  `knowledge_edges` doc graph surface pair-units detached from the corpus —
+  two-doc components and id-ordered singleton pairs — and queue one
+  `doc-link` task per pair via `knowledge ingest --ingest` and `cairn
+  knowledge rebuild`; task facts carry the member concept_ids and titles,
+  and queueing is deduped per member set so re-runs never duplicate tasks.
+  Completing a `doc-link` task through `cairn task claim`/`task complete
+  --result-file` is gated by a deterministic critic that verifies every
+  proposed edge references existing knowledge concept_ids. A valid result
+  is written back as `kind: inferred` `relates_to` entries on both docs'
+  frontmatter (`supersedes` mirrors to `superseded-by`) and, through the
+  index rebuild, as `kind: inferred` `knowledge_edges` rows. A completion
+  referencing a nonexistent concept_id is rejected with no writes: the task
+  stays in-progress and re-completable, and the rejection names the invalid
+  reference. New `cairn knowledge islands` verb lists islands and their
+  task state (read-only).
+- Stored-edge search expansion: `search_knowledge`'s related-doc expansion
+  reads the `knowledge_edges` relationship index instead of recomputing
+  tag/module overlap at query time. Neighbors connected by `extracted` or
+  `derived` edges surface with a >=50%-of-parent-score boost (both edge
+  directions, one entry per neighbor, still respecting each doc's own
+  lexical hits and visibility); `inferred` edges never boost — low-trust
+  links do not elevate a doc beyond its own merit. Stores without a rebuilt
+  index simply get no expansion.
+- Doc-to-code reference verification at ingest: backticked file paths and
+  symbols in a staged document's body resolve against the L1 graph via
+  `cairn.refs` (`file_exists`/`symbol_exists`, the wiki verified-sources
+  pattern); only resolvable refs are stored — as `{ref, kind: file|symbol,
+  verified: true}` entries in the promoted concept's OKF `verified` family
+  and, through the post-ingest rebuild, as `knowledge_doc_refs` rows. Bogus
+  refs appear nowhere; docs without resolvable refs gain no `verified`
+  family. `add_document` gains an optional `verified_refs` parameter and the
+  ingest report/CLI output carries a `verified_refs` count.
+- Derived knowledge-relationship index: `knowledge_edges(doc_id, related_id,
+  relation, kind, provenance, created_at)` and `knowledge_doc_refs(doc_id,
+  ref, ref_kind, verified)` tables (additive, idempotent schema) rebuilt from
+  the OKF bundle by `cairn knowledge rebuild` and automatically after
+  `knowledge ingest --ingest`. Declared `relates_to` pointers index as their
+  declared relation/kind (bare concept-id, path-shaped, and source-path
+  pointers all resolve; unresolved pointers stay frontmatter-only); doc pairs
+  sharing tags or `affects_modules` materialize symmetric `kind: derived`
+  edges; `sources`/`verified` entries with a `ref` become `knowledge_doc_refs`
+  rows. Rebuilds are idempotent — unchanged bundles reproduce identical table
+  contents including `created_at` stamps. `normalize_doc_id` (in
+  `knowledge/store.py`) is the single id-normalization point for the rebuild
+  and later CLI/dashboard consumers.
+- ADR supersede-chain detection at ingest: `decisions/`/`adr/` documents
+  with `NNNN-` numbered filenames gain `supersedes` / `superseded-by`
+  relationship entries from body or status-line markers ("Supersedes
+  ADR-0001") with no explicit frontmatter; both directions are written
+  (new doc supersedes, old doc superseded-by), resolution stays within
+  one ingest run and directory family, and unresolved or self-referential
+  markers are dropped rather than staged as dangling pointers.
+- Author-declared document relationships survive ingest: the source parser
+  keeps unknown frontmatter keys on `ParsedDoc.extensions` instead of
+  discarding them; `relates_to`/`supersedes`/`superseded-by` frontmatter
+  normalizes into a `relates_to` extension (`{concept_id, relation, kind}`,
+  kind defaulting to `extracted`) that rides the staged OKF file, the
+  dry-run manifest row, and the promoted `.knowledge` frontmatter;
+  `add_document` gains an optional `relationships` parameter; dry-run
+  `cairn knowledge ingest` output lists each staged doc's relationships
+  before `--ingest` writes anything.
 - Tribal-memory loop closure: `explore` surfaces a tribal-memory section
   (≤3 entries, title + "How to apply" line) and records `memory_refs` rows
   for rendered memories; `session_start` hook emits the top tribal-memory
@@ -32,6 +246,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cairn memory demote` gains `--db`).
 
 ### Changed
+- Dashboard views restyled onto the token system end to end: every view's
+  repeated markup renders through shared Jinja macro libraries
+  (`_table.html` data tables + empty states, `_filters.html` filter forms
+  carrying the hidden store field, `_cards.html` stat tiles + titled
+  cards), so table, filter-row, and summary-tile markup is identical
+  across views, and the legacy `graph-controls` form class is retired for
+  `filter-bar`. The pre-token alias vars are deleted: templates, the
+  scripts' `cssVar()` reads, and component CSS resolve the ladder names
+  (`--bg-0..3`, `--line-1/2`, `--text-1..4`, `--accent-hover`) directly —
+  inputs, chips, and floating controls sit on `--bg-2` over `--bg-1`
+  panels. Controls reach final density — `--control-h` 30px with 13px
+  text, 1.2 line-heights, and matched paddings on filter inputs, selects,
+  submit buttons, the workspace selector, the palette button, and the
+  live pause pill — and data tables densify to ~33px rows at the 13px
+  base. The chains view's inline style block moves into the stylesheet
+  under the same tokens.
+- Dashboard design tokens, dark-first: the stylesheet's theme layer is a
+  near-black surface ladder (`--bg-0 #08090a` … `--bg-3 #18191a`), 1px
+  hairlines (`--line-1/2`) instead of drop shadows (panels, dropdowns, and
+  the topbar carry no box-shadow — elevation is a surface step plus a
+  hairline), a text ramp (`--text-1..4`), one indigo accent
+  (`--accent #5e6ad2`, `--accent-hover`), and status colors (`--ok/warn/err`)
+  in the first variable block, with `[data-theme="light"]` carrying the
+  light ladder (`#ffffff` page, `#f7f8f8/#f2f3f4/#ececee` surfaces,
+  `#17181a` text) and `[data-theme="dark"]` restating the dark defaults;
+  both theme blocks redefine every token and set `color-scheme`. Constants
+  gain spacing (4/8/12/16/24), radius (4/6/10/14), and 13px-base type
+  scales on the system font stacks. Theme resolution is unchanged: the
+  inline pre-paint script still resolves stored choice → OS preference →
+  dark, and no `prefers-color-scheme` media query exists in CSS.
+  Pre-token component var names (`--bg`, `--surface`, `--border`, …) map
+  onto the ladder until views restyle onto the token names directly. The
+  theme test pins the new contract: first block holds the dark tokens and
+  nothing else, both theme blocks redefine every token, no system-color-
+  scheme media query.
 - Wiki two-kind contract: the wiki's two stored kinds have disjoint,
   structurally separated purposes — the plan manifest records pipeline
   intent only (identity, seeds, input hash, task linkage, queue attempts;
@@ -55,6 +304,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds); in-flight legacy tasks complete normally.
 
 ### Fixed
+- The /history tool filter narrows rows again: the filter matched the
+  stored `tool_name` column exactly, but CLI rows are stored namespaced
+  (`cli:<command_path>`, e.g. `cli:cairn build`), so every non-empty
+  value a user types — including the bare family (`cli`) — matched
+  nothing and rendered "No matching calls" while the session filter
+  worked. The filter is now a literal prefix match on the stored value
+  (exact = the whole value), so both the family and the full stored name
+  narrow rows, wildcard characters (`%`, `_`) in a typed value match
+  literally, and the `.csv`/`.json` exports ride the same semantics.
+  No-match values still render the empty state, never an error.
+- The settings page annotates its numeric knobs (timeout, server batch)
+  with "leave empty to keep the current value", making the blank-submit
+  no-change behavior visible instead of silent.
+- The suite-wide hermetic test fixture re-points cairn.paths' import-time
+  stores-root bindings (`CAIRN_HOME`, `REGISTRY_FILE`, `SHARED_LIB` along
+  with the already-patched `CONFIG_FILE`) into the per-test sandbox. paths
+  consumers read these module attributes at call time, so unpatched, tests
+  running on a developer machine rendered the real `~/.cairn` stores into
+  dashboard pages (store switcher, `/workspaces`) and a workspace
+  registration wrote the real registry; renders and writes now enumerate
+  and land only in the test sandbox. A regression test pins the contract:
+  rendered dashboard pages carry exactly the sandbox's store keys.
+- `relates_to` basename pointers resolve only a UNIQUE resource match: a
+  pointer like `target.md` whose basename matches several promoted
+  resources (`docs/target.md`, `archive/target.md`, …) previously
+  resolved to the single shortest one, indexing a wrong-but-existing
+  edge with no warning. Now nothing is picked — the pointer indexes
+  nothing and surfaces through the dangling-warning channel (ingest
+  dry-run, `knowledge ingest --ingest`, `cairn knowledge rebuild`) as an
+  `ambiguous pointer` naming the candidate paths. Unique-basename
+  pointers, exact resource paths, and concept-id pointers resolve
+  exactly as before.
+- The knowledge-ingest count verify leg compares the post-write store
+  against the full expected population (`pre_existing + accepted -
+  overwritten`, with `add_document` writing over existing docs in
+  place), so an incremental `knowledge ingest --ingest` into a non-empty
+  store — new documents added, or the same documents re-ingested —
+  verifies and exits 0 exactly like a first-into-empty run. A dropped
+  write still fails the leg, and standalone pre-write `verify_manifest`
+  use keeps comparing the batch alone against the store as it stands.
+- Re-ingesting a document preserves its promoted `kind: inferred`
+  `relates_to` entries: the ingest executor merges the existing
+  frontmatter's critic-approved doc-link entries into the rewritten
+  concept (declared source entries first, deduped on
+  `(concept_id, relation, kind)`), so the durable record — and the
+  rebuilt `knowledge_edges` rows — keep approved LLM links across
+  re-scans.
+- `relates_to` pointer resolution tries resource-prefixed forms: fed
+  documents promote `workspace/<relpath>` resources, so a bare
+  repo-relative pointer (e.g. `docs/adr-0001-postgres.md` or a sibling
+  fed file's name) resolves through its prefixed resource and indexes as
+  a declared edge — in the rebuild and in the ingest dry-run alike —
+  instead of dangling silently; genuinely unresolvable pointers still
+  warn by name.
 - CLI (`cairn dataflow lookup`): the subcommand registers under its documented
   name (Click had derived `dataflow-lookup` from the function name, so the
   documented `cairn dataflow lookup` form was not invokable); the shipped
@@ -101,6 +404,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - sqlite-vec internals (`vec_*`, `vecmv_*`) are excluded
   - unintrospectable tables are skipped and reported (banner), never
     fatal
+- Knowledge relationships hardening:
+  - the `knowledge_doc_refs` rebuild dedupes on its `(doc_id, ref,
+    ref_kind)` primary key keeping `verified=max`, so a ref carried by
+    both the `sources` and `verified` families with differing flags
+    indexes once instead of crashing the rebuild (which runs after
+    every `knowledge ingest --ingest`)
+  - a `doc-link` completion proposing zero edges is rejected ("no
+    proposed edges found") with the task left in-progress and
+    re-completable; empty/heading-only results can no longer promote
+    vacuously and permanently cover an island
+  - ingest staging accepts any `Iterable` of entries (generators
+    included) and the manifest serializes non-JSON extras (e.g. YAML
+    date values) via `default=str` instead of crashing the dry run
+  - `supersede_chain` documents its linear-chain assumption and asserts
+    the queried doc's membership in the result
+- Built wheels ship the dashboard's whole asset tree: the package-data
+  glob for `static/` is recursive (`static/**/*`), so nested asset
+  subtrees reach wheel installs — a flat `static/*` omitted every file
+  below the top level (the vendored mermaid chunk tree among them), and
+  on a wheel install each chunk import 404'd, silently degrading wiki
+  fences to code blocks. A packaging-coverage test replays setuptools'
+  glob matching over `templates/` and `static/`, so a data file the
+  globs miss fails the suite instead of surfacing as a runtime 404 on
+  installs.
+- `/history` polls hold the active page: the polled region bakes its
+  `before`/`after` cursor into the poll URL at render time, so a
+  cursor-paged slice re-renders itself across the 5s poll cycles instead
+  of silently reverting to page 1 (filters still ride the form's live
+  fields, and a filter change still resets paging).
+- htmx back/forward history restores (`HX-History-Restore-Request`)
+  render the full page rather than a region fragment: htmx stamps
+  `HX-Request` on restores too, so every fragment-branched route would
+  otherwise serve a bare region to a restore once any view adopts
+  `hx-push-url`. The shell's script-order test also pins the full load
+  sequence — htmx core, alpine-morph extension, morph plugin, Alpine
+  core.
+- `/favicon.ico` answers a missing vendored icon with 404 instead of an
+  unhandled 500.
+- **`cairn build` exits non-zero when it produces no store.** A build
+  whose persist phase had nothing to write (a workspace with no
+  indexable files) left the db's parent directory uncreated, the
+  derived-index open then failed with `store parent directory does not
+  exist`, and the failure surfaced only as a `dataflow skipped` note in
+  the summary panel while the command still exited 0 — scripting keying
+  on the exit code for "the store exists" saw a silent skip. The
+  no-store outcome now fails the command with a named error and exit 1;
+  a build over an openable store is unchanged.
+- `/knowledge` out-of-vocabulary filter values fall back to no filter,
+  matching the `/tasks` `/memory` `/wiki` convention (and the route's
+  documented contract): a `?family=`/`?status=` value the selects can't
+  offer previously rendered a filter-empty results region while the
+  select read `all`. The vocabulary is the classifier's families / the
+  doc statuses, each unioned with what the corpus actually contains, so
+  a doc under a custom type stays reachable from the filter.
+- The `/knowledge` archived status badge renders in the warn palette
+  like its sibling statuses instead of the unstyled base badge, and the
+  doc-detail provenance payload drops an `origin` key no template read.
+- The graph canvases' inspect fetches abort their superseded
+  predecessors (`htmx:beforeSend` carries the live xhr) instead of
+  letting stale responses complete in the background, and the dead
+  `htmx:timeout` listeners are gone — htmx fires that event only with a
+  configured timeout, which no request in the dashboard sets.
+- A wiki manifest whose `pages` section is not a mapping (e.g. a list
+  from an external edit) fails with a clear `ValueError` naming the
+  expected `{repo}/{page_id}`-keyed mapping instead of a bare
+  `AttributeError` from row normalization. The wiki commands that read
+  the manifest (`status`, `retry`, `export`, `enrich`, and
+  `generate --llm`) report it as unopenable — one stderr line naming the
+  problem, exit 1, no traceback — and the dashboard's `/wiki` catalog
+  and page views render an explicit unreadable-manifest state naming
+  the problem instead of a 500.
 
 ## [0.18.0] - 2026-09-02
 

@@ -8,6 +8,7 @@ functions over the returned connection.
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
@@ -36,6 +37,7 @@ from cairn.graph.embeddings import (
 )
 from cairn.graph.reranker import reranker_available
 from cairn.graph.schema import get_db
+from cairn.knowledge.store import normalize_doc_id, resolve_knowledge_doc
 from cairn.llm.tasks import list_tasks
 from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
@@ -730,6 +732,409 @@ def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dic
     ]
 
 
+# The ingest classifier's doc families (knowledge/ingest/classifier.py)
+# live in app.py's constants block (the app's filter vocabularies): the
+# catalog filter's seed vocabulary. Rows carry whatever family their
+# concept id names (knowledge/<family>/<slug>), so a doc added under a
+# custom type still lists — the route extends the options with any
+# family the corpus actually contains.
+
+
+def _knowledge_link_counts(conn: Optional[sqlite3.Connection]) -> Dict[str, int]:
+    """Distinct related-doc counts per bare doc id from knowledge_edges.
+
+    Both edge directions count both endpoints (a neighbor is a neighbor
+    either way). A store predating the relationship index (no
+    knowledge_edges table) counts as zero links everywhere — the catalog
+    renders, never fails, on an old DB.
+    """
+    if conn is None:
+        return {}
+    present = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'knowledge_edges'"
+    ).fetchone()[0]
+    if not present:
+        return {}
+    neighbors: Dict[str, set] = {}
+    for doc_id, related_id in conn.execute(
+        "SELECT doc_id, related_id FROM knowledge_edges"
+    ).fetchall():
+        neighbors.setdefault(doc_id, set()).add(related_id)
+        neighbors.setdefault(related_id, set()).add(doc_id)
+    return {doc_id: len(seen) for doc_id, seen in neighbors.items()}
+
+
+def _split_doc_id(doc_id: str) -> Tuple[str, str]:
+    """``knowledge/<family>/<slug>`` -> ``("<family>", "<slug>")``; a
+    two-segment id (malformed for this namespace) keeps its tail as the
+    family and an empty slug, so the row still renders."""
+    parts = doc_id.split("/")
+    if len(parts) < 3:
+        return parts[-1], ""
+    return parts[1], "/".join(parts[2:])
+
+
+def list_knowledge_docs(
+    conn: Optional[sqlite3.Connection],
+    knowledge_dir: str,
+    family: Optional[str] = None,
+    status: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> Dict:
+    """The /knowledge catalog's rows: every stored knowledge doc, once.
+
+    Joins the OKF bundle's ``knowledge/`` subtree with the derived
+    relationship index (``_knowledge_link_counts``); an unreadable
+    concept file is skipped, never fatal. Each row carries ``id`` (the
+    bare concept id), ``family``/``slug`` (the
+    ``/knowledge/{family}/{slug}`` detail href's parts), ``title``,
+    ``status``, ``tags``, ``links`` (distinct related-doc count),
+    ``source`` (the doc_source extension) and ``updated`` (concept
+    timestamp, "" when none). ``family`` / ``status`` narrow to one
+    value (None = all); ``tag`` keeps docs carrying it. ``families`` /
+    ``statuses`` total the corpus BEFORE filtering so the filters render
+    stable counts, and ``total`` is the unfiltered doc count. Rows sort
+    by family, then title.
+    """
+    bundle = OKFBundle(knowledge_dir)
+    link_counts = _knowledge_link_counts(conn)
+    docs: List[dict] = []
+    families: Dict[str, int] = {}
+    statuses: Dict[str, int] = {}
+    for cid in bundle.list_concepts(prefix="knowledge/"):
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue
+        doc_id = normalize_doc_id(bundle, cid)
+        doc_family, slug = _split_doc_id(doc_id)
+        doc_status = concept.extensions.get("doc_status") or "active"
+        families[doc_family] = families.get(doc_family, 0) + 1
+        statuses[doc_status] = statuses.get(doc_status, 0) + 1
+        if family is not None and doc_family != family:
+            continue
+        if status is not None and doc_status != status:
+            continue
+        if tag is not None and tag not in concept.tags:
+            continue
+        docs.append(
+            {
+                "id": doc_id,
+                "family": doc_family,
+                "slug": slug,
+                "title": concept.title or doc_id,
+                "status": doc_status,
+                "tags": list(concept.tags),
+                "links": link_counts.get(doc_id, 0),
+                "source": concept.extensions.get("doc_source", ""),
+                "updated": concept.timestamp or "",
+            }
+        )
+    docs.sort(key=lambda d: (d["family"], d["title"]))
+    return {
+        "docs": docs,
+        "families": families,
+        "statuses": statuses,
+        "total": sum(families.values()),
+    }
+
+
+def get_knowledge_doc(knowledge_dir: str, doc_id: str) -> Optional[dict]:
+    """One knowledge doc for the ``/knowledge/{family}/{slug}`` detail
+    page: the concept's identity plus its body through the escape-first
+    markdown renderer (``html`` + ``toc``, the wiki page's pair). None
+    when ``doc_id`` resolves to no knowledge-namespaced concept —
+    compass/wiki/memory ids resolve nothing here, the store guard's
+    namespace refusal included. The related-docs/chain panel is the
+    relationship index's job (``related_docs``/``supersede_chain``) and
+    is joined on by the caller, not here.
+    """
+    bundle = OKFBundle(knowledge_dir)
+    try:
+        concept = resolve_knowledge_doc(bundle, doc_id)
+    except ValueError:
+        return None
+    html, toc = render_markdown_with_toc(concept.body or "")
+    bare_id = normalize_doc_id(bundle, concept.concept_id)
+    family, slug = _split_doc_id(bare_id)
+    return {
+        "id": bare_id,
+        "family": family,
+        "slug": slug,
+        "title": concept.title or bare_id,
+        "status": concept.extensions.get("doc_status") or "active",
+        "tags": list(concept.tags),
+        "source": concept.extensions.get("doc_source", ""),
+        "resource": concept.resource or "",
+        "updated": concept.timestamp or "",
+        "html": html,
+        "toc": toc,
+    }
+
+
+def _knowledge_table_present(conn: Optional[sqlite3.Connection], table: str) -> bool:
+    """True when ``table`` exists on this connection. A store predating
+    the relationship index renders empty panels, never an error."""
+    if conn is None:
+        return False
+    present = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return bool(present and present[0])
+
+
+def _group_related(related: List[dict]) -> List[dict]:
+    """``related_docs`` rows grouped under their relation, groups sorted
+    by relation name, rows keeping the CLI's order within a group — the
+    panel renders exactly the rows ``cairn knowledge related`` prints."""
+    groups: Dict[str, List[dict]] = {}
+    for row in related:
+        groups.setdefault(row["relation"], []).append(row)
+    return [
+        {"relation": relation, "rows": rows}
+        for relation, rows in sorted(groups.items())
+    ]
+
+
+def _doc_chain(conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str) -> List[dict]:
+    """The doc's supersede chain (oldest -> newest) with detail-href parts
+    per member. A pre-index store, an index hiccup, or a branched
+    supersede DAG renders no chain widget (the relationship panel still
+    shows the supersedes rows) — a data oddity never 500s the page."""
+    if conn is None or not _knowledge_table_present(conn, "knowledge_edges"):
+        return []
+    from cairn.knowledge.index import supersede_chain
+
+    try:
+        chain = supersede_chain(conn, OKFBundle(knowledge_dir), doc_id)
+    except Exception:
+        return []
+    for member in chain:
+        member["family"], member["slug"] = _split_doc_id(member["concept_id"])
+    return chain
+
+
+def _doc_refs(conn: Optional[sqlite3.Connection], doc_id: str, store_key: str) -> List[dict]:
+    """The doc's stored code refs with resolution status; symbol refs
+    deep-link into the graph (the wiki sources' seam), file refs render
+    as plain code."""
+    if conn is None or not _knowledge_table_present(conn, "knowledge_doc_refs"):
+        return []
+    from urllib.parse import quote
+
+    store_suffix = f"&store={quote(store_key, safe='')}" if store_key else ""
+    refs: List[dict] = []
+    for ref, ref_kind, verified in conn.execute(
+        "SELECT ref, ref_kind, verified FROM knowledge_doc_refs "
+        "WHERE doc_id = ? ORDER BY ref_kind, ref",
+        (doc_id,),
+    ).fetchall():
+        refs.append({
+            "ref": ref,
+            "ref_kind": ref_kind,
+            "verified": bool(verified),
+            "href": _symbol_graph_href(ref, store_suffix)
+            if ref_kind == "symbol"
+            else "",
+        })
+    return refs
+
+
+def _staged_manifest_reference(
+    workspace: Optional[str], doc_id: str
+) -> dict:
+    """The doc's staged-ingest manifest reference: the manifest's path
+    (``<workspace>/.cairn/ingest-outbox/manifest.json``) plus the doc's
+    own row when the manifest exists and carries it. A missing or
+    unparsable manifest reads ``exists: False`` / ``row: None`` — the
+    provenance section explains the gap, never crashes."""
+    if not workspace:
+        return {"path": "", "exists": False, "row": None}
+    path = Path(workspace) / ".cairn" / "ingest-outbox" / "manifest.json"
+    reference = {"path": str(path), "exists": path.exists(), "row": None}
+    if not reference["exists"]:
+        return reference
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return reference
+    for row in manifest.get("rows") or []:
+        if isinstance(row, dict) and row.get("concept_id") == doc_id:
+            reference["row"] = row
+            break
+    return reference
+
+
+def _doc_provenance(doc: dict, workspace: Optional[str]) -> dict:
+    """The detail page's ingest provenance: source repo + path from the
+    staged manifest row when one exists (values that match the manifest
+    by construction), else the concept's recorded resource; plus the
+    manifest reference itself and the ingest channel (``doc_source``).
+    ``staged`` marks docs with ingest lineage at all — a store-added doc
+    has none and says so."""
+    manifest = _staged_manifest_reference(workspace, doc["id"])
+    repo, source_path = "", ""
+    resource = (doc.get("resource") or "").strip()
+    if resource:
+        repo = resource.partition("/")[0]
+        source_path = resource
+    row = manifest["row"]
+    if row:
+        repo = str(row.get("repo") or repo)
+        source_path = str(row.get("source_path") or source_path)
+    return {
+        "doc_source": doc.get("source") or "",
+        "repo": repo,
+        "source_path": source_path,
+        "manifest": manifest,
+        "staged": bool(resource or row),
+    }
+
+
+def get_knowledge_doc_detail(
+    conn: Optional[sqlite3.Connection],
+    knowledge_dir: str,
+    doc_id: str,
+    workspace: Optional[str] = None,
+    store_key: str = "",
+) -> Optional[dict]:
+    """Everything the ``/knowledge/{family}/{slug}`` detail page renders:
+    :func:`get_knowledge_doc`'s identity + rendered body plus the
+    relationship surfaces — related docs grouped by relation with kind
+    labels, the supersede chain (ordered oldest -> newest), the doc's
+    linked code refs with resolution status, and the ingest provenance
+    (source repo/path + the doc's staged-manifest row reference under
+    ``workspace``). Unknown doc ids are None (the caller's not-found);
+    a store predating the relationship index renders empty panels.
+
+    The panel rows are the same ``related_docs`` output the related CLI
+    prints, so the page and the CLI can never disagree.
+    """
+    doc = get_knowledge_doc(knowledge_dir, doc_id)
+    if doc is None:
+        return None
+    related: List[dict] = []
+    if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
+        from cairn.knowledge.index import related_docs
+
+        related = related_docs(conn, OKFBundle(knowledge_dir), doc["id"])
+        for neighbor in related:
+            neighbor["family"], neighbor["slug"] = _split_doc_id(
+                neighbor["doc_id"]
+            )
+    doc["related"] = related
+    doc["related_groups"] = _group_related(related)
+    doc["chain"] = _doc_chain(conn, knowledge_dir, doc["id"])
+    doc["refs"] = _doc_refs(conn, doc["id"], store_key)
+    doc["provenance"] = _doc_provenance(doc, workspace)
+    return doc
+
+
+def get_knowledge_graph(
+    conn: Optional[sqlite3.Connection], knowledge_dir: str
+) -> Dict:
+    """The /knowledge/graph canvas data: every stored knowledge doc as a
+    node, every indexed relationship as a directed edge — one edge per
+    ``knowledge_edges`` row, drawn exactly as stored (the index keeps a
+    supersede pair in both directions, so the pair reads as the two-way
+    link the related CLI and the detail panels report), each carrying
+    ``relation`` + ``kind`` so the canvas styles inferred dashed vs
+    extracted/derived solid and the legend can chip both facets. Rows
+    naming docs the bundle no longer resolves draw nothing (never a
+    phantom endpoint between rebuilds). Nodes carry ``id`` (the bare
+    concept id the edges join on), ``title``, ``family`` and ``status``;
+    a pre-index store renders the doc constellation with zero edges, and
+    a doc-less workspace returns empty lists."""
+    bundle = OKFBundle(knowledge_dir)
+    nodes: List[dict] = []
+    for cid in bundle.list_concepts(prefix="knowledge/"):
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue
+        doc_id = normalize_doc_id(bundle, cid)
+        family, _slug = _split_doc_id(doc_id)
+        nodes.append(
+            {
+                "id": doc_id,
+                "title": concept.title or doc_id,
+                "family": family,
+                "status": concept.extensions.get("doc_status") or "active",
+            }
+        )
+    nodes.sort(key=lambda n: n["id"])
+    node_ids = {n["id"] for n in nodes}
+    edges: List[dict] = []
+    if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
+        seen = set()
+        for doc_id, related_id, relation, kind in conn.execute(
+            "SELECT doc_id, related_id, relation, kind FROM knowledge_edges "
+            "ORDER BY doc_id, related_id, relation, kind"
+        ).fetchall():
+            key = (doc_id, related_id, relation, kind)
+            if (
+                key in seen
+                or doc_id not in node_ids
+                or related_id not in node_ids
+            ):
+                continue
+            seen.add(key)
+            edges.append(
+                {
+                    "source": doc_id,
+                    "target": related_id,
+                    "relation": relation,
+                    "kind": kind,
+                }
+            )
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metadata": {"node_count": len(nodes), "edge_count": len(edges)},
+    }
+
+
+def get_knowledge_graph_inspect(
+    conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str
+) -> Optional[dict]:
+    """The knowledge graph inspect panel's payload for one doc: identity
+    (bare id, family/slug detail-href parts, title, status, tags) plus
+    the doc's relationships — the same ``related_docs`` rows the detail
+    panels render, grouped by relation with kind labels. Unknown ids are
+    None (the route renders the panel's not-found note, matching
+    /graph/inspect's found=False contract); a pre-index store renders
+    the identity with zero relationships."""
+    bundle = OKFBundle(knowledge_dir)
+    try:
+        concept = resolve_knowledge_doc(bundle, doc_id)
+    except ValueError:
+        return None
+    bare_id = normalize_doc_id(bundle, concept.concept_id)
+    family, slug = _split_doc_id(bare_id)
+    related: List[dict] = []
+    if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
+        from cairn.knowledge.index import related_docs
+
+        related = related_docs(conn, bundle, bare_id)
+        for neighbor in related:
+            neighbor["family"], neighbor["slug"] = _split_doc_id(
+                neighbor["doc_id"]
+            )
+    return {
+        "found": True,
+        "id": bare_id,
+        "family": family,
+        "slug": slug,
+        "title": concept.title or bare_id,
+        "status": concept.extensions.get("doc_status") or "active",
+        "tags": list(concept.tags),
+        "related": related,
+        "related_groups": _group_related(related),
+    }
+
+
 HISTORY_PAGE_SIZE = 50
 
 
@@ -796,7 +1201,9 @@ def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]
     compares the content's recorded commit sha with the repo's current
     HEAD (fresh/stale/unknown) — a page with no content is always
     ``unknown``. A missing manifest (or knowledge dir) yields an empty
-    list; ``repo`` selects one repo's rows. Row order is manifest order
+    list; a manifest that cannot be parsed raises ``ValueError`` (the
+    routes render the explicit unreadable state from it); ``repo``
+    selects one repo's rows. Row order is manifest order
     (plan order) — the catalog groups by ``repo`` on top of it.
     """
     from cairn.wiki.lifecycle import derived_state, staleness as wiki_staleness
@@ -867,8 +1274,9 @@ def get_wiki_page(
     sources list linkify through it, with the selected store riding when
     ``store_key`` is set. ``sources`` is the concept's frontmatter list
     verbatim; ``staleness`` compares the recorded commit sha with the
-    repo's current HEAD (fresh/stale/unknown). None when no manifest row
-    for ``page_id`` (``repo`` narrows the match when several repos plan
+    repo's current HEAD (fresh/stale/unknown). A manifest that cannot be
+    parsed raises ``ValueError``. None when no manifest row for
+    ``page_id`` (``repo`` narrows the match when several repos plan
     the same page id) has a readable concept. The returned ``repo`` names
     the owning repo — the caller needs it for the repo-qualified URL
     ``/wiki/{repo}/{page_id}``.
@@ -926,7 +1334,11 @@ def list_history(
 ) -> Dict:
     """One bounded page of tool-invocation history, newest-first (FR-001).
 
-    ``tool_name`` / ``session_id`` / ``source`` are exact-match filters
+    ``tool_name`` is a prefix match on the stored name (exact = the whole
+    value): stored names are namespaced (``cli:<command_path>`` for CLI
+    rows), so a family prefix (``cli``) and the full stored name both
+    narrow rows, and the typed value matches literally (no wildcard
+    characters). ``session_id`` / ``source`` are exact-match filters
     (None = no filter); a no-match filter is an empty page, never an
     error.
     ``since`` (epoch seconds, None = all time) windows the page — and the
@@ -959,8 +1371,12 @@ def list_history(
     filter_clauses: List[str] = []
     filter_params: List[object] = []
     if tool_name is not None:
-        filter_clauses.append("tool_name = ?")
-        filter_params.append(tool_name)
+        # Prefix match, exact = the whole value: stored names are
+        # namespaced ("cli:<command_path>" for CLI rows), so the family
+        # and the full stored name both narrow rows. substr compares the
+        # typed value literally — no LIKE wildcard characters.
+        filter_clauses.append("substr(tool_name, 1, length(?)) = ?")
+        filter_params.extend([tool_name, tool_name])
     if session_id is not None:
         filter_clauses.append("session_id = ?")
         filter_params.append(session_id)

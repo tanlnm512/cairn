@@ -205,7 +205,13 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   topbar (every view follows the selection), a `Ctrl/Cmd+K` command palette
   (views, workspaces, symbol search), repo-scoped wiki navigation (grouped
   catalog with filters and search, breadcrumbs, in-page TOCs, prev/next,
-  graph cross-links), a collapsible grouped sidebar, CSV/JSON export of any
+  graph cross-links), knowledge views over the ingested docs (`/knowledge`
+  catalog with family/status/tag filters, per-doc detail with supersede
+  chain, relationship panel, and linked code refs, and a `/knowledge/graph`
+  relationship canvas whose legend chips filter edges in place), a
+  collapsible grouped sidebar, a dark/light theme
+  whose flip re-colors the live graph canvas in place (no reload; canvas
+  physics respects `prefers-reduced-motion`), CSV/JSON export of any
   filtered view, an Embeddings status view (probe
   health, fallback state, per-knob config sources) with the degradation
   banner, and a Settings page that persists embedding-backend configuration

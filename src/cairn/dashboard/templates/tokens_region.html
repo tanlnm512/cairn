@@ -1,0 +1,62 @@
+{#-
+  The polled region of /tokens (#refresh-region): htmx re-fetches the
+  view every 5s and the alpine-morph extension morphs the fresh fragment
+  over the region in place. The route renders THIS template alone on an
+  HX-Request (a poll is a cheap region render, never a full page). There
+  is no filter form here, so the view's current params are baked into
+  the region's hx-get URL — each poll re-requests exactly the slice the
+  page rendered.
+-#}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% import "_cards.html" as cards with context %}
+{%- set token_q = {} %}
+{%- if window != "all" %}{% set _ = token_q.update({'window': window}) %}{% endif %}
+<div id="refresh-region"
+     hx-get="{{ links.url('/tokens', token_q) }}" hx-trigger="every 5s"
+     hx-swap="morph" aria-live="polite">
+  {#- FR-002: the label names the mode that produced these numbers;
+      uncalibrated means the window had no usable stored-summary sample,
+      so the chars/token heuristic divisor stood in. -#}
+  <p class="muted">
+    Estimation mode: {{ tools.token_mode }}{% if tools.calibrated %} —
+    calibrated at ~{{ tools.chars_per_token }} chars/token from this
+    window's stored summaries{% elif 'heuristic' not in tools.token_mode %}
+    — uncalibrated for this window; estimates use the
+    {{ tools.chars_per_token }} chars/token heuristic divisor{% endif %}.
+  </p>
+  {% include "window_control.html" %}
+  {#- FR-005: exports ride the view's current filters (the selected store
+      rides links.url). -#}
+  {%- set export_q = {} %}
+  {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
+  <p class="muted">
+    Export:
+    <a class="btn-secondary" href="{{ links.url('/tokens.csv', export_q) }}">CSV</a>
+    <a class="btn-secondary" href="{{ links.url('/tokens.json', export_q) }}">JSON</a>
+  </p>
+  {% if tools %}
+  {{ cards.stat_row([
+    {"value": tools | length, "label": "tools"},
+    {"value": tools | sum(attribute='calls'), "label": "calls"},
+    {"value": "~" ~ (tools | sum(attribute='total_tokens')), "label": "est. tokens total"},
+  ]) }}
+  {% call tables.table(['Tool', 'Calls', 'Est. req tokens', 'Est. resp tokens', 'Total est. tokens', 'Mean est. tokens', 'Truncated calls', 'Chars cut']) %}
+      {% for t in tools %}
+      <tr>
+        <td>{{ links.view_link('history', 'tool', t.tool_name, window) }}</td>
+        <td class="num">{{ t.calls }}</td>
+        <td class="num">~{{ t.est_req_tokens }}</td>
+        <td class="num">~{{ t.est_resp_tokens }}</td>
+        <td class="num">~{{ t.total_tokens }}</td>
+        <td class="num">~{{ t.mean_tokens | mean }}</td>
+        {#- FR-003: unknown (no recorded truncation evidence) is not zero. -#}
+        <td class="num">{% if t.truncated_calls is none %}unknown{% else %}{{ t.truncated_calls }}{% endif %}</td>
+        <td class="num">{% if t.truncated_chars is none %}—{% else %}{{ t.truncated_chars }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+  {% endcall %}
+  {% else %}
+  {{ tables.empty_state('No tool calls recorded yet.') }}
+  {% endif %}
+</div>

@@ -46,6 +46,10 @@ Group: `cairn knowledge …`
 | Subcommand | Purpose |
 |---|---|
 | `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox` (see [knowledge-and-memory.md](knowledge-and-memory.md)) |
+| `rebuild` | recompute the derived `knowledge_edges` / `knowledge_doc_refs` index tables from the bundle (runs automatically after `ingest --ingest`; idempotent); island detection then queues `doc-link` tasks for detached pair-units (deduped per member set) |
+| `islands` | list doc-graph islands (detached pair-units) and their `doc-link` task state |
+| `related <doc_id>` | stored relationship neighbors of one doc, one line per edge with relation (`relates-to`/`supersedes`/`superseded-by`/`references`), kind (`extracted`/`inferred`/`derived`), and direction; `--json` emits the full rows. Unknown ids exit non-zero with a named error |
+| `chain <doc_id>` | the supersede chain containing a doc, printed oldest → newest (any chain member may be the argument; every member appears exactly once); `--json` emits ordered members. Unknown ids exit non-zero with a named error |
 | `add` / `import` / `remove` | manual document management |
 | `search` / `list` / `embed` / `export` | query and maintain the bundle |
 | `impact <query>` | knowledge-to-graph bridge: matching docs with affected repos and their cross-repo dependencies |

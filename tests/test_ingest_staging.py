@@ -213,6 +213,48 @@ class TestStageOutbox:
         on_disk = json.loads((outbox / "manifest.json").read_text(encoding="utf-8"))
         assert manifest == on_disk
 
+    def test_generator_input_stages_every_document(self, feed_root):
+        """The Iterable param is iterated twice (supersede detection pass +
+        staging loop); a generator argument must still stage every doc."""
+        docs = [
+            ("one.md", "---\ntitle: Gen one\nstatus: accepted\n---\nOne.\n"),
+            ("two.md", "---\ntitle: Gen two\nstatus: accepted\n---\nTwo.\n"),
+        ]
+        entries = (_entry("acme", relpath, text) for relpath, text in docs)
+        manifest = stage_outbox(entries, feed_root / "outbox")
+
+        assert manifest["counts"]["accepted"] == 2
+        assert sorted(row["source_path"] for row in manifest["rows"]) == [
+            "acme/one.md",
+            "acme/two.md",
+        ]
+        for row in manifest["rows"]:
+            assert (feed_root / "outbox" / row["staged_path"]).exists()
+
+    def test_date_valued_relationship_extra_serializes_in_manifest(
+        self, feed_root
+    ):
+        """An extra key inside a relationship entry may hold a YAML date;
+        the manifest write must serialize it instead of crashing the dry
+        run with a TypeError."""
+        text = (
+            "---\n"
+            "title: Dated link\n"
+            "status: accepted\n"
+            "relates_to:\n"
+            "  - concept_id: knowledge/spec/target\n"
+            "    relation: relates-to\n"
+            "    linked_on: 2024-01-15\n"
+            "---\n"
+            "Declares a dated link.\n"
+        )
+        manifest = stage_outbox(
+            [_entry("acme", "docs/dated.md", text)], feed_root / "outbox"
+        )
+
+        row = manifest["rows"][0]
+        assert row["relationships"][0]["linked_on"] == "2024-01-15"
+
     @pytest.mark.parametrize(
         "raw_doc_type, safe_doc_type",
         [

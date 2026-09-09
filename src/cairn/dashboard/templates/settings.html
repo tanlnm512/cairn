@@ -30,7 +30,7 @@
       head stickiness script never redirects the POST landing to a GET of
       this POST-only route (405). The hidden input stays as the fallback
       transport resolve_selection also accepts. -#}
-  <form class="graph-controls" method="post" action="{{ links.url('/settings/save') }}">
+  <form class="filter-bar" method="post" action="{{ links.url('/settings/save') }}">
     {{ links.store_field() }}
     <label>Backend
       <select name="CAIRN_EMBED_BACKEND">
@@ -51,10 +51,12 @@
     <label>Timeout (s)
       <input type="text" name="CAIRN_EMBED_TIMEOUT" value="{{ cfg['CAIRN_EMBED_TIMEOUT'].prefill }}">
     </label>
+    <span class="muted">leave empty to keep the current value</span>
     {{ env_pin(cfg['CAIRN_EMBED_TIMEOUT']) }}
     <label>Server batch
       <input type="text" name="CAIRN_EMBED_SERVER_BATCH" value="{{ cfg['CAIRN_EMBED_SERVER_BATCH'].prefill }}">
     </label>
+    <span class="muted">leave empty to keep the current value</span>
     {{ env_pin(cfg['CAIRN_EMBED_SERVER_BATCH']) }}
     <label>Migration alias (model stamp)
       <input type="text" name="CAIRN_EMBED_MODEL_STAMP" value="{{ cfg['CAIRN_EMBED_MODEL_STAMP'].prefill }}">
@@ -64,7 +66,7 @@
       <input type="text" name="CAIRN_EMBED_BASE_URL" value="{{ cfg['CAIRN_EMBED_BASE_URL'].prefill }}">
     </label>
     {{ env_pin(cfg['CAIRN_EMBED_BASE_URL']) }}
-    <label class="confirm-base-url">
+    <label class="filter-check">
       <input type="checkbox" name="confirm_base_url" value="1">
       Confirm base-URL change
     </label>
@@ -76,7 +78,7 @@
     Re-embeds a sample of stored chunks through the configured backend and
     compares against what is stored (gate 0.98).
   </p>
-  <form class="graph-controls" method="post" action="{{ links.url('/settings/parity-check') }}">
+  <form class="filter-bar" method="post" action="{{ links.url('/settings/parity-check') }}">
     {{ links.store_field() }}
     <button type="submit">Run parity check</button>
   </form>
