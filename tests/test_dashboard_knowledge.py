@@ -464,7 +464,11 @@ def test_knowledge_detail_renders_title_and_rendered_body(tmp_path):
     resp = client.get(_doc_path(ids["spec"]))
     assert resp.status_code == 200
     assert "<h1>Storage spec</h1>" in resp.text
-    assert "<h2" in resp.text  # "## Details" rendered as a heading
+    # The h2 must come from the RENDERED BODY, not the panel headings below it.
+    body_region = resp.text.split('<div class="wiki-body">', 1)[1].split(
+        '<section class="doc-subpanel"', 1
+    )[0]
+    assert "<h2" in body_region  # "## Details" rendered as a heading
     assert "## Details" not in resp.text
     assert "<code>demo_pkg/store.py</code>" in resp.text  # rendered span
     assert "type: Knowledge-spec" not in resp.text  # frontmatter not dumped
@@ -484,3 +488,324 @@ def test_knowledge_detail_unknown_and_out_of_namespace_404(tmp_path):
         assert resp.status_code == 404, path
         assert "Traceback" not in resp.text
         assert "Knowledge document not found" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# /knowledge/{family}/{slug} detail: relationship panels
+# (VAL-KNOW-006..012 server halves; the browser halves are agent-browser
+# checks against the fixture dashboard)
+# ---------------------------------------------------------------------------
+
+
+def _seed_detail_docs(kdir):
+    """The detail-page corpus: a 3-ADR supersede chain, an inferred-link
+    pair (declared, so no derived edge competes), a doc with verified +
+    unverified code refs, and an isolated zero-relationship doc.
+
+    Shared tags inside the chain give the ADRs derived relates-to edges
+    on top of the declared supersedes edges, mirroring the fixture; the
+    lone doc's tag overlaps nothing.
+    """
+    from cairn.knowledge.store import add_document
+    from cairn.okf.bundle import OKFBundle
+
+    bundle = OKFBundle(str(kdir))
+    adr1 = add_document(
+        bundle, "ADR 0001: Postgres", "Pick Postgres for storage.",
+        "decision", tags=["storage"],
+    )
+    adr2 = add_document(
+        bundle, "ADR 0002: SQLite", "Supersedes ADR-0001: move to SQLite.",
+        "decision", tags=["storage"],
+        relationships=[
+            {"concept_id": adr1, "relation": "supersedes", "kind": "extracted"}
+        ],
+    )
+    adr3 = add_document(
+        bundle, "ADR 0003: DuckDB", "Supersedes ADR-0002: embed the engine.",
+        "decision", tags=["storage"],
+        relationships=[
+            {"concept_id": adr2, "relation": "supersedes", "kind": "extracted"}
+        ],
+    )
+    ref_doc = add_document(
+        bundle, "Storage spec",
+        "Rows live in `demo_pkg/store.py` keyed by `Store.total_revenue`.",
+        "spec", tags=["storage"],
+        resource="demo/docs/spec-storage.md",
+        verified_refs=[
+            {"ref": "demo_pkg/store.py", "kind": "file", "verified": True},
+            {"ref": "Store.total_revenue", "kind": "symbol", "verified": True},
+            {"ref": "demo_pkg/missing.py", "kind": "file", "verified": False},
+        ],
+    )
+    inferred_target = add_document(
+        bundle, "Queue retry policy", "Retries are idempotent.",
+        "spec", tags=["queues"],
+    )
+    inferred_source = add_document(
+        bundle, "Backoff policy", "Backoff defers to the queue policy.",
+        "spec", tags=["queues"],
+        relationships=[
+            {"concept_id": inferred_target, "relation": "relates-to",
+             "kind": "inferred"}
+        ],
+    )
+    lone = add_document(
+        bundle, "Deploy gate", "Ship only on green builds.",
+        "business-rule", tags=["deploys"],
+    )
+    return {
+        "adr1": adr1,
+        "adr2": adr2,
+        "adr3": adr3,
+        "ref_doc": ref_doc,
+        "inferred_source": inferred_source,
+        "inferred_target": inferred_target,
+        "lone": lone,
+    }
+
+
+def _detail_client(tmp_path):
+    """A client over the detail corpus with its derived index rebuilt.
+
+    Returns ``(client, ids, db_path)`` so tests can read the index the
+    page is supposed to agree with."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+    from cairn.knowledge.index import rebuild_knowledge_index
+    from cairn.graph.schema import get_db
+    from cairn.okf.bundle import OKFBundle
+    from tests.test_dashboard_app import _graph_db_file
+
+    db = _graph_db_file(tmp_path, seed=False)
+    kdir = tmp_path / "knowledge"
+    ids = _seed_detail_docs(kdir)
+    conn = get_db(db)
+    try:
+        rebuild_knowledge_index(conn, OKFBundle(str(kdir)))
+        conn.commit()
+    finally:
+        conn.close()
+    return (
+        TestClient(create_app(db_path=db, knowledge_dir=str(kdir))),
+        ids,
+        db,
+    )
+
+
+def _panel_tuples(html: str) -> set:
+    """The (neighbor bare id, relation, kind) tuples the relationship
+    panel renders — same shape `related_docs` (and the CLI) reports."""
+    shown = set()
+    for relation, block in re.findall(
+        r'<div class="rel-group" data-relation="([^"]+)">(.*?)</div>',
+        html,
+        re.S,
+    ):
+        for href, kind in re.findall(
+            r'href="(/knowledge/[^"?]+)">.*?'
+            r'<span class="badge badge-kind-([^"]+)">',
+            block,
+            re.S,
+        ):
+            shown.add(("knowledge/" + href[len("/knowledge/"):], relation, kind))
+    return shown
+
+
+def test_knowledge_detail_chain_ordered_directional_all_members(tmp_path):
+    """VAL-KNOW-008: the chain widget renders the full supersede chain as
+    an ordered oldest->newest list with visible direction — all 3 ADRs in
+    causal order with a labeled, arrowed hop between neighbors — from
+    EITHER endpoint, and marks the page's own doc as current."""
+    client, ids, _ = _detail_client(tmp_path)
+
+    for entry in ("adr1", "adr3"):
+        resp = client.get(_doc_path(ids[entry]))
+        assert resp.status_code == 200, entry
+        assert "Supersede chain" in resp.text, entry
+        chain = re.search(
+            r'<ol class="supersede-chain">(.*?)</ol>', resp.text, re.S
+        )
+        assert chain, entry
+        block = chain.group(1)
+        p1, p2, p3 = (
+            block.find(_doc_path(ids["adr1"])),
+            block.find(_doc_path(ids["adr2"])),
+            block.find(_doc_path(ids["adr3"])),
+        )
+        assert 0 <= p1 < p2 < p3, entry  # oldest -> newest, every member
+        assert block.count("→") == 2, entry  # one arrowed hop per pair
+        assert block.count("superseded-by") == 2, entry  # labeled direction
+
+    # The viewed doc is the chain's marked-current member.
+    own = client.get(_doc_path(ids["adr2"]))
+    current = re.search(
+        r'<li class="chain-member chain-current">\s*'
+        r'<a href="([^"]+)"', own.text
+    )
+    assert current and current.group(1) == _doc_path(ids["adr2"])
+
+
+def test_knowledge_detail_chain_and_panel_traverse_by_links(tmp_path):
+    """VAL-KNOW-012 (server half): the chain and relationship links are
+    real detail hrefs — clicking through them walks 0001 -> 0002 -> 0003
+    landing on each doc's own page."""
+    client, ids, _ = _detail_client(tmp_path)
+    page = client.get(_doc_path(ids["adr1"]))
+    assert "<h1>ADR 0001: Postgres</h1>" in page.text
+    assert f'href="{_doc_path(ids["adr2"])}"' in page.text
+
+    page = client.get(_doc_path(ids["adr2"]))
+    assert "<h1>ADR 0002: SQLite</h1>" in page.text
+    assert f'href="{_doc_path(ids["adr3"])}"' in page.text
+
+    page = client.get(_doc_path(ids["adr3"]))
+    assert "<h1>ADR 0003: DuckDB</h1>" in page.text
+
+
+def test_knowledge_detail_panel_groups_relations_with_kinds(tmp_path):
+    """VAL-KNOW-007: the relationship panel groups rows under their
+    relation and labels each with its kind — the declared extracted
+    supersedes edge, the derived tag-overlap edges, and the inferred
+    edge all show their correct kind."""
+    client, ids, _ = _detail_client(tmp_path)
+
+    resp = client.get(_doc_path(ids["adr2"]))
+    assert resp.status_code == 200
+    assert 'data-relation="supersedes"' in resp.text
+    assert 'data-relation="relates-to"' in resp.text
+    assert "badge-kind-extracted" in resp.text
+    assert "badge-kind-derived" in resp.text
+    assert f'href="{_doc_path(ids["adr1"])}"' in resp.text
+
+    inferred = client.get(_doc_path(ids["inferred_source"]))
+    assert "badge-kind-inferred" in inferred.text
+    assert f'href="{_doc_path(ids["inferred_target"])}"' in inferred.text
+
+
+def test_knowledge_detail_panel_tuples_match_related_docs(tmp_path):
+    """VAL-KNOW-021 (server half): the panel's (neighbor, relation, kind)
+    tuples equal the set `related_docs` returns — the UI never shows an
+    edge the CLI wouldn't, and never drops one it would."""
+    from cairn.graph.schema import get_db
+    from cairn.knowledge.index import related_docs
+    from cairn.okf.bundle import OKFBundle
+
+    client, ids, db = _detail_client(tmp_path)
+    conn = get_db(db)
+    try:
+        expected = {
+            (n["doc_id"], n["relation"], n["kind"])
+            for n in related_docs(conn, OKFBundle(str(tmp_path / "knowledge")), ids["adr2"])
+        }
+    finally:
+        conn.close()
+
+    resp = client.get(_doc_path(ids["adr2"]))
+    assert _panel_tuples(resp.text) == expected
+
+
+def test_knowledge_detail_no_relationships_empty_state(tmp_path):
+    """VAL-KNOW-011: a doc with zero stored relationships still renders
+    the relationship panel with an explicit empty state — not a missing
+    section, and no chain widget for a chain of one."""
+    client, ids, _ = _detail_client(tmp_path)
+    resp = client.get(_doc_path(ids["lone"]))
+    assert resp.status_code == 200
+    assert "Relationships" in resp.text
+    assert 'class="empty-state"' in resp.text
+    assert "No relationships" in resp.text
+    assert "Supersede chain" not in resp.text
+    assert 'class="rel-group"' not in resp.text
+
+
+def test_knowledge_detail_refs_show_resolution_status(tmp_path):
+    """VAL-KNOW-009: linked code refs render with their kind and a
+    per-ref resolution status; verified refs read verified (symbols deep
+    linking into the graph), unverified ones read unresolved."""
+    client, ids, _ = _detail_client(tmp_path)
+    resp = client.get(_doc_path(ids["ref_doc"]))
+    assert resp.status_code == 200
+    assert "Linked code" in resp.text
+    assert "<code>demo_pkg/store.py</code>" in resp.text
+    assert "<code>Store.total_revenue</code>" in resp.text
+    assert "<code>demo_pkg/missing.py</code>" in resp.text
+    assert ">verified</span>" in resp.text
+    assert ">unresolved</span>" in resp.text
+    assert ">file</span>" in resp.text
+    assert ">symbol</span>" in resp.text
+    assert 'href="/graph?scope=symbol&amp;focus=Store.total_revenue"' in resp.text
+
+
+def test_knowledge_detail_provenance_matches_staged_manifest(tmp_path, monkeypatch):
+    """VAL-KNOW-010: the provenance section shows the source repo + path
+    and a reference to the doc's row in the staged ingest manifest —
+    values matching that manifest — degrading to the concept's recorded
+    resource (and an explicit no-staged-manifest note) when the outbox
+    is gone, and to an explicit no-ingest note for store-added docs."""
+    import json
+
+    client, ids, _ = _detail_client(tmp_path)
+    outbox = tmp_path / "ws" / ".cairn" / "ingest-outbox"
+    outbox.mkdir(parents=True)
+    manifest = {
+        "version": 1,
+        "workspace": str(outbox),
+        "rows": [
+            {
+                "concept_id": ids["adr2"],
+                "repo": "demo",
+                "source_path": "demo/docs/adr-0002-sqlite.md",
+                "staged_path": ids["adr2"] + ".md",
+                "origin": "demo",
+            }
+        ],
+    }
+    (outbox / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path / "ws"))
+
+    resp = client.get(_doc_path(ids["adr2"]))
+    assert resp.status_code == 200
+    assert "Ingest provenance" in resp.text
+    prov = re.search(
+        r'Ingest provenance(.*?)</section>', resp.text, re.S
+    ).group(1)
+    assert "<dd>demo</dd>" in prov  # source repo from the manifest row
+    assert "<code>demo/docs/adr-0002-sqlite.md</code>" in prov
+    assert ".cairn/ingest-outbox/manifest.json" in prov  # the manifest ref
+    assert ids["adr2"] in prov  # the row the doc staged under
+
+    # Outbox gone: the recorded resource carries the provenance, the
+    # manifest reference says so explicitly.
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path / "no-such-ws"))
+    resp = client.get(_doc_path(ids["ref_doc"]))
+    assert "<code>demo/docs/spec-storage.md</code>" in resp.text
+    assert "no staged manifest" in resp.text
+
+    # A store-added doc states it has no ingest lineage at all.
+    resp = client.get(_doc_path(ids["lone"]))
+    assert "added directly to the store" in resp.text
+
+
+def test_knowledge_detail_panels_degrade_on_preindex_store(tmp_path):
+    """A store predating the relationship index (edges + refs tables
+    dropped) renders the detail page with empty panels — never a 500."""
+    from cairn.graph.schema import get_db
+
+    client, ids, db = _detail_client(tmp_path)
+    conn = get_db(db)
+    try:
+        conn.execute("DROP TABLE knowledge_edges")
+        conn.execute("DROP TABLE knowledge_doc_refs")
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.get(_doc_path(ids["adr2"]))
+    assert resp.status_code == 200
+    assert "<h1>ADR 0002: SQLite</h1>" in resp.text
+    assert 'class="empty-state"' in resp.text
+    assert "No linked code references" in resp.text

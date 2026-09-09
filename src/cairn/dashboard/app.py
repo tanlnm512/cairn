@@ -274,7 +274,7 @@ def create_app(
         get_database_schema,
         get_graph,
         get_health,
-        get_knowledge_doc,
+        get_knowledge_doc_detail,
         get_read_only_db,
         get_recent_memories,
         get_session_chains,
@@ -894,20 +894,37 @@ def create_app(
 
     def knowledge_doc(request: Request) -> Response:
         """One doc's detail page at /knowledge/{family}/{slug} — the bare
-        concept id's two variable segments. The doc's identity + rendered
-        body come from get_knowledge_doc (None = the plain not-found
-        page, out-of-namespace resolutions included); the relationship
-        panel rides the same store the catalog's counts read."""
+        concept id's two variable segments. get_knowledge_doc_detail
+        assembles identity, rendered body, the relationship panels
+        (related docs, supersede chain, code refs) and ingest provenance;
+        None = the plain not-found page, out-of-namespace resolutions
+        included."""
         from starlette.responses import HTMLResponse
 
         doc_id = "knowledge/{family}/{slug}".format(
             family=request.path_params["family"],
             slug=request.path_params["slug"],
         )
-        _, selected_knowledge, store_key = resolve_selection(
+        selected_db, selected_knowledge, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
-        doc = get_knowledge_doc(selected_knowledge, doc_id)
+        # The staged-ingest manifest lives under the workspace root (the
+        # outbox is a workspace artifact, not a store one).
+        try:
+            workspace = str(paths.resolve_workspace())
+        except OSError:
+            workspace = None
+        conn = get_read_only_db(selected_db)
+        try:
+            doc = get_knowledge_doc_detail(
+                conn,
+                selected_knowledge,
+                doc_id,
+                workspace=workspace,
+                store_key=store_key,
+            )
+        finally:
+            conn.close()
         if doc is None:
             return HTMLResponse(
                 "<html><head><title>cairn dashboard</title></head><body>"

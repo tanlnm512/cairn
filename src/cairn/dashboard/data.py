@@ -8,6 +8,7 @@ functions over the returned connection.
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
@@ -870,6 +871,166 @@ def get_knowledge_doc(knowledge_dir: str, doc_id: str) -> Optional[dict]:
         "html": html,
         "toc": toc,
     }
+
+
+def _knowledge_table_present(conn: Optional[sqlite3.Connection], table: str) -> bool:
+    """True when ``table`` exists on this connection. A store predating
+    the relationship index renders empty panels, never an error."""
+    if conn is None:
+        return False
+    present = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return bool(present and present[0])
+
+
+def _group_related(related: List[dict]) -> List[dict]:
+    """``related_docs`` rows grouped under their relation, groups sorted
+    by relation name, rows keeping the CLI's order within a group — the
+    panel renders exactly the rows ``cairn knowledge related`` prints."""
+    groups: Dict[str, List[dict]] = {}
+    for row in related:
+        groups.setdefault(row["relation"], []).append(row)
+    return [
+        {"relation": relation, "rows": rows}
+        for relation, rows in sorted(groups.items())
+    ]
+
+
+def _doc_chain(conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str) -> List[dict]:
+    """The doc's supersede chain (oldest -> newest) with detail-href parts
+    per member. A pre-index store, an index hiccup, or a branched
+    supersede DAG renders no chain widget (the relationship panel still
+    shows the supersedes rows) — a data oddity never 500s the page."""
+    if conn is None or not _knowledge_table_present(conn, "knowledge_edges"):
+        return []
+    from cairn.knowledge.index import supersede_chain
+
+    try:
+        chain = supersede_chain(conn, OKFBundle(knowledge_dir), doc_id)
+    except Exception:
+        return []
+    for member in chain:
+        member["family"], member["slug"] = _split_doc_id(member["concept_id"])
+    return chain
+
+
+def _doc_refs(conn: Optional[sqlite3.Connection], doc_id: str, store_key: str) -> List[dict]:
+    """The doc's stored code refs with resolution status; symbol refs
+    deep-link into the graph (the wiki sources' seam), file refs render
+    as plain code."""
+    if conn is None or not _knowledge_table_present(conn, "knowledge_doc_refs"):
+        return []
+    from urllib.parse import quote
+
+    store_suffix = f"&store={quote(store_key, safe='')}" if store_key else ""
+    refs: List[dict] = []
+    for ref, ref_kind, verified in conn.execute(
+        "SELECT ref, ref_kind, verified FROM knowledge_doc_refs "
+        "WHERE doc_id = ? ORDER BY ref_kind, ref",
+        (doc_id,),
+    ).fetchall():
+        refs.append({
+            "ref": ref,
+            "ref_kind": ref_kind,
+            "verified": bool(verified),
+            "href": _symbol_graph_href(ref, store_suffix)
+            if ref_kind == "symbol"
+            else "",
+        })
+    return refs
+
+
+def _staged_manifest_reference(
+    workspace: Optional[str], doc_id: str
+) -> dict:
+    """The doc's staged-ingest manifest reference: the manifest's path
+    (``<workspace>/.cairn/ingest-outbox/manifest.json``) plus the doc's
+    own row when the manifest exists and carries it. A missing or
+    unparsable manifest reads ``exists: False`` / ``row: None`` — the
+    provenance section explains the gap, never crashes."""
+    if not workspace:
+        return {"path": "", "exists": False, "row": None}
+    path = Path(workspace) / ".cairn" / "ingest-outbox" / "manifest.json"
+    reference = {"path": str(path), "exists": path.exists(), "row": None}
+    if not reference["exists"]:
+        return reference
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return reference
+    for row in manifest.get("rows") or []:
+        if isinstance(row, dict) and row.get("concept_id") == doc_id:
+            reference["row"] = row
+            break
+    return reference
+
+
+def _doc_provenance(doc: dict, workspace: Optional[str]) -> dict:
+    """The detail page's ingest provenance: source repo + path from the
+    staged manifest row when one exists (values that match the manifest
+    by construction), else the concept's recorded resource; plus the
+    manifest reference itself and the ingest channel (``doc_source``).
+    ``staged`` marks docs with ingest lineage at all — a store-added doc
+    has none and says so."""
+    manifest = _staged_manifest_reference(workspace, doc["id"])
+    repo, source_path = "", ""
+    resource = (doc.get("resource") or "").strip()
+    if resource:
+        repo = resource.partition("/")[0]
+        source_path = resource
+    row = manifest["row"]
+    if row:
+        repo = str(row.get("repo") or repo)
+        source_path = str(row.get("source_path") or source_path)
+    return {
+        "doc_source": doc.get("source") or "",
+        "repo": repo,
+        "source_path": source_path,
+        "origin": str(row.get("origin") or "") if row else "",
+        "manifest": manifest,
+        "staged": bool(resource or row),
+    }
+
+
+def get_knowledge_doc_detail(
+    conn: Optional[sqlite3.Connection],
+    knowledge_dir: str,
+    doc_id: str,
+    workspace: Optional[str] = None,
+    store_key: str = "",
+) -> Optional[dict]:
+    """Everything the ``/knowledge/{family}/{slug}`` detail page renders:
+    :func:`get_knowledge_doc`'s identity + rendered body plus the
+    relationship surfaces — related docs grouped by relation with kind
+    labels, the supersede chain (ordered oldest -> newest), the doc's
+    linked code refs with resolution status, and the ingest provenance
+    (source repo/path + the doc's staged-manifest row reference under
+    ``workspace``). Unknown doc ids are None (the caller's not-found);
+    a store predating the relationship index renders empty panels.
+
+    The panel rows are the same ``related_docs`` output the related CLI
+    prints, so the page and the CLI can never disagree.
+    """
+    doc = get_knowledge_doc(knowledge_dir, doc_id)
+    if doc is None:
+        return None
+    related: List[dict] = []
+    if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
+        from cairn.knowledge.index import related_docs
+
+        related = related_docs(conn, OKFBundle(knowledge_dir), doc["id"])
+        for neighbor in related:
+            neighbor["family"], neighbor["slug"] = _split_doc_id(
+                neighbor["doc_id"]
+            )
+    doc["related"] = related
+    doc["related_groups"] = _group_related(related)
+    doc["chain"] = _doc_chain(conn, knowledge_dir, doc["id"])
+    doc["refs"] = _doc_refs(conn, doc["id"], store_key)
+    doc["provenance"] = _doc_provenance(doc, workspace)
+    return doc
 
 
 HISTORY_PAGE_SIZE = 50

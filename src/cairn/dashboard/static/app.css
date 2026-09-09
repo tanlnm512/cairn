@@ -1628,6 +1628,181 @@ a.code-ref:focus code {
   font-size: 0.9rem;
 }
 
+/* ---- Knowledge doc detail: chain, relationships, refs, provenance ---- */
+
+.doc-subpanel {
+  max-width: 46rem;
+  margin-top: 1.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line-1);
+}
+
+.doc-subpanel h2 {
+  margin: 0 0 0.7rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+/* Supersede chain: ordered oldest -> newest, one labeled hop (relation
+   + direction arrow) between neighbors; the viewed doc reads accent. */
+.supersede-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.75rem;
+  font-size: 0.86rem;
+}
+
+.chain-member {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.chain-member.chain-current > a {
+  color: var(--accent);
+}
+
+.chain-id {
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  word-break: break-all;
+}
+
+.chain-hop {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+}
+
+.chain-relation {
+  color: var(--text-3);
+}
+
+.chain-arrow {
+  color: var(--accent);
+}
+
+.rel-group {
+  margin-bottom: 0.9rem;
+}
+
+.rel-group:last-child {
+  margin-bottom: 0;
+}
+
+.rel-relation {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.rel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+}
+
+.rel-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rel-direction {
+  color: var(--text-4);
+  font-size: 0.74rem;
+}
+
+/* Relationship kind labels: extracted reads accent (the trusted record),
+   inferred warns with a dashed border (low-trust, dashed like the
+   graph's inferred edges), derived keeps the neutral badge look. */
+.badge-kind-extracted {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.badge-kind-inferred {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-style: dashed;
+}
+
+.doc-refs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.doc-refs li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.doc-refs a {
+  text-decoration: none;
+}
+
+.doc-refs a:hover code,
+.doc-refs a:focus code {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ref-kind {
+  color: var(--text-4);
+  font-size: 0.74rem;
+}
+
+.prov-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  font-size: 0.86rem;
+}
+
+.prov-item {
+  display: contents;
+}
+
+.prov-item dt {
+  padding-top: 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.prov-item dd {
+  margin: 0;
+  min-width: 0;
+}
+
 /* ---- Symbol-search typeahead dropdown ---- */
 .suggest-wrap {
   position: relative;

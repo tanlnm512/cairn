@@ -11,9 +11,121 @@
   <p>
     {% if doc.family %}<span class="badge badge-{{ doc.family }}">{{ doc.family }}</span> {% endif %}
     <span class="badge badge-{{ doc.status }}">{{ doc.status }}</span>
+    {% for tag in doc.tags %}<code>{{ tag }}</code> {% endfor %}
   </p>
   <div class="wiki-body">
     {{ doc.html | safe }}
   </div>
+
+  {#- Supersede chain: ordered oldest -> newest (the derived index's
+      causal order); each member links its detail page, the hop shows the
+      relation to the NEXT member with the direction arrow, and the
+      viewed doc is marked current. A chain of one renders no widget. -#}
+  {% if doc.chain | length > 1 %}
+  <section class="doc-subpanel" aria-labelledby="chain-heading">
+    <h2 id="chain-heading">Supersede chain</h2>
+    <ol class="supersede-chain">
+      {% for member in doc.chain %}
+      <li class="chain-member{% if member.concept_id == doc.id %} chain-current{% endif %}">
+        <a href="{{ links.url('/knowledge/' ~ member.family ~ '/' ~ member.slug) }}">{{ member.title }}</a>
+        <span class="chain-id">{{ member.concept_id }}</span>
+        {% if member.relation %}
+        <span class="chain-hop"><span class="chain-relation">{{ member.relation }}</span><span class="chain-arrow" aria-hidden="true">→</span></span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  {#- Relationship panel: every stored neighbor row, grouped under its
+      relation, each row labeled with its kind (extracted / inferred /
+      derived) — the same tuples `cairn knowledge related` prints. -#}
+  <section class="doc-subpanel" aria-labelledby="rel-heading">
+    <h2 id="rel-heading">Relationships</h2>
+    {% if doc.related_groups %}
+      {% for group in doc.related_groups %}
+      <div class="rel-group" data-relation="{{ group.relation }}">
+        <h3 class="rel-relation">{{ group.relation }}</h3>
+        <ul class="rel-list">
+          {% for n in group.rows %}
+          <li>
+            <a href="{{ links.url('/knowledge/' ~ n.family ~ '/' ~ n.slug) }}">{{ n.title }}</a>
+            <span class="badge badge-kind-{{ n.kind }}">{{ n.kind }}</span>
+            <span class="rel-direction">{{ n.direction }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="empty-state">No relationships — this document has no stored links to other documents. Declared <code>relates_to</code> frontmatter, supersede markers, and shared tags or modules index as relationships on the next rebuild.</p>
+    {% endif %}
+  </section>
+
+  {#- Linked code: the doc's stored refs with resolution status; symbol
+      refs deep-link into the graph view. -#}
+  <section class="doc-subpanel" aria-labelledby="refs-heading">
+    <h2 id="refs-heading">Linked code</h2>
+    {% if doc.refs %}
+    <ul class="doc-refs">
+      {% for ref in doc.refs %}
+      <li>
+        {% if ref.href %}<a href="{{ ref.href }}"><code>{{ ref.ref }}</code></a>{% else %}<code>{{ ref.ref }}</code>{% endif %}
+        <span class="ref-kind">{{ ref.ref_kind }}</span>
+        {% if ref.verified %}
+        <span class="badge badge-ok">verified</span>
+        {% else %}
+        <span class="badge badge-warn">unresolved</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No linked code references stored for this document.</p>
+    {% endif %}
+  </section>
+
+  {#- Ingest provenance: source repo + path (staged manifest row first,
+      the concept's recorded resource as fallback) and the staged
+      manifest reference. Store-added docs state they have none. -#}
+  <section class="doc-subpanel" aria-labelledby="prov-heading">
+    <h2 id="prov-heading">Ingest provenance</h2>
+    {% if doc.provenance.staged %}
+    <dl class="prov-list">
+      <div class="prov-item">
+        <dt>Source repo</dt>
+        <dd>{{ doc.provenance.repo or "—" }}</dd>
+      </div>
+      <div class="prov-item">
+        <dt>Source path</dt>
+        <dd>{% if doc.provenance.source_path %}<code>{{ doc.provenance.source_path }}</code>{% else %}—{% endif %}</dd>
+      </div>
+      <div class="prov-item">
+        <dt>Channel</dt>
+        <dd>{{ doc.provenance.doc_source or "—" }}</dd>
+      </div>
+      <div class="prov-item">
+        <dt>Staged manifest</dt>
+        <dd>
+          {% if doc.provenance.manifest.exists %}
+          <code>{{ doc.provenance.manifest.path }}</code>
+          {%- if doc.provenance.manifest.row %}
+          — row <code>{{ doc.provenance.manifest.row.concept_id }}</code>{% if doc.provenance.manifest.row.staged_path %} (staged <code>{{ doc.provenance.manifest.row.staged_path }}</code>){% endif %}
+          {%- else %}
+          — no row for this document
+          {%- endif %}
+          {% elif doc.provenance.manifest.path %}
+          no staged manifest at <code>{{ doc.provenance.manifest.path }}</code>
+          {% else %}
+          not available
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+    {% else %}
+    <p class="muted">No ingest provenance — this document was added directly to the store.</p>
+    {% endif %}
+  </section>
 </section>
 {% endblock %}

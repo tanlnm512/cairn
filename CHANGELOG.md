@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sidebar's Knowledge section leads with the catalog entry, the landing
   grid carries a Knowledge card, and the command palette offers both
   the catalog and a palette-only Knowledge Graph destination.
+- The `/knowledge/{family}/{slug}` detail page gained the relationship
+  surfaces: a supersede chain widget (ordered oldest -> newest, each
+  member linking its detail page, the hop labeled with its relation and
+  a direction arrow, the viewed doc highlighted), a relationship panel
+  grouping every stored neighbor row under its relation with a kind
+  badge (`extracted` / `inferred` / `derived` — the same tuples
+  `cairn knowledge related` prints; inferred wears a dashed badge), an
+  explicit empty state for docs with no relationships, linked code refs
+  with their kind and per-ref resolution status (symbols deep-link into
+  the graph), and ingest provenance — source repo/path and the doc's row
+  in the workspace's staged `.cairn/ingest-outbox/manifest.json`, or an
+  explicit note when a doc was added directly to the store. A store
+  predating the relationship index renders empty panels, never an error.
 - Vendored Mermaid 11.17.2 (`mermaid.min.js`, MIT) as the dashboard's last
   external asset: the wiki detail view now loads it from `/static/` via a
   lazy dynamic `import()` that ships only on pages holding a mermaid fence
