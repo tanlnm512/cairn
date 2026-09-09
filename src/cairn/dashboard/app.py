@@ -275,6 +275,8 @@ def create_app(
         get_graph,
         get_health,
         get_knowledge_doc_detail,
+        get_knowledge_graph,
+        get_knowledge_graph_inspect,
         get_read_only_db,
         get_recent_memories,
         get_session_chains,
@@ -940,6 +942,57 @@ def create_app(
             {"doc": doc, "store_key": store_key},
         )
 
+    def knowledge_graph(request: Request) -> Response:
+        """The knowledge relationship canvas at /knowledge/graph: every
+        stored doc as a node, every indexed relationship as a directed
+        edge. The graph JSON rides the #knowledge-graph-data script tag
+        (the /graph machinery's DataSet-from-script-tag pattern) and
+        knowledge-graph.js owns the canvas: legend chips filter edge
+        kinds/relations client-side (no reload, no refetch), and a node
+        click fetches the doc's inspect fragment into the side panel.
+        Full-page only — the filters live in the client, so there is no
+        filter param for a fragment branch to serve."""
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            graph = get_knowledge_graph(conn, selected_knowledge)
+        finally:
+            conn.close()
+        return render(
+            request,
+            "knowledge_graph.html",
+            {"graph": graph, "store_key": store_key},
+        )
+
+    def knowledge_graph_inspect(request: Request) -> Response:
+        """One doc's inspect-panel fragment (the canvas's node-click
+        fetch target): identity plus the same grouped ``related_docs``
+        rows the detail panels render. Inherently fragment-only — the
+        canvas script is the only client, no UI links the bare path (the
+        documented exception to the full-page/fragment seam) — and an
+        unknown doc renders the panel's not-found note at 200, matching
+        /graph/inspect's found=False contract."""
+        doc_id = request.query_params.get("doc", "").strip()
+        selected_db, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        conn = get_read_only_db(selected_db)
+        try:
+            doc = (
+                get_knowledge_graph_inspect(conn, selected_knowledge, doc_id)
+                if doc_id
+                else None
+            )
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request,
+            "knowledge_graph_panel.html",
+            {"doc": doc, "doc_id": doc_id, "store_key": store_key},
+        )
+
     def wiki(request: Request) -> Response:
         # Catalog filters, read like every other view's params: absent or
         # blank means no filter; ``state`` outside the derived vocabulary
@@ -1329,8 +1382,17 @@ def create_app(
         # The knowledge catalog; /knowledge/{family}/{slug} is the bare
         # concept id's two variable segments — a single path param never
         # matches "/", so a sibling one-segment route (/knowledge/graph)
-        # can never shadow these and vice versa.
+        # can never shadow these and vice versa. The canvas + its inspect
+        # fragment precede the two-param route on purpose: the fragment
+        # path (/knowledge/graph/inspect) WOULD match it as
+        # family=graph, slug=inspect if it followed.
         Route("/knowledge", knowledge_catalog, name="knowledge"),
+        Route("/knowledge/graph", knowledge_graph, name="knowledge_graph"),
+        Route(
+            "/knowledge/graph/inspect",
+            knowledge_graph_inspect,
+            name="knowledge_graph_inspect",
+        ),
         Route(
             "/knowledge/{family}/{slug}",
             knowledge_doc,

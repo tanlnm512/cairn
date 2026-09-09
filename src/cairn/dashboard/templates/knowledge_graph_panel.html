@@ -1,0 +1,39 @@
+{#- Inspect-panel fragment for the knowledge graph's node click: one
+    doc's identity + relationships, fetched by knowledge-graph.js and
+    swapped into #knowledge-graph-panel. Extends no base — inherently
+    fragment-only (the canvas script is the only client). -#}
+{% import "_links.html" as links with context %}
+{% if doc %}
+<div class="panel-head-row">
+  <span class="panel-kind">{{ doc.family }}</span>
+  <span class="panel-title">{{ doc.title }}</span>
+</div>
+<p class="panel-sub">{{ doc.id }}</p>
+<p class="panel-sub">
+  <span class="badge badge-{{ doc.status }}">{{ doc.status }}</span>
+  {%- for tag in doc.tags %} <code>{{ tag }}</code>{% endfor %}
+</p>
+<section class="panel-section">
+  <h3 class="panel-head">Relationships ({{ doc.related | length }})</h3>
+  {% if doc.related_groups %}
+    {% for group in doc.related_groups %}
+    <div class="rel-group" data-relation="{{ group.relation }}">
+      <h4 class="rel-relation">{{ group.relation }}</h4>
+      <ul class="panel-list">
+        {% for n in group.rows %}
+        <li class="panel-row">
+          <a class="panel-name" href="{{ links.url('/knowledge/' ~ n.family ~ '/' ~ n.slug) }}">{{ n.title }}</a>
+          <span class="panel-sub"><span class="badge badge-kind-{{ n.kind }}">{{ n.kind }}</span> {{ n.direction }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  {% else %}
+  <p class="panel-empty">no stored relationships</p>
+  {% endif %}
+</section>
+<a class="panel-open" href="{{ links.url('/knowledge/' ~ doc.family ~ '/' ~ doc.slug) }}">Open full detail →</a>
+{% else %}
+<p class="panel-empty">no knowledge document at '{{ doc_id }}'</p>
+{% endif %}

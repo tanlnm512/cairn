@@ -112,8 +112,14 @@ def _empty_client(tmp_path):
 
 
 def _row_hrefs(html: str) -> list:
-    """The /knowledge/{family}/{slug} hrefs a catalog page carries."""
-    return re.findall(r'href="(/knowledge/[^"?]+)"', html)
+    """The /knowledge/{family}/{slug} hrefs a catalog page carries. The
+    header's relationship-graph link (/knowledge/graph) is navigation,
+    not a row — excluded here."""
+    return [
+        href
+        for href in re.findall(r'href="(/knowledge/[^"?]+)"', html)
+        if href != "/knowledge/graph"
+    ]
 
 
 def _doc_path(doc_id: str) -> str:

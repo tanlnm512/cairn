@@ -41,6 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the workspace's staged `.cairn/ingest-outbox/manifest.json`, or an
   explicit note when a doc was added directly to the store. A store
   predating the relationship index renders empty panels, never an error.
+- The dashboard gained the `/knowledge/graph` relationship canvas (the
+  palette's Knowledge Graph destination, linked from the catalog):
+  every stored doc is a node and every indexed relationship a directed
+  edge drawn exactly as stored — a supersede pair reads as the two-way
+  link ("supersedes" on the newer doc, "superseded-by" on the older)
+  the related CLI and the detail panels report, with edges carrying
+  their `relation` + `kind` so inferred links render dashed and
+  extracted/derived links solid. The legend doubles as the filter:
+  kind/relation chips toggle whole edge groups client-side (no reload,
+  no refetch), the counts line tracks the visible share, and a node
+  click fetches the doc's inspect fragment (`/knowledge/graph/inspect`)
+  into the side panel — identity, relationships with kind badges, and
+  the full-detail link. The canvas re-themes live via the shell's
+  `cairn:theme-changed` broadcast and drops physics under
+  `prefers-reduced-motion: reduce` (the /graph machinery's conventions).
 - Vendored Mermaid 11.17.2 (`mermaid.min.js`, MIT) as the dashboard's last
   external asset: the wiki detail view now loads it from `/static/` via a
   lazy dynamic `import()` that ships only on pages holding a mermaid fence

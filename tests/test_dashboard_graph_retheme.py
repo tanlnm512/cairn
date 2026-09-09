@@ -4,14 +4,14 @@ Four pinned invariants:
 
 - Canvases re-theme through the shell's single ``cairn:theme-changed``
   broadcast: shell.js owns the only ``data-theme`` observer, and the
-  graph/database canvas scripts listen for the event instead of each
-  observing on their own.
+  graph, database, and knowledge-graph canvas scripts listen for the
+  event instead of each observing on their own.
 - The canvas palettes are theme tokens, not JS constants: the per-kind
   node colors live in app.css's theme blocks as ``--kind-*`` and reach
   the canvas through the getComputedStyle proxy — no hex color literal
   remains in the hand-written scripts.
-- The /graph physics simulation is JS-driven motion the reduced-motion
-  media query cannot reach, so the graph setup disables it under
+- The canvas physics simulations are JS-driven motion the reduced-motion
+  media query cannot reach, so the graph setups disable physics under
   ``prefers-reduced-motion: reduce``.
 - The conventional ``/favicon.ico`` path serves the icon — a browser's
   automatic probe must land a 200, never a 404 in the network log — and
@@ -73,10 +73,10 @@ def test_shell_broadcasts_theme_changes_from_a_single_observer():
 
 
 def test_canvas_scripts_listen_instead_of_observing():
-    """The graph and database canvas scripts carry no data-theme observer
-    of their own — they subscribe to the shell's broadcast, so a theme
-    flip has exactly one observer app-wide."""
-    for name in ("app.js", "db-graph.js"):
+    """The graph, database, and knowledge-graph canvas scripts carry no
+    data-theme observer of their own — they subscribe to the shell's
+    broadcast, so a theme flip has exactly one observer app-wide."""
+    for name in ("app.js", "db-graph.js", "knowledge-graph.js"):
         text = _script(name)
         assert "MutationObserver" not in text, name
         assert 'addEventListener("cairn:theme-changed"' in text, name
@@ -111,7 +111,7 @@ def test_hand_written_scripts_carry_no_hex_colors():
     """Every canvas color arrives via a CSS variable — a hex literal in a
     hand-written script is a hardcoded palette that a theme flip cannot
     reach (vendored bundles are excluded from this sweep)."""
-    for name in ("app.js", "db-graph.js", "shell.js"):
+    for name in ("app.js", "db-graph.js", "shell.js", "knowledge-graph.js"):
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b", _script(name)), name
 
 
@@ -132,12 +132,13 @@ def test_kind_tokens_declared_in_both_theme_blocks(tmp_path):
 
 
 def test_graph_setup_reads_reduced_motion_and_drops_physics():
-    """The graph setup consults matchMedia('(prefers-reduced-motion:
-    reduce)') and gates the physics block behind it — CSS collapse cannot
+    """The graph setups consult matchMedia('(prefers-reduced-motion:
+    reduce)') and gate the physics block behind it — CSS collapse cannot
     reach a canvas simulation, so the setup must."""
-    app = _script("app.js")
-    assert 'matchMedia("(prefers-reduced-motion: reduce)")' in app
-    assert "prefersReducedMotion" in app
+    for name in ("app.js", "knowledge-graph.js"):
+        script = _script(name)
+        assert 'matchMedia("(prefers-reduced-motion: reduce)")' in script, name
+        assert "prefersReducedMotion" in script, name
 
 
 # ---------------------------------------------------------------------------

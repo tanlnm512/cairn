@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "_links.html" as links with context %}
+{% block title %}Knowledge Graph — Cairn Dashboard{% endblock %}
+{% block view_title %}Knowledge Graph{% endblock %}
+{% block content %}
+<section class="panel">
+  <nav class="wiki-breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ links.url('/knowledge') }}">Knowledge</a> /
+    <span>Graph</span>
+  </nav>
+  <h1>Knowledge graph</h1>
+  <p class="muted">
+    Ingested documents as nodes, their stored relationships as directed
+    edges — one edge per indexed row, so a supersede pair reads as the
+    two-way link ("supersedes" on the newer doc, "superseded-by" on the
+    older) the related CLI and the detail panels report. Inferred links
+    render dashed; extracted and derived links solid.
+  </p>
+  {% if graph.nodes %}
+  {#- Legend as filter (the /graph pattern): kind + relation chips toggle
+      whole edge groups via client-side DataSet updates — a filter change
+      never reloads or refetches. Hidden until filled; the script renders
+      the chips from the same data the canvas drew, so they cannot drift. -#}
+  <div class="graph-legend" id="knowledge-graph-legend" hidden></div>
+  <p class="muted" id="knowledge-graph-counts">
+    {{ graph.metadata.node_count }} docs — {{ graph.metadata.edge_count }} of
+    {{ graph.metadata.edge_count }} edges shown
+  </p>
+  <div class="graph-layout">
+    <div class="graph-stage">
+      <div id="knowledge-graph-canvas" class="graph-canvas"></div>
+      {#- Overlay controls float over the canvas's bottom-left; the canvas
+          script wires the data-graph-action buttons to vis zoom/fit. -#}
+      <div class="graph-overlay">
+        <button type="button" data-graph-action="zoom-in" title="Zoom in" aria-label="Zoom in">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button type="button" data-graph-action="zoom-out" title="Zoom out" aria-label="Zoom out">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+        </button>
+        <button type="button" data-graph-action="fit" title="Fit view" aria-label="Fit view">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+      </div>
+    </div>
+    {#- Inspect panel: a node click fetches the doc's summary fragment
+        from /knowledge/graph/inspect into this panel (the canvas owns
+        the click, the server owns the markup). Hidden when nothing is
+        selected so the canvas keeps the full width. -#}
+    <aside id="knowledge-graph-panel" class="graph-panel" aria-live="polite" hidden></aside>
+  </div>
+  {#- A selected store rides the page for the inspect fetch, the same
+      #graph-data data-store seam /graph uses. -#}
+  <script id="knowledge-graph-data" type="application/json"{% if store_key %} data-store="{{ store_key }}"{% endif %}>{{ graph | tojson }}</script>
+  {% else %}
+  <p class="empty-state">No knowledge documents — ingest some first: <code>cairn knowledge ingest</code>.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+{% if graph.nodes %}
+<script src="{{ url_for('static', path='/vis-network.min.js') }}?v={{ asset_version }}"></script>
+<script src="{{ url_for('static', path='/knowledge-graph.js') }}?v={{ asset_version }}"></script>
+{% endif %}
+{% endblock %}

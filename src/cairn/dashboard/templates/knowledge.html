@@ -7,6 +7,7 @@
 <section class="panel">
   <h1>Knowledge</h1>
   <p class="muted">Ingested documents — decisions, specs, workflows, business rules — and their relationships.</p>
+  <p class="muted"><a href="{{ links.url('/knowledge/graph') }}">Open the relationship graph</a> — the same corpus as a canvas of doc nodes and typed edges.</p>
   {#- The filter form is an htmx trigger, not a page reload: a change or
       keystroke (delay:300ms) hx-gets the route and morph-swaps the
       results region below. It stays OUTSIDE #knowledge-results so a swap

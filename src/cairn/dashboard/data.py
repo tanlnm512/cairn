@@ -1033,6 +1033,109 @@ def get_knowledge_doc_detail(
     return doc
 
 
+def get_knowledge_graph(
+    conn: Optional[sqlite3.Connection], knowledge_dir: str
+) -> Dict:
+    """The /knowledge/graph canvas data: every stored knowledge doc as a
+    node, every indexed relationship as a directed edge — one edge per
+    ``knowledge_edges`` row, drawn exactly as stored (the index keeps a
+    supersede pair in both directions, so the pair reads as the two-way
+    link the related CLI and the detail panels report), each carrying
+    ``relation`` + ``kind`` so the canvas styles inferred dashed vs
+    extracted/derived solid and the legend can chip both facets. Rows
+    naming docs the bundle no longer resolves draw nothing (never a
+    phantom endpoint between rebuilds). Nodes carry ``id`` (the bare
+    concept id the edges join on), ``title``, ``family`` and ``status``;
+    a pre-index store renders the doc constellation with zero edges, and
+    a doc-less workspace returns empty lists."""
+    bundle = OKFBundle(knowledge_dir)
+    nodes: List[dict] = []
+    for cid in bundle.list_concepts(prefix="knowledge/"):
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue
+        doc_id = normalize_doc_id(bundle, cid)
+        family, _slug = _split_doc_id(doc_id)
+        nodes.append(
+            {
+                "id": doc_id,
+                "title": concept.title or doc_id,
+                "family": family,
+                "status": concept.extensions.get("doc_status") or "active",
+            }
+        )
+    nodes.sort(key=lambda n: n["id"])
+    node_ids = {n["id"] for n in nodes}
+    edges: List[dict] = []
+    if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
+        seen = set()
+        for doc_id, related_id, relation, kind in conn.execute(
+            "SELECT doc_id, related_id, relation, kind FROM knowledge_edges "
+            "ORDER BY doc_id, related_id, relation, kind"
+        ).fetchall():
+            key = (doc_id, related_id, relation, kind)
+            if (
+                key in seen
+                or doc_id not in node_ids
+                or related_id not in node_ids
+            ):
+                continue
+            seen.add(key)
+            edges.append(
+                {
+                    "source": doc_id,
+                    "target": related_id,
+                    "relation": relation,
+                    "kind": kind,
+                }
+            )
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metadata": {"node_count": len(nodes), "edge_count": len(edges)},
+    }
+
+
+def get_knowledge_graph_inspect(
+    conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str
+) -> Optional[dict]:
+    """The knowledge graph inspect panel's payload for one doc: identity
+    (bare id, family/slug detail-href parts, title, status, tags) plus
+    the doc's relationships — the same ``related_docs`` rows the detail
+    panels render, grouped by relation with kind labels. Unknown ids are
+    None (the route renders the panel's not-found note, matching
+    /graph/inspect's found=False contract); a pre-index store renders
+    the identity with zero relationships."""
+    bundle = OKFBundle(knowledge_dir)
+    try:
+        concept = resolve_knowledge_doc(bundle, doc_id)
+    except ValueError:
+        return None
+    bare_id = normalize_doc_id(bundle, concept.concept_id)
+    family, slug = _split_doc_id(bare_id)
+    related: List[dict] = []
+    if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
+        from cairn.knowledge.index import related_docs
+
+        related = related_docs(conn, bundle, bare_id)
+        for neighbor in related:
+            neighbor["family"], neighbor["slug"] = _split_doc_id(
+                neighbor["doc_id"]
+            )
+    return {
+        "found": True,
+        "id": bare_id,
+        "family": family,
+        "slug": slug,
+        "title": concept.title or bare_id,
+        "status": concept.extensions.get("doc_status") or "active",
+        "tags": list(concept.tags),
+        "related": related,
+        "related_groups": _group_related(related),
+    }
+
+
 HISTORY_PAGE_SIZE = 50
 
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-# The fifteen main views (same inventory the asset tests crawl).
+# The sixteen main views (same inventory the asset tests crawl).
 _MAIN_VIEWS = (
     "/",
     "/workspaces",
@@ -35,6 +35,7 @@ _MAIN_VIEWS = (
     "/chains",
     "/health",
     "/knowledge",
+    "/knowledge/graph",
     "/memory",
     "/tasks",
     "/wiki",

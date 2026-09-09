@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-# The fifteen main views — every page the shell renders must reference
+# The sixteen main views — every page the shell renders must reference
 # local assets only.
 _MAIN_VIEWS = (
     "/",
@@ -29,6 +29,7 @@ _MAIN_VIEWS = (
     "/chains",
     "/health",
     "/knowledge",
+    "/knowledge/graph",
     "/memory",
     "/tasks",
     "/wiki",

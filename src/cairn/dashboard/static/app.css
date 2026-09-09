@@ -932,6 +932,13 @@ body.app-shell {
   color: var(--text-3);
 }
 
+/* The inspect panel's exit link to the doc's full detail page. */
+.panel-open {
+  display: inline-block;
+  margin-top: 0.7rem;
+  font-weight: 500;
+}
+
 @media (max-width: 900px) {
   .graph-layout {
     grid-template-columns: 1fr;
@@ -1019,6 +1026,29 @@ body.app-shell {
   height: 10px;
   border-radius: 999px;
   flex: none;
+}
+
+/* Knowledge-graph legend groups: a "kind" / "relation" word heads each
+   chip run, and the kind chips' swatch previews the exact edge line
+   style (solid extracted/derived, dashed inferred) with the color set
+   from the token palette by the canvas script. */
+.legend-group-label {
+  align-self: center;
+  padding-right: 0.2rem;
+  color: var(--text-4);
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 14px;
+  border-top: 2px solid;
+  flex: none;
+}
+
+.legend-line-dashed {
+  border-top-style: dashed;
 }
 
 #graph-counts strong {

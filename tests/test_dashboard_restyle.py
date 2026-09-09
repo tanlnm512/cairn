@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-# The fifteen main views (same inventory the asset tests crawl).
+# The sixteen main views (same inventory the asset tests crawl).
 _MAIN_VIEWS = (
     "/",
     "/workspaces",
@@ -31,6 +31,7 @@ _MAIN_VIEWS = (
     "/chains",
     "/health",
     "/knowledge",
+    "/knowledge/graph",
     "/memory",
     "/tasks",
     "/wiki",
@@ -264,7 +265,7 @@ def test_main_views_carry_no_inline_style_blocks(tmp_path):
 
 
 def test_every_main_view_renders_the_restyled_shell(tmp_path):
-    """All fifteen main views return 200 and render the shared shell —
+    """All sixteen main views return 200 and render the shared shell —
     sidebar, topbar, and a non-empty main region — on the token-driven
     stylesheet (no blank or unstyled views)."""
     client = _client(tmp_path)
