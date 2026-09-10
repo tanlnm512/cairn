@@ -1,8 +1,8 @@
 """Unit tests for the dashboard shell context (cairn.dashboard.shell).
 
 Pure-function tests, no HTTP: the nav-as-data contract (sidebar and
-palette render from one source, hrefs ride the store like the old
-hand-written anchors) and the workspace label policy.
+palette render from one source, hrefs ride the selected store) and the
+workspace label policy.
 """
 
 from cairn.dashboard.shell import (
@@ -65,8 +65,7 @@ def test_shell_context_groups_nav_and_flags_active_by_path():
     ]
     assert [item["id"] for item in active] == ["graph"]
 
-    # A wiki detail path still flags the wiki item (startswith, the old
-    # hand-written rule).
+    # A wiki detail path still flags the wiki item (prefix match).
     ctx = shell_context(_stores(), "", "/wiki/demo/overview")
     active = [
         item

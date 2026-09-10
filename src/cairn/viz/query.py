@@ -174,11 +174,8 @@ _SCOPE_CAP = 50
 _SCOPE_EDGE_CAP = 100
 
 # Paths whose symbols are generated or third-party noise, not hand-written
-# structure. Minified bundles dominate the degree ranking (one vendored
-# vis-network.min.js carried 1,060 symbols whose internal calls outrank every
-# real hub), and the scanner's dir/size layers cannot catch a vendored file
-# committed under src/ — the filename marker does. Matches the scanner's
-# DEFAULT_SKIP_DIRS intent for stores built before those layers existed.
+# structure. A vendored file can sit under src/, outside the scanner's
+# skip dirs, so the filename marker is checked on every candidate path.
 _VENDORED_SEGMENTS = {"vendor", "dist", "node_modules"}
 
 
@@ -196,20 +193,17 @@ def get_module_graph(
     """Symbols in a module + their internal edges, curated for usefulness.
 
     An empty ``module`` (the dashboard's default landing view) matches every
-    path, so "first 50 by rowid" used to fill the canvas with an arbitrary
-    sample — dominated by whichever files the indexer touched first (in
-    practice, tests). Candidates are instead ranked by degree (fan-in +
-    fan-out of any edges) then name, so the cap lands on the symbols that
-    carry the module's structure. Tests are excluded by default (the
-    ``is_test_symbol`` heuristics from the impact layer); ``include_tests``
-    opts back in. Symbols from vendored/minified assets
-    (:func:`_is_vendored_path`) are never candidates — they are generated
-    noise in every scope, so unlike tests they have no opt-in. Edges are
-    deduplicated on ``(source, target, kind)``: the join is by bare symbol
-    name, so same-named symbols across repos multiply one logical edge into
-    many parallel rows (which also destabilize vis-network's force layout
-    into a blank canvas). ``metadata.tests_included``, ``metadata.truncated``
-    and ``metadata.vendored_excluded`` report all three choices honestly.
+    path. Candidates are ranked by degree (fan-in + fan-out of any edges)
+    then name, so the cap lands on the symbols that carry the module's
+    structure. Tests are excluded by default (the ``is_test_symbol``
+    heuristics from the impact layer); ``include_tests`` opts back in.
+    Symbols from vendored/minified assets (:func:`_is_vendored_path`) are
+    never candidates — they are generated noise in every scope, so unlike
+    tests they have no opt-in. Edges are deduplicated on ``(source,
+    target, kind)``: the join is by bare symbol name, so same-named symbols
+    across repos multiply one logical edge into many parallel rows.
+    ``metadata.tests_included``, ``metadata.truncated`` and
+    ``metadata.vendored_excluded`` report all three choices honestly.
     """
     from ..graph.tests import is_test_symbol
 
