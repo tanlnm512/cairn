@@ -249,18 +249,21 @@ def test_graph_route_unknown_scope_falls_back_to_module(tmp_path):
 
 
 @requires_vis_network
-def test_graph_route_symbol_scope_without_focus_guides_to_search(tmp_path):
-    """Symbol scope is focus-driven: with no focal name the empty state
-    says what to provide instead of the generic adjust-the-controls line
-    (which stays for every other scope/empty combination)."""
+def test_graph_route_symbol_scope_without_focus_draws_overview(tmp_path):
+    """Symbol scope with no focal name draws the workspace overview
+    (degree-ranked, capped) instead of an empty canvas — matching the
+    module scope's empty-filter behavior; a focus that names nothing
+    still renders the generic empty state."""
     client = _client(tmp_path, seed=True)
     resp = client.get("/graph", params={"scope": "symbol"})
     assert resp.status_code == 200
-    assert "Symbol box above" in resp.text
+    payload = _embedded_graph(resp.text)
+    assert payload["metadata"]["scope"] == "symbol"
+    assert {"demo_main", "demo_helper", "demo_util"} <= {
+        n["id"] for n in payload["nodes"]
+    }
     assert "No nodes for this scope" not in resp.text
 
-    # A focus that names nothing is a searched-and-missed case, not a
-    # missing focus: the generic line applies.
     resp = client.get("/graph", params={"scope": "symbol", "focus": "nope"})
     assert resp.status_code == 200
     assert "No nodes for this scope" in resp.text

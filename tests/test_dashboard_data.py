@@ -2583,6 +2583,99 @@ def test_module_scope_dedupes_cross_repo_parallel_edges(fresh_db):
     assert kinds == [("caller", "helper", "calls"), ("caller", "helper", "imports")]
 
 
+def test_symbol_scope_empty_focus_draws_the_overview(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_hubs(fresh_db)
+    graph = get_graph(fresh_db, scope="symbol")  # no focus
+
+    ids = {n["id"] for n in graph["nodes"]}
+    assert ids == {"hub_main", "in_a", "in_b", "out_a", "out_b", "pack_leaf"}
+    assert graph["metadata"]["scope"] == "symbol"
+    assert graph["metadata"]["tests_included"] is False
+    assert graph["metadata"]["node_count"] == 6
+    assert graph["metadata"]["edge_count"] == 4  # he1-he4; he5's test source is dropped
+    # Ranked by degree: the hub first, the unconnected leaf last.
+    assert graph["nodes"][0]["id"] == "hub_main"
+    assert graph["nodes"][-1]["id"] == "pack_leaf"
+
+
+def test_symbol_scope_overview_include_tests_opt_in(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_hubs(fresh_db)
+    graph = get_graph(fresh_db, scope="symbol", include_tests=True)
+
+    ids = {n["id"] for n in graph["nodes"]}
+    assert "test_case_00" in ids
+    assert "hub_main" in ids
+    assert graph["metadata"]["tests_included"] is True
+    assert graph["metadata"]["truncated"] is True  # 61 candidates > the 50 cap
+
+
+def test_symbol_scope_overview_excludes_vendored_and_minified_symbols(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_vendored(fresh_db)
+    graph = get_graph(fresh_db, scope="symbol")
+
+    ids = {n["id"] for n in graph["nodes"]}
+    # The minified pair has the workspace's top degree but is never a
+    # candidate; the dist/ dir is excluded by the same rule.
+    assert "append" not in ids and "emit" not in ids and "dist_helper" not in ids
+    assert ids == {"real_main", "real_helper"}
+    assert graph["metadata"]["vendored_excluded"] == 3
+    # The dist->real edge dies with its vendored source node.
+    assert graph["metadata"]["edge_count"] == 1
+
+
+def test_symbol_scope_overview_dedupes_cross_repo_parallel_edges(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    # Same bare names in two repos: the name-based edge join sees three
+    # rows for ONE logical edge, plus a distinct kind that must survive.
+    fresh_db.executemany(
+        "INSERT INTO repos (id, name, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("r1", "r1", ".", "python", "2026-08-28T00:00:00"),
+            ("r2", "r2", ".", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("f_r1", "r1", "src/one.py", "python", "2026-08-28T00:00:00"),
+            ("f_r2", "r2", "src/two.py", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, docstring) "
+        "VALUES (?, ?, ?, ?, ?, NULL)",
+        [
+            ("s_a1", "f_r1", "caller", "one.caller", "function"),
+            ("s_b1", "f_r1", "helper", "one.helper", "function"),
+            ("s_a2", "f_r2", "caller", "two.caller", "function"),
+            ("s_b2", "f_r2", "helper", "two.helper", "function"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            ("pe1", "s_a1", "s_b1", "calls"),
+            ("pe2", "s_a2", "s_b2", "calls"),
+            ("pe3", "s_a1", "s_b2", "calls"),
+            ("pe4", "s_a2", "s_b1", "imports"),
+        ],
+    )
+    fresh_db.commit()
+
+    graph = get_graph(fresh_db, scope="symbol")
+    # One calls edge caller->helper; the distinct-kind imports edge stays.
+    assert graph["metadata"]["edge_count"] == 2
+    kinds = sorted((e["source"], e["target"], e["kind"]) for e in graph["edges"])
+    assert kinds == [("caller", "helper", "calls"), ("caller", "helper", "imports")]
+
+
 # ---------------------------------------------------------------------------
 # Symbol inspect payload (graph-tab side panel): one call answering
 # "what is this, what feeds it, what does it touch, what breaks".

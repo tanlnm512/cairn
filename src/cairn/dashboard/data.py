@@ -134,11 +134,16 @@ def get_graph(
     """Dispatch to a viz query scope; returns its ``{nodes, edges, metadata}``
     verbatim — the scope functions already cap result size (LIMIT 30/50,
     ``max_nodes``), and their metadata carries the possibly-truncated counts.
-    ``include_tests`` only applies to the module scope (the other scopes are
-    focus-driven, where the user asked for exactly that symbol's world).
+    The symbol scope with no focal name draws the workspace-wide overview
+    (degree-ranked, capped), matching the module scope's empty-filter
+    behavior. ``include_tests`` applies to the module scope and the symbol
+    overview; the focus-driven scopes take the user's exact word instead.
     """
     if scope == "symbol":
-        return viz_query.get_symbol_graph(conn, focus or "", 1 if depth is None else depth)
+        name = (focus or "").strip()
+        if not name:
+            return viz_query.get_symbol_overview(conn, include_tests=include_tests)
+        return viz_query.get_symbol_graph(conn, name, 1 if depth is None else depth)
     if scope == "module":
         return viz_query.get_module_graph(conn, focus or "", include_tests=include_tests)
     if scope == "impact":

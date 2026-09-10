@@ -109,11 +109,7 @@
     <aside id="graph-panel" class="graph-panel" aria-live="polite" hidden></aside>
   </div>
   {% else %}
-  {%- if scope == "symbol" and not focus %}
-  <p class="empty-state">Symbol scope centers on one symbol — search in the Symbol box above or enter a name in Focus, then Apply.</p>
-  {%- else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
-  {%- endif %}
   {% endif %}
   {#- FR-003: a selected store rides the page for app.js (search and
       expansion fetches stay on that store); no selection renders the tag
