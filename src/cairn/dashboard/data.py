@@ -134,10 +134,13 @@ def get_graph(
     """Dispatch to a viz query scope; returns its ``{nodes, edges, metadata}``
     verbatim — the scope functions already cap result size (LIMIT 30/50,
     ``max_nodes``), and their metadata carries the possibly-truncated counts.
-    The symbol scope with no focal name draws the workspace-wide overview
-    (degree-ranked, capped), matching the module scope's empty-filter
-    behavior. ``include_tests`` applies to the module scope and the symbol
-    overview; the focus-driven scopes take the user's exact word instead.
+    An empty filter draws all of it, per scope: the symbol and impact scopes
+    with no focal name draw the workspace-wide overview (degree-ranked,
+    capped), the module scope's empty filter matches every path, and the
+    repo scope with no repo id buckets every repo in the store. Only a
+    filter that names nothing yields the empty graph. ``include_tests``
+    applies to the module scope and the overviews; the focus-driven scopes
+    take the user's exact word instead.
     """
     if scope == "symbol":
         name = (focus or "").strip()
@@ -147,7 +150,12 @@ def get_graph(
     if scope == "module":
         return viz_query.get_module_graph(conn, focus or "", include_tests=include_tests)
     if scope == "impact":
-        return viz_query.get_impact_graph(conn, focus or "", 3 if depth is None else depth)
+        name = (focus or "").strip()
+        if not name:
+            return viz_query.get_symbol_overview(
+                conn, include_tests=include_tests, scope="impact"
+            )
+        return viz_query.get_impact_graph(conn, name, 3 if depth is None else depth)
     if scope == "deps":
         return viz_query.get_deps_graph(conn)
     if scope == "repo":

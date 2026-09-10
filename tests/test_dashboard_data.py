@@ -2613,6 +2613,64 @@ def test_symbol_scope_overview_include_tests_opt_in(fresh_db):
     assert graph["metadata"]["truncated"] is True  # 61 candidates > the 50 cap
 
 
+def test_impact_scope_empty_focus_draws_the_overview(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    _seed_hubs(fresh_db)
+    graph = get_graph(fresh_db, scope="impact")  # no focus
+
+    ids = {n["id"] for n in graph["nodes"]}
+    assert ids == {"hub_main", "in_a", "in_b", "out_a", "out_b", "pack_leaf"}
+    # The overview rides under the requesting scope's label.
+    assert graph["metadata"]["scope"] == "impact"
+    assert graph["metadata"]["tests_included"] is False
+
+
+def test_repo_scope_empty_repo_buckets_every_repo(fresh_db):
+    from cairn.dashboard.data import get_graph
+
+    fresh_db.executemany(
+        "INSERT INTO repos (id, name, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("r1", "r1", ".", "python", "2026-08-28T00:00:00"),
+            ("r2", "r2", ".", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language, indexed_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("f_r1a", "r1", "src/one/core.py", "python", "2026-08-28T00:00:00"),
+            ("f_r1b", "r1", "src/one/util.py", "python", "2026-08-28T00:00:00"),
+            ("f_r2a", "r2", "src/two/core.py", "python", "2026-08-28T00:00:00"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, docstring) "
+        "VALUES (?, ?, ?, ?, ?, NULL)",
+        [
+            ("s_1a", "f_r1a", "one_core", "one.core.one_core", "function"),
+            ("s_1b", "f_r1b", "one_util", "one.util.one_util", "function"),
+            ("s_2a", "f_r2a", "two_core", "two.core.two_core", "function"),
+        ],
+    )
+    fresh_db.commit()
+
+    graph = get_graph(fresh_db, scope="repo")  # no repo id
+    ids = {n["id"] for n in graph["nodes"]}
+    # Buckets span both repos' top-level structure.
+    assert ids == {"src/one/core.py (1)", "src/one/util.py (1)", "src/two/core.py (1)"}
+    assert graph["metadata"]["repo"] == ""
+    assert graph["metadata"]["node_count"] == 3
+    assert graph["metadata"]["truncated"] is False
+
+    # A named repo still scopes to it.
+    graph = get_graph(fresh_db, scope="repo", repo="r1")
+    assert {n["id"] for n in graph["nodes"]} == {
+        "src/one/core.py (1)",
+        "src/one/util.py (1)",
+    }
+
+
 def test_symbol_scope_overview_excludes_vendored_and_minified_symbols(fresh_db):
     from cairn.dashboard.data import get_graph
 

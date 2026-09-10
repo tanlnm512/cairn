@@ -65,21 +65,34 @@ def get_tree(conn: sqlite3.Connection, repo: str, prefix: str = "") -> List[Tupl
 
 
 def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[Tuple[str, int]]:
-    """Group a repo's symbols by their top-level source directory."""
+    """Group a repo's symbols by their top-level source directory.
+
+    An empty ``repo`` spans every repo in the store — the bucket view for
+    the workspace-level scopes with no repo filter.
+    """
     cur = conn.cursor()
     # files.path is repo-relative; fetch repos.path to strip it if a DB row
     # still holds an absolute path.
-    repo_row = cur.execute(
-        "SELECT path FROM repos WHERE id = ?", (repo,)
-    ).fetchone()
+    repo_row = None
+    if repo:
+        repo_row = cur.execute(
+            "SELECT path FROM repos WHERE id = ?", (repo,)
+        ).fetchone()
     legacy_repo_root = repo_row["path"] if repo_row else ""
-    rows = cur.execute(
-        """SELECT f.path AS path, COUNT(s.id) AS symbols
-           FROM files f LEFT JOIN symbols s ON s.file_id = f.id
-           WHERE f.repo_id = ?
-           GROUP BY f.id""",
-        (repo,),
-    ).fetchall()
+    if repo:
+        rows = cur.execute(
+            """SELECT f.path AS path, COUNT(s.id) AS symbols
+               FROM files f LEFT JOIN symbols s ON s.file_id = f.id
+               WHERE f.repo_id = ?
+               GROUP BY f.id""",
+            (repo,),
+        ).fetchall()
+    else:
+        rows = cur.execute(
+            """SELECT f.path AS path, COUNT(s.id) AS symbols
+               FROM files f LEFT JOIN symbols s ON s.file_id = f.id
+               GROUP BY f.id""",
+        ).fetchall()
     # Bucket by the first 2-3 path segments.
     buckets: dict[str, int] = {}
     for r in rows:
