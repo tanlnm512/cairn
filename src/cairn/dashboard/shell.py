@@ -18,12 +18,12 @@ test). Two owners:
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
 
-# The label shown for the no-selection option: the launch store the CLI
-# resolved (the dashboard process's own db), which the selector can always
-# return to.
+# Fallback label for the no-selection option: the launch db is a custom
+# path outside the store registry, so no workspace name is derivable.
 LAUNCH_LABEL = "Launch workspace"
 
 # Sidebar + palette view grouping. Order within a section is the display
@@ -75,6 +75,21 @@ def workspace_label(path: Optional[str], key: str) -> str:
     return key
 
 
+def launch_option_label(stores: List[dict], launch_db: Optional[str]) -> str:
+    """Label for the selector's no-selection option: the launch
+    workspace's own name when the launch db is a registered store, so a
+    dashboard launched from one workspace never reads as
+    workspace-agnostic; ``LAUNCH_LABEL`` stands in for a custom ``--db``
+    outside the registry."""
+    if not launch_db:
+        return LAUNCH_LABEL
+    key = Path(launch_db).parent.name
+    for row in stores:
+        if row["key"] == key and row.get("state") == "populated":
+            return f"{workspace_label(row.get('path'), key)} (launch)"
+    return LAUNCH_LABEL
+
+
 def selector_context(
     stores: List[dict], store_key: str
 ) -> dict:
@@ -102,7 +117,7 @@ def _populated_options(stores: List[dict]) -> List[dict]:
 
 
 def shell_context(
-    stores: List[dict], store_key: str, path: str
+    stores: List[dict], store_key: str, path: str, launch_db: Optional[str] = None
 ) -> dict:
     """Everything base.html's chrome renders from, for one request.
 
@@ -112,7 +127,9 @@ def shell_context(
     the request path exactly as the old hand-written startswith checks
     did. ``palette`` seeds the command palette: the same view list plus
     the populated workspaces (the palette switches stores through the
-    same URL-rewrite behavior as the topbar selector).
+    same URL-rewrite behavior as the topbar selector). ``launch_db`` is
+    the app factory's launch db path; when it names a registered store,
+    the selector's no-selection option carries that workspace's name.
     """
     nav_query = "?store=" + quote(store_key, safe="") if store_key else ""
     options = _populated_options(stores)
@@ -139,7 +156,7 @@ def shell_context(
         "selector": {
             "options": options,
             "selected": store_key,
-            "launch_label": LAUNCH_LABEL,
+            "launch_label": launch_option_label(stores, launch_db),
         },
         "nav": {"sections": sections},
         "palette": {"views": palette_views, "workspaces": options},
