@@ -1,16 +1,29 @@
 """Tree-sitter Python parser.
 
-Extracts class/function definitions, calls, imports, and base classes (inheritance)
-into the shared ParsedFile model.
+Extracts class/function definitions, calls, imports, base classes (inheritance
+as `extends` edges), decorators (`decorates`), and signature type annotations
+(`references`) into the shared ParsedFile model.
 """
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 from tree_sitter import Node
 
 from ._registry import get_parser as _get_ts_parser
 from .base import BaseParser, Edge, Import, ParsedFile, Symbol, TreeSitterParserBase
+
+# Annotation tokens that never name a repo symbol; excluded from references
+# edges so builtin typing shapes stay out of the graph.
+_BUILTIN_TYPE_TOKENS = frozenset({
+    "any", "bool", "bytes", "callable", "class", "cls", "dict", "final",
+    "float", "frozenset", "int", "iterable", "list", "mapping", "none",
+    "optional", "self", "sequence", "set", "str", "tuple", "type", "typing",
+    "union",
+})
+
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class PythonParser(BaseParser, TreeSitterParserBase):
@@ -20,6 +33,10 @@ class PythonParser(BaseParser, TreeSitterParserBase):
         super().__init__()
         self._parser = _get_ts_parser("python")
         self._pending_edges: List[Edge] = []
+        # Decorators sit on the `decorated_definition` wrapper, not on the
+        # inner class/function_definition node. Set while the wrapper's
+        # children are visited so the definition handlers can read them.
+        self._active_decorators: List[Node] = []
 
     def parse(self, path: str) -> ParsedFile:
         import hashlib
@@ -35,6 +52,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
         # Parsers are cached singletons reused across files, so reset all
         # per-file accumulators here.
         self._pending_edges = []
+        self._active_decorators = []
         self._scope = []
         self._callable_scope = []
         self._walk(tree.root_node, source, pf)
@@ -48,10 +66,28 @@ class PythonParser(BaseParser, TreeSitterParserBase):
     def _visit(self, node: Node, source: bytes, pf: ParsedFile):
         t = node.type
 
-        if t in ("import_statement", "import_from_statement"):
+        if t == "import_statement" or t == "import_from_statement":
             imp = self._parse_import(node, source)
             if imp:
                 pf.imports.append(imp)
+            return
+
+        if t == "decorated_definition":
+            # (decorator ... definition): make the wrapper's decorators
+            # visible to the inner definition's parse, then descend.
+            self._active_decorators = [
+                c for c in node.children if c.type == "decorator"
+            ]
+            try:
+                self._walk(node, source, pf)
+            finally:
+                self._active_decorators = []
+            return
+
+        if t == "decorator":
+            # The decorator->definition relationship is captured as a
+            # `decorates` edge; walking in would duplicate it as a stray
+            # module-level `calls` edge.
             return
 
         if t == "class_definition":
@@ -94,7 +130,8 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 break
         if not name:
             return None
-        # Inheritance: argument_list holds base classes.
+        # Inheritance: argument_list holds base classes (class inheritance —
+        # `extends`, matching the other parsers' convention).
         for child in node.children:
             if child.type == "argument_list":
                 for arg in child.children:
@@ -102,11 +139,12 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                         self._pending_edges.append(
                             Edge(
                                 name,
-                                "implements",
+                                "extends",
                                 self._node_text(arg, source).strip(),
                                 node.start_point[0] + 1,
                             )
                         )
+        self._emit_decorator_edges(node, source, name)
         # decorators as modifiers
         mods = self._collect_decorators(node, source)
         doc = self._extract_docstring(node, source)
@@ -141,6 +179,8 @@ class PythonParser(BaseParser, TreeSitterParserBase):
             grandparent = parent.parent
             if grandparent is not None and grandparent.type == "class_definition":
                 kind = "method"
+        self._emit_decorator_edges(node, source, name)
+        self._emit_type_references(node, source, name)
         mods = self._collect_decorators(node, source)
         doc = self._extract_docstring(node, source)
         # async detection
@@ -181,12 +221,81 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                     return text if text else None
         return None
 
+    def _decorator_nodes(self, node: Node) -> List[Node]:
+        """Decorators for a definition: the enclosing decorated_definition's
+        wrapper-level decorators, plus any directly on the node."""
+        nodes = list(getattr(self, "_active_decorators", []))
+        nodes.extend(c for c in node.children if c.type == "decorator")
+        return nodes
+
     def _collect_decorators(self, node: Node, source: bytes) -> List[str]:
         mods = []
-        for child in node.children:
-            if child.type == "decorator":
-                mods.append(self._node_text(child, source).strip())
+        for child in self._decorator_nodes(node):
+            mods.append(self._node_text(child, source).strip())
         return mods
+
+    def _emit_decorator_edges(self, node: Node, source: bytes, owner: str) -> None:
+        """`decorates` edges: owner -> each decorator's callable name.
+
+        `@app.route("/x")` -> target `route` (the attribute tail, matching
+        how call edges name their targets); `@functools.lru_cache` ->
+        `lru_cache`. Decorators that don't resolve to a symbol simply stay
+        unresolved edges, like builtin callees.
+        """
+        for child in self._decorator_nodes(node):
+            text = self._node_text(child, source).strip().lstrip("@")
+            name = text.split("(", 1)[0].strip()
+            if "." in name:
+                name = name.rsplit(".", 1)[-1]
+            if name and _IDENT_RE.fullmatch(name):
+                self._pending_edges.append(
+                    Edge(
+                        owner,
+                        "decorates",
+                        name,
+                        child.start_point[0] + 1,
+                    )
+                )
+
+    def _emit_type_references(self, node: Node, source: bytes, owner: str) -> None:
+        """`references` edges: owner -> classes named in signature annotations.
+
+        Covers typed parameters and the return annotation of
+        function/method definitions. Subscripted shapes (`Optional[Foo]`,
+        `list[Bar]`) contribute their inner identifier tokens; builtin
+        typing tokens are filtered. Dotted paths contribute their segments
+        (the tail usually resolves; the qualifier usually does not).
+        """
+        type_nodes: List[Node] = []
+        params = node.child_by_field_name("parameters")
+        if params is not None:
+            for child in params.children:
+                ann = child.child_by_field_name("type")
+                if ann is not None:
+                    type_nodes.append(ann)
+        ret = node.child_by_field_name("return_type")
+        if ret is not None:
+            type_nodes.append(ret)
+        seen = set()
+        for ann in type_nodes:
+            text = self._node_text(ann, source)
+            for tok in _IDENT_RE.findall(text):
+                lowered = tok.lower()
+                if (
+                    lowered in _BUILTIN_TYPE_TOKENS
+                    or tok == owner
+                    or tok in seen
+                ):
+                    continue
+                seen.add(tok)
+                self._pending_edges.append(
+                    Edge(
+                        owner,
+                        "references",
+                        tok,
+                        ann.start_point[0] + 1,
+                    )
+                )
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
         text = self._node_text(node, source).replace("\n", " ").strip()

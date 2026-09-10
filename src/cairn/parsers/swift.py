@@ -235,29 +235,46 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_inheritance(self, node: Node, source: bytes, child_name: str):
-        for child in node.children:
-            if child.type == "type_inheritance_clause" or (
-                child.type == "inheritance_specifier"
-            ):
-                self._collect_inh_targets(child, source, child_name)
+        """Inheritance-clause targets as ordered `extends`/`implements` edges.
 
-    def _collect_inh_targets(
-        self, node: Node, source: bytes, child_name: str
-    ):
-        if node is None:
-            return
-        if node.type == "type_identifier":
+        A class/actor's first listed type is its superclass (`extends`);
+        every other target, and every target on structs/enums/protocols
+        (where inheritance is protocol conformance only), is `implements`.
+        """
+        specifiers: List[Node] = []
+        for child in node.children:
+            if child.type in ("type_inheritance_clause", "inheritance_specifier"):
+                self._collect_specifiers(child, specifiers)
+        # A grammar build may parse `struct`/`enum` declarations under
+        # class_declaration; the keyword child distinguishes them (the same
+        # inspection _classify_type uses). Only a true class/actor has a
+        # superclass; structs/enums conform to protocols only.
+        keyword_children = {
+            self._node_text(c, source).strip() for c in node.children
+        }
+        superclass_first = node.type == "actor_declaration" or (
+            node.type == "class_declaration"
+            and not keyword_children & {"struct", "enum"}
+        )
+        for i, spec in enumerate(specifiers):
+            name = self._node_text(spec, source).strip().split("<", 1)[0].strip()
+            if not name:
+                continue
             self._pending_edges.append(
                 Edge(
                     child_name,
-                    "implements",
-                    self._node_text(node, source).strip(),
-                    node.start_point[0] + 1,
+                    "extends" if (superclass_first and i == 0) else "implements",
+                    name,
+                    spec.start_point[0] + 1,
                 )
             )
+
+    def _collect_specifiers(self, node: Node, out: List[Node]) -> None:
+        if node.type == "inheritance_specifier":
+            out.append(node)
             return
         for child in node.children:
-            self._collect_inh_targets(child, source, child_name)
+            self._collect_specifiers(child, out)
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
         # call_expression: the called function is the first child; for

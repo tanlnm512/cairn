@@ -41,7 +41,12 @@ class Symbol:
 @dataclass
 class Edge:
     source_name: str  # name of the enclosing symbol that owns this edge
-    kind: str  # calls|imports|implements|extends|uses_type|references
+    # Canonical kinds: calls | extends | implements | embeds | with |
+    # references | decorates | imports | contains (tree-sitter SCIP edges
+    # additionally use call | reference | import). Only calls/call and
+    # extends/implements are structural (traversal); the rest are display
+    # and resolution signals.
+    kind: str
     target_name: str  # unresolved name (resolved to symbol_id later by builder)
     line: int
     column: int = 0

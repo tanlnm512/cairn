@@ -14,7 +14,10 @@
      method, class, interface, enum, module, external) from the same
      palette the legend renders; legend items are clickable filters
      that hide/show every node of that kind — vis hides connected
-     edges with their endpoints.
+     edges with their endpoints. Edges color and dash by edge kind
+     (calls, extends, implements, embeds, with, references, decorates,
+     imports, contains) from the --edge-* tokens; the edge legend's
+     chips filter whole edge kinds the same way.
    - Label discipline: dense graphs (>30 nodes with edges) label only
      the top quarter by degree; edgeless or small graphs label
      everything. Zooming out past 0.45 strips labels graph-wide (the
@@ -115,6 +118,78 @@
       highlight: { background: c, border: cssVar("--text-1") },
       hover: { background: c, border: cssVar("--text-1") }
     };
+  }
+
+  /* ---- Edge-kind coloring & filters ---- */
+
+  /* Edge kinds map to --edge-* theme tokens the same way node kinds map
+     to --kind-*; unknown kinds fall back to the hairline token (the
+     pre-token single-color rendering). Dash patterns separate the
+     structural kinds (solid) from the softer ones (containment, typing,
+     decoration, module imports). */
+  var EDGE_KIND_TOKENS = {
+    calls: "--edge-calls",
+    extends: "--edge-extends",
+    implements: "--edge-implements",
+    embeds: "--edge-embeds",
+    with: "--edge-with",
+    references: "--edge-references",
+    decorates: "--edge-decorates",
+    imports: "--edge-imports",
+    contains: "--edge-contains"
+  };
+  var EDGE_KIND_DASHES = {
+    extends: false,
+    implements: false,
+    embeds: false,
+    references: [4, 3],
+    with: [2, 2],
+    decorates: [1, 3],
+    imports: [6, 4],
+    contains: [2, 4]
+  };
+  function edgeColor(kind) {
+    var token = EDGE_KIND_TOKENS[kind];
+    return (token && cssVar(token)) || cssVar("--line-1");
+  }
+  function edgeDashes(kind) {
+    return EDGE_KIND_DASHES[kind] !== undefined
+      ? EDGE_KIND_DASHES[kind]
+      : false;
+  }
+
+  var idEdgeKind = {};
+  var edgeKindCounts = {};
+  var hiddenEdgeKinds = {};
+
+  function edgeView(e, id) {
+    var kind = e.kind || "";
+    var c = edgeColor(kind);
+    return {
+      id: id,
+      from: e.source,
+      to: e.target,
+      title: [e.kind, e.label].filter(Boolean).join(" — "),
+      dashes: edgeDashes(kind),
+      color: {
+        color: c,
+        highlight: cssVar("--accent"),
+        hover: cssVar("--accent")
+      },
+      hidden: !!hiddenEdgeKinds[kind]
+    };
+  }
+  function setEdgeKindHidden(kind, hidden) {
+    hiddenEdgeKinds[kind] = hidden;
+    var updates = [];
+    edges.get().forEach(function (edge) {
+      if (idEdgeKind[edge.id] === kind) {
+        updates.push({ id: edge.id, hidden: hidden });
+      }
+    });
+    if (updates.length) {
+      edges.update(updates);
+    }
   }
 
   /* Legend items double as filters: toggling a kind hides every node
@@ -221,12 +296,11 @@
       return;
     }
     edgeKeys[key] = true;
-    edgeViews.push({
-      id: edgeViews.length,
-      from: e.source,
-      to: e.target,
-      title: [e.kind, e.label].filter(Boolean).join(" — ")
-    });
+    var id = edgeViews.length;
+    edgeViews.push(edgeView(e, id));
+    var ek = e.kind || "";
+    idEdgeKind[id] = ek;
+    edgeKindCounts[ek] = (edgeKindCounts[ek] || 0) + 1;
   });
   var edges = new vis.DataSet(edgeViews);
   var nextEdgeId = edges.length;
@@ -452,6 +526,69 @@
   }
   renderLegend();
 
+  /* ---- Edge-kind legend: line-style chips with counts, as filters ---- */
+
+  function renderEdgeLegend() {
+    var el = document.getElementById("edge-legend");
+    if (!el) {
+      return;
+    }
+    el.textContent = "";
+    var kinds = Object.keys(edgeKindCounts).filter(function (k) {
+      return k !== "";
+    });
+    if (!kinds.length) {
+      el.hidden = true;
+      return;
+    }
+    kinds
+      .sort(function (a, b) {
+        return edgeKindCounts[b] - edgeKindCounts[a] || (a < b ? -1 : 1);
+      })
+      .forEach(function (k) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "legend-item" + (hiddenEdgeKinds[k] ? " off" : "");
+        item.setAttribute("data-edge-kind", k);
+        item.title = "toggle " + k + " edges";
+        var line = document.createElement("span");
+        line.className =
+          "legend-line" + (edgeDashes(k) ? " legend-line-dashed" : "");
+        line.style.borderColor = edgeColor(k);
+        var name = document.createElement("span");
+        name.className = "legend-name";
+        name.textContent = k;
+        var count = document.createElement("span");
+        count.className = "legend-count";
+        count.textContent = edgeKindCounts[k];
+        item.appendChild(line);
+        item.appendChild(name);
+        item.appendChild(count);
+        el.appendChild(item);
+      });
+    el.hidden = false;
+  }
+
+  var edgeLegendBar = document.getElementById("edge-legend");
+  if (edgeLegendBar) {
+    edgeLegendBar.addEventListener("click", function (event) {
+      var item =
+        event.target && event.target.closest
+          ? event.target.closest(".legend-item")
+          : null;
+      if (!item || !edgeLegendBar.contains(item)) {
+        return;
+      }
+      var kind = item.getAttribute("data-edge-kind");
+      if (!kind || !(kind in edgeKindCounts)) {
+        return;
+      }
+      setEdgeKindHidden(kind, !hiddenEdgeKinds[kind]);
+      renderEdgeLegend();
+    });
+  }
+  renderEdgeLegend();
+
   /* A theme flip re-colors the live network: theme-derived options via
      setOptions, node colors via a single batched update from the token
      palette, then the legend re-renders. The flip arrives as the shell's
@@ -469,7 +606,26 @@
     if (updates.length) {
       nodes.update(updates);
     }
+    var edgeUpdates = [];
+    edges.get().forEach(function (edge) {
+      var k = idEdgeKind[edge.id];
+      if (k !== undefined) {
+        var c = edgeColor(k);
+        edgeUpdates.push({
+          id: edge.id,
+          color: {
+            color: c,
+            highlight: cssVar("--accent"),
+            hover: cssVar("--accent")
+          }
+        });
+      }
+    });
+    if (edgeUpdates.length) {
+      edges.update(edgeUpdates);
+    }
     renderLegend();
+    renderEdgeLegend();
   }
   document.addEventListener("cairn:theme-changed", applyTheme);
   var pending = {};
@@ -507,18 +663,17 @@
         return;
       }
       edgeKeys[key] = true;
-      added.push({
-        id: nextEdgeId,
-        from: e.source,
-        to: e.target,
-        title: [e.kind, e.label].filter(Boolean).join(" — ")
-      });
+      added.push(edgeView(e, nextEdgeId));
+      var ek = e.kind || "";
+      idEdgeKind[nextEdgeId] = ek;
+      edgeKindCounts[ek] = (edgeKindCounts[ek] || 0) + 1;
       nextEdgeId += 1;
     });
     if (added.length) {
       edges.add(added);
     }
     renderLegend();
+    renderEdgeLegend();
     refreshCounts(!!(result && result.metadata && result.metadata.truncated));
   }
 

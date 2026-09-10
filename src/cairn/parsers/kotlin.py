@@ -290,6 +290,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             column_end=node.end_point[1],
             modifiers=mods,
         )
+        self._emit_type_references(node, source, name)
         return sym
 
     def _parse_property(self, node: Node, source: bytes) -> Optional[Symbol]:
@@ -322,7 +323,38 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             column_end=node.end_point[1],
             modifiers=mods,
         )
+        self._emit_type_references(node, source, name)
         return sym
+
+    def _emit_type_references(self, node: Node, source: bytes, owner: str) -> None:
+        """`references` edges for ``user_type`` annotations on a declaration's
+        signature (value parameters, return type, property/constructor
+        parameter types). Declaration bodies are excluded — local statements
+        are not part of the API surface, and body-level user_types (local
+        variable types) would dwarf the signature signal.
+        """
+        for child in node.children:
+            if child.type in (
+                "function_body", "class_body", "enum_class_body", "statements",
+            ):
+                continue
+            self._collect_user_types(child, source, owner)
+
+    def _collect_user_types(self, node: Node, source: bytes, owner: str) -> None:
+        if node.type == "user_type":
+            name = self._extract_usertype_name(node, source)
+            if name:
+                self._pending_edges.append(
+                    Edge(
+                        source_name=owner,
+                        kind="references",
+                        target_name=name,
+                        line=node.start_point[0] + 1,
+                    )
+                )
+            return
+        for child in node.children:
+            self._collect_user_types(child, source, owner)
 
     def _parse_class_parameter(self, node: Node, source: bytes) -> Optional[Symbol]:
         """Constructor parameter: [modifiers] (val|var) name : Type.
@@ -340,6 +372,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         if not name or not has_val_or_var:
             return None  # plain ctor param, not a property
         mods = self._collect_modifiers(node, source)
+        self._emit_type_references(node, source, name)
         return Symbol(
             name=name,
             kind="property",

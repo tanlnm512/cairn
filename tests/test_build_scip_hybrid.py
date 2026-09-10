@@ -76,8 +76,11 @@ def test_scip_coexists_with_tree_sitter(tmp_path):
     conn.row_factory = sqlite3.Row
 
     # Foo is merged: one row, source='merged', tree-sitter kind preserved.
+    # (Module symbols are excluded: the file-stem module row for Foo.kt is
+    # a structural node, not a merge candidate.)
     foo_rows = conn.execute(
-        "SELECT name, source, kind FROM symbols WHERE name = 'Foo'"
+        "SELECT name, source, kind FROM symbols WHERE name = 'Foo' "
+        "AND kind != 'module'"
     ).fetchall()
     assert len(foo_rows) == 1, f"expected 1 merged Foo, got {len(foo_rows)}"
     assert foo_rows[0]["source"] == "merged"
@@ -85,7 +88,7 @@ def test_scip_coexists_with_tree_sitter(tmp_path):
 
     # Python still went through tree-sitter (no SCIP index for it).
     bar = conn.execute(
-        "SELECT source FROM symbols WHERE name = 'bar'"
+        "SELECT source FROM symbols WHERE name = 'bar' AND kind != 'module'"
     ).fetchone()
     assert bar is not None
     assert bar["source"] == "tree_sitter"

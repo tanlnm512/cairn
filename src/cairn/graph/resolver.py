@@ -18,12 +18,16 @@ def build_symbol_index(conn: sqlite3.Connection) -> Dict[str, List[Tuple[str, st
     """Build a global bare-name -> symbol index.
 
     Returns ``{name: [(symbol_id, repo, file_id, qualified_name), ...]}``.
+    Module symbols (kind='module') are excluded: they are structural nodes
+    (contains/imports endpoints), not resolution targets -- a file named after
+    its single class would otherwise make every same-name reference ambiguous.
     """
     index: Dict[str, List[Tuple[str, str, str, str]]] = {}
     rows = conn.execute(
         """SELECT s.id AS sid, s.name AS name, s.qualified_name AS qname,
                   f.repo_id AS repo, f.id AS file_id
-           FROM symbols s JOIN files f ON s.file_id = f.id"""
+           FROM symbols s JOIN files f ON s.file_id = f.id
+           WHERE s.kind != 'module'"""
     ).fetchall()
     for r in rows:
         index.setdefault(r["name"], []).append(
@@ -82,14 +86,16 @@ def build_members_index(
         repo_where = " AND f.repo_id = ?"
         params = (repo_id,)
 
-    # Names of symbols that are types (anything not a member kind). Packages are
-    # not symbols, so a package segment never lands in this set.
+    # Names of symbols that are types (anything not a member kind; module
+    # symbols are structural nodes, never types). Packages are not symbols,
+    # so a package segment never lands in this set.
     placeholders = ",".join("?" * len(_MEMBER_KINDS))
     type_names = {
         r["name"]
         for r in conn.execute(
             f"SELECT DISTINCT s.name AS name FROM symbols s{repo_join} "
-            f"WHERE s.kind NOT IN ({placeholders}){repo_where}",
+            f"WHERE s.kind NOT IN ({placeholders}) AND s.kind != 'module'"
+            f"{repo_where}",
             (*_MEMBER_KINDS, *params),
         ).fetchall()
     }
@@ -126,7 +132,7 @@ def build_ancestor_index(
                FROM edges e JOIN symbols src ON e.source_id = src.id
                JOIN files f ON src.file_id = f.id
                WHERE f.repo_id = ?
-                 AND e.kind IN ('extends', 'implements')
+                 AND e.kind IN ('extends', 'implements', 'embeds')
                  AND e.target_name IS NOT NULL""",
             (repo_id,),
         ).fetchall()
@@ -134,7 +140,7 @@ def build_ancestor_index(
         rows = conn.execute(
             """SELECT src.name AS child, e.target_name AS parent
                FROM edges e JOIN symbols src ON e.source_id = src.id
-               WHERE e.kind IN ('extends', 'implements')
+               WHERE e.kind IN ('extends', 'implements', 'embeds')
                  AND e.target_name IS NOT NULL"""
         ).fetchall()
     for r in rows:

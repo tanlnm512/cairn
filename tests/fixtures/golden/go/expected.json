@@ -108,6 +108,14 @@
       "receiver_type": null
     },
     {
+      "source_name": "User",
+      "kind": "embeds",
+      "target_name": "BaseEntity",
+      "line": 25,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
       "source_name": "helperCall",
       "kind": "calls",
       "target_name": "Println",

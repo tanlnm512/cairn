@@ -176,10 +176,82 @@
       "receiver_type": null
     },
     {
+      "source_name": "helperCall",
+      "kind": "references",
+      "target_name": "String",
+      "line": 23,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "helperCall",
+      "kind": "references",
+      "target_name": "String",
+      "line": 23,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "id",
+      "kind": "references",
+      "target_name": "String",
+      "line": 6,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "id",
+      "kind": "references",
+      "target_name": "String",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "name",
+      "kind": "references",
+      "target_name": "String",
+      "line": 13,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "name",
+      "kind": "references",
+      "target_name": "String",
+      "line": 15,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
       "source_name": "process",
       "kind": "calls",
       "target_name": "helperCall",
       "line": 20,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "process",
+      "kind": "references",
+      "target_name": "String",
+      "line": 19,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "status",
+      "kind": "references",
+      "target_name": "Status",
+      "line": 16,
+      "column": 0,
+      "receiver_type": null
+    },
+    {
+      "source_name": "tag",
+      "kind": "references",
+      "target_name": "String",
+      "line": 17,
       "column": 0,
       "receiver_type": null
     }

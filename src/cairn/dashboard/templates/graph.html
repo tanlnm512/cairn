@@ -71,6 +71,11 @@
   {% if graph.nodes %}
   <p class="graph-legend muted" id="graph-legend" hidden></p>
   {% endif %}
+  {#- Edge-kind legend mirrors the node legend: app.js fills it from the
+      edges' kinds (color + dash preview per chip), doubling as filters. -#}
+  {% if graph.edges %}
+  <p class="graph-legend muted" id="edge-legend" hidden></p>
+  {% endif %}
   <p class="muted" id="graph-counts">
     scope <strong>{{ scope }}</strong> —
     {{ graph.metadata.get("node_count", graph.nodes | length) }} nodes,

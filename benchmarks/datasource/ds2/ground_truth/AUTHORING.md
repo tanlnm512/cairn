@@ -39,9 +39,11 @@ Per batch (~22-38 queries), after landing:
 2. Fresh scratch builds, one per corpus, mirroring
    `scripts/verify_ground_truth.py:build_fresh_graph` (copy to a throwaway
    workspace, `.git` scanner marker on the COPY only, `build_graph` over the
-   workspace):
-   - attrs: repos=1 files=50 symbols=1672 edges=4174 parse_errors=0
-   - yarl:  repos=1 files=24 symbols=1066 edges=2432 parse_errors=0
+   workspace) — facts re-pinned when the edge-kind enrichment changed the
+   deterministic per-corpus build output (one module symbol per file;
+   contains/imports/references/decorates/extends edges):
+   - attrs: repos=1 files=50 symbols=1722 edges=6239 parse_errors=0
+   - yarl:  repos=1 files=24 symbols=1090 edges=4112 parse_errors=0
 3. Resolution gate (STRONGER than the brief's >=10 spot-check): every one of
    the 392 expectations resolved tier-1-exact against its corpus inventory —
    exact symbol-name equality plus exact repo-relative file-path equality

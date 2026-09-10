@@ -60,7 +60,7 @@ CORPORA = {
         "source": DS2_ROOT / "second-corpus" / "attrs-26.1.0",
         "prefix": "attrs-26.1.0/",
         "recorded_facts": {
-            "repos": 1, "files": 50, "symbols": 1672, "edges": 4174,
+            "repos": 1, "files": 50, "symbols": 1722, "edges": 6239,
             "parse_errors": 0,
         },
     },
@@ -68,7 +68,7 @@ CORPORA = {
         "source": REPO_ROOT / "benchmarks" / "datasource" / "t2" / "yarl",
         "prefix": "yarl/",
         "recorded_facts": {
-            "repos": 1, "files": 24, "symbols": 1066, "edges": 2432,
+            "repos": 1, "files": 24, "symbols": 1090, "edges": 4112,
             "parse_errors": 0,
         },
     },

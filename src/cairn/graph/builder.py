@@ -539,6 +539,16 @@ def _build_graph_impl(
     # Third pass: resolve all edge targets
     resolution_stats = _resolve_all(conn, repo_edges_by_file, in_memory, verbose, progress)
 
+    # Fourth pass: materialize module->module imports edges from the imports
+    # table (needs every file's module symbol present, so it runs after the
+    # insert+resolve passes; kind='imports' stays outside
+    # STRUCTURAL_EDGE_KINDS, so traversal semantics are unchanged).
+    try:
+        import_edges = materialize_import_edges(conn)
+        log(f"  materialized {import_edges} module imports edges")
+    except Exception as e:
+        log(f"  imports-edge materialization failed: {e}")
+
     # SCIP post-resolve hook: import pre-built indexes for languages whose
     # files were skipped above. SCIP's exact edges aren't re-resolved, so this
     # runs AFTER _resolve_all (tree-sitter's resolver would otherwise try to
@@ -1026,6 +1036,8 @@ def insert_parsed_file(
     file_imports_summary = ", ".join(
         imp.imported_path for imp in pf.imports[:20]
     ) or None  # file-level summary, identical for every symbol in this file
+    # qualified_name -> symbol id, for contains-edge parent resolution.
+    qname_ids: Dict[str, str] = {}
     for sym in pf.symbols:
         sym_id = _new_id()
         # Enclosing scope is everything before the last "." of the qualified
@@ -1035,6 +1047,8 @@ def insert_parsed_file(
             sym.parent_scope = sym.qualified_name.rsplit(".", 1)[0]
         if sym.imports_summary is None:
             sym.imports_summary = file_imports_summary
+        if sym.qualified_name:
+            qname_ids.setdefault(sym.qualified_name, sym_id)
         sym_rows.append((
             sym_id,
             file_id,
@@ -1056,6 +1070,36 @@ def insert_parsed_file(
         ))
         name_to_symbol_ids.setdefault(sym.name, []).append((sym_id, repo, file_id))
 
+    # --- module symbol: one per file ----------------------------------------
+    # Owns module-level code (edges with no enclosing symbol) and the file's
+    # import edges materialized post-resolution. Name is the file stem;
+    # qualified name is the dotted repo-relative path so import statements
+    # can be mapped onto it. Appended AFTER the declared symbols so a code
+    # symbol sharing the stem name wins edge ownership (first-wins lookup).
+    module_id = _new_id()
+    module_name = Path(rel_path).stem
+    module_qname = _module_dotted(rel_path)
+    sym_rows.append((
+        module_id,
+        file_id,
+        module_name,
+        module_qname,
+        "module",
+        1,
+        1,
+        0,
+        0,
+        None,
+        "[]",
+        None,
+        None,
+        None,
+        None,
+        file_imports_summary,
+        None,
+    ))
+    name_to_symbol_ids.setdefault(module_name, []).append((module_id, repo, file_id))
+
     # --- imports ------------------------------------------------------------
     for imp in pf.imports:
         imp_rows.append((_new_id(), file_id, imp.imported_path, None, imp.line))
@@ -1065,9 +1109,33 @@ def insert_parsed_file(
     # name_to_symbol_ids accumulator (which would make this O(total_symbols)
     # per file -> O(N^2) overall). The keys are exactly the names this file
     # declared, and the values are their symbol ids in this file.
+    # (zip stops at pf.symbols, so the module row appended above is excluded.)
     in_file: Dict[str, List[str]] = {}
     for sym, row in zip(pf.symbols, sym_rows):
         in_file.setdefault(sym.name, []).append(row[0])
+    # The module symbol's entry lands last: a code symbol with the same name
+    # keeps first-wins ownership of that name's edges.
+    in_file.setdefault(module_name, []).append(module_id)
+
+    # --- contains edges: parent -> nested, module -> top-level --------------
+    # Targets are pinned in-file (qualified-name keyed, bare-name fallback),
+    # so these rows skip the resolver round-trip entirely (resolution='exact')
+    # and never enter repo_edges_by_file.
+    for sym, row in zip(pf.symbols, sym_rows):
+        child_id = row[0]
+        if sym.parent_scope:
+            parent_id = qname_ids.get(sym.parent_scope)
+            if parent_id is None:
+                parent_id = in_file.get(
+                    sym.parent_scope.rsplit(".", 1)[-1], [None]
+                )[0]
+        else:
+            parent_id = module_id
+        if parent_id:
+            edge_rows.append((
+                _new_id(), parent_id, child_id, sym.name, "contains",
+                sym.line_start, sym.column_start, "exact",
+            ))
 
     # --- edges: source resolved now; target left NULL for the resolver -----
     file_edges = repo_edges_by_file.setdefault(repo, {}).setdefault(file_id, [])
@@ -1075,7 +1143,11 @@ def insert_parsed_file(
         source_ids = in_file.get(edge.source_name, [])
         source_id = source_ids[0] if source_ids else None
         if source_id is None:
-            continue  # file-level call with no owning symbol; cannot attach
+            if not edge.source_name:
+                # Module-level code: attach to the file's module symbol.
+                source_id = module_id
+            else:
+                continue  # owner name not declared in this file; cannot attach
         edge_id = _new_id()
         edge_rows.append((
             edge_id, source_id, None, edge.target_name, edge.kind,
@@ -1113,6 +1185,185 @@ def insert_parsed_file(
         )
 
     return len(sym_rows), len(edge_rows), len(imp_rows)
+
+
+def _module_dotted(rel_path: str) -> str:
+    """Dotted form of a repo-relative file path ("src/a/b.py" -> "src.a.b").
+
+    Package initializer files ("__init__.py") collapse to their directory
+    ("pkg/__init__.py" -> "pkg") so package imports match the module.
+    """
+    parts = list(Path(rel_path).with_suffix("").parts)
+    if len(parts) > 1 and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _norm_module_token(token: str) -> str:
+    """Normalize one import path token to a dotted module path.
+
+    Separators become dots and relative markers ("./", "../") drop out:
+    "../utils/heap" -> "utils.heap", "cairn/graph/queries" ->
+    "cairn.graph.queries".
+    """
+    t = token.strip().strip("'\"").replace("\\", ".")
+    segs = [s for s in t.replace("/", ".").split(".") if s and set(s) != {"."}]
+    return ".".join(segs)
+
+
+def _dotted_suffixes(dotted: str) -> List[str]:
+    """All dotted suffixes, longest first ("a.b.c" -> ["a.b.c", "b.c", "c"])."""
+    segs = [s for s in dotted.split(".") if s]
+    return [".".join(segs[i:]) for i in range(len(segs))]
+
+
+def _import_module_bases(raw: str) -> List[str]:
+    """Base module paths derived from one raw import statement/path.
+
+    Handles the shapes the parsers store verbatim: Python
+    "from X import a, b" (bases X.a, X.b, X), "import X.Y" (base X.Y);
+    TypeScript/JS "import {a} from './m'" and "import x from './m'"
+    (bases m.a/m.x, m); Java/Kotlin "import x.y.Z" / "import static x.y.Z"
+    (base x.y.Z); bare paths for Go and C-family includes. Alias suffixes
+    ("a as b") and brace noise are stripped.
+    """
+    text = raw.strip().rstrip(";").strip()
+    bases: List[str] = []
+
+    def _add(module_token: str, name_tokens: List[str]) -> None:
+        module = _norm_module_token(module_token)
+        if not module:
+            return
+        for name in name_tokens:
+            n = name.strip().strip("{}").split(" as ")[0].strip()
+            if n:
+                bases.append(f"{module}.{_norm_module_token(n)}")
+        bases.append(module)
+
+    if text.startswith("from "):
+        rest = text[len("from "):].strip()
+        module_tok, sep, names_part = rest.partition(" import ")
+        _add(module_tok, names_part.split(",") if sep else [])
+    elif text.startswith("import "):
+        rest = text[len("import "):].strip()
+        if " from " in rest:
+            names_part, _, module_tok = rest.partition(" from ")
+            _add(module_tok, names_part.strip("{} \t").split(","))
+        else:
+            rest = rest.split(" as ")[0].strip()
+            if rest.startswith("static "):
+                rest = rest[len("static "):].strip()
+            bases.append(_norm_module_token(rest))
+    else:
+        bases.append(_norm_module_token(text))
+    return [b for b in bases if b]
+
+
+def materialize_import_edges(
+    conn,
+    repo: Optional[str] = None,
+    file_ids: Optional[List[str]] = None,
+) -> int:
+    """(Re)build ``kind='imports'`` module-to-module edges from the imports table.
+
+    Every indexed file carrying a module symbol (kind='module') indexes its
+    dotted path suffixes; each import row's normalized module bases match
+    longest-suffix-first, and the first candidate matching exactly one indexed
+    file wins. Ambiguous matches and external/unmatched imports are skipped
+    (single-segment candidates can false-positive onto same-named files; they
+    stay because a unique same-named file is usually the right target).
+    Existing imports edges sourced from the affected module symbols are
+    deleted first, so the pass is idempotent per rebuild. Scope with ``repo``
+    or an explicit ``file_ids`` list; neither recomputes the whole store.
+
+    Returns the number of edges inserted.
+    """
+    scope = ""
+    params: List[str] = []
+    if repo is not None:
+        scope = " AND f.repo_id = ?"
+        params.append(repo)
+    elif file_ids is not None:
+        ph = ",".join("?" for _ in file_ids)
+        scope = f" AND f.id IN ({ph})"
+        params.extend(file_ids)
+
+    module_rows = conn.execute(
+        f"""SELECT s.id AS mid, f.id AS fid, f.path
+            FROM symbols s JOIN files f ON s.file_id = f.id
+            WHERE s.kind = 'module'{scope}""",
+        params,
+    ).fetchall()
+
+    source_ids = [r["mid"] for r in module_rows]
+    if not source_ids:
+        return 0
+
+    # candidate -> [file ids]; module symbol per file (first wins on the
+    # impossible-in-practice duplicate-module-per-file case).
+    module_by_fid: Dict[str, str] = {}
+    files_by_candidate: Dict[str, List[str]] = {}
+    module_qname_by_fid: Dict[str, str] = {}
+    for r in module_rows:
+        fid, mid = r["fid"], r["mid"]
+        if fid in module_by_fid:
+            continue
+        module_by_fid[fid] = mid
+        module_qname_by_fid[fid] = _module_dotted(r["path"])
+        for cand in _dotted_suffixes(_module_dotted(r["path"])):
+            files_by_candidate.setdefault(cand, []).append(fid)
+
+    imp_scope = ""
+    imp_params: List[str] = []
+    if repo is not None:
+        imp_scope = " WHERE i.file_id IN (SELECT id FROM files WHERE repo_id = ?)"
+        imp_params.append(repo)
+    elif file_ids is not None:
+        ph = ",".join("?" for _ in file_ids)
+        imp_scope = f" WHERE i.file_id IN ({ph})"
+        imp_params.extend(file_ids)
+    import_rows = conn.execute(
+        f"SELECT i.file_id, i.imported_path, i.line FROM imports i{imp_scope}",
+        imp_params,
+    ).fetchall()
+
+    ph = ",".join("?" for _ in source_ids)
+    conn.execute(
+        f"DELETE FROM edges WHERE kind = 'imports' AND source_id IN ({ph})",
+        source_ids,
+    )
+
+    edge_rows: List[tuple] = []
+    for r in import_rows:
+        source_mid = module_by_fid.get(r["file_id"])
+        if not source_mid:
+            continue
+        for base in _import_module_bases(r["imported_path"]):
+            matched: Optional[str] = None
+            for cand in _dotted_suffixes(base):
+                fids = files_by_candidate.get(cand)
+                if not fids:
+                    continue  # try a shorter suffix
+                if len(fids) == 1:
+                    matched = fids[0]
+                    break
+                break  # ambiguous at this length; shorter is never safer
+            if matched is None or matched == r["file_id"]:
+                continue
+            edge_rows.append((
+                _new_id(), source_mid, module_by_fid[matched],
+                module_qname_by_fid[matched], "imports",
+                r["line"] or 0, 0, "exact",
+            ))
+            break  # first base that resolves wins
+    if edge_rows:
+        conn.executemany(
+            """INSERT INTO edges
+               (id, source_id, target_id, target_name, kind, line, column, resolution)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            edge_rows,
+        )
+    return len(edge_rows)
 
 
 def insert_parse_error(cur, repo: str, path: str, error_message: str, stack_trace: str | None = None):

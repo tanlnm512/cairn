@@ -89,7 +89,7 @@
   "edges": [
     {
       "source_name": "Status",
-      "kind": "implements",
+      "kind": "extends",
       "target_name": "Enum",
       "line": 5,
       "column": 0,
@@ -97,7 +97,7 @@
     },
     {
       "source_name": "User",
-      "kind": "implements",
+      "kind": "extends",
       "target_name": "BaseEntity",
       "line": 13,
       "column": 0,

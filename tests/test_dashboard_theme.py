@@ -55,6 +55,15 @@ _THEME_TOKENS = (
     "--kind-enum",
     "--kind-module",
     "--kind-external",
+    "--edge-calls",
+    "--edge-extends",
+    "--edge-implements",
+    "--edge-embeds",
+    "--edge-with",
+    "--edge-references",
+    "--edge-decorates",
+    "--edge-imports",
+    "--edge-contains",
 )
 
 _DARK_BG_0 = "#08090a"

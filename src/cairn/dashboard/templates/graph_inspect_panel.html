@@ -23,6 +23,7 @@
     {% for n in callers %}
     <li class="panel-row">
       <a class="panel-name" href="{{ links.url('/graph', {'scope': 'symbol', 'focus': n.name}) }}">{{ n.name }}</a>
+      {% if n.edge_kind %}<span class="panel-note">{{ n.edge_kind }}</span>{% endif %}
       {% if n.file %}<span class="panel-sub">{{ n.file }}</span>{% endif %}
     </li>
     {% else %}
@@ -37,6 +38,7 @@
     {% for n in callees %}
     <li class="panel-row">
       <a class="panel-name" href="{{ links.url('/graph', {'scope': 'symbol', 'focus': n.name}) }}">{{ n.name }}</a>
+      {% if n.edge_kind %}<span class="panel-note">{{ n.edge_kind }}</span>{% endif %}
       {% if n.file %}<span class="panel-sub">{{ n.file }}</span>{% endif %}
     </li>
     {% else %}

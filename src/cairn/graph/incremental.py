@@ -296,6 +296,17 @@ def reindex_paths(
         except Exception as e:
             errors.append(f"repair/{repo_name}: {e}")
 
+    # Imports-edge refresh: the reindexed files' module symbols and their
+    # import rows changed, so recompute the repo's kind='imports' edges
+    # (delete+reinsert per materialize_import_edges' idempotence contract).
+    from .builder import materialize_import_edges
+    for repo_name in repo_edges_by_file:
+        try:
+            materialize_import_edges(conn, repo=repo_name)
+            conn.commit()
+        except Exception as e:
+            errors.append(f"imports-edges/{repo_name}: {e}")
+
     return {"reindexed": reindexed, "deleted": deleted, "errors": errors}
 
 

@@ -37,6 +37,15 @@
   --kind-enum: #f472b6;
   --kind-module: #fbbf24;
   --kind-external: #8b9bb4;
+  --edge-calls: #7aa2f7;
+  --edge-extends: #c084fc;
+  --edge-implements: #34d399;
+  --edge-embeds: #2dd4bf;
+  --edge-with: #f472b6;
+  --edge-references: #8a8f98;
+  --edge-decorates: #fbbf24;
+  --edge-imports: #fb923c;
+  --edge-contains: #62666d;
   color-scheme: dark;
 }
 
@@ -63,6 +72,15 @@
   --kind-enum: #f472b6;
   --kind-module: #fbbf24;
   --kind-external: #8b9bb4;
+  --edge-calls: #7aa2f7;
+  --edge-extends: #c084fc;
+  --edge-implements: #34d399;
+  --edge-embeds: #2dd4bf;
+  --edge-with: #f472b6;
+  --edge-references: #8a8f98;
+  --edge-decorates: #fbbf24;
+  --edge-imports: #fb923c;
+  --edge-contains: #62666d;
   color-scheme: dark;
 }
 
@@ -89,6 +107,15 @@
   --kind-enum: #db2777;
   --kind-module: #b45309;
   --kind-external: #6b7280;
+  --edge-calls: #4c6ef5;
+  --edge-extends: #9333ea;
+  --edge-implements: #059669;
+  --edge-embeds: #0d9488;
+  --edge-with: #db2777;
+  --edge-references: #6b7280;
+  --edge-decorates: #b45309;
+  --edge-imports: #c2410c;
+  --edge-contains: #9ca3af;
   color-scheme: light;
 }
 
