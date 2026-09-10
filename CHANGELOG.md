@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-10
+
+### Added
+- The dashboard graph tab draws the whole picture instead of an empty
+  canvas whenever a scope's filter is blank:
+  - `symbol` and `impact` scopes with no focal name render the
+    workspace overview — the most-connected symbols on one canvas,
+    ranked by degree (fan-in + fan-out), capped at 50 symbols and 100
+    edges, tests excluded by default with the Include-tests toggle
+    opting back in, vendored/minified assets never candidates, and
+    edges deduplicated on `(source, target, kind)`. Metadata reports
+    `tests_included`, `truncated`, and `vendored_excluded` so a
+    count at the cap is visibly truncated. A focal name still draws
+    that symbol's neighborhood; a name that matches nothing still
+    renders the empty state.
+  - The `repo` scope with no repo id buckets every repo in the store,
+    capped at 30 buckets with an honest `truncated` flag in metadata.
+- The MCP `visualize_graph` tool rides the same viz layer: module
+  diagrams include their real internal edges, and `format="json"`
+  output for the repo scope carries the `truncated` field.
+- The dashboard sidebar's Database item has an icon (hard-drive glyph)
+  like every other nav view; a source-pinned test fails if a future
+  nav view ships without a glyph.
+
+### Fixed
+- The dashboard's workspace selector names the launch workspace (e.g.
+  `polaris (launch)`). The selector's no-selection option serves the
+  launch store — the dashboard process's own db — so the label shows
+  which workspace every view queries by default. The generic
+  `Launch workspace` label applies only to custom `--db` paths outside
+  the store registry.
+- Module- and symbol-scope edge queries apply the kept-node target
+  predicate in SQL before the 100-edge cap, so the cap lands on real
+  internal edges and the rendered edge set is stable across scans.
+
 ## [0.19.1] - 2026-09-10
 
 ### Added
