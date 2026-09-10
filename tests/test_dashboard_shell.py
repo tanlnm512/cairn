@@ -137,3 +137,20 @@ def test_shell_context_launch_label_rides_launch_db():
 
     ctx = shell_context(_stores(), "", "/graph")
     assert ctx["selector"]["launch_label"] == LAUNCH_LABEL
+
+
+def test_every_nav_view_has_an_icon_branch():
+    """The icon macro is the presentation half of NAV_SECTIONS (one glyph
+    per view id): a view without an icon branch renders a blank spot in
+    the sidebar, so the coverage is pinned at source level."""
+    from pathlib import Path
+
+    import cairn.dashboard
+
+    src = (
+        Path(cairn.dashboard.__file__).resolve().parent
+        / "templates"
+        / "_icons.html"
+    ).read_text()
+    missing = [v for v in NAV_LABELS if f'name == "{v}"' not in src]
+    assert missing == []
