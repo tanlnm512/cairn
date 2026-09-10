@@ -2905,8 +2905,8 @@ def test_shell_js_switch_contract_is_pinned_at_source_level():
 
 # ---------------------------------------------------------------------------
 # Grouped sidebar + command palette (shell chrome): the sidebar renders
-# from shell.NAV_SECTIONS (same href shape as the hand-written anchors it
-# replaced), collapse persists pre-paint like the theme, and the palette
+# from shell.NAV_SECTIONS with store-carrying hrefs, collapse persists
+# pre-paint like the theme, and the palette
 # opens as an Alpine <dialog> over two row sources — the server-rendered
 # seed JSON draws the initial list, typing fetches /palette/results
 # fragments (the same seed composition plus /graph/suggest's symbol

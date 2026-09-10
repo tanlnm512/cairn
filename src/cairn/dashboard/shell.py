@@ -8,8 +8,8 @@ test). Two owners:
 - :func:`shell_context` is the single source of truth for NAVIGATION:
   the sidebar renders from ``nav.sections`` and the command palette's
   view list from ``palette.views`` — both derive from NAV_SECTIONS, so
-  the two can never drift apart, and hrefs are composed here with the
-  store param riding exactly like the sidebar's old hand-written anchors.
+  the two can never drift apart, and every href carries the store param
+  composed here.
 - :func:`selector_context` turns :func:`enumerate_stores
   <cairn.dashboard.workspaces.enumerate_stores>` rows (stat-only, never
   probed) into the topbar workspace selector's options; the label policy
@@ -122,10 +122,9 @@ def shell_context(
     """Everything base.html's chrome renders from, for one request.
 
     ``nav.sections`` carries the grouped sidebar (each item's ``href``
-    already rides the selected store, matching the pre-shell anchors:
-    bare hrefs when nothing is selected); ``active`` flags derive from
-    the request path exactly as the old hand-written startswith checks
-    did. ``palette`` seeds the command palette: the same view list plus
+    rides the selected store: bare hrefs when nothing is selected);
+    ``active`` flags derive from the request path by prefix match.
+    ``palette`` seeds the command palette: the same view list plus
     the populated workspaces (the palette switches stores through the
     same URL-rewrite behavior as the topbar selector). ``launch_db`` is
     the app factory's launch db path; when it names a registered store,
