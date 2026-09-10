@@ -154,7 +154,8 @@ def get_deps_graph(conn: sqlite3.Connection) -> Dict:
 
 
 def get_repo_graph(conn: sqlite3.Connection, repo: str, max_nodes: int = 30) -> Dict:
-    """Module structure of a repo with symbol counts."""
+    """Module structure of a repo with symbol counts; an empty ``repo``
+    buckets every repo in the store."""
     from ..graph.queries import group_by_top_level
 
     buckets = group_by_top_level(conn, repo)
@@ -165,7 +166,8 @@ def get_repo_graph(conn: sqlite3.Connection, repo: str, max_nodes: int = 30) -> 
         _add_node(nodes, label, "module", "", repo)
     # No edges between modules at this granularity; show as a flat cluster.
     return {"nodes": list(nodes.values()), "edges": edges,
-            "metadata": {"scope": "repo", "repo": repo, "node_count": len(nodes)}}
+            "metadata": {"scope": "repo", "repo": repo, "node_count": len(nodes),
+                         "truncated": len(buckets) > max_nodes}}
 
 
 _SCOPE_CAP = 50
@@ -279,10 +281,13 @@ def get_module_graph(
     }
 
 
-def get_symbol_overview(conn: sqlite3.Connection, include_tests: bool = False) -> Dict:
+def get_symbol_overview(
+    conn: sqlite3.Connection, include_tests: bool = False, scope: str = "symbol"
+) -> Dict:
     """The workspace's most-connected symbols as one canvas — the symbol
     scope's answer to an empty focal name (the dashboard's default landing
-    on that scope).
+    on that scope). ``scope`` labels the result's metadata for the scopes
+    that dispatch here on an empty filter (impact rides along).
 
     The same curation rules as :func:`get_module_graph` without a path
     filter: candidates ranked by degree (fan-in + fan-out of any edges)
@@ -352,7 +357,7 @@ def get_symbol_overview(conn: sqlite3.Connection, include_tests: bool = False) -
         "nodes": list(nodes.values()),
         "edges": edges,
         "metadata": {
-            "scope": "symbol",
+            "scope": scope,
             "focus": "",
             "node_count": len(nodes),
             "edge_count": len(edges),

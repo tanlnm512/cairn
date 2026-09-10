@@ -269,6 +269,27 @@ def test_graph_route_symbol_scope_without_focus_draws_overview(tmp_path):
     assert "No nodes for this scope" in resp.text
 
 
+@requires_vis_network
+def test_graph_route_impact_and_repo_empty_filters_draw(tmp_path):
+    """Impact scope with no focal name draws the workspace overview under
+    its own label; repo scope with no repo id buckets every repo — no
+    scope lands on an empty canvas just because a filter is blank."""
+    client = _client(tmp_path, seed=True)
+
+    resp = client.get("/graph", params={"scope": "impact"})
+    assert resp.status_code == 200
+    payload = _embedded_graph(resp.text)
+    assert payload["metadata"]["scope"] == "impact"
+    assert payload["nodes"]
+
+    resp = client.get("/graph", params={"scope": "repo"})
+    assert resp.status_code == 200
+    payload = _embedded_graph(resp.text)
+    assert payload["metadata"]["scope"] == "repo"
+    assert payload["nodes"]
+    assert "No nodes for this scope" not in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Layout persistence + option application (graph-nav FR-004 / US3 / TC-005):
 # /graph reads ``layout`` ∈ {force, hier} -- default force, bogus → force;
