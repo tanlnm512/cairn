@@ -140,9 +140,10 @@ def get_graph(
     overview; the focus-driven scopes take the user's exact word instead.
     """
     if scope == "symbol":
-        if not (focus or "").strip():
+        name = (focus or "").strip()
+        if not name:
             return viz_query.get_symbol_overview(conn, include_tests=include_tests)
-        return viz_query.get_symbol_graph(conn, focus, 1 if depth is None else depth)
+        return viz_query.get_symbol_graph(conn, name, 1 if depth is None else depth)
     if scope == "module":
         return viz_query.get_module_graph(conn, focus or "", include_tests=include_tests)
     if scope == "impact":
