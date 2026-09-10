@@ -168,8 +168,8 @@ def get_repo_graph(conn: sqlite3.Connection, repo: str, max_nodes: int = 30) -> 
             "metadata": {"scope": "repo", "repo": repo, "node_count": len(nodes)}}
 
 
-_MODULE_CAP = 50
-_MODULE_EDGE_CAP = 100
+_SCOPE_CAP = 50
+_SCOPE_EDGE_CAP = 100
 
 # Paths whose symbols are generated or third-party noise, not hand-written
 # structure. Minified bundles dominate the degree ranking (one vendored
@@ -236,7 +236,7 @@ def get_module_graph(
         )["is_test"]:
             continue
         eligible += 1
-        if eligible > _MODULE_CAP:
+        if eligible > _SCOPE_CAP:
             continue
         _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
         kept += 1
@@ -248,8 +248,10 @@ def get_module_graph(
             f"SELECT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt, e.kind "
             f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
             f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
-            f"WHERE s1.name IN ({placeholders}) LIMIT {_MODULE_EDGE_CAP}",
-            names,
+            f"WHERE s1.name IN ({placeholders}) "
+            f"AND COALESCE(s2.name, e.target_name) IN ({placeholders}) "
+            f"LIMIT {_SCOPE_EDGE_CAP}",
+            names + names,
         ).fetchall()
         for r in rows:
             if r["tgt"] in nodes:
@@ -271,7 +273,92 @@ def get_module_graph(
             "edge_count": len(edges),
             "edge_kinds": edge_kinds,
             "tests_included": include_tests,
-            "truncated": eligible > _MODULE_CAP,
+            "truncated": eligible > _SCOPE_CAP,
+            "vendored_excluded": vendored_excluded,
+        },
+    }
+
+
+def get_symbol_overview(conn: sqlite3.Connection, include_tests: bool = False) -> Dict:
+    """The workspace's most-connected symbols as one canvas — the symbol
+    scope's answer to an empty focal name (the dashboard's default landing
+    on that scope).
+
+    The same curation rules as :func:`get_module_graph` without a path
+    filter: candidates ranked by degree (fan-in + fan-out of any edges)
+    then name, so the cap lands on the symbols that carry the workspace's
+    structure. Tests are excluded by default (the ``is_test_symbol``
+    heuristics from the impact layer); ``include_tests`` opts back in.
+    Symbols from vendored/minified assets (:func:`_is_vendored_path`) are
+    never candidates. Edges are deduplicated on ``(source, target,
+    kind)`` — the join is by bare symbol name, so same-named symbols
+    across repos multiply one logical edge into many parallel rows.
+    ``metadata.tests_included``, ``metadata.truncated`` and
+    ``metadata.vendored_excluded`` report all three choices honestly.
+    """
+    from ..graph.tests import is_test_symbol
+
+    cur = conn.cursor()
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
+    seen_edges = set()
+    vendored_excluded = 0
+    rows = cur.execute(
+        "SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
+        "(SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) + "
+        "(SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) AS degree "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "ORDER BY degree DESC, s.name ASC"
+    ).fetchall()
+    kept = 0
+    eligible = 0
+    for r in rows:
+        if _is_vendored_path(r["path"]):
+            vendored_excluded += 1
+            continue
+        if not include_tests and is_test_symbol(
+            r["path"], r["name"], r["qualified_name"] or ""
+        )["is_test"]:
+            continue
+        eligible += 1
+        if eligible > _SCOPE_CAP:
+            continue
+        _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
+        kept += 1
+    # Edges between the kept symbols.
+    if nodes:
+        names = list(nodes.keys())
+        placeholders = ",".join("?" * len(names))
+        rows = cur.execute(
+            f"SELECT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt, e.kind "
+            f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
+            f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
+            f"WHERE s1.name IN ({placeholders}) "
+            f"AND COALESCE(s2.name, e.target_name) IN ({placeholders}) "
+            f"LIMIT {_SCOPE_EDGE_CAP}",
+            names + names,
+        ).fetchall()
+        for r in rows:
+            if r["tgt"] in nodes:
+                key = (r["src"], r["tgt"], r["kind"])
+                if key in seen_edges:
+                    continue
+                seen_edges.add(key)
+                edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
+    edge_kinds: dict[str, int] = {}
+    for e in edges:
+        edge_kinds[e["kind"]] = edge_kinds.get(e["kind"], 0) + 1
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "metadata": {
+            "scope": "symbol",
+            "focus": "",
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "edge_kinds": edge_kinds,
+            "tests_included": include_tests,
+            "truncated": eligible > _SCOPE_CAP,
             "vendored_excluded": vendored_excluded,
         },
     }
