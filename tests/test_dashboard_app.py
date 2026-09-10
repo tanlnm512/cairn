@@ -248,6 +248,24 @@ def test_graph_route_unknown_scope_falls_back_to_module(tmp_path):
     assert _embedded_graph(resp.text)["metadata"]["scope"] == "module"
 
 
+@requires_vis_network
+def test_graph_route_symbol_scope_without_focus_guides_to_search(tmp_path):
+    """Symbol scope is focus-driven: with no focal name the empty state
+    says what to provide instead of the generic adjust-the-controls line
+    (which stays for every other scope/empty combination)."""
+    client = _client(tmp_path, seed=True)
+    resp = client.get("/graph", params={"scope": "symbol"})
+    assert resp.status_code == 200
+    assert "Symbol box above" in resp.text
+    assert "No nodes for this scope" not in resp.text
+
+    # A focus that names nothing is a searched-and-missed case, not a
+    # missing focus: the generic line applies.
+    resp = client.get("/graph", params={"scope": "symbol", "focus": "nope"})
+    assert resp.status_code == 200
+    assert "No nodes for this scope" in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Layout persistence + option application (graph-nav FR-004 / US3 / TC-005):
 # /graph reads ``layout`` ∈ {force, hier} -- default force, bogus → force;
@@ -2806,6 +2824,32 @@ def test_workspace_selector_lists_populated_stores_only(tmp_path, monkeypatch):
     assert 'title="/workspaces/proj-alpha' in resp.text
     # The launch store is always reachable as the empty-value option.
     assert "<option value=\"\">Launch workspace</option>" in resp.text
+
+
+def test_workspace_selector_names_the_launch_workspace(tmp_path, monkeypatch):
+    """When the launch db is itself a registered store, the no-selection
+    option names that workspace — a dashboard launched from one workspace
+    must not read as workspace-agnostic."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn import paths
+    from cairn.dashboard.app import create_app
+
+    home = tmp_path / "cairn-home"
+    home.mkdir()
+    _seed_switch_store(
+        home / _SW_KEY_A / ".kg", "storeA", "store_a_tool", "2026-08-20T07:00:00Z"
+    )
+    (home / "workspaces.json").write_text(
+        json.dumps({"/workspaces/proj-alpha": _SW_KEY_A}), encoding="utf-8"
+    )
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    client = TestClient(create_app(db_path=str(home / _SW_KEY_A / ".kg")))
+
+    resp = client.get("/projects")
+    assert resp.status_code == 200
+    assert "<option value=\"\">proj-alpha (launch)</option>" in resp.text
 
 
 def test_workspace_selector_marks_the_selected_store(tmp_path, monkeypatch):

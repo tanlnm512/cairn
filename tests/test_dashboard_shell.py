@@ -6,8 +6,10 @@ hand-written anchors) and the workspace label policy.
 """
 
 from cairn.dashboard.shell import (
+    LAUNCH_LABEL,
     NAV_LABELS,
     NAV_SECTIONS,
+    launch_option_label,
     shell_context,
     workspace_label,
 )
@@ -102,3 +104,36 @@ def test_shell_context_selector_lists_populated_stores_only():
         "aaaaaaaaaaaaaaaa",
         "bbbbbbbbbbbbbbbb",
     ]
+
+
+def test_launch_option_label_names_the_registered_launch_workspace():
+    # The launch db lives inside a registered store dir: the option reads
+    # as that workspace's name, suffixed to distinguish it from the
+    # explicit switch target.
+    assert (
+        launch_option_label(_stores(), "/home/u/.cairn/aaaaaaaaaaaaaaaa/.kg")
+        == "alpha (launch)"
+    )
+
+
+def test_launch_option_label_falls_back_outside_the_registry():
+    # A custom --db path no store row names.
+    assert launch_option_label(_stores(), "/tmp/custom/proj/dash.db") == LAUNCH_LABEL
+    # A registered store that is not populated is no label source either.
+    assert (
+        launch_option_label(_stores(), "/home/u/.cairn/cccccccccccccccc/.kg")
+        == LAUNCH_LABEL
+    )
+    # No launch db resolved (create_app(None) callers).
+    assert launch_option_label(_stores(), None) == LAUNCH_LABEL
+    assert launch_option_label(_stores(), "") == LAUNCH_LABEL
+
+
+def test_shell_context_launch_label_rides_launch_db():
+    ctx = shell_context(
+        _stores(), "", "/graph", launch_db="/home/u/.cairn/aaaaaaaaaaaaaaaa/.kg"
+    )
+    assert ctx["selector"]["launch_label"] == "alpha (launch)"
+
+    ctx = shell_context(_stores(), "", "/graph")
+    assert ctx["selector"]["launch_label"] == LAUNCH_LABEL

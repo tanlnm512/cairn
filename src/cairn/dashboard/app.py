@@ -353,6 +353,7 @@ def create_app(
                 enumerate_stores(Path(paths.CAIRN_HOME)),
                 context.get("store_key", ""),
                 request.url.path,
+                launch_db=db_path,
             )
         return templates.TemplateResponse(
             request, name, context, status_code=status_code
@@ -532,7 +533,8 @@ def create_app(
             request, db_path, knowledge_dir
         )
         palette = shell_context(
-            enumerate_stores(Path(paths.CAIRN_HOME)), store_key, "/"
+            enumerate_stores(Path(paths.CAIRN_HOME)), store_key, "/",
+            launch_db=db_path,
         )["palette"]
         lowered = query.lower()
         rows = [
