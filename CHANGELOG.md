@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.20.1] - 2026-09-11
 
 ### Removed
 - The SCIP compiler-index ingestion path: `cairn import-scip`, the
