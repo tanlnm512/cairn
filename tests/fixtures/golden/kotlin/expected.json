@@ -13,7 +13,8 @@
       "modifiers": [
         "open"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -25,7 +26,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Status",
@@ -37,7 +39,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Identifiable",
@@ -49,7 +52,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "helperCall",
@@ -63,7 +67,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
@@ -75,7 +80,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "id",
@@ -87,7 +93,8 @@
       "column_end": 18,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "id",
@@ -101,7 +108,8 @@
       "modifiers": [
         "override"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -115,7 +123,8 @@
       "modifiers": [
         "open"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -129,7 +138,8 @@
       "modifiers": [
         "override"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "status",
@@ -141,7 +151,8 @@
       "column_end": 38,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "tag",
@@ -155,7 +166,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -165,7 +177,7 @@
       "target_name": "BaseEntity",
       "line": 15,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -173,7 +185,7 @@
       "target_name": "Identifiable",
       "line": 15,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "helperCall",
@@ -181,7 +193,7 @@
       "target_name": "String",
       "line": 23,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "helperCall",
@@ -189,7 +201,7 @@
       "target_name": "String",
       "line": 23,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "id",
@@ -197,7 +209,7 @@
       "target_name": "String",
       "line": 6,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "id",
@@ -205,7 +217,7 @@
       "target_name": "String",
       "line": 15,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "name",
@@ -213,7 +225,7 @@
       "target_name": "String",
       "line": 13,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "name",
@@ -221,7 +233,7 @@
       "target_name": "String",
       "line": 15,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "process",
@@ -229,7 +241,7 @@
       "target_name": "helperCall",
       "line": 20,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "process",
@@ -237,7 +249,7 @@
       "target_name": "String",
       "line": 19,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "status",
@@ -245,7 +257,7 @@
       "target_name": "Status",
       "line": 16,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "tag",
@@ -253,13 +265,14 @@
       "target_name": "String",
       "line": 17,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     }
   ],
   "imports": [
     {
       "imported_path": "java.util.List",
-      "line": 3
+      "line": 3,
+      "local_alias": null
     }
   ]
 }

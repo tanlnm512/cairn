@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cairn-intel"
-version = "0.20.0"
+version = "0.20.1"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
@@ -84,7 +84,6 @@ dev = [
     "mypy==2.3.0",
     "bandit>=1.7",
     "pip-audit>=2.7",
-    "grpcio-tools>=1.60",
     # Local review/audit gate (Layer 0 of the review pipeline): defines the
     # pre-commit hooks (.pre-commit-config.yaml) that run before every commit.
     "pre-commit>=4.0",
@@ -114,17 +113,6 @@ semantic = [
 # platforms), so this stays cheap even for users who don't want [semantic].
 ann = [
     "sqlite-vec>=0.1.0",
-]
-# SCIP (Sourcegraph Code Intelligence Protocol) consumption. No PyPI package
-# ships Sourcegraph's SCIP protobuf bindings -- the `scip` name on PyPI is an
-# unrelated bioimaging library, and Sourcegraph ships no official Python
-# bindings (sourcegraph/scip#259, open/unresolved). The real dependency is the
-# generic `protobuf` runtime, paired with a checked-in generated stub
-# (src/cairn/parsers/_scip_pb2.py) -- the same approach googleapis-common-protos
-# uses to avoid requiring protoc/grpcio-tools at install time. Regenerating the
-# stub is a dev-only step (`scripts/regen_scip_pb2.sh`), never a runtime need.
-scip = [
-    "protobuf>=7.35.1",
 ]
 # Optional OTLP export (task T19, observability-telemetry spec §3 + §7):
 # setting CAIRN_OTEL_ENDPOINT exports cairn's LOCAL telemetry events as
@@ -235,7 +223,7 @@ select = ["F"]
 # The custom template (.cz_templates/keepachangelog.j2) renders that draft in
 # the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
 # default `## X.Y.Z (YYYY-MM-DD)`.
-version = "0.20.0"
+version = "0.20.1"
 version_scheme = "pep440"
 tag_format = "v$version"
 update_changelog_on_bump = false

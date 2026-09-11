@@ -1,4 +1,4 @@
-"""System CLI: import-scip, metrics, status, eval, sync, doctor."""
+"""System CLI: metrics, status, eval, sync, doctor."""
 from __future__ import annotations
 
 import logging

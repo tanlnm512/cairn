@@ -16,7 +16,10 @@ Go-specific shape notes:
 - ``call_expression`` targets are either a bare ``identifier`` or a
   ``selector_expression`` (``pkg.Foo()`` / ``recv.Method()``).
 
-- Imports: single (``import "fmt"``) or grouped (``import ( ... )``).
+- Imports: single (``import "fmt"``) or grouped (``import ( ... )``); the
+  spec's ``name`` child is the local alias, with blank/dot imports recording
+  none. Func symbols carry a parameter-count ``arity`` and call edges an
+  argument-count ``call_arity``; variadic params/args yield None.
 """
 from __future__ import annotations
 
@@ -195,7 +198,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
         name = self._find_name(node, source, types=("identifier",))
         if not name:
             return None
-        params, return_type = self._parse_signature(node, source)
+        params, return_type, arity = self._parse_signature(node, source)
         return Symbol(
             name=name,
             kind="method" if receiver_type else "function",
@@ -207,6 +210,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
             parameters=params,
             return_type=return_type,
             parent_scope=receiver_type,
+            arity=arity,
         )
 
     def _parse_method(self, node: Node, source: bytes) -> Optional[Symbol]:
@@ -228,9 +232,11 @@ class GoParser(BaseParser, TreeSitterParserBase):
         if not name:
             return None
         # Params/return come from the SECOND parameter_list (the real signature).
-        params, return_type = (None, None)
+        params, return_type, arity = (None, None, None)
         if len(param_lists) >= 2:
-            params, return_type = self._parse_params_and_return(param_lists[1], node, source)
+            params, return_type, arity = self._parse_params_and_return(
+                param_lists[1], node, source
+            )
 
         return Symbol(
             name=name,
@@ -243,23 +249,26 @@ class GoParser(BaseParser, TreeSitterParserBase):
             parameters=params,
             return_type=return_type,
             parent_scope=receiver_type,
+            arity=arity,
         )
 
     def _parse_signature(self, node: Node, source: bytes):
-        """Return (parameters_str, return_type_str) from a function_declaration.
+        """Return (parameters_str, return_type_str, arity) from a
+        function_declaration.
 
-        The signature's parameter_list is the FIRST one (function_declaration has
-        no receiver). The return type is the type node following it.
+        The signature's parameter_list is the FIRST one (function_declaration
+        has no receiver). The return type is the type node following it.
         """
         param_lists = [c for c in node.children if c.type == "parameter_list"]
         if not param_lists:
-            return None, None
+            return None, None, None
         return self._parse_params_and_return(param_lists[0], node, source)
 
     def _parse_params_and_return(
         self, params_node: Node, parent: Node, source: bytes
     ):
-        """Extract a parameters summary and the return type from a func node."""
+        """Extract a parameters summary, the return type, and the parameter
+        count from a func node."""
         params = self._summarize_params(params_node, source)
         # The return type, if any, is a type node after the params list.
         return_type = None
@@ -277,7 +286,24 @@ class GoParser(BaseParser, TreeSitterParserBase):
             if child.type in _TYPE_NODE_KINDS:
                 return_type = self._node_text(child, source).strip()
                 break
-        return params, return_type
+        return params, return_type, self._param_arity(params_node)
+
+    def _param_arity(self, params_node: Node) -> Optional[int]:
+        """Parameter count of a parameter_list; None when a variadic
+        parameter makes the count unknowable.
+
+        A declaration naming several parameters (``a, b int``) counts each
+        name; an unnamed declaration (``int``) counts one.
+        """
+        arity = 0
+        for child in params_node.children:
+            if child.type == "variadic_parameter_declaration":
+                return None
+            if child.type != "parameter_declaration":
+                continue
+            names = sum(1 for pc in child.children if pc.type == "identifier")
+            arity += names or 1
+        return arity
 
     def _summarize_params(self, params_node: Node, source: bytes) -> Optional[str]:
         """Render a parameter_list as ``name1 type1, name2 type2``."""
@@ -347,7 +373,23 @@ class GoParser(BaseParser, TreeSitterParserBase):
             target_name=callee,
             line=node.start_point[0] + 1,
             receiver_type=self._infer_receiver_type(receiver_text),
+            call_arity=self._argument_arity(node),
         )
+
+    def _argument_arity(self, call_node: Node) -> Optional[int]:
+        """Named-argument count of the call's argument_list; None when a
+        spread argument (``f(xs...)``) makes the count unknowable."""
+        arg_list = self._child_of_type(call_node, "argument_list")
+        if arg_list is None:
+            return None
+        count = 0
+        for child in arg_list.children:
+            if not child.is_named:
+                continue
+            if child.type == "variadic_argument":
+                return None
+            count += 1
+        return count
 
     def _split_selector(self, node: Node, source: bytes):
         """Split a selector_expression into (field_name, receiver_text)."""
@@ -367,20 +409,32 @@ class GoParser(BaseParser, TreeSitterParserBase):
         """import_declaration -> one Import per import_spec.
 
         Handles both single (``import "fmt"``) and grouped
-        (``import ( "a"; "b" )``) forms.
+        (``import ( "a"; "b" )``) forms. A ``package_identifier`` name child
+        is the local alias (``import qux "path"``); blank (``_``) and dot
+        (``.``) imports record no alias — a blank import binds nothing and a
+        dot import binds unqualified names.
         """
         imports: List[Import] = []
         # import_specs may be direct children or nested under import_spec_list.
         for spec in self._all_import_specs(node):
             path = None
+            alias = None
             for child in spec.children:
-                if child.type == "interpreted_string_literal":
+                if child.type == "package_identifier":
+                    alias = self._node_text(child, source).strip()
+                elif child.type == "interpreted_string_literal":
                     raw = self._node_text(child, source).strip()
                     # Strip the surrounding quotes.
                     path = raw.strip('"')
                     break
             if path:
-                imports.append(Import(imported_path=path, line=spec.start_point[0] + 1))
+                imports.append(
+                    Import(
+                        imported_path=path,
+                        line=spec.start_point[0] + 1,
+                        local_alias=alias,
+                    )
+                )
         return imports
 
     def _all_import_specs(self, node: Node):

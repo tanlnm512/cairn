@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "V8",
@@ -23,7 +24,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "max_val",
@@ -35,7 +37,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "run",
@@ -47,7 +50,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "Engine",
@@ -59,7 +63,8 @@
       "column_end": 40,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "getPower",
@@ -71,7 +76,8 @@
       "column_end": 43,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "start",
@@ -83,7 +89,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     }
   ],
   "edges": [
@@ -93,7 +100,7 @@
       "target_name": "Engine",
       "line": 17,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "run",
@@ -101,7 +108,7 @@
       "target_name": "getPower",
       "line": 30,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "run",
@@ -109,7 +116,7 @@
       "target_name": "max_val",
       "line": 31,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 2
     },
     {
       "source_name": "start",
@@ -117,21 +124,24 @@
       "target_name": "launch",
       "line": 20,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "\"engine.h\"",
-      "line": 3
+      "line": 3,
+      "local_alias": null
     },
     {
       "imported_path": "<memory>",
-      "line": 2
+      "line": 2,
+      "local_alias": null
     },
     {
       "imported_path": "<vector>",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

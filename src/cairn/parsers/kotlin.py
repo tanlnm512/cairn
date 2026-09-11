@@ -289,6 +289,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             column_start=node.start_point[1],
             column_end=node.end_point[1],
             modifiers=mods,
+            arity=self._count_parameters(node),
         )
         self._emit_type_references(node, source, name)
         return sym
@@ -385,20 +386,26 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
-        # `import` node. Extract the imported path from the identifier
-        # child if present, else from the node text. Drop trailing 'as Alias'.
+        # `import_header` node: the path is the `identifier` child (falls
+        # back to node text); `import a.b.C as D` carries the alias as an
+        # `import_alias` child whose named identifier is the local name.
         text = self._node_text(node, source).strip()
         if text.startswith("import "):
             text = text[len("import "):].strip()
         text = text.split(" as ")[0].strip()
-        # Prefer the identifier child text when available (cleaner).
+        local_alias = None
         for child in node.children:
             if child.type == "identifier":
                 text = self._node_text(child, source).strip()
-                break
+            elif child.type == "import_alias":
+                local_alias = self._extract_usertype_name(child, source)
         if not text:
             return None
-        return Import(imported_path=text, line=node.start_point[0] + 1)
+        return Import(
+            imported_path=text,
+            line=node.start_point[0] + 1,
+            local_alias=local_alias,
+        )
 
     # --- edges -------------------------------------------------------------
 
@@ -496,9 +503,40 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             target_name=target,
             line=node.start_point[0] + 1,
             receiver_type=receiver_type,
+            call_arity=self._count_call_arguments(node),
         )
 
+    def _count_call_arguments(self, node: Node) -> Optional[int]:
+        """Argument count of a call_expression: one per ``value_argument`` in
+        ``value_arguments``, plus one for a trailing lambda — a call argument
+        in Kotlin semantics. Type arguments don't count.
+        """
+        suffix = self._child_of_type(node, ("call_suffix",))
+        if suffix is None:
+            return None
+        count = 0
+        for child in suffix.children:
+            if child.type == "value_arguments":
+                count += sum(
+                    1 for c in child.children if c.type == "value_argument"
+                )
+            elif child.type == "annotated_lambda":
+                count += 1
+        return count
+
     # --- receiver-type inference ------------------------------------------
+
+    def _count_parameters(self, fn_node: Node) -> Optional[int]:
+        """Parameter count of a function_declaration: direct ``parameter``
+        children of ``function_value_parameters``. Vararg modifiers and
+        default values are siblings/children, not extra parameters; an
+        extension receiver is not a parameter. None when the parameter
+        clause is absent.
+        """
+        fvp = self._child_of_type(fn_node, ("function_value_parameters",))
+        if fvp is None:
+            return None
+        return sum(1 for c in fvp.children if c.type == "parameter")
 
     def _param_types(self, fn_node: Node, source: bytes) -> List[tuple]:
         """Yield (param_name, type_name) for typed function parameters."""

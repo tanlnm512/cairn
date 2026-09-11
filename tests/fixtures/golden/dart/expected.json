@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Identifiable",
@@ -25,7 +26,8 @@
       "modifiers": [
         "abstract"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -37,7 +39,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "BaseEntity",
@@ -49,7 +52,8 @@
       "column_end": 25,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "User",
@@ -61,7 +65,8 @@
       "column_end": 30,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "Status",
@@ -73,7 +78,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "helperCall",
@@ -85,7 +91,8 @@
       "column_end": 35,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
@@ -97,7 +104,8 @@
       "column_end": 20,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "id",
@@ -109,7 +117,8 @@
       "column_end": 19,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -121,7 +130,8 @@
       "column_end": 21,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "status",
@@ -133,7 +143,8 @@
       "column_end": 33,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -143,7 +154,7 @@
       "target_name": "BaseEntity",
       "line": 17,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -151,7 +162,7 @@
       "target_name": "Identifiable",
       "line": 17,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "process",
@@ -159,13 +170,14 @@
       "target_name": "helperCall",
       "line": 25,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "dart:async",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

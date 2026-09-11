@@ -292,7 +292,7 @@ def test_clear_repo_deletes_embeddings(workspace, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# #6 — crash-window marker: set before clear, cleared after SCIP, detectable.
+# #6 — crash-window marker: set before clear, cleared last, detectable.
 # ---------------------------------------------------------------------------
 
 def test_single_repo_build_clears_marker_on_success(workspace, tmp_path):
@@ -313,8 +313,8 @@ def test_single_repo_build_clears_marker_on_success(workspace, tmp_path):
 def test_crashed_repo_build_leaves_marker_detectable(workspace, tmp_path, monkeypatch):
     """A mid-rebuild crash leaves the marker so doctor can flag the partial repo.
 
-    The marker must also still be present if the crash happens during the
-    SCIP post-resolve hook (the clear runs AFTER that hook), and
+    The marker must still be present if the crash happens during the resolve
+    pass (the clear runs after it, as the build's last write), and
     repo_build_in_progress is the programmatic reader.
     """
     from cairn.graph import builder as builder_mod
@@ -324,8 +324,8 @@ def test_crashed_repo_build_leaves_marker_detectable(workspace, tmp_path, monkey
     def boom(*args, **kwargs):
         raise RuntimeError("simulated crash mid-rebuild")
 
-    # Crash at the SCIP hook boundary: patch the importer module loader path
-    # used by _build_graph_impl right after resolve (before the marker clear).
+    # Crash mid-build: _resolve_all is the pass _build_graph_impl runs right
+    # before the marker clear (the build's last write).
     monkeypatch.setattr(builder_mod, "_resolve_all", boom)
 
     with pytest.raises(RuntimeError, match="simulated crash"):

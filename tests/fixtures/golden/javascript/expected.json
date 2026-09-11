@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -23,7 +24,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "constructor",
@@ -35,7 +37,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "constructor",
@@ -47,7 +50,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "helperCall",
@@ -59,7 +63,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
@@ -71,7 +76,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "Status",
@@ -83,7 +89,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -93,7 +100,7 @@
       "target_name": "BaseEntity",
       "line": 14,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "process",
@@ -101,13 +108,14 @@
       "target_name": "helperCall",
       "line": 22,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "events",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

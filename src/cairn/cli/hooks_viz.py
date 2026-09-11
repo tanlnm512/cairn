@@ -81,27 +81,3 @@ def viz(fmt, scope, symbol, module, repo, depth, output, do_embed, db):
         click.echo(f"Wrote {output}")
     else:
         click.echo(out)
-
-
-@main.command(name="import-scip")
-@click.argument("scip_file", type=click.Path(exists=True))
-@click.option("--db", default=None, help="Database path (default: resolved).")
-@click.option("--repo", default="default", help="Repo ID prefix.")
-@click.option("--format", "fmt", default="proto",
-              type=click.Choice(["proto", "json"]),
-              help="Index format: 'proto' (default, real indexers) or 'json' (legacy).")
-def import_scip(scip_file, db, repo, fmt):
-    """Import compiler-grade symbol bindings from a SCIP index file."""
-    from ..parsers.scip_importer import import_scip_file
-
-    conn = get_db(db)
-    try:
-        stats = import_scip_file(conn, scip_file, repo_id=repo, fmt=fmt)
-    finally:
-        conn.close()
-    click.echo(
-        f"Imported SCIP index ({fmt}): {stats['files_added']} files, "
-        f"{stats['symbols_added']} symbols, {stats['edges_added']} edges."
-    )
-
-

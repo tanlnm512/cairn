@@ -36,14 +36,16 @@ class Symbol:
     parent_scope: Optional[str] = None
     imports_summary: Optional[str] = None
     body: Optional[str] = None
+    # Parameter count of the definition when the parser could count it
+    # unambiguously; None = unknown.
+    arity: Optional[int] = None
 
 
 @dataclass
 class Edge:
     source_name: str  # name of the enclosing symbol that owns this edge
     # Canonical kinds: calls | extends | implements | embeds | with |
-    # references | decorates | imports | contains (tree-sitter SCIP edges
-    # additionally use call | reference | import). Only calls/call and
+    # references | decorates | imports | contains. Only calls and
     # extends/implements are structural (traversal); the rest are display
     # and resolution signals.
     kind: str
@@ -55,12 +57,18 @@ class Edge:
     # None means "unknown" -- the resolver's type-aware tier simply abstains
     # and falls through to same-repo/global.
     receiver_type: Optional[str] = None
+    # Count of call-site arguments when the parser could count them;
+    # None = unknown.
+    call_arity: Optional[int] = None
 
 
 @dataclass
 class Import:
     imported_path: str  # e.g. "retrofit2.Retrofit" or "java.util.List"
     line: int
+    # Local binding name when it differs from the imported name
+    # (`import m.x as y` -> "y"); None when identical or absent.
+    local_alias: Optional[str] = None
 
 
 @dataclass
@@ -216,3 +224,66 @@ class TreeSitterParserBase:
         if len(body) > self.BODY_MAX_CHARS:
             body = body[: self.BODY_MAX_CHARS]
         return body
+
+
+class ScopeTypeTracker:
+    """Scope-ordered var->type tracker for receiver-type inference.
+
+    A stack of {name: type} scopes mirroring lexical block nesting:
+    push() on block entry, pop() on exit, record() on typed declarations
+    and assignments, resolve() innermost-first. resolve() returns None
+    whenever the binding is not unambiguous -- an unrecorded name, a
+    reassignment to a different type, or an intervening shadowing
+    declaration -- so callers degrade to "unknown receiver" instead of
+    guessing.
+    """
+
+    def __init__(self) -> None:
+        # Innermost scope last. {name: None} marks a name whose recorded
+        # types conflict: it resolves to None ("ambiguous"), which is
+        # distinct from "never recorded".
+        self._scopes: List[Dict[str, Optional[str]]] = [{}]
+
+    def reset(self) -> None:
+        """Drop every scope and recorded type; parsers are reused per file."""
+        self._scopes = [{}]
+
+    def push(self) -> None:
+        """Enter a nested block scope."""
+        self._scopes.append({})
+
+    def pop(self) -> None:
+        """Exit the innermost scope; the root scope is never popped."""
+        if len(self._scopes) > 1:
+            self._scopes.pop()
+
+    def record(self, name: str, type_name: Optional[str]) -> None:
+        """Record ``name`` as having type ``type_name`` in the innermost scope.
+
+        Recording a second, different type for a name that is already
+        visible (reassignment or shadowing) makes the name ambiguous: it
+        resolves to None until the innermost scope pops. Re-recording the
+        same type is a no-op. Missing name or type is ignored.
+        """
+        if not name or not type_name:
+            return
+        visible: Optional[str] = None
+        found = False
+        for scope in reversed(self._scopes):
+            if name in scope:
+                visible = scope[name]
+                found = True
+                break
+        if not found:
+            self._scopes[-1][name] = type_name
+        elif visible is None or visible == type_name:
+            return
+        else:
+            self._scopes[-1][name] = None
+
+    def resolve(self, name: str) -> Optional[str]:
+        """Innermost visible type for ``name``, else None (unknown/ambiguous)."""
+        for scope in reversed(self._scopes):
+            if name in scope:
+                return scope[name]
+        return None

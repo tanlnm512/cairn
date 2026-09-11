@@ -26,17 +26,23 @@ Node-type reference (tree-sitter-php, php_only grammar):
   ``_scope``. ``property_promotion_parameter`` children (PHP 8.0 constructor
   property promotion) -> Symbol(property).
 - ``property_declaration`` -> Symbol(property) for each ``property_element``.
-- ``function_call_expression`` (name/qualified-name call) -> Edge(calls).
 - ``member_call_expression`` (``$obj->method()``) and
   ``nullsafe_member_call_expression`` (``$obj?->method()``) -> Edge(calls).
-- ``scoped_call_expression`` (``Class::method()`` / ``$inst::method()`` /
-  ``Foo\\Bar::baz()``) -> Edge(calls), target is the trailing ``name`` child.
+- Call Edges carry ``call_arity`` (the ``arguments`` count) and function/method
+  Symbols carry ``arity`` (the ``formal_parameters`` count, promoted
+  constructor parameters included); variadic/defaulted parameters and spread
+  or first-class-callable (``...``) arguments yield None (a fixed count can
+  never match them), and ``new Foo;`` without parentheses passes zero
+  arguments.
 - ``require_*_expression`` / ``include_*_expression`` -> Import. The argument
   is often a ``binary_expression`` (``__DIR__ . "/path"``); captured verbatim.
 - ``namespace_use_declaration`` (``use``) -> Import per clause, including
-  grouped ``use Foo\\{A, B};``. ``namespace_definition`` (bracketed form)
-  scopes declarations via ``_scope``; unbracketed form is ignored (it applies
-  file-wide and cairn doesn't model namespaces in FQNs beyond ``_scope``).
+  grouped ``use Foo\\{A, B};``; a clause's ``alias`` field
+  (``use Foo\\Bar as B``) is recorded as ``local_alias`` and plain clauses
+  carry None (the imported tail already binds under its own name).
+  ``namespace_definition`` (bracketed form) scopes declarations via
+  ``_scope``; unbracketed form is ignored (it applies file-wide and cairn
+  doesn't model namespaces in FQNs beyond ``_scope``).
 
 PHP name nodes are plain ``name`` children (not ``identifier``). Leading
 backslashes on fully-qualified names (``\array_map``) are stripped, and
@@ -263,6 +269,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
             line_end=node.end_point[0] + 1,
             column_start=node.start_point[1],
             column_end=node.end_point[1],
+            arity=self._formal_arity(node),
         )
 
     def _parse_method(
@@ -301,6 +308,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
             line_end=node.end_point[0] + 1,
             column_start=node.start_point[1],
             column_end=node.end_point[1],
+            arity=self._formal_arity(node),
         )
 
     def _parse_enum_case(self, node: Node, source: bytes) -> Optional[Symbol]:
@@ -362,6 +370,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
             target_name=callee,
             line=node.start_point[0] + 1,
             receiver_type=self._infer_receiver_type(receiver),
+            call_arity=self._call_arity(node),
         )
 
     def _split_object_creation(self, node: Node, source: bytes):
@@ -429,6 +438,42 @@ class PhpParser(BaseParser, TreeSitterParserBase):
             return callee, receiver_text
         return None, None
 
+    # ------------------------------------------------------------------ arity
+
+    def _formal_arity(self, node: Node) -> Optional[int]:
+        """formal_parameters count; None when a variadic or defaulted
+        parameter makes the declared count unable to match call counts."""
+        params = self._child_of_type(node, ("formal_parameters",))
+        if params is None:
+            return None
+        count = 0
+        for child in params.children:
+            if child.type == "variadic_parameter":
+                return None
+            if child.type in ("simple_parameter", "property_promotion_parameter"):
+                if child.child_by_field_name("default_value") is not None:
+                    return None
+                count += 1
+        return count
+
+    def _call_arity(self, node: Node) -> Optional[int]:
+        """arguments count; None when a spread unpacking or the
+        first-class-callable ``...`` placeholder makes it uncountable."""
+        args = self._child_of_type(node, ("arguments",))
+        if args is None:
+            # `new Foo;` invokes the constructor with zero arguments; every
+            # other call form always carries its arguments node.
+            return 0 if node.type == "object_creation_expression" else None
+        count = 0
+        for child in args.children:
+            if child.type == "variadic_placeholder":
+                return None
+            if child.type == "argument":
+                if self._child_of_type(child, ("variadic_unpacking",)) is not None:
+                    return None
+                count += 1
+        return count
+
     # ------------------------------------------------------------- import parse
 
     def _parse_use_imports(self, node: Node, source: bytes) -> List[Import]:
@@ -436,7 +481,8 @@ class PhpParser(BaseParser, TreeSitterParserBase):
 
         Handles single (``use Foo\\A;``), multi (``use Foo\\A, Bar\\B;``), and
         grouped (``use Foo\\{A, B};``) forms. For grouped, the prefix
-        namespace_name is prepended to each inner clause name.
+        namespace_name is prepended to each inner clause name. A clause's
+        ``alias`` field (``use Foo\\A as FA``) is recorded as local_alias.
         """
         imports: List[Import] = []
         # Grouped form: namespace_use_group contains namespace_use_clause children.
@@ -454,21 +500,37 @@ class PhpParser(BaseParser, TreeSitterParserBase):
                     continue
                 inner_name = self._node_text(inner, source).strip()
                 path = f"{prefix}\\{inner_name}" if prefix else inner_name
-                imports.append(Import(imported_path=path, line=node.start_point[0] + 1))
+                imports.append(
+                    Import(
+                        imported_path=path,
+                        line=node.start_point[0] + 1,
+                        local_alias=self._use_clause_alias(clause, source),
+                    )
+                )
             return imports
         # Ungrouped form: one or more namespace_use_clause children directly.
+        # A single-segment clause carries a plain `name` (no qualified_name);
+        # the imported name always precedes the alias's `as` keyword.
         for clause in node.children:
             if clause.type != "namespace_use_clause":
                 continue
-            qn = self._child_of_type(clause, ("qualified_name",))
+            qn = self._child_of_type(clause, ("qualified_name", "name"))
             if qn is not None:
                 imports.append(
                     Import(
                         imported_path=self._node_text(qn, source).strip(),
                         line=node.start_point[0] + 1,
+                        local_alias=self._use_clause_alias(clause, source),
                     )
                 )
         return imports
+
+    def _use_clause_alias(self, clause: Node, source: bytes) -> Optional[str]:
+        """``alias`` field text of a namespace_use_clause, if aliased."""
+        alias = clause.child_by_field_name("alias")
+        if alias is None:
+            return None
+        return self._node_text(alias, source).strip()
 
     def _parse_require_import(self, node: Node, source: bytes) -> Optional[Import]:
         # require/include expression nodes wrap the path argument verbatim.

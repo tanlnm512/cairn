@@ -408,10 +408,10 @@ def test_freshness_warn_interrupted_repo_rebuild(tmp_path):
     """A stale 'building' marker -> freshness WARN with the recovery hint.
 
     builder._set_repo_build_state writes the marker before clearing a repo
-    for an on-disk rebuild and removes it only after the SCIP hook; a crash
-    in between leaves the repo partial. Doctor is the surface that makes
-    the marker observable (the detection contract repo_build_state exists
-    for).
+    for an on-disk rebuild and removes it only after the build's last write;
+    a crash in between leaves the repo partial. Doctor is the surface that
+    makes the marker observable (the detection contract repo_build_state
+    exists for).
     """
     db = tmp_path / "graph.db"
 

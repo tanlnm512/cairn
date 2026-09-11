@@ -100,13 +100,13 @@ grammar carries them. `.h` headers are sniffed to Objective-C / C++ / C.
 
 | Language | Extensions | Status |
 |----------|------------|--------|
-| Kotlin | `.kt` | Full (tree-sitter) · **SCIP merge** via `scip-java` adds compiler-grade exact call edges |
-| Java | `.java` | Full · **SCIP merge** via `scip-java` |
-| Swift | `.swift` | Full · **SCIP coexistence** (opaque-USR quirk falls back to pure-SCIP cleanly — see [docs/indexing.md](docs/indexing.md)) |
-| TypeScript | `.ts` `.tsx` `.mts` `.cts` | Full · SCIP merge via `scip-typescript` (auto-index capable) · JSX component refs tracked |
+| Kotlin | `.kt` | Full |
+| Java | `.java` | Full |
+| Swift | `.swift` | Full |
+| TypeScript | `.ts` `.tsx` `.mts` `.cts` | Full · JSX component refs tracked |
 | JavaScript | `.js` `.jsx` `.mjs` `.cjs` | Full · React `<Comp/>` JSX refs tracked as references edges |
-| Python | `.py` | Full · SCIP consume via `scip-python` |
-| Go | `.go` | Full · SCIP consume via `scip-go` |
+| Python | `.py` | Full |
+| Go | `.go` | Full |
 | Dart | `.dart` | Full |
 | Objective-C | `.m` `.mm` | Full · `.h` sniffed |
 | PHP | `.php` `.phtml` `.php3`-`5` | Full (pure-PHP grammar, no HTML mixing) |
@@ -115,9 +115,8 @@ grammar carries them. `.h` headers are sniffed to Objective-C / C++ / C.
 | C | `.c` | Full · `.h` sniffed |
 | C++ | `.cpp` `.cc` `.cxx` `.hpp` | Full · `.h` sniffed |
 
-Not indexed (yet): Vue / Svelte single-file components, CSS, HTML. SCIP
-coexistence is opt-in per language via `cairn.json` — without an index,
-tree-sitter alone carries the language. Details: [docs/indexing.md](docs/indexing.md).
+Not indexed (yet): Vue / Svelte single-file components, CSS, HTML. Details:
+[docs/indexing.md](docs/indexing.md).
 
 ## Why cairn?
 
@@ -315,7 +314,6 @@ The default install is dependency-light and network-free. Opt in with extras:
 | `[semantic]` | `sentence-transformers` — real embeddings and rerank (torch-based, large) | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — explicit ANN install (core since 0.14) | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion for `cairn knowledge ingest` | `cairn.json` `ingest` key (classification rules) |
-| `[scip]` | `protobuf` — consume pre-built [SCIP](docs/indexing.md) indexes for compiler-grade exact edges | declare indexes in `cairn.json` |
 | `[watch]` | `watchdog` — live rebuilds while `cairn serve` runs | `CAIRN_WATCH=0` disables |
 | `[otlp]` | OpenTelemetry export of local telemetry events | `CAIRN_OTEL_ENDPOINT` (unset = off) |
 
@@ -338,7 +336,7 @@ Full index: [docs/README.md](docs/README.md). The short map:
 | Read | For |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | system shape, storage layout, module map |
-| [docs/indexing.md](docs/indexing.md) | how `cairn build` / `update` work, resolver tiers, SCIP |
+| [docs/indexing.md](docs/indexing.md) | how `cairn build` / `update` work, resolver tiers |
 | [docs/retrieval.md](docs/retrieval.md) | the hybrid query pipeline and its knobs |
 | [docs/knowledge-and-memory.md](docs/knowledge-and-memory.md) | doc ingestion, memory tiers, task queue, critic |
 | [docs/mcp-tools.md](docs/mcp-tools.md) · [docs/cli-reference.md](docs/cli-reference.md) | the two tool surfaces |

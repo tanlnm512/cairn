@@ -81,7 +81,7 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `mcp_server/` | the 22-tool MCP surface |
 | `memory/` | tiered agent memory (raw → drafts → tribal → archived) |
 | `okf/` | Open Knowledge Format concept model and bundle |
-| `parsers/` | tree-sitter parsers (14 languages) + SCIP importer |
+| `parsers/` | tree-sitter parsers (14 languages) |
 | `retrieval/` | retrieval protocols + the batched vector scan (the Retriever / Fusion / Reranker stages live in `graph/`) |
 | `telemetry/` | best-effort local telemetry sink + optional OTLP export |
 | `utils/` | shared helpers (git inspection, logging) |

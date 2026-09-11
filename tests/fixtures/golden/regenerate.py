@@ -56,6 +56,7 @@ def normalise(parsed) -> dict:
                     "docstring": s.docstring,
                     "modifiers": sorted(s.modifiers),
                     "metadata": s.metadata,
+                    "arity": s.arity,
                 }
                 for s in parsed.symbols
             ],
@@ -69,7 +70,7 @@ def normalise(parsed) -> dict:
                     "target_name": e.target_name,
                     "line": e.line,
                     "column": e.column,
-                    "receiver_type": e.receiver_type,
+                    "call_arity": e.call_arity,
                 }
                 for e in parsed.edges
             ],
@@ -80,6 +81,7 @@ def normalise(parsed) -> dict:
                 {
                     "imported_path": i.imported_path,
                     "line": i.line,
+                    "local_alias": i.local_alias,
                 }
                 for i in parsed.imports
             ],

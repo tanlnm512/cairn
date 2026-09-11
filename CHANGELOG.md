@@ -11,7 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.20.1] - 2026-09-11
+
+### Removed
+- The SCIP compiler-index ingestion path: `cairn import-scip`, the
+  `cairn.json` `scip` key, the `[scip]` extra (protobuf runtime), the
+  vendored protobuf stub with its regeneration script, and the external
+  indexer auto-generation orchestrator. Indexing is tree-sitter-only for
+  every language; a stale `scip` key in `cairn.json` is ignored like any
+  other unknown key.
+
+### Added
+- Parser-emitted binding signals for all fourteen languages: import
+  aliases (`imports.local_alias`), definition arity (`symbols.arity`),
+  call arity, and receiver types for the nine parsers that previously
+  emitted none (python, c/cpp, csharp, dart, js/ts, objc, swift). The
+  resolver consumes them: a bare call through a local import alias
+  resolves exact, and same-named overloads split by argument count when
+  exactly one arity matches. Receiver-typed lookups that collide across
+  same-named types now narrow by same-file and fall through the tier walk
+  instead of degrading to ambiguous. Intra-workspace exact share rises on
+  the measured corpora (self 0.2248 → 0.2429; ds2/attrs 0.6546 → 0.6781)
+  with retrieval ground truth unchanged (558/558 + 234/234).
 
 ## [0.20.0] - 2026-09-10
 

@@ -132,23 +132,6 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
-# File extensions per scanner language, used by the per-language SCIP fallback
-# to identify tree-sitter rows that should be removed when an indexer's names
-# don't match (e.g. scip-swift USRs). Inverse of scanner.EXTENSION_MAP.
-_LANGUAGE_EXTENSIONS_CACHE: Dict[str, list] = {}
-
-
-def _language_extensions(language: str) -> list:
-    """Return the file extensions (with leading dot) for a scanner language."""
-    if not _LANGUAGE_EXTENSIONS_CACHE:
-        try:
-            for ext, lang in scanner_mod.EXTENSION_MAP.items():
-                _LANGUAGE_EXTENSIONS_CACHE.setdefault(lang, []).append(ext)
-        except Exception:
-            pass
-    return _LANGUAGE_EXTENSIONS_CACHE.get(language, [])
-
-
 def _scan_workspace_with_skips(
     workspace: str, repo_filter: Optional[str] = None
 ) -> tuple[list, list]:
@@ -272,7 +255,8 @@ def _insert_results(
     file_count = 0
 
     # repo_edges_by_file: {repo -> {source_file_id -> [(edge_id, source_sid,
-    #   target_name, line, column), ...]}} -- the resolver consumes this.
+    #   target_name, line, column, receiver_type, call_arity), ...]}} -- the
+    #   resolver consumes this; elements 6-7 are in-memory parser signals.
     repo_edges_by_file: Dict[str, Dict[str, List[tuple]]] = {}
     # name -> [(symbol_id, repo, file_id)] for same-file source lookup.
     name_to_symbol_ids: Dict[str, List[tuple]] = {}
@@ -403,56 +387,7 @@ def _build_graph_impl(
         log("No source files found.")
         return {"repos": 0, "files": 0, "symbols": 0, "edges": 0, "imports": 0}
 
-    # Capture the scanner's real yield before any SCIP skip so the 'scan' event
-    # reflects what was found, not the post-skip tree-sitter subset.
-    scan_total = len(files)
-
-    # SCIP coexistence: if cairn.json declares a pre-built SCIP index for a
-    # language and that index file exists, tree-sitter STILL parses those files
-    # (providing modifiers, body, inheritance edges, parent_scope that SCIP
-    # can't emit). The importer then merges SCIP's exact-resolution edges onto
-    # the tree-sitter rows post-resolve (below). One row per symbol after merge.
-    scip_languages: Dict[str, str] = {}
-    try:
-        from .config import load_config
-        cfg = load_config(workspace)
-        if cfg.scip:
-            ws_root_cfg = Path(workspace).resolve()
-            for lang, rel_path in cfg.scip.items():
-                idx_path = (ws_root_cfg / rel_path)
-                if not idx_path.exists():
-                    # Auto-generation (bounded): if a known indexer is on PATH,
-                    # produce the missing index once before the existence gate.
-                    # Never raises -- a missing/failing tool falls back to
-                    # tree-sitter for this language. An existing index is never
-                    # rebuilt (the user/CI owns the regeneration cadence).
-                    try:
-                        from ..parsers.scip_indexers import try_generate_index
-                        try_generate_index(lang, idx_path, workspace, log)
-                    except Exception as e:
-                        log(f"  scip[{lang}]: index generation skipped ({e})")
-                if idx_path.exists():
-                    scip_languages[lang] = str(idx_path)
-    except Exception:
-        # Config loading must never break the build: a malformed cairn.json or
-        # an unreadable path falls back to tree-sitter for everything.
-        scip_languages = {}
-    if scip_languages:
-        # Warn when a 'scip' key doesn't correspond to any known scanner
-        # language -- the importer won't find matching tree-sitter rows to
-        # merge into, so the index contributes standalone rows only.
-        known_langs: set = set()
-        try:
-            known_langs.update(scanner_mod.EXTENSION_MAP.values())
-        except Exception:
-            pass
-        known_langs.update(f.language for f in files)
-        unmatched = [k for k in scip_languages if k not in known_langs]
-        if unmatched:
-            log(f"  warning: cairn.json 'scip' keys not recognized as languages: {unmatched} "
-                f"(known: {sorted(known_langs)}). SCIP data for them won't merge with tree-sitter.")
-
-    emit("scan", files=scan_total, skips=len(skips))
+    emit("scan", files=len(files), skips=len(skips))
 
     # Bucket files by repo once so the per-repo language inference below is
     # O(files) total rather than O(repos x files).
@@ -505,9 +440,10 @@ def _build_graph_impl(
     if repo_filter:
         # Crash-window marker: durable BEFORE _clear_repo commits, so a crash
         # at any later commit boundary (clear, periodic 500-file commits,
-        # resolve, SCIP import) leaves a detectable 'building' row instead of
-        # a silently partial repo. Cleared after the SCIP post-resolve hook;
-        # `cairn doctor` surfaces a stale marker as an interrupted rebuild.
+        # resolve, imports materialization) leaves a detectable 'building'
+        # row instead of a silently partial repo. Cleared after the build's
+        # last write; `cairn doctor` surfaces a stale marker as an
+        # interrupted rebuild.
         _set_repo_build_state(conn, repo_filter)
         _clear_repo(conn, repo_filter)  # on-disk, single repo: still needed
     elif not in_memory:
@@ -549,116 +485,13 @@ def _build_graph_impl(
     except Exception as e:
         log(f"  imports-edge materialization failed: {e}")
 
-    # SCIP post-resolve hook: import pre-built indexes for languages whose
-    # files were skipped above. SCIP's exact edges aren't re-resolved, so this
-    # runs AFTER _resolve_all (tree-sitter's resolver would otherwise try to
-    # re-link them) but BEFORE backup_to (so in-memory builds capture the
-    # SCIP data too). Runs before the CLI's dataflow/transitive passes so
-    # derived indexes cover SCIP symbols.
-    scip_import_stats: Dict[str, dict] = {}
-    if scip_languages:
-        try:
-            from ..parsers.scip_importer import scip_available, import_scip_file
-            if scip_available():
-                # repo_id for the importer: consistent with files.repo_id
-                # (repo basename for multi-repo, or the single repo's id).
-                for lang, scip_idx in scip_languages.items():
-                    # Determine the repo id to attribute SCIP symbols to. Use
-                    # the first repo seen (typical single-repo case); for
-                    # multi-repo the index is still imported under one id.
-                    repo_for_scip = next((str(_r) for _r in repos_seen), "default")
-                    try:
-                        # ws_root lets the importer normalize each document's
-                        # path to (repo_id, repo-relative) so SCIP rows share
-                        # file identity with the scanner/incremental paths.
-                        s = import_scip_file(
-                            conn, scip_idx, repo_id=repo_for_scip, fmt="proto",
-                            ws_root=ws_root,
-                        )
-                        scip_import_stats[lang] = s
-                        log(f"  SCIP[{lang}]: {s.get('symbols_added',0)} symbols, "
-                            f"{s.get('edges_added',0)} edges, "
-                            f"{s.get('symbols_merged',0)} merged")
-                    except Exception as e:
-                        # Roll back any partial writes the importer left on the
-                        # shared connection before it raised. import_scip_file
-                        # commits at the end of a successful import but does not
-                        # roll back on failure, so rows inserted before the
-                        # exception point would otherwise ride along on the next
-                        # unrelated conn.commit() in the build — silently mixing
-                        # a half-imported SCIP index into the graph. Rolling
-                        # back here scopes the revert to only this import's
-                        # pending writes (earlier, committed work in the build
-                        # is already durably committed and unaffected).
-                        conn.rollback()
-                        log(f"  SCIP[{lang}] import failed: {e}; skipping "
-                            f"(partial writes rolled back)")
-                        # Don't fail the build over a bad SCIP index.
-        except ImportError:
-            log("  SCIP indexes configured but [scip] extra not installed; "
-                "using tree-sitter fallback")
-
-    # Per-language fallback: if an indexer's symbol names don't match
-    # tree-sitter's (merge rate ~0, e.g. scip-swift's opaque USRs), the
-    # coexistence duplicates are harmful -- two disconnected graphs for the
-    # same logical symbol, and get_callers breaks for both name forms. Revert
-    # that language to pure-SCIP: delete the tree-sitter rows for its files so
-    # only the SCIP data remains (clean, no dupes). Languages whose indexers
-    # have human-readable descriptors (scip-java, scip-typescript) keep the
-    # coexistence merge (source='merged').
-    for lang, s in scip_import_stats.items():
-        added = s.get("symbols_added", 0)
-        merged = s.get("symbols_merged", 0)
-        if added > 0 and merged == 0:
-            # Nothing merged -- the two sources don't share a name space.
-            # Delete tree-sitter symbols/edges for this language's files so
-            # only SCIP remains (reverts to the pre-coexistence skip model).
-            exts = _language_extensions(lang)
-            if exts:
-                like_clause = " OR ".join("path LIKE ?" for _ in exts)
-                cur = conn.cursor()
-                ts_file_ids = [
-                    r[0] for r in cur.execute(
-                        f"SELECT id FROM files WHERE ({like_clause}) "
-                        f"AND hash != 'scip_imported'",
-                        tuple(f"%{e}" for e in exts),
-                    ).fetchall()
-                ]
-                if ts_file_ids:
-                    fid_placeholders = ",".join("?" for _ in ts_file_ids)
-                    fids = tuple(ts_file_ids)
-                    # Delete only TREE-SITTER symbols (source != 'scip'), NOT
-                    # SCIP's -- after file_id reconciliation they share the
-                    # same file row, so a blanket delete would nuke SCIP too.
-                    ts_sym_ids = [
-                        r[0] for r in cur.execute(
-                            f"SELECT id FROM symbols WHERE file_id IN ({fid_placeholders}) "
-                            f"AND source != 'scip'",
-                            fids,
-                        ).fetchall()
-                    ]
-                    if ts_sym_ids:
-                        sid_placeholders = ",".join("?" for _ in ts_sym_ids)
-                        cur.execute(
-                            f"DELETE FROM edges WHERE source_id IN ({sid_placeholders})",
-                            tuple(ts_sym_ids),
-                        )
-                        cur.execute(
-                            f"DELETE FROM symbols WHERE id IN ({sid_placeholders})",
-                            tuple(ts_sym_ids),
-                        )
-                    log(f"  SCIP[{lang}]: 0/{added} symbols merged (indexer names "
-                        f"don't match tree-sitter); reverted to pure-SCIP "
-                        f"(removed {len(ts_sym_ids)} tree-sitter symbols)")
-                    s["reverted_to_pure_scip"] = True
-
     if repo_filter:
         # Single-repo rebuild complete and committed (insert final commit +
-        # per-repo resolve commits + the SCIP post-resolve hook above): out of
+        # per-repo resolve commits + imports materialization above): out of
         # the crash window, clear the marker. An exception anywhere above
-        # leaves it in place -- the repo really is partial. The clear is
-        # deliberately AFTER the SCIP hook: SCIP writes more symbols/edges for
-        # the repo, so a crash during import must stay detectable too.
+        # leaves it in place -- the repo really is partial. The clear is the
+        # build path's last write so a crash during any earlier write stays
+        # detectable.
         _clear_repo_build_state(conn, repo_filter)
 
     if in_memory:
@@ -670,25 +503,8 @@ def _build_graph_impl(
         log("  persisting in-memory graph to disk...")
         backup_to(conn, resolved_db)         # single dump
 
-    # Fold SCIP import stats into the top-level counts so the summary
-    # reflects the full build, not just the tree-sitter phase. Without this,
-    # an all-SCIP workspace reports repos=0/files=0/symbols=0.
-    scip_repo_count = 0
-    if scip_import_stats:
-        for s in scip_import_stats.values():
-            symbol_count += s.get("symbols_added", 0)
-            edge_count += s.get("edges_added", 0)
-            file_count += s.get("files_added", 0)
-        # If tree-sitter found no repos but SCIP imported data, count the SCIP
-        # file rows so the summary isn't structurally empty.
-        if not repos_seen:
-            scip_repo_count = cur.execute(
-                "SELECT COUNT(DISTINCT repo_id) FROM files WHERE hash = 'scip_imported'"
-            ).fetchone()[0]
-            # reflect SCIP repos in the summary without mutating repos_seen
-
     summary = {
-        "repos": scip_repo_count if (not repos_seen and scip_import_stats) else len(repos_seen),
+        "repos": len(repos_seen),
         "files": file_count,
         "symbols": symbol_count,
         "edges": edge_count,
@@ -697,8 +513,6 @@ def _build_graph_impl(
         "parse_errors": parse_errors,
         "resolution": resolution_stats,
     }
-    if scip_import_stats:
-        summary["scip"] = scip_import_stats
     log(f"Done: {summary}")
     return summary
 
@@ -1067,6 +881,7 @@ def insert_parsed_file(
             sym.parent_scope,
             sym.imports_summary,
             sym.body,
+            sym.arity,
         ))
         name_to_symbol_ids.setdefault(sym.name, []).append((sym_id, repo, file_id))
 
@@ -1097,12 +912,13 @@ def insert_parsed_file(
         None,
         file_imports_summary,
         None,
+        None,
     ))
     name_to_symbol_ids.setdefault(module_name, []).append((module_id, repo, file_id))
 
     # --- imports ------------------------------------------------------------
     for imp in pf.imports:
-        imp_rows.append((_new_id(), file_id, imp.imported_path, None, imp.line))
+        imp_rows.append((_new_id(), file_id, imp.imported_path, None, imp.line, imp.local_alias))
 
     # Same-file symbol-name lookup for edge *source* resolution. Built from the
     # symbols inserted for THIS file only, rather than scanning the global
@@ -1153,12 +969,15 @@ def insert_parsed_file(
             edge_id, source_id, None, edge.target_name, edge.kind,
             edge.line, edge.column, None,
         ))
-        # Carry receiver_type as the 6th (in-memory only) tuple element so the
-        # resolver's type-aware tier can use it; None when the parser didn't/
-        # couldn't infer a receiver type (abstain-safe).
+        # Carry the parser's in-memory-only signals on the tuple for the
+        # resolver: receiver_type (6th element, type-aware tier) and
+        # call_arity (7th, the call's argument count for the within-tier
+        # arity tiebreak); None when the parser didn't/couldn't infer them
+        # (abstain-safe).
         file_edges.append((
             edge_id, source_id, edge.target_name, edge.line, edge.column,
             getattr(edge, "receiver_type", None),
+            getattr(edge, "call_arity", None),
         ))
 
     if sym_rows:
@@ -1166,14 +985,15 @@ def insert_parsed_file(
             """INSERT INTO symbols
                (id, file_id, name, qualified_name, kind, line_start, line_end,
                 column_start, column_end, docstring, modifiers, metadata,
-                parameters, return_type, parent_scope, imports_summary, body, source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'tree_sitter')""",
+                parameters, return_type, parent_scope, imports_summary, body,
+                arity, source)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'tree_sitter')""",
             sym_rows,
         )
     if imp_rows:
         cur.executemany(
-            """INSERT INTO imports (id, file_id, imported_path, resolved_symbol_id, line)
-               VALUES (?,?,?,?,?)""",
+            """INSERT INTO imports (id, file_id, imported_path, resolved_symbol_id, line, local_alias)
+               VALUES (?,?,?,?,?,?)""",
             imp_rows,
         )
     if edge_rows:

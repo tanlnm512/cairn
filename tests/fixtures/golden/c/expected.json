@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Point",
@@ -23,7 +24,8 @@
       "column_end": 30,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "add",
@@ -35,7 +37,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "greet",
@@ -47,7 +50,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     }
   ],
   "edges": [
@@ -57,7 +61,7 @@
       "target_name": "add",
       "line": 16,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 2
     },
     {
       "source_name": "greet",
@@ -65,21 +69,24 @@
       "target_name": "printf",
       "line": 15,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 2
     }
   ],
   "imports": [
     {
       "imported_path": "\"utils.h\"",
-      "line": 3
+      "line": 3,
+      "local_alias": null
     },
     {
       "imported_path": "<stdio.h>",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     },
     {
       "imported_path": "<string.h>",
-      "line": 2
+      "line": 2,
+      "local_alias": null
     }
   ]
 }

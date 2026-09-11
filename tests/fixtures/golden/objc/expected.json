@@ -11,7 +11,8 @@
       "column_end": 4,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "BaseEntity",
@@ -23,7 +24,8 @@
       "column_end": 4,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -35,7 +37,8 @@
       "column_end": 4,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -47,7 +50,8 @@
       "column_end": 4,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "helperCall",
@@ -61,7 +65,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "initWithId",
@@ -75,7 +80,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "initWithId",
@@ -89,7 +95,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "initWithName",
@@ -103,7 +110,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "initWithName",
@@ -117,7 +125,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
@@ -131,7 +140,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "process",
@@ -145,7 +155,8 @@
       "modifiers": [
         "instance_method"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "id",
@@ -157,7 +168,8 @@
       "column_end": 41,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "id",
@@ -169,7 +181,8 @@
       "column_end": 41,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -181,7 +194,8 @@
       "column_end": 43,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "status",
@@ -193,7 +207,8 @@
       "column_end": 44,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Identifiable",
@@ -205,7 +220,8 @@
       "column_end": 4,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -215,7 +231,7 @@
       "target_name": "NSObject",
       "line": 12,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "Identifiable",
@@ -223,7 +239,7 @@
       "target_name": "NSObject",
       "line": 3,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -231,7 +247,7 @@
       "target_name": "BaseEntity",
       "line": 27,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -239,7 +255,7 @@
       "target_name": "Identifiable",
       "line": 27,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "helperCall",
@@ -247,7 +263,7 @@
       "target_name": "stringWithFormat",
       "line": 49,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 2
     },
     {
       "source_name": "initWithId",
@@ -255,7 +271,7 @@
       "target_name": "copy",
       "line": 38,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "initWithId",
@@ -263,7 +279,7 @@
       "target_name": "initWithName",
       "line": 36,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "initWithName",
@@ -271,7 +287,7 @@
       "target_name": "copy",
       "line": 21,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "initWithName",
@@ -279,7 +295,7 @@
       "target_name": "init",
       "line": 19,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "process",
@@ -287,13 +303,14 @@
       "target_name": "helperCall",
       "line": 45,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "Foundation/Foundation.h",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

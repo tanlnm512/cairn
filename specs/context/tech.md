@@ -1,7 +1,7 @@
 # Tech stack & conventions: cairn
 
 **Created**: 2026-08-28 | **Baseline**: 0.16.0 @ fe7a7f09edb015d6a8fb12cd5d0f1b06ed07f5c3
-**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey — mypy promoted from advisory to a hard gate in CI; test-runner line unchanged); re-verified @ 7663989 (2026-09-04 — ci.yml/pyproject/system.py line refs re-anchored)
+**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey — mypy promoted from advisory to a hard gate in CI; test-runner line unchanged); re-verified @ 7663989 (2026-09-04 — ci.yml/pyproject/system.py line refs re-anchored); refreshed @ dc9882b (2026-09-11, remove-scip-exact-rate survey — extras re-anchored: `[scip]` block at pyproject.toml:126 with protobuf>=7.35.1, grpcio-tools dev dep at :87; version now 0.20.0)
 Stack, build/test runners, and gates. Cited from pyproject.toml,
 .pre-commit-config.yaml, and .github/workflows/ci.yml read at baseline.
 

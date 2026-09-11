@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Status",
@@ -23,7 +24,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -35,7 +37,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Build",
@@ -47,7 +50,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "Identifiable",
@@ -59,7 +63,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "GetID",
@@ -71,7 +76,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "Process",
@@ -83,7 +89,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "helperCall",
@@ -95,7 +102,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     }
   ],
   "edges": [
@@ -105,7 +113,7 @@
       "target_name": "helperCall",
       "line": 37,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 2
     },
     {
       "source_name": "User",
@@ -113,7 +121,7 @@
       "target_name": "BaseEntity",
       "line": 25,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "helperCall",
@@ -121,17 +129,19 @@
       "target_name": "Println",
       "line": 42,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "context",
-      "line": 4
+      "line": 4,
+      "local_alias": null
     },
     {
       "imported_path": "fmt",
-      "line": 5
+      "line": 5,
+      "local_alias": null
     }
   ]
 }

@@ -11,7 +11,8 @@
       "column_end": 3,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -23,7 +24,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "find",
@@ -35,7 +37,8 @@
       "column_end": 7,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "greet",
@@ -47,7 +50,8 @@
       "column_end": 7,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "greet_all",
@@ -59,7 +63,8 @@
       "column_end": 3,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "initialize",
@@ -71,7 +76,8 @@
       "column_end": 7,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "sync",
@@ -83,7 +89,8 @@
       "column_end": 7,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     }
   ],
   "edges": [
@@ -93,7 +100,7 @@
       "target_name": "greet_all",
       "line": 35,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "User",
@@ -101,7 +108,7 @@
       "target_name": "attr_accessor",
       "line": 6,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "User",
@@ -109,7 +116,7 @@
       "target_name": "Base",
       "line": 5,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "find",
@@ -117,7 +124,7 @@
       "target_name": "new",
       "line": 19,
       "column": 0,
-      "receiver_type": "User"
+      "call_arity": 1
     },
     {
       "source_name": "greet",
@@ -125,7 +132,7 @@
       "target_name": "info",
       "line": 14,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "greet",
@@ -133,7 +140,7 @@
       "target_name": "new",
       "line": 13,
       "column": 0,
-      "receiver_type": "Logger"
+      "call_arity": 0
     },
     {
       "source_name": "greet_all",
@@ -141,7 +148,7 @@
       "target_name": "each",
       "line": 32,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "greet_all",
@@ -149,7 +156,7 @@
       "target_name": "greet",
       "line": 32,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "greet_all",
@@ -157,7 +164,7 @@
       "target_name": "puts",
       "line": 32,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "sync",
@@ -165,7 +172,7 @@
       "target_name": "compact",
       "line": 24,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -173,7 +180,7 @@
       "target_name": "find",
       "line": 23,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "sync",
@@ -181,7 +188,7 @@
       "target_name": "id",
       "line": 25,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -189,7 +196,7 @@
       "target_name": "list",
       "line": 25,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -197,7 +204,7 @@
       "target_name": "map",
       "line": 24,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -205,7 +212,7 @@
       "target_name": "map",
       "line": 25,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -213,7 +220,7 @@
       "target_name": "notify",
       "line": 26,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -221,7 +228,7 @@
       "target_name": "paid",
       "line": 24,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sync",
@@ -229,17 +236,19 @@
       "target_name": "update",
       "line": 23,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "./helpers",
-      "line": 2
+      "line": 2,
+      "local_alias": null
     },
     {
       "imported_path": "logger",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

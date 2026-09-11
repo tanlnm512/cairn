@@ -29,8 +29,7 @@ from cairn.okf.utils import _NON_ALNUM, slugify
 _SLUG_MAX = 60
 
 # sha1 fragment (content key, not security -- usedforsecurity=False)
-# appended to stable IDs whose slugified path exceeded the cap; matches the
-# symbol-disambiguation fragment in parsers/scip_importer.py.
+# appended to stable IDs whose slugified path exceeded the cap.
 _HASH_LEN = 8
 
 

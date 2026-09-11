@@ -100,7 +100,6 @@ Group: `cairn memory …`
 | `cairn bench` | performance suites |
 | `cairn eval` | retrieval evaluation |
 | `cairn viz` | render graph diagrams |
-| `cairn import-scip` | import a SCIP index |
 | `cairn hooks install|uninstall` | git hooks |
 | `cairn version` / `upgrade` | version and self-upgrade |
 | `cairn sync` | sync pending watcher edits |
