@@ -6,7 +6,7 @@ server. SKILL.md keeps only a name index — come here for the details.
 ## Layer 1: Structural Graph & Hybrid Retrieval
 - `explore(query)` -- **Recommended first call.** Performs 3-stage hybrid search (BM25 + BAAI/bge-m3 FP16 vectors + Cross-Encoder reranking) + 1-hop AST callers/callees + blast radius in one call
 - `semantic_search(query, limit=20, include_callers=False, structured=False)` -- 3-stage hybrid semantic search (bge-m3 dense 1024d + BM25 + sqlite-vec ANN index + Cross-Encoder rerank). `structured=True` returns a typed result object instead of the rendered text.
-- `find_definition(name)` -- Where a symbol is defined (supports Tree-sitter AST & SCIP compiler-grade exact bindings)
+- `find_definition(name)` -- Where a symbol is defined (tree-sitter AST bindings)
 - `get_callers(name, fuzzy=False, limit=200, structured=False)` -- Who calls this function (precise by default; fuzzy re-enables name-only matching). `structured=True` returns a typed result object instead of the rendered text.
 - `get_callees(name, fuzzy=False, limit=200, structured=False)` -- What this function calls (precise drops stdlib/external; fuzzy includes them). `structured=True` returns a typed result object instead of the rendered text.
 - `impact_analysis(name, depth=5, fuzzy=False, cached=False, limit=500, structured=False)` -- Recursive what-breaks (within-repo). `cached=True` uses the precomputed dataflow index (run `cairn dataflow build` first) — the default `cached=False` walks the live caller graph. `structured=True` returns a typed result object instead of the rendered text. See `references/golden-rules.md` Rule 6 before calling this on a common/lifecycle name.

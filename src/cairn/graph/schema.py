@@ -446,11 +446,19 @@ SYMBOL_IMPORTS_SUMMARY_MIGRATION = "ALTER TABLE symbols ADD COLUMN imports_summa
 SYMBOL_BODY_MIGRATION = "ALTER TABLE symbols ADD COLUMN body TEXT"
 TRANSITIVE_EDGES_TARGET_ID_MIGRATION = "ALTER TABLE transitive_edges ADD COLUMN target_id TEXT"
 
-# Provenance column on symbols: 'tree_sitter' or 'scip'. NULL on legacy rows
-# (pre-SCIP builds) is treated as 'tree_sitter'. Additive ALTER is invisible to
+# Provenance column on symbols: 'tree_sitter'. NULL on legacy rows
+# is treated as 'tree_sitter'. Additive ALTER is invisible to
 # the FTS5 triggers (schema.py CREATE TRIGGER only references rowid, name,
 # qualified_name, docstring), so it composes with existing migrations cleanly.
 SYMBOL_SOURCE_MIGRATION = "ALTER TABLE symbols ADD COLUMN source TEXT"
+
+# Parser-signal columns: local binding name of
+# an aliased import (`import x.y as z` -> 'z') and definition parameter
+# count. Nullable -- NULL means the parser had no evidence, never a guess.
+# Additive ALTER, invisible to the FTS5 triggers (they only reference rowid,
+# name, qualified_name, docstring).
+IMPORTS_LOCAL_ALIAS_MIGRATION = "ALTER TABLE imports ADD COLUMN local_alias TEXT"
+SYMBOLS_ARITY_MIGRATION = "ALTER TABLE symbols ADD COLUMN arity INTEGER"
 
 # Payload-size and arg-summary columns on tool_metrics: request/response
 # payload sizes in chars plus a redacted, truncated summary of the call's
@@ -500,6 +508,8 @@ MIGRATIONS = [
     TOOL_METRICS_SOURCE_MIGRATION,
     TOOL_METRICS_TRUNCATED_FROM_CHARS_MIGRATION,
     TOOL_METRICS_TRUNCATED_TO_CHARS_MIGRATION,
+    IMPORTS_LOCAL_ALIAS_MIGRATION,
+    SYMBOLS_ARITY_MIGRATION,
 ]
 
 # Default DB location: resolved from the central store for the current workspace.

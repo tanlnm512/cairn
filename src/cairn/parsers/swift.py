@@ -5,6 +5,12 @@ expressions, imports, and inheritance into the shared ParsedFile model.
 
 Note: Swift `enum`/`struct` may appear under class_declaration-style nodes with
 a leading keyword; classification inspects the keyword (same approach as Kotlin).
+
+Signals: call edges carry the receiver type read from the
+navigation_expression's `target` field one level down (swift 0.7.3 exposes no
+field labels on call_expression itself) and an argument count; function
+symbols carry a parameter-count arity (variadic → None). Swift has no import
+aliasing, so local_alias stays None for every import form.
 """
 from __future__ import annotations
 
@@ -13,7 +19,15 @@ from typing import List, Optional
 from tree_sitter import Node
 
 from ._registry import get_parser as _get_ts_parser
-from .base import BaseParser, Edge, Import, ParsedFile, Symbol, TreeSitterParserBase
+from .base import (
+    BaseParser,
+    Edge,
+    Import,
+    ParsedFile,
+    ScopeTypeTracker,
+    Symbol,
+    TreeSitterParserBase,
+)
 
 SWIFT_MODIFIERS = {
     "public", "private", "fileprivate", "internal", "open", "final", "static",
@@ -38,6 +52,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         self._parser = _get_ts_parser("swift")
         self._scope_kinds: List[str] = []
         self._pending_edges: List[Edge] = []
+        self._var_types = ScopeTypeTracker()
 
     def parse(self, path: str) -> ParsedFile:
         import hashlib
@@ -56,6 +71,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         self._scope = []
         self._scope_kinds = []
         self._callable_scope = []
+        self._var_types.reset()
         self._walk(tree.root_node, source, pf)
         pf.edges.extend(self._pending_edges)
         return pf
@@ -79,7 +95,10 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                 pf.symbols.append(sym)
                 self._scope.append(sym.name)
                 self._scope_kinds.append(t)
+                self._var_types.push()
+                self._var_types.record("self", sym.name)
                 self._walk(node, source, pf)
+                self._var_types.pop()
                 self._scope.pop()
                 self._scope_kinds.pop()
             return
@@ -89,7 +108,10 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             if sym:
                 pf.symbols.append(sym)
                 self._scope.append(sym.name)
+                self._var_types.push()
+                self._record_param_types(node, source)
                 self._walk(node, source, pf)
+                self._var_types.pop()
                 self._scope.pop()
             return
 
@@ -97,6 +119,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             sym = self._parse_property(node, source)
             if sym:
                 pf.symbols.append(sym)
+            self._record_property_type(node, source)
             self._walk(node, source, pf)
             return
 
@@ -105,6 +128,13 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             if edge:
                 pf.edges.append(edge)
             self._walk(node, source, pf)
+            return
+
+        if t == "statements":
+            # Each brace level is a lexical scope for var→type tracking.
+            self._var_types.push()
+            self._walk(node, source, pf)
+            self._var_types.pop()
             return
 
         self._walk(node, source, pf)
@@ -173,6 +203,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
 
     def _parse_function(self, node: Node, source: bytes) -> Optional[Symbol]:
         # function_declaration: 'func' name '(' params ')' ...
+        arity = self._param_arity(node, source)
         for child in node.children:
             if child.type in ("identifier", "simple_identifier"):
                 name = self._node_text(child, source).strip()
@@ -187,6 +218,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                     column_start=node.start_point[1],
                     column_end=node.end_point[1],
                     modifiers=mods,
+                    arity=arity,
                 )
             # init is a special function with no plain identifier
             if child.type == "init":
@@ -200,7 +232,84 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                     column_start=node.start_point[1],
                     column_end=node.end_point[1],
                     modifiers=mods,
+                    arity=arity,
                 )
+        return None
+
+    def _param_arity(self, node: Node, source: bytes) -> Optional[int]:
+        """Parameter count of a function_declaration; None when a variadic
+        parameter (``...``) makes the declared count unknowable."""
+        count = 0
+        for child in node.children:
+            if child.type != "parameter":
+                continue
+            if any(
+                not c.is_named and self._node_text(c, source) == "..."
+                for c in child.children
+            ):
+                return None
+            count += 1
+        return count
+
+    def _record_param_types(self, node: Node, source: bytes) -> None:
+        """Record each parameter's local name → declared type."""
+        for child in node.children:
+            if child.type == "parameter":
+                self._var_types.record(*self._param_name_type(child, source))
+
+    def _param_name_type(self, node: Node, source: bytes):
+        """(local_name, declared_type) of a ``parameter``.
+
+        An external argument label may precede the local name, so the local
+        name is the last identifier before the type.
+        """
+        name = None
+        type_name = None
+        for c in node.children:
+            if c.type in ("simple_identifier", "identifier"):
+                name = self._node_text(c, source).strip()
+            elif c.type == "user_type":
+                type_name = self._type_identifier_text(c, source)
+                break
+        return name, type_name
+
+    def _record_property_type(self, node: Node, source: bytes) -> None:
+        """Record a ``let``/``var`` binding's name → type for receiver lookup.
+
+        The declared type annotation wins; otherwise a ``Type()`` initializer
+        call (capitalized callee) infers the type. Anything else abstains.
+        """
+        name = None
+        type_name = None
+        for child in node.children:
+            if child.type == "pattern":
+                for c in child.children:
+                    if c.type in ("simple_identifier", "identifier"):
+                        name = self._node_text(c, source).strip()
+            elif child.type == "type_annotation":
+                for c in child.children:
+                    if c.type == "user_type":
+                        type_name = self._type_identifier_text(c, source)
+            elif type_name is None and child.type == "call_expression":
+                callee = self._initializer_callee(child, source)
+                if callee:
+                    type_name = callee
+        self._var_types.record(name, type_name)
+
+    def _initializer_callee(self, node: Node, source: bytes) -> Optional[str]:
+        """Callee of an initializer call when it names a type (capitalized)."""
+        if not node.children:
+            return None
+        lead = node.children[0]
+        if lead.type != "simple_identifier":
+            return None
+        txt = self._node_text(lead, source).strip()
+        return txt if txt[:1].isupper() else None
+
+    def _type_identifier_text(self, node: Node, source: bytes) -> Optional[str]:
+        for c in node.children:
+            if c.type == "type_identifier":
+                return self._node_text(c, source).strip()
         return None
 
     def _parse_property(self, node: Node, source: bytes) -> Optional[Symbol]:
@@ -289,7 +398,44 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             kind="calls",
             target_name=target,
             line=node.start_point[0] + 1,
+            receiver_type=self._receiver_type(self._call_receiver_text(node, source)),
+            call_arity=self._call_arity(node),
         )
+
+    def _call_receiver_text(self, node: Node, source: bytes) -> Optional[str]:
+        """Text of the called navigation_expression's `target` field.
+
+        call_expression exposes no field labels at swift 0.7.3; the receiver
+        is readable only one level down, on the navigation_expression.
+        """
+        lead = node.children[0]
+        if lead.type not in ("navigation_expression", "member_expression"):
+            return None
+        target = lead.child_by_field_name("target")
+        if target is None:
+            return None
+        return self._node_text(target, source).strip()
+
+    def _receiver_type(self, receiver: Optional[str]) -> Optional[str]:
+        if receiver is None:
+            return None
+        return self._var_types.resolve(receiver) or self._infer_receiver_type(receiver)
+
+    def _call_arity(self, node: Node) -> Optional[int]:
+        """Argument count: value_argument children plus each trailing
+        closure (each trailing closure is one argument)."""
+        suffix = self._child_of_type(node, ("call_suffix",))
+        if suffix is None:
+            return None
+        count = 0
+        for child in suffix.children:
+            if child.type == "value_arguments":
+                count += sum(
+                    1 for a in child.children if a.type == "value_argument"
+                )
+            elif child.type == "lambda_literal":
+                count += 1
+        return count
 
     def _extract_callee(self, node: Node, source: bytes) -> Optional[str]:
         if node.type in ("identifier", "simple_identifier"):

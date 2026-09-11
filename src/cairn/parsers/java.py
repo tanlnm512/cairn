@@ -172,6 +172,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             column_start=node.start_point[1],
             column_end=node.end_point[1],
             modifiers=mods,
+            arity=self._method_arity(node),
         )
 
     def _parse_field(self, node: Node, source: bytes) -> List[Symbol]:
@@ -201,13 +202,21 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         return syms
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
+        # import_declaration children: 'static'? then a scoped_identifier or
+        # a bare identifier, optionally '. asterisk' for a wildcard. Java has
+        # no import aliasing, so local_alias stays None for every form.
+        path = None
         for child in node.children:
-            if child.type == "scoped_identifier":
-                return Import(
-                    imported_path=self._node_text(child, source).strip(),
-                    line=node.start_point[0] + 1,
-                )
-        return None
+            if child.type in ("scoped_identifier", "identifier"):
+                path = self._node_text(child, source).strip()
+        if not path:
+            return None
+        if any(c.type == "asterisk" for c in node.children):
+            path += ".*"
+        return Import(
+            imported_path=path,
+            line=node.start_point[0] + 1,
+        )
 
     def _parse_inheritance(self, node: Node, source: bytes, child_name: str):
         """extends -> 'extends' edge; implements -> 'implements' edge."""
@@ -265,6 +274,32 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             if child.type == "type_list":
                 yield from child.children
 
+    def _method_arity(self, node: Node) -> Optional[int]:
+        # formal_parameters children: formal_parameter | spread_parameter |
+        # receiver_parameter (plus punctuation/comments). Varargs accept a
+        # varying call-site count, so the declared count is unknown; an
+        # explicit receiver_parameter is not a call-site argument.
+        params = self._child_of_type(node, ("formal_parameters",))
+        if params is None:
+            return None
+        count = 0
+        for child in params.children:
+            if child.type == "spread_parameter":
+                return None
+            if child.type == "formal_parameter":
+                count += 1
+        return count
+
+    def _call_arity(self, node: Node) -> Optional[int]:
+        args = self._child_of_type(node, ("argument_list",))
+        if args is None:
+            return None
+        return sum(
+            1
+            for child in args.children
+            if child.is_named and child.type not in ("line_comment", "block_comment")
+        )
+
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
         # method_invocation: (object '.')? name '(' args ')'. The called name is
         # the LAST identifier before the argument_list -- the first identifier
@@ -288,6 +323,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             target_name=callee,
             line=node.start_point[0] + 1,
             receiver_type=self._infer_receiver_type(receiver_text),
+            call_arity=self._call_arity(node),
         )
 
     def _parse_new(self, node: Node, source: bytes) -> Optional[Edge]:
@@ -309,5 +345,6 @@ class JavaParser(BaseParser, TreeSitterParserBase):
                     target_name=callee,
                     line=node.start_point[0] + 1,
                     receiver_type=None,
+                    call_arity=self._call_arity(node),
                 )
         return None

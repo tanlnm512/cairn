@@ -201,6 +201,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
             line_end=node.end_point[0] + 1,
             column_start=node.start_point[1],
             column_end=node.end_point[1],
+            arity=self._arity(self._child_of_type(node, ("method_parameters",))),
         )
 
     def _method_name(self, node: Node, source: bytes) -> Optional[str]:
@@ -240,6 +241,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
             target_name=callee,
             line=node.start_point[0] + 1,
             receiver_type=self._infer_receiver_type(receiver),
+            call_arity=self._arity(self._child_of_type(node, ("argument_list",))),
         )
 
     def _split_call(self, node: Node, source: bytes):
@@ -303,7 +305,25 @@ class RubyParser(BaseParser, TreeSitterParserBase):
                 return self._node_text(c, source).strip()
             if c.type == "self":
                 return "self"
-        return None
+
+    def _arity(self, list_node) -> int:
+        """Positional slot count of an ``argument_list``/``method_parameters``.
+
+        Every named child occupies one slot (required, optional, rest,
+        keyword, hash-splat, destructured, splat argument, keyword pair)
+        except the block pass-throughs: ``&blk`` (block_argument) and
+        ``&param`` (block_parameter) carry the block, not an argument.
+        ``do``/``{}`` blocks are siblings of the argument_list, never
+        children, so they never count. None (no parameter list / no
+        argument list) means zero.
+        """
+        if list_node is None:
+            return 0
+        return sum(
+            1
+            for c in list_node.named_children
+            if c.type not in ("block_argument", "block_parameter")
+        )
 
     # ------------------------------------------------------------- import parse
 

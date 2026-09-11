@@ -11,8 +11,8 @@ from typing import List, Optional, Tuple
 
 # Edge kinds that represent in-codebase structural relationships. Service/
 # topology edge kinds (http_call, service_call) are excluded by default; pass
-# ``include_service_edges=True`` to follow them. Both ``"calls"`` (tree-sitter
-# parsers) and ``"call"`` (the SCIP importer) are included.
+# ``include_service_edges=True`` to follow them. Both ``"calls"`` and
+# ``"call"`` spellings are included.
 STRUCTURAL_EDGE_KINDS: Tuple[str, ...] = ("calls", "call", "extends", "implements")
 
 

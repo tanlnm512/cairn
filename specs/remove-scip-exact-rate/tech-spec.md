@@ -496,3 +496,71 @@ GROUP BY f.language;
 - **Consequences**: no new permanent bench surface to maintain or test; definition
   drift between before/after runs is prevented by pinning the SQL here and re-measuring
   BOTH corpora pre-change under it; future re-measurements re-derive from this section.
+
+### D-012 — build-summary 'SCIP:' subtitle removed with the CLI task (T003)
+**Decision**: T003 also deleted `src/cairn/cli/core.py`'s build-summary subtitle
+block (`summary.get("scip")` per-language rendering, ~:442-449), beyond the task
+entry's cited 241-251 echo block.
+**Context**: dead code once T002 removes `summary["scip"]` folding; the unbounded
+`grep -rni scip src/cairn/cli/` gate cannot reach 0 with it present; FR-003/FR-004
+cover the surface.
+**Consequences**: none — the rendered key reads from a summary field that no
+longer exists.
+
+### D-013 — python non-aliased imports keep verbatim statement text (T012)
+**Decision**: only aliased python imports get the normalized-path +
+`local_alias` treatment; `from X import a` / `import x.y` keep the raw
+statement text storage.
+**Context**: builder.py `_import_module_bases` derives module bases from the raw
+python shapes; normalizing `from X import a` to `X.a` drops the module
+fallback base and empirically breaks
+test_graph_relationship_kinds.py::test_intra_repo_import_edge. The resolver's
+alias rewrite (T025) only needs `local_alias` + a path it can tail-match —
+both present on aliased rows.
+**Consequences**: non-aliased import rows keep today's tail-matching
+semantics (no regression); full normalization remains available to a later
+task that re-bases `_import_module_bases` first.
+
+### D-014 — Tier 0 multi-typed-match falls through instead of hard-ambiguous (fix round, T025 (fix 1/5))
+**Decision**: in `resolve_edge`, when the type-aware tier finds >1 typed
+candidates, the resolver intersects them with the same-file candidate set
+(single survivor → exact) and otherwise FALLS THROUGH to the name-based tier
+walk (Tier 1 same-file → … → Tier 4 global → ambiguous) instead of returning
+`ambiguous` immediately.
+**Context** (evidence, T026 diagnostic on the post-P4 build): the members index
+is global by (simple type name, member) (resolver.py:68-116); P4's receiver
+emission for the nine previously-silent languages feeds Tier 0 at
+mono-repo scale, where common class names collide: 83,894 python
+`calls`/`references` edges sit `ambiguous` WITH a same-file definition of
+their target — the population Tier 1 previously resolved exact when those
+parsers emitted no receiver_type. Net effect: self-repo share regressed
+0.2248 → 0.1722 (exact −51k, ambiguous +45k) while ds2/attrs (few
+collisions) improved.
+**Consequences (precision, FR-009)**: every exact still requires a unique
+candidate within a scope narrower than the global members index; the
+fall-through restores, for the newly-typed population, the identical
+outcomes the resolver produced pre-signal — no new false-exact mode; typed
+∩ same-file only binds members that are both typed and local.
+**Tier contract (FR-008/D-008)**: Tier 0 remains first and single-match
+stays exact; this D-### is the recorded evidence-backed exception the FR
+contemplates.
+**Consequences**: edges whose receiver type genuinely collides AND whose
+same-file tier is also ambiguous stay ambiguous (no change); an edge whose
+true target is a same-name member in ANOTHER file could bind same-file
+instead — the pre-signal behavior, accepted as the historical contract.
+
+### D-015 — TC-020 cpp share dip adjudicated as new-edge dilution, not regression
+**Decision**: TC-020 (no language's exact share worse, all-kinds per-language
+per S-11's recipe) passes in intent; cpp's 0.8396 → 0.8285 dip is recorded as
+a denominator effect, not a fix-round trigger.
+**Context**: T013's documented additive emission — cpp qualified calls
+(`ns::func()`) previously emitted NO edge, now emit one (mostly ambiguous);
+an added edge cannot change another edge's resolution (tiers read the symbol
+set, which is unchanged; fresh-build resolution is per-edge independent).
+Exact counts are not demoted; the denominator grows. All other thirteen
+languages are ≥ baseline (9 equal; javascript +0.0868, python +0.0118,
+swift +0.1). The pinned-definition global gates pass strictly on both
+corpora (self 0.2248 → 0.2429; ds2 0.6546 → 0.6781).
+**Consequences**: if cpp's dip were a real per-edge demotion it would show
+in the pinned per-language cut as falling exact counts — the closing audit's
+recorded numbers (exact 230325 > baseline 214411 globally) bound it.

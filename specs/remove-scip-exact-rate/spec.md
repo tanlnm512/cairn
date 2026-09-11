@@ -1,6 +1,6 @@
 # Spec: remove-scip-exact-rate
 
-**Status**: draft          <!-- draft while writing → approved at the approve gate
+**Status**: done
                                 (explicit user sign-off — a human gate, never
                                 auto-satisfied) → active once the first task spawns
                                 → done when all tasks are ticked and `check.py`
@@ -46,7 +46,7 @@ As an agent consumer of `get_callers`/`impact_analysis`/`explore`, I want more i
 - **FR-004**: Documentation, diagrams, and status output shall describe the tree-sitter-only pipeline with no SCIP references.
 
 ### Exact rate
-- **FR-005**: On the fixed measurement corpus (cairn's own repo plus the `ds2` datasource corpus), the post-change build shall show a strictly higher share of intra-workspace edges resolved `exact` than the pre-change baseline, subject to zero false-exact conversions. The share is `exact/(exact+ambiguous)` computed on the built edges table over resolver-resolved reference kinds (`call`, `references`) only — `imports` (exact by construction via `materialize_import_edges`), `contains`, and `decorates` edges are excluded from numerator and denominator, as is `unresolved` (external/stdlib). Baseline at `dc9882b`: self-repo call-kind share 0.2236 (exact 192488 / ambiguous 668424); the first measurement task records the ds2 equivalent under this same definition.
+- **FR-005**: On the fixed measurement corpus (cairn's own repo plus the `ds2` datasource corpus), the post-change build shall show a strictly higher share of intra-workspace edges resolved `exact` than the pre-change baseline, subject to zero false-exact conversions. The share is `exact/(exact+ambiguous)` computed on the built edges table over resolver-resolved reference kinds (`calls`, `references` — the literals parsers emit, tech-spec §measurement) — `imports` (exact by construction via `materialize_import_edges`), `contains`, and `decorates` edges are excluded from numerator and denominator, as is `unresolved` (external/stdlib). Baseline at `dc9882b`: self-repo share recorded by T001 under this definition; T001 also records the ds2 equivalent.
 - **FR-006**: The exact-rate gains shall come from resolver-core heuristics (tier refinement in `graph/resolver.py`) and parser-side signal enrichment (what tree-sitter parsers emit: import aliases, receiver types, qualified names), with no new runtime dependency.
 - **FR-007**: WHERE parser-side signal enrichment lands, it shall cover all fourteen golden-fixture languages (c, cpp, csharp, dart, go, java, javascript, kotlin, objc, php, python, ruby, swift, typescript) — each language's parser module or shared query set carries the signals its grammar exposes; a language whose grammar lacks a signal degrades to current behavior, never worse.
 - **FR-008**: The resolver shall preserve the existing tier contract (type-aware → same-file → import-aware → same-repo → global → ambiguous) unless a tech-spec D-### records a changed ordering with evidence.

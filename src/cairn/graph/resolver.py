@@ -6,7 +6,12 @@ otherwise-unresolved edges as ``resolution='ambiguous'`` (precise by default).
 Tiers: TYPE-AWARE (receiver dispatch) -> SAME-FILE -> IMPORT-AWARE ->
 SAME-REPO -> GLOBAL -> AMBIGUOUS.
 Resolution is decided per tier: one candidate -> answer; many -> mark
-ambiguous and stop; zero -> try the next broader tier.
+ambiguous and stop; zero -> try the next broader tier. A type-aware
+multi-match is the exception: it narrows by the same-file scope first and
+otherwise falls through, because the members index is global and
+same-named types collide there.
+Two levers bracket the walk: a pre-walk rewrite of names bound by an aliased
+import, and an arity tiebreak at the branches that would otherwise abstain.
 """
 from __future__ import annotations
 
@@ -14,51 +19,66 @@ import sqlite3
 from typing import Dict, List, Optional, Tuple
 
 
-def build_symbol_index(conn: sqlite3.Connection) -> Dict[str, List[Tuple[str, str, str, str]]]:
+def build_symbol_index(
+    conn: sqlite3.Connection,
+) -> Dict[str, List[Tuple[str, str, str, str, Optional[int]]]]:
     """Build a global bare-name -> symbol index.
 
-    Returns ``{name: [(symbol_id, repo, file_id, qualified_name), ...]}``.
+    Returns ``{name: [(symbol_id, repo, file_id, qualified_name, arity), ...]}``
+    where ``arity`` is the symbol's persisted parameter count (``None`` when
+    unknown); consumers treat a shorter 4-tuple as "arity unknown".
     Module symbols (kind='module') are excluded: they are structural nodes
     (contains/imports endpoints), not resolution targets -- a file named after
     its single class would otherwise make every same-name reference ambiguous.
     """
-    index: Dict[str, List[Tuple[str, str, str, str]]] = {}
+    index: Dict[str, List[Tuple[str, str, str, str, Optional[int]]]] = {}
     rows = conn.execute(
         """SELECT s.id AS sid, s.name AS name, s.qualified_name AS qname,
-                  f.repo_id AS repo, f.id AS file_id
+                  f.repo_id AS repo, f.id AS file_id, s.arity AS arity
            FROM symbols s JOIN files f ON s.file_id = f.id
            WHERE s.kind != 'module'"""
     ).fetchall()
     for r in rows:
         index.setdefault(r["name"], []).append(
-            (r["sid"], r["repo"], r["file_id"], r["qname"])
+            (r["sid"], r["repo"], r["file_id"], r["qname"], r["arity"])
         )
     return index
 
 
 def build_import_index(
     conn: sqlite3.Connection, repo_id: Optional[str] = None
-) -> Dict[str, List[str]]:
-    """Build a per-file import-path index ``{file_id: [imported_path, ...]}``.
+) -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
+    """Build per-file import indexes over the ``imports`` table.
+
+    Returns ``(imports_by_file, aliases_by_file)``:
+
+    - ``imports_by_file``: ``{file_id: [imported_path, ...]}`` -- every row.
+    - ``aliases_by_file``: ``{file_id: {local_alias: imported_path}}`` -- only
+      rows that record a local alias (``from m import n as k`` shapes); star
+      and re-export shapes record none.
 
     When ``repo_id`` is given, only that repo's imports are loaded. The
     resolver only ever looks up a source file's OWN imports, so scoping is exact.
     """
     imports: Dict[str, List[str]] = {}
+    aliases: Dict[str, Dict[str, str]] = {}
     if repo_id is not None:
         rows = conn.execute(
-            """SELECT i.file_id AS file_id, i.imported_path AS imported_path
+            """SELECT i.file_id AS file_id, i.imported_path AS imported_path,
+                      i.local_alias AS local_alias
                FROM imports i JOIN files f ON i.file_id = f.id
                WHERE f.repo_id = ?""",
             (repo_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT file_id, imported_path FROM imports"
+            "SELECT file_id, imported_path, local_alias FROM imports"
         ).fetchall()
     for r in rows:
         imports.setdefault(r["file_id"], []).append(r["imported_path"])
-    return imports
+        if r["local_alias"]:
+            aliases.setdefault(r["file_id"], {})[r["local_alias"]] = r["imported_path"]
+    return imports, aliases
 
 
 # Symbol kinds that are members of a type (never types themselves).
@@ -174,24 +194,61 @@ def _members_of(
     return []
 
 
+def _arity_unique_match(
+    cands: List[Tuple], call_arity: Optional[int]
+) -> Optional[str]:
+    """The id ``call_arity`` uniquely picks from ``cands``, else ``None``.
+
+    The within-tier arity tiebreak, applied only at a branch that would
+    otherwise return ambiguous: exactly one candidate whose recorded arity
+    equals ``call_arity`` resolves exact; a ``None`` call_arity, an unknown
+    candidate arity, or >=2 matches all abstain (precision outranks recall).
+    """
+    if call_arity is None:
+        return None
+    matches = [
+        c[0] for c in cands if len(c) > 4 and c[4] is not None and c[4] == call_arity
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def resolve_edge(
     target_name: str,
     source_file_id: str,
     source_repo: str,
-    symbols_by_name: Dict[str, List[Tuple[str, str, str, str]]],
+    symbols_by_name: Dict[str, List[Tuple[str, str, str, str, Optional[int]]]],
     imports_by_file: Dict[str, List[str]],
     receiver_type: Optional[str] = None,
     members_by_type: Optional[Dict[Tuple[str, str], List[str]]] = None,
     ancestors: Optional[Dict[str, List[str]]] = None,
+    aliases_by_file: Optional[Dict[str, Dict[str, str]]] = None,
+    call_arity: Optional[int] = None,
 ) -> Tuple[Optional[str], str]:
     """Resolve one edge's target.
 
     Returns ``(target_id, resolution_label)`` where ``resolution_label`` is one
     of ``'exact'``, ``'ambiguous'``, ``'unresolved'``. When ``ambiguous`` or
     ``unresolved``, ``target_id`` is ``None``.
+
+    ``aliases_by_file`` ({file_id: {local_alias: imported_path}}) rewrites a
+    bare ``target_name`` matching the file's local alias to the imported
+    path's final segment before the tier walk. ``call_arity`` (the call's
+    argument count) breaks a tie at a tier's ambiguous branch only when it
+    matches exactly one candidate's arity.
     """
     members_by_type = members_by_type or {}
     ancestors = ancestors or {}
+
+    # Aliased-import rewrite: `from m import n as k` binds the bare name `k`,
+    # invisible to the import tier's path-tail matching; rewrite it to the
+    # imported path's final segment so the walk resolves `n`. The walk itself
+    # is untouched -- a same-file `n` still wins Tier 1, and shapes that
+    # record no alias (stars/re-exports) never rewrite.
+    file_aliases = (aliases_by_file or {}).get(source_file_id)
+    if file_aliases and target_name in file_aliases:
+        segs = file_aliases[target_name].replace("/", ".").split(".")
+        if segs[-1]:
+            target_name = segs[-1]
 
     cands = symbols_by_name.get(target_name)
     if not cands:
@@ -201,7 +258,8 @@ def resolve_edge(
     # A known receiver type is the STRONGEST resolution signal, so it runs
     # first, ahead of same-file. Resolve `target_name` against that type's
     # members and its extends/implements ancestors; abstains when there's no
-    # receiver type or no typed match.
+    # receiver type, no typed match, or a typed collision no narrower scope
+    # splits.
     if receiver_type:
         typed = _members_of(receiver_type, target_name, members_by_type, ancestors)
         # Keep only candidates that are ALSO in the bare-name set (consistency
@@ -210,14 +268,25 @@ def resolve_edge(
         if len(typed_ids) == 1:
             return next(iter(typed_ids)), "exact"
         if len(typed_ids) > 1:
-            return None, "ambiguous"
-        # no typed match -> fall through to the name-based tiers below
+            # The members index is global, so a multi-match is usually a
+            # same-named type in another file, not a signal: bind only a
+            # unique same-file survivor (the Tier 1 scope); otherwise keep
+            # walking the name-based tiers rather than hard-demoting.
+            same_file_typed = typed_ids & {
+                c[0] for c in cands if c[2] == source_file_id
+            }
+            if len(same_file_typed) == 1:
+                return next(iter(same_file_typed)), "exact"
+        # no unique typed match -> fall through to the name-based tiers below
 
     # --- Tier 1: same-file ------------------------------------------------
     same_file = [c for c in cands if c[2] == source_file_id]
     if len(same_file) == 1:
         return same_file[0][0], "exact"
     if len(same_file) > 1:
+        tie = _arity_unique_match(same_file, call_arity)
+        if tie is not None:
+            return tie, "exact"
         return None, "ambiguous"
 
     # --- Tier 2: import-aware --------------------------------------------
@@ -229,6 +298,9 @@ def resolve_edge(
         if len(import_match) == 1:
             return import_match[0][0], "exact"
         if len(import_match) > 1:
+            tie = _arity_unique_match(import_match, call_arity)
+            if tie is not None:
+                return tie, "exact"
             return None, "ambiguous"
         # import_match == [] : imports don't mention this name; fall through.
 
@@ -237,19 +309,25 @@ def resolve_edge(
     if len(same_repo) == 1:
         return same_repo[0][0], "exact"
     if len(same_repo) > 1:
+        tie = _arity_unique_match(same_repo, call_arity)
+        if tie is not None:
+            return tie, "exact"
         return None, "ambiguous"
 
     # --- Tier 4: global ---------------------------------------------------
     if len(cands) == 1:
         return cands[0][0], "exact"
+    tie = _arity_unique_match(cands, call_arity)
+    if tie is not None:
+        return tie, "exact"
     return None, "ambiguous"
 
 
 def _import_aware_candidates(
     target_name: str,
     my_imports: List[str],
-    cands: List[Tuple[str, str, str, str]],
-) -> List[Tuple[str, str, str, str]]:
+    cands: List[Tuple[str, str, str, str, Optional[int]]],
+) -> List[Tuple[str, str, str, str, Optional[int]]]:
     """Narrow ``cands`` to those made reachable by one of the file's imports.
 
     Two reachability patterns are recognized:
@@ -324,7 +402,7 @@ def _common_suffix_len(a: List[str], b: List[str]) -> int:
 def resolve_repo_edges(
     conn: sqlite3.Connection,
     repo: str,
-    edges_by_file: Dict[str, List[Tuple[str, str, str, int, int]]],
+    edges_by_file: Dict[str, List[tuple]],
 ) -> Dict[str, int]:
     """Resolve and persist edges for one repo.
 
@@ -335,14 +413,15 @@ def resolve_repo_edges(
     fallback. Returns a counts dict
     ``{'exact': n, 'ambiguous': n, 'unresolved': n}``.
 
-    Edge tuples may be 5-tuples (no receiver_type) or 6-tuples; both tolerated.
+    Edge tuples may be 5-tuples (no in-memory signals), 6-tuples (with
+    ``receiver_type``), or 7-tuples (with ``call_arity``); all tolerated.
 
     The import/member/ancestor indexes are scoped to ``repo``; the symbol index
     is deliberately left unscoped so the same-repo (3) and global (4) tiers see
     the full workspace symbol set.
     """
     symbols_by_name = build_symbol_index(conn)
-    imports_by_file = build_import_index(conn, repo_id=repo)
+    imports_by_file, aliases_by_file = build_import_index(conn, repo_id=repo)
     members_by_type = build_members_index(conn, repo_id=repo)
     ancestors = build_ancestor_index(conn, repo_id=repo)
 
@@ -352,9 +431,10 @@ def resolve_repo_edges(
         for edge_tuple in edges:
             edge_id, _source_sid, target_name = edge_tuple[0], edge_tuple[1], edge_tuple[2]
             receiver_type = edge_tuple[5] if len(edge_tuple) > 5 else None
+            call_arity = edge_tuple[6] if len(edge_tuple) > 6 else None
             target_id, label = resolve_edge(
                 target_name, source_file_id, repo, symbols_by_name, imports_by_file,
-                receiver_type, members_by_type, ancestors,
+                receiver_type, members_by_type, ancestors, aliases_by_file, call_arity,
             )
             # Resolved edges drop the bare name (queries join via target_id);
             # unresolved/ambiguous keep it so --fuzzy can still match by name.
@@ -398,7 +478,7 @@ def repair_incoming_edges(
     # so the same-repo and global tiers see the full workspace set, mirroring
     # resolve_repo_edges.
     symbols_by_name = build_symbol_index(conn)
-    imports_by_file = build_import_index(conn, repo_id=repo)
+    imports_by_file, aliases_by_file = build_import_index(conn, repo_id=repo)
     members_by_type = build_members_index(conn, repo_id=repo)
     ancestors = build_ancestor_index(conn, repo_id=repo)
 
@@ -430,7 +510,7 @@ def repair_incoming_edges(
             continue
         target_id, label = resolve_edge(
             target_name, r["file_id"], repo, symbols_by_name, imports_by_file,
-            None, members_by_type, ancestors,
+            None, members_by_type, ancestors, aliases_by_file,
         )
         stored_name = None if target_id else target_name
         updates.append((target_id, stored_name, label, r["eid"]))

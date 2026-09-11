@@ -15,8 +15,7 @@ data:
 5. An edge marked ``resolution='exact'`` always has a non-null ``target_id`` --
    precise-by-default queries (get_callers, impact_analysis) trust this blindly.
 
-See BUGS.md#portable-path-stale-comments and
-BUGS.md#scip-importer-fake-resolution for the regressions that motivated these.
+See BUGS.md#portable-path-stale-comments for the regressions that motivated these.
 """
 from __future__ import annotations
 
@@ -214,11 +213,9 @@ def test_invariant_exact_resolution_has_target_id(fresh_db):
     """Invariant: an edge marked resolution='exact' must have a non-null target_id.
     A 'exact' label on an unresolved edge is the worst kind of data pollution --
     precise-by-default queries (get_callers, impact_analysis) trust it blindly.
-    See BUGS.md#scip-importer-fake-resolution.
 
-    NOTE: this can't catch the SCIP importer's bug directly (that would need a
-    SCIP import), but it documents the invariant and would catch any code path
-    that violates it for data inserted through normal paths.
+    NOTE: the check is structural over stored rows -- any code path that
+    writes resolution='exact' without a target_id fails it.
     """
     conn = fresh_db
 

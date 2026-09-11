@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -25,7 +26,8 @@
       "modifiers": [
         "public"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Status",
@@ -37,7 +39,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Identifiable",
@@ -49,7 +52,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "getId",
@@ -61,7 +65,8 @@
       "column_end": 19,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "getId",
@@ -75,7 +80,8 @@
       "modifiers": [
         "public"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "helperCall",
@@ -89,7 +95,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
@@ -103,7 +110,8 @@
       "modifiers": [
         "public"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "id",
@@ -117,7 +125,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -131,7 +140,8 @@
       "modifiers": [
         "protected"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "status",
@@ -145,7 +155,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -155,7 +166,7 @@
       "target_name": "BaseEntity",
       "line": 20,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -163,7 +174,7 @@
       "target_name": "Identifiable",
       "line": 20,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "process",
@@ -171,13 +182,14 @@
       "target_name": "helperCall",
       "line": 35,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "java.util.List",
-      "line": 3
+      "line": 3,
+      "local_alias": null
     }
   ]
 }

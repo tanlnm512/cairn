@@ -1,7 +1,7 @@
 # Indexing: how code gets into the graph
 
-Read this when you're touching the build path, the resolver, SCIP import, or
-wondering what `cairn build` / `cairn update` actually do.
+Read this when you're touching the build path, the resolver, or wondering
+what `cairn build` / `cairn update` actually do.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/indexing-pipeline-dark.png">
@@ -63,18 +63,10 @@ Entry: `src/cairn/graph/builder.py:build_graph`. Ordered stages:
      for fuzzy queries.
    - `unresolved` — no candidates (stdlib/external).
 
-8. **SCIP import** (optional) — `src/cairn/parsers/scip_importer.py`. If
-   `cairn.json` has a `scip` map (language → index path), the index is
-   auto-generated when possible (`scip_indexers.py`) and imported
-   (protobuf or JSON). Definitions merge into tree-sitter rows by
-   `(file_id, name, line_start)`; SCIP's exact edges replace fuzzy ones
-   (`source='merged'`). If the merge rate is 0% (e.g. opaque Swift USRs),
-   the language falls back to pure-SCIP rows.
-
-9. **Derived indexes** — `build_dataflow_index` (per-symbol impact sets) and
+8. **Derived indexes** — `build_dataflow_index` (per-symbol impact sets) and
    `build_transitive_closure` (multi-hop calls at O(1)).
 
-10. **Persist** — full-workspace builds run in-memory, then
+9. **Persist** — full-workspace builds run in-memory, then
     `backup_to` + `swap_db_file` atomically replaces `.kg` (telemetry tables
     are carried across). `--staging` builds to `.kg.tmp` and swaps under the
     build lock. A `build_runs` row records timings and resolution stats.

@@ -5,85 +5,92 @@
       "name": "BaseEntity",
       "kind": "class",
       "qualified_name": "BaseEntity",
-      "line_start": 9,
-      "line_end": 11,
+      "line_start": 10,
+      "line_end": 12,
       "column_start": 0,
       "column_end": 24,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Status",
       "kind": "class",
       "qualified_name": "Status",
-      "line_start": 5,
-      "line_end": 7,
+      "line_start": 6,
+      "line_end": 8,
       "column_start": 0,
       "column_end": 25,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
       "kind": "class",
       "qualified_name": "User",
-      "line_start": 13,
-      "line_end": 23,
+      "line_start": 14,
+      "line_end": 24,
       "column_start": 0,
       "column_end": 39,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "__init__",
       "kind": "method",
       "qualified_name": "BaseEntity.__init__",
-      "line_start": 10,
-      "line_end": 11,
+      "line_start": 11,
+      "line_end": 12,
       "column_start": 4,
       "column_end": 24,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "__init__",
       "kind": "method",
       "qualified_name": "User.__init__",
-      "line_start": 14,
-      "line_end": 17,
+      "line_start": 15,
+      "line_end": 18,
       "column_start": 4,
       "column_end": 35,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "helper_call",
       "kind": "method",
       "qualified_name": "User.helper_call",
-      "line_start": 22,
-      "line_end": 23,
+      "line_start": 23,
+      "line_end": 24,
       "column_start": 4,
       "column_end": 39,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
       "kind": "method",
       "qualified_name": "User.process",
-      "line_start": 19,
-      "line_end": 20,
+      "line_start": 20,
+      "line_end": 21,
       "column_start": 4,
       "column_end": 42,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     }
   ],
   "edges": [
@@ -91,55 +98,63 @@
       "source_name": "Status",
       "kind": "extends",
       "target_name": "Enum",
-      "line": 5,
+      "line": 6,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
       "kind": "extends",
       "target_name": "BaseEntity",
-      "line": 13,
+      "line": 14,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "__init__",
       "kind": "calls",
       "target_name": "__init__",
-      "line": 15,
+      "line": 16,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "__init__",
       "kind": "calls",
       "target_name": "super",
-      "line": 15,
+      "line": 16,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "process",
       "kind": "calls",
       "target_name": "helper_call",
-      "line": 20,
+      "line": 21,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
+      "imported_path": "datetime.timedelta",
+      "line": 2,
+      "local_alias": "Delta"
+    },
+    {
       "imported_path": "from enum import Enum",
-      "line": 2
+      "line": 3,
+      "local_alias": null
     },
     {
       "imported_path": "from typing import Optional",
-      "line": 3
+      "line": 4,
+      "local_alias": null
     },
     {
       "imported_path": "import os",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

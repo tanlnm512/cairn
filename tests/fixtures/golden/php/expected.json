@@ -11,7 +11,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Suit",
@@ -23,7 +24,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Hearts",
@@ -35,7 +37,8 @@
       "column_end": 27,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Spades",
@@ -47,7 +50,8 @@
       "column_end": 27,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "greet_all",
@@ -59,7 +63,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "sanitize_all",
@@ -71,7 +76,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "Greeter",
@@ -83,7 +89,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "__construct",
@@ -95,7 +102,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "color",
@@ -107,7 +115,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "getName",
@@ -119,7 +128,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "greet",
@@ -131,7 +141,8 @@
       "column_end": 36,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "greet",
@@ -143,7 +154,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "label",
@@ -155,7 +167,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "id",
@@ -167,7 +180,8 @@
       "column_end": 68,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -179,7 +193,8 @@
       "column_end": 27,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "name",
@@ -191,7 +206,8 @@
       "column_end": 51,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "role",
@@ -203,7 +219,8 @@
       "column_end": 24,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "status",
@@ -215,7 +232,8 @@
       "column_end": 26,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "NameAware",
@@ -227,7 +245,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -237,7 +256,7 @@
       "target_name": "greet_all",
       "line": 61,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "",
@@ -245,7 +264,7 @@
       "target_name": "sanitize",
       "line": 63,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "",
@@ -253,7 +272,7 @@
       "target_name": "sanitize_all",
       "line": 62,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "User",
@@ -261,7 +280,7 @@
       "target_name": "Greeter",
       "line": 29,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "greet",
@@ -269,7 +288,7 @@
       "target_name": "Logger",
       "line": 40,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "greet",
@@ -277,7 +296,7 @@
       "target_name": "getName",
       "line": 42,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "greet",
@@ -285,7 +304,7 @@
       "target_name": "info",
       "line": 41,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "greet_all",
@@ -293,7 +312,7 @@
       "target_name": "greet",
       "line": 53,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "label",
@@ -301,7 +320,7 @@
       "target_name": "Formatter",
       "line": 46,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "label",
@@ -309,7 +328,7 @@
       "target_name": "format",
       "line": 47,
       "column": 0,
-      "receiver_type": "Formatter"
+      "call_arity": 1
     },
     {
       "source_name": "label",
@@ -317,7 +336,7 @@
       "target_name": "getName",
       "line": 47,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 0
     },
     {
       "source_name": "sanitize_all",
@@ -325,25 +344,29 @@
       "target_name": "sanitize",
       "line": 58,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "App\\Services\\Logger",
-      "line": 5
+      "line": 5,
+      "local_alias": null
     },
     {
       "imported_path": "App\\Utils\\Formatter",
-      "line": 6
+      "line": 6,
+      "local_alias": null
     },
     {
       "imported_path": "App\\Utils\\Validator",
-      "line": 6
+      "line": 6,
+      "local_alias": null
     },
     {
       "imported_path": "require_once __DIR__ . \"/helpers.php\"",
-      "line": 4
+      "line": 4,
+      "local_alias": null
     }
   ]
 }

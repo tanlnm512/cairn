@@ -13,7 +13,6 @@ malformed files warn and fall back to defaults.
 | `exclude` | list of globs | repo-root-relative paths to skip (layer over gitignore) |
 | `include` | list of globs | force-include; overrides skip-dirs, gitignore, and `exclude` — never the 1 MB cap |
 | `repo_namespaces` | map | import-path prefix → owning repo id (cross-repo analysis) |
-| `scip` | map | language → SCIP index path (relative); auto-generates when possible |
 | `ingest` | object | knowledge-ingestion pipeline config (classification rules, dirs) |
 
 ## Store resolution
@@ -208,7 +207,6 @@ one it stays a single informational line.
 | `semantic` | sentence-transformers | real embeddings + rerank (torch-based, large) |
 | `ann` | sqlite-vec | explicit ANN install (already core since 0.14) |
 | `ingest` | pymupdf4llm, mammoth, markdownify | PDF/DOCX ingestion |
-| `scip` | protobuf | consuming pre-built SCIP indexes |
 | `watch` | watchdog | live file watcher / MCP watch mode |
 | `otlp` | opentelemetry sdk + OTLP exporter | `CAIRN_OTEL_ENDPOINT` export |
 | `dev` | pytest, ruff, mypy, bandit, pip-audit, pre-commit, commitizen | contributing — CI installs only this extra, so optional deps in tests must use `importorskip` |

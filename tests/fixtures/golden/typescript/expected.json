@@ -13,7 +13,8 @@
       "modifiers": [
         "@Injectable()"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "BaseEntity",
@@ -25,7 +26,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -37,7 +39,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "UserController",
@@ -51,7 +54,8 @@
       "modifiers": [
         "@Controller('/api')"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Status",
@@ -63,7 +67,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Identifiable",
@@ -75,7 +80,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "constructor",
@@ -87,7 +93,8 @@
       "column_end": 39,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "constructor",
@@ -99,7 +106,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 2
     },
     {
       "name": "getOne",
@@ -113,7 +121,8 @@
       "modifiers": [
         "@Get(':id')"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "helperCall",
@@ -127,7 +136,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "login",
@@ -141,7 +151,8 @@
       "modifiers": [
         "@Post('/login')"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "process",
@@ -155,7 +166,8 @@
       "modifiers": [
         "public"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     },
     {
       "name": "status",
@@ -169,7 +181,8 @@
       "modifiers": [
         "public"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
@@ -179,7 +192,7 @@
       "target_name": "BaseEntity",
       "line": 16,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -187,7 +200,7 @@
       "target_name": "Identifiable",
       "line": 16,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "process",
@@ -195,13 +208,14 @@
       "target_name": "helperCall",
       "line": 24,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "events",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }

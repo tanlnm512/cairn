@@ -13,7 +13,8 @@
       "modifiers": [
         "class"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "User",
@@ -27,7 +28,8 @@
       "modifiers": [
         "class"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Status",
@@ -39,7 +41,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "Identifiable",
@@ -51,7 +54,8 @@
       "column_end": 1,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": null
     },
     {
       "name": "helperCall",
@@ -65,7 +69,8 @@
       "modifiers": [
         "private"
       ],
-      "metadata": null
+      "metadata": null,
+      "arity": 1
     },
     {
       "name": "process",
@@ -77,7 +82,8 @@
       "column_end": 5,
       "docstring": null,
       "modifiers": [],
-      "metadata": null
+      "metadata": null,
+      "arity": 0
     }
   ],
   "edges": [
@@ -87,7 +93,7 @@
       "target_name": "init",
       "line": 25,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     },
     {
       "source_name": "User",
@@ -95,7 +101,7 @@
       "target_name": "BaseEntity",
       "line": 19,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "User",
@@ -103,7 +109,7 @@
       "target_name": "Identifiable",
       "line": 19,
       "column": 0,
-      "receiver_type": null
+      "call_arity": null
     },
     {
       "source_name": "process",
@@ -111,13 +117,14 @@
       "target_name": "helperCall",
       "line": 29,
       "column": 0,
-      "receiver_type": null
+      "call_arity": 1
     }
   ],
   "imports": [
     {
       "imported_path": "Foundation",
-      "line": 1
+      "line": 1,
+      "local_alias": null
     }
   ]
 }
