@@ -351,7 +351,7 @@ def _import_aware_candidates(
     if not import_tails:
         return []  # file imports nothing
 
-    best: List[Tuple[int, Tuple[str, str, str, str]]] = []
+    best: List[Tuple[int, Tuple[str, str, str, str, Optional[int]]]] = []
     for cand in cands:
         qname = (cand[3] or "").replace("/", ".")
         qsegs = qname.split(".") if qname else [target_name]

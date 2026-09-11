@@ -305,6 +305,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
                 return self._node_text(c, source).strip()
             if c.type == "self":
                 return "self"
+        return None
 
     def _arity(self, list_node) -> int:
         """Positional slot count of an ``argument_list``/``method_parameters``.
