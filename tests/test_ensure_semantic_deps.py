@@ -47,6 +47,9 @@ def _isolated_from_real_lib(monkeypatch):
         if m == "sentence_transformers" or m.startswith("sentence_transformers.")
     ]:
         monkeypatch.delitem(sys.modules, name, raising=False)
+    # Sentinel: the probe's `import sentence_transformers` must fail even when
+    # the test venv itself carries the package in site-packages.
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
     before_path = list(sys.path)
     sys.path[:] = [p for p in sys.path if ".cairn/lib" not in p]
     yield
