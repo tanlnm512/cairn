@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 Status reflects code state per [survey.md](survey.md), not intent.
-**Before-audit**: pending — the orchestrator writes `passed @ <sha>` here
+**Before-audit**: passed @ 99cc986 — gates: preconditions (check.py chains green) · fresh baseline (full suite 3345 passed / 1 skipped after the test-only hermeticity repair 99cc986; the 4 pre-existing failures were env-dependent on main, not spec work) · clean tree · already-done sweep (DONE-IN-CODE noted, not spawned) · isolated branch feat/indexing-exact-rate · constitution C-01..C-04 (C-01 PR step deferred by explicit user instruction: push-only, no open PR)
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
