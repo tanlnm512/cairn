@@ -26,15 +26,14 @@ HX = {"HX-Request": "true"}
 
 
 def _seed_docs(kdir):
-    """Four docs through add_document + one status flip, and the derived
-    index rebuilt over them.
+    """    Four docs through add_document + one status flip, and the derived index
+    rebuilt over them.
 
-    - ``rule`` (business-rule, tag deploys): overlaps nothing — the
+    - ``rule`` (business-rule, tag deploys): overlaps nothing - the
       zero-relationship row.
     - ``spec`` (spec, tag storage): derived-tag neighbor of both ADRs.
-    - ``old`` / ``new`` (decision, tag storage): a supersedes pair
-      (extracted edge both ways via the index) sharing the spec's tag.
-    """
+    - ``old`` / ``new`` (decision, tag storage): a supersedes pair (extracted
+      edge both ways via the index) sharing the spec's tag."""
     from cairn.knowledge.store import add_document, update_status
     from cairn.okf.bundle import OKFBundle
 

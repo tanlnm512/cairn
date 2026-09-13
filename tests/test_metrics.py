@@ -53,16 +53,14 @@ from cairn.mcp_server import metric_buffering as mb
 
 @pytest.fixture(autouse=True)
 def _reset_metric_state(monkeypatch):
-    """Reset metric_buffering's process-global state around each test.
+    """    Reset metric_buffering's process-global state around each test.
 
-    ``_METRIC_BUFFER`` (deque), ``_conn_factory``, and
-    ``_METRIC_FLUSHER_STARTED`` are module-level and never cleared in
-    production (the flusher only drains after a successful commit). Without
-    this reset, rows/connections from one test would bleed into the next.
-    ``CAIRN_READ_ONLY``, ``CAIRN_SESSION``, and ``CAIRN_TELEMETRY`` are also
-    cleared so read-only, session, and telemetry-gate tests start from a
-    known baseline; ``monkeypatch`` restores the originals on teardown.
-    """
+    ``_METRIC_BUFFER``, ``_conn_factory``, and ``_METRIC_FLUSHER_STARTED`` are
+    module-level and never cleared in production (the flusher only drains after
+    a successful commit), so rows/connections would bleed between tests.
+    ``CAIRN_READ_ONLY``, ``CAIRN_SESSION``, and ``CAIRN_TELEMETRY`` are cleared
+    so gating tests start from a known baseline; ``monkeypatch`` restores the
+    originals on teardown."""
     with mb._METRIC_LOCK:
         mb._METRIC_BUFFER.clear()
     mb._conn_factory = None
@@ -80,15 +78,12 @@ def _reset_metric_state(monkeypatch):
 
 
 class _UnclosableConn:
-    """Wraps a sqlite connection so ``close()`` is a no-op.
+    """    Wraps a sqlite connection so ``close()`` is a no-op.
 
-    ``_flush_metrics`` closes the connection it opens in a ``finally`` block.
-    The ``fresh_db`` fixture yields a single private ``:memory:`` connection
-    that is destroyed once closed, so without this wrapper the test could not
-    read back the rows it just flushed. Only the three methods
-    ``_flush_metrics`` touches (``executemany``, ``commit``, ``close``) are
-    forwarded.
-    """
+    ``_flush_metrics`` closes the connection it opens in a ``finally`` block;
+    the ``fresh_db`` fixture yields a single private ``:memory:`` connection
+    destroyed once closed. Forwards only the methods ``_flush_metrics`` touches:
+    ``executemany``, ``commit``, ``close``."""
 
     def __init__(self, real: sqlite3.Connection):
         self._real = real
@@ -637,16 +632,14 @@ def test_args_summary_truncated_at_write_chokepoint():
 
 
 def test_single_explicit_flush_drains_every_buffered_row(fresh_db, monkeypatch):
-    """Durability: one explicit flush drains 100% of a K-row buffer.
+    """    Durability: one explicit flush drains 100% of a K-row buffer.
 
-    K=60 extended rows are buffered across two sessions with one error
-    among them (K >= 50 sits far past any single-row hand-wave while
-    staying under the deque's 2000 maxlen, so nothing was dropped before the
-    flush either). The shared flush daemon ticks on a 30s cadence and this
-    test never sleeps, so the daemon cannot have interfered -- the one
-    explicit flush alone accounts for every row: count == K, buffer empty,
-    and every new column populated wherever it was provided.
-    """
+    K=60 extended rows buffered across two sessions with one error among them
+    (far past single-row hand-waving, under the deque's 2000 maxlen so nothing
+    was dropped before the flush). The shared flush daemon ticks on a 30s cadence
+    and this test never sleeps, so the one explicit flush alone accounts for
+    every row: count == K, buffer empty, and every new column populated wherever
+    it was provided."""
     mb.configure_conn(lambda: _UnclosableConn(fresh_db))
     k = 60
 

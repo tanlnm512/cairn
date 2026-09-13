@@ -38,16 +38,14 @@ _EXPLORE_ROWS = 60  # > HISTORY_PAGE_SIZE: the export must not page
 
 
 def _seed_export_store(db_path: str) -> None:
-    """A graph-schema store whose rows exercise every export filter and
-    every CSV-hostile field shape.
+    """    A graph-schema store whose rows exercise every export filter and every
+    CSV-hostile field shape.
 
     60 ``explore``/``cli`` calls inside the last hour (one pre-migration
     NULL-sizes row per nine, one NULL ``args_summary``); 3 ``explore``/``mcp``
-    calls 10 days back (inside 30d, outside 7d/24h); 4 ``ask_compass``
-    calls 40 days back (outside every preset); 2 ``edge tool``/``mcp``
-    calls inside the last hour, one an error whose message carries
-    commas, quotes, and a newline.
-    """
+    calls 10 days back (inside 30d, outside 7d/24h); 4 ``ask_compass`` calls 40
+    days back (outside every preset); 2 ``edge tool``/``mcp`` calls inside the
+    last hour, one an error whose message carries commas, quotes, and a newline."""
     from cairn.graph.schema import _apply_schema
 
     now = time.time()

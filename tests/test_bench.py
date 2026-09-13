@@ -279,16 +279,15 @@ def _write_committed_baseline(
     tmp_path, monkeypatch, *, version="DS-v1", name="perf",
     median_ms=100.0, profile="match", payload=None,
 ):
-    """Write a throwaway committed-baseline fixture and chdir onto its repo.
+    """    Write a throwaway committed-baseline fixture under tmp_path and chdir onto
+    its repo.
 
-    Mirrors the tree will mint (benchmarks/baselines/<DS-version>/
-    <suite>.json) under tmp_path -- never under the repo's real benchmarks/
-    -- and chdirs so the CLI's cwd-first resolution finds it.
-
-    profile: "match" stamps the exact current machine_profile (no warning);
-    a dict stamps that profile verbatim; None omits the key entirely
-    (pre- unstamped baseline shape).
-    """
+    Mirrors the tree the mint will use (benchmarks/baselines/<DS-version>/
+    <suite>.json), never the repo's real benchmarks/; chdirs so the CLI's
+    cwd-first resolution finds it.
+    profile: "match" stamps the exact current machine_profile (no warning); a
+    dict stamps that profile verbatim; None omits the key entirely
+    (pre-unstamped baseline shape)."""
     from cairn import __version__
     from cairn.bench.datasource import machine_profile
 

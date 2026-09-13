@@ -139,17 +139,15 @@ def test_pooled_read_only_conn_rejects_writes(tmp_path, monkeypatch, pool_env):
 
 
 def test_concurrent_update_with_pooled_reads_zero_contention(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, hash_backend
 ):
-    """P5.2 scenario: a real incremental_update running beside pooled reads.
+    """    P5.2 scenario: a real incremental_update running beside pooled reads.
 
-    The deployment shape the pool changed: one long-lived server process
-    issuing tool reads through pooled connections while a CLI-side
-    `cairn update` writes under the build lock. WAL lets readers proceed
-    without blocking; the assertion is that NO lock_contention event is
-    recorded (busy_timeout absorbed everything) and every pooled read
-    still returned rows throughout the update window.
-    """
+    The deployment shape the pool changed: one long-lived server process issuing
+    tool reads through pooled connections while a CLI-side ``cairn update`` writes
+    under the build lock. WAL lets readers proceed; asserts NO lock_contention
+    event is recorded (busy_timeout absorbed everything) and every pooled read
+    returned rows throughout the update window."""
     import threading
     import time
 

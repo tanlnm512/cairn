@@ -113,43 +113,6 @@ def test_search_symbols_camelcase_substring_via_like_union(fresh_db):
     assert {"UpdateProfileUseCase", "GetPhotosUseCase", "UseCase"} <= names
 
 
-def test_impact_analysis_surfaces_affected_tests(fresh_db, monkeypatch):
-    """impact_analysis (MCP wrapper) must isolate test callers into an
-    'Affected tests' section. Exercises the MCP tool + test-labeling."""
-    from cairn.mcp_server import tools_graph
-
-    monkeypatch.setattr(tools_graph, "_conn", lambda: fresh_db)
-    fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'be', '/repo')")
-    _row(fresh_db, "files", id="f1", repo_id="r", path="/repo/src/main/Target.kt", language="kotlin")
-    _row(fresh_db, "files", id="f2", repo_id="r", path="/repo/src/test/TargetTest.kt", language="kotlin")
-    _row(fresh_db, "symbols", id="st", file_id="f1", name="doThing", qualified_name="Target.doThing", kind="function", line_start=1, line_end=5)
-    _row(fresh_db, "symbols", id="sx", file_id="f2", name="doThingTest", qualified_name="TargetTest.doThingTest", kind="function", line_start=1, line_end=5)
-    _row(fresh_db, "edges", id="e1", source_id="sx", target_id="st", target_name=None, kind="call", line=2, column=4)
-    fresh_db.commit()
-
-    result = tools_graph.impact_analysis("doThing")
-    assert "Affected tests" in result
-    assert "doThingTest" in result
-
-
-def test_get_callers_falls_back_to_fuzzy_when_precise_empty(fresh_db, monkeypatch):
-    """get_callers auto-retries fuzzy when precise returns nothing -- the
-    agent-facing regression where an externally-defined symbol's caller was
-    silently missed."""
-    from cairn.mcp_server import tools_graph
-
-    monkeypatch.setattr(tools_graph, "_conn", lambda: fresh_db)
-    fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/repo')")
-    _row(fresh_db, "files", id="f1", repo_id="r", path="Caller.swift", language="swift")
-    _row(fresh_db, "symbols", id="s1", file_id="f1", name="pingGoogle", qualified_name="M.pingGoogle", kind="method", line_start=87, line_end=90)
-    _row(fresh_db, "edges", id="e1", source_id="s1", target_id=None, target_name="startLoadURL", kind="call", line=87, column=8)
-    fresh_db.commit()
-
-    result = tools_graph.get_callers("startLoadURL")
-    assert "fuzzy candidates" in result
-    assert "pingGoogle" in result
-
-
 def test_resolver_full_contiguous_beats_last_segment_fallback():
     """The import-aware resolver must rank a full contiguous match above a
     last-segment fallback -- guards both resolution paths + ordering at once."""
@@ -163,31 +126,6 @@ def test_resolver_full_contiguous_beats_last_segment_fallback():
     result = _import_aware_candidates("create", my_imports, cands)
     assert len(result) == 1, "ambiguous resolution not expected"
     assert result[0][0] == "sid_full", "full contiguous must outrank fallback"
-
-
-def test_resolver_receiver_type_disambiguates_same_named_method(tmp_path):
-    """Full build pipeline: two classes define `displayName`; the type-aware
-    Tier-0 resolver must dispatch each call to the correct class with zero
-    ambiguous edges."""
-    from cairn.graph.builder import build_graph
-
-    files = {
-        "Profile.kt": 'class Profile {\n    fun displayName(): String { return "x" }\n}\n',
-        "Account.kt": 'class Account {\n    fun displayName(): String { return "y" }\n}\n',
-        "Repo.kt": (
-            "class UserRepo {\n"
-            "    val profile: Profile = Profile()\n"
-            "    fun run() {\n"
-            "        val other = Account()\n"
-            "        other.displayName()\n"
-            "        this.profile.displayName()\n"
-            "    }\n"
-            "}\n"
-        ),
-    }
-    ws, db_path = _make_workspace(tmp_path, "ws_type", files)
-    summary = build_graph(workspace=ws, db_path=db_path, verbose=False)
-    assert summary["resolution"]["ambiguous"] == 0, "receiver-type dispatch must not leave ambiguous edges"
 
 
 # ===========================================================================

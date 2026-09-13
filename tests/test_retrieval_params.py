@@ -36,21 +36,19 @@ pytestmark = pytest.mark.usefixtures("hash_backend")
 
 @pytest.fixture(autouse=True)
 def _params_env(monkeypatch):
-    """Deterministic knobs around every test.
+    """    Deterministic knobs around every test.
 
     * brute scan forced (ANN presence must not change results);
-    * no rerank enablement or margin env -- the gate tests that need them
-      set CAIRN_RERANK explicitly (mirroring test_rerank_gating.py);
-    * the persistent rerank auto-enable marker neutralized: on a dev
-      machine with a real ``~/.cairn/rerank_enabled`` (i.e. a downloaded
-      reranker), a process where cairn.paths resolved CAIRN_HOME before
-      conftest's sandbox applied would otherwise run the REAL cross-encoder
-      under these exact-order assertions (the test_rerank_gating.py
-      discipline);
-    * no CAIRN_FUSION override -- fusion defaults ON, the production path
-      the equivalence contract must hold on. Tests isolating the cosine
-      filter set it to "0" themselves.
-    """
+    * no rerank enablement or margin env -- the gate tests that need them set
+      CAIRN_RERANK explicitly (mirroring test_rerank_gating.py);
+    * the persistent rerank auto-enable marker neutralized: on a dev machine
+      with a real ``~/.cairn/rerank_enabled`` (i.e. a downloaded reranker), a
+      process where cairn.paths resolved CAIRN_HOME before conftest's sandbox
+      applied would run the REAL cross-encoder under these exact-order
+      assertions;
+    * no CAIRN_FUSION override -- fusion defaults ON, the production path the
+      equivalence contract must hold on; tests isolating the cosine filter set
+      it to "0" themselves."""
     from cairn.graph import reranker as rrk
 
     monkeypatch.setattr(
@@ -257,16 +255,15 @@ class TestDenseThresholdKnob:
 
 
 class TestRRFWeightsKnob:
-    """Fusion ON, query ``alpha`` (single token, so BOTH legs are
-    non-empty -- a sentence query degenerates to an empty BM25 leg via
-    today's quoted-phrase FTS defect, the T007 survey finding).
+    """    Fusion ON, query ``alpha`` (single token, so BOTH legs are non-empty -- a
+    sentence query degenerates to an empty BM25 leg via today's quoted-phrase
+    FTS defect).
 
-    Leg memberships: BM25 = [alpha, alphaBulk] (FTS prefix ``alpha*`` +
-    LIKE substring both hit the names); vector pool (threshold 0.0) =
-    [alpha, vectorOnlyNode, alphaBulk] by cosine. Swapping the (dense,
-    sparse) weights flips which leg orders the tail -- vectorOnlyNode and
-    alphaBulk trade places, and the leg-excluded candidate scores 0.0.
-    """
+    Leg memberships: BM25 = [alpha, alphaBulk] (FTS prefix ``alpha*`` + LIKE
+    substring both hit the names); vector pool (threshold 0.0) = [alpha,
+    vectorOnlyNode, alphaBulk] by cosine. Swapping the (dense, sparse) weights
+    flips which leg orders the tail -- vectorOnlyNode and alphaBulk trade places,
+    and the leg-excluded candidate scores 0.0."""
 
     @staticmethod
     def _order(seeded_db, dense_w, sparse_w):
@@ -449,20 +446,17 @@ class TestSparseLimitKnob:
 
 
 class TestSparseTopNKnob:
-    """A rank-position cutoff on the BM25 candidate list before fusion
-    (NOT a score threshold: SQLite FTS5's bm25() rank is negative with
-    better = more negative, and the LIKE-fallback rows carry no rank at
-    all -- see the RetrievalParams field doc).
+    """    A rank-position cutoff on the BM25 candidate list before fusion -- NOT a
+    score threshold (SQLite FTS5's bm25() rank is negative with better = more
+    negative, and LIKE-fallback rows carry no rank at all).
 
-    Query ``alpha`` (both legs non-empty): BM25 = [alpha, alphaBulk];
-    vector pool at threshold 0.0 = [alpha, vectorOnlyNode, alphaBulk].
-    Equal weights, k=60. Default fused scores: alpha 2/61 = 0.0328,
-    alphaBulk 1/62 + 1/63 = 0.032, vectorOnlyNode 1/62 = 0.0161 --
-    alphaBulk's bm25 rank-2 term pushes it ABOVE vectorOnlyNode. Cutting
-    the bm25 tail at N=1 removes alphaBulk's only sparse contribution;
-    its bare vec rank-3 term (1/63 = 0.0159) falls below
-    vectorOnlyNode's 1/62, so the two trade places.
-    """
+    Query ``alpha`` (both legs non-empty): BM25 = [alpha, alphaBulk]; vector
+    pool at threshold 0.0 = [alpha, vectorOnlyNode, alphaBulk]. Equal weights,
+    k=60. Default fused scores: alpha 2/61 = 0.0328, alphaBulk 1/62 + 1/63 =
+    0.032, vectorOnlyNode 1/62 = 0.0161 -- alphaBulk's bm25 rank-2 term pushes it
+    ABOVE vectorOnlyNode. Cutting the bm25 tail at N=1 removes alphaBulk's only
+    sparse contribution; its bare vec rank-3 term (1/63 = 0.0159) falls below
+    vectorOnlyNode's 1/62, so the two trade places."""
 
     @staticmethod
     def _run(seeded_db, **fields):
@@ -913,25 +907,21 @@ class TestEnrichDenseLeg:
 
 
 def _seed_url_fixture(conn) -> None:
-    """T009's end-to-end corpus: the identifier-bearing sentence's target
-    (``parseUnencodedURL``) plus a prose decoy (``buildOutgoingRequest``).
-    All figures below are PROBED under the hash backend, not guessed:
+    """    T009's end-to-end corpus: the identifier-bearing sentence's target
+    (``parseUnencodedURL``) plus a prose decoy (``buildOutgoingRequest``). All
+    figures below are PROBED under the hash backend, not guessed:
 
     * raw sentence vs the target's chunk: cosine 0.0348 -- below the 0.3
-      default, so the dense leg alone misses; and the sentence through
-      today's ``search_symbols`` folds into one quoted FTS phrase that
-      matches no symbol (the empty-BM25 defect), so PLAIN mode returns
-      only the decoy.
+      default, so the dense leg alone misses; and the sentence through today's
+      ``search_symbols`` folds into one quoted FTS phrase that matches no symbol,
+      so PLAIN mode returns only the decoy.
     * enriched ``dense_query`` vs the target's chunk: cosine 0.2055 -- the
-      appended ``parse``/``URL`` sub-tokens overlap the docstring
-      ``"Parse URL."``, a genuine ~6x cosine gain (what subword overlap
-      gives a real embedder); still sub-threshold under token-hash
-      vectors, so the target ENTERS through the enriched sparse leg
-      (provenance ``bm25``) -- the task's sanctioned proof level.
+      appended ``parse``/``URL`` sub-tokens overlap the docstring "Parse URL."
+      (~6x cosine gain); still sub-threshold under token-hash vectors, so the
+      target ENTERS through the enriched sparse leg (provenance ``bm25``).
     * decoy: 0.3503 raw (a plain-mode dense hit), 0.2796 enriched -- the
-      appended identifier tail dilutes a chunk it does not overlap; honest
-      evidence that enrichment is a ranked trade, not a free win.
-    """
+      appended identifier tail dilutes a chunk it does not overlap; enrichment is
+      a ranked trade, not a free win."""
     conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
     conn.execute(
         "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/src/Net.kt', 'kotlin')"

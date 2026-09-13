@@ -50,27 +50,16 @@ AGENTS_MD = REPO_ROOT / "AGENTS.md"
 # ---------------------------------------------------------------------------
 
 def _scrape_click_registry() -> tuple[set[str], dict[str, set[str]]]:
-    """Return ``(top_level, groups)`` for the ``cairn`` Click CLI.
+    """    Return ``(top_level, groups)`` for the ``cairn`` Click CLI.
 
-    ``top_level`` is the set of names usable as ``cairn <name>``. ``groups`` maps a
-    group name (e.g. ``memory``) to the set of its subcommand names (e.g.
-    ``{"record", "stats", ...}``).
-
-    Building this by importing ``src.cli`` would require Click (and transitively
-    the graph stack) to be installed in CI, which is not guaranteed. Instead we
-    parse each ``src/cli/*.py`` with ``ast`` and read the decorator structure:
-
-      * a function decorated with ``@<owner>.group(...)`` defines a new group
-        named after the function;
-      * a function decorated with ``@<owner>.command(...)`` registers a command
-        on ``<owner>``. The command name is either the explicit string literal
-        argument (positional first arg or ``name="..."`` keyword) or, when the
-        decorator is bare, the function's own name.
-
-    ``ast`` is used (rather than a line regex) because ``@click.option(...)``
-    decorators are frequently split across multiple continuation lines, which
-    defeats naive forward line-scanning.
-    """
+    ``top_level``: names usable as ``cairn <name>``. ``groups``: group name ->
+    set of subcommand names. Parses each ``src/cli/*.py`` with ``ast`` (importing
+    ``src.cli`` would need Click + the graph stack in CI):
+    ``@<owner>.group(...)`` defines a group named after the function;
+    ``@<owner>.command(...)`` registers a command whose name is the explicit
+    string literal (positional first arg or ``name="..."``) or the function name
+    when bare. ``ast`` rather than a line regex because decorators are split
+    across continuation lines."""
     top: set[str] = set()
     groups: dict[str, set[str]] = {}
 
@@ -196,16 +185,13 @@ def _live_defaults_from_source(tool_name: str) -> dict[str, object] | None:
 
 
 def _render_agents_instructions_from_source() -> str:
-    """Reconstruct ``_agents_instructions()`` output by reading its source.
+    """    Reconstruct ``_agents_instructions()`` output by reading its source.
 
-    Dep-free fallback when importing ``cairn.agent_install`` fails (it pulls
-    the ``mcp`` package transitively). We locate the ``_agents_instructions``
-    function and the module-level ``_INSTRUCTIONS_BODY`` string by scanning the
-    ``agent_install`` package (after the Phase 1.3 split they live in
-    ``agent_install/_common.py``) and concatenate the two header string literals
-    with the body, mirroring what the function returns. This is enough to check
-    the tool-count blurb -- we are not validating the full rendering here.
-    """
+    Dep-free fallback when importing ``cairn.agent_install`` fails (it pulls the
+    ``mcp`` package). Locates the function and the module-level
+    ``_INSTRUCTIONS_BODY`` string (both in ``agent_install/_common.py``) and
+    concatenates the header literals with the body, mirroring what the function
+    returns -- enough to check the tool-count blurb, not the full rendering."""
     pkg_dir = SRC / "agent_install"
     body_value: str | None = None
     agents_value: str | None = None
@@ -560,15 +546,12 @@ def _load_live_tool(name: str):
 
 
 def _resolve_live_defaults(name: str) -> tuple[dict[str, object] | None, str]:
-    """Return ``(defaults, source)`` for the live defaults of tool ``name``.
+    """    Return ``(defaults, source)`` for the live defaults of tool ``name``.
 
-    Prefers ``inspect.signature`` on the imported function (returns a dict keyed
-    by param name, where params without a default are omitted). If the import
-    fails (the ``mcp`` dep is absent), falls back to AST-parsing the function's
-    ``def`` in source -- so the comparison still checks real defaults without
-    requiring the optional dependency. ``source`` is a short human-readable note
-    for skip messages. Returns ``(None, reason)`` if neither path resolves.
-    """
+    Prefers ``inspect.signature`` on the imported function (params without a
+    default omitted); on import failure (``mcp`` dep absent) falls back to
+    AST-parsing the function's ``def`` in source. ``source`` is a short note for
+    skip messages. Returns ``(None, reason)`` if neither path resolves."""
     fn, mod_path = _load_live_tool(name)
     if fn is not None:
         try:
@@ -590,18 +573,14 @@ def _resolve_live_defaults(name: str) -> tuple[dict[str, object] | None, str]:
 
 
 def test_tools_md_default_args_match_live_signatures():
-    """Every documented default argument in references/tools.md must match the
-    live tool function's actual default.
+    """    Every documented default argument in references/tools.md must match the live
+    tool function's actual default.
 
-    This is the highest-value test: it catches the precise bug where docs lie
-    about behavior -- e.g. documenting ``impact_analysis(cached=True)`` when the
-    live default is ``cached=False``. For each signature in tools.md we parse
-    the ``param=default`` pairs, then resolve the live defaults -- preferring
-    ``inspect.signature`` on the imported tool function, and falling back to
-    AST-parsing the function's ``def`` in source when the ``mcp`` package (pulled
-    in by importing the server) is unavailable, so the test still checks real
-    defaults in a minimal CI. A tool is only skipped when neither path resolves.
-    """
+    Catches docs lying about behavior (e.g. documenting
+    ``impact_analysis(cached=True)`` when the live default is ``cached=False``).
+    Parses ``param=default`` pairs per signature, then resolves live defaults via
+    ``inspect.signature``, falling back to AST-parsing the source when ``mcp`` is
+    unavailable; a tool is skipped only when neither path resolves."""
     doc_sigs = _parse_tools_md_signatures()
     assert doc_sigs, "no tool signatures parsed from references/tools.md"
 
@@ -706,19 +685,13 @@ def test_no_invented_promotion_gate_in_steward():
 # ---------------------------------------------------------------------------
 
 def test_empty_result_strings_offer_a_next_step():
-    """Bare "No X found" empty-results contradict the skill's core doctrine.
+    """    Every tool whose miss is a dead end must offer a next step.
 
-    The skill teaches "empty precise != unused" and "don't conclude nothing
-    exists" -- but if a tool returns a bare ``"No definition found for 'X'."``
-    with no remediation hint, an agent hits it and stops, which is exactly the
-    failure mode the doctrine warns against. Every tool whose miss is a dead
-    end must point at the next thing to try (a sibling tool, a broader query,
-    or an index/embed step).
-
-    This test reads the empty-result string literals from the tool source and
-    asserts each carries a next-step hint. Source-scraped (no heavy imports)
-    so it runs in minimal CI.
-    """
+    The skill teaches "empty precise != unused"; a bare "No X found" with no
+    remediation hint makes an agent stop -- the exact failure mode the doctrine
+    warns against. Each miss must point at a sibling tool, a broader query, or an
+    index/embed step. Reads the empty-result string literals from tool source
+    (no heavy imports, minimal CI)."""
     REPO = Path(__file__).resolve().parent.parent
     cases = [
         # (tool module path, function name, substring that MUST appear in an
@@ -780,17 +753,12 @@ def test_empty_result_strings_offer_a_next_step():
 # ---------------------------------------------------------------------------
 
 def test_ask_compass_surfaces_all_layers_empty():
-    """ask_compass must not return a bare header when every layer is empty.
+    """    ask_compass must not return a bare header when every layer is empty.
 
-    The router computes ``route["empty"]`` (compass/router.py), but for a long
-    time ask_compass discarded it: an all-empty query printed just the
-    "Intent: ..." header followed by nothing, forcing the agent to infer failure
-    from absence -- the exact trap the skill warns against. The fix appends an
-    explicit "(No results from any layer ...)" line when ``empty`` is true.
-
-    This asserts the empty-signal branch exists in ask_compass (source-scraped,
-    no router/db needed). Regression guard for the surfacing fix.
-    """
+    The router computes ``route["empty"]`` (compass/router.py); ask_compass must
+    append an explicit "(No results from any layer ...)" line when it is true, so
+    failure is not inferred from absence. Asserts the empty-signal branch exists
+    in ask_compass (source-scraped, no router/db needed)."""
     REPO = Path(__file__).resolve().parent.parent
     src = (REPO / "src/cairn/mcp_server/tools_compass.py").read_text(encoding="utf-8")
     m = re.search(r"^def ask_compass\b.*?(?=^def |\Z)", src, re.DOTALL | re.MULTILINE)
@@ -832,15 +800,13 @@ def _agents_instructions_text() -> str:
 
 
 def test_agents_instructions_include_wiki_section():
-    """The install template must carry a ``## Wiki`` workflow section.
+    """    The install template must carry a ``## Wiki`` workflow section.
 
-    The generated AGENTS.md/CLAUDE.md body documents the explore-first
-    workflow, the task queue, and the knowledge files, but never the wiki
-    consumer side: how pages are generated, how their tasks flow through the
-    queue, and how to read them back via compass routing. This pins the
-    section's existence in the shared instructions body both files are built
-    from.
-    """
+    The generated AGENTS.md/CLAUDE.md body documents explore-first, the task
+    queue, and the knowledge files but not the wiki consumer side: how pages are
+    generated, how their tasks flow through the queue, and how to read them back
+    via compass routing. Pins the section in the shared instructions body both
+    files are built from."""
     instructions = _agents_instructions_text()
     assert "## Wiki" in instructions, (
         "_agents_instructions() output has no `## Wiki` section -- the wiki "

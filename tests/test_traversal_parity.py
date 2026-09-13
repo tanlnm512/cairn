@@ -187,17 +187,15 @@ def corpus_db(tmp_path_factory):
 
 
 def _canon_impact(res: dict) -> dict:
-    """Order-insensitive canonical form of an impact_analysis result.
+    """    Order-insensitive canonical form of an impact_analysis result.
 
     Only enumeration-order-INVARIANT facts are pinned: the set of impacted
     (symbol, file) rows, the total, the truncated flag, and the cycle COUNT.
     Per-row depths, which rows a limit keeps, and which cycle member gets
-    reported all depend on SQL row order (= build-time file enumeration,
-    which differs between filesystems); pinning them made the goldens
-    macOS-only. Depth fidelity is pinned where it is deterministic: index
-    mode (shortest-path, tested below) and tree-shaped reachability
-    (test_dfs_depths_tree_shaped).
-    """
+    reported all depend on SQL row order (= build-time file enumeration, which
+    differs between filesystems). Depth fidelity is pinned where it is
+    deterministic: index mode (shortest-path, tested below) and tree-shaped
+    reachability (test_dfs_depths_tree_shaped)."""
     return {
         "impacted": sorted(
             (r["symbol"], r["file"]) for r in res["impacted"]

@@ -36,15 +36,13 @@ from cairn.graph.schema import note_contention
 
 @pytest.fixture(autouse=True)
 def _reset_contention_guard():
-    """Reset the process-global one-time-warning guard around each test.
+    """    Reset the process-global one-time-warning guard around each test.
 
-    ``_CONTENTION_WARNED`` is process-global and never reset in production
-    (a contention event is sticky for the process lifetime), so tests that
-    assert "fires once" must clear it to stay repeatable within the same
-    process. Mirrors the ``_ANN_FALLBACK_WARNED`` reset in
-    test_ann_fallback_warning.py and ``_HASH_FALLBACK_WARNED`` in
-    test_embedding_backend_quality.py.
-    """
+    ``_CONTENTION_WARNED`` is process-global and never reset in production (a
+    contention event is sticky for the process lifetime), so "fires once" tests
+    must clear it to stay repeatable. Mirrors the ``_ANN_FALLBACK_WARNED`` reset
+    in test_ann_fallback_warning.py and ``_HASH_FALLBACK_WARNED`` in
+    test_embedding_backend_quality.py."""
     schema._CONTENTION_WARNED.clear()
     yield
     schema._CONTENTION_WARNED.clear()
@@ -211,16 +209,14 @@ def test_second_swallow_site_is_independent_of_ann(monkeypatch, caplog):
 
 
 def test_fresh_db_init_emits_no_contention_warning(tmp_path, caplog):
-    """A first-run DB init (single process, brand-new file) must stay silent.
+    """    A first-run DB init (single process, brand-new file) must stay silent.
 
-    Regression guard: ``transitive_edges`` declares ``target_id`` in its CREATE
-    TABLE, so the retained ``TRANSITIVE_EDGES_TARGET_ID_MIGRATION`` raises
-    "duplicate column name" on every fresh DB. That idempotent re-application
-    is NOT lock contention -- it must not trip ``note_contention("schema.
-    migration")``, or every first-run ``cairn build`` would cry wolf ("another
-    cairn process holds the DB") and train users to ignore the very signal T03
-    exists to surface.
-    """
+    The retained ``TRANSITIVE_EDGES_TARGET_ID_MIGRATION`` raises "duplicate
+    column name" on every fresh DB (``transitive_edges`` declares ``target_id``
+    in its CREATE TABLE); that idempotent re-application is NOT lock contention
+    and must not trip ``note_contention("schema.migration")``, or every first-run
+    ``cairn build`` cries wolf ("another cairn process holds the DB") and trains
+    users to ignore the signal T03 exists to surface."""
     caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
 
     db_path = str(tmp_path / "fresh.db")
@@ -287,15 +283,14 @@ def test_note_contention_emits_lock_contention_event(monkeypatch):
 
 
 def test_non_lock_operational_error_is_not_contention(monkeypatch, caplog):
-    """A schema/availability-shaped OperationalError must not fire the signal.
+    """    A schema/availability-shaped OperationalError must not fire the signal.
 
     The FTS backfill and migration swallow sites catch OperationalError for
     reasons that are NOT contention ("no such module: FTS5", "no such table",
-    "duplicate column"). Before the discrimination, each emitted a WARNING
-    asserting another process held the DB plus a durable lock_contention
-    event -- phantom signals that doctor's concurrency check and
-    ``metrics --contention`` counted as real contention.
-    """
+    "duplicate column"); none may emit the WARNING asserting another process
+    holds the DB plus a durable lock_contention event -- phantom signals that
+    doctor's concurrency check and ``metrics --contention`` count as real
+    contention."""
     from cairn.telemetry import sink as _sink, LOCK_CONTENTION
 
     caplog.set_level(logging.WARNING, logger="cairn.graph.schema")

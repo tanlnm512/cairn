@@ -77,17 +77,14 @@ _SCALE_PAYLOADS = (
 
 
 def _seed_scale_store(db_path: str) -> int:
-    """Build the synthesized ~10,500-row store; returns the row count.
+    """    Build the synthesized ~10,500-row store; returns the row count.
 
-    Direct ``INSERT``s via one ``executemany`` (target: well under a few
-    seconds, no sleeps): a 6,000-call legacy ``unknown`` session of
-    contiguous 60s-apart calls entirely older than 30 days; 20 mid-age
-    sessions (180 calls each) whose starts are spaced 2 days apart, so
-    timestamps reach back ~38 days; 30 fresh sessions (30 calls each)
-    inside the last few hours. Tools cycle through ``_SCALE_TOOLS``,
-    payload sizes through ``_SCALE_PAYLOADS`` (~1 in 5 rows NULL), ~1 in
-    17 calls is an error, durations vary 5-300 ms.
-    """
+    Direct INSERTs via one ``executemany``: a 6,000-call legacy ``unknown``
+    session of contiguous 60s-apart calls entirely older than 30 days; 20
+    mid-age sessions (180 calls each) starting 2 days apart (~38 days back);
+    30 fresh sessions (30 calls each) inside the last few hours. Tools cycle
+    ``_SCALE_TOOLS``, payload sizes cycle ``_SCALE_PAYLOADS`` (~1 in 5 rows
+    NULL), ~1 in 17 calls is an error, durations vary 5-300 ms."""
     from cairn.graph.schema import _apply_schema
 
     now = time.time()
@@ -288,16 +285,14 @@ def test_tokens_covers_seeded_tools_at_scale(tmp_path):
 
 
 def test_traffic_routes_first_render_budget(tmp_path):
-    """Each traffic route's FIRST GET on a freshly started TestClient
-    renders within budget over the synthesized ~10.5k-call store.
+    """    Each traffic route's FIRST GET on a fresh TestClient renders within budget
+    over the synthesized ~10.5k-call store.
 
-    Strict 2.0s wall (SC-1) only under CAIRN_SCALE_STRICT=1 (module-level
-    gate -- see module docstring); ungated runs keep the structural
-    bounds plus a generous 10s ceiling so a real regression still fails.
-    A fresh TestClient per route makes every timed GET that client's
-    first request, so template loading/compilation counts as part of
-    "first render", as intends.
-    """
+    Strict 2.0s wall (SC-1) only under CAIRN_SCALE_STRICT=1 (module-level gate);
+    ungated runs keep the structural bounds plus a generous 10s ceiling so a real
+    regression still fails. A fresh TestClient per route makes every timed GET
+    that client's first request, so template loading/compilation counts as part
+    of "first render"."""
     db_path = _scale_db_file(tmp_path)
 
     elapsed = {}

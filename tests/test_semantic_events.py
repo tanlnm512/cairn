@@ -33,18 +33,15 @@ pytestmark = pytest.mark.usefixtures("hash_backend")
 
 @pytest.fixture(autouse=True)
 def _reset_sink_and_env(monkeypatch):
-    """Clear the telemetry buffer + env knobs around each test.
+    """    Clear the telemetry buffer + env knobs around each test.
 
     ``CAIRN_ANN_BACKEND=off`` is the module default so brute/hash/empty tests
     deterministically hit the cosine-scan branch without depending on sqlite-vec
     being installed; the ANN-path test overrides it by patching the function.
-
     The reranker is also stubbed off by default: a persistent ``rerank_enabled``
-    marker (or installed cross-encoder) would otherwise load a model + hit the HF
-    Hub mid-test, making these telemetry tests slow and network-dependent.
-    ``test_rerank_on_reports_rerank_one`` re-enables it to validate that wiring.
-    The embeddings backend cache is reset so a prior test's env doesn't leak.
-    """
+    marker (or installed cross-encoder) would otherwise load a model + hit the
+    HF Hub mid-test; ``test_rerank_on_reports_rerank_one`` re-enables it. The
+    embeddings backend cache is reset so a prior test's env doesn't leak."""
     from cairn.telemetry import sink
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
@@ -313,15 +310,13 @@ def test_telemetry_off_suppresses_semantic_events(fresh_db, monkeypatch):
 
 
 def test_bare_connection_returns_semantic_results(tmp_path, monkeypatch):
-    """A raw sqlite3.connect (no Row factory) must not silently degrade
+    """    A raw sqlite3.connect (no Row factory) must not silently degrade
     semantic_search to the FTS fallback.
 
-    Found while minting the DS-v1 quality baseline: the brute-force scan
-    reads rows by column name (r["vec"]), a bare connection yields tuples,
-    and the TypeError was swallowed into retrieval degradation -- a quality
-    run through a bare connection measured recall 0.0. The fix normalizes
-    rows at the fetch boundary (_mapping_rows).
-    """
+    The brute-force scan reads rows by column name (r["vec"]); a bare connection
+    yields tuples and the TypeError was swallowed into retrieval degradation -- a
+    quality run through a bare connection measured recall 0.0. The fix normalizes
+    rows at the fetch boundary (_mapping_rows)."""
     import sqlite3 as _sq
 
     from cairn.graph import embeddings as emb

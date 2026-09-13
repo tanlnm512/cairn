@@ -72,26 +72,6 @@ def test_edited_docstring_triggers_reembed_without_model_change(fresh_db):
     assert after_row["vec"] != before_row["vec"]
 
 
-def test_orphan_reap_deletes_vectors_for_removed_symbols(fresh_db):
-    """The gap this closes: a deleted symbol's embedding must not linger forever."""
-    from cairn.graph import embeddings as emb
-
-    _seed_one_symbol(fresh_db)
-    conn = fresh_db
-    emb.embed_all(conn)
-    assert emb.embed_count(conn) == 1
-
-    conn.execute("DELETE FROM symbols WHERE id = '1'")
-    conn.commit()
-
-    reaped = emb.reap_orphaned_embeddings(conn)
-    # Flagless embed_all is multivector by default: the symbol
-    # carries 1 base row + 2 mv rows (name, docstring); the reap removes
-    # all three.
-    assert reaped == 3
-    assert emb.embed_count(conn) == 0
-
-
 def test_embed_all_reaps_by_default(fresh_db):
     """embed_all's default reap_orphans=True should reap without a separate call."""
     from cairn.graph import embeddings as emb

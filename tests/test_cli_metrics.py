@@ -80,16 +80,14 @@ _CANARY = "sk-ant-TEST123CANARY00000000"
 
 @pytest.fixture(autouse=True)
 def cli_store(monkeypatch, tmp_path):
-    """Hermetic per-test store + ``cli_metrics`` state reset.
+    """    Hermetic per-test store + ``cli_metrics`` state reset.
 
-    Sets ``CAIRN_HOME``/``CAIRN_DB`` into the test sandbox (overriding
+    Sets ``CAIRN_HOME``/``CAIRN_DB`` into the sandbox (overriding
     ``_hermetic_env``'s defaults), pre-creates the store so flushes never race
-    first-open, resets ``cli_metrics`` module globals exactly like the metric
-    suites reset ``metric_buffering``, and injects the production-shaped
-    factory (resolves the store at FLUSH time from env). Teardown re-resets
-    and restores ``_FLUSH_CONN_WIRED`` so later suites in the same
-    process see pristine wiring.
-    """
+    first-open, resets ``cli_metrics`` module globals like the metric suites
+    reset ``metric_buffering``, and injects the production-shaped factory (store
+    resolved at FLUSH time from env). Teardown re-resets and restores
+    ``_FLUSH_CONN_WIRED``."""
     home = tmp_path / "cairn-home"
     home.mkdir()
     db = tmp_path / "graph.db"
@@ -133,15 +131,13 @@ def _rows(db, marker=None):
 
 
 def test_batch_one_row_per_invocation(cli_store, monkeypatch):
-    """Each dispatch-reaching invocation lands exactly one correctly-stamped row.
+    """    Each dispatch-reaching invocation lands exactly one correctly-stamped row.
 
     The recorded argv is ``sys.argv[1:]`` (not CliRunner's args), so each case
     tags ``sys.argv`` with a unique marker to make its row addressable. Expected
-    exits: 0 for help/config, 2 for the parse-error shapes (click's UsageError
-    exit code). Divergences pinned per the module docstring: ``--help`` records
-    nothing (parse-time Exit never reaches the wrapper) and ``tool_name``
-    carries no subcommand suffix.
-    """
+    exits: 0 for help/config, 2 for parse-error shapes (click UsageError).
+    Divergences pinned: ``--help`` records nothing (parse-time Exit never reaches
+    the wrapper) and ``tool_name`` carries no subcommand suffix."""
     runner = CliRunner()
     # (marker, args, expected exit, expected rows, (status, error substring))
     cases = [
@@ -335,15 +331,13 @@ def test_build_row_redaction_chokepoint_unit():
 
 
 def test_short_lived_process_drains_on_exit_atexit(tmp_path):
-    """A real subprocess of the real entry point lands its row via atexit only.
+    """    A real subprocess of the real entry point lands its row via atexit only.
 
     Runs ``cairn.cli.main`` under a fresh interpreter with a tmp
-    ``CAIRN_HOME``/``CAIRN_DB`` (one fast command), waits for exit, then opens
-    the store and asserts the ``cli:`` row EXISTS. The test never calls any
-    flush -- the row can only have landed through the shared sink's atexit
-    drain (the flush-on-clean-exit path). ``prog_name='cairn'`` mirrors
-    the installed ``cairn`` entry point's program name.
-    """
+    ``CAIRN_HOME``/``CAIRN_DB`` (one fast command), then asserts the ``cli:`` row
+    EXISTS without any explicit flush -- it can only have landed through the
+    shared sink's atexit drain (the flush-on-clean-exit path).
+    ``prog_name='cairn'`` mirrors the installed entry point's program name."""
     home = tmp_path / "exit-drain-home"
     home.mkdir()
     db = tmp_path / "exit-drain.db"
@@ -486,15 +480,13 @@ def test_build_row_session_id_never_unknown(monkeypatch):
 
 
 def test_no_unknown_cli_session_rows_in_store(cli_store, monkeypatch):
-    """Store-level: a live batch across env shapes, none ``unknown``.
+    """    Store-level: a live batch across env shapes, none ``unknown``.
 
-    Drives the real invoke path under each identity shape -- the same shell
-    twice (groups), a tmux pane once, and two identity-less invocations
-    (per-invocation, distinct) -- then asserts on the persisted rows: no
-    ``tool_metrics`` row with ``source='cli'`` carries session_id ``unknown``,
-    and the grouping semantics hold (shared terminal -> ONE id;
-    no identity -> distinct ids).
-    """
+    Drives the real invoke path under each identity shape -- the same shell twice
+    (groups), a tmux pane once, two identity-less invocations (per-invocation,
+    distinct) -- then asserts no ``source='cli'`` ``tool_metrics`` row carries
+    session_id ``unknown`` and the grouping semantics hold (shared terminal ->
+    ONE id; no identity -> distinct ids)."""
     shapes = [
         ("term-sess-A", None),  # same shell...
         ("term-sess-A", None),  # ...twice -> both rows group

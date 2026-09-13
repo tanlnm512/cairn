@@ -143,16 +143,15 @@ class TestRerankFallback:
 
 class TestRerankSuccessPath:
     def test_rerank_resorts_by_fake_model_score(self, monkeypatch):
-        """Substitute a fake CrossEncoder to prove the resort/truncate logic
-        without needing the real model downloaded.
+        """        Prove the resort/truncate logic with a fake CrossEncoder, without the real
+        model downloaded.
 
-        `rerank()` gates on `reranker_available()` (a CrossEncoder import
-        check), which is False when the [semantic] extra isn't installed --
-        so we also stub `reranker_available` to True here. Without that stub
-        the fake model in the cache is never reached: the availability gate
-        returns (candidates, False) first. This lets the resort/truncate
-        contract run in the default (extra-free) test environment.
-        """
+        ``rerank()`` gates on ``reranker_available()`` (a CrossEncoder import check),
+        False when the [semantic] extra isn't installed -- so also stub
+        ``reranker_available`` to True, else the availability gate returns
+        (candidates, False) before the fake model in the cache is ever reached. Lets
+        the resort/truncate contract run in the default (extra-free) test
+        environment."""
         from cairn.graph import reranker as rrk
 
         monkeypatch.setenv("CAIRN_RERANK", "1")

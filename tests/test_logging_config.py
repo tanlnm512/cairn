@@ -28,20 +28,14 @@ _CAIRN = logging.getLogger("cairn")
 
 @pytest.fixture
 def reset_cairn_logger(monkeypatch):
-    """Snapshot, isolate & restore the process-global `cairn` logger + env var.
+    """    Snapshot, isolate & restore the process-global ``cairn`` logger +
+    CAIRN_LOG_LEVEL.
 
-    configure_logging() mutates the shared `cairn` logger (attaches a handler,
-    sets the level). Without this fixture those mutations would leak across
-    tests: a later test seeing an unexpected DEBUG level, or a stacked handler
-    doubling up log lines. We also pin CAIRN_LOG_LEVEL off during the test and
-    restore the original env on teardown.
-
-    Handlers are DETACHED at setup (not just snapshotted): earlier
-    full-suite tests invoke the CLI, whose group callback attaches a handler
-    capturing *their* pytest-swapped stderr. Without the detach, our
-    idempotent configure_logging() would keep that stale handler and the
-    assertions below would test another test's stream.
-    """
+    configure_logging() mutates the shared logger (handler, level); without this
+    fixture those mutations leak across tests. Handlers are DETACHED at setup,
+    not just snapshotted: earlier CLI-invoking tests attach a handler capturing
+    *their* pytest-swapped stderr, and the idempotent configure_logging() would
+    keep that stale handler, making the assertions test another test's stream."""
     saved_handlers = _CAIRN.handlers[:]
     saved_level = _CAIRN.level
     _CAIRN.handlers = []

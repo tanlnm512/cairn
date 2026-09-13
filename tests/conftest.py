@@ -41,26 +41,18 @@ _AGENT_CLIS = ("claude", "cursor", "droid", "agy", "opencode", "kilo", "omp")
 
 @pytest.fixture(autouse=True)
 def _hermetic_env(monkeypatch, tmp_path):
-    """Every test runs as if on a clean machine (suite-wide default).
+    """    Every test runs on a clean machine (suite-wide default), so env-dependent tests
+    fail at write time.
 
-    Makes the clean-runner environment the DEFAULT so environment-dependent
-    tests fail locally, at write time:
+    * HOME/CAIRN_HOME point into the tmp sandbox (Path.home patched); no CAIRN_*
+      env leaks between tests.
+    * paths.py's import-time layout (CAIRN_HOME, REGISTRY_FILE, CONFIG_FILE,
+      SHARED_LIB) is re-pointed as a group, so call-time readers (dashboard store
+      enumeration, register_workspace writes) never touch the real machine's stores.
+    * Agent CLIs are invisible to shutil.which; the macOS Cursor.app probe
+      (agent_install.detect) resolves inside the sandbox.
 
-    * HOME/CAIRN_HOME point into the test's tmp sandbox (Path.home patched).
-    * No CAIRN_* env leaks between tests (all cleared each run).
-    * paths.py's import-time stores layout (CAIRN_HOME, REGISTRY_FILE,
-      CONFIG_FILE, SHARED_LIB) is re-pointed into the sandbox as a group, so
-      call-time readers of those attributes (the dashboard's store
-      enumeration, register_workspace's registry writes) never see or touch
-      the real machine's stores.
-    * Agent CLIs are invisible to shutil.which (detection then depends only on
-      what the test explicitly creates).
-    * The macOS /Applications/Cursor.app probe (agent_install.detect) resolves
-      inside the sandbox instead of the real machine.
-
-    Tests that genuinely need the real environment can opt out with
-    @pytest.mark.real_env -- justify it in a comment when you do.
-    """
+    Opt out with @pytest.mark.real_env -- justify in a comment."""
     home = tmp_path / "_home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda *a, **k: home)
@@ -118,18 +110,13 @@ def _hermetic_env(monkeypatch, tmp_path):
 
 @pytest.fixture
 def fresh_db() -> sqlite3.Connection:
-    """A fresh in-memory SQLite connection with the full graph schema applied.
+    """    A fresh in-memory SQLite connection with the full graph schema applied; row
+    factory is set.
 
-    Row factory is set. Foreign keys are LEFT OFF -- this matches what every
-    per-file fixture did before consolidation (``_apply_schema`` alone does
-    not enable FK; only ``schema.get_db()`` does). Some tests delete parent
-    rows that have child references (e.g. embeddings referencing a symbol
-    they then DELETE) and rely on FK being off to assert reap behavior;
-    turning it on here would silently break those.
-
-    Callers that need FK on can set it themselves via
-    ``conn.execute("PRAGMA foreign_keys = ON")``.
-    """
+    Foreign keys are LEFT OFF (``_apply_schema`` alone does not enable FK; only
+    ``schema.get_db()`` does). Some tests delete parent rows with child references
+    and rely on FK being off to assert reap behavior.
+    Callers needing FK on: ``conn.execute("PRAGMA foreign_keys = ON")``."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     _apply_schema(conn)

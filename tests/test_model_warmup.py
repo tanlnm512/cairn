@@ -31,17 +31,13 @@ _REAL_INSIDE_PYTEST = model_warmup._inside_pytest
 
 @pytest.fixture(autouse=True)
 def _reset_warmup_state(monkeypatch):
-    """Warm-up state is once-per-process; clear it around every test.
+    """    Warm-up state is once-per-process; clear it around every test.
 
-    Also patches _inside_pytest() to False so these tests exercise the
-    production code path: warm_models_in_background() hard refuses to start
-    its background thread inside a pytest test (a seconds-long load leaking
-    across test boundaries flaked test_server_robustness.TestModelCacheRace;
-    see the module docstrings). Patching the helper -- rather than deleting
-    PYTEST_CURRENT_TEST -- is deterministic because pytest re-sets that env
-    var at every test phase boundary. The guard itself has a dedicated test
-    below, which patches the helper back to True.
-    """
+    Also patches _inside_pytest() to False so these tests exercise the production
+    code path: warm_models_in_background() refuses to start its background thread
+    inside pytest (patching the helper is deterministic -- pytest re-sets
+    PYTEST_CURRENT_TEST at every test phase boundary, unlike deleting it). The
+    guard itself has a dedicated test below that patches the helper back to True."""
     monkeypatch.setattr(model_warmup, "_inside_pytest", lambda: False)
     model_warmup._reset_warmup_state()
     yield

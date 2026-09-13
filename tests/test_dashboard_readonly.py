@@ -373,18 +373,18 @@ _WS_KEY_UNKNOWN = "ff00000000000006"  # names nothing on disk or registry
 def _seed_ws_store(
     home: Path, key: str, repo_id: str, tool_name: str, build_at: str
 ) -> Path:
-    """A real schema store at ``<home>/<key>/.kg`` (the launcher layout),
+    """    A real schema store at ``<home>/<key>/.kg`` (the launcher layout),
     get_db-seeded then left in rollback-journal mode -- the suite's own
-    guard-store convention. WAL stores would muddy the sidecar guard:
-    SQLite's FIRST mode=ro visit to a WAL store materializes a 0-byte
-    ``.kg-wal`` plus a zeroed ``.kg-shm`` (the wal-index) and never
-    removes them -- any reader does this, it is not a dashboard write.
-    Rollback-journal stores keep the guard strict: ANY file that appears
-    next to a store is the dashboard's doing. Rows distinguish the store
-    from every other in the fixture: one repo, a file with two symbols
-    plus the edge between them (so /graph has a neighborhood),
-    tool_metrics rows of ``tool_name`` in one session, and a build_run
-    stamped ``build_at``."""
+    guard-store convention.
+
+    WAL stores would muddy the sidecar guard: SQLite's FIRST mode=ro visit to a
+    WAL store materializes a 0-byte ``.kg-wal`` plus a zeroed ``.kg-shm`` (the
+    wal-index) and never removes them -- any reader does this, it is not a
+    dashboard write. Rollback-journal keeps the guard strict: ANY file that
+    appears next to a store is the dashboard's doing. Rows distinguish the store
+    from every other in the fixture: one repo, a file with two symbols plus the
+    edge between them, tool_metrics rows of ``tool_name`` in one session, and a
+    build_run stamped ``build_at``."""
     kg = home / key / ".kg"
     kg.parent.mkdir(parents=True, exist_ok=True)
     conn = get_db(str(kg))

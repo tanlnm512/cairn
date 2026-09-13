@@ -87,17 +87,16 @@ def _missing_key(i: int) -> str:
 
 @pytest.fixture(scope="module")
 def scale_home(tmp_path_factory) -> dict:
-    """A CAIRN_HOME fixture with 220 synthesized stores (module-scoped:
-    every test in this file only reads it -- the route and the probe are
-    read-only by design).
+    """    A CAIRN_HOME fixture with 220 synthesized stores (module-scoped: every test
+    in this file only reads it -- the route and the probe are read-only by
+    design).
 
-    One template store is built for real (``get_db`` applies the full
-    schema, then ``tool_metrics`` rows are inserted and the WAL is
-    checkpointed so the ``.kg`` is self-contained); the other 209
-    populated stores are byte-copies of it. Empty key dirs and the
-    registered-missing tail need no DB. The registry maps a subset of
-    the populated stores plus the missing ones; the rest are orphans.
-    """
+    One template store is built for real (``get_db`` applies the full schema,
+    then ``tool_metrics`` rows are inserted and the WAL is checkpointed so the
+    ``.kg`` is self-contained); the other 209 populated stores are byte-copies of
+    it. Empty key dirs and the registered-missing tail need no DB. The registry
+    maps a subset of the populated stores plus the missing ones; the rest are
+    orphans."""
     root = tmp_path_factory.mktemp("workspaces-scale")
     home = root / "cairn-home"
     home.mkdir()
@@ -298,15 +297,14 @@ def test_overview_lists_every_store_at_scale(tmp_path, monkeypatch, scale_home):
 
 
 def test_overview_first_render_budget(tmp_path, monkeypatch, scale_home):
-    """The FIRST GET of /workspaces on a freshly started TestClient
-    renders the whole 220-store machine within budget.
+    """    The FIRST GET of /workspaces on a fresh TestClient renders the whole
+    220-store machine within budget.
 
-    Strict 2.0s wall (SC-1) only under CAIRN_WORKSPACES_STRICT=1
-    (module-level gate -- see module docstring); ungated runs keep every
-    structural bound plus a generous 20s ceiling so a real regression
-    (e.g. an unbudgeted per-store open, 210 of them) still fails. The
-    fresh client makes template loading/compilation count as part of
-    "first render", as intends."""
+    Strict 2.0s wall (SC-1) only under CAIRN_WORKSPACES_STRICT=1 (module-level
+    gate); ungated runs keep every structural bound plus a generous 20s ceiling
+    so a real regression (e.g. an unbudgeted per-store open) still fails. The
+    fresh client makes template loading/compilation count as part of "first
+    render"."""
     home = scale_home["home"]
     client = _workspaces_client(tmp_path, monkeypatch, home)
 

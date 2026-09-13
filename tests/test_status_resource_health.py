@@ -357,16 +357,14 @@ def test_health_block_no_drift_degradation_when_in_sync(status_db, monkeypatch):
 
 
 class TestStatsResolutionShares:
-    """``get_stats`` resolution breakdown over the calls/references pool.
+    """    ``get_stats`` resolution breakdown over the calls/references pool.
 
-    Contract: over ``kind IN ('calls','references')`` only,
-    ``get_stats`` reports ``resolution`` counts (``exact``/``ambiguous``/
-    ``unresolved``) plus ``exact_share``/``ambiguous_share`` -- shares of the
-    exact+ambiguous denominator. Rows with no
-    resolution (pre-migration) land in no bucket. Before the breakdown exists,
-    both probes raise KeyError: ``get_stats`` only returns the all-kind
-    ``edges_resolved`` count.
-    """
+    Contract: over ``kind IN ('calls','references')`` only, ``get_stats`` reports
+    ``resolution`` counts (exact/ambiguous/unresolved) plus
+    ``exact_share``/``ambiguous_share`` -- shares of the exact+ambiguous
+    denominator. Rows with no resolution (pre-migration) land in no bucket.
+    Before the breakdown exists, both probes raise KeyError: ``get_stats`` only
+    returns the all-kind ``edges_resolved`` count."""
 
     def test_resolution_counts_and_pool_shares(self, tmp_path):
         """Seeded calls/references/extends edges: counts scoped to the pool,

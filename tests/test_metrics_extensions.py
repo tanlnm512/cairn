@@ -31,15 +31,13 @@ from cairn.graph.schema import _apply_schema
 
 @pytest.fixture(autouse=True)
 def _wide_terminal(monkeypatch):
-    """Render rich tables full-width so column content isn't wrapped/split.
+    """    Render rich tables full-width so column content isn't wrapped/split.
 
     CliRunner stdout isn't a TTY, but rich probes the attached terminal's
-    descriptors before honoring COLUMNS, so a real terminal's width (80 here)
-    wins and wraps the 10-column builds table, breaking contiguous cell
-    assertions (e.g. the '250/8/42' resolution mix). Pin the shared display
-    console's dimensions directly; 200 fits every table here. JSON output is
-    width-independent, so this never affects the shape assertions.
-    """
+    descriptors before honoring COLUMNS, so the real terminal's width wins and
+    wraps the 10-column builds table, breaking contiguous cell assertions (e.g.
+    the '250/8/42' resolution mix). Pin the shared display console to 200
+    columns; JSON output is width-independent."""
     from cairn.cli import display as _display
 
     monkeypatch.setattr(_display.console, "_width", 200, raising=False)
@@ -238,15 +236,14 @@ def test_builds_missing_table_degrades(tmp_path):
 
 
 def _seed_quality(conn):
-    """semantic_backend / empty_result / truncate_result events.
+    """    semantic_backend / empty_result / truncate_result events.
 
     semantic_backend: ann x3, brute x2, hash x1 (6 total).
     empty_result: 4 total -- semantic_search x2, explore x1, search_symbols x1.
       Only the semantic_search empties share a denominator with semantic_backend,
-      so the rate is scoped to that kind (2/6 = 0.333...); the explore /
-      search_symbols empties prove non-semantic kinds don't pollute the rate.
-    truncate_result: explore x2, search_symbols x1 (3 total).
-    """
+      so the rate is scoped to that kind (2/6); the explore / search_symbols
+      empties prove non-semantic kinds don't pollute the rate.
+    truncate_result: explore x2, search_symbols x1 (3 total)."""
     t = 1_700_000_000.0
     for backend, n in (("ann", 3), ("brute", 2), ("hash", 1)):
         for _ in range(n):

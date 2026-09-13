@@ -59,6 +59,7 @@ def _patched_conn(fresh_db, monkeypatch):
     return fresh_db
 
 
+@pytest.mark.core
 def test_get_callers_falls_back_to_fuzzy_when_precise_empty(_patched_conn):
     _seed_external_call_edge(_patched_conn)
 

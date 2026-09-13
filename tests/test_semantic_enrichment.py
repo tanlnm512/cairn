@@ -118,17 +118,16 @@ _PROBES = [
 
 
 def _seed_idf_corpus(conn: sqlite3.Connection) -> None:
-    """Three symbols under the hash backend:
+    """    Three symbols under the hash backend:
 
-    * parseUnencodedURL -- docstring "Parse URL." (the standalone FTS
-      token ``url``; name is one camelCase unicode61 token);
+    * parseUnencodedURL -- docstring "Parse URL." (the standalone FTS token
+      ``url``; name is one camelCase unicode61 token);
     * buildOutgoingRequest -- prose decoy, no url token;
-    * urlEncoder -- matches the FTS prefix ``"url"*`` through its name,
-      so a surviving ``url`` term fetches it into the sparse leg.
+    * urlEncoder -- matches the FTS prefix ``"url"*`` through its name, so a
+      surviving ``url`` term fetches it into the sparse leg.
 
-    embed_all rebuilds term_df naturally: df(url) = 1/3 here --
-    kept. Tests override rows explicitly to set prevalence.
-    """
+    embed_all rebuilds term_df naturally: df(url) = 1/3 here -- kept. Tests
+    override rows explicitly to set prevalence."""
     conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
     conn.execute(
         "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/src/Net.kt', 'kotlin')"
@@ -307,16 +306,15 @@ class TestEnrichIdfFlagOffEquivalence:
 
 
 class TestEnrichIdfWiring:
-    """Flag-on: the lookup is built from term_df at the boundary and the
-    0.90 cutoff fires through the full semantic_search path (both legs).
+    """    Flag-on: the lookup is built from term_df at the boundary and the 0.90
+    cutoff fires through the full semantic_search path (both legs).
 
-    Query ``URL helper`` under pure-sparse weights (dense_threshold=0.99
-    empties the dense leg; BM25-only candidates bypass the threshold, so
-    the results ARE the sparse leg): enrichment extracts the identifier
-    URL, so DF-blind the sparse terms are [URL, helper] and the
-    ``"url"*`` prefix fetches urlEncoder; with url ubiquitous the terms
-    are [helper] alone and urlEncoder is gone from the results.
-    """
+    Query ``URL helper`` under pure-sparse weights (dense_threshold=0.99 empties
+    the dense leg; BM25-only candidates bypass the threshold, so the results ARE
+    the sparse leg): enrichment extracts the identifier URL, so DF-blind the
+    sparse terms are [URL, helper] and the ``"url"*`` prefix fetches urlEncoder;
+    with url ubiquitous the terms are [helper] alone and urlEncoder is gone from
+    the results."""
 
     SPARSE_ONLY = dict(dense_threshold=0.99, rrf_weights=(0.0, 1.0))
 

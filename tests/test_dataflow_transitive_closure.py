@@ -14,26 +14,14 @@ from cairn.graph.dataflow import build_transitive_closure
 
 
 def test_name_collision_no_spurious_edges(fresh_db):
-    """Two unrelated init symbols should not merge in transitive closure.
+    """    Two unrelated init symbols must not merge in transitive closure.
 
-    Setup:
-    - Symbol A: "init" (id: sid_a) in file1
-    - Symbol B: "init" (id: sid_b) in file2 (different class, unrelated)
-    - Edge from caller1 to sid_a (resolved, target_id = sid_a)
-    - Edge from caller2 to sid_b (resolved, target_id = sid_b)
-    - Edge from sid_a to callee1 (sid_a calls callee1)
-    - Edge from sid_b to callee2 (sid_b calls callee2)
-
-    Expected:
-    - Transitive closure should have caller1 -> callee1 (via sid_a)
-    - Transitive closure should have caller2 -> callee2 (via sid_b)
-    - NO spurious edges like caller1 -> callee2 or caller2 -> callee1
-
-    Bug manifestation:
-    - Current implementation joins on symbols.name = "init"
-    - Both sid_a and sid_b have name "init"
-    - This creates spurious cross-pollination between the two graphs
-    """
+    Setup: "init" symbols sid_a (file1) and sid_b (file2, different class,
+    unrelated); caller1 -> sid_a and caller2 -> sid_b (resolved); sid_a ->
+    callee1, sid_b -> callee2. Expected: caller1 -> callee1 and caller2 ->
+    callee2 only -- NO spurious caller1 -> callee2 / caller2 -> callee1 edges.
+    The bug this guards: joining on symbols.name = "init" cross-pollinates the
+    two graphs."""
     conn = fresh_db
 
     # Insert files

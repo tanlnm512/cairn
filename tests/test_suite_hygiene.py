@@ -88,15 +88,14 @@ def test_agent_cli_names_covered_by_fixture():
 
 
 def test_infra_tier_shape_stays_guarded():
-    """The infra marker tier must stay whole-file/class-shaped and off the t2 gate.
+    """    The infra marker tier must stay whole-file/class-shaped and off the t2 gate.
 
     The bench job runs ``pytest tests/ -q -k t2`` with NO ``-m`` filter, so an
     infra mark cannot deselect it today -- but a t2-named test inside an
-    infra-marked module would break the moment anyone adds a global ``-m``
-    filter (addopts), and a per-test infra mark would recreate the forbidden
-    skip-quarantine shape (release-checklist bans per-test skips/xfails).
-    Static AST checks keep the tier auditable:
-    """
+    infra-marked module would break the moment anyone adds a global ``-m`` filter
+    (addopts), and a per-test infra mark would recreate the forbidden
+    skip-quarantine shape (release-checklist bans per-test skips/xfails). Static
+    AST checks keep the tier auditable."""
     pyproject = (TESTS_DIR.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert re.search(r'^\s*"infra:', pyproject, re.M), (
         "infra marker unregistered in pyproject.toml"

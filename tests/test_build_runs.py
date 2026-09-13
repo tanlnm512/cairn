@@ -176,15 +176,11 @@ def test_two_builds_yield_two_rows(tmp_path):
 
 
 def test_full_rebuild_carries_telemetry_history(tmp_path):
-    """A full-workspace rebuild keeps build_runs/events/tool_metrics.
+    """    A full-workspace rebuild keeps build_runs/events/tool_metrics.
 
-    The full path swaps the whole DB file via ``backup_to``; before the carry
-    fix this silently reset the analytics history on every rebuild (build
-    trend, contention history, tool health, doctor freshness windows all went
-    empty), defeating spec §6.2's retention contract. After the fix the old
-    rows are appended (fresh ids, time order preserved) and the new build's
-    row lands on top.
-    """
+    The full path swaps the whole DB file via ``backup_to``, which must append
+    the old analytics rows (fresh ids, time order preserved, new build's row on
+    top) instead of resetting history -- spec section 6.2's retention contract."""
     from cairn.graph.schema import _apply_schema
 
     workspace = _make_fixture(tmp_path, "carry")

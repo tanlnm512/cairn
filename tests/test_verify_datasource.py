@@ -167,18 +167,14 @@ class TestDrift:
 
 @pytest.mark.infra
 class TestTreeHashNoiseExclusion:
-    """tree_hash must not see machine build-noise dropped inside a corpus tree.
+    """    tree_hash must not see machine build-noise dropped inside a corpus tree.
 
-    The DS-v2 defect this guards: the attrs seal was minted on the authoring
-    machine with a pre-commit ruff run's ``.ruff_cache`` inside the vendored
-    tree, so a fresh clone (no caches) hashed differently and the seal failed
-    with "corpus content drifted" despite the data being fine. Caches are
-    machine state, not corpus content -- same class of noise as ``.git``
-    metadata, so the walk prunes them (NOISE_DIR_NAMES) exactly as it prunes
-    ``.git``. Recorded before-state: with the unfixed function, adding
-    ``__pycache__/x.pyc`` + ``.ruff_cache/entries.bin`` to the pristine attrs
-    tree changed ad6eec77... -> 52b920c8..., i.e. the hash tracked the noise.
-    """
+    Caches are machine state, not corpus content -- same class of noise as
+    ``.git`` metadata -- so the walk prunes them (NOISE_DIR_NAMES) exactly as it
+    prunes ``.git``. With the unfixed function, adding ``__pycache__/x.pyc`` +
+    ``.ruff_cache/entries.bin`` to the pristine attrs tree changed ad6eec77... ->
+    52b920c8..., i.e. the hash tracked the noise and a fresh clone (no caches)
+    failed the seal with "corpus content drifted" despite the data being fine."""
 
     def test_dropped_caches_never_change_the_digest(self, tmp_path):
         """Hash a clean tree, drop every noise dir into it, hash again: the

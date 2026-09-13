@@ -117,6 +117,7 @@ def _seed_test_caller_graph(conn):
     conn.commit()
 
 
+@pytest.mark.core
 def test_impact_analysis_surfaces_affected_tests(_patched_conn):
     _seed_test_caller_graph(_patched_conn)
 

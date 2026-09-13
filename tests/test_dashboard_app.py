@@ -703,16 +703,13 @@ def _panel_client(tmp_path, db_file: str, knowledge_dir: str):
 
 
 def _await_prewarmed_probes(timeout_s: float = 30.0) -> dict:
-    """Block until the probe cache's first population lands, then return it.
+    """    Block until the probe cache's first population lands, then return it.
 
-    A /health request that overlaps the probes' one-time imports is
-    delivery-delayed far past the budget by GIL contention alone -- the
-    handler's own work is bounded by the warm window, the wall clock is not
-    -- so timing and verdict assertions wait for the prewarm to publish
-    first. The cache is process-global; callers reset it
-    (``reset_probe_cache``) before building the app so the wait covers this
-    environment's own probes, not a previous test's.
-    """
+    A /health request overlapping the probes' one-time imports is
+    delivery-delayed far past the budget by GIL contention alone, so timing and
+    verdict assertions wait for the prewarm to publish first. The cache is
+    process-global; callers reset it (``reset_probe_cache``) before building the
+    app so the wait covers this environment's own probes."""
     import cairn.dashboard.data as dashboard_data
 
     deadline = time.monotonic() + timeout_s
@@ -753,15 +750,13 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
 
 
 def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
-    """One-glance panel carrying the DB size (human-readable), index
-    freshness, backend mode, and reranker status from the seeded DB.
+    """    One-glance panel carrying the DB size (human-readable), index freshness,
+    backend mode, and reranker status from the seeded DB.
 
-    The probe verdicts are asserted against the cache the request served,
-    never against freshly recomputed live probes: with the prewarm design a
-    /health request serves cached probe values, so live recomputation can
-    legitimately disagree with what rendered (machines with the semantic
-    extra installed report a different reranker verdict mid-warmup than the
-    one the request served)."""
+    Probe verdicts are asserted against the cache the request served, never
+    freshly recomputed: a /health request serves cached probe values, so live
+    recomputation can legitimately disagree (machines with the semantic extra
+    installed report a different reranker verdict mid-warmup)."""
     from cairn.dashboard.data import reset_probe_cache
 
     reset_probe_cache()
@@ -1070,18 +1065,15 @@ _TC024_SUMMARY = _TC024_PAYLOAD[:200]
 
 
 def _history_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded with four tool_metrics rows when
-    seed=True, written newest-last so rendering order is not insert order:
+    """    A graph-schema DB file; seeded with four tool_metrics rows when seed=True,
+    written newest-last so rendering order is not insert order:
 
-    ask_compass / sess-alpha @ 00:25 — error, 1750 ms, ~100/~200 tokens
-    explore / sess-beta @ 00:20 — ok, 250 ms, ~300/~1200 tokens,
-                                        truncated args summary 
-    explore / sess-alpha @ 00:00 — ok, 60 ms, NULL sizes (pre-migration)
-    legacy_tool / unknown @ 2025-08-19 23:43:20 — ok, 30 ms, NULL sizes;
-                                        the literal 'unknown' session every
-                                        pre-session-id row shares
-                                        (cross-links the legacy shape)
-    """
+    ask_compass / sess-alpha @ 00:25 - error, 1750 ms, ~100/~200 tokens
+    explore / sess-beta @ 00:20 - ok, 250 ms, ~300/~1200 tokens, truncated args
+    explore / sess-alpha @ 00:00 - ok, 60 ms, NULL sizes (pre-migration)
+    legacy_tool / unknown @ 2025-08-19 23:43:20 - ok, 30 ms, NULL sizes; the
+    literal 'unknown' session every pre-session-id row shares (cross-links the
+    legacy shape)"""
     from cairn.graph.schema import _apply_schema
 
     db_path = str(tmp_path / "history.db")
@@ -1202,15 +1194,13 @@ _TC_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
 
 
 def _tokens_chains_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded when seed=True with:
+    """    A graph-schema DB file; seeded when seed=True with:
 
-    tokens: tool_heavy — 2 calls, 1600+2400 req / 3200+4800 resp
-    chars -> ~1000 + ~2000 = ~3000 total, ~1500 mean — clearly above
-    tool_light — 1 call, 400+800 chars -> ~100 + ~200 = ~300 total.
-    chains: sess-multi — 3 calls a minute apart;
-    sess-single — 1 call; sess-gapped — 3 calls a minute apart, then 2 more
-    six hours later under the same session id (two chains).
-    """
+    tokens: tool_heavy - 2 calls, 1600+2400 req / 3200+4800 resp chars -> ~3000
+    total, ~1500 mean - clearly above tool_light - 1 call, 400+800 chars -> ~300
+    total. chains: sess-multi - 3 calls a minute apart; sess-single - 1 call;
+    sess-gapped - 3 calls a minute apart, then 2 more six hours later under the
+    same session id (two chains)."""
     from cairn.graph.schema import _apply_schema
 
     db_path = str(tmp_path / "tokens-chains.db")
@@ -3169,16 +3159,15 @@ _MIXED_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
 
 
 def _mixed_source_db_file(tmp_path, bulk: bool) -> str:
-    """A graph-schema DB file seeded with BOTH sources' row shapes:
+    """    A graph-schema DB file seeded with BOTH sources' row shapes:
 
-    cli (source='cli', what cli_metrics lands — NULL resp chars, a CLI
-    invocation has no response payload): 'cli:cairn build' / term:shell-B @
-    00:02:00 — ok, 800 req chars; 'cli:cairn config' / term:shell-A @
-    00:01:30 — ok, 1600 req chars. mcp (source='mcp', the table default):
-    'explore' / sess-alpha @ 00:01:00 — ok, 400/800 chars; 'ask_compass'
-    sess-beta @ 00:00:30 — ok, 200/400 chars. ``bulk=True`` adds
-    HISTORY_PAGE_SIZE + 5 older mcp explore rows so ?source=mcp paginates.
-    """
+    cli (NULL resp chars - a CLI invocation has no response payload):
+    'cli:cairn build' / term:shell-B @ 00:02:00 - ok, 800 req chars;
+    'cli:cairn config' / term:shell-A @ 00:01:30 - ok, 1600 req chars.
+    mcp (the table default): 'explore' / sess-alpha @ 00:01:00 - ok, 400/800
+    chars; 'ask_compass' / sess-beta @ 00:00:30 - ok, 200/400 chars.
+    ``bulk=True`` adds HISTORY_PAGE_SIZE + 5 older mcp explore rows so
+    ?source=mcp paginates."""
     from cairn.dashboard.data import HISTORY_PAGE_SIZE
     from cairn.graph.schema import _apply_schema
 
