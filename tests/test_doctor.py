@@ -1,12 +1,12 @@
 """T12: `cairn doctor` -- health checks, PASS/WARN/FAIL, exit 0/1, --json.
 
 Doctor surfaces silent degradations (spec observability-telemetry §6.5): schema
-integrity, embedding/ANN backend fallbacks, embed-server health (probe /
+integrity, embedding/ANN backend fallbacks, embed-server health (probe
 model-listing / parity sample / latency when a server backend is configured,
-otherwise one informational line -- D-012), graph freshness, parse errors,
+otherwise one informational line -- ), graph freshness, parse errors,
 lock contention, per-tool error/latency health, tribal-memory reference
 staleness, and a config echo, plus the
-environment-wiring audit (FR-007/D-007: store resolution, client
+environment-wiring audit (store resolution, client
 registration consistency, platform/transport, binary coherence). It is
 read-only and crash-proof (a missing/corrupt store degrades to WARN/FAIL,
 never raises).
@@ -47,7 +47,7 @@ def _make_db(path, setup=None):
     """Create a file-backed DB with the full schema, optionally seed rows.
 
     ``setup(conn)`` runs inside the same connection before commit/close so a
-    test can populate pending_sync / parse_errors / events / tool_metrics /
+    test can populate pending_sync / parse_errors / events / tool_metrics
     build_runs. The connection uses ``_apply_schema`` (matching the rest of the
     suite); FK enforcement is off by default, but a repos row is seeded anyway
     so parse_errors rows mirror production shape.
@@ -101,10 +101,10 @@ def test_clean_db_exits_zero(tmp_path):
 def test_eight_checks_always_emitted(tmp_path):
     """Doctor always emits the check sequence, in order, via --json.
 
-    The historical 8 checks keep their positions; T015 slots embed_server
+    The historical 8 checks keep their positions; slots embed_server
     after ann (an informational PASS line unless a server backend is
-    configured, D-012); T021 appends ``environment`` last (the FR-007 wiring
-    audit, D-007).
+    configured); appends ``environment`` last (the wiring
+    audit).
     """
     db = tmp_path / "graph.db"
     _make_db(db)
@@ -289,8 +289,7 @@ def _force_ann_loadable(monkeypatch):
 
 def test_ann_warn_when_embeddings_present_but_no_index(tmp_path, monkeypatch):
     """F1b: sqlite-vec loads, embeddings exist for the current model, but no
-    vec0 table was ever built -> WARN with the `cairn embed` rebuild hint
-    (previously this state was invisible: the load probe alone said PASS)."""
+    vec0 table was ever built -> WARN with the `cairn embed` rebuild hint."""
     import cairn.graph.embeddings as emb
 
     monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")  # deterministic current_model()
@@ -670,7 +669,7 @@ def test_config_echo_always_pass(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Config echo -- file layer (T021, FR-010/FR-011, D-008): each A2.1 embedding
+# Config echo -- file layer (): each A2.1 embedding
 # knob echoes effective value + source layer (env / file / default); the API
 # key reports presence only. conftest's hermetic env re-points paths.CONFIG_FILE
 # into the sandbox, so a dev machine's real config.json cannot leak in.
@@ -701,7 +700,7 @@ def test_config_echo_embedding_knobs_default(tmp_path):
 
 
 def test_config_echo_env_pins_over_file(tmp_path, monkeypatch):
-    """(b) D-008 precedence: an env-pinned knob echoes the env value even when
+    """(b) precedence: an env-pinned knob echoes the env value even when
     the config file holds a DIFFERENT value."""
     from cairn import paths
 
@@ -788,8 +787,8 @@ def test_any_fail_exits_one(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Embed server (T015, FR-007/FR-013) -- informational PASS unless a
-# server-family backend (server/omlx/ollama) is configured (D-012). HTTP only
+# Embed server () -- informational PASS unless a
+# server-family backend (server/omlx/ollama) is configured . HTTP only
 # against a loopback stub on an ephemeral port (or a dead loopback port),
 # never the network.
 # ---------------------------------------------------------------------------
@@ -908,8 +907,8 @@ def embed_cache_reset():
 
 def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
     """(a) Default (local) config: one informational PASS line; the historical
-    8 checks keep their names, order, and statuses (D-012 byte-stability);
-    ``environment`` appends last (D-007)."""
+    8 checks keep their names, order, and statuses (byte-stability);
+    ``environment`` appends last ."""
     monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
     db = tmp_path / "graph.db"
     _make_db(db)
@@ -1048,7 +1047,7 @@ def test_embed_server_parity_vacuous_with_zero_rows(
 def test_embed_server_active_degradation_warn_entry(
     tmp_path, monkeypatch, embed_cache_reset
 ):
-    """(g) An active ladder degradation (FR-012) surfaces as an appended WARN
+    """(g) An active ladder degradation surfaces as an appended WARN
     entry naming rung/reason, independent of the current probe verdict."""
     from cairn.graph import embed_ladder
 
@@ -1093,10 +1092,10 @@ def test_embed_server_exit_mapping_unchanged(tmp_path, monkeypatch, embed_cache_
 
 
 # ---------------------------------------------------------------------------
-# Environment wiring (T020, FR-007 / D-007): one `environment` check appended
+# Environment wiring (): one `environment` check appended
 # to BOTH doctor return paths, auditing (a) resolved-store existence, (b)
 # client-registration consistency, (c) platform/transport supportability, and
-# (d) binary coherence. Every test in this section is RED until T021 lands
+# (d) binary coherence. Every test in this section is RED until lands
 # the check (today: 9 checks, no `environment` row) -- the same C-02 red
 # convention as tests/test_config_probe.py. Fixtures shape the machine with
 # tmp homes + monkeypatched bindings/env (never global subprocess patching);
@@ -1141,7 +1140,7 @@ def _force_non_macos(monkeypatch):
     The audit reads the platform through lifecycle.is_macos; patch THAT (the
     function the doctor calls), never sys.platform. Both plausible bindings
     are covered: the lifecycle module attribute and a from-import binding in
-    cli.system (raising=False until T021 introduces the latter).
+    cli.system (raising=False until introduces the latter).
     """
     from cairn.cli import system
     from cairn.mcp_server import lifecycle as lifecycle_mod
@@ -1151,7 +1150,7 @@ def _force_non_macos(monkeypatch):
 
 
 def test_environment_fails_on_incident_wiring(tmp_path, monkeypatch):
-    """#70 machine (TC-012 automated half / AC8): a populated custom store, an
+    """#70 machine (automated half / AC8): a populated custom store, an
     empty default store, an SSE registration whose daemon is gone, on a
     non-macOS host -> `environment` FAILs naming the client and the
     macOS-only lifecycle, and the run exits 1 -- even though the store itself
@@ -1193,7 +1192,7 @@ def test_environment_fails_on_incident_wiring(tmp_path, monkeypatch):
 
 
 def test_environment_passes_on_healthy_default_install(tmp_path, monkeypatch):
-    """AC9 / TC-013: a healthy default install -- default home, built store,
+    """AC9: a healthy default install -- default home, built store,
     no client wiring in the sandbox to contradict it -- PASSes the
     environment check. That the prior 9 checks are unchanged in name and
     order is pinned by the sequence assertions above; with no SSE
@@ -1217,7 +1216,7 @@ def test_environment_passes_on_healthy_default_install(tmp_path, monkeypatch):
 def test_environment_emitted_when_db_unavailable(tmp_path, monkeypatch):
     """The degraded (store missing/unopenable) return path still emits the
     `environment` check, last in sequence: the wiring audit needs no db
-    connection, and a broken store is precisely when wiring matters (D-007
+    connection, and a broken store is precisely when wiring matters ( 
     appends it to BOTH return paths). The missing store must not double-FAIL
     here -- schema already carries that FAIL (mixed-severity ruling)."""
     sandbox_home = tmp_path / "_sandbox_home"
@@ -1238,7 +1237,7 @@ def test_environment_emitted_when_db_unavailable(tmp_path, monkeypatch):
 
 
 def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
-    """TC-015: a registration written by the previous release (no environment
+    """A registration written by the previous release (no environment
     entry) that still resolves the doctor's own store draws a WARN advising
     `cairn install-agents` -- warned, not failed; exit stays 0."""
     from cairn.agent_install._common import mcp_config_json
@@ -1267,7 +1266,7 @@ def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Memory staleness (T015, FR-011 / TC-022 / TC-023): the write-only-memory
+# Memory staleness (): the write-only-memory
 # detector. Tribal memories whose mtime is older than the reference window
 # with zero memory_refs rows inside it draw a WARN; a recent reference turns
 # it PASS. The bundle is resolved from the --db path's directory (a tmp_path
@@ -1310,7 +1309,7 @@ def _record_ref(db, memory_path, age_days):
 
 
 def test_memory_staleness_warns_on_write_only_memory(tmp_path):
-    """TC-022: a tribal memory mtime-aged past the 30d window with zero
+    """A tribal memory mtime-aged past the 30d window with zero
     memory_refs rows in that window -> memory_staleness WARN whose detail
     names write-only memory; WARN keeps the doctor exit code at 0."""
     db = tmp_path / "graph.db"
@@ -1326,7 +1325,7 @@ def test_memory_staleness_warns_on_write_only_memory(tmp_path):
 
 
 def test_memory_staleness_passes_when_memories_referenced(tmp_path):
-    """TC-023: the tribal memory is old but holds a memory_refs row inside the
+    """The tribal memory is old but holds a memory_refs row inside the
     window -> PASS (no WARN) reporting the reference count."""
     db = tmp_path / "graph.db"
     _make_db(db)

@@ -1,17 +1,17 @@
 """Signal tests for the Python parser.
 
 Covers the three enrichment signals on ParsedFile rows:
-- Import.local_alias + normalized paths for aliased imports (D-003). Plain
+- Import.local_alias + normalized paths for aliased imports. Plain
   (non-aliased) imports keep the verbatim statement text: the builder's
   import-base parser (``_import_module_bases``) consumes that shape to derive
   module bases, so only the alias-bearing statements — whose raw text hides
   the alias from the resolver — are normalized to dotted paths.
 - Edge.receiver_type for attribute calls via the scope-ordered var->type
-  tracker (D-004/D-006): only bare-identifier receivers with a known in-file
+  tracker: only bare-identifier receivers with a known in-file
   binding (class name, ``self``/``cls``, typed or constructor assignment,
   annotated parameter) get a type; everything else abstains to None.
-- Symbol.arity at def sites and Edge.call_arity at call sites (D-005),
-  conservative per D-005: defaults, varargs, and an unrecognized receiver-self
+- Symbol.arity at def sites and Edge.call_arity at call sites --
+  conservative: defaults, varargs, and an unrecognized receiver-self
   parameter yield None instead of a count.
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _symbol(pf, name: str):
 
 # ---------------------------------------------------------------------------
 # Import signals — normalized dotted path + local_alias on alias-bearing
-# statements (D-003); plain statements keep the statement text the builder's
+# statements; plain statements keep the statement text the builder's
 # module-base parser consumes.
 # ---------------------------------------------------------------------------
 
@@ -83,8 +83,8 @@ class TestImportSignals:
         assert _imports(pf) == [("util.a", None), ("util.b", "c")]
 
     def test_wildcard_import_records_no_alias(self):
-        # Re-export shape: no local binding exists, so no alias (D-003
-        # abstention); the statement text stays as stored today.
+        # Re-export shape: no local binding exists, so no alias (abstention);
+        # the statement text stays as stored today.
         pf = _parse(b"from util import *\n")
         assert _imports(pf) == [("from util import *", None)]
 
@@ -142,7 +142,7 @@ class TestReceiverType:
 
     def test_external_capitalized_receiver_abstains(self):
         # Tracker-only contract: a receiver with no in-file binding is not a
-        # type guess (FR-009).
+        # type guess.
         pf = _parse(b"def f():\n    return Client.get()\n")
         assert _call_edge(pf, "get").receiver_type is None
 
@@ -151,7 +151,7 @@ class TestReceiverType:
         assert _call_edge(pf, "c").receiver_type is None
 
     def test_reassigned_receiver_abstains(self):
-        # D-006: reassignment to a different type poisons the binding.
+        # Reassignment to a different type poisons the binding.
         pf = _parse(
             b"class User:\n    pass\n\n\nclass Order:\n    pass\n\n\n"
             b"def f():\n    u = User()\n    u = Order()\n    return u.save()\n"
@@ -174,7 +174,7 @@ class TestReceiverType:
 
 
 # ---------------------------------------------------------------------------
-# Definition arity (Symbol.arity) — conservative counts (D-005).
+# Definition arity (Symbol.arity) — conservative counts.
 # ---------------------------------------------------------------------------
 
 class TestSymbolArity:

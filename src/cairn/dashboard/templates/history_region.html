@@ -30,7 +30,7 @@
     {"value": calls | selectattr('status', 'equalto', 'error') | list | length, "label": "error calls"},
   ]) }}
   {% include "window_control.html" %}
-  {#- FR-005: exports ride the view's current filters (the selected store
+  {#- Exports ride the view's current filters (the selected store
       rides links.url); before/after are page cursors, not filters. -#}
   {%- set export_q = {} %}
   {%- if tool %}{% set _ = export_q.update({'tool': tool}) %}{% endif %}
@@ -58,7 +58,7 @@
       {% endfor %}
   {% endcall %}
   {% if prev_cursor or next_cursor %}
-  {#- FR-003/FR-006: paging links keep the active filters AND the selected
+  {#- Paging links keep the active filters AND the selected
       store (links.url); empty selection keeps the bare hrefs. -#}
   <p class="muted">
     {%- if prev_cursor %}

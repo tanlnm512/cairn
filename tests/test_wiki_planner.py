@@ -1,4 +1,4 @@
-"""Contract tests for the wiki catalog planner (FR-001).
+"""Contract tests for the wiki catalog planner.
 
 Pins the contract of ``build_page_plan(conn, repo, pages_cap=10)`` in
 ``src/cairn/wiki/catalog.py``:
@@ -8,7 +8,7 @@ Pins the contract of ``build_page_plan(conn, repo, pages_cap=10)`` in
   path segments) are excluded from the plan entirely — page budget flows to
   the next product-code module;
 - modules are ranked by cross-module incoming edge degree DESC, ties broken
-  by module name ASC (D-005) — a large self-referential module must not win;
+  by module name ASC — a large self-referential module must not win;
 - the plan is capped at ``pages_cap`` (default 10), overview included;
 - every page record carries ``page_id`` (filesystem-safe slug), ``title``,
   ``description``, ``module``, ``source`` (``"code"``), ``seeds``
@@ -141,7 +141,7 @@ def _page_for(plan: list, module: str) -> dict:
 
 
 class TestPageRecordContract:
-    """Every page record carries the FR-001 fields with the pinned shapes."""
+    """Every page record carries the fields with the pinned shapes."""
 
     def test_every_page_record_carries_the_pinned_fields(self, fresh_db):
         _seed_graph(fresh_db)
@@ -206,7 +206,7 @@ class TestPageRecordContract:
 
 class TestPlanOrdering:
     """Overview first; test-majority modules excluded entirely; module
-    ranking per D-005 over the remaining code modules."""
+    ranking over the remaining code modules."""
 
     def test_overview_page_is_planned_first(self, fresh_db):
         _seed_graph(fresh_db)

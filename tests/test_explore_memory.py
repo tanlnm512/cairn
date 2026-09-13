@@ -85,7 +85,7 @@ def _ref_rows(db_path) -> list[sqlite3.Row]:
 
 
 # ---------------------------------------------------------------------------
-# TC-001 — matching tribal memory is surfaced
+# matching tribal memory is surfaced
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +109,7 @@ def test_explore_surfaces_matching_tribal_memory(env):
 
 
 # ---------------------------------------------------------------------------
-# TC-002 — "(none)" when nothing matches
+# "(none)" when nothing matches
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ def test_explore_reports_none_when_no_tribal_memory_matches(env):
 
 
 # ---------------------------------------------------------------------------
-# TC-003 — a surfaced memory's reference is recorded
+# a surfaced memory's reference is recorded
 # ---------------------------------------------------------------------------
 
 
@@ -153,7 +153,7 @@ def test_explore_records_reference_for_surfaced_memory(env):
 
 
 # ---------------------------------------------------------------------------
-# TC-004 — capped at 3 entries, title + "How to apply" only; refs only for
+# capped at 3 entries, title + "How to apply" only; refs only for
 # the rendered memories
 # ---------------------------------------------------------------------------
 
@@ -189,7 +189,7 @@ def test_explore_caps_section_and_records_only_rendered_memories(env):
 
 
 # ---------------------------------------------------------------------------
-# TC-005 — concurrent explore calls don't corrupt reference recording
+# concurrent explore calls don't corrupt reference recording
 # ---------------------------------------------------------------------------
 
 

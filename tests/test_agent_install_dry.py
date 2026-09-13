@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# After the Phase 1.3 split, agent_install is a package (src/cairn/agent_install/).
+# After the Phase 1.3 split, agent_install is a package (src/cairn/agent_install).
 # The _SLASH_COMMANDS constant lives in agent_install/_common.py and is the single
 # source of truth for every client module. These tests check it is defined once and
 # not duplicated as an inline literal anywhere in the package.

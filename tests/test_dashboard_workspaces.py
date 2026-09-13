@@ -1,7 +1,7 @@
 """Workspaces-overview render-budget tests over a synthesized 220-store
-machine (TC-006 / FR-005 / SC-1, spec ui-dashboard-workspace-launcher).
+machine (SC-1).
 
-FR-005's 200+ store scenario is grounded in a proven leak shape, not the
+ the 200+ store scenario is grounded in a proven leak shape, not the
 current registry — no 200-store machine exists locally — so the home is
 synthesized here: 210 populated stores, 6 empty key dirs, 4 registered-
 missing tails, registry mapping a subset (60 populated + the missing 4).
@@ -25,7 +25,7 @@ CI runners is noisy):
   broken).
 * First-render budget: the FIRST GET of /workspaces on a freshly started
   TestClient must render under a wall-clock ceiling. The strict 2.0s
-  ceiling (SC-1 / FR-005) runs only when ``CAIRN_WORKSPACES_STRICT=1``::
+  ceiling (SC-1) runs only when ``CAIRN_WORKSPACES_STRICT=1``::
 
       CAIRN_WORKSPACES_STRICT=1 uv run pytest tests/test_dashboard_workspaces.py
 
@@ -57,10 +57,10 @@ pytestmark = pytest.mark.infra
 # CAIRN_* per test, so this cannot live inside a test body).
 _STRICT_BUDGET = os.environ.get("CAIRN_WORKSPACES_STRICT", "") == "1"
 
-_STRICT_CEILING_S = 2.0  # SC-1 / FR-005: full overview render under 2s
+_STRICT_CEILING_S = 2.0  # SC-1: full overview render under 2s
 _CI_CEILING_S = 20.0  # generous ungated ceiling so breakage stays visible
 
-# Machine shape: 220 stores > FR-005's 200 threshold; populated stores
+# Machine shape: 220 stores > the 200 threshold; populated stores
 # outnumber PROBE_MAX_OPENS so the probe cap is genuinely exercised.
 _POPULATED = 210  # real schema .kg stores, _CALLS_PER_STORE rows each
 _EMPTY = 6  # key dirs with no .kg
@@ -71,7 +71,7 @@ _REGISTERED_POPULATED = 60  # the registry maps a subset of populated keys
 
 
 # 16-hex keys (paths.store_key's layout convention). Zero-padded ints
-# sort lexicographically == numerically, so the probe's populated-first /
+# sort lexicographically == numerically, so the probe's populated-first
 # by-key order is computable from the constants alone.
 def _populated_key(i: int) -> str:
     return f"{i:016x}"
@@ -87,17 +87,16 @@ def _missing_key(i: int) -> str:
 
 @pytest.fixture(scope="module")
 def scale_home(tmp_path_factory) -> dict:
-    """A CAIRN_HOME fixture with 220 synthesized stores (module-scoped:
-    every test in this file only reads it -- the route and the probe are
-    read-only by design, FR-004).
+    """    A CAIRN_HOME fixture with 220 synthesized stores (module-scoped: every test
+    in this file only reads it -- the route and the probe are read-only by
+    design).
 
-    One template store is built for real (``get_db`` applies the full
-    schema, then ``tool_metrics`` rows are inserted and the WAL is
-    checkpointed so the ``.kg`` is self-contained); the other 209
-    populated stores are byte-copies of it. Empty key dirs and the
-    registered-missing tail need no DB. The registry maps a subset of
-    the populated stores plus the missing ones; the rest are orphans.
-    """
+    One template store is built for real (``get_db`` applies the full schema,
+    then ``tool_metrics`` rows are inserted and the WAL is checkpointed so the
+    ``.kg`` is self-contained); the other 209 populated stores are byte-copies of
+    it. Empty key dirs and the registered-missing tail need no DB. The registry
+    maps a subset of the populated stores plus the missing ones; the rest are
+    orphans."""
     root = tmp_path_factory.mktemp("workspaces-scale")
     home = root / "cairn-home"
     home.mkdir()
@@ -183,7 +182,7 @@ def _expected_probe_split(home: Path) -> tuple:
 
 
 def test_scale_home_shape(scale_home):
-    """The synthesized machine matches the shape FR-005's budget assumes:
+    """The synthesized machine matches the shape the budget assumes:
     220 stores (>= 200), 210 populated -- more than PROBE_MAX_OPENS, so
     the cap is genuinely exercised -- 6 empty, 4 registered-missing, and
     the registry mapping only a subset. Every populated store is a real
@@ -199,7 +198,7 @@ def test_scale_home_shape(scale_home):
     assert states.count("empty") == _EMPTY
     assert states.count("missing") == _MISSING
     assert _POPULATED > PROBE_MAX_OPENS  # the cap is not vacuous (110 over)
-    assert _TOTAL >= 200  # FR-005's threshold
+    assert _TOTAL >= 200  # the threshold
 
     # The registry maps a subset: only _REGISTERED_POPULATED populated
     # keys are registered (plus the missing tail); the rest are orphans.
@@ -226,7 +225,7 @@ def test_scale_home_shape(scale_home):
 
 
 def _assert_overview_structure(html: str, home: Path) -> None:
-    """/workspaces at 220 stores: complete (every key rendered with its
+    """workspaces at 220 stores: complete (every key rendered with its
     state), honest past the probe cap (numeric counts for probed stores,
     em-dash for capped ones with state still populated, muted cap line),
     and correct about registration (registered rows show the path,
@@ -260,7 +259,7 @@ def _assert_overview_structure(html: str, home: Path) -> None:
         assert "<td>missing</td>" in row
         assert f"gone-{i}" in row  # the registered path stays verbatim
 
-    # Degradation visible, never silent (FR-005's other half).
+    # Degradation visible, never silent (the other half).
     assert "counts unavailable for some stores (probe cap)" in html
 
     # Registration subset renders as such: a registered populated store
@@ -280,7 +279,7 @@ def _assert_overview_structure(html: str, home: Path) -> None:
 
 
 def test_overview_lists_every_store_at_scale(tmp_path, monkeypatch, scale_home):
-    """TC-006 structural: with 220 synthesized stores the overview
+    """Structural: with 220 synthesized stores the overview
     renders every single one with its state; the probe-open budget
     degrades exactly the populated stores past PROBE_MAX_OPENS to an
     em-dash count (never a hang, never a silent zero), and the muted cap
@@ -293,20 +292,19 @@ def test_overview_lists_every_store_at_scale(tmp_path, monkeypatch, scale_home):
 
 
 # ---------------------------------------------------------------------------
-# First-render budget (TC-006 / FR-005 / SC-1)
+# First-render budget (SC-1)
 # ---------------------------------------------------------------------------
 
 
 def test_overview_first_render_budget(tmp_path, monkeypatch, scale_home):
-    """The FIRST GET of /workspaces on a freshly started TestClient
-    renders the whole 220-store machine within budget.
+    """    The FIRST GET of /workspaces on a fresh TestClient renders the whole
+    220-store machine within budget.
 
-    Strict 2.0s wall (SC-1 / FR-005) only under CAIRN_WORKSPACES_STRICT=1
-    (module-level gate -- see module docstring); ungated runs keep every
-    structural bound plus a generous 20s ceiling so a real regression
-    (e.g. an unbudgeted per-store open, 210 of them) still fails. The
-    fresh client makes template loading/compilation count as part of
-    "first render", as FR-005 intends."""
+    Strict 2.0s wall (SC-1) only under CAIRN_WORKSPACES_STRICT=1 (module-level
+    gate); ungated runs keep every structural bound plus a generous 20s ceiling
+    so a real regression (e.g. an unbudgeted per-store open) still fails. The
+    fresh client makes template loading/compilation count as part of "first
+    render"."""
     home = scale_home["home"]
     client = _workspaces_client(tmp_path, monkeypatch, home)
 

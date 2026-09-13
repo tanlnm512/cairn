@@ -1,10 +1,10 @@
-"""T007: deterministic query enrichment (FR-001 / D-001, TC-003/004/005).
+"""Deterministic query enrichment.
 
-T012 adds the FR-003 / D-004 / D-005 coverage: the injected ``df_lookup``
-(0.90 hard cutoff), the L1-D03 'URL' repro fixed deterministically
-(TC-010), the threshold boundary on both sides (TC-011), rare-term
-survival (TC-012), and the None-lookup purity equivalence regression
-guard (TC-015).
+Coverage: the injected ``df_lookup``
+(0.90 hard cutoff), the 'URL' repro fixed deterministically,
+the threshold boundary on both sides, rare-term
+survival, and the None-lookup purity equivalence regression
+guard.
 
 Pure-function unit tests for ``cairn.graph.query_enrich.enrich``: the
 extraction rules (backticks, camelCase, snake_case, dotted, ALLCAPS,
@@ -22,13 +22,12 @@ import pytest
 
 from cairn.graph.query_enrich import ENRICH_DF_MAX_FRACTION, EnrichedQuery, enrich
 
-# The FR-001 defect sentence: today search_symbols folds this into the quoted
+# Without enrichment, search_symbols folds this into the quoted
 # FTS5 phrase '"where is the function that parses an unencoded URL string"*'
 # (empty BM25); enrichment must decompose it into terms + identifiers.
 SPEC_EXAMPLE = "where is the function that parses an unencoded URL string"
 
-# The L1-D03 regression text (survey FR-003 verify command, verbatim): the
-# one-command repro whose enrichment output today pins ('URL',).
+# The enrichment output on this repro text pins ('URL',).
 L1_D03 = (
     "Where is the function that parses an already-encoded URL string "
     "without re-quoting?"
@@ -142,7 +141,7 @@ class TestDedupeAndOrder:
 
 class TestBoundaries:
     def test_no_identifier_query_keeps_original_dense(self) -> None:
-        # TC-005 boundary: nothing identifier-shaped -> identifiers == (),
+        # Nothing identifier-shaped -> identifiers == (),
         # dense_query is the ORIGINAL unchanged (never loses information,
         # never manufactures emphasis), sparse is the stopword-trimmed terms.
         q = "where do we handle retries"
@@ -152,7 +151,7 @@ class TestBoundaries:
         assert r.sparse_query == "handle retries"
 
     def test_nonsense_query_extracts_nothing_manufactured(self) -> None:
-        # TC-005's giraffe probe: enrichment must not invent matches.
+        # Enrichment must not invent matches.
         q = "the function that teleports a giraffe to mars"
         r = enrich(q)
         assert r.identifiers == ()
@@ -183,7 +182,7 @@ class TestBoundaries:
 
 class TestDeterminismPurityHermeticity:
     def test_two_calls_are_equal(self) -> None:
-        # TC-003: same input, separate invocations -> identical results.
+        # Same input, separate invocations -> identical results.
         for q in (SPEC_EXAMPLE, "how does `parse_url` differ from split_url", ""):
             assert enrich(q) == enrich(q)
 
@@ -199,7 +198,7 @@ class TestDeterminismPurityHermeticity:
             r.dense_query = "tampered"  # type: ignore[misc]
 
     def test_module_imports_are_hermetic(self) -> None:
-        # TC-004 doctrine guard: the enrichment path may not touch
+        # The enrichment path may not touch
         # randomness, time, the environment, or anything network-capable.
         # Assert via AST that only stdlib re/dataclasses are imported.
         src = Path(inspect.getsourcefile(enrich)).read_text()
@@ -242,7 +241,7 @@ class TestReEnrichment:
 
 
 class TestDfLookupL1D03:
-    """TC-010: the L1-D03 'URL' repro, fixed deterministically."""
+    """The 'URL' repro, fixed deterministically."""
 
     def test_ubiquitous_url_dropped_from_both_legs(self) -> None:
         # 'url' marked ubiquitous at 91/100 (> 0.90): dropped from the
@@ -267,7 +266,7 @@ class TestDfLookupL1D03:
         assert r1 == r3  # any prevalence > 0.90 gives the same answer
 
     def test_none_lookup_repro_unchanged(self) -> None:
-        # TC-015: the survey repro's output with no lookup is byte-identical
+        # With no lookup the repro's output is byte-identical
         # to today's -- ('URL',) with the appended tail and URL term intact.
         r = enrich(L1_D03)
         assert r.identifiers == ("URL",)
@@ -290,7 +289,7 @@ class TestDfLookupL1D03:
 
 
 class TestDfLookupThresholdBoundary:
-    """TC-011: behavior switches exactly at the documented 0.90 cut."""
+    """Behavior switches exactly at the documented 0.90 cut."""
 
     def test_documented_threshold_value(self) -> None:
         # The shipped, documented value (scikit-learn max_df convention).
@@ -336,7 +335,7 @@ class TestDfLookupThresholdBoundary:
 
 
 class TestDfLookupRareTermSurvival:
-    """TC-012: discriminative terms keep full weight."""
+    """Discriminative terms keep full weight."""
 
     def test_rare_terms_byte_identical_to_no_lookup(self) -> None:
         # Rare identifiers (2/1000, 3/5000) survive at FULL weight: the
@@ -358,7 +357,7 @@ class TestDfLookupRareTermSurvival:
 
 
 class TestDfLookupPurityEquivalence:
-    """TC-015: enrich stays pure; default behavior is byte-identical."""
+    """Enrich stays pure; default behavior is byte-identical."""
 
     PROBES = [
         L1_D03,
@@ -392,7 +391,7 @@ class TestDfLookupPurityEquivalence:
             assert enrich(q, df_lookup=lookup) == enrich(q, df_lookup=lookup)
 
     def test_lookup_called_once_per_distinct_casefolded_token(self) -> None:
-        # D-005's O(#distinct query tokens) bound: the memo means repeated
+        # O(#distinct query tokens) bound: the memo means repeated
         # occurrences (any casing) trigger exactly one lookup per key.
         calls: list[str] = []
 

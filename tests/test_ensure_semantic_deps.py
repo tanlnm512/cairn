@@ -47,6 +47,9 @@ def _isolated_from_real_lib(monkeypatch):
         if m == "sentence_transformers" or m.startswith("sentence_transformers.")
     ]:
         monkeypatch.delitem(sys.modules, name, raising=False)
+    # Sentinel: the probe's `import sentence_transformers` must fail even when
+    # the test venv itself carries the package in site-packages.
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
     before_path = list(sys.path)
     sys.path[:] = [p for p in sys.path if ".cairn/lib" not in p]
     yield
@@ -130,15 +133,13 @@ def test_verification_failure_returns_false_with_child_error(
 def test_verify_failure_wipes_lib_dir_and_reinstalls_once(
     isolated_lib, fake_install, monkeypatch, capsys
 ):
-    """A failed verification wipes the lib dir and retries the install once.
+    """    A failed verification wipes the lib dir and retries the install once.
 
-    pip install --target skips packages already present at a satisfying
-    version, so an install interrupted mid-unpack (or written by a different
-    interpreter ABI before lib dirs were ABI-scoped) is unrepairable by
-    re-running pip over it -- pip reports success while the dir stays
-    broken. The only sound repair is wipe + reinstall from empty, which is
-    exactly what this test pins (a stale sentinel file must not survive).
-    """
+    pip install --target skips packages already present at a satisfying version,
+    so an install interrupted mid-unpack (or written by a different interpreter
+    ABI before lib dirs were ABI-scoped) is unrepairable by re-running pip over
+    it -- pip reports success while the dir stays broken. The only sound repair
+    is wipe + reinstall from empty; a stale sentinel file must not survive."""
     sentinel = isolated_lib / "leftover-from-broken-install"
     sentinel.write_text("stale")
     verify_count = {"n": 0}

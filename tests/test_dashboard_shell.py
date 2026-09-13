@@ -45,7 +45,7 @@ def test_shell_context_groups_nav_and_flags_active_by_path():
     ctx = shell_context(_stores(), "", "/graph")
 
     labels = [s["label"] for s in ctx["nav"]["sections"]]
-    # Workspaces leads ungrouped (FR-001's overview-first contract), then
+    # Workspaces leads ungrouped (the overview-first contract), then
     # the scoped groups.
     assert labels == [None, "Explore", "Knowledge", "Activity", "System"]
 

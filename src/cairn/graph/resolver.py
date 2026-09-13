@@ -457,8 +457,8 @@ def repair_incoming_edges(
     """Re-resolve edges in ``repo`` that may point at freshly re-created symbols.
 
     When a file is re-indexed incrementally, its old symbols are deleted and
-    re-created with NEW ids. Edges in *other* files that previously resolved to
-    those symbols had their ``target_id`` nulled (resolution='unresolved') so
+    re-created with NEW ids. Edges in *other* files that had resolved to
+    those symbols have their ``target_id`` nulled (resolution='unresolved') so
     the FK wouldn't dangle. Without this repair pass those callers stay
     permanently 'unresolved' (so precise callers() drops them) until the caller's
     own file is edited or a full rebuild runs.

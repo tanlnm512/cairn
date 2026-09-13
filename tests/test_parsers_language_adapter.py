@@ -2,8 +2,7 @@
 
 Guards:
 1. The shared AST helpers (``_child_of_type``, ``_find_name``) live ONLY on
-   ``TreeSitterParserBase`` -- no parser redefines them (the drift that
-   previously let parsers disagree).
+   ``TreeSitterParserBase`` -- no parser redefines them.
 2. ``_extract_callee`` is intentionally NOT deduplicated -- it's genuinely
    language-specific (Python ``attribute``/``call`` vs Swift
    ``navigation_expression``), so each parser keeps its own.

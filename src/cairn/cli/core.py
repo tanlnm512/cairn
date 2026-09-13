@@ -163,7 +163,7 @@ def config(list_all, mcp_config, db_only, as_json):
         return
 
     if as_json:
-        # Read-only resolution probe (FR-005): one resolve_store() call — it
+        # Read-only resolution probe: one resolve_store() call — it
         # only reads env/registry and never creates dirs or registry entries,
         # so verifiers can spawn this from an arbitrary cwd.
         store = resolve_store()
@@ -460,6 +460,12 @@ def stats(db):
     display.kv("files", f"{s['files']:,}")
     display.kv("symbols", f"{s['symbols']:,}")
     display.kv("edges", f"{s['edges']:,} ({s['edges_resolved']:,} resolved)")
+    res = s["resolution"]
+    display.kv(
+        "resolution",
+        f"{res['exact']:,} exact / {res['ambiguous']:,} ambiguous / {res['unresolved']:,} unresolved"
+        f" ({s['exact_share']:.0%} / {s['ambiguous_share']:.0%} of pool)",
+    )
     display.kv("imports", f"{s['imports']:,}")
     if s.get("skipped_total"):
         display.kv("skipped", f"{s['skipped_total']:,} (not indexed)")

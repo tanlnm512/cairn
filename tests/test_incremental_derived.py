@@ -60,6 +60,12 @@ from cairn.graph.incremental import incremental_update
 from cairn.graph.schema import _apply_schema, get_db
 
 
+@pytest.fixture(autouse=True)
+def _hash_embedder(hash_backend):
+    """incremental_update re-embeds changed symbols; pin the dep-free hash
+    embedder so runs are deterministic and need no model download."""
+
+
 # 9 files. Call shapes: a 9-hop chain (apex -> ... -> base_a), fan-in into
 # base_a/high_e, a same-file 2-cycle (cyc_x/cyc_y), an ambiguous duplicate
 # (twin_dup defined in f07 AND f09; f06 calls it with no import -> stays

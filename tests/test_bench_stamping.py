@@ -1,4 +1,4 @@
-"""Tests for bench-artifact stamping (FR-004, T013; decisions D-005/D-006).
+"""Tests for bench-artifact stamping (decisions).
 
 Three layers:
 1. Helper unit tests -- build_artifact_stamp / runner_class / machine_profile:
@@ -7,7 +7,7 @@ Three layers:
 2. The repo's real manifest -- the stamp reads the T1 identity (tree-hash at
    the default size) via the same auto-location the CLI uses.
 3. CLI payload tests -- `cairn bench --json` (perf + scaling) carries the
-   stamp keys beside the timestamp (D-006: CLI layer, to_dict untouched).
+   stamp keys beside the timestamp (CLI layer, to_dict untouched).
 """
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ class TestBuildArtifactStamp:
         assert stamp["cairn_version"] == __version__
         from cairn.bench.datasource import runner_class as _rc
 
-        # Env-dependent by design (D-005): reference-local locally,
+        # Env-dependent by design: reference-local locally,
         # ci-github-actions-<runner> under CI -- assert the computed class.
         assert stamp["machine_profile"]["runner_class"] == _rc()
 
@@ -184,7 +184,7 @@ class TestRepoManifestStamp:
         assert dataset["version"] is None or isinstance(dataset["version"], str)
 
 
-# --- CLI payload layer (D-006) -----------------------------------------------
+# --- CLI payload layer -----------------------------------------------
 
 
 def _invoke(extra, suite_args):
@@ -216,7 +216,7 @@ class TestBenchCliStamp:
         assert set(profile) == {"arch", "cpu", "cpu_count", "os", "runner_class"}
         from cairn.bench.datasource import runner_class as _rc
 
-        assert profile["runner_class"] == _rc()  # env-dependent (D-005)
+        assert profile["runner_class"] == _rc()  # env-dependent 
         dataset = payload["dataset"]
         assert dataset["name"] == "benchmark-datasource"
         assert dataset["identity_size"] == STAMP_IDENTITY_SIZE

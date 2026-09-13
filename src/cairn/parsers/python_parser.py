@@ -454,7 +454,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _count_parameters(self, node: Node, source: bytes) -> Optional[int]:
-        """Parameter count of a def, conservative per D-005: defaults and
+        """Parameter count of a def, conservative: defaults and
         varargs make the accepted count a range, and a first parameter that
         is not a recognizable ``self``/``cls`` receiver makes the call-site
         comparison off by one — all three abstain to None.

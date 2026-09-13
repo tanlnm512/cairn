@@ -1,6 +1,6 @@
-"""Pins for `cairn task drop` and `cairn task list --kind-prefix` (FR-004).
+"""Pins for `cairn task drop` and `cairn task list --kind-prefix`.
 
-Queue contract pinned here (D-017, TC-009..TC-013):
+Queue contract pinned here:
 
 ``drop_task(bundle, task_id)`` (planned interface beside ``claim_task`` /
 ``complete_task`` in ``cairn.llm.tasks``; the bundle is positional, like its
@@ -57,11 +57,11 @@ def _bundle(knowledge):
     return OKFBundle(str(knowledge))
 
 
-# --- drop_task (queue level, TC-009..TC-012) ---------------------------------
+# --- drop_task (queue level) -------------------------------------
 
 
 def test_drop_pending_task_is_dropped_visible_and_unclaimable(cli_env):
-    """TC-009: a pending task reads "dropped" after the drop, appears under
+    """a pending task reads "dropped" after the drop, appears under
     the dropped listing (and no longer under pending), and claim_task's
     existing non-pending guard refuses it — permanently."""
     bundle = _bundle(cli_env)
@@ -82,7 +82,7 @@ def test_drop_pending_task_is_dropped_visible_and_unclaimable(cli_env):
 
 
 def test_drop_in_progress_task_releases_the_claim_marker(cli_env):
-    """TC-010: dropping an in-progress task removes its _tasks/<id>.claim
+    """dropping an in-progress task removes its _tasks/<id>.claim
     marker, so a fresh chain for the same page claims without conflict."""
     bundle = _bundle(cli_env)
     task_in_flight = create_task(bundle, "wiki-page", "mod-a")
@@ -104,7 +104,7 @@ def test_drop_in_progress_task_releases_the_claim_marker(cli_env):
 
 
 def test_drop_done_task_is_refused(cli_env):
-    """TC-011: a done task is refused by drop with a reason; its status
+    """a done task is refused by drop with a reason; its status
     stays done and nothing appears under the dropped listing."""
     bundle = _bundle(cli_env)
     finished = create_task(bundle, "compass-synthesize", "test")
@@ -124,7 +124,7 @@ def test_drop_done_task_is_refused(cli_env):
 
 
 def test_drop_already_dropped_task_is_refused(cli_env):
-    """TC-012: a second drop of the same task refuses with a reason and the
+    """a second drop of the same task refuses with a reason and the
     dropped listing is unchanged (the id appears exactly once)."""
     bundle = _bundle(cli_env)
     queued = create_task(bundle, "wiki-page", "mod-a")
@@ -155,11 +155,11 @@ def test_drop_unknown_task_is_refused(cli_env):
     assert out["errors"]
 
 
-# --- list_tasks(kind_prefix=...) (TC-013) ------------------------------------
+# --- list_tasks(kind_prefix=...)  ------------------------------------
 
 
 def test_kind_prefix_lists_every_chain_hop_disjoint_from_catalog(cli_env):
-    """TC-013: kind_prefix="wiki-page" lists every hop of the page chain
+    """kind_prefix="wiki-page" lists every hop of the page chain
     (initial + revise kinds) and never matches wiki-catalog; the catalog
     prefix lists only catalog tasks — the two listings are disjoint."""
     bundle = _bundle(cli_env)
@@ -194,7 +194,7 @@ def test_kind_prefix_defaults_to_the_unfiltered_listing(cli_env):
 
 
 def test_task_drop_cli_marks_the_task_dropped(cli_env):
-    """TC-009 (CLI pass condition): `task drop <id>` exits 0 and the id
+    """CLI pass condition: `task drop <id>` exits 0 and the id
     shows under `task list --status dropped`."""
     bundle = _bundle(cli_env)
     queued = create_task(bundle, "wiki-page", "mod-a")
@@ -214,7 +214,7 @@ def test_task_drop_cli_marks_the_task_dropped(cli_env):
 
 
 def test_task_list_kind_prefix_flag_splits_wiki_chains_from_catalog(cli_env):
-    """TC-013 (CLI pass condition): `--kind-prefix wiki-page` lists the page
+    """CLI pass condition: `--kind-prefix wiki-page` lists the page
     chain hops and not the catalog task; `--kind-prefix wiki-catalog` the
     reverse."""
     bundle = _bundle(cli_env)

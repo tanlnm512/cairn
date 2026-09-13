@@ -304,12 +304,12 @@
   });
   var edges = new vis.DataSet(edgeViews);
   var nextEdgeId = edges.length;
-  /* Layout (FR-004): the initial choice comes from the server-rendered
+  /* Layout: the initial choice comes from the server-rendered
      data-layout attribute; "hier" starts the network hierarchical
      top-down. Toggling later swaps the option on the live instance. */
   var layout = canvas.getAttribute("data-layout") === "hier" ? "hier" : "force";
 
-  /* Store selection (FR-003): a selected store's graph page carries the
+  /* Store selection: a selected store's graph page carries the
      selection as #graph-data's data-store attribute; expansion fetches
      must stay on that store. Empty/absent attribute = the launch store:
      no param appended, the URL unchanged. */
@@ -707,7 +707,7 @@
       );
   });
 
-  /* Node inspect (FR-004, D-004): single click selects a node (the vis
+  /* Node inspect: single click selects a node (the vis
      default) and #inspect-action's hint becomes a plain anchor into the
      symbol-neighborhood view; deselecting restores the hint. Normal
      anchor navigation — full page load, browser-back returns. Built
@@ -854,12 +854,12 @@
     inspectPanel(null);
   });
 
-  /* Layout toggle (FR-004): clicking an anchor in #layout-control
+  /* Layout toggle: clicking an anchor in #layout-control
      re-layouts the LIVE network (no reload). The camera (view position
      + scale) is captured before the switch and restored once the new
      layout has drawn (afterDrawing once-listener), so the current
      focus survives; history.replaceState persists the choice in the
-     URL so refresh/share round-trips (D-003). */
+     URL so refresh/share round-trips. */
   var layoutControl = document.getElementById("layout-control");
   if (layoutControl) {
     var LAYOUT_LINKS = [
@@ -941,7 +941,7 @@
     return;
   }
 
-  /* Store selection (FR-003): search fetches stay on the store the page
+  /* Store selection: search fetches stay on the store the page
      serves — the selection rides #graph-data's data-store attribute. An
      absent block (never on /graph) or empty value is the launch store:
      no param appended, the URL unchanged. */
@@ -1196,7 +1196,7 @@
   });
 })();
 
-/* Live refresh (FR-001): on traffic views the #refresh-region element is
+/* Live refresh: on traffic views the #refresh-region element is
    an htmx poll trigger (hx-trigger="every 5s", hx-swap="morph" in the
    region templates): each cycle re-fetches the view as a cheap region
    fragment — the route's HX-Request branch — and the alpine-morph
@@ -1212,7 +1212,7 @@
      wins over tab visibility — paused means no fetch, period). A hidden
      tab refuses its fetches the same way; the next visible tick catches
      up. Resume simply stops refusing; the next scheduled tick fetches.
-   - FR-005: a failed poll (HTTP error or dead server) raises the
+   - A failed poll (HTTP error or dead server) raises the
      disconnected banner; the next successful poll clears it — self-heal
      without a reload, since the timer never stopped.
    - Window scroll is re-anchored around each region swap (captured in
@@ -1250,7 +1250,7 @@
     return !!(event.detail && event.detail.elt === region);
   }
 
-  /* Pause/resume (FR-004): the toggle only flips the refusal flag and
+  /* Pause/resume: the toggle only flips the refusal flag and
      the visible word — htmx owns the schedule, so there is no timer to
      clear and resume needs no re-arm. */
   var paused = false;
@@ -1281,7 +1281,7 @@
       return;
     }
     /* A successful poll is the recovery: the banner clears as the state
-       word returns to "live" (FR-005, US3-AC2). */
+       word returns to "live". */
     banner.textContent = "";
     setState("running");
   });

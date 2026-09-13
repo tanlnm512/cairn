@@ -121,9 +121,21 @@ Applies to code comments, docstrings, markdown, and CHANGELOG entries.
 - No history: no dates, PR numbers, version references, "previously",
   "reported bug", incident stories.
 - Short and precise; prefer numbered/bulleted lists over prose.
+- Keep comments short: the fewest words that still carry the full needed
+  information (behavior, contract, constraint). One to three lines is the
+  norm; expand only when the contract itself is that large. Short but
+  incomplete is wrong too — state the whole contract, nothing else.
 - Anti-stale: no enumerations or examples that rot (line numbers,
   version-specific names, workspace-specific paths) — reference the
   code or a query instead.
+
+## Reuse before writing new code (mandatory)
+- Before adding a function, search for an existing one with the same behavior
+  (`search_symbols` / `explore`; CLI fallback: `cairn def`) and reuse or
+  extend it.
+- Two or more call sites with duplicated logic get one shared helper;
+  per-caller contract differences are documented at the helper.
+- Add a new function only when no existing one satisfies the caller.
 
 ## Tool Quirks (empirically verified)
 

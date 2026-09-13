@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [0.20.2] - 2026-09-13
+
+### Added
+- `cairn stats` reports edge resolution shares (`exact` / `ambiguous` /
+  `unresolved`) over the calls/references candidate pool.
+- `cairn update` embeds changed files' symbols when a semantic backend is
+  reachable, and reports deferred embeds when none is available.
+- `cairn.json` committed at the repo root excludes vendored dashboard static
+  chunks and benchmark datasource corpora from indexing.
+
+### Changed
+- `cairn embed` builds the multivector kinds (`name`, `docstring`) by
+  default; `--no-multivector` restores single-vector builds.
+- `reindex_paths` settles embed_symbols' buffered-batch degradation, keeping
+  an open transaction from failing subsequent file legs or losing rows.
+- Shared graph helpers (`_select_stale_symbols`, `_purge_embedding_rows`,
+  `_repo_relative_path`) replace duplicated logic across the embedding and
+  incremental paths.
+
 ## [0.20.1] - 2026-09-11
 
 ### Removed

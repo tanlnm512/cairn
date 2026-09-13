@@ -40,11 +40,11 @@ _MARKER = "cairn"  # used to identify our entries when merging/uninstalling
 class InstallResult:
     """Outcome of one installer run.
 
-    ``verification_status``/``verification_detail`` (FR-006/D-005) carry the
+    ``verification_status``/``verification_detail`` carry the
     post-install spawn-probe verdict: ``verification_status`` is one of
     "pass" / "fail" / "skipped" (default "skipped" -- verdicts are set only
     by install()'s verify loop for file-written stdio registrations;
-    dry_run, SSE, and CLI-registered clients stay skipped per D-006). On
+    dry_run, SSE, and CLI-registered clients stay skipped). On
     "fail", ``verification_detail`` names both stores (resolved and
     intended). Defaulted because InstallResult has ~24 construction sites.
     """
@@ -154,7 +154,7 @@ def _claude_hook_command(entrypoint: str) -> str:
     `[CAIRN_HOME=<path> ]<python> -m cairn.hooks.claude_hooks <entry>`.
 
     The `CAIRN_HOME` assignment is prefixed only when the effective home is
-    non-default (FR-002/D-009): clients run this string through a shell, so
+    non-default: clients run this string through a shell, so
     the assignment travels to the hook process and -- env inheritance -- to
     the cairn subprocess (claude_hooks runs it with no env kwarg). The path
     is shlex.quote()d so a shell-metacharacter home cannot inject commands.

@@ -22,15 +22,12 @@ pytestmark = pytest.mark.infra
 # --- Fixtures --------------------------------------------------------------
 
 def _set_versions(monkeypatch, installed=None, latest=None, reinstall=None):
-    """Stub the upgrade helpers. `reinstall` records calls instead of shelling.
+    """    Stub the upgrade helpers; ``reinstall`` records calls instead of shelling.
 
-    `installed`/`latest` are always patched when the helper is invoked -- using
-    a sentinel instead of `if x is not None` so that `latest=None` (the very
-    value the "PyPI unreachable" tests exercise) still replaces the real
-    ``_pypi_latest`` rather than letting it hit the network. Without this,
-    those tests leaked a real call to pypi.org and only stayed green while the
-    project was unpublished.
-    """
+    ``installed``/``latest`` are always patched via a sentinel (not
+    ``if x is not None``) so that ``latest=None`` -- the very value the "PyPI
+    unreachable" tests exercise -- still replaces the real ``_pypi_latest``
+    rather than letting it hit the network."""
     _UNSET = object()
     calls = []
     if installed is not _UNSET:

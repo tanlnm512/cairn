@@ -401,7 +401,7 @@ class TestRunIngest:
     def test_same_document_stages_identically_via_scan_and_feed(
         self, feed_root, monkeypatch
     ):
-        """TC-013: one document staged twice -- once through a repo scan
+        """One document staged twice -- once through a repo scan
         (RepoScanAdapter, allowlisted doc dirs) and once through an
         explicit feed of the same tree (FedMarkdownAdapter) -- yields
         identical staged rows (slug/stable_id/description/tags). Only the

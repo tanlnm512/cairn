@@ -143,16 +143,15 @@ class TestRerankFallback:
 
 class TestRerankSuccessPath:
     def test_rerank_resorts_by_fake_model_score(self, monkeypatch):
-        """Substitute a fake CrossEncoder to prove the resort/truncate logic
-        without needing the real model downloaded.
+        """        Prove the resort/truncate logic with a fake CrossEncoder, without the real
+        model downloaded.
 
-        `rerank()` gates on `reranker_available()` (a CrossEncoder import
-        check), which is False when the [semantic] extra isn't installed --
-        so we also stub `reranker_available` to True here. Without that stub
-        the fake model in the cache is never reached: the availability gate
-        returns (candidates, False) first. This lets the resort/truncate
-        contract run in the default (extra-free) test environment.
-        """
+        ``rerank()`` gates on ``reranker_available()`` (a CrossEncoder import check),
+        False when the [semantic] extra isn't installed -- so also stub
+        ``reranker_available`` to True, else the availability gate returns
+        (candidates, False) before the fake model in the cache is ever reached. Lets
+        the resort/truncate contract run in the default (extra-free) test
+        environment."""
         from cairn.graph import reranker as rrk
 
         monkeypatch.setenv("CAIRN_RERANK", "1")
@@ -218,7 +217,7 @@ class TestSemanticSearchIntegration:
 
 
 # ---------------------------------------------------------------------------
-# T016 (FR-004, D-005): structured rerank pairs, pinned truncation, sigmoid
+# Structured rerank pairs, pinned truncation, sigmoid
 # ---------------------------------------------------------------------------
 
 
@@ -286,7 +285,7 @@ def _full_candidate():
 
 class TestStructuredPairConstruction:
     def test_pair_text_is_importance_ordered(self, monkeypatch):
-        """Head order is exactly D-005's: kind+qname, path, signature,
+        """Head order is exactly: kind+qname, path, signature,
         docstring — then the full stored chunk as the truncatable tail."""
         from cairn.graph import reranker as rrk
 
@@ -396,8 +395,8 @@ class TestStructuredPairConstruction:
 
     def test_flat_format_still_reachable_for_ab(self, monkeypatch):
         """structured=False reproduces the legacy pair byte-for-byte (raw
-        chunk, no structured head, no pre-truncation) so T017's A/B measures
-        the pair format alone."""
+        chunk, no structured head, no pre-truncation) so an A/B measurement
+        isolates the pair format alone."""
         from cairn.graph import reranker as rrk
 
         model = _PairRecorder(scores=[1.0])
@@ -415,7 +414,7 @@ class TestStructuredPairConstruction:
 
 class TestMaxLengthPin:
     def test_crossencoder_constructed_with_explicit_max_length(self, monkeypatch):
-        """The encoder is built with max_length=512 explicitly (D-005 pin),
+        """The encoder is built with max_length=512 explicitly,
         asserted on the constructed object via an injected factory stub —
         never by loading the real model."""
         import sys
@@ -448,9 +447,8 @@ class TestMaxLengthPin:
 
 class TestQueryPriorityTruncation:
     def test_default_is_flat_per_t017(self, monkeypatch):
-        """T017 measured structured pairs at -10.4pp MRR vs flat on identical
-        pools (cross-session-anchored); the default is FLAT, structured
-        reachable for re-measurement."""
+        """The default pair format is FLAT; structured pairs are reachable
+        for re-measurement via ``structured=True``."""
         from cairn.graph import reranker as rrk
 
         model = _PairRecorder()
@@ -559,7 +557,7 @@ class TestSigmoidNormalization:
     def test_norm_field_accompanies_raw_score(self, monkeypatch):
         """rerank_score stays the RAW unbounded logit (compat: existing
         consumers order by it); rerank_score_norm is its sigmoid image in
-        [0, 1] for any future thresholding and T017's analysis."""
+        [0, 1] for thresholding and analysis."""
         import math
 
         from cairn.graph import reranker as rrk
@@ -599,8 +597,8 @@ class TestSigmoidNormalization:
 
 
 class TestSemanticSearchPassesEnrichedQuery:
-    """T016 call-site hunk: the rerank pair's query side is the enriched
-    dense query when FR-001 is on, the raw query otherwise (D-005)."""
+    """Call-site contract: the rerank pair's query side is the enriched
+    dense query when enrichment is on, the raw query otherwise."""
 
     def test_enrich_on_routes_dense_query_to_rerank(self, monkeypatch, fresh_db):
         from cairn.graph import reranker as rrk

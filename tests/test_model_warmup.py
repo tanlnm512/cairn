@@ -31,17 +31,13 @@ _REAL_INSIDE_PYTEST = model_warmup._inside_pytest
 
 @pytest.fixture(autouse=True)
 def _reset_warmup_state(monkeypatch):
-    """Warm-up state is once-per-process; clear it around every test.
+    """    Warm-up state is once-per-process; clear it around every test.
 
-    Also patches _inside_pytest() to False so these tests exercise the
-    production code path: warm_models_in_background() hard refuses to start
-    its background thread inside a pytest test (a seconds-long load leaking
-    across test boundaries flaked test_server_robustness.TestModelCacheRace;
-    see the module docstrings). Patching the helper -- rather than deleting
-    PYTEST_CURRENT_TEST -- is deterministic because pytest re-sets that env
-    var at every test phase boundary. The guard itself has a dedicated test
-    below, which patches the helper back to True.
-    """
+    Also patches _inside_pytest() to False so these tests exercise the production
+    code path: warm_models_in_background() refuses to start its background thread
+    inside pytest (patching the helper is deterministic -- pytest re-sets
+    PYTEST_CURRENT_TEST at every test phase boundary, unlike deleting it). The
+    guard itself has a dedicated test below that patches the helper back to True."""
     monkeypatch.setattr(model_warmup, "_inside_pytest", lambda: False)
     model_warmup._reset_warmup_state()
     yield
@@ -316,8 +312,8 @@ def _closed_loopback_port() -> int:
 
 
 class TestServerBackendWarmup:
-    """FR-006: a healthy server backend is warmed with one tiny
-    /v1/embeddings POST through the shared T003 probe cache; every guard
+    """A healthy server backend is warmed with one tiny
+    /v1/embeddings POST through the shared probe cache; every guard
     from the local arm still applies."""
 
     @pytest.fixture
@@ -379,7 +375,7 @@ class TestServerBackendWarmup:
         self, server_backend, monkeypatch, caplog
     ):
         """A reachable server whose /v1/models omits the configured model
-        fails the FR-002 probe: observable here as zero /embeddings hits,
+        fails the availability probe: observable here as zero /embeddings hits,
         not just an unconnectable port."""
         stub = _WarmupStubServer(model_ids=["some-other-model"])
         try:

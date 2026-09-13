@@ -56,7 +56,7 @@ def _record_invocation(
 ) -> None:
     """Buffer one usage row via the cli-metrics builder; never raises.
 
-    Recording must never fail the command (FR-001 best-effort doctrine), so
+    Recording must never fail the command (best-effort doctrine), so
     even the import is guarded — a missing/broken telemetry module degrades
     to "no row", never to a failed CLI run.
     """
@@ -75,9 +75,9 @@ def _record_invocation(
 
 
 class _RecordingGroup(click.Group):
-    """Group whose dispatch records every top-level invocation (FR-001).
+    """Group whose dispatch records every top-level invocation.
 
-    The single interception point (D-001): one row per top-level command —
+    The single interception point: one row per top-level command —
     commands registered today or in the future are covered automatically, and
     subcommand hops are intentionally not rows. Timing/status capture happens
     in `invoke`; the `parse_args` hook exists only because click 8.x raises
@@ -100,7 +100,7 @@ class _RecordingGroup(click.Group):
         # invoked_subcommand is read at RECORD time — click's Group.invoke
         # sets it while resolving the subcommand, so it is available after
         # super().invoke() on success and error paths alike, extending the
-        # root path one level (per-subcommand aggregation, D-005).
+        # root path one level (per-subcommand aggregation).
         argv = sys.argv[1:]
 
         def sub_path() -> str:

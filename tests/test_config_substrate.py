@@ -1,6 +1,6 @@
-"""Persistent config substrate (FR-010): $CAIRN_HOME/config.json.
+"""Persistent config substrate: $CAIRN_HOME/config.json.
 
-Covers the D-008 env > file > default resolution at the embeddings read
+Covers the env > file > default resolution at the embeddings read
 sites, mtime-triggered re-read (running processes pick up edits without
 restart), atomic writes via set_config_values, corruption degradation to
 defaults-with-warning, and the reset_backend_cache() invalidation contract.
@@ -303,7 +303,7 @@ class TestResetHook:
 
 
 # ---------------------------------------------------------------------------
-# (g) No config file / untouched arms: openai stays env-only (FR-009).
+# (g) No config file / untouched arms: openai stays env-only.
 # ---------------------------------------------------------------------------
 
 
@@ -315,7 +315,7 @@ class TestUnchangedArms:
             "OPENAI_API_KEY": "file-key",
         })
         # The backend knob itself is config-aware; the openai arm's model
-        # and key semantics are not (FR-009).
+        # and key semantics are not.
         assert emb._backend_name() == "openai"
         assert emb.current_model() == "text-embedding-3-small"
         assert emb.embeddings_available() is False

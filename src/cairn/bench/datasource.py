@@ -1,13 +1,13 @@
 """Datasource manifest helpers: path-order-independent tree hash + JSON I/O,
-plus the bench-artifact stamp (dataset/cairn-version/machine-profile, FR-004).
+plus the bench-artifact stamp (dataset/cairn-version/machine-profile).
 
-Why this module exists (FR-001): the T1 benchmark corpus is *regenerated*
+Why this module exists: the benchmark corpus is *regenerated*
 from a seed, not committed, so CI on any runner must be able to prove its
 regeneration is byte-for-byte the corpus the manifest was minted against.
 A whole-tree hash over raw bytes is not usable for that: ``os.listdir``
 order varies by filesystem and OS, and archive-based digests (tar/cpio)
 capture mtimes and uid/gid noise. The fix is a Git-tree-shaped
-sorted-manifest digest (decision D-003): hash each file's content, then
+sorted-manifest digest: hash each file's content, then
 hash the *sorted* ``"<mode> <relpath>\\0<content-sha>"`` entries. The
 digest's input is then a pure function of {file set, contents, modes} --
 enumeration order can never leak in, which is what makes the assert
@@ -83,7 +83,7 @@ Manifest JSON schema (minted by T002, validated here):
     }
 
 ``counts`` is the ``corpus_stats`` shape (corpus.py:99). The optional
-``t3`` pin section (T019) carries ``{"entries": [{name, url, commit,
+``t3`` pin section carries ``{"entries": [{name, url, commit,
 scale_hint}, ...]}``; unknown top-level sections are still ignored by
 ``validate_manifest`` so later sections can extend the schema without
 this validator rejecting them.
@@ -101,23 +101,23 @@ from typing import TypeGuard
 
 from .. import __version__
 
-# Schema tag + version for self-describing manifest artifacts (D-001's
-# doctrine: artifacts carry their own provenance; the tag lets a reader
-# distinguish this format from any future one before interpreting keys).
+# Schema tag + version for self-describing manifest artifacts: artifacts
+# carry their own provenance; the tag lets a reader
+# distinguish this format from any future one before interpreting keys.
 MANIFEST_SCHEMA = "cairn-bench-datasource-manifest"
 MANIFEST_VERSION = 1
 
 # Required-key contracts enforced by validate_manifest. Exposed because the
-# minter (T002) and the tests both build manifests against the same list --
+# minter and the tests both build manifests against the same list --
 # one definition, no drift.
 REQUIRED_MANIFEST_KEYS = ("schema", "version", "t1")
 REQUIRED_T1_KEYS = ("generator_git_sha", "seed", "sizes", "complexity", "entries")
 REQUIRED_ENTRY_KEYS = ("tree_hash", "counts")
 REQUIRED_COUNT_KEYS = ("files", "lines", "bytes")
-# The optional T3 pin section (T019, FR-006): when "t3" is present each of its
+# The optional T3 pin section: when "t3" is present each of its
 # entries must carry all four keys -- name/url identify the repo, commit is the
-# exact pin the local fetch-by-pin command (T020) checks out, scale_hint is the
-# human-readable scale point (e.g. "~27k files, Python") TC-029 reads.
+# exact pin the local fetch-by-pin command checks out, scale_hint is the
+# human-readable scale point (e.g. "~27k files, Python") the report reads.
 REQUIRED_T3_ENTRY_KEYS = ("name", "url", "commit", "scale_hint")
 # The three complexity profiles generate_corpus understands (corpus.py:43-48).
 VALID_COMPLEXITIES = ("low", "medium", "high")
@@ -251,12 +251,12 @@ def validate_manifest(manifest: object) -> list[str]:
     Returns a list of human-readable error strings, each prefixed with the
     dotted path of the offending field (``t1.entries.60.tree_hash: ...``),
     so a minter can fix every problem in one pass instead of whack-a-mole.
-    Missing required keys are the hard contract (FR-001); type checks and
+    Missing required keys are the hard contract; type checks and
     the sizes/entries cross-check guard the "tree-hash at every declared
     size" invariant the CI assert depends on.
 
-    The optional ``t3`` pin section (T019) is validated only when present:
-    absent stays valid (D-010 -- a T3 addition must not invalidate DS-v1
+    The optional ``t3`` pin section is validated only when present:
+    absent stays valid (a T3 addition must not invalidate existing
     manifests), present requires an ``entries`` list whose every entry
     carries the four pin keys. Genuinely unknown top-level sections are
     still ignored -- extending the schema must not invalidate existing
@@ -349,8 +349,8 @@ def validate_manifest(manifest: object) -> list[str]:
                                 f"integer, got {value!r}"
                             )
 
-    # Optional T3 pin section (T019): absent stays valid (DS-v1 manifests
-    # predate it -- D-010: a T3 addition must not invalidate DS-v1); when
+    # Optional T3 pin section: absent stays valid (a T3 addition must not
+    # invalidate existing manifests); when
     # present, each entry must carry the four pin keys.
     t3 = manifest.get("t3")
     if isinstance(t3, dict):
@@ -388,11 +388,11 @@ def validate_manifest(manifest: object) -> list[str]:
     return errors
 
 
-# --- bench-artifact stamp (FR-004, decisions D-005/D-006) -------------------
+# --- bench-artifact stamp ---------------------------------------------------
 #
 # Every `cairn bench` payload (perf / scaling / agent) is stamped at the CLI
 # layer -- beside the existing `payload["timestamp"]` assignment, never inside
-# the reports' ``to_dict`` (D-006: keeps the payload-shape tests and the 14
+# the reports' ``to_dict`` (keeps the payload-shape tests and the
 # programmatic ``to_dict`` consumers untouched; additive keys are safe for
 # ``.github/scripts/bench_compare.py`` which reads via ``.get``).
 
@@ -402,7 +402,7 @@ def validate_manifest(manifest: object) -> list[str]:
 DATASET_NAME = "benchmark-datasource"
 
 # Which manifest entry's tree-hash represents *the dataset identity* in the
-# stamp. D-005 leaves the choice open; the default perf-suite corpus size
+# stamp. The default perf-suite corpus size
 # (300, cli/bench.py --n-files default) is used because it is a pure function
 # of the manifest -- independent of whatever --n-files/--sizes a particular
 # run used, and meaningful even for --workspace runs that bypass the synthetic
@@ -436,8 +436,8 @@ def default_baselines_root() -> Path | None:
     Same two-candidate precedence as :func:`default_manifest_path`: the
     working directory first (how CI and maintainers invoke ``cairn bench`` --
     from the repo root), then the source tree the package lives in (covers
-    CliRunner-style isolated cwds and editable installs). T015 commits the
-    stamped ``DS-v1`` tree here; T014's ``--baseline <DS-version>`` resolves
+    CliRunner-style isolated cwds and editable installs). Baselines are
+    committed as stamped ``DS-v1`` trees; ``--baseline <DS-version>`` resolves
     ``<root>/<DS-version>/<suite>.json`` against it. A wheel/sdist install
     has no ``benchmarks/`` directory and ``--baseline`` correctly reports the
     unknown version instead of guessing.
@@ -455,7 +455,7 @@ def default_baselines_root() -> Path | None:
 def runner_class(env: dict[str, str] | None = None) -> str:
     """Classify where the bench ran: ``reference-local`` or ``ci-<runner>``.
 
-    D-005: maintainer-generated baselines run outside CI and stamp
+    Maintainer-generated baselines run outside CI and stamp
     ``reference-local``; anything under GitHub Actions stamps
     ``ci-<RUNNER_NAME>`` (slugified: the runner name may contain spaces and
     digits, e.g. ``GitHub Actions 12`` -> ``ci-github-actions-12``). The
@@ -470,7 +470,7 @@ def runner_class(env: dict[str, str] | None = None) -> str:
 
 
 def machine_profile(env: dict[str, str] | None = None) -> dict:
-    """The D-005 machine-profile fields: cheap, honest, warn-don't-normalize.
+    """The machine-profile fields: cheap, honest, warn-don't-normalize.
 
     ``cpu`` falls back to ``platform.machine()`` because
     ``platform.processor()`` returns ``""`` on several Linux configurations --
@@ -489,13 +489,13 @@ def machine_profile(env: dict[str, str] | None = None) -> dict:
 def _dataset_block(manifest_path: Path | str | None, t3_entry) -> dict:
     """The ``dataset`` stamp block; degrades with a reason, never raises.
 
-    Degradation contract (T013): a bench run must not crash because the
+    Degradation contract: a bench run must not crash because the
     manifest is absent or short a field -- the block carries ``reason`` and
     nulls instead, so an unstamped-dataset artifact is self-describing about
     *why*. ``version`` reads the manifest's ``dataset_version`` field via
     ``.get`` (additive): today's manifest records only the schema ``version``
     (1) and the T1 pins, so version stamps null-with-reason until a later
-    manifest mints a dataset version (T019 is the next writer).
+    manifest mints a dataset version.
     """
     block: dict = {"name": DATASET_NAME}
     if t3_entry is not None:
@@ -535,10 +535,10 @@ def build_artifact_stamp(
     env: dict[str, str] | None = None,
     t3_entry=None,
 ) -> dict:
-    """Build the FR-004 stamp for a bench payload: dataset + cairn + machine.
+    """Build the artifact stamp for a bench payload: dataset + cairn + machine.
 
     Called ONCE per CLI invocation (``cairn bench`` computes it up front and
-    applies it beside the timestamp at every payload site -- D-006). All
+    applies it beside the timestamp at every payload site). All
     sub-builds degrade instead of raising: a missing manifest yields
     ``dataset: {name, version: null, reason: "manifest missing"}`` so the
     bench always completes and the artifact explains its own gaps.

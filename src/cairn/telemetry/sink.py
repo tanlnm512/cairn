@@ -81,7 +81,7 @@ _conn_factory: Optional[Callable[[], "object"]] = None
 _MAX_EVENTS_ROWS = 5000
 _MAX_BUILD_RUNS_ROWS = 500
 
-# tool_metrics retention default (spec ui-dashboard-polish FR-004): tens of
+# tool_metrics retention default: tens of
 # thousands so a store that accreted for months is not pruned on upgrade --
 # the cap exists to bound growth, not to rewrite history.
 _DEFAULT_TOOL_METRICS_ROWS = 50_000

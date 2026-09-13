@@ -1,6 +1,6 @@
-"""Pins for `cairn wiki enrich` and the `wiki-page-enrich` kind (FR-008).
+"""Pins for `cairn wiki enrich` and the `wiki-page-enrich` kind.
 
-Enrichment contract pinned here (D-021, TC-021..TC-024):
+Enrichment contract pinned here:
 
 * ``cairn wiki enrich [<page-id>] [--repo R] [--all]`` requires exactly one
   selector -- a page-id argument or ``--all``; ``--repo`` only scopes --
@@ -179,7 +179,7 @@ def _fresh_head(monkeypatch, sha):
 
 
 def _enrich_facts(repo=CRITIC_REPO):
-    """Facts in the enrich queue path's shape (D-021): identity + seeds
+    """Facts in the enrich queue path's shape: identity + seeds
     only — the body is read from the promoted concept at completion and
     the sha is resolved then."""
     return {
@@ -234,11 +234,11 @@ def _page_file(knowledge, repo, page_id):
     return knowledge / "wiki" / "pages" / repo / f"{page_id}.md"
 
 
-# --- TC-021 (queue half): the enrich task carries the page's facts -----------
+# --- Queue half: the enrich task carries the page's facts --------------
 
 
 def test_enrich_queues_task_with_row_identity_facts(cli_env, monkeypatch):
-    """TC-021: enriching a promoted page queues one wiki-page-enrich task
+    """enriching a promoted page queues one wiki-page-enrich task
     keyed by the qualified resource, whose facts carry the row's identity
     (seeds/input_hash/repo) — never the body, never a sha. The plan kind
     is untouched: the manifest keeps whatever it had."""
@@ -272,11 +272,11 @@ def test_enrich_queues_task_with_row_identity_facts(cli_env, monkeypatch):
     assert on_disk["commit_sha"] == OLD_SHA
 
 
-# --- TC-022: enrich refuses unpromoted/unknown pages --------------------------
+# --- enrich refuses unpromoted/unknown pages --------------------------
 
 
 def test_enrich_refuses_unpromoted_or_unknown_page_and_queues_nothing(cli_env):
-    """TC-022: a page id that was never promoted -- queued in the manifest
+    """a page id that was never promoted -- queued in the manifest
     or absent entirely -- is refused with exit 1 and a refusal on stderr,
     and no enrichment task exists afterwards."""
     knowledge = cli_env
@@ -311,13 +311,13 @@ def test_enrich_requires_exactly_one_selector(cli_env):
     assert _pending_enrich_tasks(bundle) == []
 
 
-# --- TC-021 (completion half): critic-passing completion appends --------------
+# --- Completion half: critic-passing completion appends -----------------
 
 
 def test_passing_enrich_completion_appends_sections_and_merges_sources(
     cli_env, fresh_db
 ):
-    """TC-021: a critic-passing enrich completion appends its sections to
+    """a critic-passing enrich completion appends its sections to
     the promoted body (prior content stays visible, in order), merges the
     page's sources old+new deduped by entry value, and records exactly the
     appended sections in the Task-Result sibling."""
@@ -353,13 +353,13 @@ def test_passing_enrich_completion_appends_sections_and_merges_sources(
     assert "current_body" not in get_task(bundle, task.id).facts
 
 
-# --- TC-023: critic-failing cycles leave the page byte-identical --------------
+# --- critic-failing cycles leave the page byte-identical --------------
 
 
 def test_failing_enrich_completion_leaves_page_byte_identical_and_spawns_revise(
     cli_env, fresh_db
 ):
-    """TC-023: a critic-failing enrich completion appends nothing -- the
+    """a critic-failing enrich completion appends nothing -- the
     page file is byte-identical afterwards -- and spawns a
     wiki-page-enrich-revise task carrying the errors and parent link."""
     knowledge = cli_env
@@ -390,7 +390,7 @@ def test_failing_enrich_completion_leaves_page_byte_identical_and_spawns_revise(
 def test_failing_enrich_chain_drops_at_max_cycles_leaving_page_unchanged(
     cli_env, fresh_db
 ):
-    """TC-023: the enrich chain inherits the bounded revise cycle -- every
+    """the enrich chain inherits the bounded revise cycle -- every
     attempt below the cap spawns exactly one revise, the cap drops the
     chain, and the page file is byte-identical through it all."""
     knowledge = cli_env
@@ -431,11 +431,11 @@ def test_failing_enrich_chain_drops_at_max_cycles_leaving_page_unchanged(
     assert page_path.read_bytes() == before
 
 
-# --- TC-024: --all and --repo scope the queue ---------------------------------
+# --- --all and --repo scope the queue ---------------------------------
 
 
 def test_enrich_all_then_repo_scopes_the_queue(cli_env, fresh_db):
-    """TC-024: --all queues one enrichment per promoted page across all
+    """--all queues one enrichment per promoted page across all
     repositories; once those complete, --all --repo queues only the named
     repository's pages."""
     knowledge = cli_env

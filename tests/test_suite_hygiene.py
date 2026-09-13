@@ -1,15 +1,12 @@
-"""Hygiene guards for the test suite itself (prevention layer, 2026-08-14).
+"""Hygiene guards for the test suite itself.
 
-Two CI failures on one branch came from tests that were green locally only
-because of the dev machine's surroundings (agent CLIs detected; interleaved
-CLI output parsed as JSON). The suite-wide ``_hermetic_env`` fixture in
-conftest.py makes the clean-runner environment the default; this file adds
-STATIC tripwires for the known footgun patterns so a regression in the
-fixture's coverage fails loudly instead of resurfacing on a CI runner.
+The suite-wide ``_hermetic_env`` fixture in conftest.py makes the clean-runner
+environment the default; this file adds STATIC tripwires for the known footgun
+patterns so a regression in the fixture's coverage fails loudly instead of
+resurfacing on a CI runner.
 
-Each guard corresponds to a real incident -- extend the banned-pattern list
-when a new class bites (that is the whole point: every incident becomes a
-permanent tripwire).
+Each guard targets a class of environment-dependent failure -- extend the
+banned-pattern list when a new class bites.
 """
 
 from __future__ import annotations
@@ -31,8 +28,8 @@ def _iter_test_sources():
 def test_no_json_loads_on_interleaved_cli_output():
     """click's ``Result.output`` interleaves stdout+stderr.
 
-    Incidents (2026-08-14): leaked DEBUG log lines broke ``json.loads`` only
-    in full-suite order, on CI, while real-world stdout stays pure JSON.
+    Leaked DEBUG log lines break ``json.loads`` under full-suite ordering on CI,
+    while real-world stdout stays pure JSON.
     Parse ``result.stdout`` instead. Simple AST check: a ``loads(...)`` call
     whose sole argument chains attribute access ending in ``.output``.
     """
@@ -91,15 +88,14 @@ def test_agent_cli_names_covered_by_fixture():
 
 
 def test_infra_tier_shape_stays_guarded():
-    """The infra marker tier must stay whole-file/class-shaped and off the t2 gate.
+    """    The infra marker tier must stay whole-file/class-shaped and off the t2 gate.
 
     The bench job runs ``pytest tests/ -q -k t2`` with NO ``-m`` filter, so an
     infra mark cannot deselect it today -- but a t2-named test inside an
-    infra-marked module would break the moment anyone adds a global ``-m``
-    filter (addopts), and a per-test infra mark would recreate the forbidden
-    skip-quarantine shape (release-checklist bans per-test skips/xfails).
-    Static AST checks keep the tier auditable:
-    """
+    infra-marked module would break the moment anyone adds a global ``-m`` filter
+    (addopts), and a per-test infra mark would recreate the forbidden
+    skip-quarantine shape (release-checklist bans per-test skips/xfails). Static
+    AST checks keep the tier auditable."""
     pyproject = (TESTS_DIR.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert re.search(r'^\s*"infra:', pyproject, re.M), (
         "infra marker unregistered in pyproject.toml"

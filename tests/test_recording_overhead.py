@@ -1,7 +1,7 @@
-"""SC-2 / TC-010: instrumented recording stays off the tool hot path.
+"""Instrumented recording stays off the tool hot path.
 
 Median latency of an instrumented call must stay within 5% of the bare
-call (buffered recording, O(1) size capture — tech-spec D-005).
+call (buffered recording, O(1) size capture).
 
 Sizing note: the wrapper's added cost is a fixed ~20us locally / ~130us on
 shared CI runners. The 5% ratio is only testable against a body of

@@ -32,31 +32,26 @@ DB = "/repos/acme/.cairn/graph.db"
 
 
 def _fake_pid(offset: int) -> int:
-    """A fake pid guaranteed outside find_strays' protected set.
+    """    A fake pid guaranteed outside find_strays' protected set.
 
-    find_strays never treats the sweeping process itself as a stray
-    (protected = {daemon, os.getpid(), daemon children}). Hardcoded fake
-    pids (4101, 4200, ...) intermittently EQUALED the real pytest pid on
-    CI runners (pid namespaces there reach the thousands -- observed twice
-    on 2026-08-25), silently filtering the fake orphan as "self" and
-    failing these tests with e.g. ``assert [] == [4101]``. Anchoring every
-    fake pid to ``os.getpid() + offset`` keeps it out of the protected set
-    on every host, deterministically.
-    """
+    find_strays never treats the sweeping process itself as a stray (protected =
+    {daemon, os.getpid(), daemon children}); hardcoded fake pids can equal the
+    real pytest pid on CI runners, silently filtering the fake orphan as "self".
+    Anchoring every fake pid to ``os.getpid() + offset`` keeps it out of the
+    protected set on every host, deterministically."""
     return os.getpid() + offset
 
 
 def _fake_subprocess(processes=None, pgrep_pids=None, child_pids=None,
                      lsof_pids=None, lsof_fail=False):
-    """Build a subprocess.run stub simulating a process table for lifecycle.
+    """    Build a subprocess.run stub simulating a process table for lifecycle.
 
     processes: {pid: cmdline} -- what `ps -p <pid> -o command=` returns.
     pgrep_pids: what `pgrep -f 'cairn serve'` returns (candidate superset).
     child_pids: what `pgrep -P <ppid>` returns.
-    lsof_pids: pids `lsof -F p <db>` reports as holding the db file
-        (None + not lsof_fail => "file open by nobody": exit 1, no stderr).
-    lsof_fail: make lsof verification impossible (error exit + stderr).
-    """
+    lsof_pids: pids `lsof -F p <db>` reports holding the db file (None + not
+      lsof_fail => "file open by nobody": exit 1, no stderr).
+    lsof_fail: make lsof verification impossible (error exit + stderr)."""
     processes = processes or {}
     pgrep_pids = pgrep_pids or []
     child_pids = child_pids or []

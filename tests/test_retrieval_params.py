@@ -1,4 +1,4 @@
-"""RetrievalParams explicit injection (T003, D-008, FR-005).
+"""RetrievalParams explicit injection.
 
 ``RetrievalParams`` is the frozen, explicit tunable object threaded
 ``run_evaluation -> semantic_search`` -- the injection channel the quality
@@ -13,8 +13,8 @@ leak across lever combinations). Two contracts are pinned here:
   ``rrf_weights`` reorders the fused ranking by flipping leg weights,
   ``rrf_k`` rescales the fused scores, the pool knobs cap the cosine
   scan and the brute-force fetch, and the rerank/gate fields reach
-  their stages. T010 adds the NEW BM25-leg lever ``sparse_top_n``
-  (rank-position cutoff before fusion) with its own filter and
+  their stages. The BM25-leg lever ``sparse_top_n``
+  (rank-position cutoff before fusion) has its own filter and
   defaults-off-equivalence proofs.
 
 Hermetic like tests/test_rerank_gating.py: the hash embedder gives
@@ -36,21 +36,19 @@ pytestmark = pytest.mark.usefixtures("hash_backend")
 
 @pytest.fixture(autouse=True)
 def _params_env(monkeypatch):
-    """Deterministic knobs around every test.
+    """    Deterministic knobs around every test.
 
     * brute scan forced (ANN presence must not change results);
-    * no rerank enablement or margin env -- the gate tests that need them
-      set CAIRN_RERANK explicitly (mirroring test_rerank_gating.py);
-    * the persistent rerank auto-enable marker neutralized: on a dev
-      machine with a real ``~/.cairn/rerank_enabled`` (i.e. a downloaded
-      reranker), a process where cairn.paths resolved CAIRN_HOME before
-      conftest's sandbox applied would otherwise run the REAL cross-encoder
-      under these exact-order assertions (the test_rerank_gating.py
-      discipline);
-    * no CAIRN_FUSION override -- fusion defaults ON, the production path
-      the equivalence contract must hold on. Tests isolating the cosine
-      filter set it to "0" themselves.
-    """
+    * no rerank enablement or margin env -- the gate tests that need them set
+      CAIRN_RERANK explicitly (mirroring test_rerank_gating.py);
+    * the persistent rerank auto-enable marker neutralized: on a dev machine
+      with a real ``~/.cairn/rerank_enabled`` (i.e. a downloaded reranker), a
+      process where cairn.paths resolved CAIRN_HOME before conftest's sandbox
+      applied would run the REAL cross-encoder under these exact-order
+      assertions;
+    * no CAIRN_FUSION override -- fusion defaults ON, the production path the
+      equivalence contract must hold on; tests isolating the cosine filter set
+      it to "0" themselves."""
     from cairn.graph import reranker as rrk
 
     monkeypatch.setattr(
@@ -171,7 +169,7 @@ class TestRetrievalParamsContract:
 
 
 # ---------------------------------------------------------------------------
-# Defaults-off equivalence (the FR-005 defaults-preserving contract)
+# Defaults-off equivalence (the defaults-preserving contract)
 # ---------------------------------------------------------------------------
 
 
@@ -257,16 +255,15 @@ class TestDenseThresholdKnob:
 
 
 class TestRRFWeightsKnob:
-    """Fusion ON, query ``alpha`` (single token, so BOTH legs are
-    non-empty -- a sentence query degenerates to an empty BM25 leg via
-    today's quoted-phrase FTS defect, the T007 survey finding).
+    """    Fusion ON, query ``alpha`` (single token, so BOTH legs are non-empty -- a
+    sentence query degenerates to an empty BM25 leg via today's quoted-phrase
+    FTS defect).
 
-    Leg memberships: BM25 = [alpha, alphaBulk] (FTS prefix ``alpha*`` +
-    LIKE substring both hit the names); vector pool (threshold 0.0) =
-    [alpha, vectorOnlyNode, alphaBulk] by cosine. Swapping the (dense,
-    sparse) weights flips which leg orders the tail -- vectorOnlyNode and
-    alphaBulk trade places, and the leg-excluded candidate scores 0.0.
-    """
+    Leg memberships: BM25 = [alpha, alphaBulk] (FTS prefix ``alpha*`` + LIKE
+    substring both hit the names); vector pool (threshold 0.0) = [alpha,
+    vectorOnlyNode, alphaBulk] by cosine. Swapping the (dense, sparse) weights
+    flips which leg orders the tail -- vectorOnlyNode and alphaBulk trade places,
+    and the leg-excluded candidate scores 0.0."""
 
     @staticmethod
     def _order(seeded_db, dense_w, sparse_w):
@@ -328,7 +325,7 @@ class TestRRFKKnob:
 
 
 # ---------------------------------------------------------------------------
-# Scan-side pool knobs (T010): rerank_pool reaches BOTH computed-pool
+# Scan-side pool knobs: rerank_pool reaches BOTH computed-pool
 # branches; dense_pool reaches the brute-force SQL fetch cap.
 # ---------------------------------------------------------------------------
 
@@ -444,25 +441,22 @@ class TestSparseLimitKnob:
 
 
 # ---------------------------------------------------------------------------
-# The T010 NEW lever: sparse_top_n -- BM25-leg rank-position cutoff
+# The sparse_top_n lever: BM25-leg rank-position cutoff
 # ---------------------------------------------------------------------------
 
 
 class TestSparseTopNKnob:
-    """A rank-position cutoff on the BM25 candidate list before fusion
-    (NOT a score threshold: SQLite FTS5's bm25() rank is negative with
-    better = more negative, and the LIKE-fallback rows carry no rank at
-    all -- see the RetrievalParams field doc).
+    """    A rank-position cutoff on the BM25 candidate list before fusion -- NOT a
+    score threshold (SQLite FTS5's bm25() rank is negative with better = more
+    negative, and LIKE-fallback rows carry no rank at all).
 
-    Query ``alpha`` (both legs non-empty): BM25 = [alpha, alphaBulk];
-    vector pool at threshold 0.0 = [alpha, vectorOnlyNode, alphaBulk].
-    Equal weights, k=60. Default fused scores: alpha 2/61 = 0.0328,
-    alphaBulk 1/62 + 1/63 = 0.032, vectorOnlyNode 1/62 = 0.0161 --
-    alphaBulk's bm25 rank-2 term pushes it ABOVE vectorOnlyNode. Cutting
-    the bm25 tail at N=1 removes alphaBulk's only sparse contribution;
-    its bare vec rank-3 term (1/63 = 0.0159) falls below
-    vectorOnlyNode's 1/62, so the two trade places.
-    """
+    Query ``alpha`` (both legs non-empty): BM25 = [alpha, alphaBulk]; vector
+    pool at threshold 0.0 = [alpha, vectorOnlyNode, alphaBulk]. Equal weights,
+    k=60. Default fused scores: alpha 2/61 = 0.0328, alphaBulk 1/62 + 1/63 =
+    0.032, vectorOnlyNode 1/62 = 0.0161 -- alphaBulk's bm25 rank-2 term pushes it
+    ABOVE vectorOnlyNode. Cutting the bm25 tail at N=1 removes alphaBulk's only
+    sparse contribution; its bare vec rank-3 term (1/63 = 0.0159) falls below
+    vectorOnlyNode's 1/62, so the two trade places."""
 
     @staticmethod
     def _run(seeded_db, **fields):
@@ -521,7 +515,7 @@ class TestSparseTopNKnob:
             ] == 0.0161
 
     def test_defaults_off_equivalence_on_the_fixture(self, seeded_db):
-        """The FR-005 defaults-preserving contract on THIS lever's fixture:
+        """The defaults-preserving contract on THIS lever's fixture:
         an all-None params object is byte-identical to no params."""
         from cairn.graph.semantic import RetrievalParams, semantic_search
 
@@ -533,7 +527,7 @@ class TestSparseTopNKnob:
 
 
 # ---------------------------------------------------------------------------
-# The T008 lever: enrich -- sparse-leg term mode (FR-001)
+# The enrich lever: sparse-leg term mode
 #
 # With params.enrich=True the BM25 fetch consumes query_enrich's term list
 # through lexical.search_symbols_terms (OR of quoted prefixes) instead of
@@ -639,7 +633,7 @@ class TestEnrichSparseLeg:
         assert str_calls == []
 
     def test_sparse_limit_reaches_the_term_mode_fetch(self, monkeypatch, seeded_db):
-        """T010's limit threading covers the term path too: the fetch-limit
+        """The fetch-limit threading covers the term path too: the fetch-limit
         spy sees the hard-coded 30 without params and the injected 7 with
         them (the fetch limit, not the display limit)."""
         from cairn.graph import semantic as semantic_mod
@@ -703,7 +697,7 @@ class TestEnrichSparseLeg:
 
 
 # ---------------------------------------------------------------------------
-# The T009 lever: enrich -- dense-leg wiring at the search boundary (FR-001)
+# The enrich lever: dense-leg wiring at the search boundary
 #
 # The ONE EnrichedQuery computed inside semantic_search feeds BOTH legs from
 # a single enrichment: the existing single embed_query call embeds
@@ -711,7 +705,7 @@ class TestEnrichSparseLeg:
 # query when it is not; the sparse fetch consumes the SAME object's
 # ``sparse_query``; and the confidence gate's ``_exact_name_hit``
 # corroboration keeps the RAW query (gate inputs shift only through the
-# fused ranking -- T018's measurement problem).
+# fused ranking).
 # ---------------------------------------------------------------------------
 
 
@@ -881,7 +875,7 @@ class TestEnrichDenseLeg:
         assert off == plain
 
     def test_confidence_gate_keeps_the_raw_query(self, armed_gate, monkeypatch):
-        """T018's contract pinned now: under enrich=True the gate's
+        """Under enrich=True the gate's
         ``_fused_confident`` (and through it ``_exact_name_hit``) still
         receives the RAW user query -- enrichment must not leak into the
         gate's inputs, only into the fused ranking it measures."""
@@ -905,33 +899,29 @@ class TestEnrichDenseLeg:
             params=RetrievalParams(dense_threshold=0.0, enrich=True),
         )
         assert gate_queries == ["safeApiCall"]
-        # T016 (D-005) landed: the rerank pair's query side is now the
-        # enriched dense query -- "safeApiCall" is identifier-shaped, so
+        # The rerank pair's query side is the
+        # enriched dense query: "safeApiCall" is identifier-shaped, so
         # enrich() appends its camelCase sub-tokens. The gate above keeps
         # the raw query; only the rerank stage sees the enriched form.
         assert rec.calls[0]["query"] == "safeApiCall safe Api Call"
 
 
 def _seed_url_fixture(conn) -> None:
-    """T009's end-to-end corpus: the identifier-bearing sentence's target
-    (``parseUnencodedURL``) plus a prose decoy (``buildOutgoingRequest``).
-    All figures below are PROBED under the hash backend, not guessed:
+    """    T009's end-to-end corpus: the identifier-bearing sentence's target
+    (``parseUnencodedURL``) plus a prose decoy (``buildOutgoingRequest``). All
+    figures below are PROBED under the hash backend, not guessed:
 
     * raw sentence vs the target's chunk: cosine 0.0348 -- below the 0.3
-      default, so the dense leg alone misses; and the sentence through
-      today's ``search_symbols`` folds into one quoted FTS phrase that
-      matches no symbol (the empty-BM25 defect), so PLAIN mode returns
-      only the decoy.
+      default, so the dense leg alone misses; and the sentence through today's
+      ``search_symbols`` folds into one quoted FTS phrase that matches no symbol,
+      so PLAIN mode returns only the decoy.
     * enriched ``dense_query`` vs the target's chunk: cosine 0.2055 -- the
-      appended ``parse``/``URL`` sub-tokens overlap the docstring
-      ``"Parse URL."``, a genuine ~6x cosine gain (what subword overlap
-      gives a real embedder); still sub-threshold under token-hash
-      vectors, so the target ENTERS through the enriched sparse leg
-      (provenance ``bm25``) -- the task's sanctioned proof level.
+      appended ``parse``/``URL`` sub-tokens overlap the docstring "Parse URL."
+      (~6x cosine gain); still sub-threshold under token-hash vectors, so the
+      target ENTERS through the enriched sparse leg (provenance ``bm25``).
     * decoy: 0.3503 raw (a plain-mode dense hit), 0.2796 enriched -- the
-      appended identifier tail dilutes a chunk it does not overlap; honest
-      evidence that enrichment is a ranked trade, not a free win.
-    """
+      appended identifier tail dilutes a chunk it does not overlap; enrichment is
+      a ranked trade, not a free win."""
     conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
     conn.execute(
         "INSERT INTO files (id, repo_id, path, language) VALUES (1, 't', '/tmp/src/Net.kt', 'kotlin')"

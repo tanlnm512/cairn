@@ -1,4 +1,4 @@
-"""T015: pure RM3-style PRF expansion (FR-004 / D-001, D-003, TC-017).
+"""Pure RM3-style PRF expansion.
 
 Pure-function unit tests for ``cairn.graph.prf.expand``: IDF-weighted
 term selection and ordering, query-term exclusion, the RM3 (1-lambda)
@@ -242,7 +242,7 @@ class TestResultContract:
 
 class TestDeterminismHermeticity:
     def test_two_calls_byte_identical(self) -> None:
-        # TC-017: same inputs -> identical results, with and without a
+        # Same inputs -> identical results, with and without a
         # DF signal. dataclass equality compares fields; the string
         # fields pin byte-identity.
         for docs in (["alpha beta gamma", "alpha beta", "alpha delta"], []):
@@ -261,7 +261,7 @@ class TestDeterminismHermeticity:
         )
 
     def test_no_env_or_network_dependence(self) -> None:
-        # TC-017 offline guard: env mutations must not change the output
+        # Offline guard: env mutations must not change the output
         # and no network call may be attempted.
         docs = ["alpha beta", "alpha gamma"]
         baseline = expand("q", docs, df_lookup=_lookup(DF_ORDER))
@@ -298,7 +298,7 @@ class TestDeterminismHermeticity:
         assert again == baseline
 
     def test_module_imports_are_hermetic(self) -> None:
-        # Standing guard (TC-017 doctrine): only stdlib math, typing,
+        # Standing guard: only stdlib math, typing,
         # dataclasses, and collections.abc may be imported -- no random,
         # time, os, sqlite3, or anything network/LLM-capable.
         src = Path(inspect.getsourcefile(expand)).read_text()

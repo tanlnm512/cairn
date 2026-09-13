@@ -9,15 +9,15 @@ from cairn.knowledge.ingest.parser import ParsedDoc
 
 DEFAULT_DOC_TYPE = "spec"
 
-# FR-005: statuses that block ingestion; --include-drafts re-admits the
-# whole family (TC-009), tagging each readmitted doc `draft`. Orthogonal
+# Statuses that block ingestion; --include-drafts re-admits the
+# whole family, tagging each readmitted doc `draft`. Orthogonal
 # to the store's DOC_STATUSES lifecycle.
 _SKIP_STATUSES = frozenset(
     {"draft", "proposed", "review", "superseded", "deprecated"}
 )
 _DRAFT_STATUS = "draft"
 
-# FR-004 doc-kind -> doc_type map, checked in order: the first matching
+# Doc-kind -> doc_type map, checked in order: the first matching
 # kind wins, so decision must precede reference ("Architecture Decision
 # Record" is a decision, not a reference doc). Tokens match whole words
 # only; phrases match hyphen/slash-normalized text (prior-art, code-standard).
@@ -69,7 +69,7 @@ _KIND_RULES: tuple[tuple[str, tuple[str, ...], frozenset[str], frozenset[str]], 
     ),
 )
 
-# D-007 layer 2: filename/directory conventions, checked in this order.
+# Layer 2: filename/directory conventions, checked in this order.
 _DECISION_DIR_TOKENS = frozenset({"decisions", "decision", "adr", "adrs"})
 _NUMBERED_FILENAME_RE = re.compile(r"^\d{3,4}-")
 _FILENAME_KIND_TOKENS: tuple[tuple[str, frozenset[str]], ...] = (
@@ -93,9 +93,9 @@ def classify_doc(
     include_drafts: bool,
     rules: Mapping[str, str] | None = None,
 ) -> Classification:
-    """Classify one parsed document and apply the draft-status gate (FR-004/005).
+    """Classify one parsed document and apply the draft-status gate.
 
-    Layers per D-007: workspace title-keyword rules (FR-010, checked
+    Layers: workspace title-keyword rules (checked
     first so they refine the built-ins), then title keywords, then
     filename/directory conventions, then the `spec` default.
     """
@@ -138,7 +138,7 @@ def _classify_title(
 
 
 def _workspace_rule(title: str | None, rules: Mapping[str, str] | None) -> str | None:
-    """First workspace title-keyword rule that matches, if any (FR-010).
+    """First workspace title-keyword rule that matches, if any.
 
     Mirrors the built-in rules' discipline: a single keyword matches whole
     tokens only, and a multi-word keyword matches the whole phrase in the

@@ -1,6 +1,6 @@
 """Shared pytest fixtures for the cairn test suite.
 
-Consolidates the duplicated setup that previously appeared per-test-file:
+Consolidates setup shared across test files:
 
 * ``fresh_db``  -- an in-memory SQLite connection with the full schema
   (``_apply_schema``) already applied, Row factory enabled, FKs ON. Each
@@ -11,6 +11,11 @@ Consolidates the duplicated setup that previously appeared per-test-file:
   and after the test, so semantic-stack tests don't need torch / a model
   download. Apply with ``@pytest.fixture(autouse=True)`` per-test, or just
   request the fixture by name where needed.
+
+* ``caller_callee_ws`` / ``caller_callee_db`` -- a single-repo Kotlin
+  workspace (a.kt calls b.kt) and a factory that builds its graph into a
+  caller-provided DB path and returns the open connection (the test owns
+  closing it).
 
 Tests that need specific symbol/file rows still seed them locally -- the
 fixture only removes the boilerplate of creating the connection and running
@@ -25,7 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from cairn.graph.schema import _apply_schema
+from cairn.graph.builder import build_graph
+from cairn.graph.schema import _apply_schema, get_db
 
 # Names agent-client detection probes via shutil.which (agent_install/detect.py
 # + clients/*). Blocked suite-wide so a developer machine with real CLIs
@@ -35,30 +41,18 @@ _AGENT_CLIS = ("claude", "cursor", "droid", "agy", "opencode", "kilo", "omp")
 
 @pytest.fixture(autouse=True)
 def _hermetic_env(monkeypatch, tmp_path):
-    """Every test runs as if on a clean machine (suite-wide default).
+    """    Every test runs on a clean machine (suite-wide default), so env-dependent tests
+    fail at write time.
 
-    Two CI failures on one branch (2026-08-14) came from tests that were green
-    locally only because of the dev machine's surroundings: an uninstall
-    dry-run test that relied on agent CLIs being DETECTED (this machine has
-    real claude/droid; a clean runner detects nothing), and a CLI test parsing
-    click's interleaved stdout+stderr. This fixture makes the clean-runner
-    environment the DEFAULT so such tests fail locally, at write time:
+    * HOME/CAIRN_HOME point into the tmp sandbox (Path.home patched); no CAIRN_*
+      env leaks between tests.
+    * paths.py's import-time layout (CAIRN_HOME, REGISTRY_FILE, CONFIG_FILE,
+      SHARED_LIB) is re-pointed as a group, so call-time readers (dashboard store
+      enumeration, register_workspace writes) never touch the real machine's stores.
+    * Agent CLIs are invisible to shutil.which; the macOS Cursor.app probe
+      (agent_install.detect) resolves inside the sandbox.
 
-    * HOME/CAIRN_HOME point into the test's tmp sandbox (Path.home patched).
-    * No CAIRN_* env leaks between tests (all cleared each run).
-    * paths.py's import-time stores layout (CAIRN_HOME, REGISTRY_FILE,
-      CONFIG_FILE, SHARED_LIB) is re-pointed into the sandbox as a group, so
-      call-time readers of those attributes (the dashboard's store
-      enumeration, register_workspace's registry writes) never see or touch
-      the real machine's stores.
-    * Agent CLIs are invisible to shutil.which (detection then depends only on
-      what the test explicitly creates).
-    * The macOS /Applications/Cursor.app probe (agent_install.detect) resolves
-      inside the sandbox instead of the real machine.
-
-    Tests that genuinely need the real environment can opt out with
-    @pytest.mark.real_env -- justify it in a comment when you do.
-    """
+    Opt out with @pytest.mark.real_env -- justify in a comment."""
     home = tmp_path / "_home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda *a, **k: home)
@@ -116,18 +110,13 @@ def _hermetic_env(monkeypatch, tmp_path):
 
 @pytest.fixture
 def fresh_db() -> sqlite3.Connection:
-    """A fresh in-memory SQLite connection with the full graph schema applied.
+    """    A fresh in-memory SQLite connection with the full graph schema applied; row
+    factory is set.
 
-    Row factory is set. Foreign keys are LEFT OFF -- this matches what every
-    per-file fixture did before consolidation (``_apply_schema`` alone does
-    not enable FK; only ``schema.get_db()`` does). Some tests delete parent
-    rows that have child references (e.g. embeddings referencing a symbol
-    they then DELETE) and rely on FK being off to assert reap behavior;
-    turning it on here would silently break those.
-
-    Callers that need FK on can set it themselves via
-    ``conn.execute("PRAGMA foreign_keys = ON")``.
-    """
+    Foreign keys are LEFT OFF (``_apply_schema`` alone does not enable FK; only
+    ``schema.get_db()`` does). Some tests delete parent rows with child references
+    and rely on FK being off to assert reap behavior.
+    Callers needing FK on: ``conn.execute("PRAGMA foreign_keys = ON")``."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     _apply_schema(conn)
@@ -152,3 +141,39 @@ def hash_backend(monkeypatch):
     emb.reset_backend_cache()
     yield
     emb.reset_backend_cache()
+
+
+@pytest.fixture
+def caller_callee_ws(tmp_path):
+    """A single-repo workspace with a.kt calling b.kt's symbol."""
+    ws = tmp_path / "ws"
+    repo = ws / "demo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "a.kt").write_text(
+        "class Caller {\n"
+        "  fun go() {\n"
+        "    val r = Callee()\n"
+        "    r.target()\n"
+        "  }\n"
+        "}\n"
+    )
+    (repo / "b.kt").write_text(
+        "class Callee {\n"
+        "  fun target() {}\n"
+        "}\n"
+    )
+    return ws
+
+
+@pytest.fixture
+def caller_callee_db(caller_callee_ws):
+    """Factory: build the graph over caller_callee_ws, return the connection.
+
+    Usage: ``conn = caller_callee_db(str(tmp_path / "x.db"))``.
+    """
+
+    def _build(db_path):
+        build_graph(workspace=str(caller_callee_ws), db_path=str(db_path))
+        return get_db(str(db_path))
+
+    return _build

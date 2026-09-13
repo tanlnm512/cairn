@@ -4,10 +4,10 @@ Evaluates recall@10 and MRR (Mean Reciprocal Rank) for code (L1),
 knowledge (L5), and tribal-memory (L4) retrieval pipelines against
 ground-truth query datasets.
 
-Two query sources (D-008): the legacy yaml fixture via ``load_eval_queries``
+Two query sources: the legacy yaml fixture via ``load_eval_queries``
 (bundled test data, kept as-is) and the maintained graded pair via
-``load_ground_truth`` (``queries.jsonl`` + ``expectations.tsv``, D-004
-schema) with identity-first matching and grade-aware scoring.
+``load_ground_truth`` (``queries.jsonl`` + ``expectations.tsv``)
+with identity-first matching and grade-aware scoring.
 ``run_evaluation`` renders the per-level report behind ``cairn eval``.
 
 Campaign methodology and verdict records live under
@@ -81,7 +81,7 @@ def load_eval_queries(path: Optional[Path] = None) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------
-# Graded ground-truth loader (D-004 schema, D-008 second-loader decision)
+# Graded ground-truth loader
 #
 # The yaml fixture above (tests/eval/queries.yaml) is *test fixture data* and
 # stays as-is. The maintained ground truth lives as a file pair:
@@ -101,7 +101,7 @@ VALID_GRADES = frozenset({1, 2})
 class Expectation:
     """One qrel row: the symbol expected for a query, and how primary it is.
 
-    ``grade`` 1 = must-return context, 2 = the primary target (D-004).
+    ``grade`` 1 = must-return context, 2 = the primary target.
     """
 
     symbol_id: str
@@ -121,7 +121,7 @@ class GradedQuery:
 
 
 def parse_symbol_id(symbol_id: str) -> Tuple[str, str]:
-    """Split a D-004 ``file#symbol`` id into its (file, symbol) components.
+    """Split a ``file#symbol`` id into its (file, symbol) components.
 
     Splits on the *last* ``#`` so that file components containing ``#`` still
     parse (symbol names cannot contain ``#`` in any indexed language).
@@ -136,7 +136,7 @@ def parse_symbol_id(symbol_id: str) -> Tuple[str, str]:
 
 
 def load_ground_truth(ground_truth_dir: Path) -> List[GradedQuery]:
-    """Load a D-004 ground-truth pair from ``ground_truth_dir``.
+    """Load a ground-truth pair from ``ground_truth_dir``.
 
     Reads ``queries.jsonl`` + ``expectations.tsv`` and joins them on
     ``query_id``. Validation errors raise ``ValueError``:
@@ -266,7 +266,7 @@ def evaluate_l1_query(
 ) -> Tuple[float, float]:
     """Evaluate L1 query using semantic_search / search_symbols.
 
-    Returns (recall_at_k, reciprocal_rank). ``params`` (D-008) is threaded
+    Returns (recall_at_k, reciprocal_rank). ``params`` is threaded
     through to ``semantic_search`` verbatim; ``None`` keeps today's defaults.
     """
     from cairn.graph import queries as qmod
@@ -348,7 +348,7 @@ def evaluate_l4_query(
 
 
 # --------------------------------------------------------------------------
-# Graded matching + scoring (two-tier identity-first rule, D-008)
+# Graded matching + scoring (two-tier identity-first rule)
 # --------------------------------------------------------------------------
 
 def _result_field(result: Any, key: str) -> str:
@@ -416,7 +416,7 @@ def score_graded_query(
       top-k (a match via either matcher tier counts).
     * **MRR contribution** = reciprocal of the rank of the FIRST grade-2
       match when the query has any grade-2 expectation — the primary
-      target outranks must-return context, per D-004 — else the first
+      target outranks must-return context — else the first
       grade-1 match. A query whose grade-2 expectations exist but none
       matched scores 0.0: the primary target was missed, and falling back
       to a grade-1 rank would inflate the score.
@@ -446,7 +446,7 @@ def _retrieve_l1(
 ) -> List[Any]:
     """L1 retrieval pipeline (semantic first, lexical fallback), full rows.
 
-    ``params`` (D-008) reaches the ``semantic_search`` call; the lexical
+    ``params`` reaches the ``semantic_search`` call; the lexical
     fallback leg takes no retrieval tunables today.
     """
     from cairn.graph import queries as qmod
@@ -508,7 +508,7 @@ def evaluate_graded_query(
 ) -> Tuple[float, float]:
     """Evaluate one graded query through its level's retrieval pipeline.
 
-    ``params`` (D-008) applies to the L1 (semantic) leg only -- L4/L5
+    ``params`` applies to the L1 (semantic) leg only -- L4/L5
     retrieval pass no retrieval tunables.
     """
     if graded.level == "L1":
@@ -533,7 +533,7 @@ def _run_graded_evaluation(
     Report shape mirrors the yaml one — ``{"L1": {...}, "L4": {...},
     "L5": {...}}`` with ``count``/``recall_at_10``/``mrr`` — plus additive
     ``n_queries`` and ``n_expectations`` keys for dataset-size visibility.
-    ``params`` (D-008) threads through to every retrieval call.
+    ``params`` threads through to every retrieval call.
     """
     queries = load_ground_truth(graded_dir)
 
@@ -585,13 +585,13 @@ def run_evaluation(
 ) -> Dict[str, Any]:
     """Run full evaluation harness across specified corpus ("L1", "L4", "L5", or "all").
 
-    ``queries_path`` selects the query source (D-008 — two loaders, one
-    harness): a *directory* holding the graded D-004 pair
+    ``queries_path`` selects the query source (two loaders, one
+    harness): a *directory* holding the graded pair
     (``queries.jsonl`` + ``expectations.tsv``) takes the graded loader and
     the identity-first matcher; anything else (a yaml file, or None for the
     bundled fixture) takes the legacy yaml path unchanged.
 
-    ``params`` (D-008, FR-005) is an explicit frozen ``RetrievalParams``
+    ``params`` is an explicit frozen ``RetrievalParams``
     threaded through to every L1 ``semantic_search`` call in both paths —
     the injection channel the sweep harness uses instead of mutating the
     environment (in-process env writes would leak across combinations).

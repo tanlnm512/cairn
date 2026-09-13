@@ -28,19 +28,17 @@ pytestmark = pytest.mark.usefixtures("hash_backend")
 
 @pytest.fixture(autouse=True)
 def _gate_env(monkeypatch):
-    """Deterministic gate arming + telemetry capture around every test.
+    """    Deterministic gate arming + telemetry capture around every test.
 
     * rerank marker neutralized (machine-independent enablement, mirroring
       tests/test_reranker.py);
-    * the gate's hash-vector detector pinned off: the vectors ARE still
-      hash-generated (hermetic embedder), but the gate refuses to fire under
-      token-overlap vectors and ``CAIRN_EMBED_BACKEND=hash`` (set by the
-      module's hash_backend fixture) counts as that. The test exercising the
-      disable-behavior re-arms it;
+    * the gate's hash-vector detector pinned off: the vectors ARE hash-generated
+      (hermetic embedder), but the gate refuses to fire under token-overlap
+      vectors and ``CAIRN_EMBED_BACKEND=hash`` (set by the module's hash_backend
+      fixture) counts as that; the disable-behavior test re-arms it;
     * brute scan forced (CAIRN_ANN_BACKEND=off);
-    * sink buffer cleared on entry/exit so skip-event assertions see only
-      this test's emissions.
-    """
+    * sink buffer cleared on entry/exit so skip-event assertions see only this
+      test's emissions."""
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
     from cairn.graph import semantic as semantic_mod
@@ -240,23 +238,17 @@ class TestHashVectorDetector:
 
 class TestCalibrationPin:
     def test_t018_ds_v1_recalibration_no_change(self):
-        """T018 (FR-004/TC-013) re-measured the gate on the DS-v1 ground
-        truth (yarl corpus, 29-query tune split, bge-m3 + bge-reranker-base,
-        chunk variant B, rerank on): at margins {0.30, 0.45, 0.60, 0.75} the
-        gate skips 0/29 tune queries both at the shipped config and with
-        enrichment forced on -- every DS-v1 query is a natural-language
-        question, so the exact-name corroboration never fires (0/29
-        exact-name hits either way; the gate sees the RAW query by design)
-        and the skip-rate curve is flat at zero across the whole margin
-        axis. The margin cannot be re-calibrated on a population with no
-        skip traffic; the original agent-style calibration (17-25% skips,
-        0.94-1.00 top-1 rerank agreement at 0.45) remains the operative
-        basis. The margin-only hypothetical (corroboration dropped)
-        re-confirmed on DS-v1 why it must stay: 14/29 would-skip at 0.30
-        with only 0.50 agreement (9/29 at 0.45, agreement 0.44). This pin
-        exists so the constant cannot drift casually: changing it requires a
-        new calibration table (see semantic.py's gating note), not an edit.
-        """
+        """        Pin on the rerank confidence-gate margin constant.
+
+        The DS-v1 ground truth (yarl corpus, 29-query tune split, bge-m3 +
+        bge-reranker-base, chunk variant B, rerank on) is all natural-language
+        questions, so the exact-name corroboration never fires (0/29 exact-name hits
+        either way; the gate sees the RAW query by design) and the skip-rate curve is
+        flat at zero across the whole margin axis -- the margin cannot be calibrated
+        on a population with no skip traffic. Dropping the exact-name corroboration
+        and gating on margin alone would skip most queries at low margins with poor
+        top-1 rerank agreement. Changing the constant requires a new calibration
+        table (see semantic.py's gating note), not an edit."""
         from cairn.graph import semantic
 
         assert semantic._DEFAULT_RERANK_MIN_MARGIN == 0.45

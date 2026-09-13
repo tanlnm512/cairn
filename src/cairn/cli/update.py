@@ -71,6 +71,12 @@ def update(repo, file_path, workspace, db, knowledge):
             f"Updated: reindexed {result['files_reindexed']} files{deleted_part} "
             f"across {result['repos_scanned']} repos"
         )
+    deferred = result.get("deferred_embeds") or 0
+    if deferred:
+        display.warning(
+            f"Deferred embedding {deferred} symbol(s): no embedding backend "
+            "available; run `cairn embed` once one is reachable"
+        )
     
     # Run memory decay after update to archive stale raw memories automatically.
     # This ensures raw memories don't grow unbounded over time.

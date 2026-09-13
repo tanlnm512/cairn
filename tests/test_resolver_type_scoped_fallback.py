@@ -1,9 +1,6 @@
 """Tests for import-aware resolution: package-qualified matching + type-scoped fallback.
 
-Covers two related features of ``_import_aware_candidates`` (formerly split
-across test_resolver_package_qualified.py and this file; merged 2026-07-31 to
-deduplicate -- the two files tested the same function with 5 near-identical
-cases):
+Covers two related features of ``_import_aware_candidates``:
 
 1. M4 package-qualified matching: ``import com.example.RepoA`` resolves a call
    ``RepoA.create()`` to ``com.example.RepoA.create`` via contiguous-subsequence
@@ -39,19 +36,14 @@ def test_nested_package_qualified_resolves():
 
 
 def test_type_scoped_qname_with_package_qualified_import():
-    """Type-scoped qname with package-qualified import resolves via last-segment fallback.
+    """    Type-scoped qname with package-qualified import resolves via last-segment
+    fallback.
 
-    Given:
-    - import com.example.RepoA (full import path with package segments)
-    - Candidate: RepoA.create (type-scoped qualified_name, no package segments)
-    - target_name: create (extracted from call site)
-
-    Expected: candidate should match via last-segment fallback where 'RepoA'
-    (last segment of import tail) matches qsegs[0] of 'RepoA.create'.
-
-    This currently fails (scores 0) because the contiguous-subsequence match
-    looks for ['com', 'example', 'RepoA'] in ['RepoA', 'create'], which never aligns.
-    """
+    import com.example.RepoA; candidate RepoA.create (type-scoped qualified_name,
+    no package segments); target_name create. Must match via last-segment
+    fallback: 'RepoA' (last segment of the import tail) matches qsegs[0] of
+    'RepoA.create'. Scores 0 under the contiguous-subsequence match because
+    ['com', 'example', 'RepoA'] never aligns with ['RepoA', 'create']."""
     # Simulating: import com.example.RepoA
     my_imports = ["com.example.RepoA"]
 
@@ -73,15 +65,11 @@ def test_type_scoped_qname_with_package_qualified_import():
 
 
 def test_full_contiguous_match_scores_higher_than_last_segment_fallback():
-    """Full contiguous matches score higher than last-segment fallback.
+    """    Full contiguous matches score higher than last-segment fallback.
 
-    Given:
-    - import com.example.RepoA
-    - Candidate1: com.example.RepoA.create (package-qualified, full contiguous match)
-    - Candidate2: RepoA.create (type-scoped, last-segment fallback)
-
-    Expected: Candidate1 should win (higher confidence).
-    """
+    import com.example.RepoA. Candidate1 com.example.RepoA.create
+    (package-qualified, full contiguous match) must win over Candidate2
+    RepoA.create (type-scoped, last-segment fallback)."""
     my_imports = ["com.example.RepoA"]
     cands = [
         ("sid1", "repoA", "file1", "com.example.RepoA.create"),
@@ -160,16 +148,11 @@ def test_last_segment_fallback_does_not_match_unrelated_import():
 
 
 def test_direct_import_pattern_unaffected():
-    """DIRECT import pattern (symbol imported as-is) should be unaffected.
+    """    DIRECT import pattern (symbol imported as-is) is unaffected by the fallback.
 
-    Given:
-    - import com.example.RepoA
-    - Candidate: com.example.RepoA (the type itself)
-    - target_name: RepoA
-
-    Expected: should match via suffix pattern (entire qname matches import),
-    not via the new fallback.
-    """
+    import com.example.RepoA; candidate com.example.RepoA (the type itself);
+    target_name RepoA. Must match via the suffix pattern (entire qname matches
+    the import), not via the new fallback."""
     my_imports = ["com.example.RepoA"]
     cands = [
         ("sid1", "repoA", "file1", "com.example.RepoA"),

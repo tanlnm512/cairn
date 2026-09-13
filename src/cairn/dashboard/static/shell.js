@@ -35,7 +35,7 @@
 
   /* Switch the global workspace: rewrite the ?store= param on the
      current URL and reload — the tab stays and every view re-renders on
-     the selected workspace (FR-003's seam stays the URL param). Back to
+     the selected workspace (the seam stays the URL param). Back to
      the launch store (empty key) navigates bare, and clearing the
      remembered key matters: the head stickiness script would otherwise
      redirect the bare URL right back to the old store. */

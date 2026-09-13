@@ -1,13 +1,8 @@
 """get_callers / get_callees: precise-empty auto-fallback to fuzzy.
 
-Regression test for a real miss caught in a live A/B benchmark (2026-07-28,
-see agent_integration/skill/evals/rule08b-empty-precise-gave-up.md): an agent
-asked for callers of a symbol defined outside the indexed workspace got an
-empty precise result and reported "no callers" without retrying fuzzy=True,
-even though a real caller existed and fuzzy=True found it in one call.
-
-These tools now retry fuzzy themselves when fuzzy=False and precise is empty,
-so the agent doesn't have to remember to.
+When fuzzy=False and the precise lookup is empty (e.g. the symbol is defined
+outside the indexed workspace), the tools retry fuzzy themselves instead of
+returning an empty result the caller might read as "no callers".
 """
 from __future__ import annotations
 
@@ -64,6 +59,7 @@ def _patched_conn(fresh_db, monkeypatch):
     return fresh_db
 
 
+@pytest.mark.core
 def test_get_callers_falls_back_to_fuzzy_when_precise_empty(_patched_conn):
     _seed_external_call_edge(_patched_conn)
 

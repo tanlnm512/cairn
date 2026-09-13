@@ -54,7 +54,7 @@ EMBED_FLUSH_STALLED = "embed_flush_stalled"
 # skip site in graph/semantic.py with a fixed-enum `reason` attr.
 RERANK_SKIPPED = "rerank_skipped"
 
-# Bounded reason enum for embed_server_degraded (FR-013); emitters stay
+# Bounded reason enum for embed_server_degraded; emitters stay
 # within these six so the doctor/consumers can bucket on them.
 EMBED_SERVER_REASONS = frozenset(
     {

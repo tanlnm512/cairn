@@ -1,12 +1,12 @@
 """Click-level tests for `cairn wiki generate --llm --force`, `wiki status`,
 and `wiki retry`.
 
-Business pins (TC-007/TC-016/TC-017/TC-018): `generate --llm --force`
-re-queues an unchanged, promoted page that a plain re-run skips (FR-005);
+Business pins: `generate --llm --force`
+re-queues an unchanged, promoted page that a plain re-run skips;
 `status` lists each planned page
 exactly once with a state from queued/in-progress/promoted/failed plus
 per-state aggregate counts; `retry` re-queues exactly the failed/dropped
-pages as fresh task chains (parent_attempt=0, D-008) while bumping the
+pages as fresh task chains (parent_attempt=0) while bumping the
 manifest's cumulative attempt counter and never touching promoted pages;
 retry with nothing to retry is a friendly no-op with exit 0.
 
@@ -122,7 +122,7 @@ def _zombie(bundle, page_id):
 
 
 def _promote(bundle, page_id):
-    """Write the D-007 promoted article so the concept resolves."""
+    """Write the promoted article so the concept resolves."""
     bundle.write_concept(
         OKFConcept(
             type="Wiki-Article",
@@ -138,7 +138,7 @@ def _page_lines(out, page_id):
     return [line for line in out.splitlines() if page_id in line]
 
 
-# --- wiki status (TC-016) ----------------------------------------------------
+# --- wiki status -----------------------------------------------------
 
 
 def test_status_lists_each_page_once_with_a_state_and_aggregates(cli_env):
@@ -180,7 +180,7 @@ def test_status_lists_each_page_once_with_a_state_and_aggregates(cli_env):
         assert out.count(state) >= 2, state
 
 
-# --- wiki retry (TC-017 / TC-018) ---------------------------------------------
+# --- wiki retry --------------------------------------------------
 
 
 def test_retry_requeues_only_failed_pages_as_fresh_chains(cli_env):
@@ -254,7 +254,7 @@ def _drive_dropped_chain(bundle, page_id, conn):
 def test_dropped_chain_derives_failed_for_status_and_retry(cli_env, fresh_db):
     """A chain exhausted at the revise cap (terminal done task whose result
     failed the critic, no successor, concept absent) is failed for status
-    and retry even though the manifest row still says queued (TC-017)."""
+    and retry even though the manifest row still says queued."""
     bundle = _bundle(cli_env)
     original = _drive_dropped_chain(bundle, FAILED, fresh_db)
     _promote(bundle, PROMOTED)
@@ -314,7 +314,7 @@ def test_pending_revise_keeps_the_chain_alive_and_untouched_by_retry(
     assert on_disk[_key(FAILED)]["task_id"] == original.id
 
 
-# --- wiki generate --llm --force (TC-007 / FR-005) ----------------------------
+# --- wiki generate --llm --force ---------------------------------
 
 
 def _seed_indexed_repo(conn):
@@ -400,7 +400,7 @@ def test_generate_llm_malformed_manifest_errors_clean(cli_env, tmp_path):
     assert "mapping keyed by" in err_lines[0]
 
 
-# --- wiki status staleness column (TC-019 / TC-020, FR-007) -------------------
+# --- wiki status staleness column ------------------------
 
 SHA_A = "abc1234a"
 SHA_B = "def5678b"
@@ -432,7 +432,7 @@ def _fake_head(monkeypatch, head):
 
 
 def test_status_labels_recorded_sha_equal_to_head_fresh(cli_env, monkeypatch):
-    """TC-019: a page whose recorded sha equals the current HEAD reads
+    """a page whose recorded sha equals the current HEAD reads
     fresh in its status line."""
     bundle = _bundle(cli_env)
     _promote_with_sha(bundle, PROMOTED, sha=SHA_A)
@@ -469,7 +469,7 @@ def test_status_labels_recorded_sha_behind_head_stale(cli_env, monkeypatch):
 
 
 def test_status_labels_unavailable_sha_or_head_unknown(cli_env, monkeypatch):
-    """TC-020: no recorded sha anywhere, or HEAD unresolvable at display
+    """no recorded sha anywhere, or HEAD unresolvable at display
     time, reads unknown — never fresh, never stale."""
     bundle = _bundle(cli_env)
     _promote_with_sha(bundle, PROMOTED, sha=None)

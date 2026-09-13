@@ -1,18 +1,18 @@
 """CLI invocation metrics: the ``tool_metrics`` row builder + buffered flusher.
 
-CLI commands get the same observability as MCP tools (spec
-``cli-usage-recording`` FR-001/FR-003): every ``cairn`` invocation becomes one
+CLI commands get the same observability as MCP tools: every ``cairn``
+invocation becomes one
 ``tool_metrics`` row with ``tool_name = "cli:" + command_path``, timing,
 status, and a redacted argv summary. This module is the CLI-side sibling of
 :mod:`cairn.mcp_server.metric_buffering` -- it owns a buffer and its flush
 logic but no thread of its own: it registers ``_flush_cli_metrics`` with the
-shared telemetry sink (:mod:`cairn.telemetry.sink`, spec §6.1) so events,
+shared telemetry sink (:mod:`cairn.telemetry.sink`) so events,
 tool_metrics, and CLI rows share one 30s flush cadence + one atexit drain
-(FR-003's flush-on-clean-exit is the sink's atexit handler).
+(flush-on-clean-exit is the sink's atexit handler).
 
 Doctrine (mirrors ``metric_buffering`` / the shared sink):
   * Telemetry is analytics, not correctness: recording never raises into the
-    caller, never holds a user lock, never blocks the command (FR-003).
+    caller, never holds a user lock, never blocks the command.
   * Buffer then flush; the buffer is snapshotted WITHOUT clearing, so a
     transient failure ("database is locked") leaves rows queued for the next
     attempt -- no silent drops. ``deque(maxlen=2000)`` caps growth during a
@@ -25,11 +25,11 @@ Doctrine (mirrors ``metric_buffering`` / the shared sink):
     ``CAIRN_TELEMETRY=off`` (master kill switch) or the process is read-only
     (a mode=ro store would fail every flush and buffer indefinitely).
 
-Source stamping (phase 2, FR-002/D-002): every CLI row states ``source =
+Source stamping: every CLI row states ``source =
 'cli'`` explicitly -- the only two places in this module that know the
 column list are ``_INSERT_SQL`` and :func:`build_row`. MCP rows ride the
 table's ``DEFAULT 'mcp'`` (their INSERT names no source column), so no other
-writer of ``tool_metrics`` changes (FR-005).
+writer of ``tool_metrics`` changes.
 
 Deliberately CLI-agnostic: no click imports, no MCP-server imports. The
 writable connection factory is injected via :func:`configure_conn` (CLI boot
@@ -77,7 +77,7 @@ MAX_CLI_ARGS_SUMMARY_CHARS = 200
 _conn_factory: Optional[Callable[[], "object"]] = None
 
 # Explicit column list keeps this INSERT stable against future additive
-# migrations to the table. `source` is stated explicitly ('cli') per FR-002;
+# migrations to the table. `source` is stated explicitly ('cli');
 # MCP rows ride the table-side DEFAULT 'mcp'.
 _INSERT_SQL = (
     "INSERT INTO tool_metrics "
@@ -88,14 +88,12 @@ _INSERT_SQL = (
 
 
 def derive_session_id() -> str:
-    """Session identity for a CLI record; never ``"unknown"`` (FR-006).
+    """Session identity for a CLI record; never ``"unknown"``.
 
     Terminal-provided ids win so one shell's commands group together:
     ``TERM_SESSION_ID`` -> ``term:<value>``, ``TMUX_PANE`` -> ``tmux:<value>``.
     Otherwise each invocation is its own session: ``cli:<uuid4 hex[:12]>`` --
-    a fresh value per call, never the table's ``unknown`` default (a CLI row
-    stamped ``unknown`` would disappear into the legacy mega-session that
-    ui-dashboard-traffic-scale exists to bound).
+    a fresh value per call, never the table's ``unknown`` default.
     """
     term = os.environ.get("TERM_SESSION_ID")
     if term:
@@ -113,7 +111,7 @@ def build_row(
     status: str,
     error_message: str = "",
 ) -> tuple:
-    """Build one ``tool_metrics`` row tuple for a CLI invocation (FR-001).
+    """Build one ``tool_metrics`` row tuple for a CLI invocation.
 
     Contract (positional order = ``_INSERT_SQL``'s column order):
       ``(tool_name="cli:" + command_path, session_id=derive_session_id(),
@@ -161,7 +159,7 @@ def build_row(
         req_chars,
         None,  # resp_chars: a CLI invocation has no response payload
         raw_summary[:MAX_CLI_ARGS_SUMMARY_CHARS] if raw_summary else None,
-        "cli",  # source (FR-002): explicit here; MCP rows ride DEFAULT 'mcp'
+        "cli",  # source: explicit here; MCP rows ride DEFAULT 'mcp'
     )
 
 

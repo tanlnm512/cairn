@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% import "_table.html" as tables with context %}
 {% block title %}Embeddings — Cairn Dashboard{% endblock %}
-{#- FR-011 status view: effective values with D-008 precedence per knob.
-    The degradation banner above comes from the shared FR-013 accessor —
+{#- Status view: effective values with env-over-file precedence per knob.
+    The degradation banner above comes from the shared banner accessor —
     the fallback rows here read ladder_state() only (no second builder). -#}
 {% block content %}
 <section class="panel">

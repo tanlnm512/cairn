@@ -1,24 +1,24 @@
-"""Tests for scripts/verify_ground_truth.py -- the FR-003/AC5 staleness gate.
+"""Tests for scripts/verify_ground_truth.py -- the staleness gate.
 
 Hermetic strategy (same shape as tests/test_verify_datasource.py): the real
 82-query pair is the CI run's business; every unit test below mints a SMALL
-scratch snapshot + ground-truth pair in tmp_path (T010's pair-building
-pattern + T008's build-over-a-copy pattern), then drives the validator as a
+scratch snapshot + ground-truth pair in tmp_path (pair-building
+pattern + build-over-a-copy pattern), then drives the validator as a
 library call, with one --json run through main() for the wire shape and one
 end-to-end run against the committed pair (exit 0, 234/234) as the real-data
 anchor.
 
-Covered contract points (task T012 / TC-021 / TC-022):
+Covered contract points:
 * all-verified pass -> exit 0 with the per-kind/level summary;
 * a tampered grade-2 expectation -> exit 1 NAMING the entry (query text +
   missing symbol); grade-1 misses are consciously listed too, grade-2 first;
 * missing dataset dir / malformed dataset / missing snapshot / empty build /
   explicitly requested missing bundle -> exit 2 (infrastructure, not stale);
 * a missing auto-discovered bundle is NOT an error (L5 falls back to the
-  graph surface -- T011's authoring reality);
+  graph surface (L5 expectations are authored as code-symbol ids));
 * an OKF bundle at <t2>/.knowledge joins the L5 surface and rescues
   concept-shaped expectations the graph cannot verify;
-* D-010: a failing run never rewrites the dataset files;
+* a failing run never rewrites the dataset files;
 * the .git scanner marker lands on the tmp COPY, never the source snapshot.
 """
 from __future__ import annotations
@@ -44,7 +44,7 @@ _spec.loader.exec_module(vg)
 
 
 # ---------------------------------------------------------------------------
-# Scratch fixtures: a tiny snapshot + a matching D-004 pair
+# Scratch fixtures: a tiny snapshot + a matching pair
 # ---------------------------------------------------------------------------
 
 WIDGET_PY = '''"""A tiny widget package for the validator's unit fixtures."""
@@ -115,7 +115,7 @@ def _write_snapshot(t2_root: Path) -> Path:
 
 
 def _write_dataset(gt_dir: Path, expectations=EXPECTATIONS, queries=QUERIES) -> Path:
-    """Materialize a D-004 file pair (T010's test-building pattern)."""
+    """Materialize a snapshot/ground-truth file pair."""
     gt_dir.mkdir(parents=True, exist_ok=True)
     (gt_dir / "queries.jsonl").write_text(
         "".join(json.dumps(q) + "\n" for q in queries), encoding="utf-8"
@@ -217,7 +217,7 @@ class TestVerifyPaths:
         assert report.summary["L5"]["knowledge"]["verified"] == 1
 
     def test_no_bundle_leaves_concept_shaped_l5_row_stale(self, synth):
-        # T011's committed reality has no bundle; code-symbol L5 rows verify
+        # The committed reality has no bundle; code-symbol L5 rows verify
         # against the graph, but a concept-shaped row cannot -- it is stale.
         dataset, snapshot, _t2 = synth
         report = vg.verify_ground_truth(dataset=dataset, snapshot=snapshot)
@@ -235,7 +235,7 @@ class TestVerifyPaths:
         assert report.exit_code() == vg.EXIT_STALE
         assert len(report.stale) == 2  # tampered grade-2 + concept-shaped row
         first = report.stale[0]
-        assert first.grade == 2  # grade-2 primary targets list first (D-004)
+        assert first.grade == 2  # grade-2 primary targets list first.
         assert first.query_id == "l1-def"
         assert first.query_text == "Where is the Widget class defined?"
         assert first.symbol_id == "widget.py#Widget_v2"
@@ -263,7 +263,7 @@ class TestVerifyPaths:
 
 
 # ---------------------------------------------------------------------------
-# CLI surface: --json shape, human output, D-010, marker isolation
+# CLI surface: --json shape, human output, marker isolation
 # ---------------------------------------------------------------------------
 
 
@@ -304,10 +304,10 @@ class TestCliAndContract:
         assert code == vg.EXIT_STALE
         assert "Where is the Widget class defined?" in err
         assert "widget.py#Widget_v2" in err
-        assert "DS-v2" in err  # D-010: the fix ships as a new version
+        assert "DS-v2" in err  # a stale verdict ships as a new dataset version
 
     def test_failing_run_never_rewrites_the_dataset(self, synth):
-        # D-010: stale sets ship as DS-v2; the validator is read-only on the
+        # Stale sets ship as DS-v2; the validator is read-only on the
         # pair. Byte-identical files after a stale verdict proves it.
         dataset, snapshot, _t2 = synth
         before = {
@@ -351,7 +351,7 @@ class TestCliAndContract:
 
 
 # ---------------------------------------------------------------------------
-# Real committed pair (TC-021 anchor; ~0.4s: tiny yarl snapshot builds fast)
+# Real committed pair (~0.4s: tiny yarl snapshot builds fast)
 # ---------------------------------------------------------------------------
 
 
@@ -369,7 +369,7 @@ class TestRealCommittedPair:
         assert t["stale"] == 0
         assert report.build["parse_errors"] == 0
         # The committed tree carries no bundle: L5 verifies against the graph
-        # surface (T011 authored L5 expectations as code-symbol ids).
+        # surface (L5 expectations are authored as code-symbol ids).
         assert report.bundle_status == "none"
         # No .git marker leaked into the committed snapshot.
         assert not (REAL_SNAPSHOT / ".git").exists()

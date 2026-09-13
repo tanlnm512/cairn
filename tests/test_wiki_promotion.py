@@ -1,6 +1,7 @@
 """Contract and regression tests for wiki task kinds and the revise cycle.
 
-FR-002 pins the ``_output_spec`` contract for the four wiki kinds —
+Wiki output specs pin the ``_output_spec`` contract for the four wiki
+kinds —
 ``wiki-page``, ``wiki-page-revise``, ``wiki-catalog``, ``wiki-catalog-revise``
 (revise kinds are derived by appending ``-revise``, so all four must be
 registered). The page spec requires a markdown article ending in a
@@ -10,7 +11,7 @@ through ``create_task`` verbatim; only memory-* kinds are stripped).
 Assertions pin stable substrings ("## Sources", "Mermaid",
 "outside the graph"), not full sentences.
 
-FR-004 guards the existing kind-agnostic revise cycle for the wiki kind: a
+Guards the existing kind-agnostic revise cycle for the wiki kind: a
 critic-failing ``wiki-page`` completion spawns a bounded ``wiki-page-revise``
 task carrying ``errors`` + ``parent_task_id``; the chain drops at
 ``MAX_REVISE_CYCLES`` with ``dropped: True`` and nothing promoted.
@@ -76,9 +77,9 @@ def _pending_wiki_page_tasks(bundle: OKFBundle) -> list:
 
 
 class TestWikiOutputSpecRegistration:
-    """FR-002: every wiki kind resolves to a real output spec.
+    """Every wiki kind resolves to a real output spec.
 
-    FR-005: any kind whose name starts with ``wiki-page`` is served the full
+    Any kind whose name starts with ``wiki-page`` is served the full
     wiki spec (Sources-footer requirement intact), never the default string.
     """
 
@@ -126,7 +127,7 @@ class TestWikiOutputSpecRegistration:
 
 
 class TestMermaidGating:
-    """FR-002 (US2 AC3): Mermaid instructions ride facts.diagrams only."""
+    """Mermaid instructions ride facts.diagrams only."""
 
     def test_diagrams_fact_passes_through_and_gates_mermaid_instructions(
         self, tmp_path
@@ -158,7 +159,7 @@ class TestMermaidGating:
 
 
 class TestWikiPageReviseCycle:
-    """FR-004 guards: critic-fail branch stays bounded for the wiki kind."""
+    """The critic-fail branch stays bounded for the wiki kind."""
 
     def test_failing_wiki_page_completion_spawns_revise_carrying_errors_and_parent(
         self, fresh_db, tmp_path
@@ -237,13 +238,13 @@ class TestWikiPageReviseCycle:
 
 
 # --------------------------------------------------------------------------
-# FR-005: the critic reports each unresolved path once per completion,
+# The critic reports each unresolved path once per completion,
 # regardless of how many citation forms mention it.
 # --------------------------------------------------------------------------
 
 
 class TestCriticDedupePerCompletion:
-    """FR-005: one unresolved-path error per distinct dead path."""
+    """One unresolved-path error per distinct dead path."""
 
     def test_path_cited_in_prose_and_footer_reported_once(
         self, fresh_db, tmp_path
@@ -285,11 +286,11 @@ class TestCriticDedupePerCompletion:
 
 
 # --------------------------------------------------------------------------
-# FR-003: Sources-footer parsing, the critic section vocabulary, and the
+# Sources-footer parsing, the critic section vocabulary, and the
 # Wiki-Article promotion branch.
 #
 # The parser module does not exist yet, so it is imported inside the tests:
-# a module-level import would fail collection and take the FR-002/FR-004
+# a module-level import would fail collection and take the
 # tests above down with it.
 # --------------------------------------------------------------------------
 
@@ -298,7 +299,7 @@ from cairn.okf.concept import OKFConcept
 
 # A passing wiki result: graph-verified refs, no compass section headings,
 # and a `## Sources` footer citing only the seeded file. Under the wiki
-# section vocabulary this must promote (D-001); under the default compass
+# section vocabulary this must promote; under the default compass
 # vocabulary it scores 0.0, which is why the promotion branch must pass
 # the wiki vocab to the critic.
 _PASSING_RESULT = (
@@ -322,7 +323,7 @@ def _result_concept(body: str) -> OKFConcept:
 
 
 class TestSourcesFooterParser:
-    """FR-003: cairn.wiki.sources parses `## Sources` footer entries."""
+    """cairn.wiki.sources parses `## Sources` footer entries."""
 
     def test_parses_list_and_inline_link_forms_in_order(self):
         from cairn.wiki.sources import parse_sources_footer
@@ -353,7 +354,7 @@ class TestSourcesFooterParser:
 
 
 class TestResolveSources:
-    """FR-003: footer entries resolve against the graph; unresolved = error."""
+    """footer entries resolve against the graph; unresolved = error."""
 
     def test_file_and_symbol_entries_resolve(self, fresh_db):
         from cairn.wiki.sources import resolve_sources
@@ -378,7 +379,7 @@ class TestResolveSources:
 
 
 class TestCriticSectionVocab:
-    """FR-003 (D-001): optional section_vocab; default stays compass-identical."""
+    """optional section_vocab; default stays compass-identical."""
 
     def test_default_vocab_bit_identical_for_existing_callers(self, fresh_db):
         _seed_graph(fresh_db)
@@ -432,7 +433,7 @@ class TestCriticSectionVocab:
 
 
 class TestWikiPagePromotionBranch:
-    """FR-003: a critic-passing wiki-page completion promotes a Wiki-Article."""
+    """a critic-passing wiki-page completion promotes a Wiki-Article."""
 
     def test_passing_overview_completion_promotes_wiki_article(
         self, fresh_db, tmp_path
@@ -485,7 +486,7 @@ class TestWikiPagePromotionBranch:
 
 
 # --------------------------------------------------------------------------
-# FR-010: promoted pages are first-class knowledge (no new search code).
+# promoted pages are first-class knowledge (no new search code).
 #
 # Each test drives one promotion through the wiki-page branch, then asserts
 # the already-wired surfaces reach it: bundle-wide search with no area filter
@@ -511,7 +512,7 @@ def _promote_overview(fresh_db, bundle: OKFBundle, result: str = _PASSING_RESULT
 
 
 class TestPromotedArticleIsSearchable:
-    """FR-010: bundle-wide search (no area filter) reaches the article."""
+    """bundle-wide search (no area filter) reaches the article."""
 
     def test_search_for_body_topic_finds_promoted_article(
         self, fresh_db, tmp_path
@@ -529,7 +530,7 @@ class TestPromotedArticleIsSearchable:
 
 
 class TestPromotedArticleSurfacesInCompassRouting:
-    """FR-010: the compass router's wiki layer names the article."""
+    """the compass router's wiki layer names the article."""
 
     # bundle.search matches the whole query string, so the routed phrase must
     # appear in the article body for the wiki layer to fire.
@@ -555,7 +556,7 @@ class TestPromotedArticleSurfacesInCompassRouting:
 
 
 class TestPromotedArticleFrontmatterFidelity:
-    """FR-010: the article round-trips as a plain concept plus `sources`."""
+    """the article round-trips as a plain concept plus `sources`."""
 
     def test_frontmatter_survives_file_round_trip(self, fresh_db, tmp_path):
         _seed_graph(fresh_db)
@@ -591,14 +592,14 @@ class TestPromotedArticleFrontmatterFidelity:
 
 
 # --------------------------------------------------------------------------
-# FR-003 (US2 AC1, D-016): the promotion branch records the workspace HEAD
+# The promotion branch records the workspace HEAD
 # sha the page was generated from as a fifth extensions key, copied from
 # facts exactly like input_hash.
 # --------------------------------------------------------------------------
 
 
 class TestPromotionRecordsCommitSha:
-    """FR-003 (two-kind contract edition): provenance is resolved at
+    """Provenance is resolved at
     completion time — the HEAD sha rides the article's extensions alone,
     never the task facts or the manifest."""
 
@@ -660,5 +661,5 @@ class TestPromotionRecordsCommitSha:
         assert {"page_id", "repo", "input_hash", "task_id"} <= set(
             article.extensions
         )
-        # Unknown HEAD: the key is absent, never None-valued (TC-008).
+        # Unknown HEAD: the key is absent, never None-valued.
         assert "commit_sha" not in article.extensions

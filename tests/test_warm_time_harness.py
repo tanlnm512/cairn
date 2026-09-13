@@ -1,4 +1,4 @@
-"""Smoke tests for the warm-time harness script (T022, FR-007).
+"""Smoke tests for the warm-time harness script.
 
 The harness's real measurement (fresh-process model loads, warm-up thread)
 needs the local embedder + cached weights and must NOT run under pytest

@@ -1,6 +1,6 @@
 """Resolver regression tests for the alias/arity resolution shapes.
 
-Covers the previously-ambiguous edge shapes that the alias map and the
+Covers the ambiguous edge shapes that the alias map and the
 arity tiebreak convert to `exact`, and the shapes that must STAY
 `ambiguous` (precision outranks recall):
 

@@ -39,10 +39,9 @@ def _wal_writer_with_committed_frames(db_path: str, value: str) -> sqlite3.Conne
 
 
 def test_backup_to_swap_with_open_wal_writer_new_conn_sees_new_data(tmp_path):
-    """F1: a held WAL writer's committed frames must not replay over the swap.
-
-    Before the fix, the old <db>-wal survived os.replace and a NEW connection
-    read the OLD pre-build data instead of the fresh build.
+    """F1: a held WAL writer's committed frames must not replay over the swap:
+    after os.replace, a NEW connection reads the fresh build's data, never
+    the old pre-build data left in a surviving <db>-wal.
     """
     db_path = str(tmp_path / "graph.db")
     writer = _wal_writer_with_committed_frames(db_path, "OLD-PRE-BUILD-DATA")

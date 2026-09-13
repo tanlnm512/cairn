@@ -52,12 +52,12 @@ def current_model(corpus: str = "code") -> str:
     Server-family backends stamp ``server/{netloc}/{model}`` — the netloc
     of the resolved base URL (scheme and path stripped) plus the request
     model id — so staleness, purge, and vec0 table names react to producer
-    swaps with no schema change (FR-004). CAIRN_EMBED_MODEL_STAMP, when
+    swaps with no schema change. CAIRN_EMBED_MODEL_STAMP, when
     set, is returned verbatim: a pure override with no derivation and no
     validation. The ladder's rung-1 session adoption (checked between the
     env stamp and the derived stamp) pins the stored corpus stamp so an
-    adopted candidate serves the existing rows with zero re-embed (FR-012).
-    One server model serves every corpus (D-005), so ``corpus`` is ignored
+    adopted candidate serves the existing rows with zero re-embed.
+    One server model serves every corpus, so ``corpus`` is ignored
     for server backends.
     """
     backend = _effective_backend()
@@ -98,7 +98,7 @@ def embeddings_available() -> bool:
     sentence_transformers is missing. Returns False when openai is selected
     but OPENAI_API_KEY is missing, or when a server-family backend fails its
     availability probe: GET {base}/models must return 200 AND list the
-    configured model id (FR-002). The probe verdict is cached per process;
+    configured model id. The probe verdict is cached per process;
     reset_backend_cache() invalidates it.
     """
     backend = _backend_name()
@@ -109,8 +109,8 @@ def embeddings_available() -> bool:
     if backend in _SERVER_FAMILY:
         # Probe here, before the local import attempt: the ImportError branch
         # below stamps 'hash' into the shared cache, which a server config
-        # must never reach (FR-002: server never resolves to hash).
-        # Rung-2 session adoption (FR-012) already proved local availability
+        # must never reach (a server backend never resolves to hash).
+        # Rung-2 session adoption already proved local availability
         # before switching, so it answers without the (still failing) probe.
         with _BACKEND_CACHE_LOCK:
             session_backend = _SESSION_BACKEND_OVERRIDE
@@ -145,8 +145,8 @@ def install_hint() -> str:
 
 
 # All selectable chunking recipes (see chunk_for_symbol). Order is the
-# ablation ladder: A legacy baseline, B default, C maximal, then the T013
-# field-dropout variants. The TC-008 identity floor (qualified name, file
+# ablation ladder: A legacy baseline, B default, C maximal, then the
+# field-dropout variants. The identity floor (qualified name, file
 # path, signature, docstring) is present in EVERY entry; tests iterate this
 # tuple to enforce it. Values are case-normalized (upper) before matching.
 CHUNK_VARIANTS = (
@@ -166,9 +166,9 @@ def chunk_for_symbol(
     Variants: A (kind + name + first signature line), B (A + docstring +
     parameters + return_type + full signature), C (B + body + context).
 
-    Field-dropout variants of B (T013, FR-002/D-004 -- each removes one field
+    Field-dropout variants of B -- each removes one field
     family so the retrieval-quality ablation can measure its contribution;
-    the TC-008 identity floor holds in every one):
+    the identity floor holds in every one):
 
     * ``B_NO_SCOPE`` -- B minus ``Enclosing Scope``/``Imports`` (file path
       stays; tests the contextual-scope fields).
@@ -180,7 +180,7 @@ def chunk_for_symbol(
       (tests whether a trimmed body keeps C's gains at lower size).
 
     ``variant`` (explicit) overrides ``CAIRN_CHUNK_VARIANT`` (env, default B)
-    without ever mutating the environment (D-008 doctrine); both are
+    without ever mutating the environment; both are
     case-insensitive.
     """
     v = (variant or os.environ.get("CAIRN_CHUNK_VARIANT", "B")).upper()
@@ -197,8 +197,8 @@ def chunk_for_symbol(
     imports_summary = row["imports_summary"] if "imports_summary" in row.keys() and row["imports_summary"] else None
 
     # Field-dropout variants that remove the contextual scope extras; the
-    # File: line itself always stays (TC-008 floor). A/B/C never take this
-    # branch, so their output stays byte-identical to pre-T013.
+    # File: line itself always stays (identity floor). A/B/C never take this
+    # branch, so their output is unaffected by this flag.
     drop_scope_extras = v in ("B_NO_SCOPE", "B_IDENTITIES")
 
     scope_header = []
@@ -285,8 +285,8 @@ def _signature_lines_for_rows(rows: Sequence[sqlite3.Row]) -> dict:
     return out
 
 
-# Multi-vector kinds (spec retrieval-quality-v2 FR-005). Deliberately NOT
-# CHUNK_VARIANTS entries: the TC-008 identity-floor tests iterate
+# Multi-vector kinds. Deliberately NOT
+# CHUNK_VARIANTS entries: the identity-floor tests iterate
 # CHUNK_VARIANTS and would break for minimal per-kind texts. Each kind has
 # its own producer below and its own content-hash staleness over that text.
 MV_KINDS = ("name", "docstring")
@@ -342,12 +342,11 @@ def mv_text_for_kind(
 
 
 def _config_or_env(name: str, default: Optional[str] = None) -> Optional[str]:
-    """D-008 choke point for the CAIRN_EMBED_* knobs: env var > config file
+    """Resolution choke point for the CAIRN_EMBED_* knobs: env var > config file
     > ``default``. Env and file values are stripped, so a blank env value
     falls through to the file exactly as blanks used to fall through to
     defaults. File values live in $CAIRN_HOME/config.json under the same
-    env-var name (paths.CONFIG_FILE); no config file means env-or-default,
-    byte-identical to the pre-FR-010 behavior.
+    env-var name (paths.CONFIG_FILE); no config file means env-or-default.
     """
     from ..paths import get_config_value
 
@@ -387,7 +386,7 @@ _MODEL_CACHE_LOCK = threading.Lock()
 # it; every later value is a backend name.
 _EFFECTIVE_BACKEND_CACHE: dict[str, Optional[str]] = {"effective": None}
 
-# Cached availability-probe verdict for the server family (FR-002), stamped
+# Cached availability-probe verdict for the server family, stamped
 # by _server_probe_available(); invalidated by reset_backend_cache(). None
 # until the first probe answers.
 _SERVER_PROBE_CACHE: dict[str, Optional[bool]] = {"available": None}
@@ -398,17 +397,17 @@ _SERVER_PROBE_CACHE: dict[str, Optional[bool]] = {"available": None}
 # consistent verdict. Also guards every read of the _SESSION_* overrides.
 _BACKEND_CACHE_LOCK = threading.Lock()
 
-# FR-002 fixes the probe timeout at 2 s: a down server must fail the
+# The probe timeout is fixed at 2 s: a down server must fail the
 # availability gate fast, independent of CAIRN_EMBED_TIMEOUT (which governs
 # embed requests). Tests inject a shorter value via this module attribute.
 _PROBE_TIMEOUT_S = 2.0
 
-# FR-005 alias-gate verdicts keyed by the CAIRN_EMBED_MODEL_STAMP value: the
+# Alias-gate verdicts keyed by the CAIRN_EMBED_MODEL_STAMP value: the
 # parity check costs up to 16 embeds, so it runs once per process per stamp.
 _ALIAS_GATE_CACHE: dict = {}
 _ALIAS_GATE_LOCK = threading.Lock()
 
-# Session-scoped ladder adoptions (FR-012, set only by graph.embed_ladder
+# Session-scoped ladder adoptions (set only by graph.embed_ladder
 # after a parity pass): the rung-1 alias binding (stored stamp pinned so
 # reads/writes stay on the corpus while requests go through the adopted
 # model id), the adopted request model id, and the rung-2 local fallback.
@@ -448,7 +447,7 @@ def reset_backend_cache() -> None:
 
 
 def _alias_preflight(conn: sqlite3.Connection) -> None:
-    """FR-005 alias gate: parity-verify stored rows before any writer INSERT.
+    """Alias gate: parity-verify stored rows before any writer INSERT.
 
     Runs only for the server family with CAIRN_EMBED_MODEL_STAMP set; zero
     stored rows under the stamp is check_parity's vacuous pass. The verdict
@@ -482,9 +481,9 @@ def _effective_backend() -> str:
     Otherwise returns the configured backend unchanged. The server family
     (server/omlx/ollama) resolves to 'server' with no dependency probing,
     so it can never coalesce into 'hash'. The ladder's rung-2 session
-    adoption (FR-012) switches a server-family config to local for the
+    adoption switches a server-family config to local for the
     process lifetime; it applies only while the env config stays
-    server-family and is never 'hash' (D-003).
+    server-family and is never 'hash'.
 
     The resolution inputs are process-stable, so the first stamp under
     _BACKEND_CACHE_LOCK wins: racing first calls compute identical values
@@ -518,7 +517,7 @@ def _effective_backend() -> str:
 def _server_base_url() -> str:
     """The base URL for the active server backend.
 
-    CAIRN_EMBED_BASE_URL (env or config file, D-008) overrides the
+    CAIRN_EMBED_BASE_URL (env or config file) overrides the
     per-backend preset; bare 'server' has no preset and requires it.
     Raises RuntimeError when unresolvable — at resolution time, never at
     import.
@@ -540,9 +539,9 @@ def _server_model() -> str:
     """The model id sent in server embedding requests.
 
     The ladder's rung-1 session adoption wins over CAIRN_EMBED_SERVER_MODEL:
-    the adopted id is parity-proven against the stored corpus (D-009), while
+    the adopted id is parity-proven against the stored corpus, while
     the env id is the failed producer the ladder is replacing. Otherwise the
-    env-or-config-file value (D-008) wins over the default preset id.
+    env-or-config-file value wins over the default preset id.
     """
     with _BACKEND_CACHE_LOCK:
         adopted = _SESSION_SERVER_MODEL
@@ -555,7 +554,7 @@ def _server_model() -> str:
 
 
 def _server_probe_available() -> bool:
-    """The per-process cached server-family availability verdict (FR-002).
+    """The per-process cached server-family availability verdict.
 
     True only when GET {base}/models returns 200 AND lists the configured
     model id. Both outcomes are cached for the process lifetime;
@@ -576,7 +575,7 @@ def _server_probe_available() -> bool:
 
 
 def _run_server_probe() -> bool:
-    """One uncached availability probe: GET {base}/models (FR-002).
+    """One uncached availability probe: GET {base}/models.
 
     Returns False on connection failure, timeout, non-200 status, or an
     unparseable / model-missing listing. Never raises — callers gate on it.
@@ -969,13 +968,13 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
         c3 = cur.execute("DELETE FROM memory_embeddings WHERE model != ?", (target_model,)).rowcount
     except Exception:
         c3 = 0
-    # Multi-vector rows carry the same model stamp as their base row (FR-005);
+    # Multi-vector rows carry the same model stamp as their base row;
     # a model swap orphans them identically, so they purge with it. The table
     # is created unconditionally by SCHEMA_SQL, so no try/except is needed.
     c4 = cur.execute("DELETE FROM embeddings_mv WHERE model != ?", (target_model,)).rowcount
 
     # Both vec0 table families are model-scoped and purge together: vec_<model>
-    # (embeddings) and vecmv_<model> (embeddings_mv, D-007). '_' must be
+    # (embeddings) and vecmv_<model> (embeddings_mv). '_' must be
     # escaped in the LIKE patterns -- it is a single-char wildcard, so the old
     # unescaped 'vec_%' also swept up vecmv_<model> tables (and any unrelated
     # "vecX..." name), and the keep-test below then dropped the ACTIVE vecmv
@@ -1039,7 +1038,7 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
     error message verbatim; honors CAIRN_EMBED_TIMEOUT (default 30 s);
     sends a bearer header only when CAIRN_EMBED_API_KEY is set; rejects
     batches whose embeddings disagree in dimensionality. The three knobs
-    resolve env > config file > default (D-008); a CAIRN_EMBED_TIMEOUT or
+    resolve env > config file > default; a CAIRN_EMBED_TIMEOUT or
     CAIRN_EMBED_SERVER_BATCH value that does not parse to a positive finite
     number raises RuntimeError naming the knob before any request is sent.
     """
@@ -1275,7 +1274,8 @@ def _embed_mv_kinds(
 ) -> int:
     """Populate/refresh ``embeddings_mv`` rows for every MV_KINDS entry.
 
-    The opt-in FR-005 pass behind ``embed_all(multivector=True)``. Mirrors
+    The pass behind ``embed_all``'s ``multivector`` flag (default on;
+    ``False`` opts out). Mirrors
     the base chunk flow's shape per kind: build the kind-specific text via
     :func:`mv_text_for_kind`, hash it with :func:`_chunk_hash` (per-kind
     staleness -- the name row and docstring row of one symbol refresh
@@ -1330,8 +1330,8 @@ def _embed_mv_kinds(
         for (sid, kind, text, chash), blob in zip(batch, blobs):
             dim = len(blob) // 4
             # Same rowid-stable upsert contract as the base table (see the
-            # comment in embed_all): preserves rowids so the FR-005 vecmv
-            # ANN sync (T019) can key on them like the vec0 tables do.
+            # comment in embed_all): preserves rowids so the vecmv
+            # ANN sync can key on them like the vec0 tables do.
             conn.execute(
                 "INSERT INTO embeddings_mv "
                 "(symbol_id, model, vector_kind, dim, vec, chunk, content_hash, embedded_at) "
@@ -1351,14 +1351,41 @@ def _embed_mv_kinds(
     return embedded
 
 
+def _purge_embedding_rows(
+    conn: sqlite3.Connection, where_sql: str, params: tuple = ()
+) -> int:
+    """Delete base ``embeddings`` rows matching where_sql and remove their
+    vec0 ANN entries in the same transaction.
+
+    Collects the doomed (model, rowid) pairs BEFORE the delete -- the DELETE
+    can't report them, and each rowid must come out of exactly its own model's
+    vec0 table, or a later rowid reuse pairs the ann_query join with an
+    unrelated vector. Collection is skipped when the ANN backend is off (the
+    vec sync would be a no-op anyway). Never commits: the caller owns the
+    transaction. Returns the number of base rows removed.
+    """
+    from .ann_index import ann_backend_enabled, delete_index_rows
+
+    doomed: dict = {}
+    if ann_backend_enabled():
+        for r in conn.execute(
+            f"SELECT model, rowid FROM embeddings WHERE {where_sql}", params
+        ).fetchall():
+            doomed.setdefault(r[0], []).append(r[1])
+
+    cur = conn.execute(f"DELETE FROM embeddings WHERE {where_sql}", params)
+    for model, rowids in doomed.items():
+        delete_index_rows(conn, model, rowids)
+    return cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+
+
 def reap_orphaned_embeddings(conn: sqlite3.Connection) -> int:
     """Delete embedding rows whose symbol no longer exists.
 
     Covers both the base ``embeddings`` table and the parallel
-    ``embeddings_mv`` multi-vector table (FR-005): an orphaned mv row is the
+    ``embeddings_mv`` multi-vector table: an orphaned mv row is the
     same garbage as an orphaned base row, regardless of which pass wrote it,
-    so the mv DELETE is unconditional (a no-op when the table is empty, i.e.
-    on every default flag-off build). The mv table has no vec0 rows of its
+    so the mv DELETE is unconditional. The mv table has no vec0 rows of its
     own yet, so there is nothing index-side to clean here.
 
     Returns the number of rows removed across both tables. Safe to call any
@@ -1369,35 +1396,69 @@ def reap_orphaned_embeddings(conn: sqlite3.Connection) -> int:
     missing ones). The vec sync itself is a no-op when no vec0 table exists
     for a model.
     """
-    from .ann_index import ann_backend_enabled, delete_index_rows
-
-    # Collect the (model, rowid) pairs about to be deleted first -- the bulk
-    # DELETE below can't report them, and each rowid must be removed from
-    # exactly its own model's vec0 table. Skipped entirely when the ANN
-    # backend is off so the reap stays a pure no-op (same single DELETE as
-    # before, no extra scan).
-    doomed: dict = {}
-    if ann_backend_enabled():
-        for r in conn.execute(
-            "SELECT model, rowid FROM embeddings "
-            "WHERE symbol_id NOT IN (SELECT id FROM symbols)"
-        ).fetchall():
-            doomed.setdefault(r[0], []).append(r[1])
-
-    cur = conn.execute(
-        "DELETE FROM embeddings WHERE symbol_id NOT IN (SELECT id FROM symbols)"
-    )
+    reaped = _purge_embedding_rows(conn, "symbol_id NOT IN (SELECT id FROM symbols)")
     mv_cur = conn.execute(
         "DELETE FROM embeddings_mv WHERE symbol_id NOT IN (SELECT id FROM symbols)"
     )
-    for model, rowids in doomed.items():
-        delete_index_rows(conn, model, rowids)
     conn.commit()
-    reaped = cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
     reaped_mv = (
         mv_cur.rowcount if mv_cur.rowcount is not None and mv_cur.rowcount > 0 else 0
     )
     return reaped + reaped_mv
+
+
+def _select_stale_symbols(
+    conn: sqlite3.Connection,
+    model: str,
+    symbol_ids: Optional[Sequence[str]] = None,
+    variant: Optional[str] = None,
+) -> tuple:
+    """Fetch symbols and return the subset whose chunk is missing or stale.
+
+    Returns ``(rows, stale, signatures)``: every fetched row (the full column
+    set ``chunk_for_symbol`` reads, so variant-B/C chunk sections are
+    populated), the rows whose chunk content hash differs from the stored one
+    as ``(symbol_id, chunk, new_hash)`` tuples, and the per-symbol declaration
+    lines keyed by id (real source for the embedder, not just an identifier).
+
+    ``symbol_ids`` restricts the corpus to those ids; None selects every
+    indexed symbol. Empty-chunk symbols are never stale.
+    """
+    if symbol_ids is None:
+        where = "WHERE s.kind IS NOT NULL"
+        params: tuple = (model,)
+    else:
+        ids = [sid for sid in symbol_ids if sid]
+        if not ids:
+            return [], [], {}
+        placeholders = ",".join("?" for _ in ids)
+        where = f"WHERE s.kind IS NOT NULL AND s.id IN ({placeholders})"
+        params = (model, *ids)
+    rows = conn.execute(
+        f"""SELECT s.id, s.name, s.qualified_name, s.kind, s.docstring,
+                   s.line_start, s.parameters, s.return_type,
+                   s.parent_scope, s.imports_summary, s.body,
+                   f.path AS file_path, f.repo_id AS repo,
+                   e.content_hash AS existing_hash
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            LEFT JOIN embeddings e ON e.symbol_id = s.id AND e.model = ?
+            {where}
+            ORDER BY s.id""",
+        params,
+    ).fetchall()
+
+    signatures = _signature_lines_for_rows(rows)
+
+    stale_rows = []
+    for r in rows:
+        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]), variant=variant)
+        if not chunk.strip():
+            continue
+        new_hash = _chunk_hash(chunk)
+        if r["existing_hash"] is None or r["existing_hash"] != new_hash:
+            stale_rows.append((r["id"], chunk, new_hash))
+    return rows, stale_rows, signatures
 
 
 def embed_all(
@@ -1407,7 +1468,7 @@ def embed_all(
     progress=None,
     reap_orphans: bool = True,
     variant: Optional[str] = None,
-    multivector: bool = False,
+    multivector: bool = True,
 ) -> dict:
     """Embed every symbol missing or stale under the current model.
 
@@ -1419,58 +1480,33 @@ def embed_all(
     ``variant`` selects the chunking recipe (see ``chunk_for_symbol`` /
     ``CHUNK_VARIANTS``). ``None`` (default) resolves via the
     ``CAIRN_CHUNK_VARIANT`` env var exactly as before; an explicit string
-    overrides it WITHOUT touching the process environment (D-008
-    no-env-mutation doctrine) -- this is the seam per-variant sweep runs
-    (T014/T015) use to re-embed the corpus under each recipe.
+    overrides it WITHOUT touching the process environment -- this is the
+    seam per-variant sweep runs use to re-embed the corpus under each
+    recipe.
 
-    ``multivector`` (FR-005, opt-in, default False) additionally populates
-    the parallel ``embeddings_mv`` table with the ``name`` and ``docstring``
+    ``multivector`` (default True) additionally populates the
+    parallel ``embeddings_mv`` table with the ``name`` and ``docstring``
     kinds, each with its own per-kind ``_chunk_hash`` staleness (see
-    ``MV_KINDS`` / ``mv_text_for_kind``). When False -- the default -- the
+    ``MV_KINDS`` / ``mv_text_for_kind``). Pass ``False`` to opt out: the
     run performs ZERO ``embeddings_mv`` writes and the ``embeddings``-table
-    flow (upserts, staleness, reaping) is byte-identical to a pre-FR-005
-    build (D-006/TC-020). ``limit`` caps stale base rows and stale mv rows
-    independently. The summary gains ``mv_embedded`` only when the flag is
-    on, so flag-off summaries keep their exact prior shape.
+    flow (upserts, staleness, reaping) is byte-identical to the
+    single-vector build. ``limit`` caps stale base rows and
+    stale mv rows independently. The summary gains ``mv_embedded`` only
+    when the flag is on, so flag-off summaries keep their exact prior
+    shape.
 
     When ``reap_orphans`` is True (default), also deletes embedding rows for
     symbols that no longer exist. Always refreshes the persisted ``term_df``
-    DF table (D-005), so enrichment's IDF signal stays current with the
+    DF table, so enrichment's IDF signal stays current with the
     embedded corpus. ``progress`` is an optional
     callable(n_done, n_total). Returns a dict summary
     {model, embedded, skipped, total, reaped}.
     """
     _alias_preflight(conn)
     model = current_model()
-    # Fetch every column chunk_for_symbol reads, so variant-B/C chunk sections
-    # (parameters/return_type/parent_scope/imports_summary/body) are populated.
-    all_rows = conn.execute(
-        """SELECT s.id, s.name, s.qualified_name, s.kind, s.docstring,
-                  s.line_start, s.parameters, s.return_type,
-                  s.parent_scope, s.imports_summary, s.body,
-                  f.path AS file_path, f.repo_id AS repo,
-                  e.content_hash AS existing_hash
-           FROM symbols s
-           JOIN files f ON s.file_id = f.id
-           LEFT JOIN embeddings e ON e.symbol_id = s.id AND e.model = ?
-           WHERE s.kind IS NOT NULL
-           ORDER BY s.id""",
-        (model,),
-    ).fetchall()
-
-    # One line of real source per symbol (the declaration line) gives the
-    # embedding model actual code, not just an identifier.
-    signatures = _signature_lines_for_rows(all_rows)
-
-    # Filter to rows that are missing or whose chunk changed since last embed.
-    stale_rows = []
-    for r in all_rows:
-        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]), variant=variant)
-        if not chunk.strip():
-            continue
-        new_hash = _chunk_hash(chunk)
-        if r["existing_hash"] is None or r["existing_hash"] != new_hash:
-            stale_rows.append((r["id"], chunk, new_hash))
+    all_rows, stale_rows, signatures = _select_stale_symbols(
+        conn, model, variant=variant
+    )
 
     if limit is not None:
         stale_rows = stale_rows[:limit]
@@ -1518,17 +1554,17 @@ def embed_all(
 
     reaped = reap_orphaned_embeddings(conn) if reap_orphans else 0
 
-    # FR-005 opt-in: after the base flow (so flag-off runs never reach this
-    # line), refresh the parallel mv table for the two extra kinds. Reaping
-    # already ran above is fine -- it only removes rows for DEAD symbols, and
-    # the rows written here are for live ones.
+    # After the base flow, refresh the parallel mv table for the two extra
+    # kinds (multivector=False opts out). Reaping already ran above is fine
+    # -- it only removes rows for DEAD symbols, and the rows written here
+    # are for live ones.
     mv_embedded = (
         _embed_mv_kinds(conn, all_rows, signatures, model, batch_size, limit, progress)
         if multivector
         else None
     )
 
-    # D-005: the DF table's refresh rides the embed pass, so a `cairn embed`
+    # The DF table's refresh rides the embed pass, so a `cairn embed`
     # --driven build leaves term_df current with the corpus it just embedded.
     rebuild_term_df(conn)
 
@@ -1584,31 +1620,9 @@ def embed_symbols(
     if not ids:
         return {"model": model, "embedded": 0, "skipped": 0, "ann_synced": 0}
 
-    placeholders = ",".join("?" for _ in ids)
-    rows = conn.execute(
-        f"""SELECT s.id, s.name, s.qualified_name, s.kind, s.docstring,
-                   s.line_start, s.parameters, s.return_type,
-                   s.parent_scope, s.imports_summary, s.body,
-                   f.path AS file_path, f.repo_id AS repo,
-                   e.content_hash AS existing_hash
-            FROM symbols s
-            JOIN files f ON s.file_id = f.id
-            LEFT JOIN embeddings e ON e.symbol_id = s.id AND e.model = ?
-            WHERE s.kind IS NOT NULL AND s.id IN ({placeholders})
-            ORDER BY s.id""",
-        (model, *ids),
-    ).fetchall()
-
-    signatures = _signature_lines_for_rows(rows)
-
-    stale_rows = []
-    for r in rows:
-        chunk = chunk_for_symbol(r, signature=signatures.get(r["id"]), variant=variant)
-        if not chunk.strip():
-            continue
-        new_hash = _chunk_hash(chunk)
-        if r["existing_hash"] is None or r["existing_hash"] != new_hash:
-            stale_rows.append((r["id"], chunk, new_hash))
+    rows, stale_rows, _signatures = _select_stale_symbols(
+        conn, model, symbol_ids=ids, variant=variant
+    )
 
     if not stale_rows:
         return {

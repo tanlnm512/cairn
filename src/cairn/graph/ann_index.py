@@ -27,9 +27,9 @@ rows), so a brute-force ``cosine_scan`` is sub-millisecond and not worth the
 per-write vec0 sync cost. If either corpus ever grows large, the pattern here
 (rebuild from the source table) is the template for adding one.
 
-The FR-005 multi-vector table ``embeddings_mv`` gets its own ``vecmv_<safe-
+The multi-vector table ``embeddings_mv`` gets its own ``vecmv_<safe-
 model>`` vec0 index through the additive ``source`` parameter on
-:func:`rebuild_index` / :func:`ann_query` (D-007): a separate table, because
+:func:`rebuild_index` / :func:`ann_query`: a separate table, because
 the base ``vec_<model>`` rowid contract must never be shared with a table
 whose row population differs (``embeddings_mv`` holds up to one row per
 vector kind per symbol). Every existing caller passes no ``source`` and gets
@@ -139,7 +139,7 @@ def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
     _ANN_FALLBACK_WARNED = True
 
 
-# vec0 sources (D-007): each source table gets its OWN per-model vec0 index
+# vec0 sources: each source table gets its OWN per-model vec0 index
 # (rowid-keyed), so the base vec_<model> contract is never shared with a
 # table whose row population differs. Additive: callers that pass no source
 # get the embeddings/vec_ pair exactly as before.
@@ -154,7 +154,7 @@ def _table_name(model: str, source: str = "embeddings") -> str:
     of those are safe as a bare identifier, so this is NOT just cosmetic.
 
     ``source`` selects the indexed table: ``"embeddings"`` (the default,
-    table ``vec_<safe-model>``) or ``"embeddings_mv"`` (the FR-005
+    table ``vec_<safe-model>``) or ``"embeddings_mv"`` (the multi-vector
     multi-vector parallel table, table ``vecmv_<safe-model>``). Any other
     value raises ``ValueError`` -- sources are a closed set, never a
     free-form table name (SQL-injection surface).
@@ -202,7 +202,7 @@ def try_load(conn: sqlite3.Connection) -> bool:
 def index_exists(conn: sqlite3.Connection, model: str, source: str = "embeddings") -> bool:
     """Whether the vec0 table for ``model`` (and ``source``) exists.
 
-    ``source`` is additive (D-007): default probes ``vec_<safe-model>``,
+    ``source`` is additive: default probes ``vec_<safe-model>``,
     ``"embeddings_mv"`` probes ``vecmv_<safe-model>``. Existing callers pass
     two args and are unaffected.
     """
@@ -216,9 +216,9 @@ def index_exists(conn: sqlite3.Connection, model: str, source: str = "embeddings
 def rebuild_index(conn: sqlite3.Connection, model: str, source: str = "embeddings") -> dict:
     """Wholesale rebuild of the vec0 table for `model` from `source`.
 
-    ``source`` (additive, D-007) selects the indexed table: ``"embeddings"``
-    (the default -- vec0 table ``vec_<safe-model>``, byte-identical to the
-    pre-FR-005 behavior) or ``"embeddings_mv"`` (the multi-vector parallel
+    ``source`` (additive) selects the indexed table: ``"embeddings"``
+    (the default -- vec0 table ``vec_<safe-model>``, the legacy behavior)
+    or ``"embeddings_mv"`` (the multi-vector parallel
     table -- its own ``vecmv_<safe-model>`` table, same DELETE+INSERT
     rowid-keyed contract over that table's rows: every mv vector kind goes
     in, the per-kind distinction lives in ``embeddings_mv`` itself).
@@ -238,8 +238,8 @@ def rebuild_index(conn: sqlite3.Connection, model: str, source: str = "embedding
         f"SELECT dim FROM {source} WHERE model = ? LIMIT 1", (model,)
     ).fetchone()
     if row is None:
-        # Keep the base-source reason byte-identical to the pre-FR-005
-        # string (it is user-visible CLI output and asserted in tests).
+        # Keep the base-source reason string byte-identical
+        # (it is user-visible CLI output and asserted in tests).
         reason = (
             "no embeddings for model"
             if source == "embeddings"
@@ -384,7 +384,7 @@ def ann_query(
 ) -> Optional[List[Tuple[str, float]]]:
     """ANN cosine search against the vec0 table for `model` over `source`.
 
-    ``source`` (additive, D-007) selects the indexed table exactly as in
+    ``source`` (additive) selects the indexed table exactly as in
     :func:`rebuild_index`: the default joins back to ``embeddings`` through
     ``vec_<safe-model>``; ``"embeddings_mv"`` joins to the multi-vector
     table through ``vecmv_<safe-model>``. A symbol with several mv rows can
@@ -405,7 +405,7 @@ def ann_query(
     # call shape: concurrency tests monkeypatch it as `lambda conn, model:
     # ...` to force the vec0 MATCH path, and cli/system.py +
     # mcp_server/_server_core.py call it with two args. Only the opt-in mv
-    # leg (D-007) passes its source through.
+    # leg passes its source through.
     if source == "embeddings":
         have_index = index_exists(conn, model)
     else:

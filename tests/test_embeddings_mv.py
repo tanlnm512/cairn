@@ -1,12 +1,13 @@
-"""FR-005 (T017): the parallel ``embeddings_mv`` multi-vector table.
+"""The parallel ``embeddings_mv`` multi-vector table.
 
-Covers the ship gate (TC-020) and the producer/staleness contract:
-- Flag OFF (the default): zero ``embeddings_mv`` writes and the
-  ``embeddings`` table flow byte-identical to a flag-off run (D-006).
-- Flag ON: both kinds ('name', 'docstring') populated with kind-specific
-  texts, each with its OWN per-kind content-hash staleness, and the
-  producers stay OUT of ``CHUNK_VARIANTS`` (TC-008's identity-floor test
-  iterates that tuple).
+Covers the ship gate and the producer/staleness contract:
+- Default: kwarg-less ``embed_all`` writes both
+  ``embeddings_mv`` kinds and reports the ``mv_embedded`` summary key.
+- Explicit ``multivector=True/False``: the ``embeddings`` base flow is
+  byte-identical either way; ON populates the kinds
+  ('name', 'docstring') with kind-specific texts, each with its OWN
+  per-kind content-hash staleness, and the producers stay OUT of
+  ``CHUNK_VARIANTS`` (the identity-floor test iterates that tuple).
 
 Uses CAIRN_EMBED_BACKEND=hash so no torch/model download is needed.
 """
@@ -110,7 +111,7 @@ def test_existing_db_gains_mv_table_on_reopen():
 
 
 def test_base_embeddings_pk_unchanged():
-    """D-006: the base table's PK stays (symbol_id, model) -- never re-PK'd."""
+    """The base table's PK stays (symbol_id, model) -- never re-PK'd."""
     with tempfile.TemporaryDirectory() as tmp:
         conn = init_db(os.path.join(tmp, "pk.db"))
         try:
@@ -122,7 +123,7 @@ def test_base_embeddings_pk_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# Producers are NOT chunk variants (TC-008 identity floor)
+# Producers are NOT chunk variants (identity floor)
 # ---------------------------------------------------------------------------
 
 
@@ -133,7 +134,7 @@ def test_kinds_are_not_chunk_variants():
 
     assert MV_KINDS == ("name", "docstring")
     assert not set(MV_KINDS) & set(CHUNK_VARIANTS)
-    # The pre-FR-005 variant tuple is exactly unchanged.
+    # The pre- variant tuple is exactly unchanged.
     assert CHUNK_VARIANTS == (
         "A", "B", "C",
         "B_NO_SCOPE", "B_NO_SIG", "B_IDENTITIES", "C_TRIM",
@@ -141,38 +142,45 @@ def test_kinds_are_not_chunk_variants():
 
 
 # ---------------------------------------------------------------------------
-# Flag OFF (default) -- TC-020
+# Default (kwarg-less) build -- 
 # ---------------------------------------------------------------------------
 
 
-def test_flag_off_writes_zero_mv_rows_and_keeps_summary_shape(fresh_db):
-    """Default embed_all: no mv writes, no 'mv_embedded' key, base rows exist."""
+def test_default_embed_all_writes_mv_rows_and_reports_mv_embedded(fresh_db):
+    """Kwarg-less embed_all (the default) writes both mv kinds,
+    reports the 'mv_embedded' key, and keeps the base flow intact."""
     from cairn.graph import embeddings as emb
 
     _seed_corpus(fresh_db)
-    summary = emb.embed_all(fresh_db)  # no multivector kwarg: legacy call shape
+    summary = emb.embed_all(fresh_db)  # no kwarg: the default runs mv
 
     assert summary["embedded"] == 3
-    assert "mv_embedded" not in summary, "flag-off summary must keep its prior shape"
-    assert fresh_db.execute("SELECT COUNT(*) c FROM embeddings_mv").fetchone()["c"] == 0
+    assert summary["mv_embedded"] == 5
+    assert len(_mv_rows(fresh_db)) == 5
     assert emb.embed_count(fresh_db) == 3
 
-    # A second (idempotent) flag-off run still writes nothing to the mv table.
-    emb.embed_all(fresh_db)
-    assert fresh_db.execute("SELECT COUNT(*) c FROM embeddings_mv").fetchone()["c"] == 0
+    # A second (idempotent) default run rewrites nothing: all per-kind
+    # hashes still match, and the mv table keeps its five rows.
+    assert emb.embed_all(fresh_db)["mv_embedded"] == 0
+    assert len(_mv_rows(fresh_db)) == 5
 
 
-def test_flag_off_base_table_identical_to_flag_on_base_table(fresh_db):
-    """The base `embeddings` rows are byte-identical whether or not the mv
-    flag is on: the flag must never perturb the single-vector flow."""
+def test_explicit_opt_out_restores_single_vector_build(fresh_db):
+    """`multivector=False` is the explicit opt-out: zero
+    `embeddings_mv` writes, no `mv_embedded` in the summary, and base
+    `embeddings` rows byte-identical to the explicit mv leg's -- opting
+    out restores the pure single-vector build ."""
     from cairn.graph import embeddings as emb
 
     _seed_corpus(fresh_db)
-    emb.embed_all(fresh_db, multivector=False)
-    flag_off_snapshot = [tuple(r) for r in _embeddings_snapshot(fresh_db)]
-    assert len(flag_off_snapshot) == 3
+    summary = emb.embed_all(fresh_db, multivector=False)
+    assert "mv_embedded" not in summary
+    assert _mv_rows(fresh_db) == {}
+    opt_out_snapshot = [tuple(r) for r in _embeddings_snapshot(fresh_db)]
+    assert len(opt_out_snapshot) == 3
 
-    # Fresh identical corpus, embedded WITH the flag: base rows must match.
+    # Fresh identical corpus, embedded with the mv leg explicit: base
+    # rows must match -- the opt-out never perturbs the single-vector flow.
     other = sqlite3.connect(":memory:")
     other.row_factory = sqlite3.Row
     from cairn.graph.schema import _apply_schema
@@ -180,10 +188,10 @@ def test_flag_off_base_table_identical_to_flag_on_base_table(fresh_db):
     _apply_schema(other)
     _seed_corpus(other)
     emb.embed_all(other, multivector=True)
-    flag_on_snapshot = [tuple(r) for r in _embeddings_snapshot(other)]
+    mv_leg_snapshot = [tuple(r) for r in _embeddings_snapshot(other)]
     other.close()
 
-    assert flag_on_snapshot == flag_off_snapshot
+    assert mv_leg_snapshot == opt_out_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -448,12 +456,13 @@ def test_purge_drops_both_families_of_stale_models(fresh_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# CLI wiring (TC-020's user-facing surface)
+# CLI wiring (the user-facing surface)
 # ---------------------------------------------------------------------------
 
 
 def test_cli_multivector_flag_wires_to_embed_all(tmp_path, monkeypatch):
-    """`cairn embed --multivector` populates the table; without it, empty."""
+    """`cairn embed` populates the mv table: the explicit --multivector run
+    and the flagless default both write the mv kinds."""
     from cairn.cli import main as cli_main
 
     monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
@@ -475,7 +484,7 @@ def test_cli_multivector_flag_wires_to_embed_all(tmp_path, monkeypatch):
     finally:
         conn.close()
 
-    # Flag OFF (default): same corpus, zero mv rows, base index built.
+    # Flagless default run: same corpus, mv rows written.
     db_off = str(tmp_path / "off.db")
     conn = init_db(db_off)
     _seed_corpus(conn)
@@ -485,7 +494,7 @@ def test_cli_multivector_flag_wires_to_embed_all(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_off)
     conn.row_factory = sqlite3.Row
     try:
-        assert conn.execute("SELECT COUNT(*) c FROM embeddings_mv").fetchone()["c"] == 0
+        assert conn.execute("SELECT COUNT(*) c FROM embeddings_mv").fetchone()["c"] == 5
         assert conn.execute("SELECT COUNT(*) c FROM embeddings").fetchone()["c"] == 3
     finally:
         conn.close()

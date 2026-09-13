@@ -1,4 +1,4 @@
-"""Tests for scripts/fetch_t3_corpus.py -- T020 (FR-006/AC7, TC-030..TC-033).
+"""Tests for scripts/fetch_t3_corpus.py -- ( /AC7, .. ).
 
 Hermetic strategy (same pattern as tests/test_gen_benchmark_tables.py):
 the script is loaded by file path so the object under test is the module
@@ -12,12 +12,12 @@ bench subprocess (the invocation shape and the t3_entry stamp are THIS
 script's logic; running a real bench suite is the maintainer's local run).
 
 Covers the spec's test plan:
-  TC-030 --list prints pins without touching the network
-  TC-031 an unreachable/moved pin fails loudly: exit non-zero, naming the
+   --list prints pins without touching the network
+   an unreachable/moved pin fails loudly: exit non-zero, naming the
           entry, the expected pin, and what was found
-  TC-032 the verified success path (detached HEAD == pin exactly) and the
+   the verified success path (detached HEAD == pin exactly) and the
           --run-bench result marker stamped with the manifest entry
-  TC-033 nothing here belongs in CI -- the script lives in scripts/ (D-009)
+   nothing here belongs in CI -- the script lives in scripts/ 
           and the test never needs a network.
 """
 from __future__ import annotations
@@ -62,7 +62,7 @@ def origin_repo(tmp_path: Path) -> tuple[Path, str]:
     """A bare repo with exactly one commit, addressable by local path.
 
     ``git clone <this path>`` is a filesystem operation -- no network is
-    involved, which is what keeps these tests hermetic (TC-033 spirit).
+    involved, which is what keeps these tests hermetic (spirit).
     """
     src = tmp_path / "src-repo"
     src.mkdir()
@@ -110,7 +110,7 @@ BOGUS_PIN = "e" * 40  # valid sha SHAPE, exists in no clone
 
 
 # ---------------------------------------------------------------------------
-# --list: offline by construction (TC-030)
+# --list: offline by construction 
 # ---------------------------------------------------------------------------
 
 
@@ -131,7 +131,7 @@ class TestListMode:
 
     def test_list_creates_no_directories(self, tmp_path, capsys):
         """--list must not touch the network OR the disk: no cache root, no
-        dest dir (TC-030 -- the mode is safe anywhere, any runner)."""
+        dest dir (-- the mode is safe anywhere, any runner)."""
         cache = tmp_path / "cache"
         dest = tmp_path / "dest"
         rc = _run(["--list", "--cache", str(cache), "--dest", str(dest)])
@@ -162,7 +162,7 @@ class TestListMode:
 
 
 # ---------------------------------------------------------------------------
-# fetch-by-pin: enforcement is the product (TC-031/TC-032)
+# fetch-by-pin: enforcement is the product 
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ class TestFetchByPin:
     def test_checkout_is_detached_never_default_head(self, origin_repo, tmp_path):
         """The clone is --no-checkout and the only checkout is --detach at the
         pin: HEAD must not be a symbolic ref to any branch (the default-branch
-        HEAD is never materialized -- FR-006's contamination lesson)."""
+        HEAD is never materialized -- the contamination lesson)."""
         origin, head = origin_repo
         manifest = _write_manifest(tmp_path / "m.json", origin, head)
         cache = tmp_path / "cache"
@@ -204,7 +204,7 @@ class TestFetchByPin:
     def test_bogus_pin_fails_loudly_naming_entry_expected_found(
         self, origin_repo, tmp_path, capsys
     ):
-        """TC-031: a pin that does not exist in the cloned repository (moved,
+        """A pin that does not exist in the cloned repository (moved,
         force-pushed away, typo'd) fails with the entry named, the expected
         pin, and what was found instead -- never a silent default-HEAD run."""
         origin, head = origin_repo
@@ -256,7 +256,7 @@ class TestFetchByPin:
         assert "git is required" in capsys.readouterr().err
 
     def test_cache_inside_the_repository_is_refused(self, origin_repo, tmp_path, monkeypatch, capsys):
-        """D-009: multi-GB clones must never land inside the cairn checkout
+        """Multi-GB clones must never land inside the cairn checkout
         (REPO_ROOT monkeypatched to the scratch dir so the real repo is never
         a party to the test)."""
         origin, head = origin_repo
@@ -274,7 +274,7 @@ class TestFetchByPin:
 
 
 # ---------------------------------------------------------------------------
-# --run-bench: invocation shape + the t3_entry result stamp (TC-032)
+# --run-bench: invocation shape + the t3_entry result stamp 
 # ---------------------------------------------------------------------------
 
 
@@ -295,10 +295,10 @@ class TestRunBench:
     def test_invokes_bench_on_the_verified_checkout_and_stamps_the_entry(
         self, origin_repo, tmp_path, monkeypatch, capsys
     ):
-        """TC-032's result marker: after a VERIFIED checkout the script runs
+        """The result marker: after a VERIFIED checkout the script runs
         `cairn bench --workspace <checkout> --json --save <dest>/<name>.json`
         and the saved artifact's dataset.t3_entry is the manifest entry
-        verbatim (repo + commit + scale -- the T013 hook's shape)."""
+        verbatim (repo + commit + scale -- the hook's shape)."""
         origin, head = origin_repo
         manifest = _write_manifest(tmp_path / "m.json", origin, head)
         cache, dest = tmp_path / "cache", tmp_path / "results"

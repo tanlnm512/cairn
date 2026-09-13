@@ -1,4 +1,4 @@
-"""Approved-run execution: manifest rows -> store -> embeddings (D-003)."""
+"""Approved-run execution: manifest rows -> store -> embeddings."""
 from __future__ import annotations
 
 from cairn.knowledge.ingest.refs import resolve_doc_refs
@@ -158,7 +158,7 @@ def verify_manifest(
 ) -> dict:
     """Post-write checks: count vs manifest, OKF validation, smoke search.
 
-    Three verify legs (FR-008/TC-024): the store's document count must
+    Three verify legs: the store's document count must
     EQUAL the expected population -- ``pre_existing + accepted -
     overwritten`` when the caller supplies the executor's pre-write state
     (``add_document`` overwrites in place, so a fully-successful run
@@ -186,7 +186,7 @@ def verify_manifest(
         return {
             "store_count": 0,
             "expected_count": expected,
-            # Equality contract (TC-024): an absent store under-wrote.
+            # Equality contract: an absent store under-wrote.
             "count_ok": False,
             "smoke_search_hit": False,
             **validated,
@@ -214,7 +214,7 @@ def verify_manifest(
 
 
 def _validate_leg(store) -> dict:
-    """Run the ``cairn validate`` conformance check in-process (TC-024).
+    """Run the ``cairn validate`` conformance check in-process.
 
     Calls the same :func:`cairn.okf.conformance.check_bundle` the CLI
     wraps -- no subprocess -- against the knowledge bundle path the

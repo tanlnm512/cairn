@@ -1,35 +1,32 @@
 """The committed ablation artifact validates against its self-declared schema.
 
-The retrieval-quality record was UNIFIED on 2026-08-17 (owner request,
-after the two campaign PRs — #37 then #38 — left v1/v2 sibling artifacts):
-``benchmarks/quality/ablation.{json,md}`` is now the single record,
-schema ``cairn-quality-ablation/2``. The second campaign's content is the
-document body; the first campaign's ``cairn-quality-ablation/1`` record is
-embedded VERBATIM under ``campaigns.retrieval-quality-v1`` (originals in
-git history at merge commit 7d9049e and earlier; blob hashes recorded in
-the artifact). The guards below pin, so drift fails loudly:
+``benchmarks/quality/ablation.{json,md}`` is the single retrieval-quality
+record, schema ``cairn-quality-ablation/2``. The second campaign's content
+is the document body; the first campaign's ``cairn-quality-ablation/1``
+record is embedded VERBATIM under ``campaigns.retrieval-quality-v1`` (blob
+hashes recorded in the artifact). The guards below pin, so drift fails
+loudly:
 
 * parses, canonical bytes (sorted keys, trailing newline — the
   canonical-bytes discipline the artifact commits to);
 * the embedded first-campaign record is BYTE-IDENTICAL to its recorded
-  blob hashes (the TC-028 pin, moved from the removed sibling files onto
+  blob hashes (the pin, moved from the removed sibling files onto
   the embedded copy and the appendix's verbatim block);
 * the two measurement families are declared with the DS-v1 identity
   copied verbatim from the embedded first-campaign record;
 * every row carries ``family`` + ``dataset`` labels from the declared
   families, satisfies the additive row-shape contract, and no v2 row
-  presents a delta against a v1 row (TC-028/D-008/D-011); ds-v2
+  presents a delta against a v1 row; ds-v2
   aggregates never appear without per-corpus rows;
 * the ``mv`` marker follows the combo's lever, not a row-constructor
   constant: a row whose combo IS the multivector lever carries
-  ``mv=true`` in every family (the DS-v2 runner once hardcoded ``mv``
-  false, mislabeling the refuted-transfer rows);
+  ``mv=true`` in every family;
 * the (closed) verdict: SC-1 targets exactly 0.50/0.33, evidence slots
   filled (folds >= 5, DS-v2 counts), per-leg actuals, the document-branch
   close with the best candidate's intervals and the next constraint;
 * the embedded first-campaign record keeps its own invariants: one
   shipped_defaults row reproducing DS-v1's L1 block at 4 decimals
-  (TC-017) and the honest SC-1 shortfall verdict with the p=0.118
+   and the honest SC-1 shortfall verdict with the p=0.118
   near-miss row it cites.
 """
 from __future__ import annotations
@@ -48,7 +45,7 @@ SCHEMA = "cairn-quality-ablation/2"
 V1_SCHEMA = "cairn-quality-ablation/1"
 FAMILIES = {"ds-v1-kfold", "ds-v2"}
 FAMILY_VERSIONS = {"ds-v1-kfold": "DS-v1", "ds-v2": "DS-v2"}
-# The additive row-shape contract (D-008 consequences): guards compare with
+# The additive row-shape contract (consequences): guards compare with
 # >= so later tasks may add columns but never remove or retype these.
 ROW_KEYS = {
     "family",
@@ -62,8 +59,8 @@ ROW_KEYS = {
 }
 MACRO = "macro-average"
 # Blob hashes of the original standalone /1 files at unification time
-# (TC-028 pin carried over; git history keeps the files at 7d9049e and
-# earlier — CI's shallow checkout cannot, hence the embedded-copy pin).
+# (the pin; CI's shallow checkout cannot resolve git history, hence the
+# embedded-copy pin).
 V1_JSON_BLOB = "3649dd1c572652b1660d82f53d5d5bcdd1c8c76b"
 V1_MD_BLOB = "7112bb0899aef22dfda8080596cc63bbbfb8314c"
 V1_APPENDIX_BEGIN = "<!-- verbatim-begin (cairn-quality-ablation/1 ablation.md) -->"
@@ -89,12 +86,12 @@ def test_parses_with_self_declared_schema_and_canonical_bytes():
     # Canonical serialization: sorted keys, 2-space indent, one trailing \n
     # (the canonical-bytes discipline inherited from the v1 record).
     assert raw == json.dumps(doc, indent=2, sort_keys=True) + "\n"
-    # Family declaration: exactly the two FR-006 measurement families.
+    # Family declaration: exactly the two measurement families.
     assert set(doc["dataset"]["families"]) == FAMILIES
 
 
 def test_embedded_first_campaign_is_byte_identical_to_its_recorded_blobs():
-    """TC-028's pin, moved onto the embedded copy at unification."""
+    """The embedded copy is byte-identical to its recorded blob pins."""
     doc = _doc()
     camp = doc["campaigns"]["retrieval-quality-v1"]
     assert camp["original_schema"] == V1_SCHEMA
@@ -132,18 +129,18 @@ def test_families_declared_with_verbatim_ds_v1_identity():
 
 
 def test_rows_carry_family_and_dataset_labels():
-    """TC-028/D-008/D-011: v2 rows are a new family, never a v1 delta."""
+    """V2 rows are a new family, never a v1 delta."""
     doc = _doc()
     declared = doc["dataset"]["families"]
     for row in doc["rows"]:
         assert set(row) >= ROW_KEYS, row.get("combo")
         assert row["family"] in FAMILIES, row["combo"]
         assert row["dataset"] == FAMILY_VERSIONS[row["family"]], row["combo"]
-        # No v2 row is presented as a delta against a v1 row (D-008).
+        # No v2 row is presented as a delta against a v1 row.
         assert not any("vs_v1" in k or "vs-v1" in k for k in row), row["combo"]
         if row["family"] == "ds-v2":
             assert row["corpus"] in set(declared["ds-v2"]["corpora"]) | {MACRO}
-    # D-011: a ds-v2 macro-average never appears without per-corpus rows.
+    # a ds-v2 macro-average never appears without per-corpus rows.
     ds2_rows = [r for r in doc["rows"] if r["family"] == "ds-v2"]
     if any(r["corpus"] == MACRO for r in ds2_rows):
         assert any(r["corpus"] != MACRO for r in ds2_rows)
@@ -152,7 +149,7 @@ def test_rows_carry_family_and_dataset_labels():
     assert all(r["family"] in FAMILIES for r in doc["rows"])
     assert not any("full_set" in r for r in doc["rows"])
     # Honesty coupling, final state: the shipped_defaults row and the
-    # verdict status move together (T024 closed on the document branch).
+    # verdict status move together (closed on the document branch).
     sd = doc["shipped_defaults"]
     if sd["row"] is None:
         assert "no-ship" in sd["status"], sd["status"]
@@ -165,12 +162,7 @@ def test_rows_carry_family_and_dataset_labels():
 def test_mv_marker_follows_the_multivector_lever_not_a_constant():
     """The mv lever marker is a function of the combo, never a hardcode.
 
-    The DS-v2 zero-shot runner once hardcoded ``"mv": False`` in its row
-    constructors, so the committed artifact labeled the multivector
-    combo's DS-v2 rows (attrs / yarl / macro-average) single-vector —
-    wrong lever metadata for the campaign's headline zero-shot
-    refutation (DS-v1 SC-1 0.5588/0.3395, refuted at macro
-    0.4632/0.2844). Invariant, every family: a row whose combo is the
+    Invariant, every family: a row whose combo is the
     multivector lever was measured against the ``embeddings_mv`` store
     and must carry ``mv=true``; weaker, DS-v2 rows of every other combo
     measured flag-off shapes and must carry ``mv=false``.
@@ -192,14 +184,14 @@ def test_mv_marker_follows_the_multivector_lever_not_a_constant():
 
 
 def test_verdict_evidence_filled_targets_unchanged():
-    """TC-026 (targets 0.50/0.33) + TC-029 evidence slots, closed (T024)."""
+    """The verdict pins SC-1 targets 0.50/0.33 with evidence slots, closed."""
     doc = _doc()
     v = doc["verdict"]
     assert v["status"] == "done"
     assert v["outcome"] == "documented-shortfall-no-ship"
     assert v["sc1_targets"] == {"recall_at_10": 0.50, "mrr": 0.33}
     assert "never gamed" in v["honesty_clause"]
-    # TC-029 slots, FILLED: fold count >= 5 with a spread, DS-v2 counts
+    # slots, FILLED: fold count >= 5 with a spread, DS-v2 counts
     # above their floors.
     assert v["fold_count_minimum"] == 5
     assert v["fold_count"] >= v["fold_count_minimum"]
@@ -208,7 +200,7 @@ def test_verdict_evidence_filled_targets_unchanged():
     assert v["ds2_counts"]["minimum"] == {"l1_queries": 150, "l5_queries": 40}
     assert v["ds2_counts"]["l1_queries"] >= 150
     assert v["ds2_counts"]["l5_queries"] >= 40
-    # The actuals are per-leg (D-011: never a single-leg figure alone):
+    # The actuals are per-leg (never a single-leg figure alone):
     # DS-v1 k-fold best AND DS-v2 macro best, with the full-evidence verdict.
     assert v["sc1_actual"]["ds_v1_kfold_best"]["both_targets_reached"] is True
     assert v["sc1_actual"]["ds_v2_macro_best"]["both_targets_reached"] is False
@@ -229,7 +221,7 @@ def test_embedded_first_campaign_keeps_its_own_invariants():
     """The /1 record's guards, re-anchored onto the embedded copy."""
     v1 = _v1()
     # Exactly one shipped_defaults row, and it reproduces DS-v1's L1 block
-    # at 4 decimals (TC-017: numbers bought by retrieval, not looser
+    # at 4 decimals (numbers bought by retrieval, not looser
     # matching) against the immutable minted baseline.
     shipped = [r for r in v1["rows"] if r["shipped_defaults"]]
     assert len(shipped) == 1
@@ -260,10 +252,10 @@ def test_rendering_carries_closed_verdict_and_family_isolation():
     assert "no ship" in md
     assert "cairn-quality-ablation/2" in md
     assert "ablation.json" in md  # source-of-record pointer
-    # TC-026: the same bar as the first campaign, no goalpost moves.
+    # the same bar as the first campaign, no goalpost moves.
     assert "| SC-1 target (unchanged) | ≥ 0.50 | ≥ 0.33 |" in md
     assert "0.50 / 0.33" in md
-    # D-008/D-011: new family, never diffed against v1; never aggregate alone.
+    # new family, never diffed against v1; never aggregate alone.
     assert "never diffed against v1 rows" in md
     assert "never an aggregate alone" in md
     for family in FAMILIES:

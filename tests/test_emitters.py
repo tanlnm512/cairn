@@ -160,9 +160,9 @@ def test_stray_sweeper_emits_count_only_when_strays_killed(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # 4. empty_result -- explore() and the search_symbols MCP tool (F1 expansion)
-#    Spec §6.4 names the engine query layer (explore, search_symbols,
-#    semantic_search). semantic_search's emit is covered in
-#    test_semantic_events.py; these two pin the other query kinds.
+# Spec §6.4 names the engine query layer (explore, search_symbols,
+# semantic_search). semantic_search's emit is covered in
+# test_semantic_events.py; these two pin the other query kinds.
 # ---------------------------------------------------------------------------
 
 

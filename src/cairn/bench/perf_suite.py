@@ -153,10 +153,11 @@ def run_perf_suite(
 
     conn = get_db(db_path)
     try:
+        # multivector pinned off: embed is a timed op here.
         def _do_embed():
             c = get_db(db_path)
             try:
-                return emb.embed_all(c, reap_orphans=False)
+                return emb.embed_all(c, reap_orphans=False, multivector=False)
             finally:
                 c.close()
 

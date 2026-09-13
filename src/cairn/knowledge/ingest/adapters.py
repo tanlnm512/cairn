@@ -115,7 +115,7 @@ class FedMarkdownAdapter:
         self.skipped.append((relpath, reason))
         logger.warning("Skipping fed document %s: %s", relpath, reason)
 
-#: Allowlist of repository doc directories walked by RepoScanAdapter (FR-001).
+#: Allowlist of repository doc directories walked by RepoScanAdapter.
 DEFAULT_DOC_DIRS: Tuple[str, ...] = ("docs", "decisions", "adr", "adrs")
 
 
@@ -126,7 +126,7 @@ class SkipRule:
     kind "dir" matches any directory part of the repo-relative path;
     kind "file" matches the file name. Patterns compare lowercased.
     ``category`` names the built-in group a workspace config can
-    disable (FR-010); workspace-added rules use the "workspace" group.
+    disable; workspace-added rules use the "workspace" group.
     """
 
     kind: str
@@ -135,7 +135,7 @@ class SkipRule:
     category: str = ""
 
 
-#: FR-001 skip-list for knowledge ingestion. Distinct from the graph
+#: Skip-list for knowledge ingestion. Distinct from the graph
 #: scanner's DEFAULT_SKIP_DIRS (src/cairn/graph/scanner.py:102), which is
 #: code-indexing only and logs no reason; every rule here carries one.
 SKIP_LIST: Tuple[SkipRule, ...] = (
@@ -201,7 +201,7 @@ def _dir_rule_matches(parts: Tuple[str, ...], pattern: str) -> bool:
 
 
 class RepoScanAdapter:
-    """Walks a repository's allowlisted doc directories (FR-001).
+    """Walks a repository's allowlisted doc directories.
 
     Each configured doc dir is walked recursively for ``*.md`` in sorted
     order. Skip-listed documents are not yielded; they are recorded in
@@ -249,7 +249,7 @@ class RepoScanAdapter:
                 yield (repo, rel.as_posix(), text, repo)
 
 
-#: Origin label for documents converted from binary formats (FR-003).
+#: Origin label for documents converted from binary formats.
 CONVERTED_ORIGIN = "converted"
 
 

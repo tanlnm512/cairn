@@ -1,17 +1,17 @@
-"""T019 (FR-005, D-007): the dedicated ``vecmv_<safe-model>`` vec0 index.
+""" (): the dedicated ``vecmv_<safe-model>`` vec0 index.
 
 Covers the additive ``source`` parameter on ``rebuild_index``/``ann_query``:
-- default source ("embeddings") is byte-identical to the pre-T019 call shape
-  and never creates a vecmv table (TC-020's flag-off storage guarantee);
+- default source ("embeddings") is byte-identical to the pre- call shape
+  and never creates a vecmv table (the flag-off storage guarantee);
 - source="embeddings_mv" builds a SEPARATE vec0 table beside ``vec_`` with
   the same rowid-keyed wholesale-rebuild contract (every mv vector kind goes
   in), and ``ann_query`` round-trips through ``embeddings_mv``'s own rows;
 - ``_candidates_from_ann_hits`` dedups per symbol by MAX score -- one entry
-  per symbol at its best score (the ANN half of TC-023's "one symbol, one
+  per symbol at its best score (the ANN half of the "one symbol, one
   entry"), a no-op at one row per symbol where results are byte-identical
   to the previous last-wins comprehension;
-- CLI: ``cairn embed --multivector`` rebuilds BOTH indexes when the ANN
-  backend is on; the flag-off build creates only the base ``vec_`` table.
+- CLI: ``cairn embed`` rebuilds BOTH indexes when the ANN backend is on --
+  for an explicit ``--multivector`` and for the flagless default.
 
 Uses CAIRN_EMBED_BACKEND=hash so no torch/model download is needed.
 """
@@ -54,7 +54,7 @@ def _seed_corpus(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Default source -- byte-identical to the pre-T019 call shape (TC-020)
+# Default source -- byte-identical to the pre- call shape 
 # ---------------------------------------------------------------------------
 
 
@@ -82,14 +82,14 @@ def test_default_source_param_equivalent_to_legacy_call(fresh_db, monkeypatch):
     assert legacy_hits == explicit_hits, "default-source query must be byte-identical"
 
 
-def test_default_build_never_creates_vecmv_table(fresh_db, monkeypatch):
-    """A flag-off build + default rebuild must not leave a vecmv table
-    behind -- flag-off storage is byte-identical (TC-020)."""
+def test_opt_out_build_never_creates_vecmv_table(fresh_db, monkeypatch):
+    """An explicit opt-out build + default rebuild must not leave a vecmv
+    table behind -- opt-out storage is byte-identical ."""
     monkeypatch.setenv("CAIRN_ANN_BACKEND", "sqlite-vec")
     from cairn.graph import ann_index as ann, embeddings as emb
 
     _seed_corpus(fresh_db)
-    emb.embed_all(fresh_db)  # multivector off: the default
+    emb.embed_all(fresh_db, multivector=False)  # the explicit opt-out leg
     model = emb.current_model()
 
     summary = ann.rebuild_index(fresh_db, model)
@@ -209,7 +209,7 @@ def test_unknown_source_rejected(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# _candidates_from_ann_hits: last-wins -> max (FR-005, TC-023's ANN half)
+# _candidates_from_ann_hits: last-wins -> max (the ANN half)
 # ---------------------------------------------------------------------------
 
 
@@ -272,13 +272,14 @@ def test_candidates_single_vector_noop_equivalence(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# CLI wiring (TC-020's user-facing surface)
+# CLI wiring (the user-facing surface)
 # ---------------------------------------------------------------------------
 
 
 def test_cli_multivector_rebuilds_both_indexes(tmp_path, monkeypatch):
-    """`cairn embed --multivector` (ANN backend on) rebuilds the base vec_
-    AND the vecmv_ index; the flag-off build creates only vec_."""
+    """`cairn embed` (ANN backend on) rebuilds the base vec_ AND the
+    vecmv_ index -- for an explicit --multivector and for the flagless
+    default ."""
     from click.testing import CliRunner
 
     from cairn.cli import main as cli_main
@@ -316,24 +317,28 @@ def test_cli_multivector_rebuilds_both_indexes(tmp_path, monkeypatch):
     finally:
         conn.close()
 
-    # Flag OFF (default): only the base index, no vecmv table.
-    db_off = str(tmp_path / "off.db")
-    conn = init_db(db_off)
+    # Flagless default run: both indexes.
+    db_default = str(tmp_path / "default.db")
+    conn = init_db(db_default)
     _seed_corpus(conn)
     conn.close()
     result = runner.invoke(
-        cli_main, ["embed", "--db", db_off, "--build-index"], catch_exceptions=False
+        cli_main, ["embed", "--db", db_default, "--build-index"], catch_exceptions=False
     )
     assert result.exit_code == 0
-    conn = sqlite3.connect(db_off)
+    conn = sqlite3.connect(db_default)
     conn.row_factory = sqlite3.Row
     try:
+        # A fresh connection must load sqlite-vec before reading vec0 tables.
+        assert ann.try_load(conn)
+        vec_tbl = ann._table_name(model)
+        mv_tbl = ann._table_name(model, "embeddings_mv")
         names = {
             r["name"]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        assert ann._table_name(model) in names
-        assert not any(n.startswith("vecmv_") for n in names)
-        assert conn.execute("SELECT COUNT(*) c FROM embeddings_mv").fetchone()["c"] == 0
+        assert vec_tbl in names and mv_tbl in names
+        assert conn.execute(f"SELECT COUNT(*) c FROM {vec_tbl}").fetchone()["c"] == 3
+        assert conn.execute(f"SELECT COUNT(*) c FROM {mv_tbl}").fetchone()["c"] == 5
     finally:
         conn.close()

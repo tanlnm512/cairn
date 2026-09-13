@@ -44,7 +44,7 @@ expected values. This file asserts the *cardinality property* (every value is
 bounded) and is intentionally the one place that fails loudly if an emitter
 escapes its declared domain.
 
-All catalog events have live emitters today (``ann_fallback`` /
+All catalog events have live emitters today (``ann_fallback``
 ``hash_fallback`` were wired into ``warn_*_fallback_once``; the residual-gap
 fixes added ``semantic_unavailable`` and ``embed_flush_stalled``), so the
 dynamic sweep drives every name in the catalog.
@@ -80,17 +80,17 @@ from cairn.telemetry import (
 # The single source of truth: allowed attr-value domains per catalog event.
 #
 # Convention for each attr's validator:
-#   * ``frozenset``  -> strict enum / bucket. Membership is required; a new
-#                       value is a cardinality change that MUST update this set
-#                       (e.g. a 4th backend, a 5th task_lifecycle event).
-#   * callable       -> shape predicate for a bounded tag / number. Validated
-#                       by heuristic (no path separators / whitespace, bounded
-#                       length, or an int range). These attrs are *intentionally*
-#                       tags, not strict enums: their roster (the ~13 contention
-#                       sites, the MCP tool names, the task kinds) is volatile,
-#                       so coupling the test to the exact roster would be noisy
-#                       without adding cardinality safety. The heuristic still
-#                       rejects the actual risk -- paths and free text.
+# * ``frozenset`` -> strict enum / bucket. Membership is required; a new
+# value is a cardinality change that MUST update this set
+# (e.g. a 4th backend, a 5th task_lifecycle event).
+# * callable -> shape predicate for a bounded tag / number. Validated
+# by heuristic (no path separators / whitespace, bounded
+# length, or an int range). These attrs are *intentionally*
+# tags, not strict enums: their roster (the ~13 contention
+# sites, the MCP tool names, the task kinds) is volatile,
+# so coupling the test to the exact roster would be noisy
+# without adding cardinality safety. The heuristic still
+# rejects the actual risk -- paths and free text.
 # ---------------------------------------------------------------------------
 
 # Strict enum / bucket sets (a new member here is a deliberate cardinality event).
@@ -107,7 +107,7 @@ _SEMANTIC_OFF_REASONS = frozenset({"unavailable", "no_embeddings", "error"})
 _FLUSH_FAILURE_BUCKETS = frozenset({"4-10", "11-100", ">100"})
 # P0-2 rerank confidence gating: the only skip class semantic_search emits.
 _RERANK_SKIP_REASONS = frozenset({"confident_margin"})
-# FR-013 embed_server_degraded reason enum. Deliberately a LOCAL literal, not
+# embed_server_degraded reason enum. Deliberately a LOCAL literal, not
 # a reference to the live events.EMBED_SERVER_REASONS: referencing the live
 # frozenset would let a reason added in events.py auto-pass this guard. A new
 # reason must be re-declared here (a cardinality event) or the emit sweep
@@ -218,7 +218,7 @@ ALLOWED_ATTR_VALUES: dict[str, dict[str, object]] = {
     RERANK_SKIPPED: {
         "reason": _RERANK_SKIP_REASONS,
     },
-    # Spec embedding-server-backend FR-013: one event per process per reason
+    # Spec embedding-server-backend: one event per process per reason
     # when the server backend degrades or a ladder rung adopts. Payload is
     # host+model only (never request bodies); reason is the catalog enum.
     EMBED_SERVER_DEGRADED: {
@@ -247,7 +247,7 @@ LIVE_EVENTS = frozenset(
 )
 # All catalog events have a live emitter (ann_fallback / hash_fallback were
 # wired into warn_*_fallback_once; semantic_unavailable / embed_flush_stalled
-# added by the residual-gap fixes; embed_server_degraded wired by the T012
+# added by the residual-gap fixes; embed_server_degraded wired by the 
 # notify fan-out in graph/embed_ladder.py), so the partition stays honest.
 NO_EMITTER_EVENTS = frozenset()
 
@@ -476,25 +476,20 @@ def test_chars_bucket_boundary_labels_are_exact():
 
 @pytest.fixture
 def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
-    """Drive every *live* emitter once on its cheapest path; return captured rows.
+    """    Drive every *live* emitter once on its cheapest path; return
+    ``{event_name: [attrs_dict, ...]}``.
 
-    Returns ``{event_name: [attrs_dict, ...]}``. Each drive picks the minimal
-    branch that fires the emit (no ``embed_all`` corpus, no real LLM critic, no
-    real stray process) so the sweep stays fast and hermetic. The assertion that
-    each LIVE event was actually emitted lives in the parametrized consumers --
-    a silently-broken emitter must not pass vacuously.
-
-    Branch choices:
-      * ``semantic_search`` on an *empty* DB -> brute scan finds nothing ->
-        emits ``semantic_backend`` (n_results="0") AND ``empty_result``. No
-        symbols/embeddings to build, so this is cheap. ``CAIRN_ANN_BACKEND=off``
-        + reranker stubbed off keeps it deterministic (mirrors
-        test_semantic_events.py) and free of sqlite-vec / model deps.
-      * ``note_contention`` -> one ``lock_contention`` event.
-      * ``_truncate_result`` with a 50-char cap -> one ``truncate_result``.
-      * ``claim_task`` on a fresh task -> one ``task_lifecycle`` (claimed).
-      * ``_run_stray_sweep`` with a mocked sweep -> one ``stray_swept``.
-    """
+    Each drive picks the minimal branch that fires the emit so the sweep stays
+    fast and hermetic; the parametrized consumers assert each LIVE event was
+    emitted (a silently-broken emitter must not pass vacuously). Branch choices:
+    * ``semantic_search`` on an empty DB -> brute scan (``CAIRN_ANN_BACKEND=off``,
+      reranker stubbed off, mirrors test_semantic_events.py) -> emits
+      ``semantic_backend`` (n_results="0") AND ``empty_result``, no sqlite-vec /
+      model deps.
+    * ``note_contention`` -> ``lock_contention``; ``_truncate_result`` (50-char
+      cap) -> ``truncate_result``; ``claim_task`` on a fresh task ->
+      ``task_lifecycle`` (claimed); ``_run_stray_sweep`` with a mocked sweep ->
+      ``stray_swept``."""
     # Determinism knobs for the semantic drive.
     monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
     from cairn.graph import reranker as rrk
@@ -639,7 +634,7 @@ def captured_live_emits(hash_backend, fresh_db, tmp_path, monkeypatch):
     with _eb._LOCK:
         _eb._QUEUE.clear()
 
-    # 10. embed_server_degraded (T012): drive the notify fan-out directly on a
+    # 10. embed_server_degraded: drive the notify fan-out directly on a
     # bounded reason with a resolvable base URL so host/model carry real
     # values. The private once-set is cleared and the backend caches reset
     # around the drive so it is deterministic regardless of test ordering.
@@ -716,7 +711,7 @@ def test_path_like_values_are_rejected_by_the_tag_heuristic(value):
 
     This is the regression net for the heuristic: feed it the shapes that would
     cause cardinality explosion (file paths, repo-relative paths, Windows paths)
-    and confirm every one is rejected. ``_bounded_tag`` is what the ``site`` /
+    and confirm every one is rejected. ``_bounded_tag`` is what the ``site``
     ``tool`` / ``task_kind`` / ``query_kind`` attrs validate against.
     """
     assert not _bounded_tag(value), f"path-like {value!r} should be rejected"
@@ -750,16 +745,15 @@ def test_legitimate_tags_pass_the_tag_heuristic(value):
 
 
 def test_task_lifecycle_event_literals_are_within_declared_set():
-    """The ``event=`` literals in ``llm/tasks.py`` are a subset of the declared set.
+    """    The ``event=`` literals in ``llm/tasks.py`` must be a subset of the declared
+    set.
 
-    ``task_lifecycle`` emits from four sites (claimed/completed/revised/dropped)
-    inside ``complete_task``, which runs the deterministic critic (heavier to
-    drive in full). The complete/revise/drop sites share the identical emit
-    shape with the claimed site (covered dynamically above and in
-    test_emitters.py); this static check ensures no *fifth* ``event`` value has
-    been added without updating ``_TASK_EVENTS``. It greps source rather than
-    importing so a syntax-only change is still caught.
-    """
+    ``task_lifecycle`` emits from four sites inside ``complete_task``
+    (claimed/completed/revised/dropped); the complete/revise/drop sites share the
+    claimed site's emit shape (covered dynamically in test_emitters.py), so this
+    static check ensures no fifth ``event`` value is added without updating
+    ``_TASK_EVENTS``. Greps source rather than importing so a syntax-only change
+    is still caught."""
     import inspect
 
     from cairn.llm import tasks as tasks_mod

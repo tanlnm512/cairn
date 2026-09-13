@@ -268,9 +268,8 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 
     Every degrade branch (backend unavailable, no knowledge embeddings, an
     unexpected error) records one ``semantic_unavailable`` signal on the
-    'knowledge' surface (F4) -- previously this returned ``[]`` with no trace
-    at all, so a silently-empty semantic path was indistinguishable from "no
-    matches".
+    'knowledge' surface, so a silently-empty semantic path is distinguishable
+    from "no matches".
     """
     try:
         from cairn.graph import embeddings as emb

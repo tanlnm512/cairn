@@ -89,7 +89,7 @@ def test_note_failure_signature_returns_count_before_this_occurrence(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# `memory record --recurrence-key` capture gate (TC-012/TC-013/TC-014)
+# `memory record --recurrence-key` capture gate
 # --------------------------------------------------------------------------
 
 def test_memory_record_recurrence_key_gates_capture(tmp_path):
@@ -125,7 +125,7 @@ def test_memory_record_recurrence_key_is_per_signature(tmp_path):
         ])
 
     assert record("aaaaaaaaaaaaaaaa").output == ""
-    # A different signature is its own first occurrence (TC-014).
+    # A different signature is its own first occurrence.
     assert record("bbbbbbbbbbbbbbbb").output == ""
     assert _knowledge_files(knowledge) == []
     assert "Recorded" in record("aaaaaaaaaaaaaaaa").output
@@ -133,7 +133,7 @@ def test_memory_record_recurrence_key_is_per_signature(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# post_tool_failure hook registration + wiring (TC-015)
+# post_tool_failure hook registration + wiring
 # --------------------------------------------------------------------------
 
 def test_post_tool_failure_is_a_registered_entrypoint_written_on_install(tmp_path):
@@ -185,7 +185,7 @@ def test_post_tool_failure_passes_recurrence_key_to_record(tmp_path, monkeypatch
 
 
 # --------------------------------------------------------------------------
-# session_end transcript_path handling (TC-018/TC-019)
+# session_end transcript_path handling
 # --------------------------------------------------------------------------
 
 def _write_jsonl(path: Path, records: list) -> None:
@@ -289,7 +289,7 @@ def test_session_end_without_transcript_queues_nothing(tmp_path, monkeypatch, ca
 
 
 # --------------------------------------------------------------------------
-# session_start digest emission (TC-006/TC-007/TC-008)
+# session_start digest emission
 # --------------------------------------------------------------------------
 
 def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list) -> str:
@@ -348,7 +348,7 @@ def test_session_start_is_a_registered_entrypoint_with_markers():
 
 
 def test_claude_hooks_block_wires_session_start_startup_only():
-    """D-014: matcher is exactly "startup" — resume/clear/compact/fork are
+    """The matcher is exactly "startup" — resume/clear/compact/fork are
     excluded, which is what makes once-per-session true by construction."""
     from cairn.agent_install.clients.claude import claude_hooks_block
 

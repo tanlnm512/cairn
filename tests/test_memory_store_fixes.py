@@ -88,8 +88,8 @@ def test_store_twice_same_title_distinct_ids_h4(tmp_path, fresh_db):
 
     assert id1_archived != id2_archived, "Same-title archived memories must have distinct IDs"
 
-    # Test raw tier - now collision-safe with the same uuid suffix scheme as
-    # every other tier (fixed in the 2026-08-10 audit remediation, P7). It
+    # Raw tier is collision-safe with the same uuid suffix scheme as
+    # every other tier. It
     # keeps the date prefix (so decay can purge by age) AND appends a uuid.
     mem1_raw = create_memory(
         type_="pattern",

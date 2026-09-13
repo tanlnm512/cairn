@@ -6,9 +6,7 @@ These tests verify the periodic-commit *behavior* of the two build paths:
 
 The basic "build N files and verify counts persist" happy-path is covered by
 test_build_inmemory.py::test_inmemory_and_ondisk_builds_have_identical_counts,
-so it is NOT duplicated here. (Pruned 2026-07-31: removed test_on_disk_build_works,
-test_in_memory_build_works, and test_no_regression_final_row_counts as
-duplicates of that canonical count-persistence test.)
+so it is NOT duplicated here.
 """
 from __future__ import annotations
 

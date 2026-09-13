@@ -1,15 +1,15 @@
-"""T013: field-dropout chunk variants + explicit recipe param (FR-002, D-004).
+"""Field-dropout chunk variants + explicit recipe param ().
 
 Pins four things:
 
 * the existing A/B/C outputs byte-for-byte on a fixture symbol (adding the
   dropout variants must not move them),
 * each new variant's shape (what it drops, what it keeps),
-* the TC-008 identity floor across ALL selectable variants -- qualified name,
+* the identity floor across ALL selectable variants -- qualified name,
   file path, signature, and docstring appear in every chunk,
 * the recipe param on ``embed_all``/``embed_symbols``: an explicit string
   beats ``CAIRN_CHUNK_VARIANT``, ``None`` falls back to it, and neither path
-  ever mutates the environment (D-008 doctrine).
+  ever mutates the environment (doctrine).
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def test_b_no_sig_drops_params_and_return_keeps_signature_floor():
     chunk = chunk_for_symbol(_rich_row(), signature=_SIG, variant="B_NO_SIG")
     assert "Parameters:" not in chunk
     assert "Return Type:" not in chunk
-    # TC-008 floor: the signature itself is never dropped.
+    # floor: the signature itself is never dropped.
     assert "Signature: def process(self, input_str: str) -> str:" in chunk
     assert "Enclosing Scope: User" in chunk
     assert "Docstring: Process user data." in chunk
@@ -132,7 +132,7 @@ def test_variant_values_are_case_normalized_like_the_env_var():
 
 
 # ---------------------------------------------------------------------------
-# TC-008 identity floor: every selectable variant keeps the four fields.
+# identity floor: every selectable variant keeps the four fields.
 # ---------------------------------------------------------------------------
 
 
@@ -210,7 +210,7 @@ def test_embed_all_explicit_variant_beats_env_without_mutation(fresh_db, monkeyp
     assert "Imports:" not in chunk
     assert "Parameters: [{" in chunk
     assert "Docstring: Process user data." in chunk
-    # D-008: the override never mutates the process environment.
+    # the override never mutates the process environment.
     assert os.environ.get("CAIRN_CHUNK_VARIANT") == "B"
 
 
@@ -247,7 +247,7 @@ def test_embed_symbols_explicit_variant_beats_env_without_mutation(fresh_db, mon
 
 
 def test_embed_all_variant_reembed_flips_content_hash(fresh_db, monkeypatch):
-    """The staleness seam T014 drives: switching the recipe changes every
+    """The staleness seam drives: switching the recipe changes every
     chunk hash, so the same DB re-embeds under the new variant."""
     from cairn.graph import embeddings as emb
 

@@ -5,7 +5,7 @@ Three layers:
    independence (same files created in different orders under two roots
    hash identically), plus the frozen byte format, mode normalization, and
    the constant .git-marker rule.
-2. Integration with generate_corpus -- the real substrate FR-001 pins.
+2. Integration with generate_corpus -- the real substrate pins.
 3. Manifest load/save/validate -- round-trip, byte-stable saves, and the
    missing-required-key contract.
 """
@@ -47,7 +47,7 @@ class TestTreeHash:
         """Same file set built under different creation orders -> same digest.
 
         This is THE property the CI regenerate-and-assert check exists on
-        (FR-001/AC2): os.listdir order varies by filesystem, so the digest
+        ( /AC2): os.listdir order varies by filesystem, so the digest
         must be a function of the sorted manifest only.
         """
         files = {
@@ -158,8 +158,8 @@ class TestTreeHash:
 @pytest.mark.infra
 class TestGeneratedCorpus:
     def test_same_params_same_hash_across_roots(self, tmp_path):
-        """The substrate FR-001 pins: two regenerations of the same corpus
-        recipe hash identically -- what T003's CI assert will rely on."""
+        """The substrate pins: two regenerations of the same corpus
+        recipe hash identically -- what the CI assert will rely on."""
         a = generate_corpus(tmp_path / "a", 6, complexity="low")
         b = generate_corpus(tmp_path / "b", 6, complexity="low")
         assert tree_hash(a) == tree_hash(b)
@@ -308,13 +308,13 @@ class TestValidateManifest:
         """Forward compatibility: a section the validator does not know (say a
         future ``t4``) extends the schema without invalidating manifests this
         validator accepted. (``t3`` itself became a known, validated section
-        in T019 -- see TestValidateManifestT3.)"""
+        in -- see TestValidateManifestT3.)"""
         manifest = _valid_manifest()
         manifest["t4"] = [{"name": "big", "url": "https://x", "commit": "0" * 40}]
         assert validate_manifest(manifest) == []
 
 
-# --- manifest validation: optional t3 pin section (T019, FR-006/TC-029) ----
+# --- manifest validation: optional t3 pin section () ----
 
 
 def _valid_t3() -> dict:
@@ -340,7 +340,7 @@ class TestValidateManifestT3:
 
     def test_absent_t3_still_valid(self):
         """The section is optional by design: DS-v1 manifests predate it and
-        a T3 addition must not invalidate DS-v1 (D-010)."""
+        a T3 addition must not invalidate DS-v1 ."""
         assert "t3" not in _valid_manifest()
         assert validate_manifest(_valid_manifest()) == []
 
@@ -383,7 +383,7 @@ class TestValidateManifestT3:
 
     def test_second_entry_validated_too(self):
         """Every entry is checked, not just the first -- the manifest's real
-        t3 section pins two scale points (TC-029)."""
+        t3 section pins two scale points ."""
         manifest = _valid_manifest()
         t3 = _valid_t3()
         t3["entries"].append(

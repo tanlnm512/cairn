@@ -13,51 +13,26 @@ from cairn.graph.incremental import incremental_update, reindex_paths
 from cairn.graph.schema import build_lock, get_db
 
 
-# ---------------------------------------------------------------------------
-# Fixtures: a tiny workspace with two files so caller/callee span files.
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def workspace(tmp_path):
-    """A single-repo workspace with a.kt calling b.kt's symbol."""
-    ws = tmp_path / "ws"
-    repo = ws / "demo"
-    (repo / ".git").mkdir(parents=True)
-    (repo / "a.kt").write_text(
-        "class Caller {\n"
-        "  fun go() {\n"
-        "    val r = Callee()\n"
-        "    r.target()\n"
-        "  }\n"
-        "}\n"
-    )
-    (repo / "b.kt").write_text(
-        "class Callee {\n"
-        "  fun target() {}\n"
-        "}\n"
-    )
-    return ws
-
-
-def _build(workspace, db_path):
-    """Build the graph and return an open connection."""
-    build_graph(workspace=str(workspace), db_path=str(db_path))
-    return get_db(str(db_path))
+@pytest.fixture(autouse=True)
+def _hash_embedder(hash_backend):
+    """reindex_paths/incremental_update re-embed changed symbols; pin the
+    dep-free hash embedder so runs are deterministic and need no model
+    download."""
 
 
 # ---------------------------------------------------------------------------
 # #2 — incremental re-resolves INCOMING edges after a file is re-indexed.
 # ---------------------------------------------------------------------------
 
-def test_incremental_repairs_incoming_edges(workspace, tmp_path):
+def test_incremental_repairs_incoming_edges(caller_callee_db, caller_callee_ws, tmp_path):
     """Re-indexing b.kt must re-resolve a.kt's edge that points at Callee.target.
 
-    Before the fix: reindex deletes b.kt's symbols (nulling a.kt's edge to
-    'unresolved') and re-creates them with new ids, but never re-resolves the
-    incoming edge -- so precise callers of `target` dropped until a full rebuild.
+    Reindex deletes b.kt's symbols and re-creates them with new ids; the
+    incoming edge from a.kt must be re-resolved to the new symbol id, not
+    left 'unresolved'.
     """
     db = str(tmp_path / "inc.db")
-    conn = _build(workspace, db)
+    conn = caller_callee_db(db)
     try:
         # Initially there is an exact edge from a.kt -> Callee.target.
         before = conn.execute(
@@ -67,16 +42,16 @@ def test_incremental_repairs_incoming_edges(workspace, tmp_path):
         assert before["c"] >= 1, "expected a resolved edge to 'target' after build"
 
         # Touch b.kt (the callee's file) and reindex.
-        (workspace / "demo" / "b.kt").write_text(
+        (caller_callee_ws / "demo" / "b.kt").write_text(
             "class Callee {\n"
             "  fun target() {}\n"
             "  fun extra() {}\n"  # harmless change to alter the file
             "}\n"
         )
-        reindex_paths(conn, str(workspace), [str(workspace / "demo" / "b.kt")])
+        reindex_paths(conn, str(caller_callee_ws), [str(caller_callee_ws / "demo" / "b.kt")])
 
-        # The incoming edge from a.kt should be re-resolved to the NEW symbol id.
-        # Before the fix this stayed resolution='unresolved' with target_id NULL.
+        # The incoming edge from a.kt must be re-resolved to the NEW symbol id,
+        # never left resolution='unresolved' with target_id NULL.
         # At least one edge into the new 'target' symbol is exact again.
         exact_into_target = conn.execute(
             "SELECT COUNT(*) AS c FROM edges WHERE resolution = 'exact' "
@@ -94,14 +69,12 @@ def test_incremental_repairs_incoming_edges(workspace, tmp_path):
 # #1 — incremental_update rebuilds the derived indexes (transitive_edges).
 # ---------------------------------------------------------------------------
 
-def test_incremental_rebuilds_derived_indexes(workspace, tmp_path):
-    """incremental_update must refresh transitive_edges after a change.
-
-    Before the fix: only `cairn build` rebuilt derived indexes, so after
-    `cairn update` the transitive closure was stale.
+def test_incremental_rebuilds_derived_indexes(caller_callee_db, caller_callee_ws, tmp_path):
+    """incremental_update must refresh transitive_edges after a change,
+    the same way a full build does.
     """
     db = str(tmp_path / "derived.db")
-    conn = _build(workspace, db)
+    conn = caller_callee_db(db)
     try:
         # Seed the transitive table so a stale state is detectable.
         from cairn.graph.dataflow import build_transitive_closure
@@ -115,13 +88,13 @@ def test_incremental_rebuilds_derived_indexes(workspace, tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM transitive_edges").fetchone()[0] == 0
 
         # Edit a file so there's a change to pick up.
-        (workspace / "demo" / "b.kt").write_text(
+        (caller_callee_ws / "demo" / "b.kt").write_text(
             "class Callee {\n  fun target() {}\n  fun newMethod() {}\n}\n"
         )
     finally:
         conn.close()
 
-    incremental_update(workspace=str(workspace), db_path=db)
+    incremental_update(workspace=str(caller_callee_ws), db_path=db)
     conn = get_db(db)
     try:
         # transitive_edges should be repopulated by incremental_update now.
@@ -137,11 +110,11 @@ def test_incremental_rebuilds_derived_indexes(workspace, tmp_path):
 # #4 — incremental_update returns errors instead of swallowing them.
 # ---------------------------------------------------------------------------
 
-def test_incremental_update_returns_errors_key(workspace, tmp_path):
+def test_incremental_update_returns_errors_key(caller_callee_db, caller_callee_ws, tmp_path):
     """The return dict must include an 'errors' list (possibly empty)."""
     db = str(tmp_path / "errs.db")
-    _build(workspace, db)
-    result = incremental_update(workspace=str(workspace), db_path=db)
+    caller_callee_db(db)
+    result = incremental_update(workspace=str(caller_callee_ws), db_path=db)
     assert "errors" in result, "incremental_update must surface an 'errors' list"
     assert isinstance(result["errors"], list)
 
@@ -150,7 +123,7 @@ def test_incremental_update_returns_errors_key(workspace, tmp_path):
 # #3 — single-repo build takes the advisory build lock.
 # ---------------------------------------------------------------------------
 
-def test_single_repo_build_takes_lock(workspace, tmp_path, monkeypatch):
+def test_single_repo_build_takes_lock(caller_callee_ws, tmp_path, monkeypatch):
     """Two concurrent single-repo builds must not both proceed.
 
     Holding the lock from one and attempting another should raise RuntimeError.
@@ -161,7 +134,7 @@ def test_single_repo_build_takes_lock(workspace, tmp_path, monkeypatch):
     with build_lock(db):
         with pytest.raises(RuntimeError, match="another build"):
             build_graph(
-                workspace=str(workspace),
+                workspace=str(caller_callee_ws),
                 repo_filter="demo",
                 db_path=db,
             )
@@ -171,14 +144,12 @@ def test_single_repo_build_takes_lock(workspace, tmp_path, monkeypatch):
 # #5 — transactional reindex: a failed re-parse keeps the old rows.
 # ---------------------------------------------------------------------------
 
-def test_reindex_failure_keeps_old_rows(workspace, tmp_path, monkeypatch):
-    """If re-parse fails after the delete, the old symbols must be restored.
-
-    Before the fix: delete -> commit, then re-parse failure left a gap (old
-    deleted, new not written). Now the whole delete+reinsert is one transaction.
+def test_reindex_failure_keeps_old_rows(caller_callee_db, caller_callee_ws, tmp_path, monkeypatch):
+    """If re-parse fails after the delete, the old symbols must be restored:
+    the whole delete+reinsert is one transaction.
     """
     db = str(tmp_path / "tx.db")
-    conn = _build(workspace, db)
+    conn = caller_callee_db(db)
     try:
         symbols_before = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         assert symbols_before >= 2
@@ -212,11 +183,11 @@ def test_reindex_failure_keeps_old_rows(workspace, tmp_path, monkeypatch):
 
     monkeypatch.setattr(builder_mod, "get_parser", failing_get_parser)
 
-    b = workspace / "demo" / "b.kt"
+    b = caller_callee_ws / "demo" / "b.kt"
     b.write_text("class Callee {\n  fun target() {}\n}\n")  # touch
     conn = get_db(db)
     try:
-        result = reindex_paths(conn, str(workspace), [str(b)])
+        result = reindex_paths(conn, str(caller_callee_ws), [str(b)])
     finally:
         conn.close()
 
@@ -262,12 +233,12 @@ def test_read_only_skips_metric_logging(monkeypatch):
 # #12 — _clear_repo deletes embeddings.
 # ---------------------------------------------------------------------------
 
-def test_clear_repo_deletes_embeddings(workspace, tmp_path):
+def test_clear_repo_deletes_embeddings(caller_callee_db, caller_callee_ws, tmp_path):
     """A repo rebuild should not leave orphaned embedding rows."""
     from cairn.graph.builder import _clear_repo
 
     db = str(tmp_path / "emb.db")
-    conn = _build(workspace, db)
+    conn = caller_callee_db(db)
     try:
         # Manually insert embedding rows for a symbol (the semantic extra isn't
         # installed in the test env, so we simulate the rows).
@@ -295,10 +266,10 @@ def test_clear_repo_deletes_embeddings(workspace, tmp_path):
 # #6 — crash-window marker: set before clear, cleared last, detectable.
 # ---------------------------------------------------------------------------
 
-def test_single_repo_build_clears_marker_on_success(workspace, tmp_path):
+def test_single_repo_build_clears_marker_on_success(caller_callee_ws, tmp_path):
     """A completed single-repo rebuild leaves no 'building' marker behind."""
     db = str(tmp_path / "marker.db")
-    build_graph(workspace=str(workspace), repo_filter="demo", db_path=db)
+    build_graph(workspace=str(caller_callee_ws), repo_filter="demo", db_path=db)
 
     conn = get_db(db)
     try:
@@ -310,7 +281,7 @@ def test_single_repo_build_clears_marker_on_success(workspace, tmp_path):
     assert n == 0, "successful rebuild must clear its crash-window marker"
 
 
-def test_crashed_repo_build_leaves_marker_detectable(workspace, tmp_path, monkeypatch):
+def test_crashed_repo_build_leaves_marker_detectable(caller_callee_ws, tmp_path, monkeypatch):
     """A mid-rebuild crash leaves the marker so doctor can flag the partial repo.
 
     The marker must still be present if the crash happens during the resolve
@@ -329,7 +300,7 @@ def test_crashed_repo_build_leaves_marker_detectable(workspace, tmp_path, monkey
     monkeypatch.setattr(builder_mod, "_resolve_all", boom)
 
     with pytest.raises(RuntimeError, match="simulated crash"):
-        build_graph(workspace=str(workspace), repo_filter="demo", db_path=db)
+        build_graph(workspace=str(caller_callee_ws), repo_filter="demo", db_path=db)
 
     from cairn.graph.builder import repo_build_in_progress
 

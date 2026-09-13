@@ -87,21 +87,17 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 
 @pytest.fixture(autouse=True)
 def _reset_telemetry_state(monkeypatch):
-    """Reset the sink's process-global state around each test.
+    """    Reset the sink's process-global state around each test.
 
-    ``_BUFFER`` (deque) and ``_conn_factory`` are module-level and never
-    cleared in production (the flusher only drains after a successful commit).
-    The warn_once guard set (``events._WARNED``) is likewise never cleared.
-    Without this reset, rows/connections/warn-keys from one test would bleed
-    into the next. ``CAIRN_TELEMETRY`` / ``CAIRN_READ_ONLY`` / ``CAIRN_SESSION``
-    are cleared so gating tests start from a known baseline; ``monkeypatch``
-    restores the originals on teardown.
-
-    ``_FLUSHER_STARTED`` is deliberately NOT reset: the shared daemon thread
-    is started idempotently and resetting the flag would let the next emit
-    spawn a second thread. The thread never ticks within a test (30s sleep)
-    and a between-test tick is a no-op (factory is None here).
-    """
+    ``_BUFFER`` and ``_conn_factory`` are module-level and never cleared in
+    production (the flusher only drains after a successful commit); the
+    ``events._WARNED`` guard set is likewise never cleared. Without this reset,
+    rows/connections/warn-keys bleed into the next test. ``CAIRN_TELEMETRY`` /
+    ``CAIRN_READ_ONLY`` / ``CAIRN_SESSION`` are cleared so gating tests start
+    from a known baseline; ``monkeypatch`` restores originals on teardown.
+    ``_FLUSHER_STARTED`` is deliberately NOT reset: resetting the flag would let
+    the next emit spawn a second daemon thread; the thread never ticks within a
+    test (30s sleep) and a between-test tick is a no-op (factory is None here)."""
     with sink._LOCK:
         sink._BUFFER.clear()
     sink._conn_factory = None
@@ -119,15 +115,12 @@ def _reset_telemetry_state(monkeypatch):
 
 
 class _UnclosableConn:
-    """Wraps a sqlite connection so ``close()`` is a no-op.
+    """    Wraps a sqlite connection so ``close()`` is a no-op.
 
-    ``_flush_events`` closes the connection it opens in a ``finally`` block.
-    The ``_events_db`` fixture yields a single private ``:memory:`` connection
-    that is destroyed once closed, so without this wrapper the test could not
-    read back the rows it just flushed. Only the methods ``_flush_events``
-    touches (``executemany``, ``execute`` for prune, ``commit``, ``close``)
-    are forwarded.
-    """
+    ``_flush_events`` closes the connection it opens in a ``finally`` block; the
+    ``_events_db`` fixture yields a single private ``:memory:`` connection
+    destroyed once closed. Forwards only the methods ``_flush_events`` touches:
+    ``executemany``, ``execute`` for prune, ``commit``, ``close``."""
 
     def __init__(self, real: sqlite3.Connection):
         self._real = real
@@ -435,26 +428,19 @@ def test_flush_keeps_rows_appended_during_flush(events_db):
 
 
 def test_concurrent_flushes_neither_duplicate_nor_drop(events_db):
-    """Two overlapping flush cycles write each row exactly once.
+    """    Two overlapping flush cycles write each row exactly once.
 
     The daemon tick, the server watchdog drain, ``flush()`` callers, and the
-    atexit handler can overlap in normal server operation. Before the flush
-    cycle was serialized (``_FLUSH_LOCK``), two concurrent ``_flush_events``
-    runs snapshotted the SAME rows, both wrote them (duplicate ``events``
-    rows), and the second count-based popleft dropped rows appended in
-    between that were never written.
-
-    The barrier makes the overlap explicit: if both threads ever reached
-    ``executemany`` simultaneously the barrier would release and the table
-    would end up with duplicates. With serialization, the second thread
-    blocks on ``_FLUSH_LOCK`` (or finds the buffer empty) and the barrier
-    breaks on timeout instead -- harmless.
-
-    Uses its own ``check_same_thread=False`` connection rather than the
-    ``events_db`` fixture: flush runs on worker threads here, and a default
-    sqlite connection refuses cross-thread use (the failure would be
-    silently retained, not raised).
-    """
+    atexit handler can overlap in normal server operation; unserialized, two
+    ``_flush_events`` runs snapshotted the SAME rows (duplicate ``events`` rows)
+    and the second count-based popleft dropped rows appended in between. The
+    barrier makes the overlap explicit: both threads reaching ``executemany``
+    simultaneously would release it and duplicate; with serialization (``_FLUSH_LOCK``) the second thread blocks (or finds the buffer empty) and the barrier
+    breaks on timeout instead -- harmless. Uses its own
+    ``check_same_thread=False`` connection rather than the ``events_db``
+    fixture: flush runs on worker threads, and a default sqlite connection
+    refuses cross-thread use (the failure would be silently retained, not
+    raised)."""
     barrier = threading.Barrier(2, timeout=1.0)
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -592,7 +578,7 @@ def test_prune_tolerates_missing_build_runs_table(events_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 4b. tool_metrics retention (ui-dashboard-polish FR-004 / TC-006): the
+# 4b. tool_metrics retention (ui-dashboard-polish): the
 # flush-transaction prune extends to tool_metrics under
 # CAIRN_TOOL_METRICS_MAX_ROWS (default 50000) and the optional
 # CAIRN_TOOL_METRICS_MAX_AGE_SECONDS. The prune runs inside the flush
@@ -660,7 +646,7 @@ def _surviving_times(conn) -> list:
 def test_flush_prunes_tool_metrics_over_cap_keeping_newest_by_time(
     store_db, monkeypatch
 ):
-    """TC-006: an over-cap store is trimmed to the cap with the OLDEST rows
+    """an over-cap store is trimmed to the cap with the OLDEST rows
     gone, and "oldest" is time-ordered: the seeded epochs are deliberately
     out of id order, so an id-ordered prune would keep a different set than
     the time-ordered one the invoked_at index backs."""

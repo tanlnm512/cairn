@@ -31,15 +31,17 @@ from cairn.graph.schema import _apply_schema
 
 @pytest.fixture(autouse=True)
 def _wide_terminal(monkeypatch):
-    """Render rich tables full-width so column content isn't wrapped/split.
+    """    Render rich tables full-width so column content isn't wrapped/split.
 
-    CliRunner stdout isn't a TTY, so rich falls back to 80 columns and wraps the
-    10-column builds table, breaking contiguous cell assertions (e.g. the
-    '250/8/42' resolution mix). COLUMNS is honored by rich via
-    shutil.get_terminal_size; 200 fits every table here. JSON output is
-    width-independent, so this never affects the shape assertions.
-    """
-    monkeypatch.setenv("COLUMNS", "200")
+    CliRunner stdout isn't a TTY, but rich probes the attached terminal's
+    descriptors before honoring COLUMNS, so the real terminal's width wins and
+    wraps the 10-column builds table, breaking contiguous cell assertions (e.g.
+    the '250/8/42' resolution mix). Pin the shared display console to 200
+    columns; JSON output is width-independent."""
+    from cairn.cli import display as _display
+
+    monkeypatch.setattr(_display.console, "_width", 200, raising=False)
+    monkeypatch.setattr(_display.console, "_height", 100, raising=False)
 
 
 def _make_db(path, setup=None):
@@ -234,15 +236,14 @@ def test_builds_missing_table_degrades(tmp_path):
 
 
 def _seed_quality(conn):
-    """semantic_backend / empty_result / truncate_result events.
+    """    semantic_backend / empty_result / truncate_result events.
 
     semantic_backend: ann x3, brute x2, hash x1 (6 total).
     empty_result: 4 total -- semantic_search x2, explore x1, search_symbols x1.
       Only the semantic_search empties share a denominator with semantic_backend,
-      so the rate is scoped to that kind (2/6 = 0.333...); the explore /
-      search_symbols empties prove non-semantic kinds don't pollute the rate.
-    truncate_result: explore x2, search_symbols x1 (3 total).
-    """
+      so the rate is scoped to that kind (2/6); the explore / search_symbols
+      empties prove non-semantic kinds don't pollute the rate.
+    truncate_result: explore x2, search_symbols x1 (3 total)."""
     t = 1_700_000_000.0
     for backend, n in (("ann", 3), ("brute", 2), ("hash", 1)):
         for _ in range(n):
@@ -546,8 +547,8 @@ def test_multiple_flags_json_is_keyed_object(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Truncation magnitude recorded per call (ui-dashboard-polish FR-003 /
-# TC-004): a tool call capped at the truncation chokepoint carries its
+# Truncation magnitude recorded per call: a tool call capped at the truncation
+# chokepoint carries its
 # original-vs-delivered char counts as tool_metrics columns, which survive
 # the events table's row cap (the truncate_result event keeps firing for
 # occurrence analytics but is itself pruned at the 5000-row events cap).
@@ -612,7 +613,7 @@ def _wire_metric_flush(mb, db) -> sqlite3.Connection:
 def test_truncating_invocation_records_magnitude_columns(
     tmp_path, metric_state, monkeypatch
 ):
-    """TC-004: a call whose result exceeds the cap lands a tool_metrics row
+    """A call whose result exceeds the cap lands a tool_metrics row
     carrying the original and delivered char counts, and the delivered count
     equals the resp_chars the row recorded (both measured post-cap)."""
     mb = metric_state
@@ -641,7 +642,7 @@ def test_truncating_invocation_records_magnitude_columns(
 def test_non_truncated_invocations_leave_magnitude_columns_null(
     tmp_path, metric_state
 ):
-    """TC-004: rows from calls that were never capped (under-cap result, and
+    """Rows from calls that were never capped (under-cap result, and
     the error path where no result exists) read as no evidence -- NULL
     columns, not zeros."""
     mb = metric_state
@@ -673,7 +674,7 @@ def test_non_truncated_invocations_leave_magnitude_columns_null(
 def test_truncation_magnitude_survives_events_rollover(
     tmp_path, metric_state, monkeypatch
 ):
-    """TC-004's durable half: seed the events table past its 5000-row cap
+    """Durable half: seed the events table past its 5000-row cap
     with truncate_result occurrences, land a fresh truncating call, and
     force the sink's flush -- the rollover prunes the OLDEST occurrences
     while the per-call magnitude columns on the tool_metrics row stay

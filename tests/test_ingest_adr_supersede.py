@@ -70,7 +70,7 @@ ADR_0002_PLAIN = (
     "Billing moves to CockroachDB.\n"
 )
 
-# Old doc blocked by the FR-005 draft-status gate unless --include-drafts.
+# Old doc blocked by the draft-status gate unless --include-drafts.
 ADR_0001_SUPERSEDED_STATUS = (
     "---\n"
     "title: Use Postgres for billing\n"

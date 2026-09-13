@@ -195,7 +195,12 @@ def test_reap_deletes_vec_rows(fresh_db):
     fresh_db.commit()
     reaped = emb.reap_orphaned_embeddings(fresh_db)
 
-    assert reaped == 1
+    # Flagless embed_all is multivector by default: symbol 2 carries
+    # 1 base row + 2 mv rows (name, docstring); the reap removes all three.
+    assert reaped == 3
+    assert (
+        fresh_db.execute("SELECT COUNT(*) FROM embeddings_mv").fetchone()[0] == 2
+    ), "the reaped symbol's mv rows (name, docstring) are gone too"
     assert ann.index_row_count(fresh_db, model) == 1
     stale = fresh_db.execute(
         f"SELECT COUNT(*) FROM {table} WHERE rowid = ?", (rid2,)

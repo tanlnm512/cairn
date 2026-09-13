@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
 {% block title %}Settings — Cairn Dashboard{% endblock %}
-{#- The env-pin marker (D-008): an env var shadowing the file value must be
+{#- The env-pin marker: an env var shadowing the file value must be
     visible, or a save that "does nothing" is unexplainable. The API key's
     marker never echoes the effective value — the key is write-only. -#}
 {% macro env_pin(field, show_effective=true) -%}

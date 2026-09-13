@@ -1,35 +1,35 @@
 """CLI invocation metrics: batch recording, exit-time drain, redaction, gates.
 
-Covers the TC-001 / TC-002 / TC-005 auto halves of spec ``cli-usage-recording``
-(FR-001, FR-003) against the landed implementation
+Covers the auto halves of spec ``cli-usage-recording``
+() against the landed implementation
 (``cairn.telemetry.cli_metrics`` + ``_RecordingGroup`` in ``cairn.cli.main``):
 
-* TC-001 -- a representative CliRunner batch against a tmp store with a forced
+* -- a representative CliRunner batch against a tmp store with a forced
   drain: one row per invocation that reaches dispatch, with status/duration/
-  timestamp per D-005.
-* TC-005 -- argv summaries are scrubbed (``strip_private_data`` chokepoint) and
+  timestamp per.
+* -- argv summaries are scrubbed (``strip_private_data`` chokepoint) and
   capped at ``MAX_CLI_ARGS_SUMMARY_CHARS`` (200), both through the live invoke
   path and as a ``build_row`` unit.
-* TC-002 / SC-2 -- a short-lived REAL process (subprocess of the actual entry
+* / SC-2 -- a short-lived REAL process (subprocess of the actual entry
   point, tmp ``CAIRN_HOME``) lands its row purely via the atexit drain: the
   test performs no flush itself.
 * Gates -- ``CAIRN_TELEMETRY=off`` records nothing (paired on/off run).
-* TC-007 / FR-006 / D-003 -- session-identity derivation over an env matrix
+* -- session-identity derivation over an env matrix
   (``TERM_SESSION_ID`` > ``TMUX_PANE`` > per-invocation ``cli:<uuid>``) and
   the never-``unknown`` row assertion, both as ``build_row`` units and
   store-level after a live batch.
 
 TWO empirically pinned divergences from the task brief's stated facts (click
 8.4.2, verified against the landed code; the audit should reconcile these with
-D-004/D-005 -- see the digest):
+ -- see the digest):
 
 1. ``--help`` records NO row (nor does ``--version`` or any other group-level
    parse-time exit/parse error such as an unknown GROUP option). Those exits
    raise from ``parse_args`` and never reach ``_RecordingGroup.invoke``; the
-   ``parse_args`` hook covers only the bare no-args shape (D-004). So the
+   ``parse_args`` hook covers only the bare no-args shape . So the
    batch asserts "help -> zero rows", not "help -> ok".
 2. ``tool_name`` is ``"cli:" + command_path`` WITHOUT the invoked subcommand
-   suffix (``cli:main`` under CliRunner, ``cli:cairn`` in a real run). D-005's
+   suffix (``cli:main`` under CliRunner, ``cli:cairn`` in a real run). 's
    wrapper reads ``ctx.invoked_subcommand`` BEFORE ``super().invoke()``, but
    click 8.4.2 sets it inside ``Group.invoke`` (after capture), so the suffix
    never lands; deeper command identity is visible only via ``args_summary``.
@@ -66,7 +66,7 @@ from cairn.telemetry import cli_metrics
 _cli_main_module = importlib.import_module("cairn.cli.main")
 
 # Canary shaped to actually match privacy.py's ``sk-ant-[A-Za-z0-9\-_]{20,}``
-# pattern (the brief's literal "sk-ant-TEST123" payload is too short to match,
+# pattern (the brief's literal "sk-ant-TES " payload is too short to match,
 # so it would never be redacted). Placed EARLY in argv so the 200-char
 # truncation alone could not remove it -- the "not in summary" assertion then
 # proves redaction, not truncation.
@@ -80,16 +80,14 @@ _CANARY = "sk-ant-TEST123CANARY00000000"
 
 @pytest.fixture(autouse=True)
 def cli_store(monkeypatch, tmp_path):
-    """Hermetic per-test store + ``cli_metrics`` state reset.
+    """    Hermetic per-test store + ``cli_metrics`` state reset.
 
-    Sets ``CAIRN_HOME``/``CAIRN_DB`` into the test sandbox (overriding
+    Sets ``CAIRN_HOME``/``CAIRN_DB`` into the sandbox (overriding
     ``_hermetic_env``'s defaults), pre-creates the store so flushes never race
-    first-open, resets ``cli_metrics`` module globals exactly like the metric
-    suites reset ``metric_buffering``, and injects the production-shaped
-    factory (resolves the store at FLUSH time from env). Teardown re-resets
-    and restores ``_FLUSH_CONN_WIRED`` so later suites in the same
-    process see pristine wiring.
-    """
+    first-open, resets ``cli_metrics`` module globals like the metric suites
+    reset ``metric_buffering``, and injects the production-shaped factory (store
+    resolved at FLUSH time from env). Teardown re-resets and restores
+    ``_FLUSH_CONN_WIRED``."""
     home = tmp_path / "cairn-home"
     home.mkdir()
     db = tmp_path / "graph.db"
@@ -128,20 +126,18 @@ def _rows(db, marker=None):
 
 
 # ---------------------------------------------------------------------------
-# TC-001: representative batch -> one row per invocation
+# representative batch -> one row per invocation
 # ---------------------------------------------------------------------------
 
 
 def test_batch_one_row_per_invocation(cli_store, monkeypatch):
-    """Each dispatch-reaching invocation lands exactly one correctly-stamped row.
+    """    Each dispatch-reaching invocation lands exactly one correctly-stamped row.
 
     The recorded argv is ``sys.argv[1:]`` (not CliRunner's args), so each case
     tags ``sys.argv`` with a unique marker to make its row addressable. Expected
-    exits: 0 for help/config, 2 for the parse-error shapes (click's UsageError
-    exit code). Divergences pinned per the module docstring: ``--help`` records
-    nothing (parse-time Exit never reaches the wrapper) and ``tool_name``
-    carries no subcommand suffix.
-    """
+    exits: 0 for help/config, 2 for parse-error shapes (click UsageError).
+    Divergences pinned: ``--help`` records nothing (parse-time Exit never reaches
+    the wrapper) and ``tool_name`` carries no subcommand suffix."""
     runner = CliRunner()
     # (marker, args, expected exit, expected rows, (status, error substring))
     cases = [
@@ -167,7 +163,7 @@ def test_batch_one_row_per_invocation(cli_store, monkeypatch):
             continue
         status, error_fragment = expect
         row = rows[0]
-        # D-005: one subcommand level rides the tool_name (deeper identity
+        # one subcommand level rides the tool_name (deeper identity
         # lives in args_summary). Unknown commands fail resolution before
         # click sets invoked_subcommand, so those rows stay root-only.
         resolved = args and not (
@@ -183,7 +179,7 @@ def test_batch_one_row_per_invocation(cli_store, monkeypatch):
         else:
             assert error_fragment in (row["error_message"] or ""), row
         if marker == "mk-bare":
-            # D-004: the parse_args hook has no timing context -> literal 0.0.
+            # the parse_args hook has no timing context -> literal 0.0.
             assert row["duration_ms"] == 0.0, row
         if marker == "mk-config":
             # The command body genuinely ran (its output is the resolved db).
@@ -195,12 +191,12 @@ def test_batch_one_row_per_invocation(cli_store, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# D-005: exit-code semantics (ok on exit(0), error + str(code)/str(exc) else)
+# exit-code semantics (ok on exit(0), error + str(code)/str(exc) else)
 # ---------------------------------------------------------------------------
 
 
 def test_exit_code_semantics_per_d005(cli_store, monkeypatch):
-    """Pin D-005's status rules on a scratch ``_RecordingGroup``.
+    """Pin the status rules on a scratch ``_RecordingGroup``.
 
     A throwaway group (NOT registered on ``main`` -- that would leak a command
     into every later test's help output in this process) exercises the four
@@ -257,7 +253,7 @@ def test_exit_code_semantics_per_d005(cli_store, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TC-005: redaction + truncation at the write chokepoint
+# redaction + truncation at the write chokepoint
 # ---------------------------------------------------------------------------
 
 
@@ -315,7 +311,7 @@ def test_build_row_redaction_chokepoint_unit():
         source,
     ) = row
     assert tool_name == "cli:cairn memory record"
-    assert source == "cli"  # FR-002: explicit on every CLI row (D-002)
+    assert source == "cli"  # explicit on every CLI row 
     assert status == "error"
     assert duration_ms == 12.5
     assert invoked_at > 0
@@ -330,20 +326,18 @@ def test_build_row_redaction_chokepoint_unit():
 
 
 # ---------------------------------------------------------------------------
-# TC-002 / SC-2: short-lived process drains on exit (no manual flush)
+# SC-2: short-lived process drains on exit (no manual flush)
 # ---------------------------------------------------------------------------
 
 
 def test_short_lived_process_drains_on_exit_atexit(tmp_path):
-    """A real subprocess of the real entry point lands its row via atexit only.
+    """    A real subprocess of the real entry point lands its row via atexit only.
 
     Runs ``cairn.cli.main`` under a fresh interpreter with a tmp
-    ``CAIRN_HOME``/``CAIRN_DB`` (one fast command), waits for exit, then opens
-    the store and asserts the ``cli:`` row EXISTS. The test never calls any
-    flush -- the row can only have landed through the shared sink's atexit
-    drain (FR-003's flush-on-clean-exit path). ``prog_name='cairn'`` mirrors
-    the installed ``cairn`` entry point's program name.
-    """
+    ``CAIRN_HOME``/``CAIRN_DB`` (one fast command), then asserts the ``cli:`` row
+    EXISTS without any explicit flush -- it can only have landed through the
+    shared sink's atexit drain (the flush-on-clean-exit path).
+    ``prog_name='cairn'`` mirrors the installed entry point's program name."""
     home = tmp_path / "exit-drain-home"
     home.mkdir()
     db = tmp_path / "exit-drain.db"
@@ -377,7 +371,7 @@ def test_short_lived_process_drains_on_exit_atexit(tmp_path):
         conn.close()
     assert len(rows) == 1, rows
     row = rows[0]
-    # D-005: one subcommand level rides the tool_name (deeper identity in
+    # one subcommand level rides the tool_name (deeper identity in
     # args_summary).
     assert row["tool_name"] == "cli:cairn config"
     assert row["status"] == "ok"
@@ -407,7 +401,7 @@ def test_telemetry_off_records_nothing_paired(cli_store, monkeypatch):
     result_on = runner.invoke(cairn_cli, ["config", "--db"])
     cli_metrics._flush_cli_metrics()
     assert result_on.exit_code == 0
-    # Command behavior is otherwise identical (the paired-output half of TC-006).
+    # Command behavior is otherwise identical (the paired-output half of).
     assert result_on.output == result_off.output
     rows = _rows(cli_store)
     assert len(rows) == 1
@@ -415,7 +409,7 @@ def test_telemetry_off_records_nothing_paired(cli_store, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TC-007 / FR-006 / D-003: session identity derivation, never "unknown"
+# session identity derivation, never "unknown"
 # ---------------------------------------------------------------------------
 
 # Every env shape derive_session_id can see. (term, pane); None = unset.
@@ -444,7 +438,7 @@ def _apply_env_shape(monkeypatch, term, pane):
 
 
 def test_derive_session_id_env_matrix(monkeypatch):
-    """D-003 precedence: term:<v> > tmux:<v> > fresh cli:<uuid> per call."""
+    """Precedence: term:<v> > tmux:<v> > fresh cli:<uuid> per call."""
     # TERM_SESSION_ID set -> "term:<v>", STABLE across calls (one shell groups).
     _apply_env_shape(monkeypatch, "abc-123", None)
     assert cli_metrics.derive_session_id() == "term:abc-123"
@@ -459,7 +453,7 @@ def test_derive_session_id_env_matrix(monkeypatch):
     assert cli_metrics.derive_session_id() == "term:abc-123"
 
     # Neither -> "cli:"-prefixed and DIFFERENT across calls: each invocation
-    # is its own session (FR-006's per-invocation fallback).
+    # is its own session (the per-invocation fallback).
     _apply_env_shape(monkeypatch, None, None)
     first = cli_metrics.derive_session_id()
     second = cli_metrics.derive_session_id()
@@ -469,7 +463,7 @@ def test_derive_session_id_env_matrix(monkeypatch):
 
 
 def test_build_row_session_id_never_unknown(monkeypatch):
-    """build_row stamps a real session id under every env shape (FR-006).
+    """build_row stamps a real session id under every env shape.
 
     Belt to the env matrix's braces: whatever the host env looks like, the
     row builder can never emit the table's legacy ``unknown`` default (a CLI
@@ -486,15 +480,13 @@ def test_build_row_session_id_never_unknown(monkeypatch):
 
 
 def test_no_unknown_cli_session_rows_in_store(cli_store, monkeypatch):
-    """Store-level TC-007: a live batch across env shapes, none ``unknown``.
+    """    Store-level: a live batch across env shapes, none ``unknown``.
 
-    Drives the real invoke path under each identity shape -- the same shell
-    twice (groups), a tmux pane once, and two identity-less invocations
-    (per-invocation, distinct) -- then asserts on the persisted rows: no
-    ``tool_metrics`` row with ``source='cli'`` carries session_id ``unknown``,
-    and the FR-006 grouping semantics hold (shared terminal -> ONE id;
-    no identity -> distinct ids).
-    """
+    Drives the real invoke path under each identity shape -- the same shell twice
+    (groups), a tmux pane once, two identity-less invocations (per-invocation,
+    distinct) -- then asserts no ``source='cli'`` ``tool_metrics`` row carries
+    session_id ``unknown`` and the grouping semantics hold (shared terminal ->
+    ONE id; no identity -> distinct ids)."""
     shapes = [
         ("term-sess-A", None),  # same shell...
         ("term-sess-A", None),  # ...twice -> both rows group
@@ -519,7 +511,7 @@ def test_no_unknown_cli_session_rows_in_store(cli_store, monkeypatch):
     # env matrix): no cli-sourced tool_metrics row lands in 'unknown'.
     assert all(r["session_id"] != "unknown" for r in cli_rows), cli_rows
 
-    # FR-006 grouping: shared terminal id -> one session for both invocations.
+    # grouping: shared terminal id -> one session for both invocations.
     assert sum(1 for r in cli_rows if r["session_id"] == "term:term-sess-A") == 2
     assert sum(1 for r in cli_rows if r["session_id"] == "tmux:9") == 1
     # Fallback: per-invocation identities, all distinct.

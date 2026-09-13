@@ -1,6 +1,6 @@
 """Signal tests for the Java parser.
 
-Covers the parser-side signals java's grammar exposes (FR-006/FR-007):
+Covers the parser-side signals java's grammar exposes:
 
 - ``Import.local_alias`` — Java has no import aliasing at all, so every
   import form must carry ``local_alias=None`` over a normalized path
@@ -8,10 +8,10 @@ Covers the parser-side signals java's grammar exposes (FR-006/FR-007):
   ``identifier`` / trailing ``asterisk`` wildcard; no alias field exists).
 - ``Symbol.arity`` / ``Edge.call_arity`` — parameter counts on
   ``method_declaration`` and argument counts on ``method_invocation`` /
-  ``object_creation_expression``. Varargs degrades to None (D-005: a
+  ``object_creation_expression``. Varargs degrades to None (a
   declared count can never match a varying call-site count).
 - ``Edge.receiver_type`` — pins the existing capitalized-receiver
-  heuristic: ``this`` and lowercase locals abstain to None (FR-009).
+  heuristic: ``this`` and lowercase locals abstain to None.
 """
 from __future__ import annotations
 
@@ -115,7 +115,7 @@ class TestSymbolArity:
         assert _method_symbol(pf, "m").arity == 1
 
     def test_varargs_method_arity_is_none(self):
-        # D-005: varargs call sites pass a varying count, so the declared
+        # Varargs call sites pass a varying count, so the declared
         # count must stay unknown rather than mismatch every call.
         pf = _parse(b"class A { void m(String... parts) {} }\n")
         assert _method_symbol(pf, "m").arity is None
@@ -160,7 +160,7 @@ class TestCallArity:
 
 
 # ---------------------------------------------------------------------------
-# Receiver pins — existing behavior must not regress (FR-009: absent or
+# Receiver pins — existing behavior must not regress (absent or
 # lowercase receivers abstain to None, never a guess).
 # ---------------------------------------------------------------------------
 

@@ -1,8 +1,8 @@
-"""Redaction + namespace guards at the STORE/CHOKEPOINT layers (audit 2026-08).
+"""Redaction + namespace guards at the STORE/CHOKEPOINT layers.
 
-The audit's design principle: privacy/namespace fixes land at the store or
-write chokepoint, never at one caller's boundary -- otherwise the next audit
-finds the next divergent caller. These tests pin each chokepoint directly:
+Design principle: privacy/namespace fixes land at the store or write
+chokepoint, never at one caller's boundary. These tests pin each
+chokepoint directly:
 
   F1  knowledge/store.add_document (covers add_workflow + import_directory,
       which both funnel through it) redacts title/body/step-descriptions
@@ -191,15 +191,13 @@ class TestMemoryCaptureFallbackRedaction:
     def test_subprocess_fallback_queues_redacted_transcript(
         self, tmp_path, monkeypatch
     ):
-        """CAIRN_LLM_BACKEND=droid with no droid CLI -> SubprocessBackend
-        falls back to FileQueueBackend carrying the RAW transcript.
+        """        CAIRN_LLM_BACKEND=droid with no droid CLI -> SubprocessBackend falls back to
+        FileQueueBackend carrying the RAW transcript.
 
-        The CLI's own strip only runs on the no-backend branch; this path
-        reaches create_task unredacted, so the task-creation chokepoint must
-        scrub it (the codepath-divergence bug class audit F2 targeted).
-        Drives SubprocessBackend directly (the CLI wrapper would block on
-        FileQueueBackend's 600s completion poll) with the poll disabled.
-        """
+        The CLI's own strip only runs on the no-backend branch; this path reaches
+        create_task unredacted, so the task-creation chokepoint must scrub it. Drives
+        SubprocessBackend directly (the CLI wrapper would block on FileQueueBackend's
+        600s completion poll) with the poll disabled."""
         from cairn.llm.client import SubprocessBackend
 
         knowledge = tmp_path / "knowledge"

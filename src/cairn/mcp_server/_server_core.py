@@ -283,7 +283,7 @@ def _staleness_banner(conn, file_paths) -> str:
 
 
 def _embed_degradation_footnote() -> str:
-    """The FR-013 degradation footnote for MCP query-tool results.
+    """The degradation footnote for MCP query-tool results.
 
     Cached-state read only (zero side effects -- never evaluates the ladder);
     "" when no degradation is active, else one line naming the rung, reason,
@@ -295,7 +295,7 @@ def _embed_degradation_footnote() -> str:
 
 
 def _append_embed_degradation_footnote(text: str) -> str:
-    """``text`` with the FR-013 degradation footnote appended as one trailing
+    """``text`` with the degradation footnote appended as one trailing
     line; byte-identical when no degradation is active."""
     footnote = _embed_degradation_footnote()
     return f"{text}\n{footnote}" if footnote else text

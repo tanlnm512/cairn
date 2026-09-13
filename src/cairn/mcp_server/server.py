@@ -231,7 +231,7 @@ def run(transport: str = "stdio", port: int | None = None):
         check_conn.close()
     except Exception as e:
         # If we can't even check the DB, exit with a helpful message.
-        # FR-004 (D-008): name the resolved db path, the env resolution chain
+        # Name the resolved db path, the env resolution chain
         # in effect, and the CAIRN_HOME remediation -- not the bare exception.
         from datetime import datetime
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

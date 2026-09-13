@@ -55,7 +55,7 @@ def _make_multi_repo_workspace(tmp_path: Path, name: str) -> Path:
 
 def test_files_path_is_repo_relative_single_repo(tmp_path):
     """Regression: files.path must be stored repo-relative (no absolute machine
-    prefix) so the .kg is portable. See BUGS.md#2026-08-06/portable-path-stale-comments."""
+    prefix) so the .kg is portable."""
     workspace = _make_single_repo_workspace(tmp_path, "single")
     db_path = str(tmp_path / "single.db")
     build_graph(workspace=str(workspace), db_path=db_path)
@@ -72,7 +72,7 @@ def test_files_path_is_repo_relative_single_repo(tmp_path):
 
 def test_files_path_is_repo_relative_multi_repo(tmp_path):
     """Regression: same portability invariant as the single-repo case, under a
-    multi-repo workspace. See BUGS.md#2026-08-06/portable-path-stale-comments."""
+    multi-repo workspace."""
     workspace = _make_multi_repo_workspace(tmp_path, "multi")
     db_path = str(tmp_path / "multi.db")
     build_graph(workspace=str(workspace), db_path=db_path)
@@ -87,8 +87,7 @@ def test_files_path_is_repo_relative_multi_repo(tmp_path):
 
 
 def test_repos_path_is_workspace_relative(tmp_path):
-    """Regression: repos.path must be workspace-relative too, not absolute.
-    See BUGS.md#2026-08-06/portable-path-stale-comments."""
+    """Regression: repos.path must be workspace-relative too, not absolute."""
     workspace = _make_multi_repo_workspace(tmp_path, "multi")
     db_path = str(tmp_path / "multi.db")
     build_graph(workspace=str(workspace), db_path=db_path)
@@ -104,8 +103,7 @@ def test_repos_path_is_workspace_relative(tmp_path):
 
 def test_parse_errors_and_skipped_paths_are_relative(tmp_path):
     """Regression: parse_errors.file_path and skipped_files.path must also be
-    stored relative, or cross-machine reads of error/skip rows break.
-    See BUGS.md#2026-08-06/portable-path-stale-comments."""
+    stored relative, or cross-machine reads of error/skip rows break."""
     # A file with an unknown extension is skipped; a syntactically-broken file
     # is a parse error. Both should store repo-relative paths.
     workspace = tmp_path / "ws"

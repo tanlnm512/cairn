@@ -52,17 +52,14 @@ _ENDPOINT = "http://collector.internal:4318/v1/logs"
 
 @pytest.fixture(autouse=True)
 def _reset_otlp_state(monkeypatch):
-    """Reset the sink's + exporter's process-global state around each test.
+    """    Reset the sink's + exporter's process-global state around each test.
 
     ``otel`` keeps mutable module globals (side buffer, disable latch,
-    registration flag, lazily-built OTel handles) that production never
-    clears; without this reset one test's export would bleed into the next.
-    The exporter's registered flusher is removed from ``sink._FLUSHERS`` so
-    it cannot fire during sibling suites (the same leak-guard
-    ``test_register_flusher_is_idempotent_by_identity`` applies).
-    ``_FLUSHER_STARTED`` is deliberately NOT reset (one shared thread per
-    process; it never ticks within a test's lifetime).
-    """
+    registration flag, lazily-built OTel handles) production never clears;
+    without this reset one test's export would bleed into the next. The
+    exporter's registered flusher is removed from ``sink._FLUSHERS`` so it cannot
+    fire during sibling suites. ``_FLUSHER_STARTED`` is deliberately NOT reset
+    (one shared thread per process; it never ticks within a test's lifetime)."""
     _clear_everything()
     monkeypatch.delenv("CAIRN_OTEL_ENDPOINT", raising=False)
     monkeypatch.delenv("CAIRN_TELEMETRY", raising=False)
@@ -132,19 +129,16 @@ def _install_stub_sdk(
     exporter_raises: bool = False,
     export_raises: bool = False,
 ) -> dict[str, Any]:
-    """Inject stub ``opentelemetry`` modules into ``sys.modules``.
+    """    Inject stub ``opentelemetry`` modules into ``sys.modules``.
 
     The stubs mirror the SYNCHRONOUS export design: ``logger.emit`` reaches
-    ``exporter.export`` on the calling thread via SimpleLogRecordProcessor,
-    and failures are reported the way the real SDK does -- a returned
-    ``LogExportResult.FAILURE``, not a raised exception (``export_raises``
-    additionally covers the raising path). Everything the exporter does
-    (constructed exporter + endpoint + timeout, provider wiring, exported
-    records) is recorded into the returned dict. ``export_fails_first``
-    simulates a collector that rejects the first N exports then recovers
-    (retry-path coverage without a network); ``exporter_raises`` simulates a
-    rejected endpoint at construction.
-    """
+    ``exporter.export`` on the calling thread via SimpleLogRecordProcessor, and
+    failures are reported the way the real SDK does -- a returned
+    ``LogExportResult.FAILURE``, not a raised exception. Everything the exporter
+    does (constructed exporter + endpoint + timeout, provider wiring, exported
+    records) is recorded into the returned dict. ``export_fails_first`` rejects
+    the first N exports then recovers; ``exporter_raises`` rejects at
+    construction."""
     seen: dict[str, Any] = {
         "records": [],  # every LogRecord constructed
         "exported": [],  # records actually handed to exporter.export
@@ -363,15 +357,13 @@ def test_missing_sdk_does_not_raise_from_flush_all(monkeypatch):
 
 
 def test_sdk_present_exports_records_with_name_and_attrs(monkeypatch):
-    """Happy path: each event becomes a LogRecord (body=name, attrs mapped).
+    """    Happy path: each event becomes a LogRecord (body=name, attrs mapped).
 
-    Also pins the wiring contract: the exporter is built with the env
-    endpoint URL and a bounded timeout, the resource is service.name=cairn
-    (no paths/PII), the provider registers no atexit hook of its own, export
-    is synchronous (records reach the exporter within the flush call), the
-    side buffer drains, and the SQLite-bound rows are untouched (DB stays the
-    source of truth).
-    """
+    Also pins the wiring contract: the exporter is built with the env endpoint
+    URL and a bounded timeout, the resource is service.name=cairn (no paths/PII),
+    the provider registers no atexit hook of its own, export is synchronous
+    (records reach the exporter within the flush call), the side buffer drains,
+    and the SQLite-bound rows are untouched (DB stays the source of truth)."""
     monkeypatch.setenv("CAIRN_OTEL_ENDPOINT", _ENDPOINT)
     monkeypatch.setenv("CAIRN_SESSION", "trace-19")
     seen = _install_stub_sdk(monkeypatch)

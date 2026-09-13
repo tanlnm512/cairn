@@ -260,12 +260,11 @@ def test_call_shape_table(tmp_path):
 
     assert by_caller["bareCall"] == [("UseCaseA", None)]
     assert by_caller["explicitInvoke"] == [("invoke", "UseCaseA")]
-    # WI-1 (2026-07-30): `this.useCaseA(p)` is operator-invoke sugar on the
-    # `useCaseA` property of type UseCaseA. The parser now infers the property's
+    # `this.useCaseA(p)` is operator-invoke sugar on the
+    # `useCaseA` property of type UseCaseA. The parser infers the property's
     # declared type (UseCaseA) as the receiver and rewrites the target to it --
     # so this resolves to the UseCase class, exactly like the bare `useCaseA(p)`
-    # case. Pre-WI-1 this emitted ("useCaseA", "Shapes") and resolved to the
-    # local property, a real-but-useless resolution.
+    # case.
     assert by_caller["thisPrefixed"] == [("UseCaseA", "UseCaseA")]
     assert by_caller["constructorCall"] == [("UseCaseA", None)]
     assert by_caller["localHelper"] == [("helperFn", None)]

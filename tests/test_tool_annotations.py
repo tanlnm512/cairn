@@ -57,15 +57,13 @@ _TOOL_DECORATOR_RE = re.compile(
 
 
 def _scrape_tool_decorators() -> dict[str, dict[str, bool]]:
-    """Return ``{tool_name: {readOnlyHint, destructiveHint, idempotentHint}}``
+    """    Return ``{tool_name: {readOnlyHint, destructiveHint, idempotentHint}}``
     scraped from the ``@mcp.tool(annotations=ToolAnnotations(...))`` decorators.
 
-    The hint values are parsed from the ``ToolAnnotations(...)`` keyword
-    arguments with ``ast`` (after slicing the ``annotations=`` argument text out
-    of the decorator call). Source-scraped so the test needs no live server /
-    mcp import. Tools whose decorator carries no ``annotations=`` are omitted;
-    test_tool_every_decorator_has_annotations uses this absence to fail loudly.
-    """
+    Hint values are parsed from the ``ToolAnnotations(...)`` keyword arguments
+    with ``ast``. Source-scraped so the test needs no live server / mcp import.
+    Tools whose decorator carries no ``annotations=`` are omitted;
+    test_every_decorator_has_annotations_kwarg uses that absence to fail loudly."""
     out: dict[str, dict[str, bool]] = {}
     for f in TOOL_FILES:
         for m in _TOOL_DECORATOR_RE.finditer(f.read_text(encoding="utf-8")):
@@ -78,16 +76,13 @@ def _scrape_tool_decorators() -> dict[str, dict[str, bool]]:
 
 
 def _parse_annotations_hints(kw_text: str) -> dict[str, bool] | None:
-    """Parse the ``readOnlyHint``/``destructiveHint``/``idempotentHint`` booleans
-    from a ``@mcp.tool(...)`` call's keyword-argument text.
+    """    Parse the readOnlyHint/destructiveHint/idempotentHint booleans from a
+    ``@mcp.tool(...)`` call's keyword-argument text.
 
-    ``kw_text`` is the raw text inside the parentheses (e.g.
-    ``annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
-    idempotentHint=True)``). We locate the ``annotations=ToolAnnotations(...)``
-    sub-expression, then ``ast.parse`` it as an expression and walk the keyword
-    arguments of the ``ToolAnnotations(...)`` call. Returns ``None`` when no
-    ``annotations=`` keyword is present (so a missing annotation is detectable).
-    """
+    ``kw_text`` is the raw text inside the parentheses; the
+    ``annotations=ToolAnnotations(...)`` sub-expression is located, ``ast.parse``d
+    as an expression, and its keywords walked. Returns ``None`` when no
+    ``annotations=`` keyword is present (so a missing annotation is detectable)."""
     m = re.search(r"annotations\s*=\s*ToolAnnotations\s*\((.*?)\)", kw_text, re.DOTALL)
     if not m:
         return None
@@ -111,15 +106,13 @@ def _parse_annotations_hints(kw_text: str) -> dict[str, bool] | None:
 # ---------------------------------------------------------------------------
 
 def test_every_decorator_has_annotations_kwarg():
-    """Every ``@mcp.tool()`` registration across the four ``tools_*.py`` files
-    must carry an ``annotations=ToolAnnotations(...)`` keyword.
+    """    Every ``@mcp.tool()`` registration across the four ``tools_*.py`` files must
+    carry an ``annotations=ToolAnnotations(...)`` keyword.
 
-    Catches the regression where a tool is added (or a decorator is
-    reformatted) and the ``annotations=`` kwarg is dropped -- silently
-    re-advertising the tool as an un-annotated default, which defeats the
-    Phase 3.1 client-rendering goal. We scrape every ``@mcp.tool(...)``
-    decorator and fail loudly naming the offending tools.
-    """
+    Catches a tool added (or a decorator reformatted) with the ``annotations=``
+    kwarg dropped -- silently re-advertising the tool as an un-annotated default,
+    defeating client-side hint rendering. Scrapes every decorator and fails
+    loudly naming the offending tools."""
     # First, collect every tool name (decorator may or may not have annotations).
     all_tools: dict[str, str] = {}  # name -> file
     for f in TOOL_FILES:
@@ -146,15 +139,14 @@ def test_every_decorator_has_annotations_kwarg():
 # ---------------------------------------------------------------------------
 
 def test_read_only_graph_tools_advertise_read_only():
-    """The nine read-only graph-query tools (plus visualize_graph) must set
+    """    The nine read-only graph-query tools (plus visualize_graph) must set
     ``readOnlyHint=True`` (and ``destructiveHint=False``) in their annotations.
 
     Graph tools only ever read the SQLite index; mislabeling one as mutating
-    would make a client prompt for confirmation before a harmless query, or
-    worse, let an agent skip a verification step. We scrape the live hint
-    values from the decorator source rather than importing the server, so this
-    runs in minimal CI without the model/embedding stack.
-    """
+    would make a client prompt for confirmation before a harmless query, or let
+    an agent skip a verification step. Scrapes the live hint values from
+    decorator source rather than importing the server, so this runs in minimal
+    CI without the model/embedding stack."""
     annotated = _scrape_tool_decorators()
     assert annotated, "no annotations= hints scraped (parser regression?)"
 

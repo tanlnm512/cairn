@@ -28,7 +28,7 @@ is defined in a sibling pod that isn't vendored/indexed in this workspace, so no
 returns zero rows — not because there are no callers, but because there's no local
 symbol for the resolver to pin an edge to.
 
-## What actually happened (caught in a live A/B benchmark run, 2026-07-28)
+## What actually happened
 
 The agent ran `search_symbols("startLoadURL")` (empty), then `get_callers` precise
 (empty), and reported "could not enumerate real callers" — stopping there. A parallel

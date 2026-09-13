@@ -1,6 +1,6 @@
-"""Pins for `cairn wiki export --dir DIR [--force]` (FR-006).
+"""Pins for `cairn wiki export --dir DIR [--force]`.
 
-Export contract pinned here (D-019, TC-016..TC-018) against the PLANNED
+Export contract pinned here against the PLANNED
 subcommand of the wiki group:
 
 * one ``DIR/{repo}/{page_id}.md`` per PROMOTED page; page ids collide
@@ -65,7 +65,7 @@ def _key(page_id, repo=REPO):
 
 
 def _row(page_id, *, state, task_id="", attempts=0):
-    """One manifest row: the plan entry plus the D-006 tracking fields."""
+    """One manifest row: the plan entry plus the tracking fields."""
     return {
         "page_id": page_id,
         "title": "Wiki page",
@@ -110,11 +110,11 @@ def _export(knowledge, out_dir, *extra):
     )
 
 
-# --- TC-016: one frontmatter file per promoted page, count reported ----------
+# --- one frontmatter file per promoted page, count reported ----------
 
 
 def test_export_writes_one_frontmatter_file_per_promoted_page(cli_env, tmp_path):
-    """TC-016: every promoted page is written as DIR/{repo}/{page_id}.md with
+    """every promoted page is written as DIR/{repo}/{page_id}.md with
     its frontmatter (title always; sources only when the page has them) and
     the command reports the promoted count; non-promoted pages are not
     written."""
@@ -224,7 +224,7 @@ def test_export_iterates_manifest_rows_not_the_bundle_tree(cli_env, tmp_path):
     assert exported == [f"{REPO}/real.md"]
 
 
-# --- TC-017: non-empty target dir refuses without --force, proceeds with it --
+# --- non-empty target dir refuses without --force, proceeds with it --
 
 
 def _seed_prior_export(knowledge, out):
@@ -239,7 +239,7 @@ def _seed_prior_export(knowledge, out):
 def test_export_refuses_nonempty_dir_without_force_and_changes_nothing(
     cli_env, tmp_path
 ):
-    """TC-017: exporting into a directory that already contains files refuses
+    """exporting into a directory that already contains files refuses
     with exit 1 and a refusal on stderr, and leaves every pre-existing byte
     untouched."""
     knowledge = cli_env
@@ -264,7 +264,7 @@ def test_export_refuses_nonempty_dir_without_force_and_changes_nothing(
 
 
 def test_export_force_overwrites_into_nonempty_dir(cli_env, tmp_path):
-    """TC-017: with --force the export proceeds into the non-empty directory
+    """with --force the export proceeds into the non-empty directory
     and overwrites the stale files with the current pages."""
     knowledge = cli_env
     bundle = _bundle(knowledge)
@@ -285,13 +285,13 @@ def test_export_force_overwrites_into_nonempty_dir(cli_env, tmp_path):
     assert f"Body of {PROMOTED_SOURCED}." in exported
 
 
-# --- TC-018: zero promoted pages is a count-0 success ------------------------
+# --- zero promoted pages is a count-0 success ------------------------
 
 
 def test_export_with_zero_promoted_pages_reports_zero_and_writes_nothing(
     cli_env, tmp_path
 ):
-    """TC-018: queued/failed pages only -- the command reports 0 exported and
+    """queued/failed pages only -- the command reports 0 exported and
     the target directory stays empty."""
     knowledge = cli_env
     _write_manifest(knowledge, {

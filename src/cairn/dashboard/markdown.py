@@ -1,4 +1,4 @@
-"""Escape-first markdown renderer for the dashboard wiki view (D-002).
+"""Escape-first markdown renderer for the dashboard wiki view.
 
 Pure stdlib (``html`` + ``re``): importing this module must never load the
 server stack — the same guard the dashboard package is held to. Every line

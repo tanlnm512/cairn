@@ -35,83 +35,90 @@ def _cairn_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def test_self_demo_build_and_query():
+@pytest.fixture(scope="module")
+def built_db():
+    """Build cairn's own graph once per module; both scenarios read it.
+
+    Yields (db_path, build_output). Tests must treat the DB as read-only.
+    """
+    runner = CliRunner()
+    repo = _cairn_repo_root()
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "test.kg"
+        build = runner.invoke(
+            main,
+            ["build", "--db", str(db), "--workspace", str(repo)],
+            catch_exceptions=False,
+        )
+        assert build.exit_code == 0, build.output
+        yield db, build.output
+
+
+def test_self_demo_build_and_query(built_db):
     """Build cairn on itself, then exercise def / impact on real symbols.
 
     This is the verbatim walkthrough referenced from the README quick-start.
     """
     runner = CliRunner()
-    repo = _cairn_repo_root()
-    with tempfile.TemporaryDirectory() as tmp:
-        db = Path(tmp) / "test.kg"
-        build_common = ["--db", str(db), "--workspace", str(repo)]
-        query_common = ["--db", str(db)]
+    db, build_output = built_db
+    query_common = ["--db", str(db)]
 
-        # 1. Build cairn's own graph.
-        build = runner.invoke(main, ["build", *build_common], catch_exceptions=False)
-        assert build.exit_code == 0, build.output
-        # The build summary reports resolved edges — the core of promise #1.
-        assert "edges resolved" in build.output
+    # 1. The build summary reports resolved edges — the core of promise #1.
+    assert "edges resolved" in build_output
 
-        # 2. find_definition: build_graph is defined and the def command finds it.
-        def_result = runner.invoke(
-            main, ["def", "build_graph", *query_common], catch_exceptions=False
-        )
-        assert def_result.exit_code == 0, def_result.output
-        # Full path, not a loose "builder" substring (the not-found path prints
-        # "No definition found for..." which contains no path).
-        assert "graph/builder.py" in def_result.output
+    # 2. find_definition: build_graph is defined and the def command finds it.
+    def_result = runner.invoke(
+        main, ["def", "build_graph", *query_common], catch_exceptions=False
+    )
+    assert def_result.exit_code == 0, def_result.output
+    # Full path, not a loose "builder" substring (the not-found path prints
+    # "No definition found for..." which contains no path).
+    assert "graph/builder.py" in def_result.output
 
-        # 3. impact_analysis: build_graph has REAL impact (not just the symbol
-        # echoed back, which the empty-result path also does — guard against that
-        # vacuous match by asserting the non-empty path).
-        impact = runner.invoke(
-            main, ["impact", "build_graph", *query_common], catch_exceptions=False
-        )
-        assert impact.exit_code == 0, impact.output
-        assert "No impacted symbols" not in impact.output, (
-            "impact for build_graph should be non-empty on cairn's own code"
-        )
+    # 3. impact_analysis: build_graph has REAL impact (not just the symbol
+    # echoed back, which the empty-result path also does — guard against that
+    # vacuous match by asserting the non-empty path).
+    impact = runner.invoke(
+        main, ["impact", "build_graph", *query_common], catch_exceptions=False
+    )
+    assert impact.exit_code == 0, impact.output
+    assert "No impacted symbols" not in impact.output, (
+        "impact for build_graph should be non-empty on cairn's own code"
+    )
 
-        # 4. The critic gate exists and is queryable.
-        critic_def = runner.invoke(
-            main, ["def", "critic_concept", *query_common], catch_exceptions=False
-        )
-        assert critic_def.exit_code == 0, critic_def.output
-        assert "compass/critic.py" in critic_def.output  # full path, not loose "critic"
+    # 4. The critic gate exists and is queryable.
+    critic_def = runner.invoke(
+        main, ["def", "critic_concept", *query_common], catch_exceptions=False
+    )
+    assert critic_def.exit_code == 0, critic_def.output
+    assert "compass/critic.py" in critic_def.output  # full path, not loose "critic"
 
 
-def test_self_demo_resolution_invariant_holds():
+def test_self_demo_resolution_invariant_holds(built_db):
     """On cairn's own freshly-built graph, no exact edge has a NULL target_id.
 
     This is promise #1 of the verification contract, demonstrated on cairn's
     own code — the strongest possible dogfood.
     """
-    runner = CliRunner()
-    repo = _cairn_repo_root()
-    with tempfile.TemporaryDirectory() as tmp:
-        db = Path(tmp) / "test.kg"
-        common = ["--db", str(db), "--workspace", str(repo)]
-        build = runner.invoke(main, ["build", *common], catch_exceptions=False)
-        assert build.exit_code == 0, build.output
+    db, _build_output = built_db
 
-        conn = sqlite3.connect(str(db))
-        conn.row_factory = sqlite3.Row
-        # Guard against a vacuous pass: if a future build bug yielded ZERO
-        # exact edges, "violations == 0" would pass trivially. Require a
-        # non-trivial exact-edge set so the invariant is meaningful.
-        total_exact = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE resolution = 'exact'"
-        ).fetchone()[0]
-        assert total_exact > 1000, (
-            f"only {total_exact} exact edges in cairn's own graph -- expected "
-            "thousands; the invariant check below would be vacuous on an empty set"
-        )
-        violations = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE resolution = 'exact' AND target_id IS NULL"
-        ).fetchone()[0]
-        conn.close()
-        assert violations == 0, (
-            f"{violations} exact edge(s) with NULL target_id in cairn's own graph "
-            "— the verification contract is violated on cairn's own code"
-        )
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    # Guard against a vacuous pass: if a future build bug yielded ZERO
+    # exact edges, "violations == 0" would pass trivially. Require a
+    # non-trivial exact-edge set so the invariant is meaningful.
+    total_exact = conn.execute(
+        "SELECT COUNT(*) FROM edges WHERE resolution = 'exact'"
+    ).fetchone()[0]
+    assert total_exact > 1000, (
+        f"only {total_exact} exact edges in cairn's own graph -- expected "
+        "thousands; the invariant check below would be vacuous on an empty set"
+    )
+    violations = conn.execute(
+        "SELECT COUNT(*) FROM edges WHERE resolution = 'exact' AND target_id IS NULL"
+    ).fetchone()[0]
+    conn.close()
+    assert violations == 0, (
+        f"{violations} exact edge(s) with NULL target_id in cairn's own graph "
+        "— the verification contract is violated on cairn's own code"
+    )

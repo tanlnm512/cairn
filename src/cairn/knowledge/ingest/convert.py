@@ -1,4 +1,4 @@
-"""Binary-document conversion behind the cairn[ingest] extra (D-002).
+"""Binary-document conversion behind the cairn[ingest] extra.
 
 PDF via pymupdf4llm; docx via mammoth (HTML) -> markdownify. All heavy
 imports are strictly lazy: the base install imports this module cleanly
@@ -14,7 +14,7 @@ CONVERT_SUFFIXES = frozenset({".pdf", ".docx"})
 _EXTRA_MISSING = "cairn[ingest] not installed"
 _EMPTY_EXTRACTION = "empty extraction"
 
-#: Tag carried by every accepted conversion (FR-003).
+#: Tag carried by every accepted conversion.
 CONVERTED_TAG = "converted"
 
 

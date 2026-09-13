@@ -97,32 +97,28 @@ def _n_results_bucket(n: int) -> str:
 # populations drops to ~0.0 -- rerank is the only semantic component left,
 # so it must run.
 #
-# Re-calibration (T018, FR-004/TC-013, 2026-08-16; DS-v1 ground truth, yarl
-# corpus, the 29-query tune split, bge-m3 + bge-reranker-base, chunk variant
-# B, rerank on, torch pinned): NO CHANGE -- 0.45 stands, with the numbers on
+# Calibration basis: 0.45, with the numbers on
 # record. At margins {0.30, 0.45, 0.60, 0.75} the gate skips 0/29 tune
 # queries both at the shipped config and with query enrichment forced on:
-# every DS-v1 query is a natural-language question and none is an exact-name
-# reference of its fused #1 (0/29 exact-name hits either way -- the gate
+# every corpus query is a natural-language question and none is an exact-name
+# reference of its fused #1 -- the gate
 # deliberately still sees the RAW query, so flipping enrichment cannot
-# shift the corroboration), which makes the skip-rate curve flat at zero
+# shift the corroboration -- which makes the skip-rate curve flat at zero
 # across the entire margin axis. A margin cannot be re-calibrated on a
 # population with no skip traffic; the agent-style calibration above remains
 # the operative basis. Under the shipped config the margin axis is degenerate
 # anyway: the BM25 leg is empty for sentence queries, RRF fuses a single
-# list, and all 29 margins collapse to the same 0.128 constant. The
-# margin-only hypothetical (corroboration dropped) re-confirmed the original
-# rejection on this dataset too: it would skip 14/29 at 0.30 with only 0.50
-# top-1 rerank agreement (9/29 at 0.45, agreement 0.44) -- the exact-name
+# list, and all margins collapse to the same constant. The
+# margin-only hypothetical (corroboration dropped) was rejected: it would
+# skip too many qualifying queries at low agreement -- the exact-name
 # corroboration, not the margin, is what makes skips safe. The gate is
-# pair-format-safe by construction (verified again for T016's restructured
-# pairs): it reads the fused RRF ranking BEFORE the rerank call, so pair
+# pair-format-safe by construction: it reads the fused RRF ranking BEFORE
+# the rerank call, so pair
 # construction cannot shift its inputs. tests/test_rerank_gating.py pins
 # this decision (TestCalibrationPin).
 # ---------------------------------------------------------------------------
 
-# Default for CAIRN_RERANK_MIN_MARGIN. See the calibration note above
-# (re-validated T018 on the DS-v1 tune split: no change).
+# Default for CAIRN_RERANK_MIN_MARGIN. See the calibration note above.
 _DEFAULT_RERANK_MIN_MARGIN = 0.45
 
 
@@ -217,7 +213,7 @@ def _fused_confident(
       the #1 is the right answer; the exact-name check supplies the lexical
       evidence that the query was *about* that symbol.
 
-    ``min_margin`` (D-008) is the explicit per-call override of the margin
+    ``min_margin`` is the explicit per-call override of the margin
     (``RetrievalParams.gate_min_margin``, pre-clamped by the caller); ``None``
     keeps the env/default resolution.
     """
@@ -253,17 +249,17 @@ def _candidates_from_ann_hits(
     candidate dict shape the brute-force scan produces.
 
     Re-applies ``threshold`` (the vec0 MATCH query has no threshold concept of
-    its own — it just returns the nearest k). Dedups per symbol by MAX score
-    (FR-005, D-007): a symbol reaches the hit list once per vector when its
+    its own — it just returns the nearest k). Dedups per symbol by MAX score:
+    a symbol reaches the hit list once per vector when its
     table holds multiple rows for it, and must surface exactly once at its
     best score. At one row per symbol max equals the only score, so the
     single-vector behavior is unchanged.
     """
     # Max-score dedup per symbol: a symbol qualifies iff its BEST vector
     # clears the threshold, appears exactly once, and carries that best
-    # score. (The previous dict comprehension was last-wins: a later
-    # below-threshold hit could overwrite a passing score, and a multi-hit
-    # symbol appeared once per hit.)
+    # score. (A last-wins merge would let a later below-threshold hit
+    # overwrite a passing score, and a multi-hit
+    # symbol would appear once per hit.)
     score_by_id: dict = {}
     for sid, score in ann_hits:
         if sid not in score_by_id or score > score_by_id[sid]:
@@ -309,11 +305,11 @@ def _candidates_from_ann_hits(
 def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
     """Merge two already-deduped ANN candidate lists into one ranked list.
 
-    FR-005 / D-007: under ``params.multivector`` the same symbol can hit
+    Under ``params.multivector`` the same symbol can hit
     both the ``vec_`` leg and the ``vecmv_`` leg -- once each, since
     ``_candidates_from_ann_hits`` already max-dedups within a leg -- and
-    must surface exactly ONCE in the merged list, at its best (max) score
-    (TC-023). Both inputs are score-descending; the result is too, via a
+    must surface exactly ONCE in the merged list, at its best (max) score.
+    Both inputs are score-descending; the result is too, via a
     stable sort that keeps ``base`` ahead of ``extra`` on exact score ties,
     so the merge is deterministic. Candidate metadata (``chunk`` etc.) is
     the base-table display text (``_candidates_from_ann_hits`` joins
@@ -330,7 +326,7 @@ def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Explicit retrieval tunables (D-008, FR-005)
+# Explicit retrieval tunables
 #
 # The sweep/eval path is in-process, so per-combo environment mutation would
 # leak state across lever combinations and make results order-dependent.
@@ -341,10 +337,10 @@ def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
 
 @dataclass(frozen=True)
 class RetrievalParams:
-    """Immutable per-call retrieval tunables for ``semantic_search`` (D-008).
+    """Immutable per-call retrieval tunables for ``semantic_search``.
 
-    ``None``-means-default is the whole contract (FR-005's
-    defaults-preserving rule): a ``None`` field resolves to exactly the value
+    ``None``-means-default is the whole contract
+    (defaults-preserving rule): a ``None`` field resolves to exactly the value
     today's code uses — the function-arg default, the hard-coded constant, or
     the env-gated setting — so ``RetrievalParams()`` and ``params=None`` are
     behaviorally identical, and the sweep's all-levers-off row is today's
@@ -366,7 +362,7 @@ class RetrievalParams:
       reorder happens at the call site, never in the caller.
     * ``sparse_limit`` — BM25 fetch size (hard-coded ``30`` today).
     * ``sparse_top_n`` — BM25-leg rank-position cutoff applied before
-      fusion (T010's NEW lever): keep only the first N ids of the fetched
+      fusion: keep only the first N ids of the fetched
       BM25 list in ``search_symbols``' best-first order. ``None`` keeps
       today's behavior (the list as fetched, already capped by
       ``sparse_limit``); ``0`` empties the sparse leg (the sweep's
@@ -389,21 +385,21 @@ class RetrievalParams:
       per-call ``rerank`` arg: ``None`` = auto (env-gated plus the
       confidence gate), ``True`` = force past the gate (``CAIRN_RERANK=0``
       still wins), ``False`` = never.
-    * ``enrich`` — query enrichment (FR-001): ``True`` computes
+    * ``enrich`` — query enrichment: ``True`` computes
       ``query_enrich.enrich(query)`` ONCE at the ``semantic_search``
       boundary and feeds BOTH legs from that single object — the one
       ``embed_query`` call embeds ``dense_query`` (the original text with
-      each extracted identifier appended once; T009), and the BM25 fetch
+      each extracted identifier appended once), and the BM25 fetch
       consumes ``sparse_query`` as an OR-of-prefix term query
-      (``lexical.search_symbols_terms``; T008) instead of the raw query,
+      (``lexical.search_symbols_terms``) instead of the raw query,
       fixing the empty-BM25 defect for sentence queries. The confidence
       gate's ``_exact_name_hit`` corroboration still sees the RAW query —
       gate inputs shift only through the fused ranking. ``None``/``False``
       keeps today's exact behavior (the flag is carried, not defaulted on).
-    * ``enrich_idf`` — IDF-aware enrichment (FR-003, T013): ``True`` makes
+    * ``enrich_idf`` — IDF-aware enrichment: ``True`` makes
       the ONE ``enrich`` call corpus-aware by injecting a ``term_df``
       lookup built HERE (one indexed PRIMARY-KEY SELECT per distinct
-      case-folded query token, memoized -- the D-005 O(#query tokens)
+      case-folded query token, memoized -- O(#query tokens)
       bound), so terms prevalent in > 0.90 of the corpus's symbols are
       dropped from the enriched legs. Inert unless ``enrich`` is also on.
       ``None``/``False`` keeps the enrichment DF-blind: no lookup is
@@ -413,7 +409,7 @@ class RetrievalParams:
       (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
       ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
       the env path).
-    * ``multivector`` — multi-vector dense leg (FR-005): ``True`` UNIONs
+    * ``multivector`` — multi-vector dense leg: ``True`` UNIONs
       the brute scan's rows with the parallel ``embeddings_mv`` table's
       same-model ``name``/``docstring`` vectors, and the ANN leg queries
       the ``vecmv_`` index beside the base ``vec_`` index; each leg
@@ -422,21 +418,21 @@ class RetrievalParams:
       brute SQL, the single-index ANN query, and every result byte are
       today's single-vector behavior (the sweep's all-levers-off
       integrity row).
-    * ``prf`` — pseudo-relevance feedback second pass (FR-004, T016):
+    * ``prf`` — pseudo-relevance feedback second pass:
       ``True`` re-runs the full pass (both legs + fusion) ONCE at the
       post-fusion seam with an RM3-expanded query: the top ``prf_docs``
       fused candidates' text (chunk, ``name`` + ``qualified_name``
       fallback) feeds ``prf.expand`` with the ``term_df`` DF lookup, the
       expanded ``dense_query`` gets the call's SECOND ``embed_query`` --
-      the explicit D-012 exception to the one-embed-call doctrine -- and
+      the explicit exception to the one-embed-call doctrine -- and
       the expansion terms join the sparse leg's term list. PRF REPLACES
-      the rerank stage (D-012: replaces-not-stacks): a PRF combo forces
+      the rerank stage (replaces-not-stacks): a PRF combo forces
       the stage off regardless of ``rerank``/``CAIRN_RERANK``, so the
       wider rerank pool is never fetched and the cross-encoder never
       runs. An empty expansion (or empty first pass) skips the second
       pass -- zero extra embeds, first-pass results unchanged.
     * ``prf_docs`` / ``prf_terms`` / ``prf_lambda`` — the RM3 knobs
-      (``None`` = the D-002 Anserini anchors: 10 feedback docs, 10
+      (``None`` = the Anserini anchors: 10 feedback docs, 10
       terms, λ 0.5). ``prf_docs <= 0`` yields empty feedback (second
       pass skipped); ``prf_lambda`` outside [0, 1] propagates
       ``prf.expand``'s ``ValueError``.
@@ -463,7 +459,7 @@ class RetrievalParams:
 def _term_df_lookup(conn: sqlite3.Connection):
     """Build a memoized per-term DF lookup over the persisted ``term_df``.
 
-    The FR-003 / D-005 boundary half: ``semantic_search`` (and only it --
+    The ``enrich_idf`` boundary half: ``semantic_search`` (and only it --
     ``enrich`` stays pure) calls this when ``params.enrich_idf`` is truthy
     and hands the returned callable to ``enrich`` as ``df_lookup``.
 
@@ -475,7 +471,7 @@ def _term_df_lookup(conn: sqlite3.Connection):
     * one indexed ``SELECT symbol_df, n_symbols FROM term_df WHERE
       token = ?`` per DISTINCT token, memoized in a per-lookup dict, so a
       ``semantic_search`` call costs O(#distinct query tokens) SELECTs --
-      the documented D-005 bound -- each a ``token`` PRIMARY-KEY probe,
+      each a ``token`` PRIMARY-KEY probe,
       never a table scan;
     * returns ``None`` for an absent token ("no DF data": the term keeps
       full weight) or the ``(symbol_df, n_symbols)`` 2-tuple; the
@@ -542,34 +538,34 @@ def semantic_search(
     hash backend -- fallback or explicit -- keep today's
     always-rerank-when-enabled behavior).
 
-    ``params`` (D-008, FR-005) is an optional frozen
+    ``params`` is an optional frozen
     :class:`RetrievalParams` carrying explicit retrieval tunables (dense
     threshold, RRF k/weights, pool sizes, sparse fetch limit and top-N
     cutoff, rerank/gate overrides). ``params=None`` -- and every ``None`` field of a passed
     object -- preserves today's exact behavior; the eval/sweep path injects
     combinations through this object rather than mutating the environment.
-    ``params.enrich=True`` (T008/T009) computes query enrichment ONCE at
+    ``params.enrich=True`` computes query enrichment ONCE at
     this boundary and feeds both legs from it: the single ``embed_query``
     call embeds the enriched ``dense_query`` (original + identifiers), and
     the sparse (BM25) fetch goes through enrichment's term mode. The
-    confidence gate keeps seeing the raw query (T018's measurement domain);
-    the rerank pair's query side is the enriched ``dense_query`` (T016,
-    D-005) — which equals the raw query whenever enrichment is off.
-    ``params.enrich_idf=True`` (T013) additionally injects the per-term
+    confidence gate keeps seeing the raw query;
+    the rerank pair's query side is the enriched ``dense_query`` --
+    which equals the raw query whenever enrichment is off.
+    ``params.enrich_idf=True`` additionally injects the per-term
     ``term_df`` DF lookup into that one ``enrich`` call (one indexed
-    SELECT per distinct query token, D-005); off/``None`` builds no
+    SELECT per distinct query token); off/``None`` builds no
     lookup and issues no ``term_df`` SELECT. ``params.multivector=True``
-    (T018, FR-005) widens the dense leg to the parallel ``embeddings_mv``
+    widens the dense leg to the parallel ``embeddings_mv``
     vectors: the brute scan UNIONs the mv rows (same model) beside
     ``embeddings`` and the ANN leg queries the ``vecmv_`` index beside
     ``vec_``, each leg consolidating every symbol to ONE entry at its MAX
     score across vectors; the mv leg is strictly additive -- a missing
     ``vecmv_`` index leaves the base candidates unchanged, never errors.
     Off/``None`` never reads ``embeddings_mv``: identical SQL, identical
-    ANN calls, byte-identical results. ``params.prf=True`` (T016, FR-004)
+    ANN calls, byte-identical results. ``params.prf=True``
     re-runs the full pass (both legs + fusion) ONCE at the post-fusion
     seam with an RM3-expanded query -- costing a SECOND ``embed_query``
-    call, the explicit flag-gated D-012 exception to the one-call
+    call, the explicit flag-gated exception to the one-call
     doctrine, budget-accounted by REPLACING the rerank stage (never
     stacked: the stage is forced off on PRF combos regardless of
     ``rerank``/``CAIRN_RERANK``). An empty expansion skips the second
@@ -591,7 +587,7 @@ def semantic_search(
     ``[{"id", "name", "kind", "qualified_name", "file_path", "repo", "score",
     "chunk", "provenance", "reranked"}]`` (plus ``"callers"``/``"callees"`` when
     requested) sorted by score (or rerank_score) descending. When a hard
-    dense-leg embed failure falls to an active ladder rung (FR-012), every
+    dense-leg embed failure falls to an active ladder rung, every
     result additionally carries ``"degraded": "embedding-backend"`` and a
     ``"hint"`` remediation line; results are otherwise unchanged in shape.
     """
@@ -606,7 +602,7 @@ def semantic_search(
     from cairn.telemetry import emit, SEMANTIC_BACKEND, EMPTY_RESULT
     from cairn.telemetry.events import RERANK_SKIPPED
 
-    # --- Explicit tunable injection (D-008, FR-005) -------------------------
+    # --- Explicit tunable injection -------------------------------------
     # None-means-default: with params=None (or a None field) every knob keeps
     # today's exact value, so this block is a behavioral no-op for every
     # existing caller -- params=None and RetrievalParams() must be identical,
@@ -623,7 +619,7 @@ def semantic_search(
             # ratio, so out-of-range values are a harness bug, not an error
             # worth failing a sweep run over.
             _gate_margin_override = min(max(params.gate_min_margin, 0.0), 1.0)
-    # FR-005 (T018): the multi-vector query path. None and False both keep
+    # Multi-vector query path. None and False both keep
     # every scan byte-identical to the single-vector path (integrity
     # doctrine -- the sweep's all-levers-off row must never read
     # embeddings_mv).
@@ -642,7 +638,7 @@ def semantic_search(
     # the stage might still run (the gate can only be evaluated after fusion).
     _rerank_enabled = rrk.rerank_enabled()
     rerank_on = _rerank_enabled if rerank is not False else False
-    # T016 (FR-004, D-012): PRF REPLACES the rerank stage -- the second
+    # PRF REPLACES the rerank stage -- the second
     # pass spends the budget the cross-encoder would have, never stacks on
     # it. With params.prf on, the stage is forced off no matter what
     # rerank/CAIRN_RERANK requested (a caller setting both gets PRF; PRF
@@ -716,7 +712,7 @@ def semantic_search(
         # Explicit override of the computed pool size (both branches).
         pool_size = params.rerank_pool
 
-    # T009 (FR-001, D-001): query enrichment at the semantic_search boundary
+    # Query enrichment at the semantic_search boundary
     # ONLY, computed ONCE per call whenever params.enrich is truthy and fed
     # to BOTH retrieval legs from that single object -- the one embed_query
     # call below embeds `dense_query` (the original text with each extracted
@@ -725,14 +721,14 @@ def semantic_search(
     # embeddings.embed_query itself stays untouched: the memory layer shares
     # it (promotion.py) and must keep receiving raw queries. The confidence
     # gate's _exact_name_hit corroboration keeps the RAW `query` -- so gate
-    # inputs shift only through the fused ranking itself (T018's
-    # measurement); the rerank pair (T016, D-005) receives `_dense_query`
+    # inputs shift only through the fused ranking itself; the rerank pair
+    # receives `_dense_query`
     # below. enrich() is a pure regex function, so evaluating it even
     # on paths that never reach a leg (e.g. the no-rows early return) is
     # harmless; with enrich off/None _enriched stays None and both legs see
     # the raw query exactly as today.
     #
-    # T013 (FR-003, D-005): with enrich_idf ALSO truthy the DF signal
+    # With enrich_idf ALSO truthy the DF signal
     # enters exactly here -- the boundary builds the per-term term_df
     # lookup (one indexed SELECT per distinct case-folded query token)
     # and injects it, keeping enrich() itself pure. With enrich_idf
@@ -748,7 +744,7 @@ def semantic_search(
 
     model = emb.current_model()
 
-    # FR-012 (D-011): the dense leg's embed call is guarded for ALL backends.
+    # The dense leg's embed call is guarded for ALL backends.
     # One helper maps any embed failure onto the fallback ladder -- evaluated
     # at most once per search (the ladder self-caches per process) -- and a
     # hard failure contributes zero dense candidates instead of raising out
@@ -767,11 +763,11 @@ def semantic_search(
     def _dense_embed_guarded(
         text: str, conn: Optional[sqlite3.Connection] = None
     ) -> Optional[Tuple[bytes, int]]:
-        """``emb.embed_query`` with the FR-012 ladder mapped onto failure.
+        """``emb.embed_query`` with the ladder mapped onto failure.
 
         Returns ``(blob, dim)``, or ``None`` when the dense leg must
-        contribute zero candidates: any embed exception (every backend,
-        D-011) evaluates the ladder once per search; an active rung-1/2
+        contribute zero candidates: any embed exception (every backend)
+        evaluates the ladder once per search; an active rung-1/2
         adoption gets one retry, a hard failure rides the existing bm25
         fusion path. Never raises.
         """
@@ -805,7 +801,7 @@ def semantic_search(
         enrichment terms; an empty tuple keeps the term fetch exactly
         today's shape.
 
-        D-012 (FR-004): the second ``_run_pass`` call under ``params.prf``
+        The second ``_run_pass`` call under ``params.prf``
         is the explicit, flag-gated exception to the one-embed_query-
         per-call doctrine -- budget-accounted by REPLACING (never
         stacking) the rerank stage.
@@ -814,7 +810,7 @@ def semantic_search(
 
         pair = _dense_embed_guarded(dense_text, conn)
 
-        # FR-012 rung 3: a hard embed failure (``pair is None``) contributes
+        # Rung 3: a hard embed failure (``pair is None``) contributes
         # ZERO dense candidates -- ``[]`` flows into the existing fusion
         # below, which yields today's bm25-provenanced shape (no new
         # short-circuit).
@@ -831,7 +827,7 @@ def semantic_search(
                 candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
                 _ann_used = True
                 if _mv:
-                    # FR-005 (T018): query the vecmv_ index beside vec_ and
+                    # Query the vecmv_ index beside vec_ and
                     # merge -- each symbol once, at its best score across both
                     # legs. Strictly additive: no vecmv index (None) leaves the
                     # base candidates unchanged, never errors.
@@ -866,7 +862,7 @@ def semantic_search(
             if params is not None and params.dense_pool is not None:
                 brute_force_limit = params.dense_pool
             if _mv:
-                # FR-005 (T018): UNION the multi-vector kinds' rows beside the
+                # UNION the multi-vector kinds' rows beside the
                 # base rows (same model stamp on both arms); the LIMIT applies
                 # to the whole compound select. The flag-off query below stays
                 # verbatim -- never touch it (integrity doctrine).
@@ -918,10 +914,10 @@ def semantic_search(
             triples = [(r["vec"], r["dim"], r) for r in rows]
             scored = cosine_scan(q_blob, q_dim, triples, threshold)
             if _mv:
-                # FR-005 max-over-vectors: consolidate each symbol's UNION rows
+                # Max-over-vectors: consolidate each symbol's UNION rows
                 # to its best score BEFORE the pool cap -- a symbol's duplicate
-                # representations must never crowd out another candidate
-                # (TC-023). cosine_scan is score-descending, so first
+                # representations must never crowd out another candidate.
+                # cosine_scan is score-descending, so first
                 # occurrence is the max; the explicit compare keeps the
                 # contract independent of that ordering guarantee.
                 best: dict = {}
@@ -959,7 +955,7 @@ def semantic_search(
                 sparse_limit = 30
                 if params is not None and params.sparse_limit is not None:
                     sparse_limit = params.sparse_limit
-                # T008 (FR-001) term-mode sparse fetch: with params.enrich on,
+                # Term-mode sparse fetch: with params.enrich on,
                 # the stopword-trimmed term list of the ONE EnrichedQuery
                 # computed above feeds search_symbols_terms, whose
                 # OR-of-quoted-prefix MATCH lets BM25 rank symbols whose
@@ -974,7 +970,7 @@ def semantic_search(
                     _enriched.sparse_query.split() if _enriched is not None else []
                 )
                 if extra_sparse_terms:
-                    # T016 (FR-004, D-001): the PRF expansion terms join
+                    # The PRF expansion terms join
                     # the sparse leg (second pass only) after any
                     # enrichment terms; a duplicate is harmless under the
                     # OR-of-prefix MATCH.
@@ -1017,8 +1013,8 @@ def semantic_search(
                         # [bm25(sparse), vec(dense)] -- reorder at the boundary.
                         rrf_weights = [params.rrf_weights[1], params.rrf_weights[0]]
                     if params.sparse_top_n is not None:
-                        # Rank-position cutoff on the BM25 leg (T010's NEW
-                        # lever): keep the first N ids in search_symbols'
+                        # Rank-position cutoff on the BM25 leg: keep the
+                        # first N ids in search_symbols'
                         # best-first order, dropping the tail before fusion.
                         # Negative N clamps to 0 rather than erroring (the
                         # gate_min_margin clamp doctrine: a harness bug must
@@ -1071,7 +1067,7 @@ def semantic_search(
     try:
         candidates = _run_pass(_dense_query, ())
     except Exception:
-        # D-011: any residual hard failure from the dense pass maps to the
+        # Any residual hard failure from the dense pass maps to the
         # evaluated rung (zero dense candidates) instead of raising out of
         # the search.
         try:
@@ -1083,14 +1079,14 @@ def semantic_search(
     if candidates is None:
         return _finish([])
 
-    # T016 (FR-004, D-001/D-003/D-012): the PRF second pass at the
+    # The PRF second pass at the
     # post-fusion seam -- the fused top-k (or the dense-only list when
-    # fusion is off/degraded) is the feedback signal, per D-003. The ONE
+    # fusion is off/degraded) is the feedback signal. The ONE
     # extra embed_query inside _run_pass below is the explicit,
-    # flag-gated D-012 exception to the one-call doctrine, spent from the
+    # flag-gated exception to the one-call doctrine, spent from the
     # rerank budget it replaces (rerank_on was forced off above).
     if _prf and candidates and params is not None:
-        # None-means-default resolves to the D-002 Anserini anchors
+        # None-means-default resolves to the Anserini anchors
         # (docs=10, terms=10, lambda=0.5). A negative prf_docs clamps to
         # empty feedback -- a slice with a negative bound would silently
         # keep the WORST |n| candidates (the harness-bug clamp doctrine).
@@ -1109,12 +1105,12 @@ def semantic_search(
         )
         if expansion.terms:
             # Second pass on the expanded text/terms; its candidates
-            # REPLACE the first pass's (D-001), then the confidence
+            # REPLACE the first pass's, then the confidence
             # gate/slice path below continues on the new list.
             try:
                 candidates = _run_pass(expansion.dense_query, expansion.terms)
             except Exception:
-                # Same D-011 contract as the first pass's call site above:
+                # Same contract as the first pass's call site above:
                 # a residual hard failure from this pass maps to the
                 # evaluated rung (the once-flag keeps the ladder at one
                 # evaluation per search) and empty candidates, instead of
@@ -1167,10 +1163,10 @@ def semantic_search(
         logger.debug("rerank skipped: fused ranking decisive (margin gate)")
 
     if rerank_on:
-        # T016 (FR-004, D-005): the rerank pair's query side is
-        # `_dense_query` — the enriched query when FR-001 is on, the raw
+        # The rerank pair's query side is
+        # `_dense_query` — the enriched query when enrichment is on, the raw
         # query otherwise. The confidence gate above still reads the RAW
-        # query (its _exact_name_hit corroboration is T018's domain); only
+        # query; only
         # the rerank stage sees the enriched form.
         final, reranked = rrk.rerank(_dense_query, candidates, limit)
         # `reranked` is the cross-encoder's own outcome flag: False means it
@@ -1183,7 +1179,7 @@ def semantic_search(
             item["reranked"] = reranked
             if "rerank_score" in item:
                 item["rerank_score"] = round(item["rerank_score"], 4)
-                # Sigmoid-mapped companion of rerank_score (T016): additive,
+                # Sigmoid-mapped companion of rerank_score: additive,
                 # so guard with .get — a rerank stub may set only the raw
                 # field (test_rerank_gating's recorder does).
                 norm = item.get("rerank_score_norm")
@@ -1195,7 +1191,7 @@ def semantic_search(
     if include_callers:
         _attach_callers(conn, final)
 
-    # FR-012: additive degradation surfacing -- only when a ladder state is
+    # Additive degradation surfacing -- only when a ladder state is
     # active AND this search's dense leg actually fell to it (a working
     # rung-1/2 adoption leaves the results untagged). Healthy searches stay
     # byte-identical. Compass results carry their own ``degraded`` key with

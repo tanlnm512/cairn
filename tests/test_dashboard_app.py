@@ -184,7 +184,7 @@ def _embedded_graph(html: str) -> dict:
 
 
 def test_projects_route_lists_counts_and_embedding_status(tmp_path):
-    """FR-002: every project row carries counts, freshness, and the
+    """Every project row carries counts, freshness, and the
     embedded/not/partial status with the model where recorded."""
     client = _client(tmp_path, seed=True)
     resp = client.get("/projects")
@@ -209,7 +209,7 @@ def test_projects_route_empty_db_renders_empty_state(tmp_path):
 
 @requires_vis_network
 def test_graph_route_embeds_graph_json_and_assets(tmp_path):
-    """FR-003: /graph renders the serialized {nodes, edges, metadata} into
+    """/graph renders the serialized {nodes, edges, metadata} into
     the page and references the vendored vis-network asset plus app.js."""
     client = _client(tmp_path, seed=True)
     resp = client.get("/graph", params={"scope": "module", "focus": "src/demo"})
@@ -291,19 +291,18 @@ def test_graph_route_impact_and_repo_empty_filters_draw(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Layout persistence + option application (graph-nav FR-004 / US3 / TC-005):
-# /graph reads ``layout`` ∈ {force, hier} -- default force, bogus → force;
+# Layout persistence + option application (graph-nav / US3):
+# graph reads ``layout`` ∈ {force, hier} -- default force, bogus → force;
 # the control's anchors swap only that param (window-control link
 # conventions) and the canvas data-layout attribute is app.js's
-# initial-layout hook. TC-005's server-visible halves are automated below;
+# initial-layout hook. the server-visible halves are automated below;
 # the live camera-preserving toggle is not automatable here -- the manual
 # procedure is the section docstring beneath this comment.
 # ---------------------------------------------------------------------------
 
 TC005_MANUAL_PROCEDURE = """\
-TC-005 manual half -- layout toggle re-renders in the chosen style, focus
-kept (FR-004 / US3-AC1). Run against a real store (e.g. this repo's own
-graph via the dev server):
+Manual half: layout toggle re-renders in the chosen style, focus kept.
+Run against a real store (e.g. this repo's own graph via the dev server):
 
 1. Open /graph and let the force-directed network settle; pan/zoom to a
    recognizable focus point (a node cluster you can find again).
@@ -321,7 +320,7 @@ graph via the dev server):
 
 @requires_vis_network
 def test_graph_layout_defaults_to_force_with_hier_anchor(tmp_path):
-    """TC-005 auto half: default /graph renders the layout control with
+    """Auto half: default /graph renders the layout control with
     force active and hierarchical as the anchor; the canvas carries
     data-layout="force" -- the attribute app.js applies as the initial
     layout."""
@@ -342,7 +341,7 @@ def test_graph_layout_defaults_to_force_with_hier_anchor(tmp_path):
 
 @requires_vis_network
 def test_graph_layout_hier_activates_and_link_preserves_graph_params(tmp_path):
-    """TC-005 auto half: ?layout=hier marks hierarchical active and the
+    """Auto half: ?layout=hier marks hierarchical active and the
     canvas hook carries data-layout="hier"; the control's force link is
     one full href that swaps layout and keeps every other graph param
     (scope/focus/repo/depth), so a reload round-trips the whole view."""
@@ -371,7 +370,7 @@ def test_graph_layout_hier_activates_and_link_preserves_graph_params(tmp_path):
 
 @requires_vis_network
 def test_graph_layout_bogus_value_falls_back_to_force(tmp_path):
-    """TC-005 auto half: an unknown layout value degrades to force,
+    """Auto half: an unknown layout value degrades to force,
     matching the graph handler's scope fallback -- control and canvas both
     show force and the graph still renders; never an error."""
     client = _client(tmp_path, seed=True)
@@ -386,14 +385,14 @@ def test_graph_layout_bogus_value_falls_back_to_force(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Symbol-search candidates endpoint (graph-nav FR-001/FR-002 / US1): the
+# Symbol-search candidates endpoint (graph-nav / US1): the
 # JSON the graph view's search box consumes -- the data-layer contract,
 # verbatim.
 # ---------------------------------------------------------------------------
 
 
 def _candidates_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded when seed=True with TC-002's
+    """A graph-schema DB file; seeded when seed=True with the
     ambiguity: ``dup_name`` defined in two files across two repos (two
     kinds, so each match's context is distinguishable), inserted in the
     reverse of the deterministic result order, plus the unique
@@ -434,9 +433,9 @@ def _candidates_db_file(tmp_path, seed: bool) -> str:
 
 
 def test_candidates_route_returns_the_data_layer_contract(tmp_path):
-    """FR-001/FR-002: /graph/candidates is application/json carrying the
+    """/graph/candidates is application/json carrying the
     data-layer result verbatim -- the ambiguous name lists both matches
-    with file and kind (TC-002), the unique name exactly one (TC-001's
+    with file and kind, the unique name exactly one (the
     auto half)."""
     db_path = _candidates_db_file(tmp_path, seed=True)
     client = _panel_client(tmp_path, db_path, str(tmp_path / "missing"))
@@ -551,13 +550,13 @@ def test_graph_page_carries_typeahead_search_markup(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Node-expansion neighbors endpoint (graph-nav FR-003/FR-005 / US2): the
+# Node-expansion neighbors endpoint (graph-nav / US2): the
 # node/edge JSON the graph view's expand action fetches and merges.
 # ---------------------------------------------------------------------------
 
 
 def _neighbors_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded when seed=True with TC-003's hub:
+    """A graph-schema DB file; seeded when seed=True with the hub:
     ``expand_main`` with one caller (``expand_caller``) and one callee
     (``expand_helper``) -- the exact node/edge set an expansion fetches."""
     from cairn.graph.schema import _apply_schema
@@ -600,8 +599,8 @@ def _neighbors_db_file(tmp_path, seed: bool) -> str:
 
 
 def test_neighbors_route_serves_the_expansion_contract(tmp_path):
-    """FR-003/FR-005: /graph/neighbors is application/json carrying the
-    viz-layer result verbatim for the requested name -- TC-003's expected
+    """/graph/neighbors is application/json carrying the
+    viz-layer result verbatim for the requested name -- the expected
     node/edge set (focal + caller + callee, both edges) -- and repeat/blank
     ``name`` params collapse to the single-name call's JSON."""
     db_path = _neighbors_db_file(tmp_path, seed=True)
@@ -672,7 +671,7 @@ def test_neighbors_route_absent_name_and_bogus_depth_never_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Health / memory / task-queue panels (FR-008, FR-009)
+# Health / memory / task-queue panels ()
 # ---------------------------------------------------------------------------
 
 
@@ -704,16 +703,13 @@ def _panel_client(tmp_path, db_file: str, knowledge_dir: str):
 
 
 def _await_prewarmed_probes(timeout_s: float = 30.0) -> dict:
-    """Block until the probe cache's first population lands, then return it.
+    """    Block until the probe cache's first population lands, then return it.
 
-    A /health request that overlaps the probes' one-time imports is
-    delivery-delayed far past FR-001's budget by GIL contention alone -- the
-    handler's own work is bounded by the warm window, the wall clock is not
-    -- so timing and verdict assertions wait for the prewarm to publish
-    first. The cache is process-global; callers reset it
-    (``reset_probe_cache``) before building the app so the wait covers this
-    environment's own probes, not a previous test's.
-    """
+    A /health request overlapping the probes' one-time imports is
+    delivery-delayed far past the budget by GIL contention alone, so timing and
+    verdict assertions wait for the prewarm to publish first. The cache is
+    process-global; callers reset it (``reset_probe_cache``) before building the
+    app so the wait covers this environment's own probes."""
     import cairn.dashboard.data as dashboard_data
 
     deadline = time.monotonic() + timeout_s
@@ -727,7 +723,7 @@ def _await_prewarmed_probes(timeout_s: float = 30.0) -> dict:
 
 
 def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
-    """TC-001 / FR-001 / SC-1: on a fresh app instance (probe cache reset,
+    """SC-1: on a fresh app instance (probe cache reset,
     startup prewarm armed) the first /health the app serves renders in under
     200ms server-side -- the request reads the warmed cache and pays neither
     the probe imports nor the warm-window wait."""
@@ -754,15 +750,13 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
 
 
 def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
-    """FR-008: one-glance panel carrying the DB size (human-readable), index
-    freshness, backend mode, and reranker status from the seeded DB.
+    """    One-glance panel carrying the DB size (human-readable), index freshness,
+    backend mode, and reranker status from the seeded DB.
 
-    The probe verdicts are asserted against the cache the request served,
-    never against freshly recomputed live probes: with the prewarm design a
-    /health request serves cached probe values, so live recomputation can
-    legitimately disagree with what rendered (machines with the semantic
-    extra installed report a different reranker verdict mid-warmup than the
-    one the request served)."""
+    Probe verdicts are asserted against the cache the request served, never
+    freshly recomputed: a /health request serves cached probe values, so live
+    recomputation can legitimately disagree (machines with the semantic extra
+    installed report a different reranker verdict mid-warmup)."""
     from cairn.dashboard.data import reset_probe_cache
 
     reset_probe_cache()
@@ -856,7 +850,7 @@ def _seed_memories(knowledge_dir):
 
 
 def test_memory_route_lists_memories_newest_first_with_type(tmp_path):
-    """FR-009: recent memories newest-first, each with type badge + title."""
+    """Recent memories newest-first, each with type badge + title."""
     kdir = tmp_path / "knowledge"
     _seed_memories(kdir)
     client = _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
@@ -1018,7 +1012,7 @@ def _seed_tasks(knowledge_dir):
 
 
 def test_tasks_route_lists_entries_and_honors_status_filter(tmp_path):
-    """FR-009: queue entries listed with status, and ?status= filters them."""
+    """Queue entries listed with status, and ?status= filters them."""
     pending, claimed, done = _seed_tasks(tmp_path / "knowledge")
     kdir = str(tmp_path / "knowledge")
     client = _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), kdir)
@@ -1061,7 +1055,7 @@ def test_tasks_route_empty_queue_renders_empty_state(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tool-call history (FR-005, US3)
+# Tool-call history (US3)
 # ---------------------------------------------------------------------------
 
 # Distinctive head/tail of a payload whose args_summary was truncated at the
@@ -1071,18 +1065,15 @@ _TC024_SUMMARY = _TC024_PAYLOAD[:200]
 
 
 def _history_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded with four tool_metrics rows when
-    seed=True, written newest-last so rendering order is not insert order:
+    """    A graph-schema DB file; seeded with four tool_metrics rows when seed=True,
+    written newest-last so rendering order is not insert order:
 
-    ask_compass  / sess-alpha @ 00:25 — error, 1750 ms, ~100/~200 tokens
-    explore      / sess-beta  @ 00:20 — ok, 250 ms, ~300/~1200 tokens,
-                                        truncated args summary (TC-024)
-    explore      / sess-alpha @ 00:00 — ok, 60 ms, NULL sizes (pre-migration)
-    legacy_tool  / unknown    @ 2025-08-19 23:43:20 — ok, 30 ms, NULL sizes;
-                                        the literal 'unknown' session every
-                                        pre-session-id row shares
-                                        (cross-links TC-002's legacy shape)
-    """
+    ask_compass / sess-alpha @ 00:25 - error, 1750 ms, ~100/~200 tokens
+    explore / sess-beta @ 00:20 - ok, 250 ms, ~300/~1200 tokens, truncated args
+    explore / sess-alpha @ 00:00 - ok, 60 ms, NULL sizes (pre-migration)
+    legacy_tool / unknown @ 2025-08-19 23:43:20 - ok, 30 ms, NULL sizes; the
+    literal 'unknown' session every pre-session-id row shares (cross-links the
+    legacy shape)"""
     from cairn.graph.schema import _apply_schema
 
     db_path = str(tmp_path / "history.db")
@@ -1118,7 +1109,7 @@ def _history_client(tmp_path, seed: bool):
 
 
 def test_history_route_lists_calls_newest_first_with_all_columns(tmp_path):
-    """FR-005 / US3-AC1: newest-first rows carrying tool name, timestamp,
+    """US3-AC1: newest-first rows carrying tool name, timestamp,
     duration, status, and session, plus per-call token estimates (US4-AC2)
     and 'unknown' for pre-migration rows with NULL sizes."""
     resp = _history_client(tmp_path, seed=True).get("/history")
@@ -1145,7 +1136,7 @@ def test_history_route_lists_calls_newest_first_with_all_columns(tmp_path):
 
 
 def test_history_route_filters_by_tool_and_session(tmp_path):
-    """FR-005 / US3-AC2: exact-match tool and session filters, combinable,
+    """US3-AC2: exact-match tool and session filters, combinable,
     each preserving the other; a nonsense filter is a 200 empty state."""
     client = _history_client(tmp_path, seed=True)
 
@@ -1179,14 +1170,14 @@ def test_history_route_filters_by_tool_and_session(tmp_path):
 
 
 def test_history_route_fresh_db_renders_empty_state(tmp_path):
-    """TC-013: no recorded calls yet — empty state, HTTP 200, no error."""
+    """No recorded calls yet — empty state, HTTP 200, no error."""
     resp = _history_client(tmp_path, seed=False).get("/history")
     assert resp.status_code == 200
     assert "No matching calls" in resp.text
 
 
 def test_history_route_shows_arg_summary_never_full_payload(tmp_path):
-    """TC-024: the truncated args_summary renders; the payload's distinctive
+    """The truncated args_summary renders; the payload's distinctive
     tail never reaches the page."""
     resp = _history_client(tmp_path, seed=True).get("/history")
     assert resp.status_code == 200
@@ -1196,22 +1187,20 @@ def test_history_route_shows_arg_summary_never_full_payload(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tokens + chains views (FR-006, FR-007 / US4, US5)
+# Tokens + chains views (US4, US5)
 # ---------------------------------------------------------------------------
 
 _TC_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
 
 
 def _tokens_chains_db_file(tmp_path, seed: bool) -> str:
-    """A graph-schema DB file; seeded when seed=True with:
+    """    A graph-schema DB file; seeded when seed=True with:
 
-    tokens (TC-014): tool_heavy — 2 calls, 1600+2400 req / 3200+4800 resp
-    chars -> ~1000 + ~2000 = ~3000 total, ~1500 mean — clearly above
-    tool_light — 1 call, 400+800 chars -> ~100 + ~200 = ~300 total.
-    chains (TC-016 / TC-017): sess-multi — 3 calls a minute apart;
-    sess-single — 1 call; sess-gapped — 3 calls a minute apart, then 2 more
-    six hours later under the same session id (two chains).
-    """
+    tokens: tool_heavy - 2 calls, 1600+2400 req / 3200+4800 resp chars -> ~3000
+    total, ~1500 mean - clearly above tool_light - 1 call, 400+800 chars -> ~300
+    total. chains: sess-multi - 3 calls a minute apart; sess-single - 1 call;
+    sess-gapped - 3 calls a minute apart, then 2 more six hours later under the
+    same session id (two chains)."""
     from cairn.graph.schema import _apply_schema
 
     db_path = str(tmp_path / "tokens-chains.db")
@@ -1256,7 +1245,7 @@ def _chain_blocks(html: str):
 
 
 def test_tokens_route_ranks_aggregates_with_bigger_payload_tool_first(tmp_path):
-    """FR-006 / US4-AC1: calls / total / mean columns, ranked by total
+    """US4-AC1: calls / total / mean columns, ranked by total
     descending — the bigger-payload tool renders above the smaller."""
     resp = _tokens_chains_client(tmp_path, seed=True).get("/tokens")
     assert resp.status_code == 200
@@ -1275,7 +1264,7 @@ def test_tokens_route_ranks_aggregates_with_bigger_payload_tool_first(tmp_path):
 
 
 def test_chains_route_lists_sessions_as_ordered_chains(tmp_path):
-    """FR-007 / US5-AC1: each session is its own visually connected chain
+    """US5-AC1: each session is its own visually connected chain
     with calls in chronological order and human-readable timestamps and
     durations; a single-call session still renders as its own chain."""
     resp = _tokens_chains_client(tmp_path, seed=True).get("/chains")
@@ -1308,7 +1297,7 @@ def test_chains_route_lists_sessions_as_ordered_chains(tmp_path):
 
 
 def test_chains_route_gap_pair_renders_as_two_chains(tmp_path):
-    """FR-007 / US5-AC2 / TC-017: two bursts six hours apart under one
+    """US5-AC2: two bursts six hours apart under one
     session id render as two separate chains, each with only its own calls."""
     resp = _tokens_chains_client(tmp_path, seed=True).get("/chains")
     assert resp.status_code == 200
@@ -1323,7 +1312,7 @@ def test_chains_route_gap_pair_renders_as_two_chains(tmp_path):
 
 
 def test_chains_route_session_param_filters_to_one_session(tmp_path):
-    """FR-002: ``session`` narrows /chains to that session's chains only;
+    """``session`` narrows /chains to that session's chains only;
     a no-match session renders the empty state (HTTP 200, never an error);
     without the param every session renders as before."""
     client = _tokens_chains_client(tmp_path, seed=True)
@@ -1358,7 +1347,7 @@ def test_tokens_and_chains_routes_empty_db_render_empty_states(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Time-window control on the traffic routes (FR-002): the data layer owns
+# Time-window control on the traffic routes: the data layer owns
 # the semantics (tests/test_dashboard_data.py); these pin only what is
 # route-visible — the control, the bogus-value fallback, and the Older
 # link carrying the window. Seeded timestamps anchor to time.time() with
@@ -1407,7 +1396,7 @@ def _window_client(tmp_path, bulk: bool):
 
 
 def test_window_control_renders_on_history_tokens_and_chains(tmp_path):
-    """FR-002: all three traffic views carry the shared window control with
+    """All three traffic views carry the shared window control with
     the 24h/7d/30d/all presets, 'all' active by default."""
     client = _window_client(tmp_path, bulk=False)
     for path in ("/history", "/tokens", "/chains"):
@@ -1439,7 +1428,7 @@ def test_window_bogus_value_falls_back_to_all(tmp_path):
 
 
 def test_history_older_link_carries_the_active_window(tmp_path):
-    """FR-006: paging composes with the window — the Older link keeps the
+    """Paging composes with the window — the Older link keeps the
     24h param so the next page stays in-window instead of resuming all-time
     pagination past the window's edge."""
     client = _window_client(tmp_path, bulk=True)
@@ -1458,13 +1447,13 @@ def test_history_older_link_carries_the_active_window(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Live refresh, server half (live-updates FR-001 / FR-006, TC-001 / TC-007):
+# Live refresh, server half (live-updates):
 # the poll loop re-fetches the same URL and swaps #refresh-region, so the
 # server contract beneath the client is pinned here -- the region + chrome
 # render on /history, a row landed after one fetch is served by the next
-# (TC-001's auto half), and consecutive fetches of the same filtered URL
+# (the auto half), and consecutive fetches of the same filtered URL
 # re-render the region byte-identically with each row exactly once
-# (TC-007's server half: idempotent refresh, never duplicate rows). A
+# (the server half: idempotent refresh, never duplicate rows). A
 # non-traffic page carries no region, so the loop stays inert there. The
 # DOMParser swap itself is app.js's half and has no JS runtime here.
 # ---------------------------------------------------------------------------
@@ -1530,7 +1519,7 @@ def _refresh_region(html: str) -> str | None:
 
 
 def test_history_wraps_table_in_refresh_region_with_live_chrome(tmp_path):
-    """FR-001: /history renders exactly one #refresh-region wrapping the
+    """/history renders exactly one #refresh-region wrapping the
     table -- the element the poll loop swaps -- and the shared
     #live-controls chrome server-renders its initial state (data-state
     "running", hidden until the loop takes over, with the state slot and
@@ -1553,7 +1542,7 @@ def test_history_wraps_table_in_refresh_region_with_live_chrome(tmp_path):
 
 
 def test_history_refetch_serves_row_landed_after_first_fetch(tmp_path):
-    """TC-001 auto half (FR-001 / US1-AC1): a call that lands in the store
+    """Auto half (US1-AC1): a call that lands in the store
     after one fetch is served by the very next fetch of the same URL -- so
     the poll cycle's next tick renders it, newest-first at the top."""
     db_path = _history_db_file(tmp_path, seed=True)
@@ -1584,14 +1573,14 @@ def test_history_refetch_serves_row_landed_after_first_fetch(tmp_path):
     assert refetched is not None
     assert "live_new_call" in refetched  # the new row is served
     assert "2025-08-20 00:40:00 UTC" in refetched  # its rendered identity
-    # US1-AC1's top: newest-first places it above the previously-newest row.
+    # Newest-first: the new row sits above the row that was newest before.
     assert refetched.index("live_new_call") < refetched.index(
         "2025-08-20 00:25:00 UTC"
     )
 
 
 def test_history_refetch_of_same_filtered_url_is_idempotent(tmp_path):
-    """TC-007 server half (FR-006 / SC-2): two consecutive fetches of the
+    """Server half (SC-2): two consecutive fetches of the
     same filtered URL re-render #refresh-region byte-identically -- the
     same rows, each exactly once (no duplicates, no ordering drift) -- so
     a swap-per-cycle can never accumulate repeated rows."""
@@ -1617,7 +1606,7 @@ def test_history_refetch_of_same_filtered_url_is_idempotent(tmp_path):
 
 
 def test_projects_page_carries_no_refresh_region(tmp_path):
-    """FR-001's guard-skip half: /projects is not a traffic view -- no
+    """The guard-skip half: /projects is not a traffic view -- no
     #refresh-region renders there, so the poll loop stays inert on it."""
     resp = _client(tmp_path, seed=True).get("/projects")
     assert resp.status_code == 200
@@ -1625,15 +1614,15 @@ def test_projects_page_carries_no_refresh_region(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Chains + tokens fragment growth, server half (live-updates FR-002 / US2,
-# TC-003 / TC-004 auto halves): T008 wrapped both views' content in
+# Chains + tokens fragment growth, server half (live-updates / US2,
+# auto halves): wrapped both views' content in
 # #refresh-region, so the existing poll loop re-fetches them too -- pinned
 # here is what the poll's next cycle would render: the region wraps each
 # view's content, a call landing in an open session grows that session's
-# rendered chain by exactly one with no duplicate identities (TC-003), a
+# rendered chain by exactly one with no duplicate identities, a
 # new session's first call adds its chain at the top of the fragment, and
 # a call with real payload sizes shifts the tokens aggregates the next
-# fetch serves (TC-004) -- expected totals from the data layer on the same
+# fetch serves -- expected totals from the data layer on the same
 # store plus the CHARS_PER_TOKEN arithmetic the view renders.
 # ---------------------------------------------------------------------------
 
@@ -1648,7 +1637,7 @@ def _tokens_row(region: str, tool: str) -> str:
 
 
 def test_tokens_and_chains_wrap_their_content_in_refresh_region(tmp_path):
-    """FR-002's region half: /tokens and /chains each render exactly one
+    """The region half: /tokens and /chains each render exactly one
     #refresh-region wrapping the content the poll loop swaps -- the tokens
     table and the chain list with seeded content inside the swap target,
     and app.js loaded exactly once so the loop is armed on these views."""
@@ -1671,7 +1660,7 @@ def test_tokens_and_chains_wrap_their_content_in_refresh_region(tmp_path):
 
 
 def test_chains_refetch_grows_open_session_chain_by_exactly_one(tmp_path):
-    """TC-003 auto half (FR-002 / US2-AC1): a call that lands in an open
+    """Auto half (US2-AC1): a call that lands in an open
     session after one fetch is served by the next -- that session's chain
     grows by exactly one call inside the swapped region, every rendered
     call identity exactly once, and still one chain for the session."""
@@ -1714,7 +1703,7 @@ def test_chains_refetch_grows_open_session_chain_by_exactly_one(tmp_path):
 
 
 def test_chains_refetch_new_session_chain_lands_at_fragment_top(tmp_path):
-    """FR-002 / US2-AC1: the first call of a NEW session that lands after
+    """US2-AC1: the first call of a NEW session that lands after
     one fetch is served by the next as its own chain at the top of the
     fragment -- newest activity leads the chains page, so the swapped
     region gains a leading chain instead of disturbing the old ones."""
@@ -1763,7 +1752,7 @@ def test_chains_refetch_new_session_chain_lands_at_fragment_top(tmp_path):
 
 
 def test_tokens_refetch_shifts_call_count_and_displayed_totals(tmp_path):
-    """TC-004 auto half (FR-002 / US2-AC2): a call with real payload sizes
+    """Auto half (US2-AC2): a call with real payload sizes
     that lands for an existing tool after one fetch is served by the next
     -- the tool's calls count grows by one and its displayed token totals
     shift by exactly the new call's contribution, the expected aggregates
@@ -1841,8 +1830,8 @@ def test_tokens_refetch_shifts_call_count_and_displayed_totals(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Loop-module state machine, server-visible half (live-updates FR-004 /
-# FR-005, TC-005 / TC-006): the poll loop itself is htmx-owned — the
+# Loop-module state machine, server-visible half (live-updates
+#): the poll loop itself is htmx-owned — the
 # #refresh-region trigger lives in the region templates and the chrome
 # module's structural pins live in tests/test_dashboard_htmx_lists.py.
 # What stays pinned here is the chrome contract beneath the loop: the
@@ -1863,7 +1852,7 @@ def _app_js_source() -> str:
 
 
 def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
-    """TC-005/TC-006 chrome contract (FR-004 / FR-005): /history renders
+    """Chrome contract: /history renders
     the three stable hooks the loop's state machine reads and writes --
     #live-controls server-rendering its initial data-state="running", the
     #live-state word slot, the #live-pause toggle -- and loads app.js
@@ -1882,14 +1871,14 @@ def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
     assert len(loads) == 1  # the loop module loads once, never twice
 
 
-# TC-005/TC-006 interactive halves -- a real click on a live page, and a
+# interactive halves -- a real click on a live page, and a
 # server that is really dead -- cannot run here (these route tests have no
 # JS runtime); the procedures below mirror TC004_MANUAL_PROCEDURE and
 # graph-nav's TC005_MANUAL_PROCEDURE above.
 
 LIVE_TC005_MANUAL_PROCEDURE = """\
-TC-005 manual half -- pause stops updates and is indicated (FR-004 /
-US3-AC1). Run against a live dashboard (cairn serve) with traffic landing
+Manual half: pause stops updates and is indicated. Run against a live
+dashboard (cairn serve) with traffic landing
 (an agent session querying cairn, or any store that keeps growing):
 
 1. Open /history with calls landing; rows appear on their own each
@@ -1905,8 +1894,8 @@ US3-AC1). Run against a live dashboard (cairn serve) with traffic landing
 """
 
 LIVE_TC006_MANUAL_PROCEDURE = """\
-TC-006 manual half -- disconnected state on an unreachable server,
-self-healing on return (FR-005 / US3-AC2). Run against a live dashboard:
+Manual half: disconnected state on an unreachable server, self-healing
+on return. Run against a live dashboard:
 
 1. Start the dashboard (cairn serve) and open /history; the state word
    reads "live".
@@ -1923,25 +1912,25 @@ self-healing on return (FR-005 / US3-AC2). Run against a live dashboard:
 
 
 # ---------------------------------------------------------------------------
-# Cross-view links (cross-links FR-001/FR-002/FR-003/FR-004/FR-006 /
+# Cross-view links (cross-links
 # US1-US4): tokens rows anchor to tool-filtered history, history rows
 # anchor to session-focused chains (the literal 'unknown' legacy session
 # included), the shipped projects->graph anchor stays pinned, a graph
 # node's inspect action anchors into its symbol neighborhood, and /graph
-# is reachable from both navs. The session-filter ROUTE half of TC-002
+# is reachable from both navs. The session-filter ROUTE half of 
 # lives above in test_chains_route_session_param_filters_to_one_session;
-# TC-004's AUTO halves (the placeholder span the selectNode JS builds on
-# + the inspect target URL) are in the FR-004 tests below, with the live
-# JS half as TC004_MANUAL_PROCEDURE; TC-005's BUILDER half (the
+# the AUTO halves (the placeholder span the selectNode JS builds on
+# + the inspect target URL) are in the tests below, with the live
+# JS half as TC004_MANUAL_PROCEDURE; the BUILDER half (the
 # view_link macro's window/urlencode edge cases) lives below in
 # test_view_link_macro_carries_window_and_encodes_value.
 # ---------------------------------------------------------------------------
 
 
 def test_tokens_rows_anchor_to_tool_filtered_history(tmp_path):
-    """FR-001 / US1-AC1 / TC-001: each tokens row's tool name anchors to
+    """US1-AC1: each tokens row's tool name anchors to
     the history route pre-filtered to that tool, and following the anchor
-    lists only that tool's calls. FR-005's carry half: a non-'all' window
+    lists only that tool's calls. the carry half: a non-'all' window
     rides the anchor; default and explicit 'all' omit it."""
     client = _tokens_chains_client(tmp_path, seed=True)
     resp = client.get("/tokens")
@@ -1956,7 +1945,7 @@ def test_tokens_rows_anchor_to_tool_filtered_history(tmp_path):
     )
 
     # Following the anchor: history pre-filtered to that tool only
-    # (TC-001's pass condition).
+    # (the pass condition).
     drilled = client.get("/history", params={"tool": "tool_heavy"})
     assert drilled.status_code == 200
     assert "2025-08-20 00:01:00 UTC" in drilled.text  # heavy's 2 calls
@@ -1984,7 +1973,7 @@ def test_tokens_rows_anchor_to_tool_filtered_history(tmp_path):
 
 
 def test_history_rows_anchor_to_session_chains(tmp_path):
-    """FR-002 / US2-AC1 / TC-002: each history row's session id anchors to
+    """US2-AC1: each history row's session id anchors to
     the chains route focused on that session, and following it lists only
     that session's chains; the legacy literal ``unknown`` session (every
     pre-session-id row) anchors too — a functional link, never
@@ -2019,7 +2008,7 @@ def test_history_rows_anchor_to_session_chains(tmp_path):
 
 @requires_vis_network
 def test_projects_row_anchor_opens_repo_scoped_graph(tmp_path):
-    """FR-003 / US3-AC1 / TC-003: regression guard on the already-shipped
+    """US3-AC1: regression guard on the already-shipped
     link — the seeded project row anchors to the graph route scoped to
     that repo, and following it renders that repo's graph (its module
     buckets under repo metadata), never another scope."""
@@ -2040,15 +2029,14 @@ def test_projects_row_anchor_opens_repo_scoped_graph(tmp_path):
     }
 
 
-# TC-004's JS half -- the live selectNode/deselectNode swap of the
+# the JS half -- the live selectNode/deselectNode swap of the
 # #inspect-action hint into the inspect anchor and back -- needs a browser
 # (these route tests have no JS runtime); the procedure is the constant
 # beneath, mirroring TC005_MANUAL_PROCEDURE above.
 
 TC004_MANUAL_PROCEDURE = """\
-TC-004 manual half -- node inspect opens its neighborhood (FR-004 /
-US4-AC1). Run against a real store (e.g. this repo's own graph via the
-dev server):
+Manual half: node inspect opens its neighborhood. Run against a real
+store (e.g. this repo's own graph via the dev server):
 
 1. Open /graph and let the network settle; pick a node with visible
    neighbors you can find again.
@@ -2065,13 +2053,13 @@ dev server):
    to the "select a node to inspect" placeholder.
 6. Double-click the node -- it still expands in place (graph-nav's
    expand gesture): no conflict with inspect's single-click select
-   (D-004's gesture split).
+   (inspect selects, graph-nav expands).
 """
 
 
 @requires_vis_network
 def test_graph_page_renders_the_inspect_placeholder_span(tmp_path):
-    """FR-004 / TC-004 (auto half): /graph renders the inspect hook the
+    """ (auto half): /graph renders the inspect hook the
     selectNode JS builds on -- the placeholder span verbatim (id, class,
     placeholder text) before any node is selected."""
     client = _client(tmp_path, seed=True)
@@ -2085,7 +2073,7 @@ def test_graph_page_renders_the_inspect_placeholder_span(tmp_path):
 
 @requires_vis_network
 def test_inspect_target_url_renders_symbol_neighborhood(tmp_path):
-    """FR-004 / US4-AC1 / TC-004 (URL-construction half): the URL the
+    """US4-AC1 / (URL-construction half): the URL the
     selectNode JS builds -- /graph?scope=symbol&focus=<name> -- is a real
     route: following it renders that symbol's neighborhood (the focal
     plus its 1-hop caller and callee), never another scope."""
@@ -2147,7 +2135,7 @@ def test_graph_page_renders_edge_kind_legend_and_passthrough(tmp_path):
 
 
 def test_nav_and_landing_page_each_link_to_graph(tmp_path):
-    """FR-006 / US3 / TC-006: /graph is no orphan — the shared nav carries
+    """US3: /graph is no orphan — the shared nav carries
     it on every page (base.html) and the landing page's link list repeats
     it (index.html). The sidebar nav anchors carry an inline svg icon, so
     the label rides a <span> inside the anchor."""
@@ -2178,7 +2166,7 @@ def test_nav_and_landing_page_each_link_to_graph(tmp_path):
 
 
 def test_view_link_macro_carries_window_and_encodes_value():
-    """FR-005 / TC-005 (builder half): the view_link macro appends the
+    """ (builder half): the view_link macro appends the
     window param only when a real window is active -- the empty default and
     an explicit 'all' omit it, '24h' rides the href -- and a value needing
     quoting is urlencoded in the href while the anchor label stays the
@@ -2227,13 +2215,13 @@ def test_missing_db_renders_friendly_state_not_500(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Workspaces overview (workspace-launcher FR-001 / FR-002, TC-001 / TC-002):
-# /workspaces lists every local store (registry ∪ store dirs under
+# Workspaces overview (workspace-launcher):
+# workspaces lists every local store (registry ∪ store dirs under
 # CAIRN_HOME) with size, last-modified, and recorded call count; the four
 # divergent states render with their state, never an error. The handler
 # reads paths.CAIRN_HOME at request time (attribute lookup), so tests patch
 # the module attribute -- the autouse env scrub never reaches it. The probe
-# cap (FR-005's visibility half) rides probe_stores' module attribute
+# cap (the visibility half) rides probe_stores' module attribute
 # patched BEFORE create_app binds it into the handler: the route's default
 # cap is frozen into the def-time parameter, so this is the one seam.
 # ---------------------------------------------------------------------------
@@ -2271,11 +2259,11 @@ def _seed_store_db(home: Path, key: str, calls: int) -> Path:
 
 
 def _four_state_home(tmp_path) -> dict:
-    """A CAIRN_HOME fixture covering TC-002's four states:
+    """A CAIRN_HOME fixture covering the four states:
 
     populated -- real schema .kg, 2 recorded calls, registered workspace
-    empty     -- orphan key dir with no .kg (unregistered marker expected)
-    missing   -- registered key whose store dir does not exist
+    empty -- orphan key dir with no .kg (unregistered marker expected)
+    missing -- registered key whose store dir does not exist
     unreadable -- junk-byte .kg: enumerates populated, probes unreadable
     """
     home = tmp_path / "cairn-home"
@@ -2321,7 +2309,7 @@ def _store_row(html: str, key: str) -> str:
 
 
 def test_workspaces_route_lists_store_stats_columns(tmp_path, monkeypatch):
-    """FR-001 / TC-001: the populated store's row carries workspace identity,
+    """The populated store's row carries workspace identity,
     a nonzero store size, a last-modified timestamp, and the recorded
     tool-call count -- every overview column renders per store."""
     from cairn.dashboard.app import _human_size, _human_ts
@@ -2352,7 +2340,7 @@ def test_workspaces_route_lists_store_stats_columns(tmp_path, monkeypatch):
 def test_workspaces_route_renders_all_four_states_without_error(
     tmp_path, monkeypatch
 ):
-    """FR-002 / TC-002: populated, empty, missing, and unreadable stores each
+    """Populated, empty, missing, and unreadable stores each
     render with their state; the missing row keeps its registered path, the
     orphan carries the unregistered marker, the unreadable probe degrades
     the count to an em-dash -- and the page completes (200, no error)."""
@@ -2379,7 +2367,7 @@ def test_workspaces_route_renders_all_four_states_without_error(
 
 
 def test_base_nav_leads_with_the_workspaces_link(tmp_path, monkeypatch):
-    """FR-001: the shared base nav (base.html) carries the overview as its
+    """The shared base nav (base.html) carries the overview as its
     first entry, one click from every page. Sidebar nav anchors carry an
     inline svg icon, so the label rides a <span> inside the anchor."""
     fixture = _four_state_home(tmp_path)
@@ -2403,7 +2391,7 @@ def test_base_nav_leads_with_the_workspaces_link(tmp_path, monkeypatch):
 
 
 def test_probe_cap_degrades_counts_visibly(tmp_path, monkeypatch):
-    """FR-005's visibility half: past the probe-open budget a populated store
+    """The visibility half: past the probe-open budget a populated store
     renders the em-dash call count and the page carries the muted cap note --
     the degradation stays visible, never a hang or a silent zero. The route
     freezes probe_stores' default cap into its def-time parameter, so the
@@ -2438,7 +2426,7 @@ def test_probe_cap_degrades_counts_visibly(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Workspace switching (workspace-launcher FR-003, TC-003 / TC-004): two
+# Workspace switching (workspace-launcher): two
 # seeded stores with distinct repos/tool calls/build stamps under a patched
 # CAIRN_HOME plus a distinct launch store, all served by ONE TestClient --
 # ?store=<key> serves that store's projects/history/health, no param serves
@@ -2509,7 +2497,7 @@ def _seed_switch_store(
 def _switch_client(tmp_path, monkeypatch) -> tuple:
     """ONE TestClient over the launch store with paths.CAIRN_HOME pointed at
     the fixture home (the workspaces tests' attribute-lookup seam) -- the
-    same app instance serves every store, FR-003's no-restart seam. Store A
+    same app instance serves every store, the no-restart seam. Store A
     seeds enough calls (a page plus overflow) that its history paginates."""
     from cairn.dashboard.data import HISTORY_PAGE_SIZE
 
@@ -2539,7 +2527,7 @@ def _switch_client(tmp_path, monkeypatch) -> tuple:
 
 
 def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
-    """FR-003 / US2-AC1 / TC-003: two seeded stores with distinct repos and
+    """US2-AC1: two seeded stores with distinct repos and
     tool calls; ?store=<keyA> serves A's projects/history/health and
     ?store=<keyB> serves B's, while no param serves the launch store -- one
     app instance, no restart."""
@@ -2584,7 +2572,7 @@ def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
 
 
 def test_three_way_switch_sequence_tracks_selection(tmp_path, monkeypatch):
-    """FR-003 / US2-AC2 / TC-004: A -> overview -> B on one TestClient (no
+    """US2-AC2: A -> overview -> B on one TestClient (no
     server restart) -- each leg serves exactly the selected store's data and
     the overview leg between them still completes."""
     client, _ = _switch_client(tmp_path, monkeypatch)
@@ -2609,7 +2597,7 @@ def test_three_way_switch_sequence_tracks_selection(tmp_path, monkeypatch):
 
 
 def test_selected_store_rides_the_inter_view_links(tmp_path, monkeypatch):
-    """FR-003 carry (GAP-2): on a selected store's pages every inter-view
+    """Carry (GAP-2): on a selected store's pages every inter-view
     href keeps the selection -- history's session anchor, the Newer/Older
     paging links (followed Older page included), the window presets, the
     tokens tool anchor, and the graph layout link."""
@@ -2654,7 +2642,7 @@ def test_selected_store_rides_the_inter_view_links(tmp_path, monkeypatch):
 def test_unknown_and_empty_state_store_keys_render_missing_page(
     tmp_path, monkeypatch
 ):
-    """FR-003's never-an-error edge: an unknown key (nothing on disk) and an
+    """The never-an-error edge: an unknown key (nothing on disk) and an
     empty-state key (store dir, no .kg) each render the friendly missing-DB
     page (200) -- never a 500, and never the launch store's data."""
     client, _ = _switch_client(tmp_path, monkeypatch)
@@ -2666,7 +2654,7 @@ def test_unknown_and_empty_state_store_keys_render_missing_page(
 
 
 def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
-    """GAP-1 (FR-003): on a selected store's /graph the page carries the
+    """GAP-1: on a selected store's /graph the page carries the
     selection to the JS (the data-store hook on the graph-data block) and
     app.js's two fetch builders append it only when non-empty; the endpoints
     they hit honor the same param, so browser-side search/expand stays on
@@ -2719,7 +2707,7 @@ def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Forms keep the selected store (FR-003 follow-up): GET filter forms drop
+# Forms keep the selected store (follow-up): GET filter forms drop
 # the action URL's query string on submit, and the settings POST actions
 # carried no store at all -- so applying a filter or saving settings on a
 # selected store silently reverted to the launch store one hop later
@@ -3076,7 +3064,7 @@ def test_palette_results_filters_rows_by_substring(tmp_path, monkeypatch):
 def test_palette_results_symbols_come_from_the_suggest_source(tmp_path, monkeypatch):
     """From two characters up the fragment merges the /graph/suggest data
     function's matches: the store's seeded symbol row navigates to
-    /graph's symbol scope with focus (and selected store) params, hinted
+    graph's symbol scope with focus (and selected store) params, hinted
     kind — file."""
     client, _ = _switch_client(tmp_path, monkeypatch)
 
@@ -3156,7 +3144,7 @@ def test_command_palette_js_contract_is_pinned_at_source_level():
 
 
 # ---------------------------------------------------------------------------
-# Mixed-source usage (cli-usage-recording FR-002, TC-003 / TC-004): CLI
+# Mixed-source usage (cli-usage-recording): CLI
 # invocations land in tool_metrics as source='cli' rows named 'cli:<command>'
 # beside source='mcp' tool rows (cli_metrics stamps 'cli'; MCP rows ride the
 # table's DEFAULT 'mcp'). Pinned here at the route level: /history displays
@@ -3171,16 +3159,15 @@ _MIXED_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
 
 
 def _mixed_source_db_file(tmp_path, bulk: bool) -> str:
-    """A graph-schema DB file seeded with BOTH sources' row shapes:
+    """    A graph-schema DB file seeded with BOTH sources' row shapes:
 
-    cli (source='cli', what cli_metrics lands — NULL resp chars, a CLI
-    invocation has no response payload): 'cli:cairn build' / term:shell-B @
-    00:02:00 — ok, 800 req chars; 'cli:cairn config' / term:shell-A @
-    00:01:30 — ok, 1600 req chars. mcp (source='mcp', the table default):
-    'explore' / sess-alpha @ 00:01:00 — ok, 400/800 chars; 'ask_compass' /
-    sess-beta @ 00:00:30 — ok, 200/400 chars. ``bulk=True`` adds
-    HISTORY_PAGE_SIZE + 5 older mcp explore rows so ?source=mcp paginates.
-    """
+    cli (NULL resp chars - a CLI invocation has no response payload):
+    'cli:cairn build' / term:shell-B @ 00:02:00 - ok, 800 req chars;
+    'cli:cairn config' / term:shell-A @ 00:01:30 - ok, 1600 req chars.
+    mcp (the table default): 'explore' / sess-alpha @ 00:01:00 - ok, 400/800
+    chars; 'ask_compass' / sess-beta @ 00:00:30 - ok, 200/400 chars.
+    ``bulk=True`` adds HISTORY_PAGE_SIZE + 5 older mcp explore rows so
+    ?source=mcp paginates."""
     from cairn.dashboard.data import HISTORY_PAGE_SIZE
     from cairn.graph.schema import _apply_schema
 
@@ -3221,7 +3208,7 @@ def _mixed_source_client(tmp_path, bulk: bool):
 
 
 def test_history_route_displays_source_column_with_mixed_source_rows(tmp_path):
-    """TC-003 / US1-AC2: with both sources recorded, /history renders the
+    """US1-AC2: with both sources recorded, /history renders the
     Source column -- 'cli' and 'mcp' both visible -- plus the Source filter
     input, with rows newest-first across sources."""
     resp = _mixed_source_client(tmp_path, bulk=False).get("/history")
@@ -3243,7 +3230,7 @@ def test_history_route_displays_source_column_with_mixed_source_rows(tmp_path):
 
 
 def test_history_route_source_filter_narrows_and_composes(tmp_path):
-    """TC-003: ?source= narrows /history to that source's rows only, composes
+    """?source= narrows /history to that source's rows only, composes
     with the tool/session filters, and a no-match source is the empty state
     (HTTP 200, never an error) -- the same discipline as tool/session."""
     client = _mixed_source_client(tmp_path, bulk=False)
@@ -3286,7 +3273,7 @@ def test_history_route_source_filter_narrows_and_composes(tmp_path):
 
 
 def test_history_route_older_link_carries_the_active_source(tmp_path):
-    """FR-002: paging composes with the source filter -- the Older link keeps
+    """Paging composes with the source filter -- the Older link keeps
     ?source=mcp so the next page stays in-source instead of resuming
     unfiltered pagination into the cli rows."""
     client = _mixed_source_client(tmp_path, bulk=True)
@@ -3306,7 +3293,7 @@ def test_history_route_older_link_carries_the_active_source(tmp_path):
 
 
 def test_tokens_route_aggregates_include_cli_rows_under_cli_tool_name(tmp_path):
-    """TC-004 / US2-AC1: cli rows with payload sizes join the /tokens
+    """US2-AC1: cli rows with payload sizes join the /tokens
     aggregates under their cli:* tool_name (the source label the view
     renders), side by side with the mcp tools -- the rendered row matches
     the data layer's get_tool_tokens on the same store, CHARS_PER_TOKEN
@@ -3363,7 +3350,7 @@ def test_tokens_route_aggregates_include_cli_rows_under_cli_tool_name(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Embedding degradation banner (FR-013 / US3-AC3's dashboard surface): the
+# Embedding degradation banner (US3-AC3's dashboard surface): the
 # banner context is dashboard-process observability — this process's cached
 # ladder verdict plus one once-per-process uncached server probe — carried
 # onto every page through base.html's shared include, which renders zero
@@ -3421,7 +3408,7 @@ def _banner_client(tmp_path):
 def test_embed_banner_absent_and_byte_identical_for_non_server_backend(
     tmp_path, monkeypatch, _isolated_embed_state
 ):
-    """FR-013's healthy half, non-server backend: the banner machinery never
+    """The healthy half, non-server backend: the banner machinery never
     probes and never renders — every main page keeps the pre-banner bytes
     (the include site emits nothing between <main> and the view)."""
     monkeypatch.setenv("CAIRN_EMBED_BACKEND", "local")
@@ -3439,7 +3426,7 @@ def test_embed_banner_absent_and_byte_identical_for_non_server_backend(
 def test_embed_banner_healthy_server_probe_renders_nothing(
     tmp_path, monkeypatch, _isolated_embed_state
 ):
-    """FR-013's healthy half, server backend: one uncached probe answers for
+    """The healthy half, server backend: one uncached probe answers for
     the whole dashboard process (never per request), and its healthy verdict
     renders no banner on any page."""
     _server_banner_env(monkeypatch)
@@ -3478,7 +3465,7 @@ def test_embed_probe_runs_once_and_banner_serves_every_request(
 def test_embed_banner_names_rung_reason_and_remediation_on_every_page(
     tmp_path, monkeypatch, _isolated_embed_state, path
 ):
-    """FR-013 / US3-AC3: with the server backend degraded (probe fails, no
+    """US3-AC3: with the server backend degraded (probe fails, no
     served replacement), every target page carries the banner naming the
     rung, the reason, and the actionable remediation."""
     _server_banner_env(monkeypatch)
@@ -3530,11 +3517,11 @@ def test_embed_banner_prefers_this_process_ladder_verdict(
 
 
 # ---------------------------------------------------------------------------
-# Dashboard Settings section (FR-011 / US4-AC1, AC2): the app's first POST
+# Dashboard Settings section (US4-AC1, AC2): the app's first POST
 # routes. Save persists through paths.set_config_values into the conftest-
 # sandboxed CONFIG_FILE; the base-URL change needs its explicit confirm step;
 # the API key is write-only (never rendered back); env-pinned keys show the
-# override marker while the file write still lands (D-008); the parity-check
+# override marker while the file write still lands; the parity-check
 # action renders the check_parity verdict and never raises into the response.
 # ---------------------------------------------------------------------------
 
@@ -3559,7 +3546,7 @@ def test_settings_get_renders_effective_values_and_env_markers(
 ):
     """GET /settings prefills the form with effective values and marks every
     env-pinned key as overridden: a file value stays in its input while the
-    marker names the env value that actually resolves (D-008)."""
+    marker names the env value that actually resolves ."""
     monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
     monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "env-model")
     _probe_stub(monkeypatch, True)  # the banner's once-per-process probe
@@ -3624,7 +3611,7 @@ def test_settings_save_persists_to_config_file_and_reflects_state(
     saved = _saved_config()
     assert saved["CAIRN_EMBED_BACKEND"] == "omlx"
     assert saved["CAIRN_EMBED_SERVER_MODEL"] == "bge-m3"
-    assert saved["CAIRN_EMBED_TIMEOUT"] == "45"  # strings: what D-008 resolves
+    assert saved["CAIRN_EMBED_TIMEOUT"] == "45"  # strings: what resolves
     assert saved["CAIRN_EMBED_SERVER_BATCH"] == "64"
     assert saved["CAIRN_EMBED_MODEL_STAMP"] == "my-alias"
 
@@ -3724,7 +3711,7 @@ def test_settings_api_key_is_write_only(tmp_path):
 def test_settings_env_pin_shows_marker_while_save_persists_file_value(
     tmp_path, monkeypatch
 ):
-    """D-008: an env var pinning a key shows the override marker with the
+    """An env var pinning a key shows the override marker with the
     effective value, and saving still persists the file value — env wins at
     resolution time, not at write time."""
     monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")  # keep the banner inert
@@ -3861,13 +3848,13 @@ def test_settings_routes_leave_existing_routes_get_only(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Embeddings status view (FR-011 / US4-AC3): GET /embeddings renders the
+# Embeddings status view (US4-AC3): GET /embeddings renders the
 # effective backend, resolved stamp, per-corpus counts + last-embedded
 # times, the dashboard-process probe verdict, and the active fallback rung
 # as structured rows. The rung rows read ladder_state() — the SAME
-# accessor the FR-013 banner text builds from — and the probe rides the
+# accessor the banner text builds from — and the probe rides the
 # banner's once-per-process seam; per-knob effective values carry the
-# D-008 env-override marker.
+# env-override marker.
 # ---------------------------------------------------------------------------
 
 
@@ -3959,7 +3946,7 @@ def test_embeddings_status_degraded_rung_rows_from_ladder_state(
 ):
     """US4-AC3 degraded half: an active ladder verdict renders structured
     rung/reason/detail rows sourced from ladder_state() — the same
-    accessor the FR-013 banner text builds from — while the page carries
+    accessor the banner text builds from — while the page carries
     the one shared banner and introduces no second banner builder."""
     _server_banner_env(monkeypatch)
     from cairn.graph import embed_ladder
@@ -3997,7 +3984,7 @@ def test_embeddings_status_degraded_rung_rows_from_ladder_state(
 def test_embeddings_status_shows_effective_value_and_env_override_marker(
     tmp_path, monkeypatch, _isolated_embed_state
 ):
-    """D-008 transparency: an env-pinned knob renders its effective value
+    """Transparency: an env-pinned knob renders its effective value
     beside the override marker, and the API key never renders a value —
     set/not-set only."""
     monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")  # keeps the probe inert
@@ -4017,7 +4004,7 @@ def test_embeddings_status_shows_effective_value_and_env_override_marker(
 def test_nav_carries_settings_and_embeddings_entries(
     tmp_path, monkeypatch, _isolated_embed_state
 ):
-    """FR-011: /settings and /embeddings are one click from every page —
+    """/settings and /embeddings are one click from every page —
     the base sidebar nav carries both entries (with spanned labels, like
     every nav anchor)."""
     client = _client(tmp_path, seed=False)
@@ -4159,8 +4146,8 @@ def test_inspect_fetch_wiring_aborts_superseded_requests():
 
 
 # ---------------------------------------------------------------------------
-# Dashboard wiki view (FR-009 / US6): /wiki list with state badges,
-# /wiki/{page_id} rendered detail, and the stdlib markdown renderer (D-002).
+# Dashboard wiki view (US6): /wiki list with state badges,
+# wiki/{page_id} rendered detail, and the stdlib markdown renderer.
 # ---------------------------------------------------------------------------
 
 _WIKI_BODY = (
@@ -4263,7 +4250,7 @@ def test_wiki_templates_ship_with_the_dashboard():
 
 
 def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
-    """FR-009 follow-up: the wiki view is discoverable — a sidebar nav entry
+    """Follow-up: the wiki view is discoverable — a sidebar nav entry
     plus a landing launcher card, mirroring every other view."""
     client = _wiki_client(tmp_path)
 
@@ -4276,7 +4263,7 @@ def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
 
 
 def test_wiki_route_lists_pages_with_state_badges(tmp_path):
-    """FR-009 / TC-025: /wiki lists every planned page with its state,
+    """/wiki lists every planned page with its state,
     each entry linking to its repo-qualified detail view, grouped by repo."""
     client = _wiki_client(tmp_path)
 
@@ -4475,7 +4462,7 @@ def test_wiki_legacy_route_renders_unreadable_manifest_state(tmp_path):
 
 
 def test_wiki_page_route_renders_markdown_body_and_sources(tmp_path):
-    """FR-009 / TC-026: the detail view renders headings and lists as HTML
+    """The detail view renders headings and lists as HTML
     elements (never the raw markdown) with the sources listed, a breadcrumb
     naming the repo, and prev/next links to the repo's other pages."""
     client = _wiki_client(tmp_path)
@@ -4545,7 +4532,7 @@ def test_wiki_page_without_fences_skips_the_mermaid_loader(tmp_path):
     assert "jsdelivr" not in resp.text
 
 
-# --- wiki staleness badges (FR-007 / TC-019 / TC-020) -------------------------
+# --- wiki staleness badges -------------------------
 
 _SHA_A = "abc1234a"
 _SHA_B = "def5678b"
@@ -4593,7 +4580,7 @@ def _staleness_client(tmp_path, monkeypatch, head, sha=_SHA_A):
 
 
 def test_wiki_views_render_fresh_badge_beside_state_badge(tmp_path, monkeypatch):
-    """TC-019: recorded sha == HEAD reads fresh, on the /wiki list and the
+    """Recorded sha == HEAD reads fresh, on the /wiki list and the
     detail view, next to the unchanged state badge."""
     client = _staleness_client(tmp_path, monkeypatch, head=_SHA_A)
 
@@ -4627,7 +4614,7 @@ def test_wiki_views_render_stale_badge_after_head_moves(tmp_path, monkeypatch):
 def test_wiki_views_render_unknown_badge_when_comparison_unavailable(
     tmp_path, monkeypatch
 ):
-    """TC-020: HEAD unresolvable — every page reads unknown, never
+    """HEAD unresolvable — every page reads unknown, never
     fresh/stale, on both views."""
     client = _staleness_client(tmp_path, monkeypatch, head=None)
 
@@ -4645,7 +4632,7 @@ def test_wiki_views_render_unknown_badge_when_comparison_unavailable(
 
 
 def test_markdown_renderer_module_never_loads_server_stack():
-    """D-002: the renderer is pure stdlib — importing it must not pull in
+    """The renderer is pure stdlib — importing it must not pull in
     starlette/uvicorn/jinja2 (same guard as the dashboard package)."""
     code = (
         "import sys; import cairn.dashboard.markdown; "
@@ -4735,7 +4722,7 @@ def test_render_markdown_fenced_code_and_mermaid_fence():
 
 
 def test_render_markdown_inline_code_spans_render_as_code_elements():
-    """FR-002 / TC-004: backticked spans render as <code> elements inside
+    """Backticked spans render as <code> elements inside
     paragraph, list-item, and heading output (never literal backticks)."""
     from cairn.dashboard.markdown import render_markdown
 
@@ -4753,7 +4740,7 @@ def test_render_markdown_inline_code_spans_render_as_code_elements():
 
 
 def test_render_markdown_pipe_tables_render_as_tables():
-    """FR-002 / TC-005: a header + delimiter-row block renders as a table
+    """A header + delimiter-row block renders as a table
     with rows and cells; the alignment row vanishes, an escaped pipe stays
     a literal pipe inside its single cell, outer pipes are optional, HTML
     in a cell stays escaped, and a column-count mismatch degrades the whole

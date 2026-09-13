@@ -1,7 +1,7 @@
-"""Live soak harness for /history under sustained refresh (TC-007 / FR-006 /
-SC-2, spec ui-dashboard-live-updates).
+"""Live soak harness for /history under sustained refresh (
+SC-2).
 
-The poll loop's contract (tech-spec D-002): re-fetch the same URL, swap the
+The poll loop's contract (tech-spec): re-fetch the same URL, swap the
 #refresh-region whole, ordering owned by the server's ORDER BY -- so no
 duplicate row can render by construction. The AUTO half of this harness
 drives the SERVER side at tick cadence: over a seeded 300-row store it
@@ -23,7 +23,7 @@ browser-side complement this harness cannot drive).
 
 Row extraction is template-agnostic on purpose: rows are parsed as generic
 <tr>/<td> table data and only /history (landed) is asserted -- the chains/
-tokens templates are wave-mate T008's files.
+tokens templates are wave-mate the files.
 """
 from __future__ import annotations
 
@@ -178,7 +178,7 @@ def test_soak_insert_schedule_shape():
 
 
 def test_history_live_soak_matches_stored_slice_every_cycle(tmp_path):
-    """TC-007 auto half (FR-006 / SC-2): 30 simulated poll cycles over a
+    """Auto half (SC-2): 30 simulated poll cycles over a
     growing 300+-row store -- every cycle's re-fetch renders exactly the
     stored first-page slice once per row (no duplicates, no missed rows,
     no extras), the page stays bounded at HISTORY_PAGE_SIZE, and after the
@@ -257,7 +257,7 @@ def test_history_live_soak_matches_stored_slice_every_cycle(tmp_path):
         _land_rows(db_path, rows)
 
         ids = fetched_identities()
-        # FR-006: no duplicate row identity ever renders.
+        # no duplicate row identity ever renders.
         assert len(set(ids)) == len(ids), f"cycle {cycle}: duplicate rows"
         # Rendered set == stored first-page slice: no missed rows, no extras.
         assert set(ids) == stored_identities(), f"cycle {cycle}: slice drift"
@@ -268,7 +268,7 @@ def test_history_live_soak_matches_stored_slice_every_cycle(tmp_path):
             f"cycle {cycle}: newest landed row is not first"
         )
 
-    # Missed-batch check (TC-007: "no landed batch is missing from the
+    # Missed-batch check ("no landed batch is missing from the
     # final render"): every row landed mid-soak is newer than the first
     # page's newest-at-start, and the final fetch must render every one.
     final_ids = set(fetched_identities())
@@ -277,13 +277,13 @@ def test_history_live_soak_matches_stored_slice_every_cycle(tmp_path):
     assert not missing, f"rows landed but never rendered: {missing}"
 
 
-# TC-007's manual half -- one hour of real-interval behavior -- cannot run
+# the manual half -- one hour of real-interval behavior -- cannot run
 # here (no browser, and auto tests forbid real timers per the plan's risk
-# mitigation); the procedure below mirrors LIVE_TC005_MANUAL_PROCEDURE /
+# mitigation); the procedure below mirrors LIVE_TC005_MANUAL_PROCEDURE
 # LIVE_TC006_MANUAL_PROCEDURE in tests/test_dashboard_app.py.
 LIVE_SOAK_MANUAL_PROCEDURE = """\
-TC-007 manual half -- no duplicate rows across sustained refresh (FR-006 /
-SC-2). Run against a live dashboard (cairn serve) with real traffic landing
+Manual half: no duplicate rows across sustained refresh. Run against a
+live dashboard (cairn serve) with real traffic landing
 (an agent session querying cairn, or any store that keeps growing):
 
 1. Open /history in a real browser with auto-refresh ON (the default

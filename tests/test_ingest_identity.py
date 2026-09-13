@@ -1,4 +1,4 @@
-"""T004 — stable identity derivation for knowledge ingestion (FR-007)."""
+"""Stable identity derivation for knowledge ingestion."""
 from cairn.knowledge.ingest.identity import DocIdentity, build_identity
 from cairn.knowledge.ingest.parser import ParsedDoc, parse_source_doc
 from cairn.okf.utils import slugify

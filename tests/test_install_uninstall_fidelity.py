@@ -147,11 +147,11 @@ class TestHookIdempotency:
 
 
 # --------------------------------------------------------------------------
-# FR-002: hook command strings embed the CAIRN_HOME assignment iff non-default
+# Hook command strings embed the CAIRN_HOME assignment iff non-default
 # --------------------------------------------------------------------------
 
 class TestHookCairnHomePrefix:
-    """Hook env contract (tech-spec D-009): generated hook command strings
+    """Hook env contract: generated hook command strings
     carry a `CAIRN_HOME=<path> ` prefix when CAIRN_HOME resolves to a
     non-default home and stay byte-identical to today's env-less commands when
     it is default (unset, or explicitly set to Path.home()/".cairn"). The git
@@ -747,7 +747,7 @@ class TestOmpClient:
 
 
 # --------------------------------------------------------------------------
-# FR-001: stdio registrations embed env.CAIRN_HOME iff the home is non-default
+# stdio registrations embed env.CAIRN_HOME iff the home is non-default
 # --------------------------------------------------------------------------
 
 class TestCairnHomeEnvBlock:
@@ -828,7 +828,7 @@ class TestCairnHomeEnvBlock:
 
 
 # --------------------------------------------------------------------------
-# FR-006: install-time per-client verification (TC-010 / TC-011; D-005, D-006)
+# Install-time per-client verification
 # --------------------------------------------------------------------------
 
 class TestInstallVerification:
@@ -848,7 +848,7 @@ class TestInstallVerification:
 
     def test_healthy_install_marks_every_file_written_client_pass(
             self, tmp_path, monkeypatch):
-        """TC-010: a stdio install under a custom CAIRN_HOME with a built
+        """A stdio install under a custom CAIRN_HOME with a built
         store on a healthy machine verifies every file-written client PASS —
         no client missing a verdict."""
         from cairn.paths import store_key
@@ -857,7 +857,7 @@ class TestInstallVerification:
         assert real, "verification spawns the real cairn binary; it must be on PATH"
         home, ws = self._custom_home(tmp_path, monkeypatch)
         key = store_key(ws.resolve())
-        (home / key).mkdir(parents=True)  # TC-010 Given: a built store
+        (home / key).mkdir(parents=True)  # Given: a built store
         (home / key / ".kg").write_bytes(b"")
 
         rep = install(str(ws), clients=["claude", "cursor", "zcode"],
@@ -871,7 +871,7 @@ class TestInstallVerification:
 
     def test_path_shadowed_cairn_fails_naming_both_stores(
             self, tmp_path, monkeypatch):
-        """TC-011: a PATH-shadowed cairn that drops CAIRN_HOME makes the
+        """A PATH-shadowed cairn that drops CAIRN_HOME makes the
         registration resolve the default store; the affected client's verdict
         is FAIL naming both the resolved and the intended store — per client,
         not one overall pass/fail."""

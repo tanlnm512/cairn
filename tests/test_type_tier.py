@@ -12,12 +12,14 @@ Covers:
     class defines a same-named method.
   - Abstain safety: a call with no inferable receiver type (e.g. a bare
     same-file call) resolves exactly as it did before Phase 10 -- the new
-    tier never turns a previously-`exact` edge into anything else, and it
+    tier never turns an `exact` edge into anything else, and it
     never fabricates a resolution when `receiver_type` is None.
 """
 from __future__ import annotations
 
 import sqlite3
+
+import pytest
 
 from cairn.graph.builder import build_graph
 from cairn.graph.resolver import (
@@ -51,6 +53,7 @@ def _edges(db_path, target_name):
         conn.close()
 
 
+@pytest.mark.core
 def test_receiver_type_disambiguates_same_named_method(tmp_path):
     """Regression: without the type-aware Tier 0, two classes defining the same
     method name left every cross-file call `ambiguous`. See BUGS.md."""

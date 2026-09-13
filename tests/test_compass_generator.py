@@ -171,7 +171,7 @@ class TestCrossModuleDeps:
 
     def test_deterministic_template_passes_own_critic(self, conn, tmp_path):
         # The template backticks the repo-qualified dep labels; the critic's
-        # repo bridge must validate them (previously: hallucinated path).
+        # repo bridge must validate them.
         from cairn.compass.critic import critic_concept
 
         bundle = OKFBundle(str(tmp_path / "k"))

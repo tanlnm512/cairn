@@ -221,15 +221,13 @@ def test_backup_to_persists_wal_and_foreign_keys(tmp_path):
 
 
 def test_failed_acquire_never_unlinks_winners_lock_file(tmp_path):
-    """REGRESSION (scope-3 P1): a failed flock acquire must not delete the lock.
+    """    A failed flock acquire must never unlink the lock file.
 
-    The old loser path unlinked ``<db>.build.lock`` in its ``finally``, which
-    deleted the WINNER's lock file: a third process then ``os.open``\\'d a fresh
-    inode and acquired while the winner still built (deterministic
-    double-acquire; two builders could then write the same ``.tmp``). The fix
-    is to never unlink the file at all -- flock is inode-based and a stale
-    zero-byte lock file is harmless. This pins that contract.
-    """
+    Unlinking in the loser's ``finally`` deletes the WINNER's lock: a third
+    process then opens a fresh inode and acquires while the winner still builds
+    (deterministic double-acquire; two builders could write the same ``.tmp``).
+    Contract: never unlink at all -- flock is inode-based and a stale zero-byte
+    lock file is harmless."""
     import fcntl as _fcntl
 
     db_path = str(tmp_path / "never_unlink.db")

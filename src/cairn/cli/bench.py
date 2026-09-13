@@ -16,7 +16,7 @@ Exit-code contract: 0 = clean; 1 = usage / baseline-resolution error (unknown
 ``--baseline`` version, ``--baseline`` + ``--compare`` together, missing
 ``--compare`` file); 2 = regressions found by the comparison (the CI signal).
 A machine-profile mismatch between the current run and a ``--baseline``
-artifact only WARNS and never changes the exit code (D-005: warn, never
+artifact only WARNS and never changes the exit code (warn, never
 normalize) -- timing comparisons across machines stay advisory.
 """
 from __future__ import annotations
@@ -47,8 +47,8 @@ def _profile_class(key: str, value: object) -> object:
     """Bucket a profile value into its comparison CLASS (rolling baselines).
 
     The rolling CI baseline (bench-baseline.json minted on main, compared
-    PR-over-PR on the same hosted pool) must not fire the D-005 warning
-    for fields that merely identify *which instance of the same class*
+    PR-over-PR on the same hosted pool) must not fire the profile-mismatch
+    warning for fields that merely identify *which instance of the same class*
     produced the number:
 
     * ``runner_class`` -- GitHub stamps ``ci-<slug(RUNNER_NAME)>`` and the
@@ -62,8 +62,8 @@ def _profile_class(key: str, value: object) -> object:
       (the reference minter's OS delta is a real comparability fact).
 
     Everything else (arch, cpu, cpu_count) stays exact-equality -- those
-    are real comparability signals. This is metadata bucketing only: D-005
-    still forbids normalizing the TIMINGS themselves.
+    are real comparability signals. This is metadata bucketing only: the
+    TIMINGS themselves are never normalized.
     """
     if value is _UNSTAMPED:
         return value
@@ -78,12 +78,12 @@ def _profile_class(key: str, value: object) -> object:
 def _resolve_baseline_file(version: str, suite: str) -> Path:
     """Resolve ``benchmarks/baselines/<version>/<suite>.json`` or exit 1.
 
-    T014 (FR-004/AC1, TC-008): the error names the missing version, the
-    directory searched, and any versions that DO exist; a version directory
-    without this suite's artifact names the suite file it lacks. Called
-    BEFORE any suite runs, so a typo fails in milliseconds instead of after
-    a minutes-long suite ("fails promptly"). Exit 1 (usage/baseline error)
-    stays distinct from the regression signal's exit 2.
+    The error names the missing version, the directory searched, and any
+    versions that DO exist; a version directory without this suite's
+    artifact names the suite file it lacks. Called BEFORE any suite runs,
+    so a typo fails in milliseconds instead of after a minutes-long suite
+    ("fails promptly"). Exit 1 (usage/baseline error) stays distinct from
+    the regression signal's exit 2.
     """
     from . import display
     from cairn.bench.datasource import default_baselines_root
@@ -114,10 +114,10 @@ def _resolve_baseline_file(version: str, suite: str) -> Path:
 def _render_baseline_header(version: str, path: Path, data: dict) -> None:
     """Print the dataset-version header for a ``--baseline`` comparison.
 
-    TC-007/AC1: names the resolved baseline and its stamp facts (dataset
+    Names the resolved baseline and its stamp facts (dataset
     version + tree hash, cairn version, runner class) BEFORE the comparison
     table renders, so the reader knows what the numbers are against. A
-    pre-T013 baseline file (no stamp keys) renders ``?`` placeholders rather
+    baseline file without stamp keys renders ``?`` placeholders rather
     than crashing -- the header degrades the same way the stamp does.
     """
     from . import display
@@ -141,11 +141,11 @@ def _render_baseline_header(version: str, path: Path, data: dict) -> None:
 
 
 def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
-    """Loud advisory on machine-profile CLASS differences (D-005).
+    """Loud advisory on machine-profile CLASS differences.
 
-    TC-009: every mismatched field is named with both the baseline's and
-    the current value. TC-010: an exact match prints nothing (no false-warning
-    marker). TC-011: the warning is advisory only -- it never gates, so the
+    Every mismatched field is named with both the baseline's and
+    the current value. An exact match prints nothing (no false-warning
+    marker). The warning is advisory only -- it never gates, so the
     exit code stays whatever the regression comparison alone decides. A
     baseline with no machine_profile stamp at all is "unknown", not
     "mismatched": noted, but without the MISMATCH marker.
@@ -183,7 +183,7 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
         display.warning(
             f"  {key}: baseline {_profile_value(base)} vs current {_profile_value(cur)}"
         )
-    display.warning("  (D-005: warned, not normalized; rendering the comparison anyway.)")
+    display.warning("  (warned, not normalized; rendering the comparison anyway.)")
 
 
 
@@ -275,14 +275,14 @@ def bench(
     from cairn.bench.agent_suite import compare_agent_reports, run_agent_suite
     from cairn.bench.datasource import build_artifact_stamp
 
-    # FR-004 stamp (D-006): computed once per invocation, applied beside the
+    # Artifact stamp: computed once per invocation, applied beside the
     # timestamp at every payload site below -- never inside to_dict.
     stamp = build_artifact_stamp()
 
-    # --baseline <DS-version> (T014, FR-004/AC1): resolve the baseline from
+    # --baseline <DS-version>: resolve the baseline from
     # the committed benchmarks/baselines/ tree instead of an explicit
     # --compare path. Validated BEFORE any suite runs so an unknown version
-    # fails in milliseconds, not after a minutes-long suite (TC-008 "fails
+    # fails in milliseconds, not after a minutes-long suite ("fails
     # promptly"); the diff itself reuses the --compare flow verbatim below.
     if compare and baseline:
         display.error(
@@ -311,7 +311,7 @@ def bench(
             # Stamp the machine-readable payload so a saved baseline records
             # when it was measured (consumed by the CI comparison + humans),
             # and what measured it: dataset identity + cairn version +
-            # machine profile (FR-004).
+            # machine profile.
             payload["timestamp"] = datetime.now(timezone.utc).isoformat()
             payload.update(stamp)
             if not as_json:
@@ -349,7 +349,7 @@ def bench(
             # Stamp the machine-readable payload so a saved baseline records
             # when it was measured (consumed by the CI comparison + humans),
             # and what measured it: dataset identity + cairn version +
-            # machine profile (FR-004).
+            # machine profile.
             payload["timestamp"] = datetime.now(timezone.utc).isoformat()
             payload.update(stamp)
             if not as_json:
@@ -364,7 +364,7 @@ def bench(
             display.success(f"Saved baseline to {save}")
 
         # Compare against baseline if requested (explicit --compare file, or
-        # --baseline <DS-version> resolved from benchmarks/baselines/, T014).
+        # --baseline <DS-version> resolved from benchmarks/baselines/).
         if compare:
             baseline_path = Path(compare)
             if not baseline_path.exists():
@@ -373,9 +373,9 @@ def bench(
             baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
             if baseline_version is not None:
                 # Dataset-version header + machine-profile check BEFORE the
-                # comparison table (FR-004/AC1, TC-007/TC-009): the reader
+                # comparison table: the reader
                 # sees what the numbers are against -- and any cross-machine
-                # caveat -- before reading them. Advisory only (D-005): a
+                # caveat -- before reading them. Advisory only: a
                 # mismatch never changes the exit code.
                 _render_baseline_header(baseline_version, baseline_path, baseline_data)
                 _warn_machine_profile_mismatch(

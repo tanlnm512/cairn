@@ -152,10 +152,10 @@ class TestVerifyStep:
             conn.close()
 
         assert report["store_count"] == report["expected_count"] == 2
-        # TC-024: the count leg requires EQUALITY with the accepted count.
+        # The count leg requires EQUALITY with the accepted count.
         assert report["count_ok"] is True
         assert report["smoke_search_hit"] is True
-        # TC-024 third leg: the cairn-validate conformance check, in-process.
+        # The cairn-validate conformance check, in-process.
         assert report["validate_ok"] is True
         assert report["validate_errors"] == 0
         assert report["validate_message"] == ""
@@ -190,7 +190,7 @@ class TestVerifyStep:
         assert result["validate_message"]
 
     def test_count_overage_fails_not_at_least(self, staged):
-        # TC-024/US5-AC1: strict equality. A store holding MORE documents
+        # Strict equality. A store holding MORE documents
         # than the manifest accepted must fail the count leg; a `>=`
         # comparison would mask it as ok.
         from cairn.knowledge.ingest.executor import verify_manifest

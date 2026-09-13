@@ -6,7 +6,7 @@ independently -- cheap but blind to interactions); a *cross-encoder* scores
 `(query, candidate)` jointly, more accurate but too slow to run against every
 symbol, so it only ever sees a shortlist the cosine scan already narrowed down.
 
-T016 (FR-004, D-005): the pair is (query, importance-ordered structured
+The pair is (query, importance-ordered structured
 candidate) — identity fields (kind, qualified name, path, signature,
 docstring) first, stored chunk last — with the encoder window pinned at
 `RERANK_MAX_LENGTH` and query-priority truncation (the query is never cut;
@@ -30,13 +30,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
 
-# D-005 / FR-004 (T016): the pair budget, pinned explicitly rather than
-# inherited from whatever the installed sentence-transformers resolves.
-# Probed in this install (sentence-transformers 5.6.1): a bare
-# CrossEncoder("BAAI/bge-reranker-base") already resolves max_length=512
-# (tokenizer model_max_length 512), so this is a pin against future drift
-# (model/config upgrade silently changing the effective window), not a
-# behavior change. The bge-reranker-base model card lists 512 as the max.
+# The pair budget, pinned explicitly rather than
+# inherited from whatever the installed sentence-transformers resolves: a
+# bare CrossEncoder("BAAI/bge-reranker-base") may resolve a different
+# max_length depending on the installed model/tokenizer config, and a
+# silently changed effective window would shift every rerank score. The
+# bge-reranker-base model card lists 512 as the max.
 RERANK_MAX_LENGTH = 512
 
 # Special tokens the pair encoding spends outside the two text bodies
@@ -208,10 +207,10 @@ def _get_reranker():
         # Single-model cache: a model-name change evicts the stale entry.
         if _RERANKER_CACHE and next(iter(_RERANKER_CACHE)) != model_name:
             _RERANKER_CACHE.clear()
-        # max_length pinned explicitly (D-005): today the default resolves to
-        # 512 in this install, but relying on the implicit resolution means a
-        # sentence-transformers/config upgrade could silently change the
-        # truncation window and shift every rerank score with no code diff.
+        # max_length pinned explicitly: relying on the implicit resolution
+        # means a sentence-transformers/config upgrade could silently change
+        # the truncation window and shift every rerank score with no code
+        # diff.
         _RERANKER_CACHE[model_name] = CrossEncoder(
             model_name, max_length=RERANK_MAX_LENGTH
         )
@@ -224,7 +223,7 @@ def _sigmoid(x: float) -> float:
     bge-reranker raw scores are unbounded logits (model card; research RQ4),
     so any thresholding/interpretation must go through this map. Ranking is
     unchanged (sigmoid is monotone) -- it exists so future score cutoffs and
-    T017's distribution analysis see calibrated probabilities, never raw
+    score distribution analysis see calibrated probabilities, never raw
     logits. The naive 1/(1+exp(-x)) overflows for x < ~-709; the two-branch
     form below is exact for all finite floats.
     """
@@ -262,7 +261,7 @@ def _extract_chunk_section(chunk: str, label: str) -> str:
 
 
 def _structured_candidate_text(c: dict) -> str:
-    """Build the D-005 structured candidate side of a rerank pair.
+    """Build the structured candidate side of a rerank pair.
 
     Importance-ordered head first (kind + qualified name, file path,
     signature, docstring -- in that order), full stored chunk appended
@@ -401,15 +400,15 @@ def rerank(
     returned dict gains a ``"rerank_score"`` float and the list is truncated
     to ``limit`` by that score, descending.
 
-    T016 (FR-004, D-005) — pair format: ``structured=True`` builds the
+    Pair format: ``structured=True`` builds the
     candidate side as importance-ordered structured text (kind + qualified
     name, file path, signature, docstring, then the stored chunk — see
     `_structured_candidate_text`), pre-truncated with query priority to
     `RERANK_MAX_LENGTH` so the query always reaches the cross-encoder
     verbatim and only the candidate's tail loses tokens.
 
-    T017 measured that format on identical production 50-candidate pools
-    (cross-session-anchored to T018's pre-T016 figures): structured buys
+    Measured on identical production 50-candidate pools:
+    structured buys
     +0.7pp recall but costs -10.4pp MRR and ~10% stage latency vs the
     legacy flat format — the default is therefore FLAT (``structured=
     False``); the structured format stays reachable for future work and
@@ -418,7 +417,7 @@ def rerank(
     Scores: ``rerank_score`` stays the RAW logit (bge-reranker outputs are
     unbounded — ordering only, never threshold it directly); each result
     additionally carries ``rerank_score_norm``, the sigmoid-mapped [0, 1]
-    value, for any future thresholding and T017's distribution analysis.
+    value, for any future thresholding and score distribution analysis.
     Nothing in semantic.py's confidence gate consumes either field (the
     gate reads pre-rerank fused RRF scores), so both are purely additive.
 

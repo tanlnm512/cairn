@@ -1,4 +1,4 @@
-"""Binary-document conversion behind cairn[ingest] (FR-003, D-002)."""
+"""Binary-document conversion behind cairn[ingest]."""
 from __future__ import annotations
 
 import sys
@@ -92,8 +92,8 @@ class TestConvertDocument:
         pdf = feed_root / "spec.pdf"
         _text_pdf(pdf, "Deploy the gateway")
         # A None entry makes `import pymupdf4llm` raise ImportError inside
-        # the converter, simulating the cairn[ingest] extra being absent
-        # (TC-020); monkeypatch restores the module afterwards.
+        # the converter, simulating the cairn[ingest] extra being absent;
+        # monkeypatch restores the module afterwards.
         monkeypatch.setitem(sys.modules, "pymupdf4llm", None)
         markdown, reason = convert_document(pdf)
         assert markdown is None

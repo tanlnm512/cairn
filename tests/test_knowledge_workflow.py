@@ -1,10 +1,9 @@
-"""Regression tests for the procedural workflow layer (2026-07-24).
+"""Regression tests for the procedural workflow layer.
 
-cairn's answer to the gap flagged when comparing against LeanKG's
-procedural ontology (`kg_trace_workflow`, live-watched ontology YAML).
-Deliberately implemented as a plain knowledge doc (`doc_type="workflow"`)
-rather than a new watched/synced store -- see src/knowledge/workflow.py's
-module docstring for the full rationale. These tests exist to pin down:
+cairn implements the procedural ontology as a plain knowledge doc
+(``doc_type="workflow"``) rather than a new watched/synced store -- see
+src/knowledge/workflow.py's
+module docstring for the full rationale. These tests pin down:
   - a workflow inherits doc_status lifecycle + archived-filtering for free
     from the existing knowledge layer, with no extra plumbing
   - trace_workflow resolves by title, slug, or full concept_id

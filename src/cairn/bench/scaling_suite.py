@@ -88,7 +88,8 @@ def run_scaling_suite(
             _t0 = _t.perf_counter()
             c = get_db(db_path)
             try:
-                embed_stats = emb.embed_all(c, reap_orphans=False)
+                # multivector pinned off: embed is a timed op here.
+                embed_stats = emb.embed_all(c, reap_orphans=False, multivector=False)
             finally:
                 c.close()
             embed_s = _t.perf_counter() - _t0

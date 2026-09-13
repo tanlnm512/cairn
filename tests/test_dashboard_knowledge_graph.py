@@ -385,7 +385,7 @@ def test_knowledge_graph_tuples_match_related_docs(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# /knowledge/graph route
+# knowledge/graph route
 # ---------------------------------------------------------------------------
 
 
@@ -444,7 +444,7 @@ def test_knowledge_graph_route_empty_state(tmp_path):
 
 def test_knowledge_graph_route_order_inspect_not_shadowed(tmp_path):
     """Route order: /knowledge/graph is the canvas (not a detail 404) and
-    /knowledge/graph/inspect is the fragment (not the two-segment doc
+    knowledge/graph/inspect is the fragment (not the two-segment doc
     route eating it as family=graph, slug=inspect)."""
     client, ids, _ = _graph_client(tmp_path)
 
@@ -462,7 +462,7 @@ def test_knowledge_graph_route_order_inspect_not_shadowed(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# /knowledge/graph/inspect fragment (the node-click panel)
+# knowledge/graph/inspect fragment (the node-click panel)
 # ---------------------------------------------------------------------------
 
 
@@ -503,7 +503,7 @@ def test_knowledge_graph_inspect_lists_relationships_with_kinds(tmp_path):
 
 def test_knowledge_graph_inspect_unknown_doc_renders_note(tmp_path):
     """An unknown doc renders the panel's not-found note at 200 — the
-    /graph/inspect found=False contract, never a 500 or an empty panel."""
+    graph/inspect found=False contract, never a 500 or an empty panel."""
     client, _, _ = _graph_client(tmp_path)
     resp = client.get(
         "/knowledge/graph/inspect", params={"doc": "knowledge/spec/ghost"}

@@ -3,7 +3,7 @@
 Every dashboard read goes through :func:`get_read_only_db`, which opens the
 graph DB via SQLite's ``file:...?mode=ro`` URI: such a connection can never
 hold the writer lock, so the dashboard cannot contend with — let alone
-mutate — writer processes (FR-010). View-data assembly functions are pure
+mutate — writer processes. View-data assembly functions are pure
 functions over the returned connection.
 """
 from __future__ import annotations
@@ -275,7 +275,7 @@ CANDIDATES_LIMIT = 10
 def symbol_candidates(
     conn: sqlite3.Connection, name: str, limit: int = CANDIDATES_LIMIT
 ) -> Dict:
-    """Every exact-name symbol match with disambiguating context (FR-002).
+    """Every exact-name symbol match with disambiguating context.
 
     Each match carries ``name``, ``kind``, the defining ``file`` path and
     its ``repo_id`` — the context that lets a caller disambiguate instead
@@ -287,7 +287,7 @@ def symbol_candidates(
     yields ``file``/``repo_id`` None rather than dropping the symbol.
     Rows are capped at ``limit`` (bounds below 1 clamp to 1); the
     limit+1 over-fetch decides ``truncated`` so the cap stays visible in
-    the response (FR-005 honesty). An empty or whitespace-only ``name``
+    the response. An empty or whitespace-only ``name``
     short-circuits to ``{"matches": [], "truncated": False}`` without
     touching the database.
     """
@@ -415,7 +415,7 @@ def _age_str(started_at) -> Optional[str]:
 PROBE_TTL_S = 300.0
 
 # How long a request that beats the prewarm waits for the first population
-# before serving unknown probe values -- well under FR-001's 200ms budget,
+# before serving unknown probe values -- well under the 200ms probe budget,
 # and never enough to pay a slow import inside the request.
 PROBE_WARM_WAIT_S = 0.05
 
@@ -495,8 +495,8 @@ def _serve_probes(
 
 def prewarm_probes() -> None:
     """Populate the probe cache via a daemon thread; app startup calls this
-    at create_app time so no /health request pays the probe imports
-    (FR-001). The in-flight flag is set synchronously here -- a thread
+    at create_app time so no /health request pays the probe imports.
+    The in-flight flag is set synchronously here -- a thread
     merely being started is no guarantee it runs before the first request,
     which must never take the synchronous compute path itself."""
     global _probe_refreshing
@@ -523,15 +523,15 @@ def reset_probe_cache() -> None:
 
 
 def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
-    """Health panel data (FR-008): DB size, index freshness, vector backend
+    """Health panel data: DB size, index freshness, vector backend
     mode, reranker status, plus the retention policy in force and the current
-    tool_metrics row count (FR-004) -- display only; aging runs in the
-    recording sink's flush prune, never here (FR-007).
+    tool_metrics row count -- display only; aging runs in the
+    recording sink's flush prune, never here.
 
     The backend probes call the same graph-layer helpers ``cairn doctor``
     uses, so the panel's conclusions agree with doctor's on the same
     database. Probe results are cached process-wide and revalidated in the
-    background (FR-001); while the first population is still running the
+    background; while the first population is still running the
     probe keys read as None rather than blocking the request. DB reads
     degrade to null/0 on a missing table rather than raising. ``db_path``
     falls back to the connection's own file (empty for an in-memory DB,
@@ -590,7 +590,7 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         "db_size_bytes": db_size_bytes,
         "last_build_at": last_build_at,
         "last_build_age": last_build_age,
-        # D-008 precedence via the embeddings resolver (env > config file >
+        # Precedence via the embeddings resolver (env > config file >
         # "local"), not a bare env read — data.py already imports the
         # embeddings module at load, so this adds no import cost here.
         "embed_backend": _backend_name(),
@@ -702,7 +702,7 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
 def get_recent_memories(
     knowledge_dir: str, limit: int = 20, memory_type: Optional[str] = None
 ) -> List[dict]:
-    """Recent memories, newest-first, each with type and title (FR-009).
+    """Recent memories, newest-first, each with type and title.
 
     Reads the OKF bundle's ``memory/`` namespace directly; an unreadable
     concept file is skipped, never fatal. ``memory_type`` narrows to one
@@ -734,7 +734,7 @@ def get_recent_memories(
 
 def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dict]:
     """LLM task-queue entries as plain dicts, optionally filtered by status
-    (pending / in-progress / done / failed) (FR-009)."""
+    (pending / in-progress / done / failed)."""
     return [
         {
             "id": t.id,
@@ -1350,7 +1350,7 @@ def list_history(
     after: Optional[str] = None,
     limit: int = HISTORY_PAGE_SIZE,
 ) -> Dict:
-    """One bounded page of tool-invocation history, newest-first (FR-001).
+    """One bounded page of tool-invocation history, newest-first.
 
     ``tool_name`` is a prefix match on the stored name (exact = the whole
     value): stored names are namespaced (``cli:<command_path>`` for CLI
@@ -1362,7 +1362,7 @@ def list_history(
     ``since`` (epoch seconds, None = all time) windows the page — and the
     neighbor probes that decide ``next``/``prev`` — to ``invoked_at >=
     since``; rows with NULL ``invoked_at`` predate windowing and never
-    match a window (FR-002, FR-006). Paging is
+    match a window. Paging is
     keyset on ``(invoked_at, id)``: ``before`` yields the page strictly
     older than that cursor, ``after`` the page strictly newer, presented in
     the same newest-first order. A cursor is the opaque
@@ -1376,7 +1376,7 @@ def list_history(
     as ISO. Pre-migration rows carry NULL sizes; their token estimates are
     None (unknown), not 0. Estimates divide chars by the mode-aware
     divisor of :func:`_estimate_divisor`, calibrated over the same filters
-    and window (FR-002). ``args_summary`` is returned as stored —
+    and window. ``args_summary`` is returned as stored —
     already redacted and truncated at the write chokepoint
     (``MAX_ARGS_SUMMARY_CHARS``); this layer never expands it.
     """
@@ -1399,7 +1399,7 @@ def list_history(
         filter_clauses.append("session_id = ?")
         filter_params.append(session_id)
     if source is not None:
-        # FR-002: 'cli' vs 'mcp' (the column default) — exact match, no
+        # 'cli' vs 'mcp' (the column default) — exact match, no
         # allow-list, same discipline as tool/session.
         filter_clauses.append("source = ?")
         filter_params.append(source)
@@ -1491,7 +1491,7 @@ def list_history(
 # stored summaries — a bounded sample, trusted only once it is large
 # enough for a stable chars-per-token ratio. Below that (and always in
 # heuristic mode) estimates stay on CHARS_PER_TOKEN, keeping dashboard
-# and bench numbers comparable (FR-002).
+# and bench numbers comparable.
 CALIBRATION_SAMPLE_LIMIT = 200
 CALIBRATION_MIN_CHARS = 1000
 
@@ -1528,7 +1528,7 @@ class TokenEstimates(list):
     """``get_tool_tokens``' per-tool entries plus the estimation context
     that produced them: ``token_mode`` (the active mode's display name),
     ``calibrated`` (exact mode derived its divisor from this window) and
-    ``chars_per_token`` (the divisor in force, FR-002). Stays a list so
+    ``chars_per_token`` (the divisor in force). Stays a list so
     iteration, equality and the CSV/JSON exports see exactly the per-tool
     rows; the attributes ride the tokens view's ``tools`` context.
     """
@@ -1553,9 +1553,9 @@ class TokenEstimates(list):
 def get_tool_tokens(
     conn: sqlite3.Connection, since: Optional[float] = None
 ) -> TokenEstimates:
-    """Per-tool estimated context-token aggregates, ranked by total desc
-    (FR-006), with per-tool truncation counts (FR-003) and the estimation
-    context for the view's mode label (FR-002).
+    """Per-tool estimated context-token aggregates, ranked by total desc,
+    with per-tool truncation counts and the estimation
+    context for the view's mode label.
 
     Estimates divide summed chars by the divisor :func:`_estimate_divisor`
     picks for the window — ``CHARS_PER_TOKEN`` (the bench constant) in
@@ -1569,7 +1569,7 @@ def get_tool_tokens(
     None — unknown, not zero truncation. ``since`` (epoch seconds, None =
     all time) computes calls, sums, calibration sample and truncation
     counts — and therefore aggregates and ranking — within the window
-    only (FR-003); rows with NULL ``invoked_at`` predate windowing and
+    only; rows with NULL ``invoked_at`` predate windowing and
     never match a window.
     """
     clauses: List[str] = []
@@ -1626,7 +1626,7 @@ def get_tool_tokens(
 # Seconds of inactivity that split a session into separate chains.
 SESSION_GAP_S = 1800
 
-# Bounds for the chains view (FR-004): chains rendered at once, and calls
+# Bounds for the chains view: chains rendered at once, and calls
 # kept per chain before the expand affordance takes over.
 CHAINS_MAX_CHAINS = 20
 CHAINS_CALLS_PER_CHAIN = 25
@@ -1641,7 +1641,7 @@ def get_session_chains(
     expand: Optional[str] = None,
 ) -> Dict:
     """Tool calls grouped per session as ordered chains, bounded for
-    rendering (FR-004, FR-007).
+    rendering.
 
     A session's calls are ordered by ``invoked_at`` (a raw ``time.time()``
     epoch float — gaps are computed numerically, never parsed as ISO) and
@@ -1651,12 +1651,12 @@ def get_session_chains(
     current one. Sessions order newest-activity-first (all-NULL sessions
     last) and chains within a session chronologically; a single-call
     session is still one chain. ``since`` (epoch seconds, None = all
-    time) windows the rows before grouping (FR-002): sessions and chains
+    time) windows the rows before grouping: sessions and chains
     with no in-window calls vanish from the output entirely, and NULL
     ``invoked_at`` calls predate windowing and never match a window — an
     empty window is an empty result, never an error. ``session_id``
     (exact value, None = no filter) reads only that session's rows
-    (FR-002): it composes with the window predicate in the same WHERE,
+   : it composes with the window predicate in the same WHERE,
     and a no-match session is the empty wrapper, never an error.
 
     The flat chain list is capped at ``max_chains`` after flattening

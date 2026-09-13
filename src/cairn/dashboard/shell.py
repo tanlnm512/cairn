@@ -29,7 +29,7 @@ LAUNCH_LABEL = "Launch workspace"
 # Sidebar + palette view grouping. Order within a section is the display
 # order; the section list is the sidebar's top-to-bottom order. A None
 # label renders a standalone item group with no header — Workspaces leads
-# the nav ungrouped (FR-001's overview-first contract) above the scoped
+# the nav ungrouped (overview-first contract) above the scoped
 # groups. The Overview landing stays out — it is the brand link, not a
 # nav item.
 NAV_SECTIONS: tuple = (

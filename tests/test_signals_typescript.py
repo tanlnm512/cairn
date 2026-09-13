@@ -77,7 +77,7 @@ class TestImportAliasTS:
         assert pf.imports[0].local_alias is None
 
     def test_export_reexport_records_no_alias(self):
-        """Re-exports carry no import-side alias signal (D-003 abstention)."""
+        """Re-exports carry no import-side alias signal (abstention)."""
         pf = _parse(
             TypeScriptParser,
             b"export { a as re } from './x';\nimport { b as y } from './m';\n",
