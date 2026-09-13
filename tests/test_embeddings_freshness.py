@@ -85,7 +85,10 @@ def test_orphan_reap_deletes_vectors_for_removed_symbols(fresh_db):
     conn.commit()
 
     reaped = emb.reap_orphaned_embeddings(conn)
-    assert reaped == 1
+    # Flagless embed_all is multivector by default (FR-004): the symbol
+    # carries 1 base row + 2 mv rows (name, docstring); the reap removes
+    # all three.
+    assert reaped == 3
     assert emb.embed_count(conn) == 0
 
 
@@ -101,7 +104,9 @@ def test_embed_all_reaps_by_default(fresh_db):
     conn.commit()
 
     summary = emb.embed_all(conn)
-    assert summary["reaped"] == 1
+    # Flagless embed_all is multivector by default (FR-004): the reaped
+    # symbol carries 1 base row + 2 mv rows (name, docstring) = 3 rows.
+    assert summary["reaped"] == 3
     assert emb.embed_count(conn) == 0
 
 

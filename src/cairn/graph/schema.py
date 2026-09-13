@@ -218,9 +218,9 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
 -- Holds ONLY the extra vector kinds ('name', 'docstring') as one row per
 -- (symbol, model, kind); the base embeddings table above -- PK (symbol_id,
 -- model), whose rowids key the per-model vec0 ANN tables -- is NEVER
--- repurposed or re-PK'd (D-006). Populated solely by the opt-in
--- `cairn embed --multivector` pass; stays EMPTY on default builds, so
--- single-vector storage and query behavior are byte-identical (TC-020).
+-- repurposed or re-PK'd (D-006). Populated by every embed pass under the
+-- default-on multivector build; `cairn embed --no-multivector` restores the
+-- single-vector build. Query-side multivector reads stay opt-in (D-003).
 -- Additive-only: plain CREATE TABLE IF NOT EXISTS rides the idempotent
 -- executescript in _apply_schema with NO MIGRATIONS entry, so existing DBs
 -- gain the table on next connect -- the same pattern term_df used.

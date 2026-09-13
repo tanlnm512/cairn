@@ -349,3 +349,97 @@ def test_health_block_no_drift_degradation_when_in_sync(status_db, monkeypatch):
     out = _status()
     assert "ann=" not in out
     assert "  degradations: none" in out
+
+
+# ---------------------------------------------------------------------------
+# Stats resolution shares (spec FR-005)
+# ---------------------------------------------------------------------------
+
+
+class TestStatsResolutionShares:
+    """``get_stats`` resolution breakdown over the calls/references pool.
+
+    FR-005 contract: over ``kind IN ('calls','references')`` only,
+    ``get_stats`` reports ``resolution`` counts (``exact``/``ambiguous``/
+    ``unresolved``) plus ``exact_share``/``ambiguous_share`` -- shares of the
+    exact+ambiguous denominator (FR-006's candidate pool). Rows with no
+    resolution (pre-migration) land in no bucket. Before the breakdown exists,
+    both probes raise KeyError: ``get_stats`` only returns the all-kind
+    ``edges_resolved`` count.
+    """
+
+    def test_resolution_counts_and_pool_shares(self, tmp_path):
+        """Seeded calls/references/extends edges: counts scoped to the pool,
+        shares taken over exact+ambiguous; ``edges_resolved`` keeps its
+        all-kind target_id semantics (a different denominator on purpose)."""
+        from cairn.graph.queries import get_stats
+
+        db = tmp_path / "graph.db"
+
+        def setup(conn):
+            conn.executemany(
+                "INSERT INTO edges (id, source_id, target_id, target_name, "
+                "kind, resolution) VALUES (?,?,?,?,?,?)",
+                [
+                    ("e1", "s1", "s2", None, "calls", "exact"),
+                    ("e2", "s1", "s2", None, "calls", "exact"),
+                    ("e3", "s1", "s2", None, "calls", "exact"),
+                    ("e4", "s1", None, "Helper", "calls", "ambiguous"),
+                    ("e5", "s1", None, "external_fn", "calls", "unresolved"),
+                    # In the pool by kind, pre-migration: no bucket.
+                    ("e6", "s1", None, "legacy", "calls", None),
+                    ("e7", "s1", "s2", None, "references", "exact"),
+                    ("e8", "s1", "s2", None, "references", "exact"),
+                    ("e9", "s1", None, "Widget", "references", "ambiguous"),
+                    ("e10", "s1", None, "Widget", "references", "ambiguous"),
+                    ("e11", "s1", None, "Widget", "references", "ambiguous"),
+                    # Out-of-pool kind: excluded even though resolved exact.
+                    ("e12", "s1", "s2", None, "extends", "exact"),
+                    ("e13", "s1", "s2", None, "extends", "exact"),
+                    ("e14", "s1", "s2", None, "extends", "exact"),
+                    ("e15", "s1", "s2", None, "extends", "exact"),
+                    ("e16", "s1", "s2", None, "extends", "exact"),
+                ],
+            )
+
+        _make_db(db, setup=setup)
+        stats = get_stats(_open(db))
+
+        assert stats["edges"] == 16
+        assert stats["edges_resolved"] == 10
+        assert stats["resolution"] == {
+            "exact": 5,
+            "ambiguous": 4,
+            "unresolved": 1,
+        }
+        pool = 5 + 4
+        assert stats["exact_share"] == pytest.approx(5 / pool)
+        assert stats["ambiguous_share"] == pytest.approx(4 / pool)
+
+    def test_minimal_schema_defaults_resolution_to_zero(self, tmp_path):
+        """The hand-built minimal schema has no ``resolution`` column: the new
+        query degrades to zero defaults instead of raising -- shares included
+        (0/0 denominator must not divide by zero)."""
+        from cairn.graph.queries import get_stats
+
+        db = tmp_path / "bare.db"
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        conn.executescript(
+            "CREATE TABLE repos (id TEXT, name TEXT, path TEXT, language TEXT, "
+            "git_remote TEXT, indexed_at TEXT);"
+            "CREATE TABLE files (id TEXT, repo_id TEXT, path TEXT, language TEXT, "
+            "mtime REAL, size INTEGER);"
+            "CREATE TABLE symbols (id TEXT, file_id TEXT, name TEXT, "
+            "qualified_name TEXT, kind TEXT, line_start INTEGER, line_end INTEGER);"
+            "CREATE TABLE edges (id TEXT, source_id TEXT, target_id TEXT, "
+            "target_name TEXT, kind TEXT, line INTEGER, column INTEGER);"
+            "CREATE TABLE imports (id TEXT, file_id TEXT, path TEXT, kind TEXT);"
+            "CREATE TABLE skipped_files (id TEXT, repo_id TEXT, path TEXT, reason TEXT);"
+        )
+        conn.close()
+
+        stats = get_stats(_open(db))
+        assert stats["resolution"] == {"exact": 0, "ambiguous": 0, "unresolved": 0}
+        assert stats["exact_share"] == 0
+        assert stats["ambiguous_share"] == 0

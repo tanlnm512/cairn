@@ -90,7 +90,7 @@ def test_reindex_paths_persists_signals(tmp_path):
     conn.commit()
     try:
         result = reindex_paths(conn, str(ws), [str(src)])
-        assert result == {"reindexed": 1, "deleted": 0, "errors": []}
+        assert result == {"reindexed": 1, "deleted": 0, "embedded_symbols": 2, "deferred_embeds": 0, "errors": []}
 
         pf = get_parser("python").parse(str(src))
         expected_imports = {i.imported_path: i.local_alias for i in pf.imports}

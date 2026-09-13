@@ -1,6 +1,6 @@
 # Spec: indexing-exact-rate
 
-**Status**: draft
+**Status**: done
 **Created**: 2026-09-13
 **Re-baselined**: 2026-09-13 against `ac09d4b` (post `remove-scip-exact-rate`)
 **Branch**: `feat/indexing-exact-rate`
@@ -51,7 +51,7 @@ As a maintainer, I want `cairn stats` to report exact/ambiguous/unresolved share
 - **FR-001**: The repo's committed `cairn.json` shall exclude vendored dashboard static assets and third-party benchmark datasource corpora from indexing.
 - **FR-002**: WHEN `cairn update` creates or changes symbols and a semantic backend is available, the system shall embed those symbols under the current model before the update reports completion.
 - **FR-003**: IF no semantic backend is available, `cairn update` shall succeed and surface the deferred embeds (log/doctor-observable), never fail the update.
-- **FR-004**: `cairn embed` shall build the multivector kinds (`embeddings_mv`: name, docstring) by default; `--no-multivector` shall restore single-vector builds (clarify ruling: default flipped on). Tests asserting the off-by-default byte-identical build are superseded by this FR and follow C-02's failing-test-first treatment; the survey enumerates 8 build-side pins (test_embeddings_mv.py, test_ann_vecmv.py, test_multivector_query.py) — query-side pins stay.
+- **FR-004**: `cairn embed` shall build the multivector kinds (`embeddings_mv`: name, docstring) by default; `--no-multivector` shall restore single-vector builds (clarify ruling: default flipped on). Superseded pins per tech-spec D-003's as-built adjudication: six total — four rewritten failing-test-first (they go red on the flip), two stale-green rewrites to the opt-out contract; three survey-listed pins survive untouched (query side); one superseded pin sat beyond the survey's list. Query-side pins stay green and untouched throughout.
 - **FR-005**: `cairn stats` shall report edge resolution shares (`exact` / `ambiguous` / `unresolved`).
 - **FR-006**: Acceptance targets — after implementation, of `calls`/`references` edges with at least one same-name indexed candidate (the exact+ambiguous pool, per `remove-scip-exact-rate` FR-005's measurement definition), at least 75% shall be `exact` and at most 25% `ambiguous`; embedding coverage shall be 100% of indexed symbols after an embed pass. Target provenance: user's clarify ruling was 95%; the survey measured the machinery ceiling at 75.81% exact with exclusions applied (exclusion is the only in-scope resolution lever), so D-001 in tech-spec.md re-derived the target to ≥75% pre-approval rather than discovering the shortfall at the closing audit — the approve gate confirms or overrides this.
 

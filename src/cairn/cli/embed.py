@@ -158,11 +158,10 @@ def _resolve_adopted_model(conn, requested):
     help="Pre-download model weights into local HuggingFace cache.",
 )
 @click.option(
-    "--multivector",
-    is_flag=True,
-    help="Also embed name-only and docstring-only vectors (embeddings_mv, FR-005). "
-    "Off by default: default builds store one vector per symbol, byte-identical "
-    "to before.",
+    "--multivector/--no-multivector",
+    default=True,
+    help="Also embed name-only and docstring-only vectors (embeddings_mv). "
+    "--no-multivector stores one vector per symbol (the single-vector build).",
 )
 @click.option(
     "--adopt-server-model",
@@ -306,10 +305,10 @@ def embed(
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())
-                # --multivector: also rebuild the FR-005 mv index (D-007 --
-                # its own vecmv_<model> vec0 table over embeddings_mv). Flag
-                # off: this call is absent and the flow is byte-identical to
-                # the pre-FR-005 single-index build.
+                # Default-on multivector: also rebuild the FR-005 mv index
+                # (D-007 -- its own vecmv_<model> vec0 table over
+                # embeddings_mv). --no-multivector skips it and the flow is
+                # byte-identical to the single-index build.
                 mv_idx_summary = (
                     ann.rebuild_index(conn, emb.current_model(), source="embeddings_mv")
                     if multivector

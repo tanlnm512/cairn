@@ -27,7 +27,8 @@ def reindex_paths(
     paths: list[str],
 ) -> dict:
     """Re-index a set of absolute file paths. Handles repo resolution, deletion,
-    and resolver re-run. Returns {'reindexed': n, 'deleted': m, 'errors': [...]}.
+    and resolver re-run. Returns {'reindexed': n, 'deleted': m,
+    'embedded_symbols': k, 'deferred_embeds': d, 'errors': [...]}.
 
     Idempotent and safe to call from the watcher thread (as long as the watcher
     opens its own connection).
@@ -43,6 +44,8 @@ def reindex_paths(
 
     reindexed = 0
     deleted = 0
+    embedded_symbols = 0
+    deferred_embeds = 0
     errors: list[str] = []
 
     # Group paths by repo for batched resolver re-run.
@@ -170,6 +173,14 @@ def reindex_paths(
                                 model,
                                 [r["rowid"] for r in doomed if r["model"] == model],
                             )
+                    # embeddings_mv also FK-references symbols(id) (no
+                    # cascade); no vecmv rowid cleanup exists (vecmv_ tables
+                    # rebuild wholesale).
+                    cur.execute(
+                        "DELETE FROM embeddings_mv WHERE symbol_id IN "
+                        "(SELECT id FROM symbols WHERE file_id = ?)",
+                        (file_id,),
+                    )
                 except sqlite3.OperationalError as e:
                     note_contention("incremental.delete_embeddings", error=e)
                     logger.debug("embeddings table missing", exc_info=True)
@@ -218,8 +229,7 @@ def reindex_paths(
             language = resolve_file_language(suffix, abs_path)
 
             file_hash = file_sha256(Path(abs_path))
-            from .builder import get_parser, insert_parsed_file, insert_parse_error
-
+            from .builder import get_parser, insert_parsed_file
             parser = get_parser(language)
             if not parser:
                 conn.execute("COMMIT")
@@ -244,6 +254,25 @@ def reindex_paths(
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
             conn.execute("COMMIT")
+            # embed_symbols self-commits its batches: keep it after the COMMIT
+            # above or its commit would defeat the rollback on re-parse
+            # failure. FR-3: a closed gate or a failing embed defers, never
+            # fails, the update.
+            if name_to_symbol_ids:
+                new_ids = [
+                    sid
+                    for entries in name_to_symbol_ids.values()
+                    for (sid, _, _) in entries
+                ]
+                from .embeddings import embed_symbols, embeddings_available
+                if embeddings_available():
+                    try:
+                        embedded_symbols += embed_symbols(conn, new_ids)["embedded"]
+                    except Exception:
+                        logger.debug("embed_symbols failed; deferring", exc_info=True)
+                        deferred_embeds += len(new_ids)
+                else:
+                    deferred_embeds += len(new_ids)
             # Record BOTH the removed and the freshly-introduced names for the
             # repair pass. The removed names cover edges whose targets were
             # deleted+re-created (classic repair); the freshly-introduced names
@@ -264,6 +293,9 @@ def reindex_paths(
             except sqlite3.Error:
                 pass
             import traceback
+            # Bound here, not in the parse section, so a failure raised
+            # before that import -- e.g. the delete leg -- surfaces as itself.
+            from .builder import insert_parse_error
             # insert_parse_error opens its own implicit transaction; safe after
             # the ROLLBACK above.
             try:
@@ -307,8 +339,13 @@ def reindex_paths(
         except Exception as e:
             errors.append(f"imports-edges/{repo_name}: {e}")
 
-    return {"reindexed": reindexed, "deleted": deleted, "errors": errors}
-
+    if deferred_embeds:
+        logger.warning(
+            "Deferred embedding %d symbol(s): no usable embedding backend "
+            "this pass; run `cairn embed` once a backend is reachable",
+            deferred_embeds,
+        )
+    return {"reindexed": reindexed, "deleted": deleted, "embedded_symbols": embedded_symbols, "deferred_embeds": deferred_embeds, "errors": errors}
 
 
 
@@ -395,6 +432,7 @@ def incremental_update(
         "files_reindexed": result["reindexed"],
         "files_deleted": result["deleted"],
         "errors": result["errors"] + derived_errors,
+        "deferred_embeds": result["deferred_embeds"],
     }
 
 

@@ -163,7 +163,7 @@ def test_alias_pass_writes_zero_rows_and_rows_resolve(fresh_db, monkeypatch):
     monkeypatch.setattr(emb, "_embed_server", client)
 
     before = _all_rows(fresh_db)
-    summary = emb.embed_all(fresh_db)
+    summary = emb.embed_all(fresh_db, multivector=False)
 
     assert summary["model"] == ALIAS
     assert summary["embedded"] == 0
@@ -310,7 +310,7 @@ def test_alias_with_zero_rows_vacuous_pass_writes_under_alias(fresh_db, monkeypa
     probe = mock.Mock(wraps=embed_ladder.check_parity)
     monkeypatch.setattr(embed_ladder, "check_parity", probe)
 
-    summary = emb.embed_all(fresh_db)
+    summary = emb.embed_all(fresh_db, multivector=False)
 
     assert probe.call_count == 1
     assert summary["model"] == ALIAS
@@ -393,7 +393,7 @@ def test_migration_with_alias_keeps_search_correct(fresh_db, monkeypatch, stub_s
     emb.reset_backend_cache()
 
     before = _all_rows(fresh_db)
-    summary = emb.embed_all(fresh_db)
+    summary = emb.embed_all(fresh_db, multivector=False)
 
     assert summary["model"] == ALIAS
     assert summary["embedded"] == 0
@@ -450,5 +450,5 @@ def test_file_layer_stamp_triggers_parity_gate(fresh_db, monkeypatch, _server_en
     emb.reset_backend_cache()
 
     assert emb.current_model() == stamp
-    emb.embed_all(conn)
+    emb.embed_all(conn, multivector=False)
     assert gate_calls == [stamp], "file-layer stamp must run the alias preflight"

@@ -391,3 +391,127 @@ to fresh builds; the stale-installed-binary caveat (repo context: use
   FR-005's shares and `skipped_by_reason`, fixable by a one-line exclude.
   Existing DBs (incl. the live one) keep their noise symbols until a fresh
   build; no migration ships.
+
+### D-005 — signal-persistence return-dict pin updated once, at T006
+
+- **Decision**: `tests/test_signal_persistence.py:93` pins `reindex_paths`' return dict
+  with exact equality. T004's contract-mandated `embedded_symbols` key breaks it;
+  T006 adds `deferred_embeds` to the same dict. The expected-dict update lands ONCE,
+  in T006, carrying both keys — not per-task.
+- **Context**: two one-line updates to the same assertion in two tasks is churn; between
+  T004 and T006 the file stays transiently red (1 failed), acceptable mid-plan since
+  ticks and audits happen only at plan end.
+- **Consequences**: if T006's key shape differs from `deferred_embeds: int`, the pin
+  needs a third touch — bounded, test-only.
+
+### D-006 — multivector rows in the incremental delete leg; handler masking fix
+
+- **Decision**: T010's default-on flip writes `embeddings_mv` rows whose
+  `symbol_id` FK-references `symbols(id)` (schema.py:228). The `reindex_paths`
+  delete leg (incremental.py:148-178) clears `embeddings` + vec0 rows only, so
+  re-creating a changed file's symbols now raises FK IntegrityError — masked as
+  UnboundLocalError because the except handler references `insert_parse_error`
+  before its line-223 import binds. Both fixes land in T006's edit (same file,
+  already its set): the delete leg also clears re-created symbols' `embeddings_mv`
+  rows (mirroring the existing embeddings/vec0 cleanup, incl. the vecmv leg where
+  the existing vec0 cleanup runs), and the handler binds/imports so a real error
+  surfaces as itself.
+- **Context**: the masking bug hid a contract-breaking FK failure — errors==[] was
+  lying; FR-003's observability contract requires real errors.
+- **Consequences**: none to the flip (D-003 stands); if the cleanup misses a
+  vec0/vecmv surface, T003/T005 legs stay red and name it.
+
+### D-007 — schema.py embeddings_mv comment updated to the default-on contract
+
+- **Decision**: T010's flip made schema.py's table comment ("stays EMPTY on
+  default builds") false. Comment rewritten in-place by the orchestrator
+  (single line, zero behavior): populated by every embed pass under the
+  default-on build; --no-multivector restores the single-vector build;
+  query-side reads stay opt-in (D-003). Flagged by T010's digest.
+- **Context**: comments state current contract only; a schema comment lying about
+  population semantics is a future-bug seed.
+- **Consequences**: none — comment-only, no schema change.
+
+### D-008 — D-006's mechanism corrected; incremental mv-coverage gap noted
+
+- **Decision**: D-006's fix target stands (delete-leg embeddings_mv cleanup +
+  handler unmask, both incremental.py, both in T006), but its stated mechanism
+  was wrong: `embed_symbols` has NO mv leg (`_embed_mv_kinds` runs only inside
+  `embed_all`, gated on its multivector flag), so the update-path hook cannot
+  write mv rows. The orphaned rows come from a FLAGLESS `embed_all` pass before
+  reindex (T003's baseline embed at test line 82, post-T010 default-on) — the
+  delete leg clears `embeddings` + vec0 only, then `DELETE FROM symbols` raises
+  the FK error. Precedent for the fix shape: `reap_orphaned_embeddings` already
+  deletes orphaned mv rows unconditionally.
+- **Context**: measured during T012 — incrementally-updated symbols receive
+  base vectors only — no mv rows until a full embed pass. FR-006's coverage leg
+  (base embeddings under current model) is unaffected; mv-query coverage gaps
+  silently for new symbols. Surfaced at the closing-audit rulings report;
+  extending `embed_symbols` with an mv leg is follow-up scope, not this plan's.
+- **Consequences**: none — correction of narrative; the fix was already right.
+
+### D-009 — ann_incremental reap-count pin updated to the default-on contract
+
+- **Decision**: `tests/test_ann_incremental.py::test_reap_deletes_vec_rows`
+  pins `reaped == 1`; its `_built_index` fixture calls flagless `embed_all`,
+  which since T010 writes name+docstring mv rows, so deleting one symbol
+  orphans 1 base + 2 mv rows and `reap_orphaned_embeddings` correctly returns
+  3. T006 takes the one-time pin update as a rider (same class as D-005).
+  The reaper's behavior is unchanged and correct — the pin asserted the
+  pre-flip world.
+- **Context**: third flip-cascade pin (after D-005's signal-persistence and the
+  T009 set); Tech's supersession list under-enumerated count-semantics pins —
+  they key on row counts, not flags, so the flag-set audit missed them.
+- **Consequences**: none — test-only expectation update to real behavior.
+
+### D-010 — regression-gate flip-cascade: alias-gate traffic pins, freshness reap counts
+
+- **Decision**: six pre-existing tests failed the step-10 gate on the
+  implemented tree, all flip-cascade, none product defects. (a) The four
+  alias-gate tests assert single-vector embed traffic (echo client keyed by
+  base chunks; `len(client.calls)==1`; parity sample only) — their subject is
+  the alias/stamp machinery, so their `embed_all` calls pin
+  `multivector=False` explicitly (D-003's opt-out), keeping their
+  single-vector assumptions honest. (b) The two freshness reap tests assert
+  `reaped == 1` — reaping is mv-inclusive by design (D-008/D-009 precedent),
+  so their expectation updates to 3 (1 base + 2 mv for one seeded symbol).
+- **Context**: Tech's supersession list enumerated flag pins; it missed both the
+  count-semantics class (D-009) and this traffic-semantics class. The 78
+  kwarg-less inherit-and-stay-green claim held for behavior, not for
+  assertions keyed on exact traffic/counts.
+- **Consequences**: none — test-only; product reaping/alias behavior
+  unchanged and correct.
+
+### D-011 — D-010's file set, named for the scope gate
+
+- **Decision**: the six pin fixes ruled by D-010 live in exactly two files,
+  named here for the mechanical scope grep: `tests/test_alias_gate.py`
+  (four opt-out pins) and `tests/test_embeddings_freshness.py` (two
+  mv-inclusive reap expectations).
+- **Context**: D-010 named them by test class, not path; the closing audit's
+  scope gate greps literal paths.
+- **Consequences**: none — naming record only.
+
+### D-012 — TC-017 narrowed to a bounded corpus; at-scale verify stands in survey/task SQL
+
+- **Context**: reviewer WARN — TC-017's closing-audit rewrite narrowed the
+  100%-coverage leg from a full-repo embed to a seconds-scale workspace, with
+  no decision recorded (unlike TC-009's channel fix, adjudicated by D-002).
+  The narrowing was forced by the audit harness's 120 s per-TC cap: a
+  full-repo flagless embed measures ~11 min (T012's run: 659 s).
+- **Decision**: TC-017 keeps the bounded-corpus shape (same contract: build +
+  flagless embed + zero-unembedded SQL). The at-scale verify is T012's
+  recorded measurement (coverage 100.0, 7,478/7,478) plus survey FR-006b's
+  standing SQL, re-runnable any time outside the audit's per-TC timeout.
+- **Consequences**: FR-006's at-scale coverage leg is a recorded measurement
+  plus a re-runnable command, not a per-audit executable TC — a future
+  coverage regression is caught by the SQL, not by `audit.py proofs`.
+
+### D-013 — cli/embed.py mv-index comment reworded (D-007 doctrine, second site)
+
+- **Context**: reviewer NIT — the mv-index-rebuild comment still read as
+  opt-in and cited the retired flag-off default; D-007's comment doctrine was
+  applied to schema.py but missed this site.
+- **Decision**: comment reworded in place to the default-on contract
+  (`--no-multivector` skips the mv index rebuild). Comment-only.
+- **Consequences**: none — no behavior change.

@@ -9,7 +9,7 @@
 |-------|-----------|---------------------|-----|------------|
 | 1 | Quiet corpus | Committed root `cairn.json` excludes dashboard static chunks + benchmark datasource corpora; fresh build shows zero noise symbols, `config_exclude` skips x179, pool exact share 75.81% (from 71.16%) | FR-001 | — |
 | 2 | Complete, observable, multivector indexing | Update path embeds changed symbols when a backend is available and defers observably when not; no-flag `cairn embed` builds `embeddings_mv`; `cairn stats` prints exact/ambiguous/unresolved shares beside edge totals | FR-002, FR-003, FR-004, FR-005 | Phase 1 |
-| 3 | Acceptance measurement | Final pool + embedding-coverage numbers on the implemented tree; any shortfall vs the 95% target is recorded as an adjudicated D-### decision re-deriving the target, never a silent pass/fail | FR-006 | Phase 2 |
+| 3 | Acceptance measurement | Final pool + embedding-coverage numbers on the implemented tree; gate is D-001's re-derived ≥75% exact / ≤25% ambiguous (95% stands as north-star provenance only); any shortfall vs 75% is a fresh adjudicated D-### re-deriving the target, never a silent pass/fail | FR-006 | Phase 2 |
 
 Already in tree per survey evidence — **noted here, no tasks spawned** (task-breaker cites these as context, never re-implements):
 - Layer C exclusion machinery, end to end (survey item FR-001a: `src/cairn/graph/scanner.py:_build_config_spec:323`, `classify_file:376` running Layer C at lines 418-420; skips persisted by `src/cairn/graph/builder.py:_record_skips:160`).
@@ -77,10 +77,10 @@ Run everything from the repo root with `CAIRN_HOME` pinned to a throwaway store 
   sqlite3 $T/*/*/.kg "SELECT ROUND(100.0*COUNT(*)/(SELECT COUNT(*) FROM symbols),2) FROM embeddings;"
     # embedding-coverage leg: 1.0 after the embed pass (live DB today: 10,880/20,296, survey FR-006b)
   ```
-  Exact share at or above 95% → targets met. Below → record the D-### adjudication in tech-spec: re-derive the target from the measured residual (survey FR-006b: exclusion alone measures 75.81%; calls ambiguity persists beyond current machinery). The shortfall is a recorded decision, never a silent audit failure (spec Risk 1).
+  Operative gate is D-001's re-derivation: ≥75% exact / ≤25% ambiguous → targets met (measured 75.78). Below 75% → record the D-### adjudication in tech-spec: re-derive the target from the measured residual (survey FR-006b: exclusion alone measures 75.81%; calls ambiguity persists beyond current machinery). The shortfall is a recorded decision, never a silent audit failure (spec Risk 1). The original 95% ruling remains recorded in spec FR-006's provenance as the north star D-001 measured against.
 
 ## Risks & mitigations
-- Risk: the 95% exact target exceeds the machinery's measured ceiling (75.81% post-exclusion projection). → Mitigation: Phase 3's adjudication path is first-class — a D-### records the measured residual and the re-derived target; no scope silently expands inside this spec to chase 95%.
+- Risk: the original 95% exact target exceeded the machinery's measured ceiling (75.81% post-exclusion projection). → Resolved pre-approval by D-001's re-derivation to ≥75%; no scope silently expands inside this spec to chase 95%.
 - Risk: tracks A and C collide on `src/cairn/graph/embeddings.py` if FR-004 flips the library default. → Mitigation: the map pins the flip to the CLI layer; a tech-spec decision to flip `embed_all`'s default must also chain C after A in task.md.
 - Risk: update-path embedding slows incremental updates. → Mitigation: bounded to changed symbols (`name_to_symbol_ids`), gated on `embeddings_available` (`src/cairn/graph/embeddings.py:embeddings_available:94`), degrade-not-fail mirrors `src/cairn/knowledge/ingest/executor.py:execute_manifest:10` lines 63-66 — never the embed CLI's hard exit (survey FR-003).
 - Risk: measurements taken with the stale installed 0.20.0 binary poison the baselines. → Mitigation: every checkpoint pins `CAIRN_HOME` to a mktemp store and uses the repo venv binary (survey CONV + supporting evidence).

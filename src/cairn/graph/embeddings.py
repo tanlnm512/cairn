@@ -1275,7 +1275,8 @@ def _embed_mv_kinds(
 ) -> int:
     """Populate/refresh ``embeddings_mv`` rows for every MV_KINDS entry.
 
-    The opt-in FR-005 pass behind ``embed_all(multivector=True)``. Mirrors
+    The pass behind ``embed_all``'s ``multivector`` flag (default on;
+    ``False`` opts out). Mirrors
     the base chunk flow's shape per kind: build the kind-specific text via
     :func:`mv_text_for_kind`, hash it with :func:`_chunk_hash` (per-kind
     staleness -- the name row and docstring row of one symbol refresh
@@ -1407,7 +1408,7 @@ def embed_all(
     progress=None,
     reap_orphans: bool = True,
     variant: Optional[str] = None,
-    multivector: bool = False,
+    multivector: bool = True,
 ) -> dict:
     """Embed every symbol missing or stale under the current model.
 
@@ -1423,15 +1424,16 @@ def embed_all(
     no-env-mutation doctrine) -- this is the seam per-variant sweep runs
     (T014/T015) use to re-embed the corpus under each recipe.
 
-    ``multivector`` (FR-005, opt-in, default False) additionally populates
-    the parallel ``embeddings_mv`` table with the ``name`` and ``docstring``
+    ``multivector`` (FR-004, default True) additionally populates the
+    parallel ``embeddings_mv`` table with the ``name`` and ``docstring``
     kinds, each with its own per-kind ``_chunk_hash`` staleness (see
-    ``MV_KINDS`` / ``mv_text_for_kind``). When False -- the default -- the
+    ``MV_KINDS`` / ``mv_text_for_kind``). Pass ``False`` to opt out: the
     run performs ZERO ``embeddings_mv`` writes and the ``embeddings``-table
-    flow (upserts, staleness, reaping) is byte-identical to a pre-FR-005
-    build (D-006/TC-020). ``limit`` caps stale base rows and stale mv rows
-    independently. The summary gains ``mv_embedded`` only when the flag is
-    on, so flag-off summaries keep their exact prior shape.
+    flow (upserts, staleness, reaping) is byte-identical to the
+    single-vector build (D-006/TC-020). ``limit`` caps stale base rows and
+    stale mv rows independently. The summary gains ``mv_embedded`` only
+    when the flag is on, so flag-off summaries keep their exact prior
+    shape.
 
     When ``reap_orphans`` is True (default), also deletes embedding rows for
     symbols that no longer exist. Always refreshes the persisted ``term_df``
@@ -1518,10 +1520,10 @@ def embed_all(
 
     reaped = reap_orphaned_embeddings(conn) if reap_orphans else 0
 
-    # FR-005 opt-in: after the base flow (so flag-off runs never reach this
-    # line), refresh the parallel mv table for the two extra kinds. Reaping
-    # already ran above is fine -- it only removes rows for DEAD symbols, and
-    # the rows written here are for live ones.
+    # After the base flow, refresh the parallel mv table for the two extra
+    # kinds (multivector=False opts out). Reaping already ran above is fine
+    # -- it only removes rows for DEAD symbols, and the rows written here
+    # are for live ones.
     mv_embedded = (
         _embed_mv_kinds(conn, all_rows, signatures, model, batch_size, limit, progress)
         if multivector

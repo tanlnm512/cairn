@@ -8,10 +8,10 @@ Status reflects code state per [survey.md](survey.md), not intent.
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 2     | 0    |
-| 2     | 9     | 0    |
-| 3     | 1     | 0    |
-| **Σ** | 12    | 0    |
+| 1     | 2     | 2    |
+| 2     | 9     | 9    |
+| 3     | 1     | 1    |
+| **Σ** | 12    | 12   |
 
 ## Phase 1: Quiet corpus (FR-001)
 <!-- Checkpoint (plan, After Phase 1): `git ls-files -- cairn.json` non-empty; a
@@ -25,7 +25,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
      Layer C machinery end to end (survey FR-001a), noise measurement and the
      minified-skip miss explanation (survey FR-001c), bench/eval corpus-discovery
      safety (survey FR-001d). -->
-- [ ] T001 [P] Commit repo-root `cairn.json` excluding the two noise corpora (FR-001)
+- [x] T001 [P] Commit repo-root `cairn.json` excluding the two noise corpora (FR-001)
+  - done 2026-09-13 — byte-exact file landed; fresh pinned build: config_exclude|179, zero symbols under both prefixes, 7,467 symbols total (build-B projection matched).
   - File: new `cairn.json` at repo root; no source file touched. Content exactly
     `{"exclude": ["src/cairn/dashboard/static/chunks/", "benchmarks/datasource/"]}` —
     the shapes build B validated (survey FR-001b gap): zero symbols under either
@@ -36,7 +37,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     only — do not widen `_is_minified` (D-004).
   - Verify before implementing (survey FR-001b): `git ls-files -- cairn.json` —
     empty today, non-empty once this lands.
-- [ ] T002 (after T001) Measure the quiet corpus on a fresh pinned build — AC1 anchor (FR-001)
+- [x] T002 (after T001) Measure the quiet corpus on a fresh pinned build — AC1 anchor (FR-001)
+  - done 2026-09-13 — pinned build + the three SQL probes: config_exclude|179; chunks 0 / datasource 0 (7,467 symbols, 438 files); pool 75.81 of 19,786.
   - Consumes T001's committed `cairn.json` via `src/cairn/graph/config.py:load_config:70`
     (then `src/cairn/graph/scanner.py:classify_file:376`, Layer C at lines 418-420;
     skips persisted by `src/cairn/graph/builder.py:_record_skips:160`).
@@ -72,7 +74,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
      src/cairn/cli/core.py plus tests/test_status_resource_health.py; C owns
      src/cairn/graph/embeddings.py, src/cairn/cli/embed.py, the three bench
      call sites, and the three mv test files. -->
-- [ ] T003 [P] Write the failing update-path embed test — new `tests/test_update_path_embedding.py` (FR-002)
+- [x] T003 [P] Write the failing update-path embed test — new `tests/test_update_path_embedding.py` (FR-002)
+  - done 2026-09-13 — red bar verified: 1 failed, failure mode the asserted missing behavior (4 unembedded ids after reindex_paths); greened by T004.
   - C-02 test-first. Docstring states the pre-fix failure (survey FR-002 NOTE):
     reindex deletes changed files' embeddings (incremental.py lines 146-175,
     incl. vec0 cleanup) and never re-embeds, so changed symbols stay unembedded
@@ -89,7 +92,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Red bar: `embed_symbols` has zero production callers today (survey FR-002
     verify: `grep -rn embed_symbols src/cairn | grep -v "def embed_symbols"`
     shows only the note_contention string at embeddings.py line 1661).
-- [ ] T004 (after T003) Wire `embed_symbols` post-COMMIT in `reindex_paths` (FR-002)
+- [x] T004 (after T003) Wire `embed_symbols` post-COMMIT in `reindex_paths` (FR-002)
+  - done 2026-09-13 — hook verified via the D-005 pin's own diff (embedded_symbols: 2 in the reindex return); three-file suite green.
   - Consumes T003's red test in `tests/test_update_path_embedding.py`; implements
     its contract. File: `src/cairn/graph/incremental.py` only — consumes
     `src/cairn/graph/embeddings.py:embed_symbols:1549` and
@@ -110,7 +114,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     shows the production call site (survey FR-002 verify, inverted);
     `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_ann_incremental.py tests/test_workflow_audit_fixes.py tests/test_update_path_embedding.py -q`
     green.
-- [ ] T005 (after T004) Write the failing deferred-embed observability test (FR-003)
+- [x] T005 (after T004) Write the failing deferred-embed observability test (FR-003)
+  - done 2026-09-13 — red bar verified: deferred_embeds None vs 4 with errors==[] held; greened by T006.
   - Same file track A owns: `tests/test_update_path_embedding.py`, added after
     T004 so the call site exists to observe. C-02 test-first.
   - With no backend available (the runner already pins
@@ -125,7 +130,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     `src/cairn/knowledge/ingest/executor.py:execute_manifest:10` lines 63-66
     (`embedded: None` when deferred) — NOT the embed CLI's hard exit
     (`src/cairn/cli/embed.py:_exit_backend_unavailable:11`).
-- [ ] T006 (after T005) Implement degrade-not-fail deferral on the update path (FR-003)
+- [x] T006 (after T005) Implement degrade-not-fail deferral on the update path (FR-003)
+  - done 2026-09-13 — both update-path legs green (errors==[], deferred_embeds==4, one WARN with the count); D-005 pin updated once; D-006a/b riders landed; D-009 rider (reap 3); acceptance set 26 passed.
   - Files: `src/cairn/graph/incremental.py` — wrap T004's call site: absorb
     `embed_symbols` failures, log one WARN per pass with the deferred count, add
     `deferred_embeds: int` to the reindex_paths return dict and pass it through
@@ -138,7 +144,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     surfaces the deferred count via the log/result channel (plan checkpoint,
     track A leg); `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_ann_incremental.py tests/test_workflow_audit_fixes.py tests/test_update_path_embedding.py -q`
     green.
-- [ ] T007 [P] Write the failing stats resolution-share test (FR-005)
+- [x] T007 [P] Write the failing stats resolution-share test (FR-005)
+  - done 2026-09-13 — red bar verified: 2 failed (KeyError 'resolution'), 11 pre-existing green; greened by T008.
   - File: `tests/test_status_resource_health.py` — stats are asserted via its
     `get_stats` minimal-schema fixture convention (survey CONV); class-grouped,
     behavior-named.
@@ -151,7 +158,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     exact+ambiguous denominator, on a populated fixture; the minimal-schema
     fixture defaults the new counts to 0 and does not raise (tech-spec pitfall).
   - Runner: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_status_resource_health.py -q`.
-- [ ] T008 (after T007) Add resolution shares to `get_stats` and the stats CLI (FR-005)
+- [x] T008 (after T007) Add resolution shares to `get_stats` and the stats CLI (FR-005)
+  - done 2026-09-13 — 13 passed; fresh pinned build prints resolution 15,021 exact / 4,797 ambiguous / 17,530 unresolved (76% / 24% of pool) beside edge totals (AC6).
   - Files: `src/cairn/graph/stats.py:get_stats:17` — one GROUP BY over
     `kind IN ('calls','references')` x `resolution` (the FR-006-comparable
     denominator; `edges_resolved` at lines 40-42 stays untouched) — and
@@ -164,7 +172,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Acceptance: T007 green; plan checkpoint track B:
     `T=$(mktemp -d /tmp/cairn-p2.XXXXXX); CAIRN_HOME=$T .venv/bin/cairn build && CAIRN_HOME=$T .venv/bin/cairn stats | grep -ci exact`
     returns at least 1, three shares printed beside edge totals.
-- [ ] T009 [P] Rewrite the four mechanically-red build-side pins for the new default (FR-004)
+- [x] T009 [P] Rewrite the four mechanically-red build-side pins for the new default (FR-004)
+  - done 2026-09-13 — red bar verified: 7 failed (exactly the 4 rewritten pins, one x4) / 42 survivors green incl. the 3 query-side pins, byte-untouched.
   - C-02 test-first (spec FR-004; D-003 pin set): these go red the moment T010's
     flip lands, so rewrite them first — red against today's default-off, green
     after the flip. Files, this track's own test files only:
@@ -182,7 +191,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     stay green and untouched — if they break, the query default leaked (D-003).
   - Red bar (tech-spec verify, inverted): `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_embeddings_mv.py tests/test_ann_vecmv.py tests/test_multivector_query.py -q`
     fails on exactly the rewritten cases and passes the survivors.
-- [ ] T010 (after T009) Flip the multivector build default on and add the opt-out (FR-004)
+- [x] T010 (after T009) Flip the multivector build default on and add the opt-out (FR-004)
+  - done 2026-09-13 — mv trio 49 passed; embed --help: Off-by-default 0, no-multivector 2; bench pins False (D-003); query side untouched.
   - Survey FR-004 status PARTIAL — machinery fully built (producers
     `src/cairn/graph/embeddings.py:_embed_mv_kinds:1267` with per-kind
     `_chunk_hash` staleness at lines 1276-1281, `MV_KINDS` at line 292,
@@ -212,7 +222,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_embeddings_mv.py tests/test_ann_vecmv.py tests/test_multivector_query.py -q`.
   - Interface for T011: the `--no-multivector` CLI opt-out and the explicit
     `embed_all(multivector=False)` library leg.
-- [ ] T011 (after T010) Rewrite the two stale-green pins to pin the explicit opt-out (FR-004)
+- [x] T011 (after T010) Rewrite the two stale-green pins to pin the explicit opt-out (FR-004)
+  - done 2026-09-13 — mv trio 49 passed; tests/ carries no retired wording; query-side pins untouched at 210/221/462.
   - Files: `tests/test_embeddings_mv.py:test_flag_off_base_table_identical_to_flag_on_base_table:165`
     (passes explicit kwargs on both legs — stays green, but exists to pin the
     retired default's byte-identity; reframe to pin the explicit opt-out) and
@@ -236,7 +247,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
      are for comparison, not re-derivation: tree 71.16% exact (43,546/61,195,
      survey FR-006a), exclusion projection 75.81% (15,000/19,786, survey
      FR-006b). -->
-- [ ] T012 (after T006) (after T008) (after T011) Measure acceptance against the re-derived targets (FR-006)
+- [x] T012 (after T006) (after T008) (after T011) Measure acceptance against the re-derived targets (FR-006)
+  - done 2026-09-13 — pinned fresh build + flagless embed: pool 75.78|19833 (>=75.00 D-001), coverage 1.0 (7,478/7,478), mv 10,941; stats 15,030/4,803/17,530 (76%/24%); D-008 observation recorded.
   - No code — audit SQL over the implemented tree (tech-spec Code guide,
     FR-006). Consumes the Phase 2 surfaces: T008's stats shares are where AC2's
     before/after is read; the coverage leg runs a flagless embed (T010's

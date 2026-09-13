@@ -40,6 +40,26 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     stats["edges_resolved"] = cur.execute(
         "SELECT COUNT(*) AS c FROM edges WHERE target_id IS NOT NULL"
     ).fetchone()["c"]
+    # Resolution mix over the calls/references candidate pool only, not all
+    # edge kinds; best-effort -- pre-migration DBs lack the resolution column.
+    try:
+        counts = {
+            r["resolution"]: r["c"]
+            for r in cur.execute(
+                "SELECT resolution, COUNT(*) AS c FROM edges "
+                "WHERE kind IN ('calls','references') "
+                "AND resolution IN ('exact','ambiguous','unresolved') "
+                "GROUP BY resolution"
+            ).fetchall()
+        }
+    except sqlite3.OperationalError as e:
+        note_contention("stats.resolution", error=e)
+        counts = {}
+    stats["resolution"] = {"exact": 0, "ambiguous": 0, "unresolved": 0}
+    stats["resolution"].update(counts)
+    pool = stats["resolution"]["exact"] + stats["resolution"]["ambiguous"]
+    stats["exact_share"] = stats["resolution"]["exact"] / pool if pool else 0.0
+    stats["ambiguous_share"] = stats["resolution"]["ambiguous"] / pool if pool else 0.0
     # skipped-file counts by reason (best-effort -- the table may not exist).
     try:
         stats["skipped_total"] = cur.execute(

@@ -367,8 +367,11 @@ def test_empty_mv_table_flag_on_equals_flag_off(brute_env, probe):
     from cairn.graph.semantic import RetrievalParams, semantic_search
 
     _seed_symbols(brute_env)
-    emb.embed_all(brute_env)  # default: no mv rows
-    assert brute_env.execute("SELECT COUNT(*) FROM embeddings_mv").fetchone()[0] == 0
+    emb.embed_all(brute_env)  # default run: mv rows written (FR-004)
+    assert brute_env.execute("SELECT COUNT(*) FROM embeddings_mv").fetchone()[0] == 5
+    # The empty-mv state is built by hand: clear the default run's rows.
+    brute_env.execute("DELETE FROM embeddings_mv")
+    brute_env.commit()
 
     kwargs = dict(limit=5, threshold=0.1)
     off = semantic_search(brute_env, probe, **kwargs)
