@@ -141,8 +141,8 @@ def test_thread_safe_concurrent_callers_warn_once(caplog):
 
 # ---------------------------------------------------------------------------
 # 4. Integration -- simulated OperationalError at the ann_query swallow site
-#    (the representative site named in the task). Verifies the real call path
-#    warns exactly once across two calls and leaves semantics unchanged.
+# (the representative site named in the task). Verifies the real call path
+# warns exactly once across two calls and leaves semantics unchanged.
 # ---------------------------------------------------------------------------
 
 
@@ -226,8 +226,8 @@ def test_fresh_db_init_emits_no_contention_warning(tmp_path, caplog):
     db_path = str(tmp_path / "fresh.db")
     conn = schema.get_db(db_path)  # creates the file + applies all migrations
     try:
-        # Sanity: the migration that previously caused the false positive ran
-        # and was recorded as applied via the idempotent duplicate-column path.
+        # Sanity: the migration ran and was recorded as applied via the
+        # idempotent duplicate-column path.
         applied = conn.execute(
             "SELECT value FROM schema_meta WHERE key = ?",
             ("transitive_edges.target_id",),

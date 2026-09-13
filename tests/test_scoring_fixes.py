@@ -258,11 +258,9 @@ class TestGraphVerificationAlignment:
 
 
 class TestCriticDedup:
-    """Tests that scoring.py imports verification functions from critic.py rather than duplicating them.
-
-    Regression guard: scoring.py previously had duplicate _file_exists and
-    _symbol_exists implementations with identical SQL. These should be imported from
-    critic.py instead to eliminate drift risk.
+    """scoring.py imports verification functions from critic.py rather than
+    duplicating them: _file_exists and _symbol_exists must be the same
+    function objects as critic.py's, eliminating drift risk.
     """
 
     def test_file_exists_imported_from_critic(self):

@@ -192,7 +192,8 @@ def _warm_embedder() -> None:
         _load_with_offline_guard(embeddings._get_local_model)
         return
     if backend == "server":
-        # Consumes (or, on a cold cache, populates) the FR-002 probe verdict
+        # Consumes (or, on a cold cache, populates) the server availability
+        # probe verdict
         # shared with embeddings_available() -- never a duplicate probe.
         if not embeddings._server_probe_available():
             raise RuntimeError(

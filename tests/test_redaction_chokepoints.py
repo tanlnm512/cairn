@@ -1,8 +1,8 @@
-"""Redaction + namespace guards at the STORE/CHOKEPOINT layers (audit 2026-08).
+"""Redaction + namespace guards at the STORE/CHOKEPOINT layers.
 
-The audit's design principle: privacy/namespace fixes land at the store or
-write chokepoint, never at one caller's boundary -- otherwise the next audit
-finds the next divergent caller. These tests pin each chokepoint directly:
+Design principle: privacy/namespace fixes land at the store or write
+chokepoint, never at one caller's boundary. These tests pin each
+chokepoint directly:
 
   F1  knowledge/store.add_document (covers add_workflow + import_directory,
       which both funnel through it) redacts title/body/step-descriptions

@@ -7,9 +7,9 @@ member calls, or a ``qualified_identifier`` (fields ``scope``/``name``) for
 namespace-qualified calls — ``scope`` is the receiver signal. ``arguments``
 is the ``argument_list`` whose named children are the call-site arguments.
 Definition arity counts ``function_declarator`` -> ``parameter_list``
-parameters; defaults, varargs, and C-style unspecified ``()`` stay None
-(D-005). Receiver typing runs through the shared scope-ordered tracker with
-shadow-abstain (D-006).
+parameters; defaults, varargs, and C-style unspecified ``()`` stay None.
+Receiver typing runs through the shared scope-ordered tracker with
+shadow-abstain.
 """
 from __future__ import annotations
 
@@ -115,7 +115,7 @@ class TestReceiverType:
         assert outer.call_arity == 2
 
     def test_shadowed_receiver_abstains_then_recovers(self):
-        """D-006: an inner shadow poisons the name until its scope pops."""
+        """An inner shadow poisons the name until its scope pops."""
         pf = _parse(
             b"void run(Engine *e) {\n"
             b"  if (1) { Other e; e->shadowed(1); }\n"

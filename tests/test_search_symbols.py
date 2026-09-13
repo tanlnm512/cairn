@@ -1,14 +1,14 @@
 """Regression tests for search_symbols FTS5 underscore-token handling.
 
 Phase 1c: verifies that underscored patterns like *core_ui_v4* return results
-(the old LIKE-based search broke on these; FTS5 + _pattern_to_fts fixed it).
+(LIKE-based search breaks on these; FTS5 + _pattern_to_fts handles them).
 
 Phase 1d: verifies the LIKE-union fallback for camelCase substring matches.
 FTS5's ``*`` only matches from the *start* of an indexed token, and unicode61
 does not split camelCase, so a pattern like ``*UseCase*`` (or even bare
-``UseCase``, no wildcard) previously matched only names literally starting
+``UseCase``, no wildcard) match only names literally starting
 with "UseCase" -- missing ``UpdateProfileUseCase``/``GetPhotosUseCase``
-entirely. ``search_symbols`` now unions in a LIKE-based substring pass
+entirely. ``search_symbols`` unions in a LIKE-based substring pass
 whenever the pattern isn't a pure trailing-prefix pattern.
 """
 from __future__ import annotations
@@ -201,7 +201,7 @@ def test_no_duplicate_ids_after_merge(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Term mode (T008, FR-001): search_symbols_terms / _terms_to_fts.
+# Term mode: search_symbols_terms / _terms_to_fts.
 #
 # The OR-of-quoted-prefix path for enriched sentence queries. The contract
 # split is deliberate: everything above this line pins search_symbols /
@@ -214,7 +214,7 @@ _SPEC_TERMS = "parses unencoded URL string".split()  # enrich(sentence).sparse_q
 
 
 def test_terms_to_fts_is_or_of_quoted_prefixes():
-    """The TC-001 mechanism: per-term quoted prefix queries, OR-combined --
+    """The mechanism: per-term quoted prefix queries, OR-combined --
     never one folded phrase."""
     from cairn.graph.lexical import _terms_to_fts
 
@@ -228,7 +228,7 @@ def test_terms_to_fts_contrasted_with_the_phrase_defect():
     """Before/after on the spec's sentence query: _pattern_to_fts folds the
     whole sentence into ONE quoted phrase (matches no symbol name), while
     the term expression is an OR-style per-token query. Both shapes are
-    pinned verbatim -- the acceptance proof for FR-001/TC-001."""
+    pinned verbatim."""
     from cairn.graph.lexical import _pattern_to_fts, _terms_to_fts
 
     assert _pattern_to_fts(_SPEC_SENTENCE) == (

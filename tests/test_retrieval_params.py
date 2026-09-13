@@ -1,4 +1,4 @@
-"""RetrievalParams explicit injection (T003, D-008, FR-005).
+"""RetrievalParams explicit injection.
 
 ``RetrievalParams`` is the frozen, explicit tunable object threaded
 ``run_evaluation -> semantic_search`` -- the injection channel the quality
@@ -13,8 +13,8 @@ leak across lever combinations). Two contracts are pinned here:
   ``rrf_weights`` reorders the fused ranking by flipping leg weights,
   ``rrf_k`` rescales the fused scores, the pool knobs cap the cosine
   scan and the brute-force fetch, and the rerank/gate fields reach
-  their stages. T010 adds the NEW BM25-leg lever ``sparse_top_n``
-  (rank-position cutoff before fusion) with its own filter and
+  their stages. The BM25-leg lever ``sparse_top_n``
+  (rank-position cutoff before fusion) has its own filter and
   defaults-off-equivalence proofs.
 
 Hermetic like tests/test_rerank_gating.py: the hash embedder gives
@@ -171,7 +171,7 @@ class TestRetrievalParamsContract:
 
 
 # ---------------------------------------------------------------------------
-# Defaults-off equivalence (the FR-005 defaults-preserving contract)
+# Defaults-off equivalence (the defaults-preserving contract)
 # ---------------------------------------------------------------------------
 
 
@@ -328,7 +328,7 @@ class TestRRFKKnob:
 
 
 # ---------------------------------------------------------------------------
-# Scan-side pool knobs (T010): rerank_pool reaches BOTH computed-pool
+# Scan-side pool knobs: rerank_pool reaches BOTH computed-pool
 # branches; dense_pool reaches the brute-force SQL fetch cap.
 # ---------------------------------------------------------------------------
 
@@ -444,7 +444,7 @@ class TestSparseLimitKnob:
 
 
 # ---------------------------------------------------------------------------
-# The T010 NEW lever: sparse_top_n -- BM25-leg rank-position cutoff
+# The sparse_top_n lever: BM25-leg rank-position cutoff
 # ---------------------------------------------------------------------------
 
 
@@ -521,7 +521,7 @@ class TestSparseTopNKnob:
             ] == 0.0161
 
     def test_defaults_off_equivalence_on_the_fixture(self, seeded_db):
-        """The FR-005 defaults-preserving contract on THIS lever's fixture:
+        """The defaults-preserving contract on THIS lever's fixture:
         an all-None params object is byte-identical to no params."""
         from cairn.graph.semantic import RetrievalParams, semantic_search
 
@@ -533,7 +533,7 @@ class TestSparseTopNKnob:
 
 
 # ---------------------------------------------------------------------------
-# The T008 lever: enrich -- sparse-leg term mode (FR-001)
+# The enrich lever: sparse-leg term mode
 #
 # With params.enrich=True the BM25 fetch consumes query_enrich's term list
 # through lexical.search_symbols_terms (OR of quoted prefixes) instead of
@@ -639,7 +639,7 @@ class TestEnrichSparseLeg:
         assert str_calls == []
 
     def test_sparse_limit_reaches_the_term_mode_fetch(self, monkeypatch, seeded_db):
-        """T010's limit threading covers the term path too: the fetch-limit
+        """The fetch-limit threading covers the term path too: the fetch-limit
         spy sees the hard-coded 30 without params and the injected 7 with
         them (the fetch limit, not the display limit)."""
         from cairn.graph import semantic as semantic_mod
@@ -703,7 +703,7 @@ class TestEnrichSparseLeg:
 
 
 # ---------------------------------------------------------------------------
-# The T009 lever: enrich -- dense-leg wiring at the search boundary (FR-001)
+# The enrich lever: dense-leg wiring at the search boundary
 #
 # The ONE EnrichedQuery computed inside semantic_search feeds BOTH legs from
 # a single enrichment: the existing single embed_query call embeds
@@ -711,7 +711,7 @@ class TestEnrichSparseLeg:
 # query when it is not; the sparse fetch consumes the SAME object's
 # ``sparse_query``; and the confidence gate's ``_exact_name_hit``
 # corroboration keeps the RAW query (gate inputs shift only through the
-# fused ranking -- T018's measurement problem).
+# fused ranking).
 # ---------------------------------------------------------------------------
 
 
@@ -881,7 +881,7 @@ class TestEnrichDenseLeg:
         assert off == plain
 
     def test_confidence_gate_keeps_the_raw_query(self, armed_gate, monkeypatch):
-        """T018's contract pinned now: under enrich=True the gate's
+        """Under enrich=True the gate's
         ``_fused_confident`` (and through it ``_exact_name_hit``) still
         receives the RAW user query -- enrichment must not leak into the
         gate's inputs, only into the fused ranking it measures."""
@@ -905,8 +905,8 @@ class TestEnrichDenseLeg:
             params=RetrievalParams(dense_threshold=0.0, enrich=True),
         )
         assert gate_queries == ["safeApiCall"]
-        # T016 (D-005) landed: the rerank pair's query side is now the
-        # enriched dense query -- "safeApiCall" is identifier-shaped, so
+        # The rerank pair's query side is the
+        # enriched dense query: "safeApiCall" is identifier-shaped, so
         # enrich() appends its camelCase sub-tokens. The gate above keeps
         # the raw query; only the rerank stage sees the enriched form.
         assert rec.calls[0]["query"] == "safeApiCall safe Api Call"

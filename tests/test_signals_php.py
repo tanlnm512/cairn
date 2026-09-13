@@ -1,6 +1,6 @@
 """Signal tests for the PHP parser.
 
-Covers the parser-side signals php's grammar exposes (FR-006/FR-007):
+Covers the parser-side signals php's grammar exposes:
 
 - ``Import.local_alias`` — the ``alias`` field on ``namespace_use_clause``
   (F2.1, field-labeled at tree-sitter-php 0.24.1) across plain, multi-clause,
@@ -8,14 +8,14 @@ Covers the parser-side signals php's grammar exposes (FR-006/FR-007):
   ``use`` clauses and require/include carry ``local_alias=None``.
 - ``Symbol.arity`` / ``Edge.call_arity`` — ``formal_parameters`` count on
   ``function_definition`` / ``method_declaration`` (promoted constructor
-  parameters count; variadic and defaulted parameters degrade to None per
-  D-005: a declared count can never match a varying call-site count) and
+  parameters count; variadic and defaulted parameters degrade to None:
+  a declared count can never match a varying call-site count) and
   ``arguments`` count on the five call node types (spread unpacking and the
   first-class-callable ``...`` placeholder degrade to None; ``new Foo;``
   passes zero arguments).
 - ``Edge.receiver_type`` — pins the existing capitalized-receiver heuristic:
   a qualified scoped-call receiver is reduced to its last ``\\``-segment and
-  pinned; lowercase ``$var`` receivers abstain to None (FR-009).
+  pinned; lowercase ``$var`` receivers abstain to None.
 
 Closures (``anonymous_function`` / ``arrow_function``) produce no Symbol
 (unnamed), so their parameter lists carry no arity; ``use (...)`` captures
@@ -147,7 +147,7 @@ class TestSymbolArity:
         assert _symbol(pf, "__construct", "method").arity == 2
 
     def test_default_value_degrades_to_none(self):
-        # A defaulted parameter accepts a varying call-site count (D-005).
+        # A defaulted parameter accepts a varying call-site count.
         pf = _parse(b"<?php\nfunction f($a, $b = 2) {}\n")
         assert _symbol(pf, "f", "function").arity is None
 
@@ -210,7 +210,7 @@ class TestCallArity:
 
 
 # ---------------------------------------------------------------------------
-# Receiver pins — existing behavior must not regress (FR-009: lowercase
+# Receiver pins — existing behavior must not regress (lowercase
 # receivers abstain to None, never a guess).
 # ---------------------------------------------------------------------------
 

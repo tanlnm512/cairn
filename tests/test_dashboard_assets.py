@@ -163,7 +163,7 @@ def test_vendored_mermaid_has_no_external_imports():
 
 def test_vendored_mermaid_served_from_static(tmp_path):
     """The entry and the chunk tree the entry imports both serve from
-    /static/ as JavaScript — a missing chunk breaks the import at runtime,
+    static/ as JavaScript — a missing chunk breaks the import at runtime,
     not at build time."""
     client = _client(tmp_path)
     resp = client.get("/static/mermaid.min.js")

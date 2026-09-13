@@ -1,4 +1,4 @@
-"""CliRunner tests for `cairn embed --adopt-server-model` (FR-012).
+"""CliRunner tests for `cairn embed --adopt-server-model`.
 
 The flag validates a parity-verified server candidate through the ladder and
 then runs the embed under the ALIAS BINDING: rows keep the stored corpus stamp

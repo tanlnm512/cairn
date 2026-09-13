@@ -603,7 +603,7 @@ def run_agent_suite(
 
         conn = get_db(db_path)
         try:
-            # multivector pinned off: embed is a timed op here (D-003).
+            # multivector pinned off: embed is a timed op here.
             emb.embed_all(conn, reap_orphans=False, multivector=False)
             build_transitive_closure(conn)
 

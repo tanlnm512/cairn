@@ -316,8 +316,8 @@ def _closed_loopback_port() -> int:
 
 
 class TestServerBackendWarmup:
-    """FR-006: a healthy server backend is warmed with one tiny
-    /v1/embeddings POST through the shared T003 probe cache; every guard
+    """A healthy server backend is warmed with one tiny
+    /v1/embeddings POST through the shared probe cache; every guard
     from the local arm still applies."""
 
     @pytest.fixture
@@ -379,7 +379,7 @@ class TestServerBackendWarmup:
         self, server_backend, monkeypatch, caplog
     ):
         """A reachable server whose /v1/models omits the configured model
-        fails the FR-002 probe: observable here as zero /embeddings hits,
+        fails the availability probe: observable here as zero /embeddings hits,
         not just an unconnectable port."""
         stub = _WarmupStubServer(model_ids=["some-other-model"])
         try:

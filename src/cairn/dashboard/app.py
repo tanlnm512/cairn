@@ -1,10 +1,10 @@
-"""Starlette app factory for the read-only dashboard (FR-001, FR-010).
+"""Starlette app factory for the read-only dashboard.
 
 Routes: landing, workspaces overview, projects, graph (plus its
 /graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
 history, tokens (plus their .csv/.json exports), chains, health, memory,
 tasks, wiki (list plus per-page detail), settings, embeddings — the
-settings section (FR-011) carries the
+settings section carries the
 app's only POST routes (/settings/save, /settings/parity-check); the
 embeddings status view and everything else stay GET-only so the read-only
 views keep their assumptions.
@@ -53,16 +53,16 @@ MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
 # any family the corpus actually contains.
 KNOWLEDGE_FAMILIES = ("business-rule", "decision", "spec", "workflow")
 
-# Traffic-view time-window presets (FR-002) — the ``window`` param's
+# Traffic-view time-window presets — the ``window`` param's
 # allowed values; "all" is the unbounded default.
 WINDOW_PRESETS = ("24h", "7d", "30d", "all")
 
 # Preset -> seconds back from now; "all" is absent (unbounded).
 _WINDOW_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 
-# Settings-section knob set (FR-011): the CAIRN_EMBED_* keys the page reads
+# Settings-section knob set: the CAIRN_EMBED_* keys the page reads
 # and writes in $CAIRN_HOME/config.json. Values persist as strings — the
-# D-008 resolver (embeddings._config_or_env) honors str file values only.
+# The resolver (embeddings._config_or_env) honors str file values only.
 SETTINGS_BACKENDS = ("local", "server", "omlx", "ollama", "hash")
 SETTINGS_KEYS = (
     "CAIRN_EMBED_BACKEND",
@@ -106,7 +106,7 @@ def _human_iso(value) -> str:
     """ISO-8601 timestamp string as a UTC wall-clock string (``—`` when
     absent or unparseable). Status views render stored ISO columns
     (build_runs.started_at, embeddings.embedded_at) through this so a
-    raw ``2026-08-28T01:30:08.173238+00:00`` never reaches the page."""
+    raw ISO-8601 timestamps never reach the page."""
     try:
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
@@ -161,7 +161,7 @@ def _fmt_mean(value) -> str:
 
 
 def _resolve_window(window: str | None) -> tuple[str, float | None]:
-    """Validated ``window`` param plus its ``since`` epoch cutoff (FR-002).
+    """Validated ``window`` param plus its ``since`` epoch cutoff.
 
     Unknown values silently fall back to ``"all"``, matching the graph
     handler's scope fallback; ``since`` is None (unbounded) for ``"all"``.
@@ -190,7 +190,7 @@ def is_hx_request(request: "Request") -> bool:
     return (request.headers.get("HX-Request") or "").strip().lower() == "true"
 
 
-# Exports fetch the filtered set in one unpaginated call (FR-005): a single
+# Exports fetch the filtered set in one unpaginated call: a single
 # list_history page large enough to cover it — never a cursor-following
 # duplicate of the view's paging.
 _EXPORT_ROW_LIMIT = 1_000_000
@@ -300,9 +300,9 @@ def create_app(
     from ..paths import default_knowledge_path
     from ..viz import query as viz_query
 
-    # The FR-013 banner reflects THIS process's observability only: the
+    # The embed-degradation banner reflects THIS process's observability only: the
     # ladder cache is per-process and nothing in this read-only app evaluates
-    # it, so the first page render adds one uncached server probe (FR-002's
+    # it, so the first page render adds one uncached server probe (the
     # 2 s discipline) whose failure seeds the ladder here; later requests
     # read that cached verdict. The status view shares the same one-probe
     # seam for its probe-health row.
@@ -365,7 +365,7 @@ def create_app(
         knowledge_dir: str | None,
         form=None,
     ) -> tuple[str | None, str, str]:
-        """This request's ``(db, knowledge_root, store_key)`` (FR-003, D-001).
+        """This request's ``(db, knowledge_root, store_key)``.
 
         No ``store`` param keeps the launch store — today's behavior,
         byte-identical (``db`` may stay None for the data layer to resolve).
@@ -425,7 +425,7 @@ def create_app(
 
     # Machine-wide by design: reads the process-wide CAIRN_HOME, not the
     # launch db; the store param is echoed for the nav only — the overview
-    # itself never switches (FR-003's seam is the data views).
+    # itself never switches (the seam is the data views).
     def workspaces_overview(request: Request) -> Response:
         _, _, store_key = resolve_selection(request, db_path, knowledge_dir)
         home = Path(paths.CAIRN_HOME)
@@ -463,7 +463,7 @@ def create_app(
         # module scope; anything else falls back to the curated default,
         # matching the scope/layout fallback conventions.
         include_tests = request.query_params.get("tests", "") in ("1", "on", "true")
-        # Layout choice (FR-004): only "force" | "hier" are meaningful;
+        # Layout choice: only "force" | "hier" are meaningful;
         # absent/bogus falls back to force, matching the scope fallback.
         layout = request.query_params.get("layout", "force")
         if layout not in ("force", "hier"):
@@ -574,7 +574,7 @@ def create_app(
         )
 
     def graph_neighbors(request: Request) -> Response:
-        # Repeatable ``name`` param (FR-003): strip each, drop empties,
+        # Repeatable ``name`` param: strip each, drop empties,
         # dedupe preserving first-seen order (dict.fromkeys is ordered).
         # An empty list after cleaning hits the function's empty contract
         # (200 with empty nodes), never an error.
@@ -704,7 +704,7 @@ def create_app(
             )
         return render(request, "tokens.html", context)
 
-    # FR-005 exports ride the same seams the views ride: resolve_selection
+    # Exports ride the same seams the views ride: resolve_selection
     # for the store, _resolve_window for the window, the view's filter
     # params, and the very data functions the views render from — parity
     # by construction. The cursor params (before/after) page the HTML view
@@ -780,7 +780,7 @@ def create_app(
     def chains(request: Request) -> Response:
         window, since = _resolve_window(request.query_params.get("window"))
         expand = request.query_params.get("expand", "").strip() or None
-        # Session filter (FR-002), read like history's tool/session params:
+        # Session filter, read like history's tool/session params:
         # absent or blank means no filter.
         session = request.query_params.get("session", "").strip() or None
         selected_db, _, store_key = resolve_selection(
@@ -1177,7 +1177,7 @@ def create_app(
     def _settings_context(
         store_key: str, saved: bool = False, error: str = "", parity=None
     ) -> dict:
-        """Settings-page context: per-knob file/effective state (D-008).
+        """Settings-page context: per-knob file/effective state.
 
         ``prefill`` is the file value when one exists — the form edits the
         file layer — else the effective value; ``pinned`` marks an env var
@@ -1372,10 +1372,10 @@ def create_app(
     # Plain-def like the SQL views: the store read is blocking, and a
     # first-request server probe rides the banner's once-per-process seam.
     def embeddings_status(request: Request) -> Response:
-        """FR-011's status view: effective backend + precedence, resolved
+        """Settings status view: effective backend + precedence, resolved
         stamp, per-corpus counts, probe health, and the active fallback
         rung — the rung rows read ladder_state(), the same accessor the
-        FR-013 banner text builds from (one degradation source)."""
+        The degradation banner's text builds from (one degradation source)."""
         selected_db, _, store_key = resolve_selection(
             request, db_path, knowledge_dir
         )
@@ -1473,7 +1473,7 @@ def create_app(
         Route("/embeddings", embeddings_status, name="embeddings"),
         Route("/database", database, name="database"),
         Route("/settings", settings, name="settings"),
-        # The app's first POST routes (FR-011) — loopback-only by the CLI's
+        # The app's first POST routes — loopback-only by the CLI's
         # DEFAULT_HOST + _require_loopback; the GET views stay untouched.
         Route(
             "/settings/save",
@@ -1510,7 +1510,7 @@ def create_app(
             "</body></html>"
         )
 
-    # Prewarm the health probes off the request path (FR-001); the flag set
+    # Prewarm the health probes off the request path; the flag set
     # must be synchronous, so create_app never blocks on the probe import.
     prewarm_probes()
 

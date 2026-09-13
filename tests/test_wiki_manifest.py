@@ -1,4 +1,4 @@
-"""Contract tests for the wiki manifest (FR-005, D-006).
+"""Contract tests for the wiki manifest.
 
 Pins the contract of ``src/cairn/wiki/manifest.py``:
 
@@ -28,7 +28,7 @@ Pins the contract of ``src/cairn/wiki/manifest.py``:
   renamed ``queue_attempts``);
 - ``should_skip(page_row, current_plan_entry, bundle, repo)`` is True only
   when the recorded input hash equals the current plan hash AND the
-  promoted concept (D-007 identity ``wiki/pages/{repo}/{page_id}``) is
+  promoted concept (identity ``wiki/pages/{repo}/{page_id}``) is
   readable via ``bundle.read_concept``; promotion is derived from the
   concept, never from the recorded state. A changed module input re-queues
   exactly that page. ``--force`` is applied by the caller, not the helper.
@@ -121,7 +121,7 @@ def _empty_doc() -> dict:
 
 
 def _promote(bundle: OKFBundle, repo: str, page_id: str) -> None:
-    """Write the D-007 promoted article so read_concept resolves it."""
+    """Write the promoted article so read_concept resolves it."""
     bundle.write_concept(
         OKFConcept(
             type="Wiki-Article",
@@ -168,7 +168,7 @@ class TestSchemaConstants:
 
 
 class TestManifestLocation:
-    """D-006: the manifest lives at <knowledge>/_wiki/manifest.json."""
+    """The manifest lives at <knowledge>/_wiki/manifest.json."""
 
     def test_manifest_is_written_to_knowledge_root_wiki_manifest_json(self, bundle):
         knowledge_root = bundle.root
@@ -420,7 +420,7 @@ class TestSchema1Migration:
 
 
 class TestShouldSkip:
-    """Skip rule: hash unchanged AND promoted concept readable (D-006)."""
+    """Skip rule: hash unchanged AND promoted concept readable."""
 
     def test_unchanged_hash_with_promoted_concept_skips(self, bundle, plan):
         entry = plan[0]

@@ -9,7 +9,7 @@ Raw shape (``cairn.json`` ``ingest`` key, kept raw by CairnConfig):
 
 Workspace classification rules are checked before the built-in doc-kind
 map; skip ``add`` patterns extend the built-in skip-list and ``disable``
-turns built-in categories off (e.g. re-admitting changelogs, TC-028).
+turns built-in categories off (e.g. re-admitting changelogs).
 Everything defaults to empty: a bare workspace runs on built-ins alone.
 """
 from __future__ import annotations

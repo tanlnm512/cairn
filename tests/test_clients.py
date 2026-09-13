@@ -143,7 +143,7 @@ def test_uninstall_opencode_global_scope_strips_global_path(tmp_path, monkeypatc
 
 
 # --------------------------------------------------------------------------
-# FR-001: command-array shapes (opencode + kilo) embed env.CAIRN_HOME iff the
+# command-array shapes (opencode + kilo) embed env.CAIRN_HOME iff the
 # home is non-default; default home stays byte-identical to the env-less shape
 # --------------------------------------------------------------------------
 

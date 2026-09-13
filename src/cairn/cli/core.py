@@ -163,7 +163,7 @@ def config(list_all, mcp_config, db_only, as_json):
         return
 
     if as_json:
-        # Read-only resolution probe (FR-005): one resolve_store() call — it
+        # Read-only resolution probe: one resolve_store() call — it
         # only reads env/registry and never creates dirs or registry entries,
         # so verifiers can spawn this from an arbitrary cwd.
         store = resolve_store()

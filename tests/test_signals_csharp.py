@@ -1,6 +1,6 @@
 """Signal tests for the C# parser.
 
-Covers the parser-side signals csharp's grammar exposes (FR-006/FR-007):
+Covers the parser-side signals csharp's grammar exposes:
 
 - ``Import.local_alias`` — using-alias detection is structural at the pinned
   grammar version (F2.1/G2: no ``name_equals`` node exists in 0.23.1; the
@@ -11,12 +11,12 @@ Covers the parser-side signals csharp's grammar exposes (FR-006/FR-007):
   shared scope-ordered var->type tracker (locals from ``var``/explicit
   declarations, fields, parameters, ``foreach`` iteration variables), with
   the capitalized heuristic for static-class receivers. Reassignment to a
-  different type and live shadowing poison the name to None (D-006);
-  unresolvable receivers abstain to None (FR-009).
+  different type and live shadowing poison the name to None;
+  unresolvable receivers abstain to None.
 - ``Symbol.arity`` / ``Edge.call_arity`` — parameter counts on method and
   constructor declarations, argument counts on invocations and
   ``new`` expressions. Default-valued, ``params`` and extension-``this``
-  parameters degrade the declared arity to None (D-005: a fixed count can
+  parameters degrade the declared arity to None (a fixed count can
   never match those call sites).
 """
 from __future__ import annotations
@@ -60,7 +60,7 @@ class TestImportAlias:
     def test_alias_directive_records_target_path_and_alias(self):
         # `using Foo = Bar.Baz;` -> the resolver rewrites bare `Foo` hits to
         # the final segment of the stored path, so the path must be the
-        # TARGET namespace, never the alias (D-003).
+        # TARGET namespace, never the alias.
         pf = _parse(b"using Foo = Bar.Baz;\n")
         assert len(pf.imports) == 1
         imp = pf.imports[0]
@@ -194,7 +194,7 @@ class TestReceiverType:
 
     def test_foreach_var_degrades_to_none(self):
         # `var` over an untyped collection expression cannot be inferred
-        # without type checking -- abstain (FR-007: never a guess).
+        # without type checking -- abstain (never a guess).
         pf = _parse(
             b"class C {\n"
             b"    void Go() {\n"
@@ -235,7 +235,7 @@ class TestReceiverType:
         assert _call_edge(pf, "update").receiver_type is None
 
     def test_reassignment_to_different_type_poisons(self):
-        # D-006: after `c = new Other();` the local's type is conflicting;
+        # After `c = new Other();` the local's type is conflicting;
         # it must resolve to None, never either guess.
         pf = _parse(
             b"class C {\n"
@@ -294,7 +294,7 @@ class TestSymbolArity:
         assert _method_symbol(pf, "m").arity == 3
 
     def test_default_value_parameter_arity_is_none(self):
-        # D-005: `b = 5` admits call sites passing 1 or 2 arguments, so the
+        # `b = 5` admits call sites passing 1 or 2 arguments, so the
         # declared count must stay unknown.
         pf = _parse(b"class C { void m(int a, int b = 5) {} }\n")
         assert _method_symbol(pf, "m").arity is None

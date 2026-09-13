@@ -1,4 +1,4 @@
-"""Repo doc-tree scan: allowlist walk, skip-list with reasons (FR-001)."""
+"""Repo doc-tree scan: allowlist walk, skip-list with reasons."""
 from __future__ import annotations
 
 import tempfile

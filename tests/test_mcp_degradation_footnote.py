@@ -1,4 +1,4 @@
-"""Tests for the FR-013 MCP degradation footnote (T016).
+"""Tests for the MCP degradation footnote.
 
 Query tools whose quality depends on the dense leg (semantic_search, explore,
 ask_compass, recall_memory) append ``embed_ladder.degradation_footnote()`` as

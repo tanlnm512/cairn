@@ -58,29 +58,19 @@ def reindex_paths(
 
     for abs_path in paths:
         abs_path = str(abs_path)
-        repo = scanner_mod.infer_repo_for_path(abs_path, workspace)
-        if not repo:
+        resolved = _repo_relative_path(workspace, abs_path)
+        if resolved is None:
             continue
-        repo_path = str(scanner_mod.resolve_repo_path(workspace, repo))
-        try:
-            Path(abs_path).relative_to(repo_path)
-        except ValueError:
-            continue
+        repo, rel_to_repo = resolved
 
         cur = conn.cursor()
         # files.path is stored as REPO-RELATIVE (the portable-path contract);
-        # reindex_paths receives ABSOLUTE paths. Normalize the incoming abs_path
-        # to repo-relative first (the common case). Fall back to matching the
-        # stored absolute form for DBs not yet rebuilt to portable paths.
-        from pathlib import Path as _P
-        rel_to_repo = str(_P(abs_path).relative_to(repo_path)) if abs_path.startswith(repo_path) else _P(abs_path).name
-
-        # Primary: repo-relative (current build contract).
+        # reindex_paths receives ABSOLUTE paths. Primary lookup: repo-relative.
+        # Fallback: DBs not yet rebuilt store absolute paths.
         row = cur.execute(
             "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
         ).fetchone()
         if row is None:
-            # Fallback: DBs not yet rebuilt store absolute paths.
             row = cur.execute(
                 "SELECT id, repo_id, path FROM files WHERE path = ?", (abs_path,)
             ).fetchone()
@@ -150,29 +140,15 @@ def reindex_paths(
                 # FK (embeddings.symbol_id -> symbols.id) blocks the symbol delete.
                 # Re-embedding after reindex repopulates them.
                 try:
-                    # Collect (model, rowid) pairs BEFORE the delete: the vec0
-                    # index keys on embeddings.rowid, and a stale vec entry can
-                    # later pair a REUSED rowid with an unrelated vector (wrong
-                    # results, not just missing ones). No-op when ANN is off.
-                    doomed = cur.execute(
-                        "SELECT model, rowid FROM embeddings WHERE symbol_id IN "
-                        "(SELECT id FROM symbols WHERE file_id = ?)",
-                        (file_id,),
-                    ).fetchall()
-                    cur.execute(
-                        "DELETE FROM embeddings WHERE symbol_id IN "
-                        "(SELECT id FROM symbols WHERE file_id = ?)",
+                    from .embeddings import _purge_embedding_rows
+
+                    # Base rows + their vec0 entries go through the shared
+                    # helper (collect-before-delete, no-op when ANN is off).
+                    _purge_embedding_rows(
+                        conn,
+                        "symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)",
                         (file_id,),
                     )
-                    if doomed:
-                        from .ann_index import delete_index_rows
-
-                        for model in {r["model"] for r in doomed}:
-                            delete_index_rows(
-                                conn,
-                                model,
-                                [r["rowid"] for r in doomed if r["model"] == model],
-                            )
                     # embeddings_mv also FK-references symbols(id) (no
                     # cascade); no vecmv rowid cleanup exists (vecmv_ tables
                     # rebuild wholesale).
@@ -256,8 +232,8 @@ def reindex_paths(
             conn.execute("COMMIT")
             # embed_symbols self-commits its batches: keep it after the COMMIT
             # above or its commit would defeat the rollback on re-parse
-            # failure. FR-3: a closed gate or a failing embed defers, never
-            # fails, the update.
+            # failure. A closed gate or a failing embed defers, never fails,
+            # the update.
             if name_to_symbol_ids:
                 new_ids = [
                     sid
@@ -267,10 +243,30 @@ def reindex_paths(
                 from .embeddings import embed_symbols, embeddings_available
                 if embeddings_available():
                     try:
-                        embedded_symbols += embed_symbols(conn, new_ids)["embedded"]
+                        summary = embed_symbols(conn, new_ids)
                     except Exception:
                         logger.debug("embed_symbols failed; deferring", exc_info=True)
                         deferred_embeds += len(new_ids)
+                        # Drop partially buffered writes so an open transaction
+                        # cannot break the next file leg's BEGIN.
+                        try:
+                            conn.rollback()
+                        except sqlite3.Error:
+                            pass
+                    else:
+                        embedded_symbols += summary["embedded"]
+                        # embed_symbols' commit-failure path (lock contention)
+                        # leaves the batch buffered on an open transaction and
+                        # reports embedded=0. Settle it here or the next file
+                        # leg's BEGIN fails and that leg's rollback drops the
+                        # buffered rows. Flush success keeps the rows; a second
+                        # loss rolls back and defers the file's symbols.
+                        if conn.in_transaction:
+                            try:
+                                conn.commit()
+                            except sqlite3.OperationalError:
+                                conn.rollback()
+                                deferred_embeds += len(new_ids)
                 else:
                     deferred_embeds += len(new_ids)
             # Record BOTH the removed and the freshly-introduced names for the
@@ -359,8 +355,8 @@ def incremental_update(
     Uses `git diff` to find changed source files, deletes their old symbols/edges,
     and re-parses + inserts them. After reindexing it also refreshes the derived
     indexes (dataflow + transitive closure) so cached impact lookups and multi-hop
-    traversals reflect the change -- previously these were only rebuilt by a full
-    `cairn build`, leaving `cairn update` serving stale derived data.
+    traversals reflect the change; without this refresh `cairn update` would
+    serve stale derived data.
 
     Returns a summary dict including any per-file errors (re-parse failures,
     resolver failures). Uses a longer busy_timeout than interactive MCP tool
@@ -475,12 +471,10 @@ def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _find_tracked_file_row(cur, workspace: str, abs_path: str):
-    """Resolve an absolute path to its tracked ``files`` row (or None).
+def _repo_relative_path(workspace: str, abs_path: str) -> tuple[str, str] | None:
+    """Infer the owning repo and the repo-relative path for an absolute path.
 
-    Mirrors reindex_paths' normalization (repo-relative primary, absolute
-    fallback) so the pre/post snapshots agree with what reindex_paths actually
-    deleted and re-inserted.
+    Returns None when the path lies outside every known repo in the workspace.
     """
     repo = scanner_mod.infer_repo_for_path(abs_path, workspace)
     if not repo:
@@ -490,9 +484,26 @@ def _find_tracked_file_row(cur, workspace: str, abs_path: str):
         Path(abs_path).relative_to(repo_path)
     except ValueError:
         return None
-    from pathlib import Path as _P
+    rel_to_repo = (
+        str(Path(abs_path).relative_to(repo_path))
+        if abs_path.startswith(repo_path)
+        else Path(abs_path).name
+    )
+    return repo, rel_to_repo
 
-    rel_to_repo = str(_P(abs_path).relative_to(repo_path)) if abs_path.startswith(repo_path) else _P(abs_path).name
+
+def _find_tracked_file_row(cur, workspace: str, abs_path: str):
+    """Resolve an absolute path to its tracked ``files`` row (or None).
+
+    Normalizes through the same repo-relative path the delete/reinsert legs
+    compute, then applies the repo-relative-primary, absolute-fallback lookup
+    so pre/post snapshots agree with what reindex_paths actually deleted and
+    re-inserted.
+    """
+    resolved = _repo_relative_path(workspace, abs_path)
+    if resolved is None:
+        return None
+    _repo, rel_to_repo = resolved
     row = cur.execute(
         "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
     ).fetchone()

@@ -1,9 +1,8 @@
 """F4: `semantic_unavailable` -- durable signal for semantic-off degrades.
 
 explore() and search_knowledge()'s semantic stage both degrade to lexical-only
-results when the semantic backend can't contribute; those degrades previously
-emitted nothing at all (explore: a debug log; knowledge/search._semantic_search:
-a bare `return []` with no log). Now each surface records one bounded
+results when the semantic backend can't contribute. Each surface records one
+bounded
 `semantic_unavailable` event (surface: explore|knowledge, reason:
 unavailable|no_embeddings|error) via ``note_semantic_unavailable``.
 

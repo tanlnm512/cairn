@@ -1,14 +1,14 @@
-"""Dedicated tests for the eval harness (FR-003 / T010).
+"""Dedicated tests for the eval harness.
 
 The survey found zero dedicated eval tests; this is the first suite. Covers:
 
-* the graded ground-truth loader (D-004 schema: queries.jsonl +
+* the graded ground-truth loader (schema: queries.jsonl +
   expectations.tsv) and its validation errors;
 * the two-tier identity-first matcher (strict ``file#symbol`` identity,
   then the legacy substring rule);
 * grade-aware recall@10 / MRR arithmetic on hand-built result sets;
 * ``run_evaluation`` / ``eval_cmd --queries`` directory dispatch;
-* the untouched yaml fixture (D-008: 30 L1 + 10 L5, legacy report shape).
+* the untouched yaml fixture (30 L1 + 10 L5, legacy report shape).
 
 Loader/matcher fixtures live in tmp_path.
 """
@@ -56,7 +56,7 @@ GOOD_EXPECTATIONS = [
 
 
 def _write_ground_truth(directory, queries, expectation_rows):
-    """Materialize a D-004 file pair inside ``directory`` (tmp_path-backed)."""
+    """Materialize a file pair inside ``directory`` (tmp_path-backed)."""
     directory.mkdir(parents=True, exist_ok=True)
     queries_path = directory / "queries.jsonl"
     queries_path.write_text(
@@ -290,8 +290,8 @@ class TestRunEvaluationDispatch:
 
         def fake_l1(conn_, query, k, params=None):
             # Rank 2 for the primary target, rank 1 for context: RR = 1/2.
-            # (params: the D-008 RetrievalParams run_evaluation threads
-            # through since T003 -- the double accepts and ignores it.)
+            # (params: the RetrievalParams run_evaluation threads
+            # through since -- the double accepts and ignores it.)
             return [
                 {"name": "_new", "file_path": "/repo/src/yarl/_url.py"},
                 {"name": "URL", "file_path": "/repo/src/yarl/_url.py"},
@@ -370,7 +370,7 @@ class TestRunEvaluationDispatch:
 
 
 # ---------------------------------------------------------------------------
-# yaml fixture untouched (D-008)
+# yaml fixture untouched 
 # ---------------------------------------------------------------------------
 
 class TestYamlFixtureUntouched:

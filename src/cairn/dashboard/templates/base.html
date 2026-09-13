@@ -75,7 +75,7 @@
   </script>
   <script{% if shell is defined and shell.selector.options %} data-valid-stores='{{ shell.selector.options | map(attribute='key') | list | tojson }}'{% endif %}>
     /* Workspace stickiness: the store selection rides the URL
-       (?store=<key>, the FR-003 seam), which a typed URL or new tab
+       (?store=<key>, the store seam), which a typed URL or new tab
        drops — so, like the theme, the last explicit selection is
        remembered (localStorage "cairn-store") and a bare visit
        redirects to it. Until the user picks a workspace, nothing is
@@ -146,7 +146,7 @@
   {%- set selector = (shell_ctx.selector if shell_ctx else none) %}
   {%- set palette = (shell_ctx.palette if shell_ctx else none) %}
   <aside class="sidebar">
-    {#- FR-003: keep the selected store on every nav hop; empty when the
+    {#- Keep the selected store on every nav hop; empty when the
         launch store is served (byte-identical plain hrefs). -#}
     {% set nav_query = '' if not store_key else '?store=' + (store_key | urlencode) %}
     {% set path = request.url.path %}
@@ -184,7 +184,7 @@
           views may override via the view_title block. -#}
       <div class="topbar-title">{% block view_title %}{{ 'Overview' if path == '/' else (path.strip('/').split('/')[0] | capitalize) }}{% endblock %}</div>
       <div class="topbar-actions">
-        {#- Global workspace selector (FR-003 seam stays the URL param):
+        {#- Global workspace selector (the seam stays the URL param):
             switching rewrites ?store= on the current URL and reloads, so
             every tab shows the selected workspace. shell.js owns the
             change behavior; the options are server-rendered. -#}

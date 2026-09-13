@@ -1,14 +1,14 @@
 """Regression tests for dropped call edges:
 
-- Java field-initializer calls — ``field_declaration`` now descends via ``_walk``
-  (previously returned, dropping e.g. ``Repo r = createRepo();``).
-- Java constructor calls ``new Foo()`` — ``object_creation_expression`` handler
-  (previously had no handler, so every ``new`` produced no edge).
-- PHP constructor calls ``new Foo()`` — ``object_creation_expression`` added to
-  ``_CALL_NODES`` (previously omitted).
+- Java field-initializer calls — ``field_declaration`` descends via ``_walk``
+  (e.g. ``Repo r = createRepo();``).
+- Java constructor calls ``new Foo()`` — ``object_creation_expression``
+  handler produces an edge.
+- PHP constructor calls ``new Foo()`` — ``object_creation_expression`` is in
+  ``_CALL_NODES``.
 
 Same edge-drop family as the TS var-declarator / ``public_field_definition``
-fixes (see ``test_jsx_references.py``).
+cases (see ``test_jsx_references.py``).
 """
 from __future__ import annotations
 

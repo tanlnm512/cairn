@@ -43,7 +43,7 @@
         {% endfor %}
       </ol>
       {% if chain.truncated_calls %}
-      {#- FR-003: the expand anchor keeps the window AND the selected store
+      {#- The expand anchor keeps the window AND the selected store
           (links.url); empty selection keeps the bare href. -#}
       {% set q = {'expand': chain.session_id} %}
       {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}

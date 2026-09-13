@@ -65,9 +65,7 @@ class TestCompleteTaskCriticIntegration:
         A passing compass-synthesize task is auto-promoted into compass/<module>
         (see complete_task + the `cairn task complete` CLI branch that prints
         "completed and promoted"). Other task kinds are left for the caller to
-        promote. This test was previously written asserting `promoted is False`,
-        which contradicted the production behavior; the assertion now matches
-        the intended auto-promotion contract.
+        promote; a compass-synthesize pass is auto-promoted by the same contract.
         """
         conn = _conn_with_fixture(fresh_db)
         bundle = _create_bundle(tmp_path)

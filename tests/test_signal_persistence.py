@@ -72,7 +72,7 @@ def test_insert_parsed_file_persists_signals(db):
     assert arity["a"] is None  # synthesized module row never carries arity
 
 
-def test_reindex_paths_persists_signals(tmp_path):
+def test_reindex_paths_persists_signals(tmp_path, hash_backend):
     """The incremental write path (reindex_paths -> insert_parsed_file) persists
     exactly what the language parser produced for the re-parsed file."""
     ws = tmp_path / "ws"

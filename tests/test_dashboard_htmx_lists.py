@@ -378,7 +378,7 @@ def test_live_loop_is_htmx_event_driven_and_never_fetches():
 
 
 def test_live_loop_paused_and_hidden_guards_cancel_the_poll():
-    """FR-004 / D-003: inside the beforeRequest listener the paused guard
+    """Inside the beforeRequest listener the paused guard
     leads — ahead of the transport call — so a paused loop issues no
     fetch regardless of tab state, and a hidden tab fetches nothing; both
     refuse the request while htmx's own timer keeps its schedule, so the
@@ -400,7 +400,7 @@ def test_live_loop_paused_and_hidden_guards_cancel_the_poll():
 
 
 def test_live_loop_pause_toggles_words_resume_restores_live():
-    """FR-004: the pause toggle is the state machine's pause half — it
+    """The pause toggle is the state machine's pause half — it
     lands the 'paused' word and flips the button to Resume; the resume
     half restores 'running' (the 'live' word)."""
     loop = _live_loop_js()
@@ -430,7 +430,7 @@ def test_live_loop_pause_toggles_words_resume_restores_live():
 
 
 def test_live_loop_failure_sets_disconnected_success_restores_running():
-    """FR-005: the rejected-then-resolved transitions — a failed poll
+    """The rejected-then-resolved transitions — a failed poll
     raises the disconnected banner and word (self-healing: htmx's timer
     keeps ticking, so recovery needs no reload), while the next
     successful poll clears the banner and restores 'running'."""

@@ -1,9 +1,6 @@
 """Tests for import-aware resolution: package-qualified matching + type-scoped fallback.
 
-Covers two related features of ``_import_aware_candidates`` (formerly split
-across test_resolver_package_qualified.py and this file; merged 2026-07-31 to
-deduplicate -- the two files tested the same function with 5 near-identical
-cases):
+Covers two related features of ``_import_aware_candidates``:
 
 1. M4 package-qualified matching: ``import com.example.RepoA`` resolves a call
    ``RepoA.create()`` to ``com.example.RepoA.create`` via contiguous-subsequence

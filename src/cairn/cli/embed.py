@@ -9,9 +9,9 @@ from .main import DEFAULT_DB_PATH, get_db, main, queries
 
 
 def _exit_backend_unavailable() -> None:
-    """Report an unavailable embedding backend and exit 1 (D-003: loud).
+    """Report an unavailable embedding backend and exit 1.
 
-    Server-family backends never fall back to hash (FR-002), so a failed
+    Server-family backends never fall back to hash, so a failed
     probe exits with a server-specific remediation (base URL, the /v1/models
     check it must pass, `cairn doctor`) instead of the sentence-transformers
     install hint every other backend keeps. Exit code is 1 either way.
@@ -46,7 +46,7 @@ def _exit_backend_unavailable() -> None:
 
 
 def _exit_not_adoptable(requested, state) -> None:
-    """Exit 1 naming what the ladder found (FR-012/D-003: degrade loudly)."""
+    """Exit 1 naming what the ladder found (degrade loudly)."""
     from . import display
 
     if requested:
@@ -76,7 +76,7 @@ def _exit_not_adoptable(requested, state) -> None:
 
 
 def _resolve_adopted_model(conn, requested):
-    """Resolve --adopt-server-model into the FR-012 alias binding.
+    """Resolve --adopt-server-model into the model alias binding.
 
     Returns (adopted_model_id, stored_stamp) with the session pins set so the
     embed below reads and writes the STORED stamp while requests route to the
@@ -84,7 +84,7 @@ def _resolve_adopted_model(conn, requested):
     bare flag reuses the ladder's active rung-1 adoption, else forces one
     evaluation against the server; an explicit MODEL_ID is verified the same
     honest way: it must be the candidate the ladder's parity scan proves
-    (D-009: only a passing parity gate switches producers).
+    (only a passing parity gate switches producers).
     """
     from . import display
     from cairn.graph import embed_ladder as ladder
@@ -170,7 +170,7 @@ def _resolve_adopted_model(conn, requested):
     flag_value="",
     default=None,
     metavar="[MODEL_ID]",
-    help="Adopt a parity-verified server model (FR-012): the stored corpus "
+    help="Adopt a parity-verified server model: the stored corpus "
     "keeps its stamp while this embed runs through the adopted model. "
     "Omit MODEL_ID to use the ladder's verified rung-1 adoption, "
     "re-evaluated against the server when none is active.",
@@ -305,8 +305,8 @@ def embed(
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())
-                # Default-on multivector: also rebuild the FR-005 mv index
-                # (D-007 -- its own vecmv_<model> vec0 table over
+                # Default-on multivector: also rebuild the mv index
+                # (its own vecmv_<model> vec0 table over
                 # embeddings_mv). --no-multivector skips it and the flow is
                 # byte-identical to the single-index build.
                 mv_idx_summary = (
@@ -351,8 +351,8 @@ def embed(
                     )
 
         if adopted is not None:
-            # FR-012: permanence persists the alias binding — the corpus keeps
-            # its stamp. ~/.cairn/config.json (the FR-010 substrate, landed) is
+            # Permanence persists the alias binding — the corpus keeps
+            # its stamp. ~/.cairn/config.json is
             # the durable home for the pin; the env export remains for
             # env-only setups.
             display.success(

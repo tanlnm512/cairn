@@ -1,12 +1,12 @@
 """F2: OperationalError discrimination at the two query swallow sites.
 
-``ann_index.ann_query`` and ``lexical.search_symbols`` previously routed EVERY
-``sqlite3.OperationalError`` to ``note_contention`` ("lock contention
-absorbed") -- including FTS5 syntax errors, no-such-table races, and vec0
-corruption, which are *query* failures, not cross-process lock events. That
-misattribution polluted the ``lock_contention`` signal ``cairn doctor`` /
-``metrics --contention`` aggregate on, and the spec's ``query_error`` enum
-value was never emitted.
+``ann_index.ann_query`` and ``lexical.search_symbols`` route only
+lock-contention-shaped ``sqlite3.OperationalError`` to ``note_contention``;
+other ``OperationalError`` kinds (FTS5 syntax errors, no-such-table races,
+vec0 corruption) are *query* failures, not cross-process lock events, and
+surface through ``query_error`` instead. Without that discrimination the
+``lock_contention`` signal aggregated by ``cairn doctor`` /
+``metrics --contention`` absorbs query failures.
 
 These tests drive both branches of the discrimination at both sites:
 

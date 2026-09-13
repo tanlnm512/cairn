@@ -268,10 +268,9 @@ _UNINSTALLERS = {
 }
 
 
-# --- FR-006/D-005: install-time registration verification ------------------
+# --- Install-time registration verification ------------------
 #
-# Ceiling for one probe spawn. A warm probe costs ~0.5s (the spec assumes
-# ~1s per client); the ceiling is deliberately generous because a timeout is
+# Ceiling for one probe spawn. A warm probe costs ~0.5s; the ceiling is deliberately generous because a timeout is
 # reported as FAIL and a healthy install must never flake on it.
 
 _PROBE_TIMEOUT_S = 5.0
@@ -336,7 +335,7 @@ def verify_registration(
     expected: dict[str, str],
 ) -> tuple[str, str]:
     """Spawn one written registration and compare its resolved store with the
-    install target (FR-006, D-005; TC-010/TC-011).
+    install target.
 
     ``command`` is the registration's exact argv as written (its ``command``
     plus ``args``); the trailing ``"serve"`` is replaced by the read-only
@@ -348,7 +347,7 @@ def verify_registration(
     store, resolve exactly that store? The intended home is derived from
     ``expected["db"]`` per the StorePaths layout (``<CAIRN_HOME>/<store
     key>/.kg``). Pinning happens after the written env merges in, so a
-    spawned wrapper that drops ``CAIRN_HOME`` (TC-011's PATH-shadowed
+    spawned wrapper that drops ``CAIRN_HOME`` (e.g. a PATH-shadowed
     binary) is still caught, while a long-lived installer process's
     binding-vs-env divergence is bridged deterministically. ``cwd`` is the
     target workspace so cwd-based resolution matches what the client does.
@@ -357,7 +356,7 @@ def verify_registration(
     ``("fail", <reason naming both stores>)``. Spawn failure, timeout
     (``_PROBE_TIMEOUT_S``), non-zero exit, and unparseable output all FAIL
     naming the intended store. Reused by the doctor's consistency audit
-    (FR-007) instead of duplicating the mechanism.
+    instead of duplicating the mechanism.
     """
     argv = list(command)
     if argv and argv[-1] == "serve":
@@ -406,7 +405,7 @@ def verify_registration(
 
 
 def _verify_results(results: list[InstallResult], workspace: str) -> None:
-    """FR-006 verify loop: record per-client spawn-probe verdicts in place.
+    """Verify loop: record per-client spawn-probe verdicts in place.
 
     For every result carrying a file-written stdio registration (located by
     scanning the files this installer actually wrote, per client shape), the
@@ -414,7 +413,7 @@ def _verify_results(results: list[InstallResult], workspace: str) -> None:
     the workspace and compared against this process's ``resolve_store()``.
     dry_run never reaches this (guarded by the caller). SSE registrations
     (URL-based, nothing to spawn) and CLI-registered clients (no file-written
-    registration this run) stay "skipped" and get a note (D-006).
+    registration this run) stay "skipped" and get a note.
     """
     store = paths.resolve_store(workspace)
     expected = {"db": str(store.db), "workspace": str(store.workspace)}
@@ -462,7 +461,7 @@ def install(
     pass ``transport="stdio"`` to opt out everywhere.
 
     After writing (unless ``dry_run``), every file-written stdio registration
-    is spawn-verified against the install-time store (FR-006/D-005); the
+    is spawn-verified against the install-time store; the
     per-client verdict lands on ``InstallResult.verification_status`` /
     ``verification_detail``.
     """
@@ -485,12 +484,12 @@ def install(
             scope=scope,
         ))
 
-    # FR-006/D-005: verify each file-written stdio registration by spawning
+    # Verify each file-written stdio registration by spawning
     # its exact binary+env with probe args (cwd = target workspace) and
     # comparing the resolved store against this process's resolve_store().
     # Lives here — not the CLI layer — so every install() caller gets
     # verification; agents.py only renders the verdicts. dry_run never
-    # spawns; SSE and CLI-registered clients stay "skipped" (D-006).
+    # spawns; SSE and CLI-registered clients stay "skipped".
     if not dry_run:
         _verify_results(results, workspace)
 

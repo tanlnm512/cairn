@@ -1,23 +1,23 @@
-"""Contract tests for the ``--refine-catalog`` two-step wiki generation (FR-007).
+"""Contract tests for the ``--refine-catalog`` two-step wiki generation.
 
-D-003: with ``--refine-catalog``, ``cairn wiki generate --llm`` queues exactly
+With ``--refine-catalog``, ``cairn wiki generate --llm`` queues exactly
 one ``wiki-catalog`` task and returns with claim/complete instructions (the
 ``cli/compass.py`` queued-task echo shape); page tasks spawn only on a re-run
 that finds the completed catalog's Task-Result sibling (``llm/tasks.py
 read_result`` — never a promoted concept).
 
-CLI scenarios (TC-019..TC-022, over a seeded four-module graph whose
+CLI scenarios (over a seeded four-module graph whose
 deterministic plan is ``overview, m_a, m_b, m_c, m_big``):
 
-- TC-019  first run: one pending ``wiki-catalog`` task, zero ``wiki-page``
+- First run: one pending ``wiki-catalog`` task, zero ``wiki-page``
   tasks, output carries the task id and claim/complete instructions;
-- TC-020  after the catalog task completes with a fully valid refined
+- After the catalog task completes with a fully valid refined
   outline, the re-run queues page tasks from that outline (retitles prove
   refinement drove the queue) and no ``wiki-catalog`` task stays pending;
-- TC-021  a refined entry naming a nonexistent module is rejected and the
+- A refined entry naming a nonexistent module is rejected and the
   deterministic plan's entry is kept in its slot (positionally), while the
   valid refined entries are honored;
-- TC-022  a catalog chain that fails through its revise cycle to
+- A catalog chain that fails through its revise cycle to
   ``dropped: True`` falls back to the full deterministic plan on the re-run.
 
 Validator unit contract (implemented over the graph, LIKE prefix precedent
@@ -181,7 +181,7 @@ def _expected_hash(entry: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-# --- TC-019: the first run queues only the catalog task --------------------
+# --- the first run queues only the catalog task --------------------
 
 
 class TestFirstRunQueuesOnlyCatalogTask:
@@ -215,7 +215,7 @@ class TestFirstRunQueuesOnlyCatalogTask:
         assert "complete" in result.output
 
 
-# --- TC-020: a valid refined outline drives the page tasks -----------------
+# --- a valid refined outline drives the page tasks -----------------
 
 
 class TestRerunQueuesPagesFromRefinedOutline:
@@ -260,7 +260,7 @@ class TestRerunQueuesPagesFromRefinedOutline:
         assert list_tasks(bundle, kind="wiki-catalog", status="pending") == []
 
 
-# --- TC-021: an invalid refined entry reverts to the deterministic entry ---
+# --- an invalid refined entry reverts to the deterministic entry ---
 
 
 class TestInvalidRefinedEntryKeepsDeterministicSlot:
@@ -306,7 +306,7 @@ class TestInvalidRefinedEntryKeepsDeterministicSlot:
         assert list_tasks(bundle, kind="wiki-catalog", status="pending") == []
 
 
-# --- TC-022: a failed/dropped refinement falls back to the deterministic plan
+# --- a failed/dropped refinement falls back to the deterministic plan
 
 
 class TestDroppedCatalogFallsBackToDeterministicPlan:
@@ -487,7 +487,7 @@ class TestQueueIntegration:
         self, fresh_db, tmp_path
     ):
         """The catalog result rides the standard claim/complete path; no
-        completion hook spawns anything (D-003) — completion alone must not
+        completion hook spawns anything — completion alone must not
         create page tasks."""
         knowledge = tmp_path / ".knowledge"
         knowledge.mkdir()

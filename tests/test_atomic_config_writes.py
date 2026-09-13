@@ -143,7 +143,7 @@ class TestMergeMalformedBackup:
 
 
 class TestNonObjectKeyBackup:
-    """F6: a non-object value under a key the merge writes (mcpServers / mcp /
+    """F6: a non-object value under a key the merge writes (mcpServers / mcp
     hooks -- e.g. ``"mcp": true``) is treated like a malformed config: backed
     up, then merged fresh, instead of crashing with AttributeError."""
 
@@ -238,7 +238,7 @@ def _cairn_entry(data: dict, config_key: str) -> dict:
 
 
 class TestAlreadyInstalledEnvComparison:
-    """T023 (FR-001/D-012): the zcode and opencode/kilo idempotence branches
+    """The zcode and opencode/kilo idempotence branches
     must compare env like the flat mcpServers branch, so a reinstall after
     moving the store (changed CAIRN_HOME) replaces the stale env instead of
     silently keeping the old registration."""
@@ -259,7 +259,7 @@ class TestAlreadyInstalledEnvComparison:
     @pytest.mark.parametrize("config_key", ["zcode", "opencode", "kilo"])
     def test_default_home_reinstall_removes_env_key(self, tmp_path, config_key):
         """Back on the default home the generator emits no env block, so the
-        reinstall must drop the stale CAIRN_HOME key (FR-001 AC5)."""
+        reinstall must drop the stale CAIRN_HOME key (AC5)."""
         path = tmp_path / "config.json"
         path.write_text(json.dumps(_mcp_merger(config_key, {"CAIRN_HOME": "/old/cairn-home"})))
 

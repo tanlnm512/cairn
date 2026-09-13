@@ -1,13 +1,13 @@
-"""FR-005 (T017): the parallel ``embeddings_mv`` multi-vector table.
+"""The parallel ``embeddings_mv`` multi-vector table.
 
-Covers the ship gate (TC-020) and the producer/staleness contract:
-- Default (FR-004): kwarg-less ``embed_all`` writes both
+Covers the ship gate and the producer/staleness contract:
+- Default: kwarg-less ``embed_all`` writes both
   ``embeddings_mv`` kinds and reports the ``mv_embedded`` summary key.
 - Explicit ``multivector=True/False``: the ``embeddings`` base flow is
-  byte-identical either way (D-006); ON populates the kinds
+  byte-identical either way; ON populates the kinds
   ('name', 'docstring') with kind-specific texts, each with its OWN
   per-kind content-hash staleness, and the producers stay OUT of
-  ``CHUNK_VARIANTS`` (TC-008's identity-floor test iterates that tuple).
+  ``CHUNK_VARIANTS`` (the identity-floor test iterates that tuple).
 
 Uses CAIRN_EMBED_BACKEND=hash so no torch/model download is needed.
 """
@@ -111,7 +111,7 @@ def test_existing_db_gains_mv_table_on_reopen():
 
 
 def test_base_embeddings_pk_unchanged():
-    """D-006: the base table's PK stays (symbol_id, model) -- never re-PK'd."""
+    """The base table's PK stays (symbol_id, model) -- never re-PK'd."""
     with tempfile.TemporaryDirectory() as tmp:
         conn = init_db(os.path.join(tmp, "pk.db"))
         try:
@@ -123,7 +123,7 @@ def test_base_embeddings_pk_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# Producers are NOT chunk variants (TC-008 identity floor)
+# Producers are NOT chunk variants (identity floor)
 # ---------------------------------------------------------------------------
 
 
@@ -134,7 +134,7 @@ def test_kinds_are_not_chunk_variants():
 
     assert MV_KINDS == ("name", "docstring")
     assert not set(MV_KINDS) & set(CHUNK_VARIANTS)
-    # The pre-FR-005 variant tuple is exactly unchanged.
+    # The pre- variant tuple is exactly unchanged.
     assert CHUNK_VARIANTS == (
         "A", "B", "C",
         "B_NO_SCOPE", "B_NO_SIG", "B_IDENTITIES", "C_TRIM",
@@ -142,12 +142,12 @@ def test_kinds_are_not_chunk_variants():
 
 
 # ---------------------------------------------------------------------------
-# Default (kwarg-less) build -- TC-020 / FR-004
+# Default (kwarg-less) build -- 
 # ---------------------------------------------------------------------------
 
 
 def test_default_embed_all_writes_mv_rows_and_reports_mv_embedded(fresh_db):
-    """Kwarg-less embed_all (the FR-004 default) writes both mv kinds,
+    """Kwarg-less embed_all (the default) writes both mv kinds,
     reports the 'mv_embedded' key, and keeps the base flow intact."""
     from cairn.graph import embeddings as emb
 
@@ -166,10 +166,10 @@ def test_default_embed_all_writes_mv_rows_and_reports_mv_embedded(fresh_db):
 
 
 def test_explicit_opt_out_restores_single_vector_build(fresh_db):
-    """`multivector=False` is the explicit opt-out (FR-004): zero
+    """`multivector=False` is the explicit opt-out: zero
     `embeddings_mv` writes, no `mv_embedded` in the summary, and base
     `embeddings` rows byte-identical to the explicit mv leg's -- opting
-    out restores the pure single-vector build (TC-020)."""
+    out restores the pure single-vector build ."""
     from cairn.graph import embeddings as emb
 
     _seed_corpus(fresh_db)
@@ -456,13 +456,13 @@ def test_purge_drops_both_families_of_stale_models(fresh_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# CLI wiring (TC-020's user-facing surface)
+# CLI wiring (the user-facing surface)
 # ---------------------------------------------------------------------------
 
 
 def test_cli_multivector_flag_wires_to_embed_all(tmp_path, monkeypatch):
     """`cairn embed` populates the mv table: the explicit --multivector run
-    and the flagless default (FR-004) both write the mv kinds."""
+    and the flagless default both write the mv kinds."""
     from cairn.cli import main as cli_main
 
     monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")

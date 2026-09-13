@@ -627,14 +627,14 @@ def sync(workspace, db):
 
 
 # --------------------------------------------------------------------------
-# cairn doctor (spec observability-telemetry §6.5)
+# cairn doctor
 # --------------------------------------------------------------------------
 # 11 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
-# one informational line unless a server backend is configured, D-012; the
-# environment wiring audit is appended to both return paths, FR-007/D-007).
+# one informational line unless a server backend is configured; the
+# environment wiring audit is appended to both return paths).
 # Read-only -- doctor never writes to
 # the store. Exit code is 0 when every check is PASS or WARN, and 1 when any
-# check is FAIL, so agents can gate on it (spec §6.5, success metric §8).
+# check is FAIL, so agents can gate on it.
 #
 # Threshold policy: a clean, freshly-built store exits 0 even when optional
 # backends (sentence-transformers, sqlite-vec) are absent -- absence degrades
@@ -771,7 +771,7 @@ def _check_embeddings(conn) -> dict:
     """
     from ..graph.embeddings import _backend_name, is_hash_fallback
 
-    # _backend_name() resolves env > config file > default (D-008), so the
+    # _backend_name() resolves env > config file > default, so the
     # PASS line reports the effective backend, not just the env layer.
     configured = _backend_name()
     if is_hash_fallback():
@@ -897,7 +897,7 @@ def _check_embed_server(conn) -> list[dict]:
 
     One informational PASS line unless a server-family backend (server, omlx,
     ollama) is configured -- no network I/O happens and the default-configured
-    output stays byte-stable (D-012). With a server backend, doctor
+    output stays byte-stable. With a server backend, doctor
     re-evaluates by design: reset_backend_cache() drops the cached probe and
     stamp resolution (and any session adoptions) before probing. Verdicts: an
     unreachable server or a missing configured model FAILs with a remediation
@@ -905,9 +905,9 @@ def _check_embed_server(conn) -> list[dict]:
     re-embed, not broken); otherwise PASS naming host, model, and the latency
     bucket of one tiny embed round-trip. Zero stored rows under the current
     stamp makes the parity arm vacuous (check_parity's contract), so a fresh
-    install still PASSes. An active ladder degradation (FR-012, recorded
+    install still PASSes. An active ladder degradation (recorded
     earlier in this process) surfaces as an appended WARN entry naming
-    rung/reason/remediation (FR-013) -- sampled before the cache reset so
+    rung/reason/remediation -- sampled before the cache reset so
     doctor reports it instead of erasing it.
     """
     from urllib.parse import urlsplit
@@ -930,7 +930,7 @@ def _check_embed_server(conn) -> list[dict]:
     )
     from ..graph.semantic import _ms_bucket
 
-    # _backend_name() resolves env > config file > default (D-008), so a
+    # _backend_name() resolves env > config file > default, so a
     # file-only server config reaches this probe instead of being reported
     # as a disabled 'local' backend (env-only reads missed the file layer).
     configured = _backend_name()
@@ -965,7 +965,7 @@ def _check_embed_server(conn) -> list[dict]:
         )
         return results
 
-    # Probe and model-listing share one path (FR-002's GET {base}/models,
+    # Probe and model-listing share one path (GET {base}/models,
     # 200 AND the configured id listed); a failed probe fetches the listing
     # once more to separate server-down from model-missing.
     if not embeddings_available():
@@ -1277,10 +1277,10 @@ def _check_tool_health(conn) -> dict:
 def _knob_source(name: str, default: str) -> tuple[str, str]:
     """Effective value and supplying layer for a CAIRN_EMBED_* knob.
 
-    Mirrors embeddings._config_or_env's precedence (D-008: env > config file
+    Mirrors embeddings._config_or_env's precedence (env > config file
     > default, non-string file values ignored) but also reports which layer
     supplied the value, so doctor's echo cannot diverge from dashboard
-    truth (FR-010/FR-011).
+    truth.
     """
     from ..paths import get_config_value
 
@@ -1350,10 +1350,9 @@ def _check_config() -> dict:
 
     Always PASS -- a transparency echo, not a health verdict. Lists the
     effective runtime knobs so a doctor snapshot is self-describing. The
-    embedding knobs (spec A2.1) resolve env > config file > default
-    (D-008, FR-010): each echoes its effective value plus the layer that
-    supplied it. The API key reports presence only -- its value is never
-    echoed.
+    embedding knobs resolve env > config file > default: each echoes its
+    effective value plus the layer that supplied it. The API key reports
+    presence only -- its value is never echoed.
     """
     knobs = [
         ("workers", os.environ.get("CAIRN_WORKERS", "<unset>")),
@@ -1383,15 +1382,15 @@ def _check_config() -> dict:
 
 
 # --------------------------------------------------------------------------
-# the environment wiring check (FR-007 / D-007)
+# the environment wiring check
 #
 # Appended to BOTH _run_doctor return paths: the audit needs no db
 # connection, so it must appear precisely when the store is broken -- that is
-# when wiring matters most. Per the mixed-severity ruling the store's absence
-# is schema's FAIL alone; this check WARNs for it. Sub-audit (b) enumerates
+# when wiring matters most. The store's absence is schema's FAIL alone; this
+# check WARNs for it. Sub-audit (b) enumerates
 # installed clients via check_installed, inspects each written env block,
-# spawn-probes stdio registrations against the doctor's own store (T019's
-# verify_registration), and probes SSE endpoints (lifecycle.sse_responds) --
+# spawn-probes stdio registrations against the doctor's own store
+# (verify_registration), and probes SSE endpoints (lifecycle.sse_responds) --
 # all read-only and timeout-bounded. FAILs are reserved for a provably
 # different EXISTING store and an unreachable endpoint; everything else
 # (merely-missing env on a stale registration, probe errors) WARNs.
@@ -1494,7 +1493,7 @@ def _sse_host_port(url: str) -> tuple[str, int] | None:
         return None
 
 
-# Different-store verdict shape from verify_registration (T019): the fail
+# Different-store verdict shape from verify_registration: the fail
 # detail that names the store the registration ACTUALLY resolves alongside
 # the intended one. Everything else it returns starts with "probe ".
 _RESOLVES_PREFIX = "registration resolves db="
@@ -1504,11 +1503,11 @@ _TARGET_SEP = "; install target db="
 def _registration_findings(
     db: str,
 ) -> tuple[list[tuple[str, str]], list[str], list[str]]:
-    """Sub-audit (b): client-registration consistency (FR-007, mixed severity).
+    """Sub-audit (b): client-registration consistency (mixed severity).
 
     Per installed client's cairn registration:
 
-    * stdio -- the WRITTEN env block is inspected first (D-013: the spawn
+    * stdio -- the WRITTEN env block is inspected first (the spawn
       probe pins the intended env over the written one, so it cannot see a
       merely-missing entry): an env-less registration, or one not carrying
       the effective home's env, WARNs advising ``cairn install-agents``.
@@ -1517,8 +1516,7 @@ def _registration_findings(
       doctor's own store (``db``, the store every other check audits): a
       FAIL is recorded only when it provably resolves a different EXISTING
       store (both stores named); a probe that errors, times out, or resolves
-      a store that does not exist on disk stays a WARN (the spec risk ruling
-      forbids blanket-FAIL).
+      a store that does not exist on disk stays a WARN.
     * SSE -- ``lifecycle.sse_responds`` probes the endpoint (bounded socket
       read, no request beyond a root GET); unreachable => FAIL naming the
       client and the endpoint.
@@ -1546,7 +1544,7 @@ def _registration_findings(
         if "command" in entry:
             written = entry.get("env")
             written_env = dict(written) if isinstance(written, dict) else {}
-            # D-013: env completeness is judged on the written block, BEFORE
+            # Env completeness is judged on the written block, BEFORE
             # the probe (which pins the intended env over it).
             missing = sorted(
                 k for k, v in required_env.items() if written_env.get(k) != v
@@ -1630,7 +1628,7 @@ def _check_environment(db: str) -> dict:
     (b) registration consistency -- enumerates installed clients via
         ``check_installed``; stdio registrations are env-inspected (stale
         registrations WARN) and spawn-probed against this doctor's own store
-        via T019's ``verify_registration`` (FAIL only on a provably different
+        via ``verify_registration`` (FAIL only on a provably different
         EXISTING store, naming both), SSE registrations are probed with
         ``lifecycle.sse_responds`` (unreachable endpoint => FAIL). All probes
         are read-only and timeout-bounded;
@@ -1756,7 +1754,7 @@ def _run_doctor(db: str) -> list[dict]:
 
     if conn is None:
         # The environment audit needs no db connection, so it is appended on
-        # the degraded path too (D-007): a broken store is precisely when
+        # the degraded path too: a broken store is precisely when
         # wiring matters.
         return [*_db_unavailable_results(db_error), _check_environment(db)]
     try:
@@ -2013,7 +2011,7 @@ def _report_config() -> dict:
         "read_only": os.environ.get("CAIRN_READ_ONLY", "<unset>"),
         "fusion": os.environ.get("CAIRN_FUSION", "<unset>"),
         "ann_backend": os.environ.get("CAIRN_ANN_BACKEND", "<unset (=sqlite-vec)>"),
-        # Same D-008 resolution _check_config uses, so report and doctor
+        # Same resolution _check_config uses, so report and doctor
         # agree on the effective embed backend (env > file > default).
         "embed_backend": _knob_source("CAIRN_EMBED_BACKEND", "<unset (=local)>")[0],
         "telemetry": os.environ.get("CAIRN_TELEMETRY", "<unset (=on)>"),

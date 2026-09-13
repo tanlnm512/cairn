@@ -191,8 +191,7 @@ def explore(
     if fusion_enabled or len(seeds) < 3:
         # Degrade reason for the semantic_unavailable signal (F4): None while
         # semantic expansion is usable; one of the bounded enum values when it
-        # isn't. Recorded once per process via note_semantic_unavailable --
-        # explore's FTS5-only degrade was previously completely invisible.
+        # isn't. Recorded once per process via note_semantic_unavailable.
         _sem_off_reason = None
         try:
             from cairn.graph import embeddings as emb

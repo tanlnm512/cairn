@@ -6,9 +6,9 @@ research F2.2, tree-sitter-c 0.23.4 ``call_expression.function`` is a plain
 expression with no receiver field — the only member-call shape is a callee
 ``field_expression`` (fields ``argument``/``field``), as in ``p->cb(1)`` or
 ``obj.fn(1, 2)``. Receiver typing runs through the shared scope-ordered
-tracker (params + locals), shadow-abstain per D-006; definition arity counts
+tracker (params + locals) with shadow-abstain; definition arity counts
 ``function_declarator`` -> ``parameter_list`` parameters, with varargs and
-C's unspecified ``()`` staying None (D-005).
+C's unspecified ``()`` staying None.
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ class TestReceiverType:
         assert outer.call_arity == 2
 
     def test_shadowed_receiver_abstains_then_recovers(self):
-        """D-006: an inner shadow poisons the name until its scope pops."""
+        """an inner shadow poisons the name until its scope pops."""
         pf = _parse(
             b"void run(struct CB *p) {\n"
             b"  if (1) { struct Other p; p->shadowed(1); }\n"

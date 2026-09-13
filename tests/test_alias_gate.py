@@ -1,4 +1,4 @@
-"""Alias preflight gate tests (FR-005): the embed writers parity-check stored
+"""Alias preflight gate tests: the embed writers parity-check stored
 rows under ``CAIRN_EMBED_MODEL_STAMP`` before the first INSERT.
 
 Unit tests stub ``check_parity`` (verdict injection) or the server client;
@@ -423,7 +423,7 @@ def test_different_model_under_alias_aborts(fresh_db, monkeypatch, stub_server):
 
 
 def test_file_layer_stamp_triggers_parity_gate(fresh_db, monkeypatch, _server_env):
-    """A stamp set only via config.json must arm the FR-005 gate exactly like
+    """A stamp set only via config.json must arm the gate exactly like
     the env var (file-layer aliases are the dashboard's persistence path)."""
     from cairn import paths as cairn_paths
 

@@ -1,15 +1,15 @@
-"""Enumeration of local cairn stores for the workspaces overview (FR-002).
+"""Enumeration of local cairn stores for the workspaces overview.
 
 The registry (``<cairn_home>/workspaces.json``) and the hash-keyed store
 directories under ``cairn_home`` are two independent records of what exists
 on this machine; :func:`enumerate_stores` unions them and classifies each
 store. Divergence — a registered key whose dir is gone, or an orphan store
 dir no registry entry points at — is data to render, never to repair: this
-module writes nothing anywhere (FR-004, tech-spec D-002).
+module writes nothing anywhere.
 
 :func:`probe_store` / :func:`probe_stores` add the per-store metrics
 (size, freshness, tool-call count) on top — stat-first, with SQL opens
-only for counts and only budgeted (FR-001, tech-spec D-003). Every open
+only for counts and only budgeted. Every open
 is mode=ro; this module still writes nothing anywhere.
 """
 from __future__ import annotations
@@ -33,9 +33,9 @@ _KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 # Layout constant mirroring paths.StorePaths (db = <home>/<key>/.kg).
 _DB_FILENAME = ".kg"
 
-# FR-005: the overview must render within 2s with 200+ stores, and count
+# The overview must render within 2s with 200+ stores, and count
 # opens dominate probe cost — cap them; rows past the cap degrade visibly
-# (counts_capped) rather than silently (tech-spec D-003).
+# (counts_capped) rather than silently.
 PROBE_MAX_OPENS = 100
 
 
@@ -113,7 +113,7 @@ def _stat_kg(cairn_home: Path, key: str) -> tuple:
 
     Free (no open); mtime is the freshness proxy for "last-indexed" — the
     SQLite header does not record a trustworthy indexed-at timestamp, and
-    opening every store just to ask would defeat D-003.
+    opening every store just to ask would defeat the open budget.
     """
     try:
         st = (cairn_home / key / _DB_FILENAME).stat()
@@ -190,7 +190,7 @@ def probe_stores(
     """:func:`probe_store` over ``entries`` in list order, ≤ ``max_opens`` DB opens.
 
     Rows past the cap keep their filesystem stats with ``call_count`` None
-    and ``counts_capped`` True — the degradation stays visible (FR-005).
+    and ``counts_capped`` True — the degradation stays visible.
     Failed opens count against the budget too: the cap bounds work, not
     just successes.
     """

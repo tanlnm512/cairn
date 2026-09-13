@@ -1,10 +1,10 @@
 """Standing guard: a full pass over every dashboard route leaves the
-database file untouched (FR-010 / TC-021), reads stay clean while a
-concurrent writer appends tool_metrics rows (TC-025), the candidates
-and neighbors JSON endpoints sit inside the same guard (FR-006 / TC-006),
+database file untouched, reads stay clean while a
+concurrent writer appends tool_metrics rows, the candidates
+and neighbors JSON endpoints sit inside the same guard
 and the workspace launcher's overview browsing + store switching leave
 every store under CAIRN_HOME byte-identical, sidecars included
-(workspace-launcher FR-004 / TC-005)."""
+(workspace-launcher)."""
 from __future__ import annotations
 
 import hashlib
@@ -21,7 +21,7 @@ from cairn.graph.schema import _apply_schema, get_db
 # Every route on the app, including the query variants that hit distinct
 # read paths: graph scope changes (repo / symbol+depth / unknown fallback),
 # the graph JSON endpoints (candidates: exact / absent-from-store / absent
-# / whitespace name; neighbors: repeatable names + depth, whitespace-only,
+# whitespace name; neighbors: repeatable names + depth, whitespace-only,
 # absent, unknown name + bogus depth), history tool+session filters
 # (separate and combined), tasks status filter, and the static assets.
 ROUTES = [
@@ -216,7 +216,7 @@ def _metric_rows(db_path: str) -> int:
 
 
 def test_full_route_pass_leaves_db_byte_identical(tmp_path):
-    """TC-021: after exercising every view with its query variants and the
+    """After exercising every view with its query variants and the
     static assets, the DB file's checksum, the tool_metrics row count, and
     the sidecar set (no -wal/-shm may appear) are all unchanged."""
     client, db_path = _guard_world(tmp_path)
@@ -239,7 +239,7 @@ def test_full_route_pass_leaves_db_byte_identical(tmp_path):
 
 
 def test_graph_json_endpoints_stay_read_only(tmp_path):
-    """TC-006 / FR-006: the candidates and neighbors JSON endpoints --
+    """The candidates and neighbors JSON endpoints --
     happy paths and every edge path (repeatable name params, whitespace
     name, absent name, name absent from the store, bogus depth) -- leave
     the DB byte-identical with no sidecars, and both return real content
@@ -304,8 +304,8 @@ def test_graph_json_endpoints_stay_read_only(tmp_path):
 
 
 def test_reads_stay_clean_while_a_writer_appends_tool_metrics(tmp_path):
-    """TC-025: while a concurrent writer commits tool_metrics rows (the
-    server's FR-004 role, never the dashboard's), every route fetch stays
+    """While a concurrent writer commits tool_metrics rows (the
+    server's role, never the dashboard's), every route fetch stays
     HTTP 200 with no lock error, and the new records appear on refresh."""
     client, db_path = _guard_world(tmp_path, name="concurrent.db")
     before_rows = _metric_rows(db_path)
@@ -348,7 +348,7 @@ def test_reads_stay_clean_while_a_writer_appends_tool_metrics(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Workspace launcher guard (workspace-launcher FR-004 / TC-005): the
+# Workspace launcher guard (workspace-launcher): the
 # overview stats every store under CAIRN_HOME and mode=ro-opens each
 # populated one, and ?store=<key> serves the data views against that
 # store -- none of it may write anything anywhere, visited or merely
@@ -437,7 +437,7 @@ def _seed_ws_store(
 
 
 def _launcher_home(tmp_path) -> Path:
-    """The multi-store CAIRN_HOME the TC-005 guard runs against: two
+    """The multi-store CAIRN_HOME the guard runs against: two
     populated stores with distinct data (the visited ones), an empty key
     dir, a corrupt-.kg store, and a registered key whose dir is gone (the
     merely-listed ones), plus the registry itself."""
@@ -485,7 +485,7 @@ def _tree_digest(root: Path) -> tuple:
 def test_launcher_interactions_leave_every_store_byte_identical(
     tmp_path, monkeypatch
 ):
-    """TC-005 / FR-004: the overview (which stats every store and
+    """The overview (which stats every store and
     mode=ro-opens each populated one) plus a full selected-store sweep
     across the data views leave EVERY file under CAIRN_HOME
     byte-identical -- the two visited stores, the merely-listed
@@ -572,7 +572,7 @@ def test_launcher_interactions_leave_every_store_byte_identical(
 
 
 # ---------------------------------------------------------------------------
-# Retention display guard (ui-dashboard-polish FR-007 / TC-009): the health
+# Retention display guard (ui-dashboard-polish): the health
 # panel now renders the retention policy and the current store size, and
 # the dashboard serves traffic views over stores that are OVER those
 # bounds. Aging runs solely in the recording sink's flush -- the dashboard
@@ -582,7 +582,7 @@ def test_launcher_interactions_leave_every_store_byte_identical(
 
 
 def test_views_over_an_over_cap_store_never_age_it(tmp_path, monkeypatch):
-    """TC-009: a store past BOTH bounds -- row count over the pinned cap and
+    """A store past BOTH bounds -- row count over the pinned cap and
     every bulk row older than the pinned age window -- serves the full route
     sweep (health displaying the policy in force and the over-cap size
     included) with row counts and the file digest unchanged and no sidecars:

@@ -1,6 +1,6 @@
 """Signal tests for the Objective-C parser.
 
-Covers the parser-side signals objc's grammar exposes (FR-006/FR-007):
+Covers the parser-side signals objc's grammar exposes:
 
 - ``Import.local_alias`` — objc headers are includes, not imports (F2.1:
   ``preproc_include`` has no alias field), so every include form carries
@@ -8,12 +8,12 @@ Covers the parser-side signals objc's grammar exposes (FR-006/FR-007):
 - ``Edge.call_arity`` / ``Symbol.arity`` — argument counts on
   ``message_expression`` selector segments and plain-C ``call_expression``
   argument_lists; parameter counts from ``method_parameter`` children, with
-  variadic ``...`` degrading to None (D-005).
+  variadic ``...`` degrading to None.
 - ``Edge.receiver_type`` — the ``receiver`` field of a message expression
   (F2.2), typed via the scope-ordered tracker (method parameters + typed
   locals) or the capitalized class-name heuristic. ``self`` resolves to the
   enclosing class; ``super`` abstains (its superclass lives in the header,
-  cross-file); shadows and nested message receivers abstain (FR-009).
+  cross-file); shadows and nested message receivers abstain.
 """
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ class TestReceiverType:
 
     def test_super_receiver_abstains(self):
         # The superclass is declared in the header, not the grammar-visible
-        # receiver -- FR-009 abstention.
+        # receiver -- abstention.
         pf = _parse(
             b"@implementation User\n"
             b"- (void)m {\n"
@@ -151,7 +151,7 @@ class TestReceiverType:
         assert _edge(pf, "init").receiver_type is None
 
     def test_shadow_of_different_type_poisons(self):
-        # D-006: an inner redeclaration under a different type makes the
+        # An inner redeclaration under a different type makes the
         # binding ambiguous until the scope pops.
         pf = _parse(
             b"void f() {\n"
@@ -166,7 +166,7 @@ class TestReceiverType:
 
 
 # ---------------------------------------------------------------------------
-# Symbol.arity — method_parameter count, variadic abstains (D-005).
+# Symbol.arity — method_parameter count, variadic abstains.
 # ---------------------------------------------------------------------------
 
 class TestDefinitionArity:

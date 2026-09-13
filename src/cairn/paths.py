@@ -34,7 +34,7 @@ CAIRN_HOME = Path(
 
 REGISTRY_FILE = CAIRN_HOME / "workspaces.json"
 
-# Persistent settings file (FR-010): flat string->scalar JSON object whose
+# Persistent settings file: flat string->scalar JSON object whose
 # keys mirror the CAIRN_EMBED_* env names. Bound at import time exactly like
 # REGISTRY_FILE -- tests monkeypatch this attribute, not the env var.
 CONFIG_FILE = CAIRN_HOME / "config.json"
@@ -83,7 +83,7 @@ def cairn_home_env() -> dict[str, str]:
 
 
 def render_env_resolution_chain() -> str:
-    """One-line rendering of the env resolution chain in effect (FR-004):
+    """One-line rendering of the env resolution chain in effect:
     the CAIRN_HOME / CAIRN_WORKSPACE / CAIRN_DB / CAIRN_KNOWLEDGE values
     (or ``unset``) plus the db path that chain resolves to, per the
     resolve_workspace / resolve_store order. Reads the environment at call
@@ -213,8 +213,8 @@ def is_registered(workspace: Path) -> bool:
 # --------------------------------------------------------------------------
 # Persistent config: $CAIRN_HOME/config.json. Flat JSON object whose keys
 # mirror the CAIRN_EMBED_* env names (e.g. "CAIRN_EMBED_BACKEND": "omlx")
-# and whose values are scalars. Consumers resolve env > file > default
-# (D-008); this layer only reads/writes/caches the file side.
+# and whose values are scalars. Consumers resolve env > file > default;
+# this layer only reads/writes/caches the file side.
 # --------------------------------------------------------------------------
 
 _CONFIG_CACHE: dict = {"stamp": None, "data": {}}

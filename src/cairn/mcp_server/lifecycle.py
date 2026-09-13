@@ -86,7 +86,7 @@ def render_plist(
     env = {
         # Inherit the user PATH so `cairn` can find python etc.
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        # FR-003: propagate a non-default CAIRN_HOME so the launchd daemon
+        # Propagate a non-default CAIRN_HOME so the launchd daemon
         # resolves config.json and shared libs under the same store the
         # invoking shell used ({} when the home is default).
         **cairn_home_env(),

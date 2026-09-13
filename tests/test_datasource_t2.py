@@ -1,14 +1,14 @@
-"""T2 datasource build+query smoke: the TC-mapped contract layer (FR-002, AC3).
+"""T2 datasource build+query smoke: the TC-mapped contract layer (AC3).
 
-T008 ships this as a thin TC-mapped layer beside T005's snapshot sanity test
+ ships this as a thin TC-mapped layer beside the snapshot sanity test
 (``tests/test_t2_snapshot.py``: build counts, URL findable, URL callers
-non-empty). No assertion overlap by design: where T005 checks presence, this
+non-empty). No assertion overlap by design: where checks presence, this
 file pins *identity*, against the upstream commit pinned in
 ``benchmarks/datasource/t2/provenance.json`` (dddcb82):
 
-* TC-013 -- the known-symbol query returns THAT symbol: exactly one
+* -- the known-symbol query returns THAT symbol: exactly one
   class-kind ``URL`` in ``yarl/_url.py`` (class defined at _url.py:356).
-* TC-014 -- the snapshot carries source in two languages (Python modules
+* -- the snapshot carries source in two languages (Python modules
   plus the Cython ``yarl/_quoting_c.pyx``), and a precise
   ``get_callers("split_url")`` returns ``encode_url``: caller defined in
   ``yarl/_url.py`` (call site ``_url.py:230``), callee in
@@ -17,7 +17,7 @@ file pins *identity*, against the upstream commit pinned in
 
 Hermetic by construction: the tree is copied to tmp and the *copy*, not the
 committed tree, gets the ``.git`` scanner marker exactly as
-``generate_corpus`` does for T1 (``bench/corpus.py:50-52``: ``(repo /
+``generate_corpus`` does for T1 (``bench/corpus.py:50-52``: ``(repo
 ".git").mkdir(exist_ok=True)``) -- git does not track empty dirs, so a
 committed marker dir would not survive the clone anyway (tech-spec pitfall).
 The graph lands in a throwaway DB inside the test sandbox, and the build
@@ -57,7 +57,7 @@ def t2_graph_db(tmp_path):
 
 
 def test_t2_tc013_known_symbol_query_returns_identity(t2_graph_db):
-    """TC-013: a query for a symbol known to exist returns that symbol."""
+    """A query for a symbol known to exist returns that symbol."""
     conn = sqlite3.connect(t2_graph_db)
     conn.row_factory = sqlite3.Row
     try:
@@ -76,8 +76,8 @@ def test_t2_tc013_known_symbol_query_returns_identity(t2_graph_db):
 
 
 def test_t2_tc014_cross_file_callers_query(t2_graph_db):
-    """TC-014: a precise callers query returns a caller from another file."""
-    # TC-014's tree clause: genuinely multi-language source is vendored --
+    """A precise callers query returns a caller from another file."""
+    # the tree clause: genuinely multi-language source is vendored --
     # Python modules plus the Cython source _quoting_c.pyx.
     exts = {p.suffix for p in SNAPSHOT.rglob("*") if p.is_file()}
     assert {".py", ".pyx"} <= exts, sorted(exts)
@@ -107,7 +107,7 @@ def test_t2_tc014_cross_file_callers_query(t2_graph_db):
         edge = pinned[0]
         assert edge["caller_kind"] == "function"
         assert edge["resolution"] == "exact"
-        # The TC-014 observable: the caller lives in a different file.
+        # The observable: the caller lives in a different file.
         assert edge["file_path"] != callee["file_path"]
     finally:
         conn.close()

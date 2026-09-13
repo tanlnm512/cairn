@@ -76,10 +76,10 @@ class TestStoreExistenceCheck:
                     mock_mcp.run.assert_called_once()
 
     # ------------------------------------------------------------------
-    # FR-004 / TC-007: the boot-guard error must name the resolved db
+    # The boot-guard error must name the resolved db
     # path, the env resolution chain in effect, and the remediation --
     # not the bare OperationalError text alone. RED until the boot-guard
-    # message is enriched (tech-spec D-008).
+    # message is enriched.
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -99,7 +99,7 @@ class TestStoreExistenceCheck:
     def test_missing_store_error_names_path_env_and_remediation(
         self, monkeypatch, tmp_path, capsys
     ):
-        """TC-007: boot against a missing store directory exits 1 with an
+        """boot against a missing store directory exits 1 with an
         error naming the resolved db path, the env chain in effect, and the
         set-CAIRN-HOME / cairn init && cairn build remediation."""
         home, workspace, db, knowledge = self._missing_store_env(
@@ -130,8 +130,8 @@ class TestStoreExistenceCheck:
     def test_missing_store_error_reports_unset_env_vars(
         self, monkeypatch, tmp_path, capsys
     ):
-        """TC-007 edge: chain entries with no env value in effect are still
-        named, rendered as 'unset' (D-008: value or 'unset' per entry)."""
+        """Edge case: chain entries with no env value in effect are still
+        named, rendered as 'unset' (value or 'unset' per entry)."""
         monkeypatch.setenv("CAIRN_DB",
                            str((tmp_path / "no-such-store" / "missing.db").resolve()))
         monkeypatch.delenv("CAIRN_WORKSPACE", raising=False)
@@ -151,10 +151,10 @@ class TestStoreExistenceCheck:
     def test_cli_get_db_missing_store_error_is_actionable(
         self, monkeypatch, tmp_path
     ):
-        """TC-008: the CLI db-open path raises the SAME OperationalError type
+        """The CLI db-open path raises the SAME OperationalError type
         when the store's parent directory is missing, but the text carries
         the resolved path, the env chain, and the remediation -- the red
-        that drives the schema.get_db pre-check (D-008)."""
+        that drives the schema.get_db pre-check."""
         from cairn.graph.schema import get_db
 
         home, workspace, db, knowledge = self._missing_store_env(
@@ -324,7 +324,7 @@ class TestWatchdogBufferDrain:
 
 
 class TestSessionIdentity:
-    """D-004 (FR-007): run() stamps a per-process CAIRN_SESSION at boot.
+    """run() stamps a per-process CAIRN_SESSION at boot.
 
     The env var has three readers (metric_buffering, telemetry/events,
     graph/builder) that default the session column to "unknown" — boot is the

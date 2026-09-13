@@ -1,10 +1,10 @@
-"""Tests for L4 (port constant DRY) and L5 (unload() returns real status) audit findings.
+"""Tests for the port constant and the unload()/plist contracts.
 
 This file tests:
-1. L4: No literal 9876 in serve.py or agent_install.py (VAL-MC-005)
-2. L5: lifecycle.unload() returns real exit status, not always True (VAL-MC-006)
-3. FR-003: render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
-   home is non-default (automated half of TC-005/TC-006)
+1. No literal 9876 in serve.py or agent_install.py
+2. lifecycle.unload() returns the real exit status, not always True
+3. render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
+   home is non-default
 """
 from __future__ import annotations
 
@@ -134,13 +134,12 @@ class TestUnloadReturnsRealStatus:
 
 
 class TestPlistEnvironmentVariables:
-    """FR-003: render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
+    """render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
     home is non-default, leaving the existing env entries unchanged.
 
-    The automated half of TC-005/TC-006 (loading the actual LaunchAgent stays
-    manual -- macOS only). Tests drive render_plist via the CAIRN_HOME env
-    var (D-010: the same mechanism the fidelity tests pin), not via a
-    render_plist parameter.
+    Loading the actual LaunchAgent stays manual (macOS only). Tests drive
+    render_plist via the CAIRN_HOME env var, not via a render_plist
+    parameter.
     """
 
     @staticmethod
@@ -159,7 +158,7 @@ class TestPlistEnvironmentVariables:
         env = plist["EnvironmentVariables"]
         assert env.get("CAIRN_HOME") == custom_home, (
             "render_plist must include CAIRN_HOME in EnvironmentVariables "
-            "when the home is non-default (FR-003)"
+            "when the home is non-default"
         )
 
     def test_render_plist_omits_cairn_home_under_default_home(self, monkeypatch):
@@ -171,8 +170,8 @@ class TestPlistEnvironmentVariables:
         plist = lifecycle.render_plist()
         assert "CAIRN_HOME" not in plist["EnvironmentVariables"]
 
-        # The spec rules an explicitly-set default location counts as default
-        # (TC-003): comparison is by expanded absolute path.
+        # An explicitly-set default location counts as default:
+        # comparison is by expanded absolute path.
         monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
         plist = lifecycle.render_plist()
         assert "CAIRN_HOME" not in plist["EnvironmentVariables"]

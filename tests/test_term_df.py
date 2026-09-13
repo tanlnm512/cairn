@@ -1,9 +1,9 @@
-"""Tests for the persisted term_df DF table (spec retrieval-quality-v2 T011).
+"""Tests for the persisted term_df DF table.
 
-FR-003/D-005: ``term_df(token, symbol_df, n_symbols)`` is a per-corpus
+``term_df(token, symbol_df, n_symbols)`` is a per-corpus
 document-frequency table built from the ``symbols_fts`` FTS5 vocabulary
 (row-mode fts5vocab; aggregate-scan fallback), refreshed on the embed pass.
-The builder must be a pure function of the DB contents (TC-014):
+The builder must be a pure function of the DB contents
 deterministic, hermetic, no env/network/time dependence.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ from cairn.graph.schema import _apply_schema, init_db, rebuild_term_df
 #   s2 (fetch_url / m.fetch_url / "Fetch URL")
 #       -> {fetch, url, m}
 # 'URL' in the docstrings folds onto the same 'url' token as the names -- the
-# case-folding pitfall FR-003 calls out for the lookup key.
+# case-folding pitfall for the lookup key.
 SEEDED = [
     ("s1", "parse_url", "m.parse_url", "Parse an encoded URL string"),
     ("s2", "fetch_url", "m.fetch_url", "Fetch URL"),
@@ -108,7 +108,7 @@ def test_rebuild_deterministic(fresh_db):
     rebuild_term_df(fresh_db)
     assert _rows(fresh_db) == first
 
-    # Hermetic (TC-014): a separate, identically-seeded DB builds the same
+    # Hermetic: a separate, identically-seeded DB builds the same
     # table -- the result depends only on DB contents, not process state.
     other = sqlite3.connect(":memory:")
     other.row_factory = sqlite3.Row
@@ -198,7 +198,7 @@ def test_migration_old_db_gains_term_df(tmp_path):
 
 
 def test_embed_pass_refreshes_term_df(fresh_db, hash_backend):
-    """D-005: a `cairn embed`-driven build (embed_all) leaves term_df current."""
+    """A `cairn embed`-driven build (embed_all) leaves term_df current."""
     _seed(fresh_db)
     assert _rows(fresh_db) == {}, "no DF rows before any embed pass"
 

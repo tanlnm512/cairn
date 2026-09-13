@@ -1,9 +1,9 @@
-"""Tests for the `cairn embed` server-down path (D-003: loud failure).
+"""Tests for the `cairn embed` server-down path (loud failure).
 
 A server-family backend whose availability probe fails must exit 1 with a
 server-specific remediation (base URL, the /v1/models check, `cairn doctor`)
 -- never the sentence-transformers install text, and never a silent hash
-fallback (FR-002). Non-server backends keep the existing install-hint exit.
+fallback . Non-server backends keep the existing install-hint exit.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from cairn.graph import embeddings as emb
 
 @pytest.fixture(autouse=True)
 def _fresh_backend_cache():
-    """The probe/effective-backend verdicts are process-cached (FR-002);
+    """The probe/effective-backend verdicts are process-cached
     reset around every test so each one probes its own env."""
     emb.reset_backend_cache()
     yield
@@ -55,7 +55,7 @@ def test_server_down_exits_1_with_server_remediation(monkeypatch, tmp_path):
     assert base in out  # names the base URL the probe hit
     assert "/v1/models" in out  # the check the server must pass
     assert "cairn doctor" in out  # the diagnostic next step
-    # D-003: the torch-install text is wrong for a server user.
+    # the torch-install text is wrong for a server user.
     assert "pip install" not in out
     assert "sentence-transformers" not in out
     assert "--install-deps" not in out
@@ -119,4 +119,4 @@ def test_install_deps_flag_path_untouched(monkeypatch, tmp_path):
     assert result.exit_code == 1
     out = _flat(result)
     assert "Semantic dependencies unavailable" in out
-    assert "pip install" in out  # install-hint path, unchanged by T005
+    assert "pip install" in out  # install-hint path, unchanged by 

@@ -1,4 +1,4 @@
-"""Regression tests for the 2026-08-10 codebase audit remediation.
+"""Regression tests for the codebase audit remediation.
 
 One focused test per finding (P1-P10). Each fails on the pre-fix code and
 passes after the fix. See docs/audit-remediation/spec.md for the full

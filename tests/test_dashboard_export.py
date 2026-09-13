@@ -1,4 +1,4 @@
-"""Export-parity tests for the CSV/JSON export routes (TC-007 / FR-005,
+"""Export-parity tests for the CSV/JSON export routes (
 spec ui-dashboard-polish).
 
 An export must contain exactly the rows the filtered view shows: every
@@ -117,7 +117,7 @@ def _client_over(db_path: str, tmp_path):
 
 def _history_rows(db_path: str, **params) -> list:
     """The view's data function under the caller's exact filters, at the
-    export's unpaginated limit -- TC-007's parity oracle."""
+    export's unpaginated limit -- the parity oracle."""
     from cairn.dashboard.app import _EXPORT_ROW_LIMIT
     from cairn.dashboard.data import get_read_only_db, list_history
 
@@ -150,12 +150,12 @@ def _assert_csv_parity(text: str, expected_rows: list) -> None:
 
 
 # ---------------------------------------------------------------------------
-# TC-007: history export parity (filtered row sets, quoted fields)
+# history export parity (filtered row sets, quoted fields)
 # ---------------------------------------------------------------------------
 
 
 def test_history_json_export_matches_filtered_view_rows(tmp_path):
-    """TC-007 / FR-005: /history.json under tool+source+window filters
+    """/history.json under tool+source+window filters
     returns exactly the rows ``list_history`` returns under the same
     params -- a bare JSON row array, so parsed identity is the check."""
     db_path = _export_db_file(tmp_path)
@@ -176,7 +176,7 @@ def test_history_json_export_matches_filtered_view_rows(tmp_path):
 
 
 def test_history_csv_export_roundtrips_quoted_fields(tmp_path):
-    """TC-007 / FR-005: /history.csv under the same filters parses back
+    """/history.csv under the same filters parses back
     via csv.reader into exactly the oracle rows, and the RFC 4180 quoting
     is visible at the byte level (embedded quotes doubled inside a
     quoted field); every hostile args_summary value survives verbatim."""
@@ -206,7 +206,7 @@ def test_history_csv_export_roundtrips_quoted_fields(tmp_path):
 
 
 def test_history_export_is_unpaginated_beyond_one_page(tmp_path):
-    """TC-007: the export is not the view's first page -- with 60 matching
+    """The export is not the view's first page -- with 60 matching
     rows the view pages at HISTORY_PAGE_SIZE while the export carries all
     of them."""
     from cairn.dashboard.data import (
@@ -239,7 +239,7 @@ def test_history_export_is_unpaginated_beyond_one_page(tmp_path):
 
 
 def test_history_export_parity_with_session_and_hostile_tool_name(tmp_path):
-    """TC-007: the session filter composes in parity too, a tool name
+    """The session filter composes in parity too, a tool name
     with a space filters exactly, and the error row's hostile
     error_message survives the CSV round-trip; the attachment filename
     collapses the unsafe characters (space -> ``_``) while keeping the
@@ -262,12 +262,12 @@ def test_history_export_parity_with_session_and_hostile_tool_name(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TC-007: tokens export parity
+# tokens export parity
 # ---------------------------------------------------------------------------
 
 
 def test_tokens_export_parity_under_window(tmp_path):
-    """TC-007 / FR-005: /tokens.json?window=7d equals
+    """/tokens.json?window=7d equals
     ``get_tool_tokens(since=...)`` for the same window, and /tokens.csv
     round-trips the same aggregates (only the tools with in-window calls
     appear)."""
@@ -299,12 +299,12 @@ def test_tokens_export_parity_under_window(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TC-007: attachment disposition on all four routes
+# attachment disposition on all four routes
 # ---------------------------------------------------------------------------
 
 
 def test_export_routes_attach_filenames_and_media_types(tmp_path):
-    """TC-007 / FR-005: every export route answers with an attachment
+    """Every export route answers with an attachment
     Content-Disposition whose filename carries the view plus its active
     filter hints, and the right media type."""
     db_path = _export_db_file(tmp_path)
@@ -331,7 +331,7 @@ def test_export_routes_attach_filenames_and_media_types(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TC-007: ?store= selection honored by an export route
+# ?store= selection honored by an export route
 # ---------------------------------------------------------------------------
 
 _SW_KEY_A = "1234567890abc001"  # 16 hex chars: the store-dir layout
@@ -360,7 +360,7 @@ def _seed_store_db(home, key: str, tool: str):
 
 
 def test_history_export_honors_store_selection(tmp_path, monkeypatch):
-    """TC-007: an export route rides the same store selection as the
+    """An export route rides the same store selection as the
     views -- ``?store=<keyA>`` exports store A's rows, ``?store=<keyB>``
     store B's, each matching ``list_history`` over that store's DB."""
     pytest.importorskip("httpx")

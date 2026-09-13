@@ -1,7 +1,7 @@
-"""WI-3: test-labeling in impact analysis.
+"""Test-labeling in impact analysis.
 
-Tests are in the graph as ordinary symbols (no `test` kind; verified
-2026-07-30). ``impact_analysis`` already visits them; WI-3 labels and isolates
+Tests are in the graph as ordinary symbols (no `test` kind).
+``impact_analysis`` visits them; labeling isolates
 them into an ``Affected tests`` section so the caller sees "what to run".
 """
 from __future__ import annotations
@@ -50,9 +50,8 @@ def test_name_signal_does_not_false_match_update():
 
 
 def test_production_file_named_test_is_not_a_test():
-    """Audit fix (2026-07-30): a file named `Test.kt` under `src/main/` is a
-    production class, not a test. Pre-fix this was a false positive -- 7 real
-    customer-android files like `xyz.be.delivery.util.Test` were mislabeled."""
+    """A file named `Test.kt` under `src/main/` is a
+    production class, not a test."""
     r = is_test_symbol(
         "/repo/beCustomer/src/main/java/xyz/be/delivery/util/Test.kt", "doThing", "Test.doThing"
     )

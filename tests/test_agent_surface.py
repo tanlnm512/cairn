@@ -144,7 +144,7 @@ _TOOL_DEF_RE = re.compile(
 def _scrape_mcp_tool_names() -> set[str]:
     """Collect the names of every ``@mcp.tool()``-decorated function.
 
-    Source-scraped (not imported) so the test has no dependency on the model /
+    Source-scraped (not imported) so the test has no dependency on the model
     embedding stack. The function name under ``@mcp.tool()`` IS the tool name
     FastMCP exposes.
     """
@@ -245,7 +245,7 @@ def _render_agents_instructions_from_source() -> str:
 # Helpers: parse documented tool signatures in references/tools.md
 # ---------------------------------------------------------------------------
 
-# A documented signature looks like:  `tool_name(p1, p2=default, p3="x")`
+# A documented signature looks like: `tool_name(p1, p2=default, p3="x")`
 # captured as a single backtick-quoted span. We match the opening `` `name(``
 # then read up to the matching close paren, then a closing backtick.
 _DOC_SIG_RE = re.compile(r"`([A-Za-z_]\w*)\((.*?)\)`", re.DOTALL)
@@ -722,7 +722,7 @@ def test_empty_result_strings_offer_a_next_step():
     REPO = Path(__file__).resolve().parent.parent
     cases = [
         # (tool module path, function name, substring that MUST appear in an
-        #  empty-result return string in that function)
+        # empty-result return string in that function)
         ("src/cairn/mcp_server/tools_graph.py", "find_definition",
          "search_symbols"),
         # Phase 3.3 moved search_symbols' empty-result prose into a dedicated

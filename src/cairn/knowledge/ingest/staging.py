@@ -1,4 +1,4 @@
-"""OKF outbox staging and the dry-run manifest (D-009 v1).
+"""OKF outbox staging and the dry-run manifest.
 
 Each staged entry is one source document carrying the four upstream
 contracts, constructible in a single expression:
@@ -23,9 +23,9 @@ frontmatter key order; the YAML is never hand-rolled) plus
   whenever the source declares or its markers resolve to any; skipped
   rows carry source_path + skip reason and stage no file
 * each staged file's frontmatter title/type is cross-checked against
-  its row at staging time (D-009) -- a mismatch raises
+  its row at staging time -- a mismatch raises
 
-Store parity (audit 2026-08): the doc_type is slugified exactly as
+The doc_type is slugified exactly as
 ``knowledge.store.add_document`` does (``slugify(doc_type) or "general"``),
 so a workspace-config doc_type (``cairn.json`` ``ingest.classification``
 only checks non-emptiness) can never traverse out of the outbox; and
@@ -54,7 +54,7 @@ from cairn.okf.concept import OKFConcept
 from cairn.okf.provenance import Tier
 from cairn.okf.utils import slugify
 
-#: D-009 manifest schema version.
+#: Manifest schema version.
 MANIFEST_VERSION = 1
 
 #: Manifest file name at the outbox root.
@@ -77,7 +77,7 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
     """Stage the OKF outbox and manifest; return the parsed manifest.
 
     Rows are emitted in sorted (repo, relpath) order so re-run diffs are
-    deterministic (D-008).
+    deterministic.
     """
     outbox_dir = Path(outbox_dir)
     outbox_dir.mkdir(parents=True, exist_ok=True)
@@ -234,7 +234,7 @@ def _merged_tags(base: list[str], extra: list[str]) -> list[str]:
 def _cross_check(
     staged_file: Path, title: str, doc_type: str, staged_path: str
 ) -> None:
-    """D-009 staging-time check: the staged frontmatter matches its row."""
+    """Staging-time check: the staged frontmatter matches its row."""
     staged = OKFConcept.from_file(str(staged_file))
     expected_type = f"Knowledge-{doc_type}"
     if staged.title != title or staged.type != expected_type:

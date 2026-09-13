@@ -36,10 +36,8 @@ def _fake_pid(offset: int) -> int:
 
     find_strays never treats the sweeping process itself as a stray
     (protected = {daemon, os.getpid(), daemon children}). Hardcoded fake
-    pids (4101, 4200, ...) intermittently EQUALED the real pytest pid on
-    CI runners (pid namespaces there reach the thousands -- observed twice
-    on 2026-08-25), silently filtering the fake orphan as "self" and
-    failing these tests with e.g. ``assert [] == [4101]``. Anchoring every
+    pids can equal the real pytest pid on CI runners, silently filtering the
+    fake orphan as "self" and failing these tests. Anchoring every
     fake pid to ``os.getpid() + offset`` keeps it out of the protected set
     on every host, deterministically.
     """

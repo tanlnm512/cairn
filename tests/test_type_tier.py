@@ -12,7 +12,7 @@ Covers:
     class defines a same-named method.
   - Abstain safety: a call with no inferable receiver type (e.g. a bare
     same-file call) resolves exactly as it did before Phase 10 -- the new
-    tier never turns a previously-`exact` edge into anything else, and it
+    tier never turns an `exact` edge into anything else, and it
     never fabricates a resolution when `receiver_type` is None.
 """
 from __future__ import annotations

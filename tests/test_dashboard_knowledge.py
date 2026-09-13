@@ -305,7 +305,7 @@ def test_list_knowledge_docs_empty_and_unindexed_store(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# /knowledge catalog route
+# knowledge catalog route
 # ---------------------------------------------------------------------------
 
 
@@ -526,7 +526,7 @@ def test_knowledge_catalog_in_palette_seed(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# /knowledge/{family}/{slug} detail seam (rows must resolve)
+# knowledge/{family}/{slug} detail seam (rows must resolve)
 # ---------------------------------------------------------------------------
 
 
@@ -587,7 +587,7 @@ def test_knowledge_detail_unknown_and_out_of_namespace_404(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# /knowledge/{family}/{slug} detail: relationship panels
+# knowledge/{family}/{slug} detail: relationship panels
 # (VAL-KNOW-006..012 server halves; the browser halves are agent-browser
 # checks against the fixture dashboard)
 # ---------------------------------------------------------------------------

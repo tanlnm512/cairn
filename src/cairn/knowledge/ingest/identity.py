@@ -1,6 +1,6 @@
 """Stable identity derivation for ingested source documents.
 
-Implements FR-007 / D-006: the path-derived stable ID, the
+Path-derived stable ID, the
 ``"{stable ID} — {title}"`` display title, deterministic slugs with a
 ``({repo})`` suffix on collisions (numbered when the suffix itself
 collides), the source-tag union, and real description extraction (never
@@ -55,7 +55,7 @@ def build_identity(
     """Derive the identity of one source document.
 
     ``seen_slugs`` is the caller's accumulating slug set: pass one set while
-    processing rows in sorted ``(repo, relpath)`` order (D-006) and each
+    processing rows in sorted ``(repo, relpath)`` order and each
     final slug is added to it, so collision suffixing stays deterministic.
     Omitted -> no collision resolution (pure function of the inputs).
     """

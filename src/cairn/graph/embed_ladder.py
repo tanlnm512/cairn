@@ -1,11 +1,11 @@
-"""Embedding parity sampler over stored chunks (FR-005).
+"""Embedding parity sampler over stored chunks.
 
 ``check_parity`` samples stored embedding rows under a model stamp, re-embeds
 the sampled chunk texts through an embed client (default: the server client
 ``embeddings._embed_server``), and compares each returned vector with the
 stored float32-LE blob by cosine. Shared by the embed writers' alias
 preflight, ``cairn doctor``, and the dashboard parity action; the availability
-ladder and its FR-013 degradation notification fan-out live in this module too.
+ladder and its degradation notification fan-out live in this module too.
 """
 from __future__ import annotations
 
@@ -20,11 +20,11 @@ from urllib.parse import urlsplit
 
 from . import embeddings
 
-# Mean-cosine parity gate (D-007): one constant shared by the alias preflight,
+# Mean-cosine parity gate: one constant shared by the alias preflight,
 # the ladder rungs, and doctor. Deliberately not env-overridable.
 PARITY_GATE = 0.98
 
-# Upper bound on stored chunks sampled per check (FR-005).
+# Upper bound on stored chunks sampled per check.
 SAMPLE_LIMIT = 16
 
 
@@ -54,11 +54,11 @@ def check_parity(
 ) -> ParityResult:
     """Sample stored chunks under ``stamp`` and parity-check them.
 
-    ``embed_fn(texts) -> (float32-LE blobs, dim)`` defaults to the T002
+    ``embed_fn(texts) -> (float32-LE blobs, dim)`` defaults to the
     server client. Contract:
 
     * zero stored rows under the stamp -> vacuous pass (``sampled=0``,
-      ``mean_cosine=None``); ``embed_fn`` is never called (FR-005).
+      ``mean_cosine=None``); ``embed_fn`` is never called.
     * a served/stored dim mismatch fails naming both measured dims.
     * otherwise pass iff mean pairwise cosine >= PARITY_GATE; failures
       report the measured mean.
@@ -129,10 +129,10 @@ def _cosine(a: List[float], b: List[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Availability ladder (FR-012 / spec A2.7). Rung 1 adopts a parity-passing
+# Availability ladder. Rung 1 adopts a parity-passing
 # same-server candidate session-scoped through the alias mechanics; rung 2
 # falls back to a cached local model on the same parity gate; rung 3 is the
-# terminal BM25/FTS5-hybrid-only state. Hash is never a rung (D-003).
+# terminal BM25/FTS5-hybrid-only state. Hash is never a rung.
 # Evaluated at most once per process per backend-state.
 # ---------------------------------------------------------------------------
 
@@ -168,7 +168,7 @@ _LADDER_CACHE: dict = {"state": None}
 _LADDER_LOCK = threading.Lock()
 
 # Rung-3 detail strings: short, machine-actionable, one per trigger reason.
-# Each names the degraded state AND one actionable remediation (FR-013).
+# Each names the degraded state AND one actionable remediation.
 _RUNG3_DETAIL = {
     "server_down": (
         "embedding server unreachable; dense leg off, "
@@ -229,9 +229,9 @@ def reset_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FR-013 notification fan-out (D-010). One unit per (process, reason):
+# Degradation notification fan-out. One unit per (process, reason):
 # a user-facing warn-once line on the shared 'cairn' logger plus one
-# EMBED_SERVER_DEGRADED event (host+model payload only, spec A2.6). The
+# EMBED_SERVER_DEGRADED event (host+model payload only). The
 # logger line is deliberately NOT gated on telemetry: events.warn_once
 # refuses under CAIRN_TELEMETRY=off, which would silence US3 AC3's
 # unconditional surface, so this module keeps a private once-set and leaves
@@ -304,7 +304,7 @@ def notify_degradation(reason: str, detail: str = "") -> None:
 
 
 def degradation_active() -> bool:
-    """True when a ladder degradation is active right now (doctor, FR-013)."""
+    """True when a ladder degradation is active right now (doctor)."""
     state = _LADDER_CACHE["state"]
     return state is not None and state.active
 
@@ -319,7 +319,7 @@ def _degradation_line(prefix: str) -> str:
 
 
 def degradation_footnote() -> str:
-    """The degradation footnote MCP tool results append (FR-013).
+    """The degradation footnote MCP tool results append.
 
     Zero side effects; "" when no degradation is active, else one line
     naming the rung, reason, and remediation.
@@ -328,7 +328,7 @@ def degradation_footnote() -> str:
 
 
 def degradation_banner() -> str:
-    """The dashboard degradation banner text (FR-013).
+    """The dashboard degradation banner text.
 
     Zero side effects; "" when no degradation is active, else one line
     naming the rung, reason, and remediation.
@@ -340,7 +340,7 @@ def evaluate_ladder(
     conn: Optional[sqlite3.Connection] = None,
     force: bool = False,
 ) -> Optional[LadderState]:
-    """Evaluate the FR-012 fallback ladder.
+    """Evaluate the fallback ladder.
 
     Consumers call this when the server probe fails or an embed error
     occurs; the verdict is cached for the process per backend-state and
@@ -348,7 +348,7 @@ def evaluate_ladder(
     returns None with nothing cached — unless the effective backend is the
     server family. A healthy re-evaluation supersedes any active state
     (``active=False``, cache back to None). A state-setting evaluation
-    notifies once at the end via :func:`notify_degradation` (FR-013), so a
+    notifies once at the end via :func:`notify_degradation`, so a
     rung adoption is never silent.
 
     Thread-safe: the cache check-then-act is double-checked under
@@ -389,7 +389,7 @@ def _evaluate(conn: Optional[sqlite3.Connection]) -> Optional[LadderState]:
 
     # Rung 1: same-server candidates. Requires a conn WITH stored rows under
     # the current stamp — parity against nothing proves nothing, so the rung
-    # declines rather than trusting an unverified producer (D-009).
+    # declines rather than trusting an unverified producer.
     if ids and conn is not None and stamp and _has_stored_rows(conn, stamp):
         for cid in ids:
             if cid == configured:
@@ -470,7 +470,7 @@ def _sentence_transformers_available() -> bool:
 
 
 def _config_value(name: str) -> str:
-    """One CAIRN_EMBED_* knob through the D-008 choke point (env > file),
+    """One CAIRN_EMBED_* knob through the config choke point (env > file),
     stripped, '' when unset.
 
     Lazy import: embeddings imports this module at load time, so the
@@ -492,8 +492,8 @@ def _local_default_model() -> str:
 def _fetch_model_listing() -> Optional[List[str]]:
     """GET {base}/models -> listed model ids, or None on any failure.
 
-    Same base URL / bearer / 2 s timeout discipline as the FR-002 probe;
-    never raises.
+    Same base URL / bearer / 2 s timeout discipline as the availability
+    probe; never raises.
     """
     import http.client
     import json

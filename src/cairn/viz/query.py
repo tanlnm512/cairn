@@ -66,7 +66,7 @@ def get_symbol_neighbors(conn: sqlite3.Connection,
     every resolved same-name symbol row contributes its own neighborhood,
     capped at _NEIGHBOR_CAP per row per direction; metadata.truncated is
     True iff any direction hit its cap. ``depth`` is accepted but clamped
-    to 1 — the signature is depth-ready (D-002), the behavior is 1-hop
+    to 1 — the signature is depth-ready, the behavior is 1-hop
     per action. Empty or blank ``names`` yield an empty graph, never an
     error; names with no symbol rows appear only in metadata.requested.
     """

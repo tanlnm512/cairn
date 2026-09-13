@@ -1,6 +1,6 @@
 """Shared pytest fixtures for the cairn test suite.
 
-Consolidates the duplicated setup that previously appeared per-test-file:
+Consolidates setup shared across test files:
 
 * ``fresh_db``  -- an in-memory SQLite connection with the full schema
   (``_apply_schema``) already applied, Row factory enabled, FKs ON. Each
@@ -11,6 +11,11 @@ Consolidates the duplicated setup that previously appeared per-test-file:
   and after the test, so semantic-stack tests don't need torch / a model
   download. Apply with ``@pytest.fixture(autouse=True)`` per-test, or just
   request the fixture by name where needed.
+
+* ``caller_callee_ws`` / ``caller_callee_db`` -- a single-repo Kotlin
+  workspace (a.kt calls b.kt) and a factory that builds its graph into a
+  caller-provided DB path and returns the open connection (the test owns
+  closing it).
 
 Tests that need specific symbol/file rows still seed them locally -- the
 fixture only removes the boilerplate of creating the connection and running
@@ -25,7 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from cairn.graph.schema import _apply_schema
+from cairn.graph.builder import build_graph
+from cairn.graph.schema import _apply_schema, get_db
 
 # Names agent-client detection probes via shutil.which (agent_install/detect.py
 # + clients/*). Blocked suite-wide so a developer machine with real CLIs
@@ -37,12 +43,8 @@ _AGENT_CLIS = ("claude", "cursor", "droid", "agy", "opencode", "kilo", "omp")
 def _hermetic_env(monkeypatch, tmp_path):
     """Every test runs as if on a clean machine (suite-wide default).
 
-    Two CI failures on one branch (2026-08-14) came from tests that were green
-    locally only because of the dev machine's surroundings: an uninstall
-    dry-run test that relied on agent CLIs being DETECTED (this machine has
-    real claude/droid; a clean runner detects nothing), and a CLI test parsing
-    click's interleaved stdout+stderr. This fixture makes the clean-runner
-    environment the DEFAULT so such tests fail locally, at write time:
+    Makes the clean-runner environment the DEFAULT so environment-dependent
+    tests fail locally, at write time:
 
     * HOME/CAIRN_HOME point into the test's tmp sandbox (Path.home patched).
     * No CAIRN_* env leaks between tests (all cleared each run).
@@ -152,3 +154,39 @@ def hash_backend(monkeypatch):
     emb.reset_backend_cache()
     yield
     emb.reset_backend_cache()
+
+
+@pytest.fixture
+def caller_callee_ws(tmp_path):
+    """A single-repo workspace with a.kt calling b.kt's symbol."""
+    ws = tmp_path / "ws"
+    repo = ws / "demo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "a.kt").write_text(
+        "class Caller {\n"
+        "  fun go() {\n"
+        "    val r = Callee()\n"
+        "    r.target()\n"
+        "  }\n"
+        "}\n"
+    )
+    (repo / "b.kt").write_text(
+        "class Callee {\n"
+        "  fun target() {}\n"
+        "}\n"
+    )
+    return ws
+
+
+@pytest.fixture
+def caller_callee_db(caller_callee_ws):
+    """Factory: build the graph over caller_callee_ws, return the connection.
+
+    Usage: ``conn = caller_callee_db(str(tmp_path / "x.db"))``.
+    """
+
+    def _build(db_path):
+        build_graph(workspace=str(caller_callee_ws), db_path=str(db_path))
+        return get_db(str(db_path))
+
+    return _build

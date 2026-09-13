@@ -1,5 +1,5 @@
-"""Tests for scripts/verify_datasource.py -- the FR-001/AC2 content gate and
-the FR-002/AC4 size-budget gate.
+"""Tests for scripts/verify_datasource.py -- the content gate and
+the size-budget gate.
 
 Hermetic strategy: the full-size real manifest (sizes 100..5000) is the CI
 job's business, not the unit suite's -- every manifest test below mints a
@@ -97,7 +97,7 @@ class TestHappyPath:
 @pytest.mark.infra
 class TestDrift:
     def test_flipped_byte_in_generated_file_exits_nonzero(self, tmp_path):
-        """TC-003 via content: mint the pin from a corpus with one flipped
+        """Via content: mint the pin from a corpus with one flipped
         byte, so the manifest pins a tree regeneration cannot reproduce.
 
         The flip is length-preserving (bytes XOR) so ONLY the hash fact
@@ -146,7 +146,7 @@ class TestDrift:
         ]
 
     def test_seed_flip_exits_nonzero(self, tmp_path):
-        """TC-003's scratch experiment: bump the seed, leave the pin alone."""
+        """Scratch experiment: bump the seed, leave the pin alone."""
         manifest = _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [4])
         manifest["t1"]["seed"] += 1
         save_manifest(tmp_path / "m.json", manifest)
@@ -156,7 +156,7 @@ class TestDrift:
         assert res.status == "hash_mismatch"
 
     def test_two_consecutive_runs_identical_hash(self, tmp_path):
-        """TC-005 determinism substrate: same recipe, two fresh regenerations
+        """Determinism substrate: same recipe, two fresh regenerations
         into different roots -> identical actual hash, both runs green."""
         _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [5])
         first = vd.verify_manifest(tmp_path / "m.json", workroot=tmp_path / "run1")
@@ -291,12 +291,12 @@ class TestJsonOutput:
 
 
 class TestSizeBudgets:
-    """FR-002/AC4 library layer: verify_budgets measures trees as byte sums
+    """Library layer: verify_budgets measures trees as byte sums
     against the per-corpus and total limits, injectable via repo_root
     (T003's pattern)."""
 
     def test_real_tree_within_all_budgets(self):
-        """TC-017 pass leg: the committed tree (T005's yarl snapshot) is under
+        """Pass leg: the committed tree (T005's yarl snapshot) is under
         every limit with exactly the budget rules the spec names -- t2 and ds2
         per-corpus, datasource total."""
         results = vd.verify_budgets()
@@ -313,7 +313,7 @@ class TestSizeBudgets:
         assert by_path["benchmarks/datasource/t2"].actual_bytes > 0  # t2 vendored (T005)
 
     def test_t2_breach_detected_with_injected_oversized_file(self, tmp_path):
-        """TC-017 breach leg: pad t2/ past 3 MB while the WHOLE tree stays
+        """Breach leg: pad t2/ past 3 MB while the WHOLE tree stays
         under 5 MB -- the subtree budget fires alone, proving the limits
         are independent checks, not one folded into the other."""
         t2 = tmp_path / "benchmarks" / "datasource" / "t2"
@@ -328,7 +328,7 @@ class TestSizeBudgets:
         assert not ds2_result.breached
 
     def test_total_budget_breaches_independently_of_t2(self, tmp_path):
-        """TC-018: > 5 MB of files OUTSIDE t2/ breaches the total budget
+        """> 5 MB of files OUTSIDE t2/ breaches the total budget
         while both per-corpus dirs are absent (measured as 0 bytes --
         nothing vendored, nothing to guard)."""
         ds = tmp_path / "benchmarks" / "datasource"
@@ -367,7 +367,7 @@ class TestSizeBudgets:
         assert not any(b.breached for b in results)
 
     def test_pycache_build_noise_is_not_counted(self, tmp_path):
-        """The budget guards the COMMITTED tree (D-002): a local graph build
+        """The budget guards the COMMITTED tree: a local graph build
         over t2/ drops git-ignored __pycache__ dirs into the vendored tree,
         and that noise must not count -- or a clean CI checkout and a used
         dev tree would measure differently (and could false-breach)."""
@@ -383,7 +383,7 @@ class TestSizeBudgets:
 
 
 class TestDs2Budget:
-    """FR-002/TC-009: the ds2 sibling corpus dir is covered by its own
+    """The ds2 sibling corpus dir is covered by its own
     per-corpus rule, not exempt by omission -- the rule is declared whether
     or not the dir exists yet."""
 
@@ -435,7 +435,7 @@ class TestDs2Budget:
 
 @pytest.mark.infra
 class TestBudgetCli:
-    """FR-002/AC4 wire layer: --budget mode, default-run wiring, exit codes.
+    """Wire layer: --budget mode, default-run wiring, exit codes.
     vd.REPO_ROOT is monkeypatched to a scratch tree so main() measures the
     tmp layout, not the repo (verify_budgets resolves it at call time)."""
 
@@ -463,7 +463,7 @@ class TestBudgetCli:
             assert isinstance(b["actual_kb"], float)
 
     def test_budget_breach_exits_nonzero_naming_budget_and_limit(self, tmp_path, capsys, monkeypatch):
-        """TC-017/TC-018 failure path over the wire: exit 3, stderr names the
+        """Failure path over the wire: exit 3, stderr names the
         breached budget path and the limit it exceeded."""
         _mint_manifest(tmp_path / "m.json", tmp_path / "corpora", [4])
         t2 = tmp_path / "benchmarks" / "datasource" / "t2"
@@ -530,7 +530,7 @@ class TestEndToEnd:
     def test_real_run_includes_budget_lines(self):
         """T007 acceptance over the wire: the default --size 100 run now also
         prints the budget lines (both limits visible), still exit 0 -- CI
-        gets content and budget enforcement from the one step (TC-017)."""
+        gets content and budget enforcement from the one step."""
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--size", "100"],
             capture_output=True,

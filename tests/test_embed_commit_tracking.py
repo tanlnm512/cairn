@@ -4,11 +4,9 @@ Verifies the two load-bearing behaviors of the embed_all summary dict:
 1. On success: ``embedded`` reflects committed rows, ``failed_batches`` is 0.
 2. On commit failure: ``failed_batches`` is incremented and ``embedded`` is 0.
 
-(Pruned 2026-07-31: the four near-duplicate happy-path tests that each
-re-asserted the summary keys/counts on a successful run were collapsed into
-one representative -- test_commit_success_counts_correctly. The failure path
-is exercised only by test_commit_failure_simulation, which actually wraps the
-connection to fail on commit.)
+The happy-path summary keys/counts are asserted by
+test_commit_success_counts_correctly; the failure path is exercised only by
+test_commit_failure_simulation, which wraps the connection to fail on commit.
 
 Uses the hash_backend fixture to avoid the torch dependency.
 """

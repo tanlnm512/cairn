@@ -1,20 +1,20 @@
-"""T016 (FR-004): the PRF wiring at the post-fusion seam in semantic_search.
+"""The PRF wiring at the post-fusion seam in semantic_search.
 
-Pins the boundary contract of the second pass (D-001/D-003/D-012):
+Pins the boundary contract of the second pass:
 
 * flag-off byte-equivalence -- ``params=None``, ``RetrievalParams()``, and
   a flag-off object carrying the new knobs are all identical, with exactly
-  ONE ``embed_query`` per call and zero ``term_df`` SELECTs (TC-016);
+  ONE ``embed_query`` per call and zero ``term_df`` SELECTs;
 * flag-on full-path wiring -- the fused top-k's text feeds
-  ``prf.expand`` (with T013's ``term_df`` lookup and the resolved
-  D-002 knobs), the expanded ``dense_query`` gets the call's SECOND
-  ``embed_query`` (the D-012 doctrine exception, at most one extra), the
+  ``prf.expand`` (with the ``term_df`` lookup and the resolved
+  knobs), the expanded ``dense_query`` gets the call's SECOND
+  ``embed_query`` (at most one extra), the
   expansion terms join the sparse leg, and the second pass's candidates
   replace the first's;
-* PRF replaces the rerank stage, never stacks (TC-019, wiring level): a
+* PRF replaces the rerank stage, never stacks: a
   PRF combo never reaches ``rrk.rerank`` even with ``CAIRN_RERANK=1``
   and an explicit ``rerank=True``;
-* offline determinism (TC-017) and the degenerate empty-expansion
+* offline determinism and the degenerate empty-expansion
   fallback (second pass skipped: zero extra embeds, first-pass results).
 
 The corpus is two python-ish symbols under the hash backend plus
@@ -193,7 +193,7 @@ def _install_expand_spy(monkeypatch):
 
 
 class _RerankRecorder:
-    """Stand-in for rrk.rerank that records calls (the spy for TC-019's
+    """Stand-in for rrk.rerank that records calls (the spy for the
     never-runs proof); mirrors the real success contract."""
 
     def __init__(self):
@@ -208,7 +208,7 @@ class _RerankRecorder:
 
 
 class TestPrfFlagOffEquivalence:
-    """TC-016: the lever ships flag-off. params=None, RetrievalParams(),
+    """The lever ships flag-off. params=None, RetrievalParams(),
     and a flag-off object that ALSO carries the new knobs are all
     byte-identical, one embed_query per call, no term_df read."""
 
@@ -234,8 +234,8 @@ class TestPrfFlagOffEquivalence:
         )
         assert empty_obj == plain
         assert flag_off_with_knobs == plain
-        # One call per semantic_search, never two: the second embed is the
-        # flag-gated D-012 exception and the flag is off.
+        # One call per semantic_search, never two: the flag gating the
+        # second embed is off.
         assert embed_calls == [probe, probe, probe]
 
     def test_flag_off_issues_zero_term_df_selects(self, prf_db):
@@ -291,7 +291,7 @@ class TestPrfWiring:
         expansion = captured[0]["result"]
         assert expansion.terms, "the corpus must yield a non-empty expansion"
         # Exactly TWO embeds: the first pass on the raw query, the second
-        # (the D-012 exception) on the expanded dense text -- never more.
+        # on the expanded dense text -- never more.
         assert embed_calls == ["gizmo", expansion.dense_query]
         assert expansion.dense_query.startswith("gizmo ")
         assert set(expansion.dense_query.split()[1:]) == set(expansion.terms)
@@ -395,10 +395,10 @@ class TestPrfWiring:
             ),
         )
         call = captured[0]
-        # None-means-default resolves to the D-002 anchors at the boundary.
+        # None-means-default resolves to the anchors at the boundary.
         assert call["fb_terms"] == 1
         assert call["fb_lambda"] == 0.9
-        # The DF signal is T013's builder over the persisted term_df table
+        # The DF signal is the builder over the persisted term_df table
         # (both symbols carry the qualified-name token ``mod``).
         assert call["df_lookup"] is not None
         assert call["df_lookup"]("mod") == (2, 2)
@@ -425,8 +425,8 @@ class TestPrfWiring:
 
 
 class TestPrfReplacesRerank:
-    """TC-019 (wiring level): a PRF combo never reaches the rerank stage
-    -- D-012's replaces-not-stacks doctrine."""
+    """Wiring level: a PRF combo never reaches the rerank stage
+    (replaces-not-stacks)."""
 
     def test_rerank_never_runs_on_prf_combo_even_when_armed(
         self, monkeypatch, prf_db
@@ -474,7 +474,7 @@ class TestPrfReplacesRerank:
 
 
 class TestPrfDeterminismAndDegenerate:
-    """TC-017 + the bounded fallback: offline determinism, and the
+    """Offline determinism and the
     degenerate empty-expansion path."""
 
     def test_two_runs_byte_identical_with_network_disabled(

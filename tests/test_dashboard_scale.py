@@ -1,7 +1,7 @@
 """Scale tests for the traffic routes over a synthesized ~10.5k-call store
-(TC-006 / FR-005 / SC-1, spec ui-dashboard-traffic-scale).
+(SC-1).
 
-Survey Q7: no 10,000-row store exists locally, so FR-005's 2-second
+Survey Q7: no 10,000-row store exists locally, so the 2-second
 first-render budget is proven against a store synthesized here by direct
 ``tool_metrics`` inserts (no server, no sleeps, ``executemany`` for speed).
 
@@ -42,11 +42,11 @@ pytestmark = pytest.mark.infra
 # CAIRN_* per test, so this cannot live inside a test body).
 _STRICT_BUDGET = os.environ.get("CAIRN_SCALE_STRICT", "") == "1"
 
-_STRICT_CEILING_S = 2.0  # SC-1 / FR-005: first render under 2 seconds
+_STRICT_CEILING_S = 2.0  # SC-1: first render under 2 seconds
 _CI_CEILING_S = 10.0  # generous ungated ceiling so breakage stays visible
 
 # Store shape (~10,500 rows): a giant contiguous legacy 'unknown' session
-# (the all-'unknown' legacy shape the spec calls out as FR-004/FR-005's
+# (the all-'unknown' legacy shape the spec calls out as 's
 # first case), mid-age sessions reaching back >30 days, fresh sessions.
 _LEGACY_ROWS = 6000  # contiguous 60s-apart calls, all older than 30 days
 _MID_SESSIONS = 20  # x _MID_CALLS, session starts spaced 2 days apart
@@ -182,7 +182,7 @@ def _assert_history_first_page_bounded(client):
 
 
 def _assert_chains_bounded(client, db_path):
-    """/chains at most CHAINS_MAX_CHAINS chains x CHAINS_CALLS_PER_CHAIN
+    """chains at most CHAINS_MAX_CHAINS chains x CHAINS_CALLS_PER_CHAIN
     calls, both route-visible and via the data layer on the same store."""
     from cairn.dashboard.data import (
         CHAINS_CALLS_PER_CHAIN,
@@ -212,7 +212,7 @@ def _assert_chains_bounded(client, db_path):
 
 
 def _assert_tokens_cover_seeded_tools(client):
-    """/tokens returns a row for every seeded tool."""
+    """tokens returns a row for every seeded tool."""
     resp = client.get("/tokens")
     assert resp.status_code == 200
     for tool in _SCALE_TOOLS:
@@ -220,13 +220,13 @@ def _assert_tokens_cover_seeded_tools(client):
 
 
 def test_scale_store_shape(tmp_path):
-    """The synthesized store matches the shape FR-005's budget assumes:
+    """The synthesized store matches the shape the budget assumes:
     >=10,000 calls, one several-thousand-call CONTIGUOUS legacy 'unknown'
     session (a single giant chain), timestamps reaching back >30 days,
     a spread of tools, and both NULL and non-NULL payload sizes."""
     db_path = str(tmp_path / "scale.db")
     total = _seed_scale_store(db_path)
-    assert total >= 10_000  # FR-005's threshold
+    assert total >= 10_000  # the threshold
     assert total == (
         _LEGACY_ROWS + _MID_SESSIONS * _MID_CALLS + _RECENT_SESSIONS * _RECENT_CALLS
     )
@@ -260,13 +260,13 @@ def test_scale_store_shape(tmp_path):
 
 
 def test_history_first_page_bounded_at_scale(tmp_path):
-    """TC-006 structural: /history's first page is exactly one bounded
+    """Structural: /history's first page is exactly one bounded
     page (HISTORY_PAGE_SIZE rows + Older link), never the whole store."""
     _assert_history_first_page_bounded(_client_over(_scale_db_file(tmp_path), tmp_path))
 
 
 def test_chains_render_bounded_at_scale(tmp_path):
-    """TC-006 structural: /chains stays bounded despite 51 chains in the
+    """Structural: /chains stays bounded despite 51 chains in the
     store -- at most CHAINS_MAX_CHAINS rendered, at most
     CHAINS_CALLS_PER_CHAIN calls each; the giant legacy 'unknown' session
     cannot flood the page."""
@@ -275,7 +275,7 @@ def test_chains_render_bounded_at_scale(tmp_path):
 
 
 def test_tokens_covers_seeded_tools_at_scale(tmp_path):
-    """TC-006 structural: /tokens aggregates the whole 10.5k-row store
+    """Structural: /tokens aggregates the whole 10.5k-row store
     and returns a row for every seeded tool."""
     _assert_tokens_cover_seeded_tools(
         _client_over(_scale_db_file(tmp_path), tmp_path)
@@ -283,7 +283,7 @@ def test_tokens_covers_seeded_tools_at_scale(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# First-render budget (TC-006 / FR-005 / SC-1)
+# First-render budget (SC-1)
 # ---------------------------------------------------------------------------
 
 
@@ -296,7 +296,7 @@ def test_traffic_routes_first_render_budget(tmp_path):
     bounds plus a generous 10s ceiling so a real regression still fails.
     A fresh TestClient per route makes every timed GET that client's
     first request, so template loading/compilation counts as part of
-    "first render", as FR-005 intends.
+    "first render", as intends.
     """
     db_path = _scale_db_file(tmp_path)
 

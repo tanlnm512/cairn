@@ -3,7 +3,7 @@
 Builds the same small fixture workspace two ways -- forced on-disk
 (repo_filter set) and in-memory (repo_filter=None, the default full-rebuild
 path) -- and asserts identical table counts and resolution histograms.
-Proves backup_to() is a lossless persist and that the bulk-load pragmas /
+Proves backup_to() is a lossless persist and that the bulk-load pragmas
 executemany batching / O(n^2) fix / dropped periodic commits didn't change
 *what* gets built, only how fast.
 """

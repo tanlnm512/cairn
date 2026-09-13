@@ -1,8 +1,8 @@
-"""Tests for the benchmark module (src/cairn/bench/).
+"""Tests for the benchmark module (src/cairn/bench).
 
 Three layers:
 1. Unit tests for the timing primitives (percentiles, time_call, peak_memory)
-   — deterministic, fast, no graph/build dependency.
+   deterministic, fast, no graph/build dependency.
 2. Tests for the corpus generator (determinism, scanner-recognition, buildable).
 3. Smoke tests for the two suites + the cairn bench CLI — run end-to-end on a tiny
    corpus, assert report shape (not specific timings, which are machine-dependent).
@@ -244,7 +244,7 @@ class TestBenchCliJson:
         assert not result.stdout.lstrip().startswith("{")
 
 
-# --- CLI --baseline resolution (T014, FR-004/AC1, TC-007..TC-012) ----------
+# --- CLI --baseline resolution (/AC1, .. ) ----------
 
 
 def _synthetic_perf_report(median_ms=100.0):
@@ -281,13 +281,13 @@ def _write_committed_baseline(
 ):
     """Write a throwaway committed-baseline fixture and chdir onto its repo.
 
-    Mirrors the tree T015 will mint (benchmarks/baselines/<DS-version>/
+    Mirrors the tree will mint (benchmarks/baselines/<DS-version>/
     <suite>.json) under tmp_path -- never under the repo's real benchmarks/
     -- and chdirs so the CLI's cwd-first resolution finds it.
 
     profile: "match" stamps the exact current machine_profile (no warning);
     a dict stamps that profile verbatim; None omits the key entirely
-    (pre-T013 unstamped baseline shape).
+    (pre- unstamped baseline shape).
     """
     from cairn import __version__
     from cairn.bench.datasource import machine_profile
@@ -335,7 +335,7 @@ def _invoke_perf_cli(extra_args, tmp_path, monkeypatch):
 
 class TestBenchCliBaseline:
     def test_header_renders_version_and_stamp_facts(self, tmp_path, monkeypatch):
-        """TC-007: --baseline resolves the committed dir, headers it with its
+        """--baseline resolves the committed dir, headers it with its
         stamp facts (dataset version, cairn version, runner class), and the
         comparison names the requested version -- clean run exits 0."""
         from cairn import __version__
@@ -353,7 +353,7 @@ class TestBenchCliBaseline:
     def test_mismatch_warning_names_exactly_differing_fields(
         self, tmp_path, monkeypatch
     ):
-        """TC-009/TC-011: every differing profile field is named with both
+        """Every differing profile field is named with both
         values; matching fields are NOT; the mismatch never gates (exit 0)."""
         import platform
 
@@ -386,7 +386,7 @@ class TestBenchCliBaseline:
         assert platform.machine() in result.output  # current arch
 
     def test_matching_profile_prints_no_mismatch_warning(self, tmp_path, monkeypatch):
-        """TC-010: an exact profile match renders no mismatch marker."""
+        """An exact profile match renders no mismatch marker."""
         _write_committed_baseline(tmp_path, monkeypatch)  # profile matches
         _patch_perf_suite(monkeypatch, median_ms=100.0)
         result = _invoke_perf_cli(["--baseline", "DS-v1"], tmp_path, monkeypatch)
@@ -442,7 +442,7 @@ class TestBenchCliBaseline:
         assert "runner_class: baseline ci-self-hosted-7 vs current " in result.output
 
     def test_unstamped_baseline_notes_unknown_not_mismatch(self, tmp_path, monkeypatch):
-        """A pre-T013 baseline (no machine_profile key) is 'unknown', not
+        """A pre- baseline (no machine_profile key) is 'unknown', not
         'mismatched': noted without the MISMATCH marker, compare proceeds."""
         _write_committed_baseline(
             tmp_path, monkeypatch, profile=None,
@@ -455,7 +455,7 @@ class TestBenchCliBaseline:
         assert "no machine_profile stamp" in result.output
 
     def test_unknown_version_fails_promptly(self, tmp_path, monkeypatch):
-        """TC-008: unknown version exits 1 naming the version (and the ones
+        """Unknown version exits 1 naming the version (and the ones
         that exist), renders no comparison, and never runs the suite."""
         def _boom(*args, **kwargs):
             raise AssertionError("suite must not run for an unknown version")

@@ -2,7 +2,7 @@
 
 Handles pattern-to-FTS conversion and the bm25-ranked symbol search that
 ``search_symbols`` exposes; degrades to a LIKE scan when FTS5 is unavailable
-or the MATCH query errors. ``search_symbols_terms`` (T008/FR-001) is the
+or the MATCH query errors. ``search_symbols_terms`` is the
 term-mode entry point for enriched queries: OR-combined per-term prefix
 queries instead of one folded phrase.
 """
@@ -84,7 +84,7 @@ def _pattern_to_fts(pattern: str) -> Optional[str]:
 
 
 def _terms_to_fts(terms: Iterable[str]) -> Optional[str]:
-    """Build an OR-combined per-term-prefix FTS5 MATCH query (FR-001/T008).
+    """Build an OR-combined per-term-prefix FTS5 MATCH query.
 
     The term-mode counterpart to ``_pattern_to_fts`` for enriched queries:
     instead of folding a whole pattern into ONE quoted phrase (which a
@@ -290,7 +290,7 @@ def search_symbols_terms(
     kind: Optional[str] = None,
     limit: int = 100,
 ) -> List[sqlite3.Row]:
-    """Search symbols by an OR-combined term list, ranked by bm25 (T008/FR-001).
+    """Search symbols by an OR-combined term list, ranked by bm25.
 
     The term-mode counterpart to ``search_symbols`` for enriched queries
     (``query_enrich``'s ``sparse_query`` term list): ``_terms_to_fts`` turns

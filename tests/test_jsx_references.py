@@ -1,8 +1,8 @@
 """JSX reference tracking: `<UserCard/>` emits a `references` edge from the
 enclosing component to the UserCard symbol.
 
-Also covers the variable-declarator initializer fix (call_expression / JSX as
-the direct value of ``const x = ...``), which previously dropped the edge.
+Also covers the variable-declarator initializer (call_expression / JSX as
+the direct value of ``const x = ...``), which must also emit the edge.
 
 These are parser-level tests (TypeScriptParser on `.tsx`, JavaScriptParser on
 `.jsx`); the resolver/builder pipeline is exercised by the smoke test in the
@@ -128,12 +128,11 @@ const App = () => {
         assert "calls" in kinds
         assert "references" in kinds
 
-    # --- variable-declarator initializer (previously dropped) ---------------
+    # --- variable-declarator initializer ---------------
 
     def test_jsx_as_var_declarator_initializer(self):
-        # ``const x = <UserCard/>`` -- previously the JSX ref was dropped
-        # because _handle_var_decl walked the value's children rather than
-        # visiting the value node itself. Now fixed.
+        # ``const x = <UserCard/>`` -- the JSX ref edge is emitted
+        # when _handle_var_decl visits the value node itself.
         src = b"const App = () => { const x = <UserCard />; };\n"
         pf = _parse(TypeScriptParser, src, ".tsx")
         assert _ref_targets(pf) == ["UserCard"]

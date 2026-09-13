@@ -40,10 +40,10 @@
     {{ links.store_field() }}
     <button type="submit">Apply</button>
   </form>
-  {#- Layout toggle (FR-004): links swap only the layout param, keeping
+  {#- Layout toggle: links swap only the layout param, keeping
       scope/focus/repo/depth (window_control link conventions); the active
       layout renders as <strong>. app.js intercepts clicks on the anchors
-      to toggle the live network without a reload. FR-003: links.url keeps
+      to toggle the live network without a reload. links.url keeps
       the selected store riding the href; empty selection keeps the bare
       hrefs, byte-identical. -#}
   {% macro layout_href(kind) -%}
@@ -59,7 +59,7 @@
     {%- for kind, label in [("force", "force"), ("hier", "hierarchical")] %} {% if not loop.first %} · {% endif %}{% if kind == layout %}<strong>{{ label }}</strong>{% else %}<a href="{{ layout_href(kind) }}" data-layout="{{ kind }}">{{ label }}</a>{% endif %}
     {%- endfor %}
   </p>
-  {#- Node inspect (FR-004, D-004): selecting a node on the canvas swaps
+  {#- Node inspect: selecting a node on the canvas swaps
       this hint for an anchor to that symbol's neighborhood graph
       (scope=symbol&focus=...); deselecting restores the hint. Distinct from
       double-click, which expands in place. -#}
@@ -111,7 +111,7 @@
   {% else %}
   <p class="empty-state">No nodes for this scope — adjust the controls above.</p>
   {% endif %}
-  {#- FR-003: a selected store rides the page for app.js (search and
+  {#- A selected store rides the page for app.js (search and
       expansion fetches stay on that store); no selection renders the tag
       byte-identical to the pre-seam page. -#}
   <script id="graph-data" type="application/json"{% if store_key %} data-store="{{ store_key }}"{% endif %}>{{ graph | tojson }}</script>

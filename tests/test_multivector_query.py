@@ -1,7 +1,7 @@
-"""T018 (FR-005): the multi-vector query path in ``semantic_search``.
+"""The multi-vector query path in ``semantic_search``.
 
 Covers ``RetrievalParams.multivector``:
-- flag-off is byte-identical (TC-020's query half): params=None,
+- flag-off is byte-identical: params=None,
   RetrievalParams(), and multivector=False return identical result lists
   and never touch ``embeddings_mv`` in SQL, even when mv rows exist;
 - flag-on brute leg UNIONs ``embeddings`` + ``embeddings_mv`` rows (same
@@ -10,10 +10,10 @@ Covers ``RetrievalParams.multivector``:
 - flag-on ANN leg queries ``vec_`` AND ``vecmv_`` and merges the candidate
   lists (each symbol once, best score); a missing vecmv index leaves the
   base candidates unchanged;
-- TC-021: a telegraphic name-style query and a prose docstring-style query
+- a telegraphic name-style query and a prose docstring-style query
   each surface a symbol through the vector kind that matches (the pole the
   single-vector build misses);
-- TC-023: no result list ever contains a symbol twice, including under the
+- no result list ever contains a symbol twice, including under the
   default fusion-on path;
 - an empty ``embeddings_mv`` behaves exactly single-vector.
 
@@ -189,7 +189,7 @@ _PROBES = [
 
 
 # ---------------------------------------------------------------------------
-# Flag-off equivalence (TC-020's query half): byte-identical, mv never read
+# Flag-off equivalence: byte-identical, mv never read
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +248,7 @@ def test_flag_off_never_reads_embeddings_mv(mv_corpus_db):
 
 
 # ---------------------------------------------------------------------------
-# Brute leg: UNION + max-dedup (TC-023 brute half)
+# Brute leg: UNION + max-dedup
 # ---------------------------------------------------------------------------
 
 
@@ -286,7 +286,7 @@ def test_brute_union_max_dedup(brute_env, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TC-021: both mismatch poles surface through the matching vector kind
+# Both mismatch poles surface through the matching vector kind
 # ---------------------------------------------------------------------------
 
 
@@ -307,7 +307,7 @@ def test_tc021_telegraphic_and_prose_poles(brute_env, monkeypatch):
     off_name = semantic_search(brute_env, "safeApiCall", limit=10)
     hit = next(c for c in on_name if c["id"] == "1")
     assert hit["score"] == 1.0 and hit["chunk"] == "name:safeApiCall"
-    assert "1" not in {c["id"] for c in off_name}, "the pole that previously missed"
+    assert "1" not in {c["id"] for c in off_name}, "the pole that missed"
 
     # Prose pole: a describes-the-behavior sentence; pinned e3 (the
     # docstring-kind axis in this corpus).
@@ -332,7 +332,7 @@ def test_tc021_telegraphic_and_prose_poles(brute_env, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TC-023: no duplicate symbols in any result list (fused path included)
+# No duplicate symbols in any result list (fused path included)
 # ---------------------------------------------------------------------------
 
 
@@ -352,7 +352,7 @@ def test_fused_result_lists_duplicate_free(fused_env, probe):
     )
     assert results, "fixture sanity: non-empty list to inspect"
     ids = [r["id"] for r in results]
-    assert len(ids) == len(set(ids)), "one symbol, one entry (TC-023)"
+    assert len(ids) == len(set(ids)), "one symbol, one entry"
     assert len(results) <= 5, "list length stays within the requested top-k"
 
 
@@ -367,7 +367,7 @@ def test_empty_mv_table_flag_on_equals_flag_off(brute_env, probe):
     from cairn.graph.semantic import RetrievalParams, semantic_search
 
     _seed_symbols(brute_env)
-    emb.embed_all(brute_env)  # default run: mv rows written (FR-004)
+    emb.embed_all(brute_env)  # default run: mv rows written
     assert brute_env.execute("SELECT COUNT(*) FROM embeddings_mv").fetchone()[0] == 5
     # The empty-mv state is built by hand: clear the default run's rows.
     brute_env.execute("DELETE FROM embeddings_mv")

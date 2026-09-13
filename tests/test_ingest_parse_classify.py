@@ -331,7 +331,7 @@ def test_classify_ingestible_statuses_pass(status, include_drafts):
 
 
 def test_classify_include_drafts_readmits_whole_skip_family():
-    """include_drafts=True re-admits every skip status, tagged `draft` (FR-005/TC-009)."""
+    """include_drafts=True re-admits every skip status, tagged `draft`."""
 
     for status in ("draft", "proposed", "review", "superseded", "deprecated"):
         doc = ParsedDoc(status=status)

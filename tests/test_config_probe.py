@@ -1,12 +1,12 @@
-"""Failing tests for the machine-readable resolution probe (FR-005; TC-009).
+"""Failing tests for the machine-readable resolution probe.
 
 `cairn config --json` must exit 0 emitting a single JSON object with the keys
 ``cairn_home``, ``workspace``, ``db`` and ``knowledge`` matching the
-environment in effect — the probe FR-006 spawns with a registration's exact
-binary+env (tech-spec D-004/D-005) and that install-time verification and the
+environment in effect — the probe spawns with a registration's exact
+binary+env (tech-spec) and that install-time verification and the
 doctor environment audit compare resolved stores against.
 
-Survey gap (FR-005 PARTIAL): `cairn config` prints all four values text-only
+Survey gap (PARTIAL): `cairn config` prints all four values text-only
 (core.py:186-191) and `--db` covers one field (core.py:150-170); no JSON probe
 emitting all four exists. Every test here is RED until the `--json` flag
 lands, failing on click's "No such option: --json" (exit 2) — never on
@@ -49,7 +49,7 @@ def _repoint_bindings(monkeypatch, home: Path) -> None:
 
 
 def _expected_store(home: Path, ws: Path) -> dict[str, str]:
-    """The four values FR-005 requires, derived from the environment in effect."""
+    """The four values requires, derived from the environment in effect."""
     from cairn.paths import store_key
 
     key = store_key(ws)
@@ -71,13 +71,13 @@ def _invoke_config_json() -> object:
 
 
 # --------------------------------------------------------------------------
-# The probe (TC-009)
+# The probe 
 # --------------------------------------------------------------------------
 
 def test_config_json_custom_home_reports_all_four_keys(tmp_path, monkeypatch):
     """Given CAIRN_HOME at a custom folder and the workspace resolved from the
     current directory, the probe emits one JSON object whose four keys match
-    the environment in effect (FR-005; TC-009)."""
+    the environment in effect ."""
     home = tmp_path / "custom_home"
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -98,7 +98,7 @@ def test_config_json_custom_home_reports_all_four_keys(tmp_path, monkeypatch):
 def test_config_json_default_home_reports_default_paths(tmp_path, monkeypatch):
     """Repeating the run with CAIRN_HOME unset reports the default home
     (~/.cairn of the sandboxed HOME), not some stale or custom location
-    (TC-009)."""
+     ."""
     default_home = Path.home() / ".cairn"  # Path.home is patched into the tmp sandbox by conftest
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -137,7 +137,7 @@ def test_config_json_exits_zero_with_single_json_document(tmp_path, monkeypatch)
 def test_config_json_is_read_only_no_workspace_registration(tmp_path, monkeypatch):
     """Running the probe must NOT auto-register the cwd workspace (the
     resolve_store side effect described in its paths.py docstring): the
-    workspaces.json registry gains no entry — FR-006 spawns the probe from
+    workspaces.json registry gains no entry — spawns the probe from
     arbitrary cwds and verification must not mutate the registry."""
     from cairn.paths import is_registered
 

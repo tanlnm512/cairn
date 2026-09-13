@@ -103,7 +103,7 @@ CREATE TRIGGER IF NOT EXISTS symbols_au AFTER UPDATE ON symbols BEGIN
 END;
 
 -- Persisted per-corpus document-frequency table for IDF-aware query
--- enrichment (spec retrieval-quality-v2 FR-003/D-005). One row per indexed
+-- enrichment. One row per indexed
 -- token: symbol_df = symbols whose symbols_fts-indexed text contains the
 -- token, n_symbols = total symbol count at build time. Rebuilt from the FTS5
 -- vocabulary by rebuild_term_df(); refresh rides the embed pass, query time
@@ -214,13 +214,13 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
 
--- Parallel multi-vector embeddings table (spec retrieval-quality-v2 FR-005).
+-- Parallel multi-vector embeddings table.
 -- Holds ONLY the extra vector kinds ('name', 'docstring') as one row per
 -- (symbol, model, kind); the base embeddings table above -- PK (symbol_id,
 -- model), whose rowids key the per-model vec0 ANN tables -- is NEVER
--- repurposed or re-PK'd (D-006). Populated by every embed pass under the
+-- repurposed or re-PK'd. Populated by every embed pass under the
 -- default-on multivector build; `cairn embed --no-multivector` restores the
--- single-vector build. Query-side multivector reads stay opt-in (D-003).
+-- single-vector build. Query-side multivector reads stay opt-in.
 -- Additive-only: plain CREATE TABLE IF NOT EXISTS rides the idempotent
 -- executescript in _apply_schema with NO MIGRATIONS entry, so existing DBs
 -- gain the table on next connect -- the same pattern term_df used.
@@ -338,7 +338,7 @@ CREATE TABLE IF NOT EXISTS tool_metrics (
     req_chars INTEGER,          -- request payload size in chars; NULL on pre-migration rows
     resp_chars INTEGER,         -- response payload size in chars; NULL on pre-migration rows
     args_summary TEXT,          -- redacted, truncated JSON summary of the call's kwargs
-    source TEXT NOT NULL DEFAULT 'mcp',  -- 'mcp' | 'cli' (spec cli-usage-recording FR-002)
+    source TEXT NOT NULL DEFAULT 'mcp',  -- 'mcp' | 'cli'
     truncated_from_chars INTEGER,  -- original chars, set only when the result was capped; NULL = not truncated
     truncated_to_chars INTEGER     -- delivered chars (capped, incl. the notice); NULL = not truncated
 );
@@ -467,16 +467,16 @@ TOOL_METRICS_REQ_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN req_char
 TOOL_METRICS_RESP_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN resp_chars INTEGER"
 TOOL_METRICS_ARGS_SUMMARY_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN args_summary TEXT"
 
-# Origin stamp on tool_metrics rows (spec cli-usage-recording FR-002/D-002):
+# Origin stamp on tool_metrics rows:
 # 'mcp' (the default -- the MCP INSERT in mcp_server/metric_buffering.py names
-# no source column and rides this default, byte-identical per FR-005) or 'cli'
+# no source column and rides this default) or 'cli'
 # (stated explicitly by telemetry/cli_metrics). NOT NULL + DEFAULT makes the
 # ALTER legal on old DBs and backfills pre-migration rows as 'mcp' -- honest
 # for this table's history, so NULL never appears in the views.
 TOOL_METRICS_SOURCE_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN source TEXT NOT NULL DEFAULT 'mcp'"
 
-# Truncation-magnitude columns on tool_metrics (spec ui-dashboard-polish
-# FR-003/D-002): original vs delivered chars, set only on calls whose result
+# Truncation-magnitude columns on tool_metrics: original vs delivered chars,
+# set only on calls whose result
 # was actually capped. Nullable by design -- NULL means no-evidence (a
 # non-truncated call or a pre-migration row), never zero, and the CLI writer
 # (which truncates nothing) needs no change.
@@ -771,7 +771,7 @@ def rebuild_term_df(conn: sqlite3.Connection) -> int:
     virtual table; when that is unusable, falls back to one aggregate scan
     of the symbols table. A pure function of the DB contents -- no env,
     network, or time dependence -- so repeated runs on the same DB produce
-    identical table contents (spec retrieval-quality-v2 TC-014). Commits;
+    identical table contents. Commits;
     returns the number of tokens written.
     """
     n_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
@@ -810,7 +810,7 @@ def get_db(
     """
     path = Path(db_path) if db_path else resolve_store().db
     key = str(path.resolve())  # resolve() works on non-existent paths too (strict=False default)
-    # FR-004 (D-008): a missing store PARENT DIRECTORY yields sqlite's bare
+    # A missing store PARENT DIRECTORY yields sqlite's bare
     # "unable to open database file", which names neither the path nor the env
     # that resolved it. Raise the same exception type (doctor's catch formats
     # its own "cannot open database: " prefix around it) with the resolved

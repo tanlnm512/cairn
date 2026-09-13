@@ -1,11 +1,11 @@
-"""TC-024/D-012: memory lifecycle verbs left the MCP surface but stay reachable.
+"""Memory lifecycle verbs left the MCP surface but stay reachable.
 
 The six lifecycle tools (digest, evolve, promote, demote, delete, decay) are
 unregistered from the MCP server; each operation remains available as a
 ``cairn memory <verb>`` CLI command (delete's verb is ``forget``). The CLI
 ``demote`` verb opens the graph DB via ``--db`` and passes a writable conn
 into ``demote_memory`` so the persisted embedding row follows the tier-move
-rename instead of orphaning (D-012).
+rename instead of orphaning.
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _relative_id(bundle, concept_id: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# TC-024: gone from MCP, alive via CLI
+# Gone from MCP, alive via CLI
 # --------------------------------------------------------------------------
 
 def test_six_memory_lifecycle_tools_absent_from_mcp_registry():
@@ -62,7 +62,7 @@ def test_six_memory_lifecycle_tools_absent_from_mcp_registry():
 
 
 def test_memory_demote_cli_accepts_db_and_carries_embedding_row(tmp_path):
-    """D-012: `cairn memory demote --db` threads a writable conn into
+    """`cairn memory demote --db` threads a writable conn into
     demote_memory, so the memory's embedding row is renamed to the new
     concept_id instead of orphaning under the old one."""
     from cairn.graph.schema import get_db

@@ -195,7 +195,7 @@ class TestIncrementalCountLeg:
     def test_verify_standalone_keeps_batch_equality(self, workspace):
         # Pre-write use (no executor pre-state) keeps comparing the batch
         # alone against the store as it stands: a store not holding exactly
-        # the batch is a mismatch (TC-024) -- the executor's pre-state is
+        # the batch is a mismatch -- the executor's pre-state is
         # what lets incremental runs verify.
         from cairn.knowledge.ingest.executor import verify_manifest
         from cairn.knowledge.store import add_document

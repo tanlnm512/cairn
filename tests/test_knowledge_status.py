@@ -1,9 +1,8 @@
-"""Regression tests for doc_status lifecycle enforcement (2026-07-24).
+"""Regression tests for doc_status lifecycle enforcement.
 
-Before this fix, update_status() accepted any string with no validation,
-and no search path filtered on doc_status at all -- an "archived" document
-surfaced in knowledge_search results exactly like an active one. See
-[[project-cairn-internals]].
+update_status() validates its status string, and search paths filter on
+doc_status so an "archived" document does not surface in knowledge_search
+results like an active one. See [[project-cairn-internals]].
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The raw ``ingest`` key in cairn.json (FR-010, D-005)."""
+"""The raw ``ingest`` key in cairn.json."""
 from __future__ import annotations
 
 import json
@@ -55,7 +55,7 @@ def _w(root, rel, text):
     target.write_text(text, "utf-8")
 
 
-# --- Workspace overrides layered over built-ins (T015, FR-010/FR-012) ---
+# --- Workspace overrides layered over built-ins ---
 
 
 def _stage(tmp_path, monkeypatch, cairn_json=None, scan=False):

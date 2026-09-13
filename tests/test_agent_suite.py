@@ -227,7 +227,7 @@ class TestAgentCli:
         assert "--runs" in result.output
 
 
-# --- CLI --baseline resolution (T014, FR-004/AC1, agent-suite path) --------
+# --- CLI --baseline resolution (/AC1, agent-suite path) --------
 
 
 class TestAgentBaselineCli:

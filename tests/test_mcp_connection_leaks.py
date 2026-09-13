@@ -1,23 +1,19 @@
 """Test that MCP tools close their SQLite connections on exception.
 
-Regression guard: tools previously leaked connections when exceptions occurred
-because they didn't use try/finally. This test verifies that all tools properly
+Regression guard: verifies that all tools properly
 close connections even when queries fail.
 
-The 12 leaky tools are:
+Tools requiring the connection-close guard:
 - tools_graph.py: find_definition, get_callers, get_callees, impact_analysis,
   explore, search_symbols, cross_repo_deps, visualize_graph
 - tools_memory.py: recall_memory, record_memory
 - tools_compass.py: ask_compass
 
-The 3 correct tools already use try/finally:
+Tools already using try/finally:
 - tools_graph.py: semantic_search
 - tools_compass.py: get_compass, search_knowledge (no DB, so no leak)
 
-Note (pruned 2026-07-31): this file previously had 22 tests -- one exception
-AND one normal-exit test per tool. The exception path strictly subsumes the
-normal path (both exercise the same ``finally: conn.close()``), so the 11
-normal-exit duplicates were removed. The exception path is the harder, more
+The exception path is the more
 load-bearing case: it proves close() runs even when the query raises. A
 representative normal-exit sanity check lives in tests/test_core_smoke.py.
 """

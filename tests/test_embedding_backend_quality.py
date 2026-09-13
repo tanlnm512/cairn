@@ -246,7 +246,7 @@ class TestServerBackendFamily:
 
 
 class TestFrozenBackendsContract:
-    """The local/hash/openai backends keep their exact contract (FR-009)."""
+    """The local/hash/openai backends keep their exact contract ."""
 
     def test_embed_openai_still_targets_api_openai_com(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -278,7 +278,7 @@ class TestFrozenBackendsContract:
 
 
 # ---------------------------------------------------------------------------
-# 7. _embed_server client — OpenAI-compatible server arm (FR-001, FR-003)
+# 7. _embed_server client — OpenAI-compatible server arm ()
 # ---------------------------------------------------------------------------
 
 
@@ -293,8 +293,8 @@ class _StubEmbedServer:
     Serves POST /v1/embeddings and GET /v1/models. ``behavior`` maps a
     recorded request dict to one of:
       ("json", status, payload) — respond with that status and JSON body
-      ("raw", status, text)     — respond with that status and a plain body
-      ("close",)                — drop the connection without responding
+      ("raw", status, text) — respond with that status and a plain body
+      ("close") — drop the connection without responding
     """
 
     def __init__(self):
@@ -426,7 +426,7 @@ def _models_behavior(ids, status=200):
 
 
 class TestEmbedServerClient:
-    """_embed_server speaks the OpenAI /v1/embeddings contract (FR-003)."""
+    """_embed_server speaks the OpenAI /v1/embeddings contract ."""
 
     def test_happy_path_returns_blobs_in_input_order_despite_shuffled_data(
         self, stub_server, monkeypatch
@@ -515,7 +515,7 @@ class TestEmbedServerClient:
 
 
 # ---------------------------------------------------------------------------
-# 8. embeddings_available() server probe — GET {base}/models gate (FR-002)
+# 8. embeddings_available() server probe — GET {base}/models gate 
 # ---------------------------------------------------------------------------
 
 
@@ -524,7 +524,7 @@ def _model_probe_hits(stub_server):
 
 
 class TestServerAvailabilityProbe:
-    """The server family gates availability on GET {base}/models (FR-002).
+    """The server family gates availability on GET {base}/models.
 
     True only when the probe returns 200 AND lists the configured model id;
     the verdict is cached per process and invalidated by
@@ -587,12 +587,12 @@ class TestServerAvailabilityProbe:
 
 
 # ---------------------------------------------------------------------------
-# 6b. current_model() — server-family stamp derivation (FR-004)
+# 6b. current_model() — server-family stamp derivation 
 # ---------------------------------------------------------------------------
 
 
 class TestCurrentModelServerStamp:
-    """Server backends stamp rows ``server/{netloc}/{model}`` (FR-004).
+    """Server backends stamp rows ``server/{netloc}/{model}``.
 
     The stamp must flow unmodified through ann_index._table_name so the
     vec0 tables, staleness, and purge machinery work untouched (survey S03).
@@ -625,7 +625,7 @@ class TestCurrentModelServerStamp:
         monkeypatch.setenv("CAIRN_EMBED_BASE_URL", "http://127.0.0.1:8000/v1")
         stamp = emb.current_model()
         # The real sanitizer maps EVERY non-[a-zA-Z0-9_] char (including the
-        # stamp's / : separators and the model id's hyphen) to underscore.
+        # stamp's: separators and the model id's hyphen) to underscore.
         assert ann_index._table_name(stamp) == "vec_server_127_0_0_1_8000_bge_m3"
 
     def test_unresolvable_bare_server_raises_at_stamp_time(self, monkeypatch):

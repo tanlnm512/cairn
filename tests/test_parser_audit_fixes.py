@@ -164,9 +164,8 @@ class TestPhpQualifiedNames:
         assert "array_map" in _targets(pf)
 
     def test_qualified_new_uses_last_segment(self):
-        """``new App\\Models\\User()`` targets ``User`` (previously the edge
-        was dropped entirely: only ``name`` children were considered, never
-        ``qualified_name``)."""
+        """``new App\\Models\\User()`` targets ``User``: both ``name`` and
+        ``qualified_name`` children are considered."""
         pf = _parse(
             PhpParser,
             b"<?php\nfunction f() { $u = new App\\Models\\User(); }\n",

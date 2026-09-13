@@ -231,7 +231,7 @@ def test_fusion_off_reports_fusion_zero(fresh_db, monkeypatch):
 def test_fusion_degrade_reports_zero_and_degraded_flag(fresh_db, monkeypatch):
     """F3: RRF fusion configured ON but the rrf_fuse call raises -> the event
     must report execution (fusion=0) plus the durable degraded marker, not the
-    config value it previously reported."""
+    config value it replaces."""
     _seed_symbols(fresh_db)
     from cairn.graph import embeddings as emb
     from cairn.graph import fusion as fusion_mod
@@ -255,7 +255,7 @@ def test_fusion_degrade_reports_zero_and_degraded_flag(fresh_db, monkeypatch):
 def test_rerank_degrade_reports_zero_and_degraded_flag(fresh_db, monkeypatch):
     """F3: rerank configured ON but the cross-encoder degrades (its documented
     fallback returns reranked=False) -> rerank=0 + rerank_degraded=1. The attr
-    set previously reported the config value 1, hiding the degrade."""
+    set reports 0 plus the durable degraded flag, never the config value."""
     _seed_symbols(fresh_db)
     from cairn.graph import embeddings as emb
     from cairn.graph import reranker as rrk
@@ -365,7 +365,7 @@ def test_bare_connection_returns_semantic_results(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# embed_server_degraded catalog (T010, FR-007/FR-013)
+# embed_server_degraded catalog
 #
 # Catalog-only pins for the producer/consumer contract: the event constant,
 # its re-export convention, and the bounded reason enum. The emission site is
@@ -391,7 +391,7 @@ def test_embed_server_degraded_reexported_and_in_all():
 
 
 def test_embed_server_reasons_exact_membership():
-    """FR-013 reason enum: a frozenset of exactly these six reasons."""
+    """reason enum: a frozenset of exactly these six reasons."""
     from cairn.telemetry import events
 
     assert isinstance(events.EMBED_SERVER_REASONS, frozenset)
@@ -418,7 +418,7 @@ def test_embed_server_reasons_snake_case_tags():
 
 
 # ---------------------------------------------------------------------------
-# FR-012 dense-leg guard (T013, D-011): embed failures never raise out of
+# Dense-leg guard: embed failures never raise out of
 # semantic_search
 #
 # The dense embed call is guarded for ALL backends: a hard failure evaluates

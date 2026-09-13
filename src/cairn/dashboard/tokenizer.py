@@ -23,7 +23,7 @@ _lock = threading.Lock()
 
 def _tokenizer_model() -> str:
     # Lazy import (kept: the dashboard must not pay the embeddings import at
-    # module load), now via the D-008 config-aware resolver so a config.json
+    # module load), via the config-aware resolver so a config.json
     # CAIRN_EMBED_LOCAL_MODEL is honored exactly like the env var.
     from cairn.graph.embeddings import DEFAULT_LOCAL_MODEL, _config_or_env
 

@@ -592,7 +592,7 @@ def test_prune_tolerates_missing_build_runs_table(events_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 4b. tool_metrics retention (ui-dashboard-polish FR-004 / TC-006): the
+# 4b. tool_metrics retention (ui-dashboard-polish): the
 # flush-transaction prune extends to tool_metrics under
 # CAIRN_TOOL_METRICS_MAX_ROWS (default 50000) and the optional
 # CAIRN_TOOL_METRICS_MAX_AGE_SECONDS. The prune runs inside the flush
@@ -660,7 +660,7 @@ def _surviving_times(conn) -> list:
 def test_flush_prunes_tool_metrics_over_cap_keeping_newest_by_time(
     store_db, monkeypatch
 ):
-    """TC-006: an over-cap store is trimmed to the cap with the OLDEST rows
+    """an over-cap store is trimmed to the cap with the OLDEST rows
     gone, and "oldest" is time-ordered: the seeded epochs are deliberately
     out of id order, so an id-ordered prune would keep a different set than
     the time-ordered one the invoked_at index backs."""

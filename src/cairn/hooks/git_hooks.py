@@ -43,7 +43,7 @@ cairn validate-paths --mark > /dev/null 2>&1 &
 def _render_post_commit(repo: str) -> str:
     """POST_COMMIT_TEMPLATE for `repo`, with one quoted
     `export CAIRN_HOME="<path>"` line right after the shebang when the
-    effective home is non-default (FR-002/D-009). Default home keeps the hook
+    effective home is non-default. Default home keeps the hook
     byte-identical to the bare template.
     """
     rendered = POST_COMMIT_TEMPLATE.format(repo=repo)

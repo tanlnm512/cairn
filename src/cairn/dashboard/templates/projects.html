@@ -15,7 +15,7 @@
   ]) }}
   {% call tables.table(['Project', 'Language', 'Path', 'Files', 'Symbols', 'Edges', 'Last indexed', 'Embeddings']) %}
       {% for p in projects %}
-      {#- FR-003: the repo-scoped graph anchor keeps the selected store
+      {#- The repo-scoped graph anchor keeps the selected store
           (links.url); empty selection keeps the bare href. -#}
       <tr>
         <td><a href="{{ links.url('/graph', {'scope': 'repo', 'repo': p.id}) }}">{{ p.name }}</a></td>

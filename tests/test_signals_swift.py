@@ -8,7 +8,7 @@ tests/test_parser_audit_fixes.py).
 Contracts:
 - Swift has no import aliasing: ``import Foo`` and member imports
   (``import struct Foo.Bar``) bind the path's final segment under its own
-  name, so ``local_alias`` is None for every form (FR-007 — never a guess).
+  name, so ``local_alias`` is None for every form (never a guess).
 - ``Edge.receiver_type`` reads the ``navigation_expression`` ``target`` field
   one level down (G1: swift 0.7.3 ``call_expression`` has no field labels,
   so any ``call_expression.function`` read fails silently), resolved through
@@ -161,7 +161,7 @@ class TestReceiverType:
         assert _calls(pf, "baz")[0].receiver_type == "Foo.Bar"
 
     def test_live_shadow_poisons_until_scope_pops(self):
-        # D-006: an inner redeclaration under a different type makes the
+        # An inner redeclaration under a different type makes the
         # binding ambiguous for the inner scope; the outer binding survives.
         pf = _parse(
             b"class C {\n"

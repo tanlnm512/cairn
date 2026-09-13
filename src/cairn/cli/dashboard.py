@@ -1,4 +1,4 @@
-"""Dashboard CLI: `cairn dashboard` — local read-only web UI (FR-001)."""
+"""Dashboard CLI: `cairn dashboard` — local read-only web UI."""
 from __future__ import annotations
 
 import ipaddress

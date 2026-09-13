@@ -15,7 +15,7 @@
 <div id="refresh-region"
      hx-get="{{ links.url('/tokens', token_q) }}" hx-trigger="every 5s"
      hx-swap="morph" aria-live="polite">
-  {#- FR-002: the label names the mode that produced these numbers;
+  {#- The label names the mode that produced these numbers;
       uncalibrated means the window had no usable stored-summary sample,
       so the chars/token heuristic divisor stood in. -#}
   <p class="muted">
@@ -26,7 +26,7 @@
     {{ tools.chars_per_token }} chars/token heuristic divisor{% endif %}.
   </p>
   {% include "window_control.html" %}
-  {#- FR-005: exports ride the view's current filters (the selected store
+  {#- Exports ride the view's current filters (the selected store
       rides links.url). -#}
   {%- set export_q = {} %}
   {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
@@ -50,7 +50,7 @@
         <td class="num">~{{ t.est_resp_tokens }}</td>
         <td class="num">~{{ t.total_tokens }}</td>
         <td class="num">~{{ t.mean_tokens | mean }}</td>
-        {#- FR-003: unknown (no recorded truncation evidence) is not zero. -#}
+        {#- Unknown (no recorded truncation evidence) is not zero. -#}
         <td class="num">{% if t.truncated_calls is none %}unknown{% else %}{{ t.truncated_calls }}{% endif %}</td>
         <td class="num">{% if t.truncated_chars is none %}—{% else %}{{ t.truncated_chars }}{% endif %}</td>
       </tr>

@@ -4,7 +4,7 @@ Verifies the opt-in 1-hop caller/callee attachment, and that it's a true
 no-op (no "callers"/"callees" keys at all) when not requested -- existing
 callers of semantic_search must see zero shape change by default.
 
-The T013 section (FR-003 / D-005) pins the ``enrich_idf`` boundary: the
+This section pins the ``enrich_idf`` boundary: the
 DF lookup is built at the ``semantic_search`` seam (never inside
 ``enrich``), flag-off is byte-identical to today, flag-on demonstrably
 drops a corpus-ubiquitous token through the full path, and the per-query
@@ -95,16 +95,16 @@ def test_include_callers_degrades_to_empty_lists_for_symbol_with_no_edges(fresh_
 
 
 # ---------------------------------------------------------------------------
-# T013 (FR-003, D-005): the enrich_idf boundary -- DF lookup injection at
+# The enrich_idf boundary -- DF lookup injection at
 # the semantic_search seam.
 #
 # The corpus-side DF signal enters exactly at ``_enriched = enrich_query``
 # (semantic.py): when params.enrich_idf is truthy AND enrichment is
 # active, the boundary builds a per-term lookup over the persisted
-# term_df table (T011) and injects it into the ONE enrich() call --
-# enrich itself stays pure (TC-015). Flag-off must be byte-identical to
-# today (TC-016-style defaults doctrine); the per-query cost is bounded
-# by the query's distinct token count (TC-014's documented bound).
+# term_df table and injects it into the ONE enrich() call --
+# enrich itself stays pure. Flag-off must be byte-identical to
+# today (defaults-preserving doctrine); the per-query cost is bounded
+# by the query's distinct token count (the documented bound).
 # ---------------------------------------------------------------------------
 
 # The L1-D03 sentence shape plus identifier/plain probes -- every kind of
@@ -126,7 +126,7 @@ def _seed_idf_corpus(conn: sqlite3.Connection) -> None:
     * urlEncoder -- matches the FTS prefix ``"url"*`` through its name,
       so a surviving ``url`` term fetches it into the sparse leg.
 
-    embed_all rebuilds term_df naturally (T011): df(url) = 1/3 here --
+    embed_all rebuilds term_df naturally: df(url) = 1/3 here --
     kept. Tests override rows explicitly to set prevalence.
     """
     conn.execute("INSERT INTO repos (id, name, path) VALUES ('t', 't', '/tmp/t')")
@@ -223,11 +223,11 @@ def _install_boundary_spies(monkeypatch):
 
 
 class TestEnrichIdfFlagOffEquivalence:
-    """The FR-005 defaults-preserving contract on the new field: with
+    """The defaults-preserving contract on the new field: with
     enrich_idf None (inside an object) or explicit False, the enriched
     outputs and the retrieval results are byte-identical to the DF-blind
-    enrich(query) call -- T012's TC-015 None-lookup equivalence chains
-    that to the pre-FR-003 bytes -- and not one term_df SELECT runs."""
+    enrich(query) call -- no DF lookup is injected -- and not one term_df
+    SELECT runs."""
 
     @pytest.mark.parametrize("probe", _PROBES)
     def test_flag_off_matches_the_pure_enrich_call_byte_for_byte(
@@ -405,7 +405,7 @@ class TestEnrichIdfWiring:
         assert term_calls == [["URL", "helper"]]
 
     def test_flag_on_results_deterministic(self, idf_db):
-        """TC-014 flavor: the injected signal is a pure read of the local
+        """Determinism: the injected signal is a pure read of the local
         table -- same query, same table, byte-identical results twice."""
         from cairn.graph.semantic import RetrievalParams, semantic_search
 
@@ -417,7 +417,7 @@ class TestEnrichIdfWiring:
 
 
 class TestEnrichIdfCostBound:
-    """The documented D-005 bound: one indexed term_df SELECT per
+    """The documented bound: one indexed term_df SELECT per
     DISTINCT case-folded query token, memoized per call, never a scan."""
 
     def test_one_select_per_distinct_token(self, idf_db):

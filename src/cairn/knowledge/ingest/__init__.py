@@ -37,7 +37,7 @@ def run_ingest(
     """Run the stage-only pipeline over fed markdown and repo scans.
 
     Composition: source adapters -> parse -> classify (skips recorded
-    with reasons, workspace overrides layered per FR-010) -> identity ->
+    with reasons, workspace overrides layered) -> identity ->
     stage_outbox. Stops after staging; the knowledge store is never
     touched (dry-run default).
     """
@@ -122,7 +122,7 @@ def _scan_skip_entry(repo: str, relpath: str, reason: str) -> StagedEntry:
 
 
 def _default_outbox() -> Path:
-    """D-008: ``<workspace-root>/.cairn/ingest-outbox/``."""
+    """``<workspace-root>/.cairn/ingest-outbox/``."""
     return resolve_workspace() / ".cairn" / "ingest-outbox"
 
 

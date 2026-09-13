@@ -1,12 +1,13 @@
 """Regression tests for the compass/wiki critic's fact-checking rigor.
 
-Covers the two gaps closed in src/compass/critic.py (2026-07-24):
-1. Symbol/file extraction used to miss qualified names, lowerCamelCase
-   members, and several supported file extensions -- those references never
-   even reached the matcher, so they were silently never checked.
-2. File matching used a bare basename substring, so an unrelated file
-   sharing a basename could satisfy a reference to a completely different
-   path.
+Covers the two fact-checking gaps in src/compass/critic.py:
+1. Symbol/file extraction must cover qualified names, lowerCamelCase
+   members, and several supported file extensions; references outside
+   those shapes would silently never reach the matcher and never be
+   checked.
+2. File matching must not use a bare basename substring, or an unrelated
+   file sharing a basename could satisfy a reference to a completely
+   different path.
 """
 from __future__ import annotations
 

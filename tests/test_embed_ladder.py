@@ -1,4 +1,4 @@
-"""Unit tests for the FR-005 parity sampler and the FR-012 availability
+"""Unit tests for the parity sampler and the availability
 ladder (graph/embed_ladder.py).
 
 Parity tests: no HTTP, embed_fn is always a stub, every BLOB handcrafted
@@ -84,7 +84,7 @@ def _counting_stub(blobs, dim):
 
 
 # ---------------------------------------------------------------------------
-# Gate constants (D-007: named module constant, no env override).
+# Gate constants (named module constant, no env override).
 # ---------------------------------------------------------------------------
 
 
@@ -119,7 +119,7 @@ def test_pass_identical_blobs(fresh_db):
 
 # ---------------------------------------------------------------------------
 # (b) Truncation-divergence case: served vectors at cosine ~0.991 vs stored
-# (D-004 worst case) stay ABOVE the 0.98 gate.
+# (worst case) stay ABOVE the 0.98 gate.
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ def test_sample_limit_caps_embedded_texts_at_16(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Default embed_fn resolves to the T002 server client (late-bound, injectable).
+# Default embed_fn resolves to the server client (late-bound, injectable).
 # ---------------------------------------------------------------------------
 
 
@@ -245,7 +245,7 @@ def test_default_embed_fn_is_server_client(fresh_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# FR-012 availability ladder.
+# availability ladder.
 # ---------------------------------------------------------------------------
 
 
@@ -582,7 +582,7 @@ def test_non_server_backend_nop(fresh_db, monkeypatch):
 
 
 # (h) hash is never a rung: no candidates + no sentence-transformers ->
-# rung 3, never the hash backend (D-003).
+# rung 3, never the hash backend.
 
 
 def test_no_candidates_and_no_st_does_not_reach_hash(fresh_db, monkeypatch):
@@ -653,7 +653,7 @@ def test_healthy_evaluation_supersedes_active_state(fresh_db, monkeypatch):
     assert degraded.active is False
 
 
-# Every reason the ladder can record stays inside the FR-013 enum.
+# Every reason the ladder can record stays inside the enum.
 
 
 def test_ladder_reasons_within_telemetry_enum():
@@ -664,7 +664,7 @@ def test_ladder_reasons_within_telemetry_enum():
 
 
 # ---------------------------------------------------------------------------
-# FR-013 notification fan-out (T012): notify_degradation + accessors.
+# notification fan-out: notify_degradation + accessors.
 # The logger line is the user-facing surface and must NEVER be silenced by
 # telemetry-off (US3 AC3); the event is telemetry-gated and carries
 # host+model only (spec A2.6).
@@ -823,8 +823,8 @@ def test_reset_backend_cache_rearms_notify_once_set(caplog, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# File-persisted config reaches the ladder probes (FR-010 x FR-012): the
-# D-008 choke point (_config_or_env) must feed the listing probe, the parity
+# File-persisted config reaches the ladder probes (x): the
+# choke point (_config_or_env) must feed the listing probe, the parity
 # embed, and the rung-2 local model -- env-only reads there make parity
 # false-fail against authenticated/slow servers or check the wrong model.
 # The hermetic conftest points CONFIG_FILE into the sandbox, so a key set
@@ -892,7 +892,7 @@ def test_file_local_model_is_what_rung2_checks(fresh_db, monkeypatch):
 
 # ---------------------------------------------------------------------------
 # Concurrency: evaluate_ladder's check-then-act is atomic (audit WARN) --
-# N racing threads yield exactly one _evaluate pass and one FR-013 notify.
+# N racing threads yield exactly one _evaluate pass and one notify.
 # ---------------------------------------------------------------------------
 
 
@@ -930,7 +930,7 @@ def test_concurrent_evaluation_runs_once_and_notifies_once(fresh_db, monkeypatch
         r is results[0] and r.rung == 3 and r.reason == "model_missing"
         for r in results
     )
-    # and exactly one FR-013 unit: one warn line + one event for the reason
+    # and exactly one unit: one warn line + one event for the reason
     assert len(_cairn_warnings(caplog)) == 1
     assert [e["reason"] for e in _degraded_events()] == ["model_missing"]
 

@@ -1,4 +1,4 @@
-"""RM3-style pseudo-relevance-feedback query expansion (FR-004 / D-001, D-003).
+"""RM3-style pseudo-relevance-feedback query expansion.
 
 Why this module exists
 ----------------------
@@ -11,10 +11,10 @@ contains the right symbols and mines their text for the vocabulary the
 query is missing -- the RM3 route, with corpus-aware IDF weighting added
 explicitly (research RQ3 x RQ1).
 
-This module is the PURE half of FR-004: given the query and the feedback
+This module is the PURE half of PRF: given the query and the feedback
 documents' text, it deterministically selects expansion terms. It never
 runs a search, never reads the DB, env, clock, or network, and calls no
-LLM (TC-017). The wiring half (T016) takes this module's output and
+LLM. The wiring half takes this module's output and
 re-runs the full pass (both legs + fusion) ONCE at the
 ``candidates = fused_candidates`` seam.
 
@@ -48,11 +48,11 @@ network (stdlib ``math`` only beyond the tokenizer). The DF signal is
 INJECTED as a parameter; this module never touches the graph DB. Equal
 inputs produce byte-identical outputs.
 
-df_lookup contract (symmetric to T012's ``enrich(query, df_lookup=...)``)
+df_lookup contract (symmetric to ``enrich(query, df_lookup=...)``)
 ------------------------------------------------------------------------
 ``df_lookup`` is a callable ``lowercase_token -> (symbol_df, n_symbols)
 | None`` -- per-term indexed reads over the persisted ``term_df(token,
-symbol_df, n_symbols)`` table (schema.py, T011). The key MUST already be
+symbol_df, n_symbols)`` table (schema.py). The key MUST already be
 case-folded (unicode61): FTS5 vocabulary tokens are lowercase while
 candidate text keeps casing, exactly the asymmetry documented for
 ``enrich``. Expected ``1 <= symbol_df <= n_symbols``; values outside that
@@ -62,7 +62,7 @@ missing table degrades PRF to frequency-only selection instead of
 raising. Lookup exceptions propagate (a DB fault is the caller's failure,
 not degenerate feedback).
 
-Consumer contract (T016 reads only this)
+Consumer contract
 ----------------------------------------
 ``expand(query, feedback_docs, *, df_lookup=None, fb_terms=10,
 fb_lambda=0.5)`` takes:
@@ -83,7 +83,7 @@ fb_lambda=0.5)`` takes:
     dedup). ``None``/empty entries contribute no tokens, never raise.
 ``fb_terms`` (default 10) and ``fb_lambda`` (default 0.5)
     The Anserini RM3 anchors (terms=10, lambda=0.5; docs=10 lives with
-    the CALLER as the ``feedback_docs`` slice). The sweep grid (D-002)
+    the CALLER as the ``feedback_docs`` slice). The sweep grid
     varies docs over {3, 10} with terms=10, lambda=0.5. ``fb_terms <= 0``
     yields an empty expansion; ``fb_lambda`` outside [0, 1] raises
     ``ValueError``.
@@ -101,7 +101,7 @@ Returns a frozen :class:`ExpansionResult`:
     never-loses-information contract). Equals ``query`` unchanged when
     no terms survive (PRF never manufactures signal out of nothing).
 
-The sparse leg gains the same terms: T016 appends ``result.terms`` to
+The sparse leg gains the same terms: the caller appends ``result.terms`` to
 the first-pass sparse term list. Empty feedback yields
 ``terms == ()`` and ``dense_query == query`` -- never raises.
 """
@@ -192,7 +192,7 @@ def expand(
 ) -> ExpansionResult:
     """Deterministically expand ``query`` with RM3-style feedback terms.
 
-    Pure and hermetic (TC-017): no LLM, network, randomness, time, or
+    Pure and hermetic: no LLM, network, randomness, time, or
     environment reads; the corpus DF signal arrives only via
     ``df_lookup``. See the module docstring for the full parameter,
     df_lookup, and consumer contracts and the algorithm's five steps.

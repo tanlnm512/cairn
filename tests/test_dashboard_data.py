@@ -170,13 +170,13 @@ def test_get_graph_rejects_unknown_scope(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Symbol-search candidates (graph-nav FR-001/FR-002 / US1): exact-name
+# Symbol-search candidates (graph-nav / US1): exact-name
 # matches with disambiguating context, capped with an honest truncated flag.
 # ---------------------------------------------------------------------------
 
 
 def _seed_dup_name(conn):
-    """TC-002's seed: one symbol name defined in two files (two repos, two
+    """The seed: one symbol name defined in two files (two repos, two
     kinds, so each match's context is distinguishable), inserted in the
     reverse of the deterministic result order -- only the query's ORDER BY
     can produce a stable list."""
@@ -192,7 +192,7 @@ def _seed_dup_name(conn):
 
 
 def test_symbol_candidates_exact_unique_name_single_match(fresh_db):
-    """TC-001's one-interaction precondition (FR-001): a unique name
+    """The one-interaction precondition: a unique name
     resolves to exactly one candidate carrying its kind, file, and repo."""
     from cairn.dashboard.data import symbol_candidates
 
@@ -212,7 +212,7 @@ def test_symbol_candidates_exact_unique_name_single_match(fresh_db):
 
 
 def test_symbol_candidates_ambiguous_name_lists_both_in_file_order(fresh_db):
-    """TC-002 (FR-002): a name defined in two files lists both matches with
+    """A name defined in two files lists both matches with
     their file/kind context instead of an arbitrary pick, in the
     deterministic file-ASC order."""
     from cairn.dashboard.data import symbol_candidates
@@ -390,7 +390,7 @@ def test_symbol_suggest_caps_at_limit_with_honest_truncation(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Node expansion (graph-nav FR-003/FR-005 / US2): the viz-layer neighbors
+# Node expansion (graph-nav / US2): the viz-layer neighbors
 # query, called directly -- the node/edge shape the dashboard's DataSet
 # merge consumes, duplicate-free, with honest counts at the per-direction
 # caps.
@@ -398,7 +398,7 @@ def test_symbol_suggest_caps_at_limit_with_honest_truncation(fresh_db):
 
 
 def _seed_expand(conn):
-    """TC-003's seed: close alpha's chain into a hub -- alpha_util now calls
+    """The seed: close alpha's chain into a hub -- alpha_util now calls
     alpha_main, so alpha_main has one caller (alpha_util) and one callee
     (alpha_helper) by construction."""
     conn.execute(
@@ -409,10 +409,10 @@ def _seed_expand(conn):
 
 
 def test_get_symbol_neighbors_returns_the_merge_shape(fresh_db):
-    """TC-003's data half (FR-003): one requested name yields exactly that
+    """The data half: one requested name yields exactly that
     symbol plus its caller and callee, with both call edges connected to
     it -- the shape the client's DataSet merge consumes -- and metadata
-    counts equal to the returned lists (FR-005)."""
+    counts equal to the returned lists ."""
     from cairn.viz.query import get_symbol_neighbors
 
     _seed(fresh_db)
@@ -432,14 +432,14 @@ def test_get_symbol_neighbors_returns_the_merge_shape(fresh_db):
         ("alpha_util", "alpha_main", "calls"),
     }
     assert result["metadata"]["truncated"] is False
-    # FR-005: the counts are the returned lists, never a silent overdraw.
+    # the counts are the returned lists, never a silent overdraw.
     assert result["metadata"]["node_count"] == len(result["nodes"]) == 3
     assert result["metadata"]["edge_count"] == len(result["edges"]) == 2
 
 
 def _seed_neighbors_dups(conn):
-    """TC-004's duplicate half: ``hub`` defined in two files, both rows
-    called by the one ``feeder``; plus two distinct names ``pair_a`` /
+    """The duplicate half: ``hub`` defined in two files, both rows
+    called by the one ``feeder``; plus two distinct names ``pair_a``
     ``pair_b`` whose neighborhoods share the one callee ``shared_sink``."""
     conn.executemany(
         "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
@@ -466,7 +466,7 @@ def _seed_neighbors_dups(conn):
 
 
 def test_get_symbol_neighbors_yields_no_duplicates(fresh_db):
-    """TC-004 (FR-005): expansion merges by node id -- a name defined in
+    """Expansion merges by node id -- a name defined in
     two files contributes each row's neighborhood without duplicating node
     ids, and two requested names with overlapping neighborhoods keep both
     node ids and edge triples unique."""
@@ -504,7 +504,7 @@ def test_get_symbol_neighbors_yields_no_duplicates(fresh_db):
 
 
 def test_get_symbol_neighbors_caps_per_direction_with_honest_counts(fresh_db):
-    """TC-004's cap half (FR-005): past the per-direction cap exactly the
+    """The cap half: past the per-direction cap exactly the
     cap renders with truncated True; exactly-at-the-cap is not truncation
     (the cap+1 over-fetch boundary); either way the counts equal the
     returned lists, never the uncapped totals still in the store."""
@@ -558,7 +558,7 @@ def test_get_symbol_neighbors_caps_per_direction_with_honest_counts(fresh_db):
     # The per-direction cap yields exactly 30 of the 35 callers, never all.
     callers = {n["id"] for n in popular["nodes"]} - {"popular"}
     assert len(callers) == _NEIGHBOR_CAP
-    # Count honesty (FR-005): the metadata counts equal the returned lists
+    # Count honesty: the metadata counts equal the returned lists
     # -- never the uncapped 36 nodes / 35 edges that exist in the store.
     assert (
         popular["metadata"]["node_count"]
@@ -605,7 +605,7 @@ def test_get_symbol_neighbors_empty_blank_and_miss_never_error(fresh_db):
 
 
 def test_get_symbol_neighbors_depth_past_one_is_clamped(fresh_db):
-    """D-002's boundary: the signature accepts depth, the behavior is
+    """The boundary: the signature accepts depth, the behavior is
     1-hop per action -- depth=5 returns exactly the depth=1 (and default)
     result over a seeded neighborhood."""
     from cairn.viz.query import get_symbol_neighbors
@@ -621,7 +621,7 @@ def test_get_symbol_neighbors_depth_past_one_is_clamped(fresh_db):
 
 def test_projects_data_flows_through_the_read_only_factory(tmp_path):
     """The dashboard's own connection factory serves the view data, and that
-    connection can never write (FR-010)."""
+    connection can never write ."""
     from cairn.dashboard.data import get_read_only_db, list_projects
 
     db_path = str(tmp_path / "dash.db")
@@ -641,7 +641,7 @@ def test_projects_data_flows_through_the_read_only_factory(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Health panel (FR-008 / US6)
+# Health panel (US6)
 # ---------------------------------------------------------------------------
 
 
@@ -708,7 +708,7 @@ def test_get_health_in_memory_conn_degrades_to_zero_and_none(fresh_db):
 
 
 def test_get_health_agrees_with_doctor_on_the_same_db(tmp_path):
-    """TC-018: the panel's conclusions must match `cairn doctor`'s.
+    """The panel's conclusions must match `cairn doctor`'s.
 
     doctor's own check functions are run in-process against the same
     connection (instead of parsing CLI output), plus the graph-layer probes
@@ -775,7 +775,7 @@ def test_get_health_agrees_with_doctor_on_the_same_db(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Memory + task-queue panels (FR-009 / US7)
+# Memory + task-queue panels (US7)
 # ---------------------------------------------------------------------------
 
 
@@ -878,7 +878,7 @@ def test_get_task_queue_missing_dir_returns_empty(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tool-use history (FR-005 / US3)
+# Tool-use history (US3)
 # ---------------------------------------------------------------------------
 
 # Known-by-construction calls across 2 tools / 2 sessions. Ids deliberately
@@ -1074,7 +1074,7 @@ def test_list_history_args_summary_truncated_never_expanded(fresh_db):
 
     tail_marker = "DISTINCTIVE_TAIL_" + "x" * 300
     payload = '{"query": "' + "y" * 300 + tail_marker + '"}'
-    # Stored exactly as the write chokepoint (T004) leaves it: redacted and
+    # Stored exactly as the write chokepoint leaves it: redacted and
     # sliced to MAX_ARGS_SUMMARY_CHARS, with req_chars the FULL payload size.
     _seed_metrics(
         fresh_db,
@@ -1090,20 +1090,20 @@ def test_list_history_args_summary_truncated_never_expanded(fresh_db):
 
     assert row["args_summary"] == payload[:MAX_ARGS_SUMMARY_CHARS]
     assert len(row["args_summary"]) <= 200
-    assert "DISTINCTIVE_TAIL_" not in row["args_summary"]  # TC-024
+    assert "DISTINCTIVE_TAIL_" not in row["args_summary"]  # 
     # The full-payload size still drives the token estimate.
     assert row["est_req_tokens"] == len(payload) // 4
 
 
 # ---------------------------------------------------------------------------
-# History pagination (traffic-scale FR-001/FR-006, US1-AC1/AC2): keyset
-# cursors on (invoked_at DESC, id DESC) per tech-spec D-001. These call the
+# History pagination (traffic-scale, US1-AC1/AC2): keyset
+# cursors on (invoked_at DESC, id DESC) per the tech-spec. These call the
 # data layer directly over a seeded connection.
 # ---------------------------------------------------------------------------
 
 
 def test_list_history_first_page_is_bounded_with_older_page_cursor(fresh_db):
-    """TC-001's data half: however large the store, the default fetch is one
+    """The data half: however large the store, the default fetch is one
     bounded page plus the cursor of what lies older."""
     from cairn.dashboard.data import HISTORY_PAGE_SIZE, list_history
 
@@ -1124,7 +1124,7 @@ def test_list_history_first_page_is_bounded_with_older_page_cursor(fresh_db):
 
 
 def test_list_history_cursor_stable_under_mid_paging_insert(fresh_db):
-    """TC-002: pages stay stable and repeat-free while rows land mid-walk."""
+    """Pages stay stable and repeat-free while rows land mid-walk."""
     from cairn.dashboard.data import list_history
 
     _seed_metrics(fresh_db, rows=_history_rows(120))
@@ -1165,7 +1165,7 @@ def test_list_history_full_walk_covers_every_row_exactly_once(fresh_db):
 
 
 def test_list_history_backward_walk_retraces_to_first_page(fresh_db):
-    """TC-002's other half: paging forward and back lands on the same pages."""
+    """The other half: paging forward and back lands on the same pages."""
     from cairn.dashboard.data import list_history
 
     _seed_metrics(fresh_db, rows=_history_rows(120))
@@ -1248,7 +1248,7 @@ def test_list_history_filters_compose_with_paging_cursors(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Token aggregates (FR-006 / US4) + call chains (FR-007 / US5)
+# Token aggregates (US4) + call chains (US5)
 # ---------------------------------------------------------------------------
 
 
@@ -1275,7 +1275,7 @@ def test_get_tool_tokens_aggregates_ranked_by_total_desc(fresh_db):
     assert by_tool["explore"]["calls"] == 2
     assert by_tool["explore"]["total_tokens"] == 750
     # Every row internally consistent: req + resp == total, mean * calls
-    # == total within rounding (TC-014).
+    # == total within rounding.
     for t in tokens:
         assert t["est_req_tokens"] + t["est_resp_tokens"] == t["total_tokens"]
         assert t["mean_tokens"] * t["calls"] == pytest.approx(t["total_tokens"])
@@ -1331,14 +1331,14 @@ def test_get_session_chains_gap_splits_bursts_keeps_order(fresh_db):
     _seed_metrics(
         fresh_db,
         rows=[
-            # sess-a burst 1: three calls a minute apart (TC-017).
+            # sess-a burst 1: three calls a minute apart.
             (1, "explore", "sess-a", base, 5.0, "ok", 10, 10),
             (2, "get_callers", "sess-a", base + 60, 5.0, "ok", 10, 10),
             (3, "ask_compass", "sess-a", base + 120, 5.0, "ok", 10, 10),
             # sess-a burst 2: two more calls six hours later, same session.
             (4, "explore", "sess-a", later, 5.0, "ok", 10, 10),
             (5, "impact_analysis", "sess-a", later + 60, 5.0, "ok", 10, 10),
-            # sess-b: a single call is still a chain (TC-016).
+            # sess-b: a single call is still a chain.
             (6, "explore", "sess-b", base + 30, 5.0, "ok", 10, 10),
         ],
     )
@@ -1347,7 +1347,7 @@ def test_get_session_chains_gap_splits_bursts_keeps_order(fresh_db):
     chains = result["chains"]
 
     # Three chains, under both render bounds: the wrapper is the flat list
-    # plus honest totals (nothing hidden, FR-004's no-op half).
+    # plus honest totals (nothing hidden, the no-op half).
     assert (result["total_chains"], result["truncated"]) == (3, False)
     # Sessions newest-activity-first (sess-a ends at later+60, sess-b at
     # base+30); chains within a session chronological.
@@ -1429,7 +1429,7 @@ def test_get_session_chains_empty_db_returns_empty_list(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Time windows (FR-002/FR-003 / US2): the shared ``since`` predicate across
+# Time windows (US2): the shared ``since`` predicate across
 # history, tokens, and chains. Seeded timestamps anchor to ``time.time()``
 # at seeding time with fixed offsets, so every cutoff is deterministic —
 # never a sleep, never wall-clock dependence.
@@ -1437,8 +1437,8 @@ def test_get_session_chains_empty_db_returns_empty_list(fresh_db):
 
 
 def test_list_history_since_excludes_outside_rows_keeps_cursors_in_window(fresh_db):
-    """TC-003's history half: only in-window rows render, and the paging
-    cursors stay in-window too (FR-002 + FR-006)."""
+    """The history half: only in-window rows render, and the paging
+    cursors stay in-window too (+ )."""
     from cairn.dashboard.data import list_history
 
     cutoff = time.time() - 86400  # a 24h-style window edge
@@ -1476,7 +1476,7 @@ def test_list_history_since_excludes_null_invoked_at_rows():
     """The shipped schema declares invoked_at NOT NULL, so NULL rows cannot
     occur in production; this pins the window predicate's SQL contract on a
     legacy-shape table without the constraint — NULL never satisfies
-    ``invoked_at >= ?`` (FR-002), so such rows surface only on all-time
+    ``invoked_at >= ?``, so such rows surface only on all-time
     pages."""
     from cairn.dashboard.data import list_history
 
@@ -1506,7 +1506,7 @@ def test_list_history_since_excludes_null_invoked_at_rows():
 
 
 def test_get_session_chains_since_drops_old_sessions_and_old_calls(fresh_db):
-    """TC-003's chains half: a session with no in-window calls vanishes
+    """The chains half: a session with no in-window calls vanishes
     entirely; a mixed session keeps only its in-window calls with chain
     bounds recomputed from them; an empty window is an empty list."""
     from cairn.dashboard.data import get_session_chains
@@ -1562,7 +1562,7 @@ def test_get_session_chains_since_drops_old_sessions_and_old_calls(fresh_db):
 
 
 def test_get_session_chains_session_id_filters_and_composes_with_window(fresh_db):
-    """FR-002's session filter: ``session_id`` reads only that session's
+    """The session filter: ``session_id`` reads only that session's
     rows, composes with the ``since`` window, and a no-match session is
     the empty wrapper, never an error."""
     from cairn.dashboard.data import get_session_chains
@@ -1609,7 +1609,7 @@ def test_get_session_chains_session_id_filters_and_composes_with_window(fresh_db
 
 
 def test_get_tool_tokens_since_recomputes_aggregates_and_ranking(fresh_db):
-    """TC-004: a tool with heavy old traffic and light recent traffic —
+    """A tool with heavy old traffic and light recent traffic —
     windowed totals are the window's sums only, and the ranking flips;
     NULL-size rows inside the window still count as calls, zero tokens."""
     from cairn.dashboard.data import get_tool_tokens
@@ -1665,7 +1665,7 @@ def test_get_tool_tokens_since_recomputes_aggregates_and_ranking(fresh_db):
 
 
 def test_list_history_window_composes_with_tool_and_session_filters(fresh_db):
-    """FR-006: the window is one more WHERE term — tool and session filters
+    """The window is one more WHERE term — tool and session filters
     each narrow it, and it narrows them."""
     from cairn.dashboard.data import list_history
 
@@ -1691,7 +1691,7 @@ def test_list_history_window_composes_with_tool_and_session_filters(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Chains bounds (traffic-scale FR-004 / US3-AC1, TC-005): the render caps —
+# Chains bounds (traffic-scale / US3-AC1): the render caps —
 # chains at once (CHAINS_MAX_CHAINS) and calls kept per chain
 # (CHAINS_CALLS_PER_CHAIN, overridable via expand) — over the legacy
 # all-'unknown'-session store shape, composing with the ``since`` window.
@@ -1699,7 +1699,7 @@ def test_list_history_window_composes_with_tool_and_session_filters(fresh_db):
 
 
 def test_get_session_chains_legacy_unknown_session_capped_per_chain(fresh_db):
-    """TC-005, the spec's first case: a legacy store where every call sits
+    """The spec's first case: a legacy store where every call sits
     under one session id 'unknown' — hundreds of calls, one chain. The
     rendered chain keeps only its newest CHAINS_CALLS_PER_CHAIN calls with
     honest shown/total accounting and recomputed bounds; expand exempts
@@ -1738,7 +1738,7 @@ def test_get_session_chains_legacy_unknown_session_capped_per_chain(fresh_db):
 
 
 def test_get_session_chains_chain_list_cap_keeps_newest_activity(fresh_db):
-    """FR-004's list bound: more chains than CHAINS_MAX_CHAINS render —
+    """The list bound: more chains than CHAINS_MAX_CHAINS render —
     exactly the cap is kept, the kept ones are the newest-activity chains,
     and total_chains/truncated tell the truth about the rest."""
     from cairn.dashboard.data import CHAINS_MAX_CHAINS, get_session_chains
@@ -1772,7 +1772,7 @@ def test_get_session_chains_chain_list_cap_keeps_newest_activity(fresh_db):
 
 
 def test_get_session_chains_below_caps_results_unchanged_with_new_keys(fresh_db):
-    """FR-004's no-op half: below both bounds the wrapper changes nothing
+    """The no-op half: below both bounds the wrapper changes nothing
     about which chains render, their order, or their calls — it only adds
     the honest keys."""
     from cairn.dashboard.data import (
@@ -1822,7 +1822,7 @@ def test_get_session_chains_below_caps_results_unchanged_with_new_keys(fresh_db)
 
 
 def test_get_session_chains_since_windows_before_the_caps(fresh_db):
-    """FR-002 + FR-004: the window filters rows before grouping and before
+    """ +: the window filters rows before grouping and before
     either cap — an old giant session that would flood the capped list
     vanishes under a recent window, and the windowed totals count only
     in-window chains."""
@@ -1875,8 +1875,8 @@ def test_get_session_chains_since_windows_before_the_caps(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Workspaces probe degradation (workspace-launcher FR-005 / T009, tech-spec
-# D-003): probe_stores bounds the SQL opens; rows past the cap must surface
+# Workspaces probe degradation (workspace-launcher, tech-spec
+# ): probe_stores bounds the SQL opens; rows past the cap must surface
 # a VISIBLE counts-unavailable state (call_count None + counts_capped True,
 # the row the route renders as the em-dash under the cap line) while
 # keeping the free os.stat fields — never a silent zero, never a hang.
@@ -1917,11 +1917,11 @@ def _ws_store(home, key, calls):
 
 
 def test_probe_stores_past_cap_degrades_counts_visibly_keeps_stats(tmp_path):
-    """T009 / FR-005: more populated stores than the open budget → exactly
+    """More populated stores than the open budget → exactly
     max_opens rows carry a call count and they are the FIRST stores in
     list order; every past-cap row degrades visibly (call_count None +
     counts_capped True, state still populated) while size/freshness —
-    D-003's free stat-first half — survive for every row."""
+     the free stat-first half — survive for every row."""
     from cairn.dashboard.workspaces import enumerate_stores, probe_stores
 
     home = _ws_home(tmp_path)
@@ -1955,7 +1955,7 @@ def test_probe_stores_past_cap_degrades_counts_visibly_keeps_stats(tmp_path):
 
 
 def test_probe_stores_zero_opens_degrades_populated_only(tmp_path):
-    """T009 / FR-005's floor: max_opens=0 degrades EVERY populated row
+    """The floor: max_opens=0 degrades EVERY populated row
     (counts None + flagged, stats kept) while empty and missing rows are
     exactly what they were — those states never open a DB, so they are
     not capped, just count-less by nature (no .kg to stat either)."""
@@ -1995,7 +1995,7 @@ def test_probe_stores_zero_opens_degrades_populated_only(tmp_path):
 
 
 def test_probe_stores_corrupt_first_store_fails_fast_batch_completes(tmp_path):
-    """T009's no-hang half: a corrupt .kg at list position 1 fails its
+    """The no-hang half: a corrupt .kg at list position 1 fails its
     open fast — reclassified unreadable, stats kept — and CONSUMES one
     budget slot, yet the batch continues: the next store still gets its
     real count, the last degrades past the cap, and the call returns one
@@ -2041,7 +2041,7 @@ def test_probe_stores_corrupt_first_store_fails_fast_batch_completes(tmp_path):
 
 
 def test_probe_stores_empty_and_missing_consume_no_open_budget(tmp_path):
-    """T009's accounting half: only populated rows draw from the open
+    """The accounting half: only populated rows draw from the open
     budget. Three empty dirs and a registered-missing key walk the list
     FIRST (entries reordered — probe_stores probes in the list order it is
     handed), and both populated stores behind them still get their counts
@@ -2078,8 +2078,8 @@ def test_probe_stores_empty_and_missing_consume_no_open_budget(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tokenizer mode selection (ui-dashboard-polish FR-002 / TC-002, TC-003) and
-# per-tool truncation surfacing (FR-003 / TC-005). The active mode is a
+# Tokenizer mode selection (ui-dashboard-polish) and
+# per-tool truncation surfacing . The active mode is a
 # process-wide singleton, so every mode test pins sys.modules["transformers"]
 # itself (a deterministic stub for present, None for absent) and resets the
 # singleton on entry AND exit -- a leaked exact-mode resolution would
@@ -2106,7 +2106,7 @@ class _StubAutoTokenizer:
 
 @pytest.fixture
 def exact_tokenizer_present(monkeypatch):
-    """TC-002's precondition: the exact tokenizer importable and its model
+    """The precondition: the exact tokenizer importable and its model
     cached. sys.modules carries the deterministic stub, so the probe
     resolves exact mode without the semantic extra ever being installed."""
     from cairn.dashboard.tokenizer import reset_tokenizer_mode
@@ -2122,7 +2122,7 @@ def exact_tokenizer_present(monkeypatch):
 
 @pytest.fixture
 def tokenizer_import_absent(monkeypatch):
-    """TC-003's precondition: the import absent. A None in sys.modules makes
+    """The precondition: the import absent. A None in sys.modules makes
     ``from transformers import AutoTokenizer`` raise ImportError -- the
     probe's absent-import path, not a failing tokenizer."""
     from cairn.dashboard.tokenizer import reset_tokenizer_mode
@@ -2195,7 +2195,7 @@ def _rendered_tool_row(html, tool):
 def test_tokenizer_exact_mode_used_and_labeled_when_import_present(
     fresh_db, exact_tokenizer_present
 ):
-    """TC-002 (FR-002): with an exact tokenizer available, the resolved mode
+    """With an exact tokenizer available, the resolved mode
     names it, direct estimates count through it, and the window's estimates
     divide by its calibrated ratio -- in get_tool_tokens, in list_history,
     and in the rendered /tokens label."""
@@ -2231,7 +2231,7 @@ def test_tokenizer_exact_mode_used_and_labeled_when_import_present(
 def test_tokenizer_heuristic_fallback_used_and_labeled_when_import_absent(
     fresh_db, tokenizer_import_absent
 ):
-    """TC-003 (FR-002): import absent -> the heuristic mode resolves,
+    """Import absent -> the heuristic mode resolves,
     estimates are the documented chars // 4 (the same corpus as the exact
     test, different numbers -- the estimates follow the mode), and the
     rendered label says heuristic with no calibration claim."""
@@ -2283,7 +2283,7 @@ def test_exact_mode_below_calibration_floor_stays_uncalibrated(
     assert re.search(r"estimates use the\s+4 chars/token heuristic divisor", html)
 
 
-# TC-005's mixed store: (id, tool, req_chars, resp_chars,
+# the mixed store: (id, tool, req_chars, resp_chars,
 # truncated_from_chars, truncated_to_chars) -- every truncation-evidence
 # shape at once.
 _TRUNCATION_ROWS = [
@@ -2324,7 +2324,7 @@ def _seed_truncation_mixed(conn):
 
 
 def test_get_tool_tokens_surfaces_per_tool_truncation_counts(fresh_db):
-    """TC-005's data half (FR-003): truncated_calls/truncated_chars ride the
+    """The data half: truncated_calls/truncated_chars ride the
     per-tool entries from the durable columns -- magnitudes aggregate across
     the truncated calls only, absent evidence reads unknown (None, never
     0), and a zero-magnitude truncation reads 0, never unknown."""
@@ -2352,7 +2352,7 @@ def test_get_tool_tokens_surfaces_per_tool_truncation_counts(fresh_db):
 
 
 def test_tokens_render_distinguishes_truncation_unknown_from_zero(fresh_db):
-    """TC-005's view half (FR-003): the rendered surface shows per-tool
+    """The view half: the rendered surface shows per-tool
     truncation counts alongside usage, renders no-evidence rows as
     unknown/-- and zero-magnitude evidence as 0, and the mode label names a
     real mode regardless of the machine's semantic extra."""
@@ -2771,7 +2771,7 @@ def test_inspect_symbol_unknown_name_reports_not_found(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# Dashboard wiki panel (FR-009 / US6): manifest rows joined with the
+# Dashboard wiki panel (US6): manifest rows joined with the
 # promoted wiki/pages/ concepts, rendered bodies, and sources.
 # ---------------------------------------------------------------------------
 
@@ -3065,7 +3065,7 @@ def test_get_wiki_page_ref_map_keys_match_escaped_span_text(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Wiki staleness (FR-007 / D-020): recorded sha (concept extensions, manifest
+# Wiki staleness: recorded sha (concept extensions, manifest
 # row fallback) vs the workspace HEAD, as fresh/stale/unknown.
 # ---------------------------------------------------------------------------
 
@@ -3074,7 +3074,7 @@ _SHA_B = "def5678b"
 
 
 def _promote_concept_with_sha(bundle, repo, page_id, sha=None):
-    """The FR-009 promoted concept, plus the recorded-sha extension."""
+    """The promoted concept, plus the recorded-sha extension."""
     from cairn.okf.concept import OKFConcept
 
     extensions = {"page_id": page_id, "input_hash": f"hash-{page_id}"}
