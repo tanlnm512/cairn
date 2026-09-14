@@ -114,6 +114,8 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 3. Ensure `pytest -m core` passes at minimum; `pytest -q` if you can run the
    full suite.
 4. Keep PRs scoped — one logical change each.
+5. Enable auto-merge on your PR (`gh pr merge --auto --merge`) so it merges
+   the moment review and required checks land.
 
 ## Contributor licensing (DCO)
 

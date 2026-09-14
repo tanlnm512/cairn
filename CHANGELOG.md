@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PR legs run the Python 3.14 ceiling only — the full 3.10-3.14 matrix still
   gates every push to main. Eval-path tests pin the dep-free hash embedder,
   keeping the semantic model out of the retrieval loop.
+- CI installs every job from the committed uv.lock via `uv sync` (the
+  lockfile is the tested dependency set, not a fresh pip resolution), runs
+  the full 3.10-3.14 matrix on merge-group entries as well as main pushes
+  (merge-queue-ready), and sets per-job `timeout-minutes`.
 
 
 ## [0.20.2] - 2026-09-13
