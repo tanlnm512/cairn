@@ -87,7 +87,7 @@ Group: `cairn memory …`
 | `cairn wiki export --dir DIR [--force]` | write every promoted page as `DIR/{repo}/{page_id}.md` (OKF frontmatter preserved) and report the exported count; a non-empty target directory is refused unless `--force` is passed |
 | `cairn wiki enrich [<page-id>] [--repo R] [--all]` | queue one `wiki-page-enrich` task per promoted page — either a single `page-id` or `--all` (never both), optionally scoped with `--repo`; the task's facts carry page identity and fresh seeds (never the body); the critic-passing completion reads the promoted body at completion time, appends the new sections, and merges the new `## Sources` entries into the frontmatter. Requires an already-promoted page |
 | `cairn task list|show|claim|complete|drop` | LLM synthesis task queue; `list` filters by `--status`, `--kind`, or `--kind-prefix PREFIX` (e.g. `--kind-prefix wiki-page` lists every chain hop), `drop` abandons a pending or in-progress task — terminal: done tasks are refused and a dropped task is never claimable again (dropping an in-progress task releases its claim marker so the resource can be re-queued) |
-| `cairn dataflow build|lookup` | precomputed impact index |
+| `cairn dataflow build\|lookup` | precomputed impact index; `build` caps public symbols per run — `--max-symbols`, else `CAIRN_DATAFLOW_MAX_SYMBOLS`, else 2000 — and warns on stderr when truncating (partial index) |
 
 ## Health & ops
 

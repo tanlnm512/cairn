@@ -14,13 +14,20 @@ def dataflow():
 
 @dataflow.command(name="build")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-def dataflow_build(db):
+@click.option(
+    "--max-symbols",
+    type=int,
+    default=None,
+    help="Cap on public symbols indexed per run "
+    "(default: CAIRN_DATAFLOW_MAX_SYMBOLS env var, else 2000).",
+)
+def dataflow_build(db, max_symbols):
     """Build the dataflow index from scratch."""
     from ..graph.dataflow import build_dataflow_index
 
     conn = get_db(db)
     try:
-        count = build_dataflow_index(conn)
+        count = build_dataflow_index(conn, max_symbols=max_symbols)
     finally:
         conn.close()
     click.echo(f"Dataflow index built: {count} public symbols indexed.")

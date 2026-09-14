@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Added
+- `cairn dataflow build --max-symbols N` caps the public symbols indexed per
+  run; `CAIRN_DATAFLOW_MAX_SYMBOLS` sets the cap for every builder entry point
+  (`cairn build`, `cairn sync`, `cairn dataflow build`). The partial-index
+  warning names the env var and flag.
+
+### Changed
+- Dataflow builds upsert rows in batches and compute the repo-keyed
+  `cross_repo_deps` payload once per repo per run instead of once per symbol.
+
+
 ## [0.20.2] - 2026-09-13
 
 ### Added

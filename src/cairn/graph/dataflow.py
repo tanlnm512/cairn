@@ -13,7 +13,9 @@ when its preconditions hold.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import sys
 import time
 from typing import Dict, List, Optional, Sequence
 
@@ -24,6 +26,42 @@ from .traversal import STRUCTURAL_EDGE_KINDS
 # records a direct caller at depth 0 (= closure distance 1), so a query at
 # ``max_depth=D`` needs ancestors up to closure distance D+1.
 CLOSURE_MAX_DEPTH = 4
+
+# Default cap on public symbols processed per build_dataflow_index() call;
+# overridable per call, via the CAIRN_DATAFLOW_MAX_SYMBOLS env var, or via
+# `cairn dataflow build --max-symbols`.
+DEFAULT_MAX_SYMBOLS = 2000
+MAX_SYMBOLS_ENV = "CAIRN_DATAFLOW_MAX_SYMBOLS"
+
+
+def resolve_max_symbols(explicit: Optional[int] = None) -> int:
+    """Resolve the dataflow symbol cap: explicit arg > env var > default.
+
+    An invalid env value (non-integer or non-positive) warns on stderr and
+    falls back to DEFAULT_MAX_SYMBOLS.
+    """
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(MAX_SYMBOLS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_SYMBOLS
+    try:
+        value = int(raw)
+    except ValueError:
+        print(
+            f"warning: {MAX_SYMBOLS_ENV}={raw!r} is not an integer; "
+            f"using {DEFAULT_MAX_SYMBOLS}",
+            file=sys.stderr,
+        )
+        return DEFAULT_MAX_SYMBOLS
+    if value <= 0:
+        print(
+            f"warning: {MAX_SYMBOLS_ENV}={raw!r} must be positive; "
+            f"using {DEFAULT_MAX_SYMBOLS}",
+            file=sys.stderr,
+        )
+        return DEFAULT_MAX_SYMBOLS
+    return value
 
 
 def _public_symbols(conn: sqlite3.Connection) -> List[Dict[str, str]]:
@@ -87,7 +125,10 @@ def _chunked(items, size: int = _SQLITE_IN_CHUNK):
 
 
 def _compute_dataflow_row(
-    conn: sqlite3.Connection, name: str, repo: str
+    conn: sqlite3.Connection,
+    name: str,
+    repo: str,
+    cross_cache: Optional[Dict[str, list]] = None,
 ) -> tuple[list[str], list[str]]:
     """Compute one symbol's dataflow payload: (within_repo, cross_repo).
 
@@ -96,6 +137,10 @@ def _compute_dataflow_row(
     can never drift on semantics -- the property-parity tests diff a maintained
     table against a fresh full build row-for-row, which only holds if both
     call this one function.
+
+    ``cross_repo_deps`` depends only on ``repo``, so callers looping over many
+    symbols pass a ``cross_cache`` dict to memoize it per repo for the run;
+    the cached value is identical to a fresh computation.
     """
     from .queries import impact_analysis, cross_repo_deps  # avoid circular import
 
@@ -105,16 +150,21 @@ def _compute_dataflow_row(
     except Exception:
         within = []
 
-    try:
-        xref = cross_repo_deps(conn, repo)
-        cross = [d["repo"] for d in xref.get("dependents", [])]
-    except Exception:
-        cross = []
+    if cross_cache is not None and repo in cross_cache:
+        cross = cross_cache[repo]
+    else:
+        try:
+            xref = cross_repo_deps(conn, repo)
+            cross = [d["repo"] for d in xref.get("dependents", [])]
+        except Exception:
+            cross = []
+        if cross_cache is not None:
+            cross_cache[repo] = cross
     return within, cross
 
 
 def build_dataflow_index(
-    conn: sqlite3.Connection, progress=None, max_symbols: int = 2000
+    conn: sqlite3.Connection, progress=None, max_symbols: Optional[int] = None
 ) -> int:
     """Build the dataflow table from scratch for all public symbols.
 
@@ -126,36 +176,51 @@ def build_dataflow_index(
     ``max_symbols`` caps the number of public symbols processed per call. Each
     symbol triggers a per-symbol BFS (impact_analysis), so an unbounded loop
     never completes for large repos; this converts a hang into bounded work.
+    None (the default) resolves the cap from the CAIRN_DATAFLOW_MAX_SYMBOLS
+    env var, falling back to DEFAULT_MAX_SYMBOLS (see resolve_max_symbols).
     If truncated, a warning is emitted and the returned count reflects only the
     symbols actually indexed (the dataflow table is partial but still usable).
 
+    Rows are upserted in batches (executemany); all rows commit once at the end.
+
     Returns the number of symbols indexed.
     """
+    max_symbols = resolve_max_symbols(max_symbols)
     symbols = _public_symbols(conn)
     truncated = len(symbols) > max_symbols
     if truncated:
-        import sys
-
         print(
             f"warning: dataflow index is partial -- "
             f"{len(symbols)} public symbols found, capping at {max_symbols}. "
-            f"Re-run or raise max_symbols for full coverage.",
+            f"Set {MAX_SYMBOLS_ENV} (or --max-symbols on `cairn dataflow build`) "
+            f"above {len(symbols)} for full coverage.",
             file=sys.stderr,
         )
         symbols = symbols[:max_symbols]
     count = 0
     now = time.time()
 
+    cross_cache: Dict[str, list] = {}
+    batch: list[tuple] = []
     for sym in symbols:
-        within, cross = _compute_dataflow_row(conn, sym["name"], sym["repo"])
+        within, cross = _compute_dataflow_row(conn, sym["name"], sym["repo"], cross_cache)
 
-        conn.execute("""
-            INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
-            VALUES (?, ?, ?, ?, ?)
-        """, (sym["name"], sym["repo"], json.dumps(within), json.dumps(cross), now))
+        batch.append((sym["name"], sym["repo"], json.dumps(within), json.dumps(cross), now))
         count += 1
+        if len(batch) >= _SQLITE_IN_CHUNK:
+            conn.executemany("""
+                INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
+                VALUES (?, ?, ?, ?, ?)
+            """, batch)
+            batch.clear()
         if progress:
             progress(count)
+
+    if batch:
+        conn.executemany("""
+            INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
+            VALUES (?, ?, ?, ?, ?)
+        """, batch)
 
     conn.commit()
     return count
@@ -462,6 +527,7 @@ def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
         return 0
     count = 0
     now = time.time()
+    cross_cache: Dict[str, list] = {}
 
     for name in names:
         # Same selection query shape as _public_symbols, scoped to this name.
@@ -487,7 +553,7 @@ def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
             if repo in repos_done:
                 continue  # one row per (name, repo); payload is name-keyed
             repos_done.add(repo)
-            within, cross = _compute_dataflow_row(conn, name, repo)
+            within, cross = _compute_dataflow_row(conn, name, repo, cross_cache)
             conn.execute(
                 """
                 INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
