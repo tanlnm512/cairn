@@ -37,7 +37,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
       # Every job installs from the committed uv.lock (exact pinned set) via
       # `uv sync` -- the lockfile is the dependency set CI tests, not a fresh
       # pip resolution. `uv run --no-sync` then executes from that venv.
@@ -65,7 +65,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Install (with dev extras)
         run: uv sync --extra dev
       - name: mypy
@@ -121,7 +121,7 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Install (with dev extras)
         run: uv sync --extra dev
       - name: Run all hooks
@@ -163,7 +163,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Install (with dev + ingest extras)
         run: uv sync --extra dev --extra ingest --python ${{ matrix.python-version }}
@@ -264,7 +264,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Install (with dev extras)
         run: uv sync --extra dev
@@ -290,7 +290,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Build distributions
         run: |
@@ -340,7 +340,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
 
       # Restore the newest main-minted rolling baseline (same hosted runner
       # class). The exact key embeds the run id so it always misses by
