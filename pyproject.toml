@@ -70,6 +70,10 @@ dev = [
     "pytest>=7.0",
     # Coverage reporting in CI (Layer 1 test job). Reporting-only, no threshold.
     "pytest-cov>=4.0",
+    # Parallel suite execution (`pytest -n auto` in the CI test job); the
+    # suite is hermetic (per-test sandboxed HOME/env, tmp_path), so workers
+    # need no shared state.
+    "pytest-xdist>=3.6",
     "watchdog>=3.0",
     "build",
     "ruff>=0.6",

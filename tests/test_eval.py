@@ -31,6 +31,13 @@ from cairn.eval import (
 )
 from cairn.graph.schema import get_db
 
+# Every eval assertion here pins shapes/counts, never embedding quality, so
+# the dep-free hash embedder keeps the semantic model out of the retrieval
+# loop (the default backend otherwise pays a model load per leg).
+@pytest.fixture(autouse=True)
+def _hash_embedder(hash_backend):
+    pass
+
 
 GOOD_QUERIES = [
     {

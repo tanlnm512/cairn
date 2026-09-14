@@ -15,7 +15,9 @@ def test_cli_help():
     assert "eval" in result.output
 
 
-def test_cli_commands_smoke():
+def test_cli_commands_smoke(hash_backend):
+    # hash embedder: the `eval` smoke leg runs the default 40-query harness;
+    # shape assertions don't need the semantic model.
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "test.db")
