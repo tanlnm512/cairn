@@ -95,7 +95,7 @@ def get_callers(
             "(SELECT id FROM symbols WHERE name = ?))"
         )
         target_params: Tuple[str, ...] = (name, name)
-    elif fuzzy:
+    elif fuzzy and symbol_id is not None:
         target_clause = "(e.target_name = ? OR e.target_id = ?)"
         target_params = (name, symbol_id)
     elif symbol_id is not None:
@@ -248,7 +248,11 @@ def impact_analysis(
     callers_memo: dict[str | tuple[str, str], list] = {}
 
     def _callers(sym_id: Optional[str], n: str) -> list:
-        key = (sym_id, n) if seed_id is not None else n
+        key: str | tuple[str, str]
+        if sym_id is not None and seed_id is not None:
+            key = (sym_id, n)
+        else:
+            key = n
         if key not in callers_memo:
             callers_memo[key] = get_callers(
                 conn,

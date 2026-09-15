@@ -672,7 +672,8 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
                 "Semantic index is empty. Run `cairn embed` once to index the "
                 "corpus (build-time, ~1-2 min for 50k symbols), then retry "
                 "this query. Embedding is not done lazily during search to "
-                "avoid write-lock contention with the running server."
+                "avoid write-lock contention with the running server.",
+                freshness,
             )
         from cairn.graph import queries
         rows = queries.semantic_search(conn, query, limit=limit, include_callers=include_callers, rerank=rerank)

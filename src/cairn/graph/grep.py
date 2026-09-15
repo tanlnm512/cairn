@@ -183,10 +183,11 @@ def _collect_file_hits(
     for line_number, text in enumerate(lines, start=1):
         for match in matcher.finditer(text):
             symbol = _innermost_symbol(symbols, line_number)
+            symbol_name = symbol.qualified_name if symbol is not None else ""
             key = (
                 repo,
                 path,
-                symbol.qualified_name if symbol else "",
+                symbol_name or "",
             )
             group = groups.get(key)
             if group is None:

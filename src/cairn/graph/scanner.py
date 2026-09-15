@@ -17,7 +17,7 @@ import hashlib
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path, PosixPath, WindowsPath
+from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
 import pathspec
@@ -166,18 +166,17 @@ class RepositoryRecord:
     path: Path
 
 
-_RepositoryPathBase = WindowsPath if os.name == "nt" else PosixPath
-
-
-class RepositoryPath(_RepositoryPathBase):
+class RepositoryPath(Path):
     """Path carrying the stable repository id used by graph storage."""
 
     __slots__ = ("repo_id",)
+    repo_id: str
 
-    def __new__(cls, path, repo_id: str):
-        self = super().__new__(cls, path)
-        self.repo_id = repo_id
-        return self
+
+def _repository_path(record: RepositoryRecord) -> RepositoryPath:
+    path = RepositoryPath(str(record.path))
+    path.repo_id = record.repo_id
+    return path
 
 
 def _descendant_directories(root: Path) -> Iterator[Path]:
@@ -247,7 +246,7 @@ def discover_repos(workspace: str = DEFAULT_WORKSPACE) -> List[Path]:
     repository rather than in a parent directory containing multiple repos.
     """
     return [
-        RepositoryPath(record.path, record.repo_id)
+        _repository_path(record)
         for record in discover_repo_records(workspace)
     ]
 
@@ -278,7 +277,7 @@ def resolve_repo_path(workspace: str, repo_name: str) -> Path:
     """
     for record in discover_repo_records(workspace):
         if record.repo_id == repo_name:
-            return RepositoryPath(record.path, record.repo_id)
+            return _repository_path(record)
     ws = Path(workspace)
     if is_single_repo_workspace(workspace):
         return ws

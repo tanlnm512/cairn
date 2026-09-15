@@ -58,7 +58,10 @@ class RustParser(GenericTreeSitterParser):
 
     def _first_type_identifier(self, node: Node) -> Optional[str]:
         if node.type == "type_identifier":
-            return node.text.decode("utf-8")
+            text = node.text
+            if text is None:
+                return None
+            return text.decode("utf-8")
         for child in node.children:
             name = self._first_type_identifier(child)
             if name is not None:
