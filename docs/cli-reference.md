@@ -10,12 +10,23 @@ are read at process start, not per call.
 | Command | Purpose |
 |---|---|
 | `cairn init` | interactive first-time setup (runs a build) |
-| `cairn build` | full workspace rebuild (see [indexing.md](indexing.md)) |
+| `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) |
 | `cairn update [--file <path>]` | incremental reindex (git-diff driven) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | snapshot the store |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
 | `cairn uninstall` | remove cairn integration artifacts |
+
+### `cairn build --lsp`
+
+- Runs `pyright --stdio` only when `--lsp` is present and `pyright` is on
+  `PATH`.
+- Candidates are Python call edges still marked `ambiguous` after normal
+  resolution. Exactly one definition location mapping inside one stored Python
+  symbol upgrades the edge to `exact`.
+- Missing or failing pyright is a noticed no-op; failed passes roll back their
+  changes.
+- Existing `exact` edges are never selected or downgraded.
 
 ## Query
 
@@ -27,10 +38,43 @@ are read at process start, not per call.
 | `cairn search <query>` | symbol search (FTS5) |
 | `cairn semantic <query>` | hybrid semantic search |
 | `cairn impact <symbol>` | what breaks if changed (within-repo) |
+| `cairn blast` | reverse-dependency radius of a git diff |
+| `cairn map` | deterministic repository orientation map |
+| `cairn grep <pattern>` | span-grouped search over indexed files |
 | `cairn deps <repo>` | cross-repo dependency map |
 | `cairn tree <path>` | file/module symbol tree |
 | `cairn ask "<question>"` | natural-language query across layers |
 | `cairn context <file>` | compass + memory context for a file |
+
+### `cairn blast`
+
+- Default comparison: working tree versus `HEAD`.
+- `--base <ref>` compares `HEAD` with the merge base of `<ref>` and `HEAD`.
+- `--format text|markdown|mermaid|json` selects the renderer; text is the
+  default. `--output <file>` writes the rendered result instead of stdout.
+- Traversal is precise by default; `--fuzzy` also follows unresolved edges and
+  labels their resolution.
+- An empty radius exits 0 and states that there are no dependents.
+- An unknown `--base` ref exits non-zero, names the ref, and recommends
+  fetching full history with CI fetch-depth guidance.
+
+### `cairn map`
+
+- Groups directory clusters per repository with file, symbol, and edge counts;
+  ranks hubs by incoming edges and reports workspace hotspots.
+- `--json` emits the canonical machine shape. Text is the default.
+- `--max-clusters`, `--max-hubs`, and `--max-hotspots` cap their arrays and
+  every cap reports how many entries were dropped, including zero.
+
+### `cairn grep <pattern>`
+
+- Searches indexed files and groups hits by their innermost enclosing symbol;
+  hits outside symbol spans form a file-level group.
+- Groups rank by incoming edge count, then path, qualified name, and first hit.
+- `-i` ignores case, `--fixed` treats the pattern literally, and `--in
+  <path-prefix>` restricts repository-relative paths.
+- `--max-hits` caps returned hits; dropped hit and group counts are always
+  reported, and unreadable files are counted.
 
 ## Embeddings & rerank
 
@@ -99,7 +143,7 @@ Group: `cairn memory …`
 | `cairn validate` / `validate-paths` / `verify` | store integrity checks |
 | `cairn bench` | performance suites |
 | `cairn eval` | retrieval evaluation |
-| `cairn viz` | render graph diagrams |
+| `cairn viz [--export FILE]` | render graph diagrams; `--export` writes one self-contained HTML file |
 | `cairn hooks install|uninstall` | git hooks |
 | `cairn version` / `upgrade` | version and self-upgrade |
 | `cairn sync` | sync pending watcher edits |

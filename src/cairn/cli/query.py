@@ -8,14 +8,31 @@ import sys
 from .main import DEFAULT_DB_PATH, get_db, main, queries
 from ._helpers import _mods, _shorten
 
+
+def _refresh_conn(conn, refresh: bool | None = None):
+    """Refresh the graph before a query; report unrepaired drift on stderr."""
+    from ..graph.watcher import refresh_for_query
+
+    report = refresh_for_query(conn, repair=refresh)
+    if report.drifted_paths and not report.repaired:
+        click.echo(report.banner(), err=True)
+    return report
+
+
 @main.command(name="def")
 @click.argument("symbol")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def find_def(symbol, db, as_json):
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+def find_def(symbol, db, as_json, refresh):
     """Find where a SYMBOL is defined."""
     conn = get_db(db)
     try:
+        _refresh_conn(conn, refresh)
         rows = queries.find_definition(conn, symbol)
     finally:
         conn.close()
@@ -45,7 +62,12 @@ def find_def(symbol, db, as_json):
     help="Also match unresolved edges by name (pre-resolution behavior). "
     "Default is precise: only edges resolved to exactly one definition.",
 )
-def callers(symbol, db, as_json, fuzzy):
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+def callers(symbol, db, as_json, fuzzy, refresh):
     """Find all callers of SYMBOL.
 
     Default (precise) returns only callers of the exact resolved symbol.
@@ -54,6 +76,7 @@ def callers(symbol, db, as_json, fuzzy):
     """
     conn = get_db(db)
     try:
+        _refresh_conn(conn, refresh)
         rows = queries.get_callers(conn, symbol, fuzzy=fuzzy)
     finally:
         conn.close()
@@ -76,10 +99,16 @@ def callers(symbol, db, as_json, fuzzy):
 @click.option("--kind", default=None, help="Filter by kind: class|function|method|...")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def search(pattern, kind, db, as_json):
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+def search(pattern, kind, db, as_json, refresh):
     """Search symbols by PATTERN (supports * wildcards)."""
     conn = get_db(db)
     try:
+        _refresh_conn(conn, refresh)
         rows = queries.search_symbols(conn, pattern, kind=kind)
     finally:
         conn.close()
@@ -107,10 +136,16 @@ def search(pattern, kind, db, as_json):
     help="Also include unresolved outgoing calls (named-only). "
     "Default is precise: only calls resolved to a workspace symbol.",
 )
-def callees(symbol, db, as_json, fuzzy):
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+def callees(symbol, db, as_json, fuzzy, refresh):
     """Find what a SYMBOL calls."""
     conn = get_db(db)
     try:
+        _refresh_conn(conn, refresh)
         rows = queries.get_callees(conn, symbol, fuzzy=fuzzy)
     finally:
         conn.close()
@@ -135,15 +170,21 @@ def callees(symbol, db, as_json, fuzzy):
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 @click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+@click.option(
     "--fuzzy",
     is_flag=True,
     help="Also traverse unresolved name-only edges. "
     "Default is precise: walk only resolved edges (no name-collision inflation).",
 )
-def impact(symbol, depth, db, as_json, fuzzy):
+def impact(symbol, depth, db, as_json, refresh, fuzzy):
     """Recursive impact analysis: what breaks if SYMBOL changes."""
     conn = get_db(db)
     try:
+        _refresh_conn(conn, refresh)
         result = queries.impact_analysis(conn, symbol, max_depth=depth, fuzzy=fuzzy)
     finally:
         conn.close()
@@ -204,4 +245,3 @@ def deps(repo, db, as_json):
         click.echo("  (none)")
     if not result["dependencies"] and not result["dependents"]:
         sys.exit(1)
-

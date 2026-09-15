@@ -456,3 +456,94 @@ pins the old no-Rust coverage; new Rust tests own that contract.
 - **Context**: Current generators replace whole bodies and the critic scans the full body (survey.md FR-008).
 - **Decision**: Use an exact level-2 `## Notes` section bounded by the next same-or-higher heading or EOF; splice its original bytes back after generation and pass only the remaining body to the critic.
 - **Consequences**: Human content survives byte-identical and cannot fail code-reference criticism. Writers must use one shared helper; renderer-specific markdown normalization is prohibited.
+
+### D-009: Generic-tier languages are excluded from exact-edge upgrade
+- **Context**: `src/cairn/graph/builder.py::insert_parsed_file` routes every parser
+  call edge through the normal resolver, so a uniquely named Rust target would be
+  promoted to `exact` — contradicting FR-011's `unresolved`-only contract for the
+  generic tier. Enforcing the contract needs a change in the resolver/builder seam,
+  which T026's original file list did not include.
+- **Decision**: Extend T026's intended file set to cover the minimal seam in
+  `src/cairn/graph/builder.py` and/or `src/cairn/graph/resolver.py`: generic-tier
+  languages carry a tier marker on parsed call edges, and the resolver skips
+  exact-target promotion for marked edges (they stay `unresolved` with the target
+  name preserved). Hand-written full-fidelity languages keep the existing path
+  unchanged.
+- **Consequences**: The resolution-label contract stays honest — `exact` continues
+  to mean a resolved edge from a full-fidelity extractor. Cost: the builder/resolver
+  seam gains one tier-aware branch; if a future full-fidelity Rust extractor lands,
+  it opts out of the marker and inherits normal resolution.
+
+### D-010: Rust registers through the parser factory constructor map
+- **Context**: `src/cairn/parsers/factory.py::_PARSER_CONSTRUCTORS` is the only
+  language → `BaseParser` route used by `src/cairn/graph/builder.py::get_parser`;
+  `src/cairn/parsers/_registry.py` only loads grammar capsules. T026's file list
+  named `_registry.py` but not the actual wiring point.
+- **Decision**: Extend T026's intended file set with `src/cairn/parsers/factory.py`.
+  The Rust adapter registers in `_PARSER_CONSTRUCTORS`; `_registry.py` stays the
+  grammar-capsule loader. No parallel registration mechanism is introduced.
+- **Consequences**: One registration path for all languages. Cost: the task touches
+  the factory shared by every language — existing factory/parser tests must stay
+  green and no other language's constructor entry changes.
+
+### D-011: The 24-tool inventory is updated at every pinned surface
+- **Context**: The tool count is stated in more places than T018's original file
+  list: `AGENTS.md:9`, `src/cairn/agent_install/_common.py:445` (instruction
+  template), `src/cairn/mcp_server/__init__.py:7` (module docstring), and
+  `tests/test_ingest_compat.py:243` (a pin asserting 22). Leaving any at 22 makes
+  the new `repo_map`/`file_api` tools invisible to agents and fails the inventory
+  tests T017 surfaced.
+- **Decision**: Extend T018's intended file set with those four files. The count
+  becomes 24 with graph (11); no other wording changes ride along.
+- **Consequences**: Agent instruction templates and docs stay truthful after the
+  tool addition. Cost: T018 touches AGENTS.md — a shared instruction surface — so
+  its diff there is limited to the count/layer line.
+
+### D-012: Closing-audit scope and hygiene adjudications
+- **Context**: The closing scope diff flagged `src/cairn/agent_integration/skill/SKILL.md`
+  and `uv.lock` as unmentioned; the hygiene sweep flagged `src/cairn/graph/config.py`'s
+  `print(` as a debug-statement suspect.
+- **Decision**: All three are adjudicated legitimate. `src/cairn/agent_install/../agent_integration/skill/SKILL.md`
+  carries the bundled skill's tool index, whose 22-tool pin had to move to 24 (D-011
+  follow-through, self-reported by T029). `uv.lock` is the generated lockfile for the
+  D-004 `tree-sitter-rust==0.24.2` pin. `src/cairn/graph/config.py` prints a
+  malformed-config warning to stderr, matching the pre-existing `_as_string_list`
+  convention in the same module — not debug output.
+- **Consequences**: No revert. The bundled skill stays truthful at 24 tools; the
+  lockfile is committed as the dependency record; the warning behavior stays
+  consistent with its module.
+
+### D-013: Blast seeds traverse by symbol id through a shared traversal seam
+- **Context**: Fixing the duplicate-name blast finding inside
+  `src/cairn/graph/blast.py` alone would have duplicated the reverse traversal.
+  The smallest correct seam is `src/cairn/graph/traversal.py`: optional
+  `symbol_id`/`seed_id` parameters on `get_callers`/`impact_analysis`.
+- **Decision**: Extend the review-fix file set with `src/cairn/graph/traversal.py`
+  for those optional id-aware parameters. `blast` passes each seed's stored symbol
+  id so same-name symbols in other files cannot enter the radius. Name-based calls
+  keep their existing behavior.
+- **Consequences**: One traversal implementation; name lookups unchanged. Cost:
+  two optional parameters on public traversal functions — covered by the
+  duplicate-name regression fixture in `tests/test_graft_parity_blast.py`.
+
+### D-014: Diagram text surfaces updated with the 24-tool count
+- **Context**: The reviewer found `docs/diagrams/*.html` and `.svg` text sources
+  still advertising 22 tools. No diagram generator exists under `scripts/`, so the
+  text sources were edited directly during the review-fix round; they appeared in
+  no task's file list.
+- **Decision**: Adjudicate the 13 diagram text files as in-scope for the D-011
+  inventory correction: docs/diagrams/c4.html, docs/diagrams/c4-dark.html,
+  docs/diagrams/c4-components.html, docs/diagrams/c4-components-dark.html,
+  docs/diagrams/c4-containers.html, docs/diagrams/c4-containers-dark.html,
+  docs/diagrams/c4-context.html, docs/diagrams/c4-context-dark.html,
+  docs/diagrams/readme-architecture.html,
+  docs/diagrams/readme-architecture-dark.html,
+  docs/diagrams/readme-architecture.svg,
+  docs/diagrams/system-architecture.html,
+  docs/diagrams/system-architecture-dark.html,
+  docs/diagrams/system-architecture.svg. PNG derivatives are generated binaries and stay stale
+  until the next diagram regeneration pass.
+- **Consequences**: Editable diagram sources agree with the 24-tool inventory.
+  Parked debt: the 12 PNG derivatives (`c4*.png`, `readme-architecture*.png`,
+  `system-architecture*.png`) still render 22 and need regeneration by whoever
+  owns the diagram toolchain.

@@ -13,6 +13,9 @@ from __future__ import annotations
 # Re-export main for `from cairn.cli import main` (entry point in pyproject.toml
 # is `cairn.cli:main`, and tests import it directly).
 from .main import main
+from .blast import blast
+
+main.add_command(blast)
 
 # Import every command module for its decorator side effects: each
 # @main.command() / @<subgroup>.command() call registers the command on
@@ -27,7 +30,9 @@ from . import dataflow     # noqa: F401
 from . import download_reranker  # noqa: F401
 from . import embed        # noqa: F401
 from . import hooks_viz    # noqa: F401
+from . import grep         # noqa: F401
 from . import knowledge    # noqa: F401
+from . import map          # noqa: F401
 from . import memory       # noqa: F401
 from . import query        # noqa: F401
 from . import serve        # noqa: F401

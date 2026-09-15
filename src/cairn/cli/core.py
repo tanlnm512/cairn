@@ -253,7 +253,9 @@ def config(list_all, mcp_config, db_only, as_json):
 @click.option("-v", "--verbose", is_flag=True,
               help="Verbose per-file detail (parse errors, skip reasons).")
 @click.option("--staging", is_flag=True, help="Build to temp DB and atomic-swap for zero downtime.")
-def build(repo, workspace, db, verbose, staging):
+@click.option("--lsp", is_flag=True,
+              help="Upgrade ambiguous Python calls with pyright when available.")
+def build(repo, workspace, db, verbose, staging, lsp):
     """Build (or rebuild) the code graph."""
     from . import display
 
@@ -319,7 +321,7 @@ def build(repo, workspace, db, verbose, staging):
             try:
                 summary = builder.build_graph(
                     workspace=workspace, repo_filter=repo, db_path=target_db,
-                    verbose=verbose, progress=on_progress,
+                    verbose=verbose, progress=on_progress, lsp=lsp,
                 )
             except Exception:
                 # --staging writes to a temp DB; remove the half-built temp DB on
@@ -418,6 +420,7 @@ def build(repo, workspace, db, verbose, staging):
         kv_pairs.append(("transitive", f"{tc_count:,} edges"))
 
     resolution = summary.get("resolution") or {}
+    lsp_report = summary.get("lsp") or {}
     exact = resolution.get("exact", 0)
     ambig = resolution.get("ambiguous", 0)
     unres = resolution.get("unresolved", 0)
@@ -431,6 +434,8 @@ def build(repo, workspace, db, verbose, staging):
         subtitle_parts.append(f"atomic swap → {db}")
     if df_error:
         subtitle_parts.append(f"dataflow skipped: {df_error}")
+    if lsp_report.get("upgraded"):
+        subtitle_parts.append(f"pyright +{lsp_report['upgraded']:,} exact")
 
     display.summary_panel(
         title=f"Built graph in {elapsed:.1f}s",
@@ -439,6 +444,8 @@ def build(repo, workspace, db, verbose, staging):
     )
     if verbose and summary.get("skipped"):
         display.dim(f"{summary['skipped']} files skipped (gitignored/default/config/size; see `cairn stats`)")
+    for notice in lsp_report.get("notices", []):
+        display.dim(f"LSP: {notice}")
 
 
 # --------------------------------------------------------------------------

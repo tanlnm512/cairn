@@ -37,10 +37,12 @@ from ..parsers import service_calls as service_calls_mod
 from .repository import GraphRepository
 from . import scanner as scanner_mod
 from . import resolver as resolver_mod
+from . import lsp as lsp_mod
 from .schema import init_db, get_build_db, get_db, backup_to, build_lock, note_contention
 from ..paths import resolve_store as _resolve_store
 
 _logger = logging.getLogger(__name__)
+_AUTO_LSP_TRANSPORT = object()
 
 
 def _now() -> str:
@@ -290,6 +292,8 @@ def _build_graph_impl(
     db_path: Optional[str] = None,
     verbose: bool = False,
     progress=None,
+    lsp: bool = False,
+    lsp_transport: object = _AUTO_LSP_TRANSPORT,
 ) -> dict:
     """Build (or rebuild) the graph into ``conn`` (opened by the caller).
 
@@ -304,7 +308,20 @@ def _build_graph_impl(
     files, skips = _scan_workspace_with_skips(workspace, repo_filter=repo_filter)
     if not files:
         log("No source files found.")
-        return {"repos": 0, "files": 0, "symbols": 0, "edges": 0, "imports": 0}
+        skip_count = _record_skips(cur, skips) if skips else 0
+        conn.commit()
+        if skip_count and in_memory:
+            backup_to(conn, resolved_db)
+        return {
+            "repos": 0,
+            "files": 0,
+            "symbols": 0,
+            "edges": 0,
+            "imports": 0,
+            "skipped": skip_count,
+            "parse_errors": 0,
+            "resolution": {"exact": 0, "ambiguous": 0, "unresolved": 0},
+        }
 
     emit("scan", files=len(files), skips=len(skips))
 
@@ -394,6 +411,19 @@ def _build_graph_impl(
     # Third pass: resolve all edge targets
     resolution_stats = _resolve_all(conn, repo_edges_by_file, in_memory, verbose, progress)
 
+    lsp_report = None
+    if lsp:
+        if lsp_transport is _AUTO_LSP_TRANSPORT:
+            lsp_report = lsp_mod.upgrade_ambiguous_edges(conn, workspace)
+        else:
+            lsp_report = lsp_mod.upgrade_ambiguous_edges(
+                conn, workspace, transport=lsp_transport
+            )
+        upgraded = lsp_report.get("upgraded", 0)
+        if upgraded:
+            resolution_stats["exact"] += upgraded
+            resolution_stats["ambiguous"] -= upgraded
+
     # Fourth pass: materialize module->module imports edges from the imports
     # table (needs every file's module symbol present, so it runs after the
     # insert+resolve passes; kind='imports' stays outside
@@ -432,6 +462,8 @@ def _build_graph_impl(
         "parse_errors": parse_errors,
         "resolution": resolution_stats,
     }
+    if lsp_report is not None:
+        summary["lsp"] = lsp_report
     log(f"Done: {summary}")
     return summary
 
@@ -442,6 +474,8 @@ def build_graph(
     db_path: Optional[str] = None,
     verbose: bool = False,
     progress=None,
+    lsp: bool = False,
+    lsp_transport: object = _AUTO_LSP_TRANSPORT,
 ) -> dict:
     """Build (or rebuild) the graph. Returns summary stats.
 
@@ -470,6 +504,13 @@ def build_graph(
     """
     resolved_db = db_path or str(_resolve_store().db)
     in_memory = repo_filter is None
+    if (
+        in_memory
+        and Path(resolved_db).resolve() == _resolve_store(workspace).db.resolve()
+    ):
+        from .worktree import prepare_worktree_graph
+
+        prepare_worktree_graph(workspace)
 
     # Capture phase timings from the progress callbacks (spec observability-
     # telemetry 6.2). First-seen timestamp for phase-start markers, last-seen
@@ -497,6 +538,8 @@ def build_graph(
                 db_path=db_path,
                 verbose=verbose,
                 progress=_timing_progress,
+                lsp=lsp,
+                lsp_transport=lsp_transport,
             )
         finally:
             conn.close()
@@ -514,6 +557,8 @@ def build_graph(
                     db_path=db_path,
                     verbose=verbose,
                     progress=_timing_progress,
+                    lsp=lsp,
+                    lsp_transport=lsp_transport,
                 )
             finally:
                 conn.close()
@@ -888,14 +933,14 @@ def insert_parsed_file(
             edge.line, edge.column, None,
         ))
         # Carry the parser's in-memory-only signals on the tuple for the
-        # resolver: receiver_type (6th element, type-aware tier) and
-        # call_arity (7th, the call's argument count for the within-tier
-        # arity tiebreak); None when the parser didn't/couldn't infer them
-        # (abstain-safe).
+        # resolver: receiver_type (6th element, type-aware tier), call_arity
+        # (7th, the within-tier arity tiebreak), and generic_tier (8th, no
+        # exact-target promotion); absent signals are abstain-safe.
         file_edges.append((
             edge_id, source_id, edge.target_name, edge.line, edge.column,
             getattr(edge, "receiver_type", None),
             getattr(edge, "call_arity", None),
+            getattr(edge, "generic_tier", False),
         ))
 
     if sym_rows:

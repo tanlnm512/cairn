@@ -71,6 +71,7 @@ def get_callers(
     limit: int = 200,
     fuzzy: bool = False,
     kind: Optional[str] = None,
+    symbol_id: Optional[str] = None,
 ) -> List[sqlite3.Row]:
     """Return edges whose target is a symbol named `name`.
 
@@ -82,37 +83,41 @@ def get_callers(
 
     ``kind`` (optional) filters by edge kind; ``None`` returns all kinds. Each
     row reports the caller symbol, its file:line, and repo.
+
+    ``symbol_id`` (optional) restricts precise matches to one stored symbol.
     """
     cur = conn.cursor()
     kind_clause = "AND e.kind = ?" if kind else ""
     kind_params: Tuple[str, ...] = (kind,) if kind else ()
-    if fuzzy:
-        rows = cur.execute(
-            f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
-                      s.name AS caller_name, s.kind AS caller_kind, s.id AS caller_id,
-                      f.path AS file_path, f.repo_id AS repo, e.resolution AS resolution
-               FROM edges e
-               JOIN symbols s ON e.source_id = s.id
-               JOIN files f ON s.file_id = f.id
-               WHERE (e.target_name = ?
-                  OR e.target_id IN (SELECT id FROM symbols WHERE name = ?))
-                  {kind_clause}
-               LIMIT ?""",
-            (name, name, *kind_params, limit),
-        ).fetchall()
+    if fuzzy and symbol_id is None:
+        target_clause = (
+            "(e.target_name = ? OR e.target_id IN "
+            "(SELECT id FROM symbols WHERE name = ?))"
+        )
+        target_params: Tuple[str, ...] = (name, name)
+    elif fuzzy:
+        target_clause = "(e.target_name = ? OR e.target_id = ?)"
+        target_params = (name, symbol_id)
+    elif symbol_id is not None:
+        target_clause = "e.target_id = ?"
+        target_params = (symbol_id,)
     else:
-        rows = cur.execute(
-            f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
-                      s.name AS caller_name, s.kind AS caller_kind, s.id AS caller_id,
-                      f.path AS file_path, f.repo_id AS repo, e.resolution AS resolution
-               FROM edges e
-               JOIN symbols s ON e.source_id = s.id
-               JOIN files f ON s.file_id = f.id
-               WHERE e.target_id IN (SELECT id FROM symbols WHERE name = ?)
-                  {kind_clause}
-               LIMIT ?""",
-            (name, *kind_params, limit),
-        ).fetchall()
+        target_clause = (
+            "e.target_id IN (SELECT id FROM symbols WHERE name = ?)"
+        )
+        target_params = (name,)
+    rows = cur.execute(
+        f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
+                  s.name AS caller_name, s.kind AS caller_kind, s.id AS caller_id,
+                  f.path AS file_path, f.repo_id AS repo, e.resolution AS resolution
+           FROM edges e
+           JOIN symbols s ON e.source_id = s.id
+           JOIN files f ON s.file_id = f.id
+           WHERE {target_clause}
+              {kind_clause}
+           LIMIT ?""",
+        (*target_params, *kind_params, limit),
+    ).fetchall()
     return list(rows)
 
 
@@ -161,6 +166,7 @@ def impact_analysis(
     limit: int = 500,
     include_service_edges: bool = False,
     use_index: Optional[bool] = None,
+    seed_id: Optional[str] = None,
 ) -> dict:
     """Recursive caller traversal with cycle detection.
 
@@ -171,6 +177,7 @@ def impact_analysis(
     ``include_service_edges=True`` to also follow ``http_call``/``service_call``.
 
     ``limit`` caps total impacted rows; ``truncated`` in the return flags this.
+    ``seed_id`` (optional) restricts the entry symbol to one stored symbol id.
 
     **Index mode.** When the precomputed ``transitive_edges`` closure can serve
     the query -- precise, structural-only, ``max_depth <= 3``, the name has
@@ -205,15 +212,20 @@ def impact_analysis(
             and not include_service_edges
             and max_depth + 1 <= CLOSURE_MAX_DEPTH
         ):
-            seeds = find_definition(conn, name, limit=limit)
-            # find_definition falls back to qualified-name/substring matches;
-            # get_callers-based DFS only ever matches exact names, so require
-            # an exact-name symbol before serving from the closure.
-            exact = conn.execute(
-                "SELECT id FROM symbols WHERE name = ? LIMIT 1", (name,)
-            ).fetchone()
-            if exact is not None and closure_available(conn):
-                seed_ids = [s["id"] for s in seeds]
+            if seed_id is not None:
+                seed_ids = [seed_id]
+                can_use_closure = True
+            else:
+                seeds = find_definition(conn, name, limit=limit)
+                # find_definition falls back to qualified-name/substring matches;
+                # get_callers-based DFS only ever matches exact names, so require
+                # an exact-name symbol before serving from the closure.
+                exact = conn.execute(
+                    "SELECT id FROM symbols WHERE name = ? LIMIT 1", (name,)
+                ).fetchone()
+                seed_ids = [seed["id"] for seed in seeds]
+                can_use_closure = exact is not None
+            if can_use_closure and closure_available(conn):
                 # use_index=True genuinely forces: the cycle gate keeps auto
                 # mode on the DFS path (cycle reporting), but a forced query
                 # accepts cycles=[] (documented) -- the escape hatch for
@@ -232,16 +244,19 @@ def impact_analysis(
     cycles_seen: set[str] = set()
     cycles = []
     truncated = False
-    # Per-call memo: caller lookup is keyed by NAME, so distinct symbols that
-    # share a name (same-named methods across classes) re-query identical SQL.
-    # Pure caching -- visit order and results are unchanged (pinned by the
-    # golden parity tests).
-    callers_memo: dict[str, list] = {}
+    # Per-call memo: caller lookup is keyed by name, or symbol id when seeded by id.
+    callers_memo: dict[str | tuple[str, str], list] = {}
 
-    def _callers(n: str) -> list:
-        if n not in callers_memo:
-            callers_memo[n] = get_callers(conn, n, fuzzy=fuzzy)
-        return callers_memo[n]
+    def _callers(sym_id: Optional[str], n: str) -> list:
+        key = (sym_id, n) if seed_id is not None else n
+        if key not in callers_memo:
+            callers_memo[key] = get_callers(
+                conn,
+                n,
+                fuzzy=fuzzy,
+                symbol_id=sym_id if seed_id is not None else None,
+            )
+        return callers_memo[key]
 
     def traverse(sym_id: str, sym_name: str, depth: int):
         nonlocal truncated
@@ -259,7 +274,7 @@ def impact_analysis(
             return  # already fully explored via another path
         visited.add(sym_id)
         on_path.add(sym_id)
-        callers = _callers(sym_name)
+        callers = _callers(sym_id, sym_name)
         for c in callers:
             # Filter to structural kinds unless the caller opted in to service
             # edges.
@@ -281,10 +296,16 @@ def impact_analysis(
 
     # Seed: the entry name may resolve to several symbols. Mark every matching
     # id as visited/on-path so the traversal does not re-enter the seed.
-    for seed in find_definition(conn, name, limit=limit):
-        visited.add(seed["id"])
-        on_path.add(seed["id"])
-    for c in _callers(name):
+    if seed_id is None:
+        for seed in find_definition(conn, name, limit=limit):
+            visited.add(seed["id"])
+            on_path.add(seed["id"])
+        root_id = None
+    else:
+        visited.add(seed_id)
+        on_path.add(seed_id)
+        root_id = seed_id
+    for c in _callers(root_id, name):
         if allowed is not None and c["edge_kind"] not in allowed:
             continue
         if len(results) >= limit:

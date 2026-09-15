@@ -36,7 +36,7 @@ through a decoupled task queue.
 
 | Surface | Module | Facts |
 |---|---|---|
-| MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 22 tools (verified at boot); `cairn://status` resource |
+| MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 24 tools (verified at boot); `cairn://status` resource |
 | CLI | `src/cairn/cli/` | Click; entry point `cairn` → `cairn.cli:main`; see [cli-reference.md](cli-reference.md) |
 | Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json`; knowledge views — `/knowledge` catalog, `/knowledge/{family}/{slug}` detail with relationship panels, `/knowledge/graph` relationship canvas — render from the OKF bundle + derived `knowledge_edges` index |
 
@@ -48,6 +48,22 @@ through a decoupled task queue.
 | Retrieval | `src/cairn/retrieval/`, `src/cairn/graph/` (`semantic.py`, `lexical.py`, `fusion.py`, `reranker.py`, `prf.py`, `query_enrich.py`, `embed_ladder.py`) | always-on 3-stage hybrid (vectors + BM25 + RRF) with a gated rerank 4th stage; `embed_ladder.py` adds the parity-verified embedding-server fallback ladder; see [retrieval.md](retrieval.md) |
 | Knowledge & memory | `src/cairn/knowledge/`, `src/cairn/memory/`, `src/cairn/okf/` | OKF document store, staged doc ingestion, tiered agent memory; see [knowledge-and-memory.md](knowledge-and-memory.md) |
 | Compass & wiki | `src/cairn/compass/`, `src/cairn/wiki/`, `src/cairn/llm/tasks.py` | navigation guides and architecture summaries; LLM work runs via the task queue, fact-checked by a deterministic critic |
+
+### Optional precision, Rust, and worktree behavior
+
+- `cairn build --lsp` runs pyright only for ambiguous Python call edges. A
+  unique definition that maps to one stored Python symbol upgrades that edge to
+  `exact`; missing or failing pyright is a noticed no-op, and exact edges never
+  downgrade.
+- Rust uses the generic tree-sitter tier with a pinned grammar dependency. It
+  records definitions and spans, keeps call edges `unresolved`, and records
+  `.rs` files as parser-unavailable skips when the grammar cannot load.
+- `cairn.json` `include_nested_repos` defaults to false. When true, initialized
+  submodules and nested child repositories are indexed once under
+  parent-prefixed repo ids.
+- A linked worktree without a store is seeded by a read-only SQLite snapshot of
+  the main graph, then refreshed for worktree drift. The main store is never
+  mutated.
 
 ### Storage — where state lives
 
@@ -78,17 +94,19 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `hooks/` | git hooks and lifecycle hooks |
 | `knowledge/` | document knowledge: staged ingestion (`knowledge/ingest/`) + semantic retrieval |
 | `llm/` | agent-decoupled LLM task queue |
-| `mcp_server/` | the 22-tool MCP surface |
+| `mcp_server/` | the 24-tool MCP surface |
 | `memory/` | tiered agent memory (raw → drafts → tribal → archived) |
 | `okf/` | Open Knowledge Format concept model and bundle |
-| `parsers/` | tree-sitter parsers (14 languages) |
+| `parsers/` | tree-sitter parsers (15 languages) |
 | `retrieval/` | retrieval protocols + the batched vector scan (the Retriever / Fusion / Reranker stages live in `graph/`) |
 | `telemetry/` | best-effort local telemetry sink + optional OTLP export |
 | `utils/` | shared helpers (git inspection, logging) |
-| `viz/` | Mermaid / DOT / JSON graph renderers |
+| `viz/` | Mermaid / DOT / JSON / self-contained HTML graph renderers |
 | `wiki/` | the wiki's page-plan pipeline (plan → refine → queue) and the lifecycle module that derives promotion/state/staleness from the two stored kinds (plan manifest + promoted articles) |
 
 Standalone modules: `eval.py`, `paths.py` (store resolution + the `~/.cairn/config.json` layer), `refs.py`.
+
+`cairn viz --export FILE` writes one self-contained HTML file.
 
 ## Key data model facts
 

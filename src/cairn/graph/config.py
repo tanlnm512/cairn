@@ -14,7 +14,8 @@ Example ``cairn.json``::
 
     {
       "exclude": ["static/", "**/vendor/**"],
-      "include": ["vendor/lib/"]
+      "include": ["vendor/lib/"],
+      "include_nested_repos": false
     }
 
 If no file is present, :func:`load_config` returns a default (empty) config and
@@ -43,12 +44,16 @@ class CairnConfig:
     ``ingest`` holds the raw ``ingest`` JSON object for the knowledge
     ingestion pipeline (classification/skip overrides). It is kept raw
     here; the ingest package types and layers it over built-in defaults.
+
+    ``include_nested_repos`` opts a repository into indexing initialized
+    submodules and nested child repositories.
     """
 
     exclude: List[str] = field(default_factory=list)
     include: List[str] = field(default_factory=list)
     repo_namespaces: Dict[str, str] = field(default_factory=dict)
     ingest: Dict[str, object] = field(default_factory=dict)
+    include_nested_repos: bool = False
     source: Optional[Path] = None  # the file these came from, for diagnostics
 
     @property
@@ -57,6 +62,7 @@ class CairnConfig:
             not self.exclude and not self.include
             and not self.repo_namespaces
             and not self.ingest
+            and not self.include_nested_repos
         )
 
 
@@ -65,6 +71,7 @@ _EXCLUDE_KEY = "exclude"
 _INCLUDE_KEY = "include"
 _REPO_NAMESPACES_KEY = "repo_namespaces"
 _INGEST_KEY = "ingest"
+_INCLUDE_NESTED_REPOS_KEY = "include_nested_repos"
 
 
 def load_config(root: Union[str, Path]) -> CairnConfig:
@@ -100,13 +107,31 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
     include = _as_string_list(raw.get(_INCLUDE_KEY), path, _INCLUDE_KEY)
     repo_namespaces = _as_string_dict(raw.get(_REPO_NAMESPACES_KEY), path, _REPO_NAMESPACES_KEY)
     ingest = _as_dict(raw.get(_INGEST_KEY), path, _INGEST_KEY)
+    include_nested_repos = _as_bool(
+        raw.get(_INCLUDE_NESTED_REPOS_KEY), path, _INCLUDE_NESTED_REPOS_KEY
+    )
     return CairnConfig(
         exclude=exclude,
         include=include,
         repo_namespaces=repo_namespaces,
         ingest=ingest,
+        include_nested_repos=include_nested_repos,
         source=path,
     )
+
+
+def _as_bool(value, path: Path, key: str) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    import sys
+
+    print(
+        f"warning: {path}: '{key}' must be a boolean; ignoring config",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _as_string_list(value, path: Path, key: str) -> List[str]:

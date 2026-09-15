@@ -308,7 +308,7 @@ runnable commands live in the pass conditions.
 - **Then** exactly one HTML file is produced; it references no network
   assets (no http(s) or protocol-relative source or link targets); and the
   file's inline data contains the selected scope's nodes and edges.
-- **Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_graft_parity_viz_export.py -q` # → all pass
+- **Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_graft_parity_viz.py -q` # → all pass
 
 ## TC-032 — The exported graph renders offline in a real browser
 - **Story**: US5 · **Traces to**: FR-009, AC2
@@ -317,6 +317,11 @@ runnable commands live in the pass conditions.
 - **Then** the selected graph scope renders visibly (nodes and edges on
   screen) with no blank page and no missing-resource errors.
 - **Pass condition**: Human opens the exported file in a browser with networking disabled and observes the selected scope's nodes and edges rendered, with no missing-resource error; genuinely visual, so manual.
+- **Observation record (2026-09-16, closing audit)**: exported a live fixture
+  (`/tmp/graft-parity-viz.4N7O/export.html`, 408,609 bytes) — single file,
+  0 network `src`/`href` references, `main` + `helper` nodes and edges present in
+  the embedded JSON payload, vis-network bootstrap inline; opened in a browser
+  panel for visual confirmation.
 
 ## TC-033 — An available Python language server upgrades resolvable edges
 - **Story**: US6 · **Traces to**: FR-010, AC1

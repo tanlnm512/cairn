@@ -1,6 +1,6 @@
 # Spec: graft-parity
 
-**Status**: draft
+**Status**: done
 **Created**: 2026-09-15
 **Branch**: `feat/graft-parity`
 

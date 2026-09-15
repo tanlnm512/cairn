@@ -10,6 +10,7 @@ threshold. The LLM quality-judge is optional.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
@@ -23,6 +24,48 @@ from ..refs import (
     symbol_exists as _symbol_exists,
     unresolved_file_refs as _unresolved_file_refs,
 )
+
+
+NOTES_HEADING = "## Notes"
+_NOTES_HEADING_RE = re.compile(rf"(?m)^{NOTES_HEADING}[ \t\r]*$")
+_SAME_OR_HIGHER_HEADING_RE = re.compile(
+    r"(?m)^#{1,2}(?:[ \t]+.*)?[ \t\r]*$"
+)
+
+
+def split_notes(body: str) -> tuple[str, str]:
+    """Return ``(Notes section, body without Notes)`` with bytes intact."""
+    heading = _NOTES_HEADING_RE.search(body)
+    if heading is None:
+        return "", body
+    boundary = _SAME_OR_HIGHER_HEADING_RE.search(body, heading.end())
+    end = boundary.start() if boundary is not None else len(body)
+    return body[heading.start() : end], body[: heading.start()] + body[end:]
+
+
+def without_notes(body: str) -> str:
+    """Return a body with its exact Notes section removed."""
+    return split_notes(body)[1]
+
+
+def splice_notes(existing_body: str, generated_body: str) -> str:
+    """Splice the existing Notes section verbatim into generated content."""
+    notes, _ = split_notes(existing_body)
+    if not notes:
+        return generated_body
+    content = without_notes(generated_body)
+    if content and not content.endswith(("\n", "\r")):
+        content += "\n"
+    return content + notes
+
+
+def preserved_concept_notes(bundle, concept_id: str, generated_body: str) -> str:
+    """Read an existing concept and splice its Notes into generated content."""
+    try:
+        existing = bundle.read_concept(concept_id)
+    except OSError:
+        return generated_body
+    return splice_notes(existing.body or "", generated_body)
 
 
 @dataclass
@@ -65,7 +108,7 @@ def critic_concept(
     errors = []
     warnings = []
 
-    body = concept.body or ""
+    body = without_notes(concept.body or "")
 
     # 1. Extract backtick-quoted file references and check existence.
     file_refs = _extract_file_refs(body)

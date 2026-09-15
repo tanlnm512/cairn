@@ -21,6 +21,7 @@ _PARSER_CONSTRUCTORS: Mapping[str, Tuple[str, str]] = {
     "go": ("go", "GoParser"),
     "php": ("php", "PhpParser"),
     "ruby": ("ruby", "RubyParser"),
+    "rust": ("rust", "RustParser"),
     "csharp": ("csharp", "CSharpParser"),
     "c": ("c_family", "CParser"),
     "cpp": ("c_family", "CppParser"),

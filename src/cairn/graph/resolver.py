@@ -19,6 +19,9 @@ import sqlite3
 from typing import Dict, List, Optional, Tuple
 
 
+GENERIC_TIER_LANGUAGES = frozenset({"rust"})
+
+
 def build_symbol_index(
     conn: sqlite3.Connection,
 ) -> Dict[str, List[Tuple[str, str, str, str, Optional[int]]]]:
@@ -414,7 +417,8 @@ def resolve_repo_edges(
     ``{'exact': n, 'ambiguous': n, 'unresolved': n}``.
 
     Edge tuples may be 5-tuples (no in-memory signals), 6-tuples (with
-    ``receiver_type``), or 7-tuples (with ``call_arity``); all tolerated.
+    ``receiver_type``), 7-tuples (with ``call_arity``), or 8-tuples (with
+    ``generic_tier``); all tolerated.
 
     The import/member/ancestor indexes are scoped to ``repo``; the symbol index
     is deliberately left unscoped so the same-repo (3) and global (4) tiers see
@@ -432,10 +436,15 @@ def resolve_repo_edges(
             edge_id, _source_sid, target_name = edge_tuple[0], edge_tuple[1], edge_tuple[2]
             receiver_type = edge_tuple[5] if len(edge_tuple) > 5 else None
             call_arity = edge_tuple[6] if len(edge_tuple) > 6 else None
-            target_id, label = resolve_edge(
-                target_name, source_file_id, repo, symbols_by_name, imports_by_file,
-                receiver_type, members_by_type, ancestors, aliases_by_file, call_arity,
-            )
+            generic_tier = edge_tuple[7] if len(edge_tuple) > 7 else False
+            if generic_tier:
+                target_id, label = None, "unresolved"
+            else:
+                target_id, label = resolve_edge(
+                    target_name, source_file_id, repo, symbols_by_name,
+                    imports_by_file, receiver_type, members_by_type, ancestors,
+                    aliases_by_file, call_arity,
+                )
             # Resolved edges drop the bare name (queries join via target_id);
             # unresolved/ambiguous keep it so --fuzzy can still match by name.
             stored_name = None if target_id else target_name
@@ -489,8 +498,9 @@ def repair_incoming_edges(
     # edges, which is the right granularity).
     name_placeholders = ",".join("?" for _ in changed_target_names)
     rows = conn.execute(
-        f"""SELECT e.id AS eid, e.source_id AS src, e.target_name AS tname,
-                   e.line AS line, e.column AS col, f.id AS file_id, f.repo_id AS repo
+        f"""SELECT e.id AS eid, e.kind AS kind, e.target_name AS tname,
+                   e.line AS line, e.column AS col, f.id AS file_id,
+                   f.repo_id AS repo, f.language AS language
             FROM edges e
             JOIN symbols s ON e.source_id = s.id
             JOIN files f ON s.file_id = f.id
@@ -508,10 +518,18 @@ def repair_incoming_edges(
         target_name = r["tname"]
         if not target_name:
             continue
-        target_id, label = resolve_edge(
-            target_name, r["file_id"], repo, symbols_by_name, imports_by_file,
-            None, members_by_type, ancestors, aliases_by_file,
+        generic_tier = (
+            r["kind"] == "calls"
+            and r["language"] in GENERIC_TIER_LANGUAGES
         )
+        if generic_tier:
+            target_id, label = None, "unresolved"
+        else:
+            target_id, label = resolve_edge(
+                target_name, r["file_id"], repo, symbols_by_name,
+                imports_by_file, None, members_by_type, ancestors,
+                aliases_by_file,
+            )
         stored_name = None if target_id else target_name
         updates.append((target_id, stored_name, label, r["eid"]))
         stats[label] += 1
