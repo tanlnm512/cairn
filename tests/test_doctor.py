@@ -74,6 +74,22 @@ def _by_name(results, name):
     return next(r for r in results if r["name"] == name)
 
 
+_JSON_CHECK_NAMES = [
+    "schema",
+    "embeddings",
+    "ann",
+    "embed_server",
+    "freshness",
+    "parse_errors",
+    "concurrency",
+    "tool_health",
+    "memory_staleness",
+    "config",
+    "environment",
+]
+_HEALTH_STATUSES = {"PASS", "WARN", "FAIL"}
+
+
 # ---------------------------------------------------------------------------
 # Clean store + structural invariants
 # ---------------------------------------------------------------------------
@@ -112,24 +128,24 @@ def test_eight_checks_always_emitted(tmp_path):
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
-    expected = [
-        "schema",
-        "embeddings",
-        "ann",
-        "embed_server",
-        "freshness",
-        "parse_errors",
-        "concurrency",
-        "tool_health",
-        "memory_staleness",
-        "config",
-        "environment",
-    ]
-    assert [d["name"] for d in data] == expected
+    assert [d["name"] for d in data] == _JSON_CHECK_NAMES
     # Every row carries the documented keys; status is one of the three values.
     for row in data:
         assert set(row.keys()) >= {"name", "status", "detail"}
-        assert row["status"] in {"PASS", "WARN", "FAIL"}
+        assert row["status"] in _HEALTH_STATUSES
+
+
+def test_json_contract_on_fresh_structured_store(tmp_path):
+    """A schema-initialized store emits parseable, complete doctor JSON."""
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+
+    data = json.loads(result.stdout)
+    assert [row["name"] for row in data] == _JSON_CHECK_NAMES
+    assert all(row["status"] in _HEALTH_STATUSES for row in data)
 
 
 # ---------------------------------------------------------------------------

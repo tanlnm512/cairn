@@ -30,98 +30,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..parsers.base import BaseParser, ParsedFile
-from ..parsers.kotlin import KotlinParser
+from ..parsers.base import ParsedFile
+from ..parsers.factory import get_parser
 from ..parsers import routes as routes_mod
 from ..parsers import service_calls as service_calls_mod
+from .repository import GraphRepository
 from . import scanner as scanner_mod
 from . import resolver as resolver_mod
 from .schema import init_db, get_build_db, get_db, backup_to, build_lock, note_contention
 from ..paths import resolve_store as _resolve_store
 
 _logger = logging.getLogger(__name__)
-
-# Language -> parser class.
-PARSERS: Dict[str, BaseParser] = {}
-_parser_instances: Dict[str, BaseParser] = {}
-
-
-def get_parser(language: str) -> Optional[BaseParser]:
-    if language not in _parser_instances:
-        cls = {
-            "kotlin": KotlinParser,
-            "java": None,  # filled below to avoid import cycle risk
-            "swift": None,
-            "python": None,
-            "typescript": None,
-            "javascript": None,
-            "dart": None,
-            "objc": None,
-            "go": None,
-            "php": None,
-            "ruby": None,
-            "csharp": None,
-            "c": None,
-            "cpp": None,
-        }.get(language)
-        # Lazy imports to avoid loading all parsers if only one language is used.
-        if language == "java":
-            from ..parsers.java import JavaParser
-
-            _parser_instances["java"] = JavaParser()
-        elif language == "swift":
-            from ..parsers.swift import SwiftParser
-
-            _parser_instances["swift"] = SwiftParser()
-        elif language == "python":
-            from ..parsers.python_parser import PythonParser
-
-            _parser_instances["python"] = PythonParser()
-        elif language == "typescript":
-            from ..parsers.typescript import TypeScriptParser
-
-            _parser_instances["typescript"] = TypeScriptParser()
-        elif language == "javascript":
-            from ..parsers.typescript import JavaScriptParser
-
-            _parser_instances["javascript"] = JavaScriptParser()
-        elif language == "dart":
-            from ..parsers.dart import DartParser
-
-            _parser_instances["dart"] = DartParser()
-        elif language == "objc":
-            from ..parsers.objc import ObjCParser
-
-            _parser_instances["objc"] = ObjCParser()
-        elif language == "go":
-            from ..parsers.go import GoParser
-
-            _parser_instances["go"] = GoParser()
-        elif language == "php":
-            from ..parsers.php import PhpParser
-
-            _parser_instances["php"] = PhpParser()
-        elif language == "ruby":
-            from ..parsers.ruby import RubyParser
-
-            _parser_instances["ruby"] = RubyParser()
-        elif language == "csharp":
-            from ..parsers.csharp import CSharpParser
-
-            _parser_instances["csharp"] = CSharpParser()
-        elif language == "c":
-            from ..parsers.c_family import CParser
-
-            _parser_instances["c"] = CParser()
-        elif language == "cpp":
-            from ..parsers.c_family import CppParser
-
-            _parser_instances["cpp"] = CppParser()
-        elif cls is not None:
-            _parser_instances[language] = cls()
-        else:
-            return None
-    return _parser_instances.get(language)
 
 
 def _now() -> str:
@@ -794,7 +713,6 @@ def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, 
     """
     import traceback
     path, rel_path, language, repo = args
-    from cairn.graph.builder import get_parser
     parser = get_parser(language)
     if parser is None:
         return path, rel_path, language, repo, None, f"No parser for {language}", None
@@ -832,10 +750,10 @@ def insert_parsed_file(
         file_mtime = st.st_mtime
     except OSError:
         file_size, file_mtime = 0, 0.0
-    cur.execute(
-        """INSERT INTO files (id, repo_id, path, language, hash, line_count, indexed_at, size, mtime)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (file_id, repo, rel_path, language, file_hash, pf.line_count, _now(), file_size, file_mtime),
+    repository = GraphRepository()
+    repository.insert_files(
+        cur,
+        [(file_id, repo, rel_path, language, file_hash, pf.line_count, _now(), file_size, file_mtime)],
     )
 
     # Accumulate rows and flush with executemany (one round-trip per table
@@ -981,28 +899,11 @@ def insert_parsed_file(
         ))
 
     if sym_rows:
-        cur.executemany(
-            """INSERT INTO symbols
-               (id, file_id, name, qualified_name, kind, line_start, line_end,
-                column_start, column_end, docstring, modifiers, metadata,
-                parameters, return_type, parent_scope, imports_summary, body,
-                arity, source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'tree_sitter')""",
-            sym_rows,
-        )
+        repository.insert_symbols(cur, sym_rows)
     if imp_rows:
-        cur.executemany(
-            """INSERT INTO imports (id, file_id, imported_path, resolved_symbol_id, line, local_alias)
-               VALUES (?,?,?,?,?,?)""",
-            imp_rows,
-        )
+        repository.insert_imports(cur, imp_rows)
     if edge_rows:
-        cur.executemany(
-            """INSERT INTO edges
-               (id, source_id, target_id, target_name, kind, line, column, resolution)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            edge_rows,
-        )
+        repository.insert_edges(cur, edge_rows)
 
     return len(sym_rows), len(edge_rows), len(imp_rows)
 
@@ -1177,12 +1078,7 @@ def materialize_import_edges(
             ))
             break  # first base that resolves wins
     if edge_rows:
-        conn.executemany(
-            """INSERT INTO edges
-               (id, source_id, target_id, target_name, kind, line, column, resolution)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            edge_rows,
-        )
+        GraphRepository().insert_edges(conn, edge_rows)
     return len(edge_rows)
 
 
@@ -1325,4 +1221,3 @@ def _clear_repo(conn, repo_name: str):
 
 def _log(*args):
     print(*args)
-

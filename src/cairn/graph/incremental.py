@@ -205,8 +205,8 @@ def reindex_paths(
             language = resolve_file_language(suffix, abs_path)
 
             file_hash = file_sha256(Path(abs_path))
-            from .builder import get_parser, insert_parsed_file
-            parser = get_parser(language)
+            from .builder import insert_parsed_file
+            parser = builder.get_parser(language)
             if not parser:
                 conn.execute("COMMIT")
                 continue

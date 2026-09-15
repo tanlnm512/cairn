@@ -1,645 +1,20 @@
-"""System CLI: metrics, status, eval, sync, doctor."""
+"""Doctor command and system health checks."""
 from __future__ import annotations
 
-import logging
 import os
-import platform
-import re
+import logging
 import sqlite3
 import time
 import click
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Callable
 
-from .. import __version__
-from ..memory.privacy import strip_private_data
-from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, get_db, main, queries, scanner_mod
-from ._helpers import _shorten
+from ..main import DEFAULT_DB_PATH, get_db, main
 
 _log = logging.getLogger(__name__)
-
-@main.command()
-@click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--tool", "tool_name", default=None, help="Filter by tool name.")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.option("--builds", "builds_flag", is_flag=True,
-              help="Recent build-run trend with the resolution mix.")
-@click.option("--quality", "quality_flag", is_flag=True,
-              help="Retrieval quality: empty-result rate, truncations, backend mix.")
-@click.option("--contention", "contention_flag", is_flag=True,
-              help="Lock-contention events grouped by site.")
-@click.option("--tasks", "tasks_flag", is_flag=True,
-              help="LLM task-queue lifecycle: events by kind and task type.")
-def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag, tasks_flag):
-    """Report MCP tool metrics and telemetry trends.
-
-    With no flag, aggregates ``tool_metrics`` (calls / avg ms / errors) -- the
-    original behavior, unchanged. The extension flags render from the telemetry
-    tables added by spec observability-telemetry §6.5:
-
-      --builds      recent ``build_runs`` rows with the resolution mix
-      --quality     empty-result rate, truncations, semantic backend mix
-      --contention  ``lock_contention`` events grouped by site
-      --tasks       ``task_lifecycle`` events: counts by event (claimed /
-                    completed / revised / dropped) and by task_kind
-
-    All four accept ``--json``. Multiple flags render each section in turn
-    (and, under ``--json``, a single object keyed by section name).
-    """
-    from . import display
-
-    # The default (no flag) path is the original tool_metrics aggregation. It
-    # is kept verbatim in _metrics_default so its output is byte-for-byte
-    # unchanged -- the new flags branch off here and never touch it.
-    if not (builds_flag or quality_flag or contention_flag or tasks_flag):
-        _metrics_default(db, tool_name, as_json, display)
-        return
-
-    # One connection shared across the requested sections; closed in finally.
-    conn = get_db(db)
-    sections: list[tuple[str, object]] = []
-    try:
-        if builds_flag:
-            sections.append(("builds", _gather_builds(conn)))
-        if quality_flag:
-            sections.append(("quality", _gather_quality(conn)))
-        if contention_flag:
-            sections.append(("contention", _gather_contention(conn)))
-        if tasks_flag:
-            sections.append(("tasks", _gather_tasks(conn)))
-    finally:
-        conn.close()
-
-    if as_json:
-        # Single flag -> the bare value (a list for builds/contention, a dict
-        # for quality/tasks), matching the per-flag spec wording. Multiple
-        # flags -> one object keyed by section so a combined snapshot is
-        # self-describing.
-        if len(sections) == 1:
-            click.echo(json.dumps(sections[0][1], indent=2, default=str))
-        else:
-            click.echo(json.dumps({k: v for k, v in sections}, indent=2, default=str))
-        return
-
-    for i, (kind, value) in enumerate(sections):
-        if i:
-            display.console.print()  # blank line between sections
-        if kind == "builds":
-            _render_builds(value, display)
-        elif kind == "quality":
-            _render_quality(value, display)
-        elif kind == "tasks":
-            _render_tasks(value, display)
-        else:
-            _render_contention(value, display)
-
-
-def _metrics_default(db, tool_name, as_json, display):
-    """Original tool_metrics aggregation (spec: default output unchanged).
-
-    Body preserved verbatim from the pre-extension command so callers with no
-    flag see identical output.
-    """
-    conn = get_db(db)
-    try:
-        where = "WHERE tool_name = ?" if tool_name else ""
-        params = (tool_name,) if tool_name else ()
-        rows = conn.execute(
-            f"SELECT tool_name, COUNT(*) AS calls, "
-            f"AVG(duration_ms) AS avg_ms, "
-            f"SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors "
-            f"FROM tool_metrics {where} "
-            f"GROUP BY tool_name ORDER BY calls DESC",
-            params,
-        ).fetchall()
-    finally:
-        conn.close()
-    if not rows:
-        display.info("No tool metrics recorded yet.")
-        return
-    if as_json:
-        click.echo(json.dumps([dict(r) for r in rows], indent=2, default=str))
-        return
-    table_rows = []
-    for r in rows:
-        err_pct = r["errors"] / r["calls"] * 100 if r["calls"] else 0
-        table_rows.append([
-            r["tool_name"],
-            f"{r['calls']:,}",
-            f"{r['avg_ms']:.1f}",
-            f"{r['errors']:,}",
-            f"{err_pct:.1f}%",
-        ])
-    display.print_table(
-        title=None,
-        columns=["tool", "calls", "avg ms", "errors", "err %"],
-        rows=table_rows,
-    )
-
-
-# --------------------------------------------------------------------------
-# metrics extension helpers (spec observability-telemetry §6.5)
-#
-# Each ``_gather_*`` reads one telemetry table defensively (a missing/
-# unreadable table degrades to an empty result, never raises -- telemetry is
-# analytics, and these tables are populated by other processes). Each
-# ``_render_*`` maps that data to either a human table/summary or is bypassed
-# for --json, where the gather result is emitted verbatim.
-# --------------------------------------------------------------------------
-
-# Cap on rows surfaced by --builds so a long-running store still renders a
-# bounded table; the newest rows are the useful trend.
-_BUILDS_LIMIT = 20
-
-
-def _gather_builds(conn) -> list[dict]:
-    """Recent ``build_runs`` rows (newest first) including the resolution mix."""
-    try:
-        rows = conn.execute(
-            "SELECT kind, started_at, duration_s, repos, files, symbols, edges, "
-            "resolution_exact, resolution_ambiguous, resolution_unresolved, "
-            "parse_errors, skipped, workers "
-            "FROM build_runs ORDER BY started_at DESC LIMIT ?",
-            (_BUILDS_LIMIT,),
-        ).fetchall()
-    except Exception:
-        _log.debug("metrics --builds: build_runs unreadable", exc_info=True)
-        return []
-    return [dict(r) for r in rows]
-
-
-def _render_builds(rows: list[dict], display) -> None:
-    if not rows:
-        display.info("No build runs recorded yet.")
-        return
-    table_rows = []
-    for r in rows:
-        table_rows.append([
-            r["kind"],
-            _fmt_ts(r["started_at"]),
-            _fmt_dur(r["duration_s"]),
-            _fmt_int(r["repos"]),
-            _fmt_int(r["files"]),
-            _fmt_int(r["symbols"]),
-            _fmt_int(r["edges"]),
-            _fmt_resolution(r),
-            _fmt_int(r["parse_errors"]),
-            _fmt_int(r["skipped"]),
-        ])
-    display.print_table(
-        title="Build runs",
-        columns=["kind", "started", "dur", "repos", "files", "symbols",
-                 "edges", "resolution", "errs", "skip"],
-        rows=table_rows,
-    )
-
-
-def _gather_quality(conn) -> dict:
-    """Aggregate retrieval-quality signals from ``events``.
-
-    ``empty_result`` is emitted from three query kinds (semantic_search,
-    explore, search_symbols -- spec §6.4). Only the ``semantic_search``
-    empties share a denominator with ``semantic_backend`` (the population at
-    risk of an empty result), so the rate is scoped to that kind: semantic
-    empties / semantic_backend total. ``empty_by_kind`` exposes the full
-    per-kind breakdown so explore/search_symbols empties stay visible without
-    polluting the rate. backend mix counts ``backend`` across
-    ``semantic_backend`` events; truncations is the ``truncate_result`` total
-    plus a per-tool breakdown.
-    """
-    semantic_total = _count_events(conn, "semantic_backend")
-    empty_total = _count_events(conn, "empty_result")
-    empty_by_kind = _attr_counts(conn, "empty_result", "query_kind")
-    empty_semantic = empty_by_kind.get("semantic_search", 0)
-    truncate_total = _count_events(conn, "truncate_result")
-    return {
-        "empty_results": empty_total,
-        "empty_by_kind": empty_by_kind,
-        "semantic_total": semantic_total,
-        # Scoped to the semantic kind: only semantic_search empties share a
-        # denominator (semantic_backend) with a meaningful at-risk population.
-        # None (rendered 'n/a') when no semantic calls have been recorded yet.
-        "empty_result_rate": (empty_semantic / semantic_total) if semantic_total else None,
-        "truncations": truncate_total,
-        "truncations_by_tool": _attr_counts(conn, "truncate_result", "tool"),
-        "backend_mix": _attr_counts(conn, "semantic_backend", "backend"),
-    }
-
-
-def _render_quality(data: dict, display) -> None:
-    if data["semantic_total"] == 0 and data["empty_results"] == 0 and data["truncations"] == 0:
-        display.info("No quality events recorded yet.")
-        return
-    rate = data["empty_result_rate"]
-    rate_str = f"{rate * 100:.1f}%" if rate is not None else "n/a"
-    display.console.print("[bold]Quality signals[/bold]")
-    # Rate is scoped to the semantic kind (the only one with a denominator);
-    # render that numerator explicitly so "X / Y" can't be mistaken for the
-    # all-kinds empty total.
-    empty_semantic = data["empty_by_kind"].get("semantic_search", 0)
-    display.kv(
-        "empty results (semantic)",
-        f"{empty_semantic} / {data['semantic_total']} ({rate_str})",
-    )
-    by_kind = data["empty_by_kind"]
-    if by_kind:
-        ordered = sorted(by_kind.items(), key=lambda kv: (-kv[1], kv[0]))
-        display.kv(
-            "empty by kind",
-            ", ".join(f"{k}: {v}" for k, v in ordered),
-        )
-    display.kv("truncations", f"{data['truncations']}")
-    mix = data["backend_mix"]
-    if mix:
-        total = sum(mix.values())
-        ordered = sorted(mix.items(), key=lambda kv: (-kv[1], kv[0]))
-        display.kv("backend mix", f"{total} calls — " + ", ".join(f"{k}: {v}" for k, v in ordered))
-    else:
-        display.kv("backend mix", "no semantic calls recorded")
-
-
-def _gather_contention(conn) -> list[dict]:
-    """``lock_contention`` events grouped by site (count + most-recent ts).
-
-    Ordered by count desc then site. An event whose ``site`` attr is missing or
-    unreadable is bucketed under ``<unknown>`` so it still counts.
-    """
-    try:
-        # ASC so the running last_ts update lands on the most-recent row.
-        rows = conn.execute(
-            "SELECT ts, attrs FROM events WHERE name = ? ORDER BY ts ASC",
-            ("lock_contention",),
-        ).fetchall()
-    except Exception:
-        _log.debug("metrics --contention: events unreadable", exc_info=True)
-        return []
-    sites: dict[str, dict] = {}
-    for r in rows:
-        ts = r[0]
-        site = _attr_value(r[1], "site") or "<unknown>"
-        entry = sites.setdefault(site, {"site": site, "count": 0, "last_ts": ts})
-        entry["count"] += 1
-        entry["last_ts"] = ts
-    return sorted(sites.values(), key=lambda d: (-d["count"], d["site"]))
-
-
-def _render_contention(rows: list[dict], display) -> None:
-    if not rows:
-        display.info("No lock-contention events recorded.")
-        return
-    table_rows = [[r["site"], f"{r['count']:,}", _fmt_ts(r["last_ts"])] for r in rows]
-    display.print_table(
-        title="Lock contention by site",
-        columns=["site", "count", "last seen"],
-        rows=table_rows,
-    )
-
-
-def _gather_tasks(conn) -> dict:
-    """Aggregate ``task_lifecycle`` events: totals by event and by task_kind.
-
-    Makes the LLM task queue's history consumable (F5): claim/complete/revise/
-    drop transitions were recorded as events but no surface read them back.
-    ``by_event`` is the lifecycle funnel (claimed -> completed, with revised
-    re-work and dropped losses visible); ``by_kind`` shows which queue kinds
-    actually run. Reuses the defensive ``_attr_counts`` reader.
-    """
-    return {
-        "total": _count_events(conn, "task_lifecycle"),
-        "by_event": _attr_counts(conn, "task_lifecycle", "event"),
-        "by_kind": _attr_counts(conn, "task_lifecycle", "task_kind"),
-    }
-
-
-def _render_tasks(data: dict, display) -> None:
-    if data["total"] == 0:
-        display.info("No task-lifecycle events recorded yet.")
-        return
-    display.console.print("[bold]Task queue lifecycle[/bold]")
-    display.kv("events (total)", f"{data['total']:,}")
-    for label, key in (("by event", "by_event"), ("by kind", "by_kind")):
-        counts = data[key]
-        if counts:
-            ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-            display.kv(label, ", ".join(f"{k}: {v}" for k, v in ordered))
-        else:
-            display.kv(label, "none recorded")
-
-
-# --- small formatting / defensive-read helpers ----------------------------
-
-
-def _count_events(conn, name: str) -> int:
-    """Count ``events`` rows named ``name``; 0 on any read failure."""
-    try:
-        row = conn.execute("SELECT COUNT(*) FROM events WHERE name = ?", (name,)).fetchone()
-        return row[0] if row else 0
-    except Exception:
-        _log.debug("metrics: events unreadable for %s", name, exc_info=True)
-        return 0
-
-
-def _attr_counts(conn, name: str, attr_key: str) -> dict:
-    """Distinct-value counts of ``attr_key`` across events named ``name``.
-
-    ``attrs`` is JSON; parsed in Python so the query does not depend on
-    SQLite's JSON1 extension being compiled in. Malformed/missing attrs are
-    skipped (never raise).
-    """
-    counts: dict[str, int] = {}
-    try:
-        rows = conn.execute("SELECT attrs FROM events WHERE name = ?", (name,)).fetchall()
-    except Exception:
-        _log.debug("metrics: events unreadable for %s", name, exc_info=True)
-        return counts
-    for r in rows:
-        val = _attr_value(r[0] if r else None, attr_key)
-        if val is None:
-            continue
-        key = str(val)
-        counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
-def _attr_value(raw, key):
-    """One attr value from a JSON ``attrs`` blob, or None (defensive)."""
-    if not raw:
-        return None
-    try:
-        attrs = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    return attrs.get(key) if isinstance(attrs, dict) else None
-
-
-def _fmt_ts(value) -> str:
-    """Readable timestamp from an epoch float OR ISO string; '—' for None.
-
-    cairn stores timestamps inconsistently: ``build_runs.started_at`` is ISO
-    (``builder._iso_ts``) while ``events.ts`` is a raw ``time.time()`` epoch
-    float. Both are handled so each metrics section needn't track the shape.
-    Display-only; the JSON path keeps the raw value.
-    """
-    if value is None:
-        return "—"
-    dt = None
-    if isinstance(value, (int, float)):
-        try:
-            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            dt = None
-    else:
-        try:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            dt = None
-    if dt is None:
-        return str(value)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _fmt_dur(value) -> str:
-    return f"{value:.1f}s" if value is not None else "—"
-
-
-def _fmt_int(value) -> str:
-    return f"{value:,}" if value is not None else "—"
-
-
-def _fmt_resolution(r) -> str:
-    """Resolution mix as 'exact/ambiguous/unresolved'; '—' when all NULL."""
-    parts = [r["resolution_exact"], r["resolution_ambiguous"], r["resolution_unresolved"]]
-    if all(p is None for p in parts):
-        return "—"
-    return "/".join(_fmt_int(p) for p in parts)
-
-
-# --------------------------------------------------------------------------
-# cairn status
-# --------------------------------------------------------------------------
-@main.command()
-@click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--knowledge", default=DEFAULT_KNOWLEDGE_PATH, help="Knowledge directory path.")
-def status(db, knowledge):
-    """System status and health across all layers."""
-    from ..memory.promotion import memory_stats as mstats
-    from ..okf.bundle import OKFBundle
-
-    conn = get_db(db)
-    try:
-        s = queries.get_stats(conn)
-        bundle = OKFBundle(knowledge)
-        compass_n = len(bundle.list_concepts(prefix="compass/"))
-        wiki_n = len(bundle.list_concepts(prefix="wiki/"))
-        mem = mstats(bundle)
-
-        # Show pending sync files (unindexed edits in debounce window).
-        try:
-            pending_rows = conn.execute(
-                "SELECT path, repo_id, changed_at FROM pending_sync ORDER BY changed_at DESC"
-            ).fetchall()
-        except Exception:
-            pending_rows = []
-
-        # Parse errors are written by the builder/incremental indexer but read
-        # by zero commands -- surface the newest few so a degraded build isn't
-        # invisible. Silent when the table is empty (clean DB output unchanged).
-        try:
-            parse_err_total = conn.execute(
-                "SELECT COUNT(*) FROM parse_errors"
-            ).fetchone()[0]
-            parse_err_rows = conn.execute(
-                "SELECT file_path, error_message FROM parse_errors "
-                "ORDER BY timestamp DESC LIMIT 5"
-            ).fetchall()
-        except Exception:
-            parse_err_total = 0
-            parse_err_rows = []
-    finally:
-        conn.close()
-
-    from . import display
-    display.kv("graph", f"{s['repos']} repos · {s['symbols']:,} symbols · {s['edges']:,} edges")
-    display.kv("compass", f"{compass_n} files")
-    display.kv("wiki", f"{wiki_n} articles")
-    display.kv("memory", "")
-    for tier, info in mem.items():
-        display.kv(f"  {tier}", f"{info['count']:>4} (avg {info['avg_score']:.2f})")
-
-    if pending_rows:
-        display.warning(f"Pending sync: {len(pending_rows)} files")
-        for row in pending_rows[:20]:
-            display.dim(f"  {_shorten(row['path'])}")
-        if len(pending_rows) > 20:
-            display.dim(f"  ... and {len(pending_rows) - 20} more")
-
-    if parse_err_total:
-        display.warning(f"Parse errors: {parse_err_total}")
-        for row in parse_err_rows:
-            msg = row["error_message"] or ""
-            if len(msg) > 100:
-                msg = msg[:100] + "..."
-            display.dim(f"  {_shorten(row['file_path'])} — {msg}")
-        if parse_err_total > len(parse_err_rows):
-            display.dim(f"  ... and {parse_err_total - len(parse_err_rows)} more")
-
-
-# --------------------------------------------------------------------------
-# cairn eval
-# --------------------------------------------------------------------------
-@main.command(name="eval")
-@click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--knowledge", default=DEFAULT_KNOWLEDGE_PATH, help="Knowledge directory path.")
-@click.option("--corpus", type=click.Choice(["L1", "L4", "L5", "all"]), default="all", help="Corpus filter.")
-@click.option("--queries", "queries_path", default=None,
-              help="Path to eval queries.yaml OR a ground-truth directory "
-                   "(queries.jsonl + expectations.tsv); default: bundled tests/eval/queries.yaml.")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def eval_cmd(db, knowledge, corpus, queries_path, as_json):
-    """Run retrieval evaluation harness across L1/L5 corpora."""
-    from ..eval import run_evaluation
-
-    qpath = Path(queries_path) if queries_path else None
-    conn = get_db(db)
-    try:
-        report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
-    except ValueError as exc:
-        raise click.ClickException(f"invalid eval dataset: {exc}") from exc
-    finally:
-        conn.close()
-
-    if as_json:
-        click.echo(json.dumps(report, indent=2))
-        return
-
-    from . import display
-    rows = []
-    for c_key in ["L1", "L4", "L5"]:
-        if corpus != "all" and c_key != corpus:
-            continue
-        data = report.get(c_key, {})
-        rows.append([
-            c_key,
-            f"{data.get('count', 0):,}",
-            f"{data.get('recall_at_10', 0.0):.4f}",
-            f"{data.get('mrr', 0.0):.4f}",
-        ])
-    display.print_table(None, ["corpus", "samples", "recall@10", "mrr"], rows)
-
-
-# --------------------------------------------------------------------------
-# cairn sync (manual re-index escape hatch)
-# --------------------------------------------------------------------------
-@main.command()
-@click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
-@click.option("--db", default=str(DEFAULT_DB_PATH))
-def sync(workspace, db):
-    """Manually re-index changed files (used when watcher is disabled or for scripting).
-
-    Detects files changed since last index via size/mtime comparison and
-    re-indexes them. Equivalent to what the watcher does automatically.
-    """
-    from ..graph import scanner as scanner_mod
-    from ..graph.incremental import reindex_paths
-
-    conn = get_db(db)
-    try:
-        changed: list[str] = []
-
-        for repo_path in scanner_mod.discover_repos(workspace):
-            repo_name = repo_path.name
-            try:
-                file_rows = conn.execute(
-                    "SELECT path, size, mtime FROM files WHERE repo_id = ?",
-                    (repo_name,),
-                ).fetchall()
-            except Exception:
-                continue
-
-            existing = set()
-            for row in file_rows:
-                existing.add(row["path"])
-                # files.path is repo-relative; resolve to absolute via the
-                # single chokepoint for stat.
-                p = Path(scanner_mod.resolve_file_path(workspace, repo_name, row["path"]))
-                try:
-                    st = p.stat()
-                except OSError:
-                    changed.append(str(p))
-                    continue
-                if st.st_size != (row["size"] or 0):
-                    changed.append(str(p))
-                elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
-                    changed.append(str(p))
-
-            # Detect new source files. Storage is repo-relative; the scanner
-            # yields absolute, so compare on the relative form.
-            for src in scanner_mod.iter_source_files(repo_path):
-                rel = str(src.relative_to(repo_path)) if str(src).startswith(str(repo_path)) else str(src)
-                if rel not in existing and str(src) not in existing:
-                    changed.append(str(src))
-
-        if not changed:
-            from . import display
-            display.success("No changes detected. Graph is up to date.")
-            return
-
-        from . import display
-        import time
-        sync_started = time.time()
-        with display.progress_bar(description=f"Syncing {len(changed)} files", total=len(changed), unit="files") as bar:
-            # reindex_paths doesn't expose per-file progress; show an indeterminate
-            # bar that completes when it returns. For small N this is instant.
-            result = reindex_paths(conn, workspace, changed)
-            bar.update(bar._cg_task_id, completed=len(changed))
-        # Refresh the dataflow index if any files were reindexed.
-        if result["reindexed"]:
-            try:
-                from ..graph.dataflow import build_dataflow_index
-                df_count = build_dataflow_index(conn)
-                display.dim(f"  dataflow index: {df_count:,} symbols")
-            except Exception:
-                pass
-        display.success(f"Synced: {result['reindexed']} reindexed, {result['deleted']} deleted")
-        if result["errors"]:
-            display.warning(f"{len(result['errors'])} errors")
-            for e in result["errors"][:5]:
-                display.dim(f"  {e}")
-
-        # Persist a 'sync' build_runs row (best-effort; record_build_run
-        # swallows all errors). reindex_paths returns reindexed/deleted only;
-        # resolution mix / parse-error breakdown / phase_timings stay NULL
-        # (the sync path has no scan/parse/resolve phase contract). Recorded
-        # here in the CLI command rather than inside the shared reindex_paths
-        # so the `cairn update` path records its own 'incremental' row.
-        from ..graph.builder import record_build_run
-        record_build_run(
-            db,
-            "sync",
-            started_at=sync_started,
-            duration_s=time.time() - sync_started,
-            files=result["reindexed"],
-            skipped=result["deleted"],
-        )
-    finally:
-        conn.close()
-
-
-# --------------------------------------------------------------------------
-# cairn doctor
-# --------------------------------------------------------------------------
-# 11 health checks, each PASS/WARN/FAIL (the embed-server check collapses to
-# one informational line unless a server backend is configured; the
-# environment wiring audit is appended to both return paths).
-# Read-only -- doctor never writes to
-# the store. Exit code is 0 when every check is PASS or WARN, and 1 when any
-# check is FAIL, so agents can gate on it.
-#
-# Threshold policy: a clean, freshly-built store exits 0 even when optional
-# backends (sentence-transformers, sqlite-vec) are absent -- absence degrades
-# to WARN (functional-but-slower), never FAIL. FAIL is reserved for
-# "wrong/broken": an integrity error or a store that can't be opened.
 
 _PASS = "PASS"
 _WARN = "WARN"
@@ -653,6 +28,32 @@ CONTENTION_WINDOW_DAYS = 7       # lock_contention / stray_swept lookback
 TOOL_HEALTH_WINDOW_DAYS = 7      # tool_metrics lookback window
 TOOL_ERROR_RATE_WARN = 0.10      # a tool with >10% errors -> WARN
 TOOL_P95_LATENCY_MS_WARN = 5000  # a tool with p95 latency over 5s -> WARN
+
+
+@dataclass(frozen=True)
+class HealthCheck:
+    """A named doctor check returning one or more result rows."""
+
+    name: str
+    run: Callable[[str, sqlite3.Connection], list[dict]]
+
+
+HEALTH_CHECKS: tuple[HealthCheck, ...] = (
+    HealthCheck("schema", lambda _db, conn: [_check_schema(conn)]),
+    HealthCheck("embeddings", lambda _db, conn: [_check_embeddings(conn)]),
+    HealthCheck("ann", lambda _db, conn: [_check_ann(conn)]),
+    HealthCheck("embed_server", lambda _db, conn: _check_embed_server(conn)),
+    HealthCheck("freshness", lambda _db, conn: [_check_freshness(conn)]),
+    HealthCheck("parse_errors", lambda _db, conn: [_check_parse_errors(conn)]),
+    HealthCheck("concurrency", lambda _db, conn: [_check_concurrency(conn)]),
+    HealthCheck("tool_health", lambda _db, conn: [_check_tool_health(conn)]),
+    HealthCheck(
+        "memory_staleness",
+        lambda db, conn: [_check_memory_staleness(conn, db)],
+    ),
+    HealthCheck("config", lambda _db, _conn: [_check_config()]),
+    HealthCheck("environment", lambda db, _conn: [_check_environment(db)]),
+)
 
 
 def _result(name: str, status: str, detail: str, hint: str | None = None) -> dict:
@@ -769,10 +170,9 @@ def _check_embeddings(conn) -> dict:
     backend is active OR the user explicitly chose ``hash`` (an informed
     choice, never a degradation). Mirrors ``embeddings.is_hash_fallback()``.
     """
-    from ..graph.embeddings import _backend_name, is_hash_fallback
+    from ...graph.embeddings import _backend_name, is_hash_fallback
 
-    # _backend_name() resolves env > config file > default, so the
-    # PASS line reports the effective backend, not just the env layer.
+    # Report the effective backend, including config and defaults.
     configured = _backend_name()
     if is_hash_fallback():
         return _result(
@@ -805,13 +205,13 @@ def _check_ann(conn) -> dict:
     / ``index_row_count`` probes, and surfaces the latest ``ann_fallback``
     event reason when one was recorded.
     """
-    from ..graph.ann_index import (
+    from ...graph.ann_index import (
         ann_backend_enabled,
         index_exists,
         index_row_count,
         try_load,
     )
-    from ..graph.embeddings import current_model, embed_count
+    from ...graph.embeddings import current_model, embed_count
 
     configured = (
         os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower() or "sqlite-vec"
@@ -912,13 +312,13 @@ def _check_embed_server(conn) -> list[dict]:
     """
     from urllib.parse import urlsplit
 
-    from ..graph.embed_ladder import (
+    from ...graph.embed_ladder import (
         _fetch_model_listing,
         check_parity,
         degradation_active,
         degradation_footnote,
     )
-    from ..graph.embeddings import (
+    from ...graph.embeddings import (
         _SERVER_FAMILY,
         _backend_name,
         _embed_server,
@@ -928,11 +328,9 @@ def _check_embed_server(conn) -> list[dict]:
         embeddings_available,
         reset_backend_cache,
     )
-    from ..graph.semantic import _ms_bucket
+    from ...graph.semantic import _ms_bucket
 
-    # _backend_name() resolves env > config file > default, so a
-    # file-only server config reaches this probe instead of being reported
-    # as a disabled 'local' backend (env-only reads missed the file layer).
+    # Resolve the backend from env, config file, and defaults.
     configured = _backend_name()
     if configured not in _SERVER_FAMILY:
         return [
@@ -1282,7 +680,7 @@ def _knob_source(name: str, default: str) -> tuple[str, str]:
     supplied the value, so doctor's echo cannot diverge from dashboard
     truth.
     """
-    from ..paths import get_config_value
+    from ...paths import get_config_value
 
     env = (os.environ.get(name) or "").strip()
     if env:
@@ -1381,20 +779,9 @@ def _check_config() -> dict:
     return _result("config", _PASS, "; ".join(f"{k}={v}" for k, v in knobs))
 
 
-# --------------------------------------------------------------------------
-# the environment wiring check
-#
-# Appended to BOTH _run_doctor return paths: the audit needs no db
-# connection, so it must appear precisely when the store is broken -- that is
-# when wiring matters most. The store's absence is schema's FAIL alone; this
-# check WARNs for it. Sub-audit (b) enumerates
-# installed clients via check_installed, inspects each written env block,
-# spawn-probes stdio registrations against the doctor's own store
-# (verify_registration), and probes SSE endpoints (lifecycle.sse_responds) --
-# all read-only and timeout-bounded. FAILs are reserved for a provably
-# different EXISTING store and an unreachable endpoint; everything else
-# (merely-missing env on a stale registration, probe errors) WARNs.
-# --------------------------------------------------------------------------
+# Environment wiring is appended to both doctor return paths. It reports read-only
+# registration, spawn-probe, and endpoint findings; only a wrong existing store or an
+# unreachable endpoint FAILs.
 
 # Per-client MCP registration files the doctor audits -- exactly the config
 # paths ``check_installed`` consults (agent_install/detect.py): the files
@@ -1437,7 +824,7 @@ def _client_config_paths(client: str) -> list[tuple[Path, str]]:
         rel = _REG_WS_FILES[client]
         pairs.append((Path.cwd() / rel, rel))
     if client == "claude-desktop":
-        from ..agent_install import claude_desktop_config_path
+        from ...agent_install import claude_desktop_config_path
 
         path = claude_desktop_config_path()
         try:
@@ -1460,7 +847,7 @@ def _enumerate_registrations() -> list[tuple[str, str, dict]]:
     path, entry) triples; absent or unparseable files are skipped, never
     raised.
     """
-    from ..agent_install import _registration_entry, check_installed
+    from ...agent_install import _registration_entry, check_installed
 
     found: list[tuple[str, str, dict]] = []
     for client, installed in check_installed(str(Path.cwd())).items():
@@ -1524,9 +911,9 @@ def _registration_findings(
     Returns (findings, hints, sse display paths); the SSE list feeds the
     platform/transport sub-audit (c).
     """
-    from ..agent_install import _registration_argv, verify_registration
-    from ..mcp_server import lifecycle
-    from ..paths import cairn_home_env
+    from ...agent_install import _registration_argv, verify_registration
+    from ...mcp_server import lifecycle
+    from ...paths import cairn_home_env
 
     findings: list[tuple[str, str]] = []
     hints: list[str] = []
@@ -1644,8 +1031,8 @@ def _check_environment(db: str) -> dict:
     already echoes), and static remediation strings; absolute store paths a
     probe verdict carries are redacted by the report path.
     """
-    from ..agent_install._common import resolve_cg_command
-    from ..mcp_server import lifecycle
+    from ...agent_install._common import resolve_cg_command
+    from ...mcp_server import lifecycle
 
     findings: list[tuple[str, str]] = []
     hints: list[str] = []
@@ -1759,17 +1146,9 @@ def _run_doctor(db: str) -> list[dict]:
         return [*_db_unavailable_results(db_error), _check_environment(db)]
     try:
         return [
-            _check_schema(conn),
-            _check_embeddings(conn),
-            _check_ann(conn),
-            *_check_embed_server(conn),
-            _check_freshness(conn),
-            _check_parse_errors(conn),
-            _check_concurrency(conn),
-            _check_tool_health(conn),
-            _check_memory_staleness(conn, db),
-            _check_config(),
-            _check_environment(db),
+            result
+            for health_check in HEALTH_CHECKS
+            for result in health_check.run(db, conn)
         ]
     finally:
         try:
@@ -1817,7 +1196,7 @@ def doctor(db, as_json):
     0 when every check is PASS or WARN, and 1 when any check FAILs, so agents
     can gate on it (spec observability-telemetry §6.5).
     """
-    from . import display
+    from .. import display
 
     results = _run_doctor(db)
     if as_json:
@@ -1826,320 +1205,3 @@ def doctor(db, as_json):
         _render_doctor(results, display)
     code = 1 if any(r["status"] == _FAIL for r in results) else 0
     click.get_current_context().exit(code)
-
-
-# --------------------------------------------------------------------------
-# cairn report (spec observability-telemetry §7 / plan Phase 2 item 4)
-# --------------------------------------------------------------------------
-# A redacted diagnostic bundle for bug reports / GitHub issues. Reuses the
-# doctor checks (_run_doctor) and renders a self-describing snapshot of
-# versions, health, recent errors, and effective config.
-#
-# PRIVACY GATE (spec §7, Tier-1 redaction invariant): every string field that
-# could carry a path, secret, query text, or code content is passed through
-# ``memory.privacy.strip_private_data`` (secret shapes, ``<private>`` tags, URI
-# credentials) and then through ``_redact_paths`` below (absolute filesystem
-# paths -- ``str(exc)`` from file I/O routinely embeds them, and they identify
-# the user's directories). The bundle is intended to be safe to paste into a
-# public GitHub issue. Nothing is ever uploaded -- the command only prints to
-# stdout and, optionally, writes to ``--out``.
-
-# The error-ish event names mirrored from the spec §6.4 degradation catalog:
-# lock contention and the two silent backend fallbacks. (``stray_swept`` and
-# the quality/lifecycle signals are normal operation, not errors.)
-_ERROR_EVENTS: tuple[str, ...] = ("ann_fallback", "hash_fallback", "lock_contention")
-_REPORT_LIMIT = 20  # bounded set of recent rows per source (events / tool errors)
-
-# Absolute-path redaction. POSIX: a leading "/" followed by one or more
-# directory segments ("~" shorthand included); Windows: a drive-letter root.
-# The lookbehind keeps URL path portions ("https://host/x") and relative
-# workspace paths ("src/main.py") intact -- only absolute local paths leak the
-# user's directory structure. The basename survives so a report stays
-# debuggable ("[PATH]/main.py:10" still names the failing file).
-_POSIX_PATH_RE = re.compile(r"(?<![\w:/.-])/(?:[^\s\"']+/)+[^\s\"']*|(?<![\w])~/[^\s\"']+")
-_WIN_PATH_RE = re.compile(r"(?<![\w])(?:[A-Za-z]:)?\\(?:[^\\\s\"']+\\)+[^\\\s\"']*")
-
-
-def _redact_path_match(m: re.Match) -> str:
-    """Replace one absolute-path hit with ``[PATH]/<basename>``."""
-    leaf = re.split(r"[\\/]", m.group(0))[-1]
-    return f"[PATH]/{leaf}" if leaf else "[PATH]"
-
-
-def _redact_paths(text: str) -> str:
-    """Collapse absolute filesystem paths to ``[PATH]/<basename>``."""
-    text = _POSIX_PATH_RE.sub(_redact_path_match, text)
-    return _WIN_PATH_RE.sub(_redact_path_match, text)
-
-
-def _scrub(value):
-    """Privacy gate for one bundle field.
-
-    Strings pass through ``strip_private_data`` (secret shapes / tags / URI
-    credentials, spec §7) and then ``_redact_paths`` (absolute local paths);
-    anything else (ints/floats/None/timestamps) is returned unchanged. Applied
-    to every field below so the redaction invariant holds regardless of source.
-    """
-    if isinstance(value, str):
-        return _redact_paths(strip_private_data(value))
-    return value
-
-
-def _scrub_strings(d: dict) -> dict:
-    """Apply the privacy gate to every value in ``d`` (non-strings pass through)."""
-    return {k: _scrub(v) for k, v in d.items()}
-
-
-def _scrub_doctor(results: list[dict]) -> list[dict]:
-    """Redact the dynamic-content fields of doctor rows (``detail``/``hint``).
-
-    ``name``/``status`` come from a closed enum and cannot carry user data, so
-    they are left as-is; ``detail`` (e.g. parse_errors lists file paths) and
-    ``hint`` are the fields that could carry paths/secrets and are scrubbed.
-    """
-    out: list[dict] = []
-    for r in results:
-        rr = dict(r)
-        rr["detail"] = _scrub(rr.get("detail"))
-        if rr.get("hint") is not None:
-            rr["hint"] = _scrub(rr["hint"])
-        out.append(rr)
-    return out
-
-
-def _open_report_conn(db: str):
-    """Open the store for reads; return None (never raise) if it can't open.
-
-    Mirrors doctor's graceful-degradation contract: a missing/read-only/corrupt
-    store degrades the DB-dependent sections to empty/FAIL rather than crashing.
-    A path that doesn't exist is NOT created -- the report is a read-only
-    diagnostic and must not materialize a store (or mask a typo'd ``--db``).
-    """
-    if not Path(db).exists():
-        _log.debug("report: store missing at %s", db)
-        return None
-    try:
-        return get_db(db)
-    except Exception as e:  # OperationalError / DatabaseError / ...
-        _log.debug("report: get_db(%s) raised %r", db, e)
-        return None
-
-
-def _report_versions(conn) -> dict:
-    """Runtime + store versions. cairn/Python/platform/sqlite are always cheap;
-    ``db_schema_user_version`` is a best-effort ``PRAGMA user_version`` probe
-    (cairn applies ``CREATE TABLE IF NOT EXISTS`` DDL and does not track a
-    numeric schema version, so this is typically 0; None when unreadable).
-    """
-    user_version = None
-    if conn is not None:
-        try:
-            row = conn.execute("PRAGMA user_version").fetchone()
-            user_version = row[0] if row else None
-        except Exception:
-            _log.debug("report: user_version unreadable", exc_info=True)
-            user_version = None
-    return {
-        "cairn": __version__,
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "sqlite": sqlite3.sqlite_version,
-        "db_schema_user_version": user_version,
-    }
-
-
-def _gather_recent_errors(conn) -> dict:
-    """Bounded set of recent error-ish rows from ``events`` + ``tool_metrics``.
-
-    ``events``: the degradation-catalog names (``_ERROR_EVENTS``), newest first,
-    capped at ``_REPORT_LIMIT``. ``tool_metrics``: rows with ``status='error'``,
-    newest first, same cap. Both degrade to empty lists on any read failure or
-    when the store is unavailable -- never raise. Every string value is scrubbed.
-    """
-    events: list[dict] = []
-    tool_errors: list[dict] = []
-    if conn is None:
-        return {"events": events, "tool_errors": tool_errors}
-
-    placeholders = ",".join("?" for _ in _ERROR_EVENTS)
-    try:
-        rows = conn.execute(
-            f"SELECT ts, name, session_id, attrs FROM events "
-            f"WHERE name IN ({placeholders}) ORDER BY ts DESC LIMIT ?",
-            [*_ERROR_EVENTS, _REPORT_LIMIT],
-        ).fetchall()
-        for r in rows:
-            events.append(_scrub_strings({
-                "ts": r[0],
-                "name": r[1],
-                "session_id": r[2],
-                "attrs": r[3],
-            }))
-    except Exception:
-        _log.debug("report: events unreadable", exc_info=True)
-
-    try:
-        rows = conn.execute(
-            "SELECT tool_name, invoked_at, duration_ms, status, error_message "
-            "FROM tool_metrics WHERE status = 'error' "
-            "ORDER BY invoked_at DESC LIMIT ?",
-            (_REPORT_LIMIT,),
-        ).fetchall()
-        for r in rows:
-            tool_errors.append(_scrub_strings({
-                "tool_name": r[0],
-                "invoked_at": r[1],
-                "duration_ms": r[2],
-                "status": r[3],
-                "error_message": r[4],
-            }))
-    except Exception:
-        _log.debug("report: tool_metrics unreadable", exc_info=True)
-
-    return {"events": events, "tool_errors": tool_errors}
-
-
-def _report_config() -> dict:
-    """Effective CAIRN_* knobs (the same list ``_check_config`` echoes).
-
-    A structured key->value form of the config-echo check so the report's
-    ``config`` section is self-describing in JSON. Values are scrubbed by the
-    caller before inclusion.
-    """
-    return {
-        "workers": os.environ.get("CAIRN_WORKERS", "<unset>"),
-        "read_only": os.environ.get("CAIRN_READ_ONLY", "<unset>"),
-        "fusion": os.environ.get("CAIRN_FUSION", "<unset>"),
-        "ann_backend": os.environ.get("CAIRN_ANN_BACKEND", "<unset (=sqlite-vec)>"),
-        # Same resolution _check_config uses, so report and doctor
-        # agree on the effective embed backend (env > file > default).
-        "embed_backend": _knob_source("CAIRN_EMBED_BACKEND", "<unset (=local)>")[0],
-        "telemetry": os.environ.get("CAIRN_TELEMETRY", "<unset (=on)>"),
-        "log_level": os.environ.get("CAIRN_LOG_LEVEL", "<unset (=WARNING)>"),
-    }
-
-
-def _build_report(db: str) -> dict:
-    """Assemble the redacted bundle. Never raises.
-
-    Versions/recent-errors share one read connection (closed in ``finally``);
-    doctor opens its own via ``_run_doctor`` (reused unchanged). All string
-    fields are routed through the privacy gate before the bundle is returned.
-    """
-    conn = _open_report_conn(db)
-    try:
-        versions = _scrub_strings(_report_versions(conn))
-        recent_errors = _gather_recent_errors(conn)
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                _log.debug("report: conn.close failed", exc_info=True)
-
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "versions": versions,
-        "doctor": _scrub_doctor(_run_doctor(db)),
-        "recent_errors": recent_errors,
-        "config": _scrub_strings(_report_config()),
-    }
-
-
-def _render_report(bundle: dict) -> str:
-    """Plain-text rendering of the bundle (clean copy-paste, no ANSI codes).
-
-    Kept as plain text (rather than ``display``/rich) so the bundle pastes
-    cleanly into a GitHub issue and so ``--out`` can faithfully capture the
-    same text that goes to stdout. Doctor rows render as PASS/WARN/FAIL lines.
-    """
-    lines: list[str] = [
-        "cairn report — redacted diagnostic bundle",
-        "# Secrets scrubbed via memory.privacy.strip_private_data; absolute "
-        "paths collapsed to [PATH]/<basename>. Safe to paste into a GitHub issue.",
-        f"generated: {bundle['generated_at']}",
-        "",
-    ]
-
-    v = bundle["versions"]
-    lines.append("## Versions")
-    lines.append(f"cairn: {v['cairn']}")
-    lines.append(f"python: {v['python']}")
-    lines.append(f"platform: {v['platform']}")
-    lines.append(f"sqlite: {v['sqlite']}")
-    lines.append(f"db_schema_user_version: {v['db_schema_user_version']}")
-    lines.append("")
-
-    lines.append("## Doctor")
-    for r in bundle["doctor"]:
-        lines.append(f"{r['status']:<4} {r['name']}: {r['detail']}")
-        if r.get("hint"):
-            lines.append(f"      hint: {r['hint']}")
-    lines.append("")
-
-    re_ = bundle["recent_errors"]
-    lines.append(f"## Recent error events ({len(re_['events'])})")
-    if re_["events"]:
-        for e in re_["events"]:
-            lines.append(f"  {_fmt_ts(e['ts'])} {e['name']} {e.get('attrs') or ''}")
-    else:
-        lines.append("  none")
-    lines.append("")
-
-    lines.append(f"## Recent tool errors ({len(re_['tool_errors'])})")
-    if re_["tool_errors"]:
-        for t in re_["tool_errors"]:
-            lines.append(f"  {_fmt_ts(t['invoked_at'])} {t['tool_name']} {t.get('error_message') or ''}")
-    else:
-        lines.append("  none")
-    lines.append("")
-
-    lines.append("## Config")
-    for k, val in bundle["config"].items():
-        lines.append(f"{k}: {val}")
-
-    return "\n".join(lines)
-
-
-@main.command()
-@click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--json", "as_json", is_flag=True, help="Emit the bundle as JSON.")
-@click.option("--out", "out_path", default=None,
-              help="Write the bundle to this file as well as printing it.")
-def report(db, as_json, out_path):
-    """Print a redacted diagnostic bundle for bug reports / GitHub issues.
-
-    Assembles four sections into one bundle: versions (cairn/Python/platform/
-    sqlite/store), the 10 doctor checks, recent error-ish events and
-    ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
-
-    PRIVACY GATE (spec observability-telemetry §7): every string field is
-    passed through ``memory.privacy.strip_private_data`` (known secret shapes
-    -- API keys, bearer tokens, JWTs, ... -- and ``<private>`` tags are
-    redacted to ``[REDACTED_SECRET]`` / ``[REDACTED]``) and then through path
-    redaction (absolute local filesystem paths collapse to
-    ``[PATH]/<basename>``, since ``str(exc)`` from file I/O embeds them).
-
-    The bundle is printed to stdout and NEVER auto-uploaded. ``--out PATH``
-    additionally writes it to a file (JSON with ``--json``, otherwise the same
-    human-readable text); the file-write confirmation goes to stderr so it
-    can't corrupt JSON output. Best-effort throughout: a missing, read-only, or
-    corrupt store degrades to empty sections and a schema FAIL (mirroring
-    ``cairn doctor``) and never raises.
-    """
-    bundle = _build_report(db)
-    if as_json:
-        text = json.dumps(bundle, indent=2, default=str)
-    else:
-        text = _render_report(bundle)
-    click.echo(text)
-
-    if out_path:
-        try:
-            Path(out_path).write_text(text + "\n", encoding="utf-8")
-        except OSError as e:
-            click.echo(f"warning: could not write --out {out_path}: {e}", err=True)
-        else:
-            click.echo(f"wrote report to {out_path}", err=True)
-
-
