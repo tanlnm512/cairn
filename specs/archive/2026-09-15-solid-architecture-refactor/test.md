@@ -37,10 +37,11 @@ pre-refactor baseline exactly, and (b) the graph builder no longer constructs
 concrete parser classes itself (no per-language lazy-import branch chain remains in
 the file that builds the graph).
 
-**Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_parsers_language_adapter.py -q && rg -c "from \.\.parsers\." src/cairn/graph/builder.py`
-- First command must report all cases passing (baseline: 9 passed).
-- Second command must report `0` (baseline: 13 lazy-import lines forming the
-  if/elif chain).
+**Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_parsers_language_adapter.py -q && rg -q '^(from \.\.parsers\.factory import get_parser|from cairn\.parsers\.factory import get_parser)$' src/cairn/graph/builder.py && rg -q 'get_parser\s*\(' src/cairn/graph/builder.py && ! rg -q '\b[A-Z][A-Za-z0-9_]*Parser\s*\(' src/cairn/graph/builder.py`
+- Parser tests must pass; the current baseline is `9 passed`.
+- The factory import and builder call must both match.
+- The negated constructor scan must exit `0` only when no concrete parser
+  class is constructed in the builder.
 
 **Type**: Auto
 
@@ -112,7 +113,11 @@ configured in turn.
 **Then** each backend returns vectors with the same format, dimensionality, and model
 identity as the current baseline for that backend.
 
-**Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_embedding_model.py tests/test_embed_ladder.py tests/test_embeddings_freshness.py -q`
+**Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_embedding_model.py tests/test_embed_ladder.py tests/test_embeddings_freshness.py -q && uv run python -c "import ast,pathlib; b=ast.parse(pathlib.Path('src/cairn/graph/embed_backends.py').read_text()); e=ast.parse(pathlib.Path('src/cairn/graph/embeddings.py').read_text()); assert any(isinstance(n,ast.ClassDef) and n.name=='EmbeddingBackend' for n in b.body); assert any(isinstance(n,(ast.Assign,ast.AnnAssign)) and 'EMBEDDING_BACKENDS' in ast.unparse(n) for n in b.body); assert all(not (isinstance(n,ast.ImportFrom) and (n.module or '').split('.')[-1]=='embeddings') and not (isinstance(n,ast.Import) and any(a.name.split('.')[-1]=='embeddings' for a in n.names)) for n in ast.walk(b)); f=next(n for n in ast.walk(e) if isinstance(n,ast.FunctionDef) and n.name=='_embed'); assert any(isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='resolve_embedding_backend' for n in ast.walk(f))"`
+- Behavioral tests must pass first.
+- The structural command must find `EmbeddingBackend` and the
+  `EMBEDDING_BACKENDS` registry, find no import of `embeddings.py`, and find
+  a registry call inside `_embed`.
 
 **Type**: Auto
 
@@ -129,8 +134,8 @@ backend.
 repeated `if backend == "..."` / `elif backend == "..."` string-branch chain that
 today appears independently in multiple functions is gone from the entry point.
 
-**Pass condition**: `rg -c "if backend ==|elif backend ==" src/cairn/graph/embeddings.py`
-- Must report `0` (baseline: 9 matches across `current_model`, `embeddings_available`,
+- **Pass condition**: `! rg -q "if backend ==|elif backend ==" src/cairn/graph/embeddings.py`
+- Must exit `0` only because there are no matches (baseline: 9 matches across `current_model`, `embeddings_available`,
   and `_embed`, per survey.md's FR-005 evidence).
 
 **Type**: Auto
@@ -197,12 +202,14 @@ unchanged from today.
 
 **Given** the dashboard application factory that builds the app object.
 **When** the refactor is complete.
-**Then** the factory function's own body no longer defines the 30+ route handlers as
-nested functions — it registers routes from elsewhere instead.
+**Then** the factory function explicitly registers each controller route table
+and defines zero route handlers itself.
 
-**Pass condition**: `rg -c "^\s{4,}(async )?def " src/cairn/dashboard/app.py`
-- Must report a small number close to `0` (baseline: 30+ nested handler definitions
-  inside `create_app`, per survey.md's FR-007 evidence).
+**Pass condition**: `uv run python -c "import ast,pathlib; s=pathlib.Path('src/cairn/dashboard/app.py').read_text(); t=ast.parse(s); funcs={n.name for n in ast.walk(t) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))}; wired=set(); [wired.add(x.id) for c in ast.walk(t) if isinstance(c,ast.Call) and ((isinstance(c.func,ast.Name) and c.func.id=='Route') or (isinstance(c.func,ast.Attribute) and c.func.attr=='add_route')) for x in ([c.args[1]] if len(c.args)>1 else [])+[k.value for k in c.keywords if k.arg=='endpoint'] if isinstance(x,ast.Name)]; routed=[n for n in ast.walk(t) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and (n.name in wired or any(isinstance(d,(ast.Attribute,ast.Name)) and getattr(d,'attr',getattr(d,'id','')) in {'get','post','put','delete','route','websocket'} for d in n.decorator_list))]; assert not routed, routed; calls={c.func.value.id for c in ast.walk(t) if isinstance(c,ast.Call) and isinstance(c.func,ast.Attribute) and c.func.attr=='register' and isinstance(c.func.value,ast.Name)}; assert {'core','graph','history','memory','knowledge','wiki','settings'} <= calls, calls"`
+- The AST scan must find zero definitions wired to routes or decorated with
+  route HTTP methods in the app module.
+- Explicit AST-verified registration calls must be present for all seven
+  controller modules.
 
 **Type**: Auto
 
@@ -283,17 +290,20 @@ are today.
 
 - **Story**: US4 · **Traces to**: FR-010
 
-**Given** more than one retrieval stage is unavailable at the same time (e.g.
-embedding backend *and* reranker both unavailable).
+**Given** more than one retrieval stage is actually configured unavailable at
+the same time (e.g. embedding backend *and* reranker both unavailable).
 **When** semantic search runs.
-**Then** it still returns a valid, non-crashing result set with the combined
-degradation markers/provenance reflecting all affected stages, and no telemetry event
-is dropped or duplicated as a result of the overlap.
+**Then** it returns a valid, non-crashing result set. For every stage that is
+actually configured unavailable, its existing result marker/provenance and
+telemetry event match the corresponding single-stage degraded run exactly. No
+combined or aggregate degradation marker is required or invented.
 
-**Pass condition**: Human observation — with both the embedding backend and reranker
-forced unavailable in a bounded test workspace, run a semantic search query and
-confirm the response is well-formed, includes markers for both degraded stages, and
-the run completes without raising.
+**Pass condition**: Human observation — in a bounded test workspace, first run
+and record each configured unavailable stage separately, then make that same
+set unavailable together. Run semantic search, confirm it completes without
+raising, and compare each stage's existing markers/provenance and telemetry to
+its single-stage record; confirm no event is dropped or duplicated and do not
+require a synthetic combined marker.
 
 **Type**: Manual
 
@@ -383,10 +393,11 @@ reporting, etc.) in both human and `--json` modes.
 **Then** its command name, human-readable output semantics, JSON output contract,
 exit code, and redaction of sensitive values are unchanged from today.
 
-**Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_doctor.py -q`
-- Baseline (per survey.md): 46 passed. Extend to the full system-command test surface
-  before closing this spec (`unknown — verify` full list beyond `test_doctor.py` was
-  not independently re-run this session).
+**Pass condition**: `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_cli_metrics.py tests/test_cli_smoke.py tests/test_doctor.py tests/test_metrics_extensions.py tests/test_report.py tests/test_redaction_chokepoints.py tests/test_status_parse_errors.py tests/test_status_resource_health.py -q`
+- This is the complete implemented system-command test surface: metrics,
+  command smoke, doctor, extended metrics, report, redaction, status parse
+  errors, and status resource health.
+- Current baseline: `158 passed`.
 
 **Type**: Auto
 
@@ -455,8 +466,11 @@ baseline exactly.
 written directly inside the graph-building orchestration code — those writes are
 reached through a persistence seam instead.
 
-**Pass condition**: `rg -c "INSERT INTO (files|symbols|imports|edges)" src/cairn/graph/builder.py`
-- Must report `0` (baseline: 5 matches, per survey.md's FR-015 evidence).
+**Pass condition**: `! rg -q 'INSERT INTO[[:space:]]+(files|symbols|imports|edges)\b' src/cairn/graph/builder.py && rg -q 'repository\s*=\s*GraphRepository\s*\(' src/cairn/graph/builder.py && rg -q '\.insert_files\s*\(' src/cairn/graph/builder.py && rg -q '\.insert_symbols\s*\(' src/cairn/graph/builder.py && rg -q '\.insert_imports\s*\(' src/cairn/graph/builder.py && rg -q '\.insert_edges\s*\(' src/cairn/graph/builder.py`
+- The negated raw-SQL scan must exit `0` only when there are no matches
+  (baseline: 5 matches, per survey.md's FR-015 evidence).
+- The positive scans must find repository construction and all four table
+  insert methods in use.
 
 **Type**: Auto
 
@@ -468,14 +482,18 @@ reached through a persistence seam instead.
 
 **Given** an index build that is interrupted partway through a batch commit.
 **When** the same repository is indexed again afterward.
-**Then** the build recovers to a consistent state (no partial/corrupt rows left
-uncommitted beyond the existing transaction-boundary contract) and re-indexing the
-same unchanged files does not duplicate rows or IDs.
+**Then** the build recovers to a consistent logical graph state: the relative
+file paths, symbol identities/names/kinds/locations, import source-target
+relations, edge types/endpoints/payloads, and row cardinality match a clean
+single-pass build, with no duplicate or orphaned rows. Generated IDs need not
+be equal after recovery, but every internal reference must resolve
+consistently.
 
-**Pass condition**: Human observation — in a bounded fixture repository, interrupt a
-build process mid-batch (kill it after the first commit but before the run
-completes), then re-run the same index build and confirm row counts and IDs match a
-clean single-pass build of the same fixture, with no duplicate or orphaned rows.
+**Pass condition**: Human observation — in a bounded fixture repository, record
+the clean build's logical projection excluding generated IDs. Interrupt a build
+mid-batch, re-run the same index build, and compare the same projection against
+the clean baseline. Confirm referential consistency, unchanged cardinality, and
+no duplicate or orphaned rows; do not require UUID equality.
 
 **Type**: Manual
 
@@ -489,9 +507,10 @@ clean single-pass build of the same fixture, with no duplicate or orphaned rows.
 core, click, pyyaml, mcp, jinja2, pydantic, pathspec, packaging, sqlite-vec, numpy,
 rich, questionary — per survey.md's FR-017 baseline).
 **When** the refactor is complete.
-**Then** no package name is added to the runtime `dependencies` list that was not
-already present at baseline (version bumps of existing packages are fine; new
-package names are not).
+**Then** no package name is added to the declared runtime `dependencies` array
+that was not already present at baseline (version bumps of existing packages are
+fine; new package names are not). Optional, development, and test dependency
+groups are outside this rule.
 
 **Pass condition**: Human observation on `git diff 06c977da3b0f078169d82fd9ac20a1e3ca89f66e..HEAD -- pyproject.toml` — reviewer confirms every added line inside the `dependencies` array is a version/formatting change to an already-listed package, never a new package name.
 
@@ -509,9 +528,12 @@ the pyflakes rule set).
 **Then** both gates still run clean exactly as they do at baseline — no new mypy
 error and no new ruff (`F`-rule) finding is introduced by the refactor.
 
-**Pass condition**: `uv run mypy --ignore-missing-imports src && uv run ruff check src`
-- Both commands must exit `0`, matching the baseline "runs clean" state cited in
-  survey.md's FR-018 evidence (ci.yml:67-68; pyproject.toml `select = ["F"]`).
+**Pass condition**: `uv run mypy --ignore-missing-imports src && uv run ruff check src && uv run ruff check src --select C901,PLR0912,PLR0913,PLR0915 --output-format json | uv run python -c "import collections,json,sys; counts=collections.Counter(item['code'] for item in json.load(sys.stdin)); limits={'C901':88,'PLR0912':52,'PLR0913':67,'PLR0915':37}; assert all(counts[rule] <= limit for rule,limit in limits.items()), counts"`
+- Mypy and the existing Ruff gate must exit `0`, matching the baseline clean
+  state.
+- Ruff must evaluate exactly `C901`, `PLR0912`, `PLR0913`, and `PLR0915`.
+- The JSON gate must cap per-category findings at complexity `88`, branches
+  `52`, statements `37`, and arguments `67`.
 
 **Type**: Auto
 
@@ -529,7 +551,8 @@ before — every new module boundary keeps a one-directional dependency.
 
 **Pass condition**: Human observation — reviewer traces the import direction of each
 newly introduced module boundary (factory-to-parsers, registry-to-backends,
-controllers-to-dashboard-app, repository-to-graph-builder, stages-to-semantic-search)
+dashboard-app-to-controllers, graph-builder-to-repository,
+semantic-search-to-search-pipeline/stages)
 and confirms none of them is imported back by the module it depends on. Survey.md
 notes the repo has no dedicated cycle-detection tool configured today — if one is
 added as part of the refactor, its clean run becomes the Auto replacement for this TC.

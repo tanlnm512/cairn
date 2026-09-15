@@ -63,7 +63,7 @@ def _scrape_click_registry() -> tuple[set[str], dict[str, set[str]]]:
     top: set[str] = set()
     groups: dict[str, set[str]] = {}
 
-    cli_files = sorted((SRC / "cli").glob("*.py"))
+    cli_files = sorted((SRC / "cli").rglob("*.py"))
 
     # Pass 1: collect every group name (function name under a .group() call).
     group_names: set[str] = set()
@@ -836,4 +836,3 @@ def test_wiki_section_covers_generate_claim_complete_and_ask_compass():
             "generate -> task claim -> task complete -> ask_compass workflow "
             "is incomplete"
         )
-

@@ -51,7 +51,8 @@ full closing regression gate").
 
 **Checkpoint**:
 - `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest -q` (full suite) — record pass count.
-- `uv run ruff check src` (pyflakes-only, `select = ["F"]` per survey FR-018 citation of `pyproject.toml:184-206`) — record finding count as the FR-018 baseline.
+- `uv run ruff check src` — preserve the existing pyflakes-only CI gate baseline.
+- `uv run ruff check --select C901,PLR0912,PLR0913,PLR0915 --statistics src` — record the FR-018 baseline as complexity (`C901`) 88, branches (`PLR0912`) 52, statements (`PLR0915`) 37, and args (`PLR0913`) 67.
 - `uv run mypy --ignore-missing-imports src` — must be clean (HARD gate per survey FR-018 citation of `ci.yml:67-68`).
 - `sed -n '25,65p' pyproject.toml` — record the current runtime-dependency list as the FR-017 baseline (survey already captured this at survey.md FR-017; re-snapshot here so M8 diffs against the same anchor).
 
@@ -74,16 +75,16 @@ import/call at `incremental.py:208-209`).
 - `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_build_graph_connection_cleanup.py tests/test_build_graph_decomposition.py tests/test_build_graph_periodic_commit.py tests/test_build_inmemory.py tests/test_build_runs.py tests/test_incremental_derived.py tests/test_reindex_resolution_invariant.py -q` (indexing-path regression; file list from this session's `ls tests | grep -iE "build|index|incremental"`).
 
 ### M2 — Embedding backend contract & registry (FR-004, FR-005, FR-006)
-Demoable: `embeddings.py`'s dispatch (`_embed` at `embeddings.py:1227-1236`)
-and the duplicated `if backend == "..."` branches (survey FR-005: 9 hits
+Demoable: `embeddings.py`'s embedding entry points dispatch through the
+`EmbeddingBackend` Protocol and registry in `src/cairn/graph/embed_backends.py`,
+replacing the duplicated `if backend == "..."` branches (survey FR-005: 9 hits
 across `current_model`, `embeddings_available`, an unnamed function near
-`:496`, and `_embed`) are replaced by a Protocol/ABC contract resolved
-through a registry.
+`:496`, and `_embed`).
 
-**Touches**: `src/cairn/graph/embeddings.py` only.
+**Touches**: `src/cairn/graph/embed_backends.py` and `src/cairn/graph/embeddings.py` only.
 
 **Checkpoint**:
-- `rg -n "class .*Backend|Protocol" src/cairn/graph/embeddings.py` — expect a contract type (survey baseline: 0 hits).
+- `rg -n "class .*Backend|EMBEDDING_BACKENDS" src/cairn/graph/embed_backends.py` — expect the contract type and registry.
 - `rg -n "if backend ==|elif backend ==" src/cairn/graph/embeddings.py` — branch count should collapse outside the registry itself (survey baseline: 9 hits).
 - `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_embedding_model.py tests/test_embed_ladder.py tests/test_embeddings_freshness.py tests/test_embed_cli_adopt.py tests/test_embed_cli_download_model.py tests/test_embed_cli_server_down.py tests/test_embed_commit_tracking.py tests/test_embed_flush_stalled.py tests/test_embedding_backend_quality.py tests/test_embeddings_mv.py tests/test_ensure_semantic_deps.py tests/test_memory_embeddings.py tests/test_semantic_unavailable.py tests/test_update_path_embedding.py -q` (full embed-related file list from survey.md FR-006's `ls tests | grep -i embed` citation) — must preserve resolution order/fallback/cache-invalidation/vector-format/dimensions/model-identity (FR-006).
 
@@ -115,7 +116,7 @@ Demoable: the 30+ route handlers currently nested as closures inside
 separate controller units; `create_app` (`app.py:223`) assembles a route
 table instead of implementing handlers inline.
 
-**Touches**: `src/cairn/dashboard/app.py` + new `src/cairn/dashboard/controllers/*.py`
+**Touches**: `src/cairn/dashboard/app.py` + new `src/cairn/dashboard/routes/*.py`
 (or equivalent) only.
 
 **Checkpoint**:
@@ -163,13 +164,12 @@ guard and raises uncaught on malformed `{`-prefixed lines.
 - `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_redaction_chokepoints.py -q` (only existing test survey found exercising these backends: `grep -rl "SubprocessBackend\|FileQueueBackend\|get_client" tests`).
 
 ### M7 — Operational CLI modularity (FR-013, FR-014)
-Demoable: `src/cairn/cli/system.py` (2145 lines, all commands flat in one
-file per survey) splits by command family; `_run_doctor` (`system.py:1732`)
-resolves checks through a registry instead of calling check functions
-directly.
+Demoable: the former `src/cairn/cli/system.py` module (2145 survey baseline)
+splits into the `src/cairn/cli/system/` package by command family;
+`_run_doctor` (formerly `system.py:1732`) resolves checks through a registry
+instead of calling check functions directly.
 
-**Touches**: `src/cairn/cli/system.py` + new `src/cairn/cli/system/*.py`
-package (or equivalent) only.
+**Touches**: `src/cairn/cli/system/*.py` only.
 
 **Interface note (not a file conflict, but re-verify after dependents land)**:
 `system.py` imports directly from modules other milestones edit —
@@ -185,8 +185,8 @@ those land, and any milestone that renames a symbol `system.py` imports
 should update that import as part of its own task list.
 
 **Checkpoint**:
-- `wc -l src/cairn/cli/system.py` — expect a reduction from the survey baseline of 2145 lines.
-- `rg -n "class.*Check|_CHECKS" src/cairn/cli/system.py` — expect a check registry (survey baseline: 0 hits).
+- `wc -l src/cairn/cli/system/*.py` — target the split package and expect a reduction from the survey baseline of 2145 former-module lines.
+- `rg -n "class.*Check|_CHECKS" src/cairn/cli/system/*.py` — expect a check registry (survey baseline: 0 hits).
 - `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_doctor.py -q` → expect 46 passed (survey FR-014 baseline).
 
 ### M8 — Closing guardrails + umbrella PR (FR-017, FR-018)
@@ -200,7 +200,8 @@ not any one subsystem).
 
 **Checkpoint**:
 - `sed -n '25,65p' pyproject.toml` diffed against M0's snapshot — no new runtime dependency (FR-017).
-- `rg -n "radon|xenon|import-linter|importlinter" pyproject.toml .pre-commit-config.yaml` — survey found no dedicated cycle/complexity tool (FR-018 gap: "unclear what tool this FR's 'no new static complexity finding' would be measured against — unknown, verify with the spec author/tech survey"). **Assumption** (flagged per guardrails, not survey-confirmed): absent a dedicated tool, this gate is `uv run ruff check src` (pyflakes-only) finding-count diffed against M0's baseline, plus a manual import-cycle check (e.g. `python -c "import cairn"` and importing each touched package root) — confirm with the spec author before treating this as sufficient.
+- `rg -n "radon|xenon|import-linter|importlinter" pyproject.toml .pre-commit-config.yaml` — survey found no dedicated cycle tool; perform a manual import-cycle check (e.g. `python -c "import cairn"` and importing each touched package root).
+- `uv run ruff check --select C901,PLR0912,PLR0913,PLR0915 --statistics src` — FR-018 gate: complexity (`C901`) ≤ 88, branches (`PLR0912`) ≤ 52, statements (`PLR0915`) ≤ 37, and args (`PLR0913`) ≤ 67 versus M0's baseline.
 - `uv run mypy --ignore-missing-imports src` clean (HARD gate, unchanged from M0).
 - `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest -q` full suite green, pass count ≥ M0's baseline.
 - Open the single umbrella PR (spec.md assumption: "the complete implementation lands on one umbrella branch and one final implementation PR").
@@ -251,11 +252,11 @@ among them beyond M1→M3):**
 | Milestone | Files it owns | Why independent |
 |---|---|---|
 | M1 | `src/cairn/parsers/*.py` (new), `src/cairn/graph/builder.py:45-124,798`, `src/cairn/graph/incremental.py:208-209` | Only refactor touching parser construction |
-| M2 | `src/cairn/graph/embeddings.py` | No other milestone edits this file (CLI/dashboard/semantic only *call* its public functions, don't edit it) |
-| M4 | `src/cairn/dashboard/app.py`, new `src/cairn/dashboard/controllers/*.py` | Dashboard-only; its one cross-import (`app.py:298` → `embeddings`) is a call, not an edit |
+| M2 | `src/cairn/graph/embed_backends.py`, `src/cairn/graph/embeddings.py` | No other milestone edits either file (CLI/dashboard/semantic only *call* public functions, don't edit them) |
+| M4 | `src/cairn/dashboard/app.py`, new `src/cairn/dashboard/routes/*.py` | Dashboard-only; its one cross-import (`app.py:298` → `embeddings`) is a call, not an edit |
 | M5 | `src/cairn/graph/semantic.py`, `reranker.py`, `query_enrich.py`, `fusion.py`, `ann_index.py` | Stage modules are already file-separate from parser/embedding/dashboard/CLI/LLM/persistence work |
 | M6 | `src/cairn/llm/client.py` | Fully isolated — imports only `..okf.bundle` and `. tasks`, no cross-refactor coupling at all |
-| M7 | `src/cairn/cli/system.py`, new `src/cairn/cli/system/*.py` | CLI-only file edits; its imports *from* M1/M2/M3/M5 are read-only call sites, not shared files |
+| M7 | `src/cairn/cli/system/*.py` | CLI-only file edits; its imports *from* M1/M2/M3/M5 are read-only call sites, not shared files |
 
 **Strictly ordered pair**: M1 → M3, justified above (shared `builder.py` +
 `incremental.py`, same import block).

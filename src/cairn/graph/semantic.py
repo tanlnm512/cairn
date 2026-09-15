@@ -17,59 +17,22 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .lexical import search_symbols, search_symbols_terms
 from .prf import expand as prf_expand
 from .query_enrich import enrich as enrich_query
+from .search_pipeline import (
+    SearchAdapters,
+    SearchContext,
+    _ms_bucket as _ms_bucket,
+    _n_results_bucket as _n_results_bucket,
+    run_search,
+)
 from .traversal import get_callers, get_callees
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Telemetry bucketing (spec §6.4 -- enums/buckets only, no free text/paths).
-#
-# `semantic_search` emits one `semantic_backend` event per call on its return
-# path; wall-time and result-count are collapsed to fixed low-cardinality tags
-# so the `events` table can't grow an unbounded distinct-value set. Both
-# helpers are pure O(1); `emit()` itself is best-effort and never raises.
-# ---------------------------------------------------------------------------
-
-_MS_BUCKETS = (
-    (10.0, "0-10ms"),
-    (100.0, "10-100ms"),
-    (1000.0, "100-1000ms"),
-)
-_MS_BUCKET_MAX = ">1000ms"
-
-_N_BUCKETS = (
-    (5, "1-5"),
-    (10, "6-10"),
-    (50, "11-50"),
-)
-_N_BUCKET_ZERO = "0"
-_N_BUCKET_MAX = ">50"
-
-
-def _ms_bucket(ms: float) -> str:
-    """Bucket a wall-clock duration (ms) into a fixed low-cardinality tag."""
-    for bound, label in _MS_BUCKETS:
-        if ms < bound:
-            return label
-    return _MS_BUCKET_MAX
-
-
-def _n_results_bucket(n: int) -> str:
-    """Bucket a result count into a fixed low-cardinality tag (0 handled first)."""
-    if n <= 0:
-        return _N_BUCKET_ZERO
-    for bound, label in _N_BUCKETS:
-        if n <= bound:
-            return label
-    return _N_BUCKET_MAX
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +455,262 @@ def _term_df_lookup(conn: sqlite3.Connection):
     return lookup
 
 
+def _evaluate_dense_ladder_once(context) -> None:
+    """Evaluate the embedding fallback ladder once for one search."""
+    from cairn.graph import embed_ladder
+
+    if not context.dense_ladder_evaluated:
+        context.dense_ladder_evaluated = True
+        embed_ladder.evaluate_ladder(context.conn)
+
+
+def _dense_embed_guarded(context, text: str):
+    """Return ``(blob, dim)``, or ``None`` when the dense leg must be empty."""
+    from cairn.graph import embeddings as emb
+
+    try:
+        return emb.embed_query(text)
+    except Exception:
+        pass
+    try:
+        _evaluate_dense_ladder_once(context)
+        from cairn.graph import embed_ladder
+
+        state = embed_ladder.ladder_state()
+        if state is not None and state.active and state.adopted_model:
+            return emb.embed_query(text)
+    except Exception:
+        pass
+    return None
+
+
+def _dense_retrieve(context):
+    """Retrieve dense candidates through ANN or the cosine-scan fallback."""
+    pool_size = max(context.limit * 5, 50) if context.rerank_on else context.limit
+    params = context.params
+    if params is not None and params.rerank_pool is not None:
+        pool_size = params.rerank_pool
+
+    pair = _dense_embed_guarded(context, context.dense_query)
+    if pair is None:
+        context.dense_lost = True
+        return []
+
+    candidates = None
+    q_blob, q_dim = pair
+    if context.ann_enabled:
+        ann_hits = context.ann_index.query(
+            context.conn, context.model, q_blob, pool_size
+        )
+        if ann_hits is not None:
+            candidates = _candidates_from_ann_hits(
+                context.conn, ann_hits, context.threshold
+            )
+            context.ann_used = True
+            if params is not None and params.multivector:
+                mv_hits = context.ann_index.query(
+                    context.conn,
+                    context.model,
+                    q_blob,
+                    pool_size,
+                    source="embeddings_mv",
+                )
+                if mv_hits is not None:
+                    candidates = _merge_ann_candidates(
+                        candidates,
+                        _candidates_from_ann_hits(
+                            context.conn, mv_hits, context.threshold
+                        ),
+                    )
+
+    if candidates is None:
+        if not context.ann_enabled:
+            from cairn.graph import ann_index as ann
+
+            ann.warn_ann_fallback_once(logger, context="semantic_search")
+        brute_force_limit = 50000
+        if params is not None and params.dense_pool is not None:
+            brute_force_limit = params.dense_pool
+        if params is not None and params.multivector:
+            rows = _mapping_rows(
+                context.conn.execute(
+                    "SELECT symbol_id, vec, chunk, dim, name, kind, "
+                    "qualified_name, file_path, repo FROM ("
+                    "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                    "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                    "FROM embeddings e "
+                    "JOIN symbols s ON e.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE e.model = ? "
+                    "UNION ALL "
+                    "SELECT m.symbol_id, m.vec, m.chunk, m.dim, "
+                    "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                    "FROM embeddings_mv m "
+                    "JOIN symbols s ON m.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE m.model = ?"
+                    ") LIMIT ?",
+                    (context.model, context.model, brute_force_limit),
+                )
+            )
+        else:
+            rows = _mapping_rows(
+                context.conn.execute(
+                    "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
+                    "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
+                    "FROM embeddings e "
+                    "JOIN symbols s ON e.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE e.model = ? "
+                    "LIMIT ?",
+                    (context.model, brute_force_limit),
+                )
+            )
+        if not rows:
+            return None
+
+        from cairn.retrieval import cosine_scan
+
+        triples = [(row["vec"], row["dim"], row) for row in rows]
+        scored = cosine_scan(q_blob, q_dim, triples, context.threshold)
+        if params is not None and params.multivector:
+            best = {}
+            for score, row in scored:
+                symbol_id = row["symbol_id"]
+                if symbol_id not in best or score > best[symbol_id][0]:
+                    best[symbol_id] = (score, row)
+            scored = list(best.values())
+        candidates = []
+        for score, row in scored[:pool_size]:
+            candidates.append(
+                {
+                    "id": row["symbol_id"],
+                    "name": row["name"],
+                    "kind": row["kind"],
+                    "qualified_name": row["qualified_name"],
+                    "file_path": row["file_path"],
+                    "repo": row["repo"],
+                    "score": round(score, 4),
+                    "chunk": row["chunk"],
+                    "provenance": context.semantic_provenance,
+                    "reranked": False,
+                }
+            )
+    return candidates
+
+
+def _sparse_retrieve(context, sparse_terms):
+    """Fetch lexical candidates in term mode or raw-query mode."""
+    sparse_limit = 30
+    if context.params is not None and context.params.sparse_limit is not None:
+        sparse_limit = context.params.sparse_limit
+    if sparse_terms:
+        rows = search_symbols_terms(context.conn, sparse_terms, limit=sparse_limit)
+    else:
+        rows = search_symbols(context.conn, context.query, limit=sparse_limit)
+    return [dict(row) for row in rows]
+
+
+def _build_fused_candidates(context, bm25_map, dense_map, fused_rank):
+    """Materialize fused candidates and tag each candidate's source."""
+    fused = []
+    for doc_id, fused_score in fused_rank:
+        in_bm25 = doc_id in bm25_map
+        in_dense = doc_id in dense_map
+        if in_bm25 and in_dense:
+            base = dict(dense_map[doc_id])
+            base["provenance"] = context.fused_provenance
+        elif in_dense:
+            base = dict(dense_map[doc_id])
+            base["provenance"] = context.semantic_provenance
+        else:
+            item = bm25_map[doc_id]
+            base = {
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "kind": item.get("kind"),
+                "qualified_name": item.get("qualified_name"),
+                "file_path": item.get("file_path"),
+                "repo": item.get("repo"),
+                "score": 0.0,
+                "chunk": "",
+                "provenance": "bm25",
+                "reranked": False,
+            }
+        base["score"] = round(fused_score, 4)
+        fused.append(base)
+    return fused
+
+
+def _confidence_gate(context) -> bool:
+    """Reject rerank skipping for sparse, degraded, or hash-backed rankings."""
+    return bool(
+        not _vectors_carry_token_overlap_only(context.hash_backend)
+        and context.fusion_used
+        and context.candidates
+        and _fused_confident(
+            context.query,
+            context.candidates,
+            context.limit,
+            min_margin=context.gate_margin_override,
+        )
+    )
+
+
+def _enrich_results(context) -> None:
+    _attach_callers(context.conn, context.results)
+
+
+def _dense_failure(context) -> None:
+    try:
+        _evaluate_dense_ladder_once(context)
+    except Exception:
+        pass
+
+
+def _apply_degradation(context) -> None:
+    from cairn.graph import embed_ladder
+
+    if context.dense_lost and embed_ladder.degradation_active():
+        hint = embed_ladder.degradation_footnote()
+        for item in context.results:
+            item["degraded"] = "embedding-backend"
+            item["hint"] = hint
+
+
+def _query_enricher(query, df_lookup=None):
+    if df_lookup is None:
+        return enrich_query(query)
+    return enrich_query(query, df_lookup=df_lookup)
+
+
+def _prf_expander(
+    dense_query, feedback_docs, df_lookup=None, fb_terms=10, fb_lambda=0.5
+):
+    return prf_expand(
+        dense_query,
+        feedback_docs,
+        df_lookup=df_lookup,
+        fb_terms=fb_terms,
+        fb_lambda=fb_lambda,
+    )
+
+
+def _search_adapters():
+    return SearchAdapters(
+        dense_retrieve=_dense_retrieve,
+        sparse_retrieve=_sparse_retrieve,
+        query_enricher=_query_enricher,
+        prf_expander=_prf_expander,
+        build_fused_candidates=_build_fused_candidates,
+        confidence_gate=_confidence_gate,
+        enrich_results=_enrich_results,
+        dense_failure=_dense_failure,
+        apply_degradation=_apply_degradation,
+        df_lookup_factory=_term_df_lookup,
+    )
+
+
 def semantic_search(
     conn: sqlite3.Connection,
     query: str,
@@ -592,620 +811,34 @@ def semantic_search(
     ``"hint"`` remediation line; results are otherwise unchanged in shape.
     """
     from cairn.graph import embeddings as emb
-    from cairn.graph import reranker as rrk
-    from cairn.graph import ann_index as ann
-    # Lazy import mirrors metric_buffering.py's discipline to avoid any
-    # boot-order cycle with the telemetry package. emit() is best-effort and
-    # never raises (spec §5.6); the import is cached after the first call.
-    # RERANK_SKIPPED comes from the events module directly -- it is not
-    # re-exported at the cairn.telemetry package level.
-    from cairn.telemetry import emit, SEMANTIC_BACKEND, EMPTY_RESULT
-    from cairn.telemetry.events import RERANK_SKIPPED
 
-    # --- Explicit tunable injection -------------------------------------
-    # None-means-default: with params=None (or a None field) every knob keeps
-    # today's exact value, so this block is a behavioral no-op for every
-    # existing caller -- params=None and RetrievalParams() must be identical,
-    # which is what the equivalence tests pin. A non-None field wins over the
-    # scalar arg (see RetrievalParams' precedence note).
-    _gate_margin_override: Optional[float] = None
-    if params is not None:
-        if params.dense_threshold is not None:
-            threshold = params.dense_threshold
-        if params.rerank is not None:
-            rerank = params.rerank
-        if params.gate_min_margin is not None:
-            # Clamp like the env path (_rerank_min_margin): the signal is a
-            # ratio, so out-of-range values are a harness bug, not an error
-            # worth failing a sweep run over.
-            _gate_margin_override = min(max(params.gate_min_margin, 0.0), 1.0)
-    # Multi-vector query path. None and False both keep
-    # every scan byte-identical to the single-vector path (integrity
-    # doctrine -- the sweep's all-levers-off row must never read
-    # embeddings_mv).
-    _mv = params is not None and bool(params.multivector)
+    if params is not None and params.dense_threshold is not None:
+        threshold = params.dense_threshold
+    gate_margin_override = None
+    if params is not None and params.gate_min_margin is not None:
+        gate_margin_override = min(max(params.gate_min_margin, 0.0), 1.0)
 
-    # Under the dep-free hash fallback the embedding carries only token-overlap
-    # signal, so annotate provenance strings to surface the degradation.
-    _hash = emb.is_hash_fallback()
-    _sem_prov = "semantic (hash backend)" if _hash else "semantic"
-    _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
-
-    # Per-call override on top of the env/marker enablement: False is a hard
-    # off; True forces past the confidence gate but still respects CAIRN_RERANK=0
-    # (the kill switch must win); None (default) leaves the gate in charge.
-    # Computed BEFORE pool_size: the wider rerank pool must be fetched whenever
-    # the stage might still run (the gate can only be evaluated after fusion).
-    _rerank_enabled = rrk.rerank_enabled()
-    rerank_on = _rerank_enabled if rerank is not False else False
-    # PRF REPLACES the rerank stage -- the second
-    # pass spends the budget the cross-encoder would have, never stacks on
-    # it. With params.prf on, the stage is forced off no matter what
-    # rerank/CAIRN_RERANK requested (a caller setting both gets PRF; PRF
-    # wins). Must precede pool_size below: a stage that cannot run must
-    # never widen the pool.
-    _prf = params is not None and bool(params.prf)
-    if _prf:
-        rerank_on = False
-    # Hoisted above the early-return path so the semantic_backend telemetry can
-    # report it. Same expression explore.py / tools_graph.py use: fusion defaults
-    # ON (anything other than the literal "0" leaves it on).
-    fusion_enabled = os.environ.get("CAIRN_FUSION", "1") != "0"
-    # Wall-clock start for the `ms` telemetry bucket; _ann_used flips the
-    # backend tag to "ann" only when the native vec0 query actually produced
-    # this call's candidates (not merely when it was enabled).
-    _t0 = time.perf_counter()
-    _ann_used = False
-    # Execution-truth flags for the fusion/rerank stages: the attrs must report
-    # what the call ACTUALLY did, not what it was configured to do. A
-    # configured-but-degraded stage (RRF exception, reranker model not cached)
-    # reports 0 for the stage and 1 for its *_degraded marker, so the
-    # degradation is durable in the events table instead of invisible.
-    # Assigned in the enclosing scope and read by the _finish closure (same
-    # pattern as _ann_used).
-    _fusion_used = False
-    _fusion_degraded = False
-    _rerank_used = False
-    _rerank_degraded = False
-
-    def _finish(results: List[dict]) -> List[dict]:
-        """Emit `semantic_backend` (+ `empty_result` when empty); return results.
-
-        Single funnel for both return paths so the event fires exactly once per
-        call regardless of which branch produced the list. `backend` precedence
-        is hash > ann > brute: the hash-embed fallback is the worst degradation
-        (token-overlap vectors carry no real semantic signal), so a query that
-        ran on hash vectors is tagged ``hash`` whether or not the cosine scan
-        used the native ANN index. `fusion`/`rerank` report execution (the
-        stage ran to completion / applied re-scoring), with paired
-        `*_degraded` markers for a configured stage that failed mid-call.
-        Cardinality is bounded to enums + fixed buckets (spec §6.4). emit()
-        never raises; the wrap is belt-and-suspenders so a bucketing bug can't
-        fail the search (spec §5.6).
-        """
-        try:
-            elapsed_ms = (time.perf_counter() - _t0) * 1000.0
-            backend = "hash" if _hash else ("ann" if _ann_used else "brute")
-            emit(
-                SEMANTIC_BACKEND,
-                backend=backend,
-                fusion=1 if _fusion_used else 0,
-                fusion_degraded=1 if _fusion_degraded else 0,
-                rerank=1 if _rerank_used else 0,
-                rerank_degraded=1 if _rerank_degraded else 0,
-                ms=_ms_bucket(elapsed_ms),
-                n_results=_n_results_bucket(len(results)),
-            )
-            if not results:
-                # empty_result carries only query_kind (spec §6.4 lists query_kind,
-                # not backend); the per-backend view comes from correlating with
-                # the semantic_backend event emitted on the same call.
-                emit(EMPTY_RESULT, query_kind="semantic_search")
-        except Exception:
-            logger.debug("semantic_search telemetry emit failed", exc_info=True)
-        return results
-
-    # When reranking, retrieve a wider shortlist for the cross-encoder to
-    # re-sort; plain cosine ordering slices to exactly `limit`.
-    pool_size = max(limit * 5, 50) if rerank_on else limit
-    if params is not None and params.rerank_pool is not None:
-        # Explicit override of the computed pool size (both branches).
-        pool_size = params.rerank_pool
-
-    # Query enrichment at the semantic_search boundary
-    # ONLY, computed ONCE per call whenever params.enrich is truthy and fed
-    # to BOTH retrieval legs from that single object -- the one embed_query
-    # call below embeds `dense_query` (the original text with each extracted
-    # identifier appended once, per EnrichedQuery's contract), and the
-    # sparse leg's term fetch reads the SAME object's sparse_query.
-    # embeddings.embed_query itself stays untouched: the memory layer shares
-    # it (promotion.py) and must keep receiving raw queries. The confidence
-    # gate's _exact_name_hit corroboration keeps the RAW `query` -- so gate
-    # inputs shift only through the fused ranking itself; the rerank pair
-    # receives `_dense_query`
-    # below. enrich() is a pure regex function, so evaluating it even
-    # on paths that never reach a leg (e.g. the no-rows early return) is
-    # harmless; with enrich off/None _enriched stays None and both legs see
-    # the raw query exactly as today.
-    #
-    # With enrich_idf ALSO truthy the DF signal
-    # enters exactly here -- the boundary builds the per-term term_df
-    # lookup (one indexed SELECT per distinct case-folded query token)
-    # and injects it, keeping enrich() itself pure. With enrich_idf
-    # off/None the call below stays today's single-argument form: no
-    # lookup built, no term_df SELECT (flag-off byte-equivalence).
-    _enriched = None
-    if params is not None and params.enrich:
-        if params.enrich_idf:
-            _enriched = enrich_query(query, df_lookup=_term_df_lookup(conn))
-        else:
-            _enriched = enrich_query(query)
-    _dense_query = _enriched.dense_query if _enriched is not None else query
-
-    model = emb.current_model()
-
-    # The dense leg's embed call is guarded for ALL backends.
-    # One helper maps any embed failure onto the fallback ladder -- evaluated
-    # at most once per search (the ladder self-caches per process) -- and a
-    # hard failure contributes zero dense candidates instead of raising out
-    # of the search.
-    _dense_ladder_evaluated = False
-    _dense_lost = False
-
-    def _evaluate_dense_ladder_once() -> None:
-        nonlocal _dense_ladder_evaluated
-        from cairn.graph import embed_ladder
-
-        if not _dense_ladder_evaluated:
-            _dense_ladder_evaluated = True
-            embed_ladder.evaluate_ladder(conn)
-
-    def _dense_embed_guarded(
-        text: str, conn: Optional[sqlite3.Connection] = None
-    ) -> Optional[Tuple[bytes, int]]:
-        """``emb.embed_query`` with the ladder mapped onto failure.
-
-        Returns ``(blob, dim)``, or ``None`` when the dense leg must
-        contribute zero candidates: any embed exception (every backend)
-        evaluates the ladder once per search; an active rung-1/2
-        adoption gets one retry, a hard failure rides the existing bm25
-        fusion path. Never raises.
-        """
-        try:
-            return emb.embed_query(text)
-        except Exception:
-            pass
-        try:
-            _evaluate_dense_ladder_once()
-            from cairn.graph import embed_ladder
-
-            state = embed_ladder.ladder_state()
-            if state is not None and state.active and state.adopted_model:
-                # Rung 1/2 adopted a session replacement: one retry rides it.
-                return emb.embed_query(text)
-        except Exception:
-            pass
-        return None
-
-    def _run_pass(
-        dense_text: str, extra_sparse_terms: Tuple[str, ...]
-    ) -> Optional[List[dict]]:
-        """Run ONE full retrieval pass: embed, dense leg, RRF fusion.
-
-        Contract: returns the pass's candidate list (post-fusion when
-        fusion is on; ``None`` means the corpus has no embeddable rows at
-        all -- the caller's empty-result early return). The dense leg
-        embeds ``dense_text`` in the ONE ``embed_query`` call this pass
-        costs. ``extra_sparse_terms`` -- the PRF expansion terms, second
-        pass only -- are appended to the sparse leg's term list after any
-        enrichment terms; an empty tuple keeps the term fetch exactly
-        today's shape.
-
-        The second ``_run_pass`` call under ``params.prf``
-        is the explicit, flag-gated exception to the one-embed_query-
-        per-call doctrine -- budget-accounted by REPLACING (never
-        stacking) the rerank stage.
-        """
-        nonlocal _ann_used, _fusion_used, _fusion_degraded, _dense_lost
-
-        pair = _dense_embed_guarded(dense_text, conn)
-
-        # Rung 3: a hard embed failure (``pair is None``) contributes
-        # ZERO dense candidates -- ``[]`` flows into the existing fusion
-        # below, which yields today's bm25-provenanced shape (no new
-        # short-circuit).
-        candidates: Optional[List[dict]] = [] if pair is None else None
-        _dense_lost = _dense_lost or pair is None
-        ann_enabled = ann.ann_backend_enabled()
-        if pair is not None and candidates is None and ann_enabled:
-            # Narrowed locals: everything below this line runs only with a
-            # real (blob, dim) pair.
-            q_blob, q_dim = pair
-            ann_hits = ann.ann_query(conn, model, q_blob, pool_size)
-            if ann_hits is not None:
-                # ANN path available and an index exists for this model.
-                candidates = _candidates_from_ann_hits(conn, ann_hits, threshold)
-                _ann_used = True
-                if _mv:
-                    # Query the vecmv_ index beside vec_ and
-                    # merge -- each symbol once, at its best score across both
-                    # legs. Strictly additive: no vecmv index (None) leaves the
-                    # base candidates unchanged, never errors.
-                    mv_hits = ann.ann_query(
-                        conn, model, q_blob, pool_size, source="embeddings_mv"
-                    )
-                    if mv_hits is not None:
-                        candidates = _merge_ann_candidates(
-                            candidates,
-                            _candidates_from_ann_hits(conn, mv_hits, threshold),
-                        )
-
-        if candidates is None and pair is not None:
-            # Brute-force cosine scan fallback. Hard-cap the candidate pool so the
-            # fetchall() can't grow unbounded with corpus size.
-            #
-            # ``pair`` is not None here by construction: a hard embed failure
-            # leaves ``candidates == []`` above, never None -- the unpack
-            # below is the type-level statement of that runtime gate.
-            #
-            # Surface the degradation once when sqlite-vec was *expected* but is
-            # unavailable. When ann_enabled is False it's either that or an
-            # explicit CAIRN_ANN_BACKEND=off (the helper stays silent on the
-            # opt-out). When ann_enabled is True, ann_query has already surfaced
-            # its own once-guarded reason on every None path (load failure inside
-            # try_load; the no-index state and query errors in ann_query), so
-            # there is nothing left to warn about here.
-            if not ann_enabled:
-                ann.warn_ann_fallback_once(logger, context="semantic_search")
-            q_blob, q_dim = pair
-            brute_force_limit = 50000
-            if params is not None and params.dense_pool is not None:
-                brute_force_limit = params.dense_pool
-            if _mv:
-                # UNION the multi-vector kinds' rows beside the
-                # base rows (same model stamp on both arms); the LIMIT applies
-                # to the whole compound select. The flag-off query below stays
-                # verbatim -- never touch it (integrity doctrine).
-                rows = _mapping_rows(
-                    conn.execute(
-                        "SELECT symbol_id, vec, chunk, dim, name, kind, "
-                        "qualified_name, file_path, repo FROM ("
-                        "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
-                        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-                        "FROM embeddings e "
-                        "JOIN symbols s ON e.symbol_id = s.id "
-                        "JOIN files f ON s.file_id = f.id "
-                        "WHERE e.model = ? "
-                        "UNION ALL "
-                        "SELECT m.symbol_id, m.vec, m.chunk, m.dim, "
-                        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-                        "FROM embeddings_mv m "
-                        "JOIN symbols s ON m.symbol_id = s.id "
-                        "JOIN files f ON s.file_id = f.id "
-                        "WHERE m.model = ?"
-                        ") LIMIT ?",
-                        (model, model, brute_force_limit),
-                    )
-                )
-            else:
-                rows = _mapping_rows(
-                    conn.execute(
-                        "SELECT e.symbol_id, e.vec, e.chunk, e.dim, "
-                        "s.name, s.kind, s.qualified_name, f.path AS file_path, f.repo_id AS repo "
-                        "FROM embeddings e "
-                        "JOIN symbols s ON e.symbol_id = s.id "
-                        "JOIN files f ON s.file_id = f.id "
-                        "WHERE e.model = ? "
-                        "LIMIT ?",
-                        (model, brute_force_limit),
-                    )
-                )
-            if not rows:
-                # The pass cannot produce candidates at all; ``None`` (not
-                # an empty list -- that would run fusion over nothing and
-                # could still yield BM25-only rows) is the caller's signal
-                # to take the empty-result early return.
-                return None
-
-            # Prefer numpy for the scan; fall back to pure Python. Both produce
-            # identical cosine scores. Shared via cairn.retrieval.cosine_scan.
-            from cairn.retrieval import cosine_scan
-
-            triples = [(r["vec"], r["dim"], r) for r in rows]
-            scored = cosine_scan(q_blob, q_dim, triples, threshold)
-            if _mv:
-                # Max-over-vectors: consolidate each symbol's UNION rows
-                # to its best score BEFORE the pool cap -- a symbol's duplicate
-                # representations must never crowd out another candidate.
-                # cosine_scan is score-descending, so first
-                # occurrence is the max; the explicit compare keeps the
-                # contract independent of that ordering guarantee.
-                best: dict = {}
-                for score, r in scored:
-                    sid = r["symbol_id"]
-                    if sid not in best or score > best[sid][0]:
-                        best[sid] = (score, r)
-                scored = list(best.values())
-            candidates = []
-            for score, r in scored[:pool_size]:
-                candidates.append(
-                    {
-                        "id": r["symbol_id"],
-                        "name": r["name"],
-                        "kind": r["kind"],
-                        "qualified_name": r["qualified_name"],
-                        "file_path": r["file_path"],
-                        "repo": r["repo"],
-                        "score": round(score, 4),
-                        "chunk": r["chunk"],
-                        "provenance": _sem_prov,
-                        "reranked": False,
-                    }
-                )
-
-        # RRF Hybrid fusion (fusion_enabled hoisted above for the early-return path).
-        if fusion_enabled and candidates is not None:
-            try:
-                from cairn.graph.fusion import rrf_fuse
-
-                # Fetch BM25 candidates. search_symbols returns sqlite3.Row,
-                # which has no .get() — convert to dict at this boundary so the
-                # shared .get("id") access below works on both BM25 rows and the
-                # candidate dicts (which are already plain dicts).
-                sparse_limit = 30
-                if params is not None and params.sparse_limit is not None:
-                    sparse_limit = params.sparse_limit
-                # Term-mode sparse fetch: with params.enrich on,
-                # the stopword-trimmed term list of the ONE EnrichedQuery
-                # computed above feeds search_symbols_terms, whose
-                # OR-of-quoted-prefix MATCH lets BM25 rank symbols whose
-                # indexed tokens begin with ANY term. The raw sentence through
-                # search_symbols would fold into ONE quoted FTS phrase
-                # (_pattern_to_fts) that matches no symbol name -- the
-                # empty-BM25 defect. Empty sparse_query ("every token was a
-                # stopword") keeps the raw-query call per the EnrichedQuery
-                # contract. With enrich off/None the fetch below is
-                # byte-identical to today's.
-                sparse_terms: List[str] = (
-                    _enriched.sparse_query.split() if _enriched is not None else []
-                )
-                if extra_sparse_terms:
-                    # The PRF expansion terms join
-                    # the sparse leg (second pass only) after any
-                    # enrichment terms; a duplicate is harmless under the
-                    # OR-of-prefix MATCH.
-                    sparse_terms = sparse_terms + list(extra_sparse_terms)
-                if sparse_terms:
-                    bm25_raw = [
-                        dict(r)
-                        for r in search_symbols_terms(
-                            conn, sparse_terms, limit=sparse_limit
-                        )
-                    ]
-                else:
-                    bm25_raw = [
-                        dict(r) for r in search_symbols(conn, query, limit=sparse_limit)
-                    ]
-                bm25_map = {}
-                bm25_ids = []
-                for r in bm25_raw:
-                    sid = r.get("id")
-                    if sid:
-                        bm25_map[sid] = r
-                        bm25_ids.append(sid)
-
-                vec_map = {}
-                vec_ids = []
-                for r in candidates:
-                    sid = r.get("id")
-                    if sid:
-                        vec_map[sid] = r
-                        vec_ids.append(sid)
-
-                rrf_k = 60
-                rrf_weights: Optional[List[float]] = None
-                if params is not None:
-                    if params.rrf_k is not None:
-                        rrf_k = params.rrf_k
-                    if params.rrf_weights is not None:
-                        # Field order is (dense, sparse); rrf_fuse pairs
-                        # weights[i] with rankings[i], and the rankings here are
-                        # [bm25(sparse), vec(dense)] -- reorder at the boundary.
-                        rrf_weights = [params.rrf_weights[1], params.rrf_weights[0]]
-                    if params.sparse_top_n is not None:
-                        # Rank-position cutoff on the BM25 leg: keep the
-                        # first N ids in search_symbols'
-                        # best-first order, dropping the tail before fusion.
-                        # Negative N clamps to 0 rather than erroring (the
-                        # gate_min_margin clamp doctrine: a harness bug must
-                        # not fail a sweep run) -- plain slicing with a
-                        # negative N would silently keep the WORST |N| matches
-                        # instead, which is the opposite of a cutoff.
-                        top_n = max(params.sparse_top_n, 0)
-                        if len(bm25_ids) > top_n:
-                            bm25_ids = bm25_ids[:top_n]
-                fused_rank = rrf_fuse([bm25_ids, vec_ids], k=rrf_k, weights=rrf_weights)
-                fused_candidates = []
-                for doc_id, fused_score in fused_rank:
-                    in_bm25 = doc_id in bm25_map
-                    in_vec = doc_id in vec_map
-
-                    if in_bm25 and in_vec:
-                        base = dict(vec_map[doc_id])
-                        base["provenance"] = _fused_prov
-                    elif in_vec:
-                        base = dict(vec_map[doc_id])
-                        base["provenance"] = _sem_prov
-                    else:
-                        b_item = bm25_map[doc_id]
-                        base = {
-                            "id": b_item.get("id"),
-                            "name": b_item.get("name"),
-                            "kind": b_item.get("kind"),
-                            "qualified_name": b_item.get("qualified_name"),
-                            "file_path": b_item.get("file_path"),
-                            "repo": b_item.get("repo"),
-                            "score": 0.0,
-                            "chunk": "",
-                            "provenance": "bm25",
-                            "reranked": False,
-                        }
-                    base["score"] = round(fused_score, 4)
-                    fused_candidates.append(base)
-
-                candidates = fused_candidates
-                _fusion_used = True
-            except Exception:
-                # Degrade to vector-only rather than failing the search, but log
-                # at WARNING (not debug): this path was once silently broken by a
-                # .get()-on-Row AttributeError swallowed here, so a future regression
-                # must be visible. The debug-level exc_info still gives the traceback.
-                _fusion_degraded = True
-                logger.warning("RRF fusion degraded to vector-only", exc_info=True)
-        return candidates
-
-    try:
-        candidates = _run_pass(_dense_query, ())
-    except Exception:
-        # Any residual hard failure from the dense pass maps to the
-        # evaluated rung (zero dense candidates) instead of raising out of
-        # the search.
-        try:
-            _evaluate_dense_ladder_once()
-        except Exception:
-            pass
-        _dense_lost = True
-        candidates = []
-    if candidates is None:
-        return _finish([])
-
-    # The PRF second pass at the
-    # post-fusion seam -- the fused top-k (or the dense-only list when
-    # fusion is off/degraded) is the feedback signal. The ONE
-    # extra embed_query inside _run_pass below is the explicit,
-    # flag-gated exception to the one-call doctrine, spent from the
-    # rerank budget it replaces (rerank_on was forced off above).
-    if _prf and candidates and params is not None:
-        # None-means-default resolves to the Anserini anchors
-        # (docs=10, terms=10, lambda=0.5). A negative prf_docs clamps to
-        # empty feedback -- a slice with a negative bound would silently
-        # keep the WORST |n| candidates (the harness-bug clamp doctrine).
-        fb_n = params.prf_docs if params.prf_docs is not None else 10
-        feedback_docs = [
-            c.get("chunk")
-            or " ".join(p for p in (c.get("name"), c.get("qualified_name")) if p)
-            for c in candidates[: max(fb_n, 0)]
-        ]
-        expansion = prf_expand(
-            _dense_query,
-            feedback_docs,
-            df_lookup=_term_df_lookup(conn),
-            fb_terms=params.prf_terms if params.prf_terms is not None else 10,
-            fb_lambda=params.prf_lambda if params.prf_lambda is not None else 0.5,
-        )
-        if expansion.terms:
-            # Second pass on the expanded text/terms; its candidates
-            # REPLACE the first pass's, then the confidence
-            # gate/slice path below continues on the new list.
-            try:
-                candidates = _run_pass(expansion.dense_query, expansion.terms)
-            except Exception:
-                # Same contract as the first pass's call site above:
-                # a residual hard failure from this pass maps to the
-                # evaluated rung (the once-flag keeps the ladder at one
-                # evaluation per search) and empty candidates, instead of
-                # raising out of the search.
-                try:
-                    _evaluate_dense_ladder_once()
-                except Exception:
-                    pass
-                _dense_lost = True
-                candidates = []
-            if candidates is None:
-                return _finish([])
-        # Empty expansion (or prf_docs <= 0): prf.expand's contract returns
-        # dense_query == _dense_query, so the second pass would be
-        # byte-identical to the first -- it is skipped: zero extra
-        # embeds, first-pass results returned unchanged (the bounded
-        # fallback).
-
-    # Confidence gate (auto mode only -- `rerank=True` explicitly wants the
-    # cross-encoder, `rerank=False` already turned the stage off above).
-    # Scoped to successful RRF fusion: the margin is calibrated on RRF score
-    # geometry (rank-sums in the ~0.016-0.033 band), which cosine scores from
-    # the CAIRN_FUSION=0 path don't share; with fusion off or degraded the
-    # stage keeps today's behavior. Also disabled under hash embed vectors
-    # (either the silent fallback or explicit CAIRN_EMBED_BACKEND=hash):
-    # token-overlap vectors make the fused ranking untrustworthy exactly
-    # when the cross-encoder is the only semantic signal left (measured
-    # top-1 agreement of skip populations drops to ~0.0 there). On skip,
-    # `rerank_on=False` routes the call through the plain
-    # `candidates[:limit]` return below, so scores and provenance stay
-    # exactly the fused ones the call actually produced.
-    if (
-        rerank_on
-        and rerank is None
-        and not _vectors_carry_token_overlap_only(_hash)
-        and _fusion_used
-        and candidates
-        and _fused_confident(query, candidates, limit, min_margin=_gate_margin_override)
-    ):
-        rerank_on = False
-        try:
-            # Durable signal for doctor/metrics aggregation; reason is a
-            # fixed enum so the events table's cardinality stays bounded
-            # (spec §6.4). emit() is best-effort and never raises; the
-            # wrap mirrors ann_index.warn_ann_fallback_once's belt-and-
-            # suspenders discipline.
-            emit(RERANK_SKIPPED, reason="confident_margin")
-        except Exception:
-            pass
-        logger.debug("rerank skipped: fused ranking decisive (margin gate)")
-
-    if rerank_on:
-        # The rerank pair's query side is
-        # `_dense_query` — the enriched query when enrichment is on, the raw
-        # query otherwise. The confidence gate above still reads the RAW
-        # query; only
-        # the rerank stage sees the enriched form.
-        final, reranked = rrk.rerank(_dense_query, candidates, limit)
-        # `reranked` is the cross-encoder's own outcome flag: False means it
-        # degraded to returning the hybrid order unchanged (disabled, model
-        # not cached, or a predict() failure -- see reranker.rerank). Report
-        # the execution truth, not the rerank_on config.
-        _rerank_used = reranked
-        _rerank_degraded = not reranked
-        for item in final:
-            item["reranked"] = reranked
-            if "rerank_score" in item:
-                item["rerank_score"] = round(item["rerank_score"], 4)
-                # Sigmoid-mapped companion of rerank_score: additive,
-                # so guard with .get — a rerank stub may set only the raw
-                # field (test_rerank_gating's recorder does).
-                norm = item.get("rerank_score_norm")
-                if norm is not None:
-                    item["rerank_score_norm"] = round(norm, 4)
-    else:
-        final = candidates[:limit]
-
-    if include_callers:
-        _attach_callers(conn, final)
-
-    # Additive degradation surfacing -- only when a ladder state is
-    # active AND this search's dense leg actually fell to it (a working
-    # rung-1/2 adoption leaves the results untagged). Healthy searches stay
-    # byte-identical. Compass results carry their own ``degraded`` key with
-    # unrelated semantics -- this never feeds them.
-    if _dense_lost:
-        from cairn.graph import embed_ladder
-
-        if embed_ladder.degradation_active():
-            hint = embed_ladder.degradation_footnote()
-            for item in final:
-                item["degraded"] = "embedding-backend"
-                item["hint"] = hint
-
-    return _finish(final)
+    hash_backend = emb.is_hash_fallback()
+    context = SearchContext(
+        conn=conn,
+        query=query,
+        limit=limit,
+        threshold=threshold,
+        rerank_override=rerank,
+        params=params,
+        adapters=_search_adapters(),
+        include_callers=include_callers,
+        hash_backend=hash_backend,
+        model=emb.current_model(),
+        semantic_provenance=(
+            "semantic (hash backend)" if hash_backend else "semantic"
+        ),
+        fused_provenance=(
+            "fused(bm25+semantic, hash)" if hash_backend else "fused(bm25+semantic)"
+        ),
+        gate_margin_override=gate_margin_override,
+    )
+    return run_search(context)
 
 
 def _attach_callers(conn: sqlite3.Connection, results: List[dict], neighbor_limit: int = 5) -> None:

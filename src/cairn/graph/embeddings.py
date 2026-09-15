@@ -23,6 +23,12 @@ from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
+from .embed_backends import (
+    CallableEmbeddingBackend,
+    register_embedding_backend,
+    resolve_effective_backend,
+    resolve_embedding_backend,
+)
 from .schema import note_contention, rebuild_term_df
 
 # ---------------------------------------------------------------------------
@@ -60,24 +66,33 @@ def current_model(corpus: str = "code") -> str:
     One server model serves every corpus, so ``corpus`` is ignored
     for server backends.
     """
-    backend = _effective_backend()
-    if backend == "hash":
-        return HASH_MODEL
-    if backend == "openai":
-        return os.environ.get("CAIRN_EMBED_OPENAI_MODEL", "text-embedding-3-small")
-    if backend == "server":
-        override = _config_or_env("CAIRN_EMBED_MODEL_STAMP")
-        if override:
-            return override
-        with _BACKEND_CACHE_LOCK:
-            session_stamp = _SESSION_STAMP_OVERRIDE
-        if session_stamp:
-            return session_stamp
-        # urlsplit keeps the bracket pair on IPv6 netlocs ([::1]:8000); the
-        # stamp -- and every vec0 table name derived from it -- drops them.
-        netloc = urlsplit(_server_base_url()).netloc
-        netloc = netloc.replace("[", "").replace("]", "")
-        return f"server/{netloc}/{_server_model()}"
+    return resolve_embedding_backend(_effective_backend()).model(corpus)
+
+
+def _model_hash(_corpus: str) -> str:
+    return HASH_MODEL
+
+
+def _model_openai(_corpus: str) -> str:
+    return os.environ.get("CAIRN_EMBED_OPENAI_MODEL", "text-embedding-3-small")
+
+
+def _model_server(_corpus: str) -> str:
+    override = _config_or_env("CAIRN_EMBED_MODEL_STAMP")
+    if override:
+        return override
+    with _BACKEND_CACHE_LOCK:
+        session_stamp = _SESSION_STAMP_OVERRIDE
+    if session_stamp:
+        return session_stamp
+    # urlsplit keeps the bracket pair on IPv6 netlocs ([::1]:8000); the
+    # stamp -- and every vec0 table name derived from it -- drops them.
+    netloc = urlsplit(_server_base_url()).netloc
+    netloc = netloc.replace("[", "").replace("]", "")
+    return f"server/{netloc}/{_server_model()}"
+
+
+def _model_local(corpus: str) -> str:
     env_name = _CORPUS_MODEL_ENV.get(corpus)
     if env_name:
         corpus_model = _config_or_env(env_name)
@@ -101,30 +116,18 @@ def embeddings_available() -> bool:
     configured model id. The probe verdict is cached per process;
     reset_backend_cache() invalidates it.
     """
-    backend = _backend_name()
-    if backend == "hash":
-        return True
-    if backend == "openai":
-        return bool(os.environ.get("OPENAI_API_KEY"))
-    if backend in _SERVER_FAMILY:
-        # Probe here, before the local import attempt: the ImportError branch
-        # below stamps 'hash' into the shared cache, which a server config
-        # must never reach (a server backend never resolves to hash).
-        # Rung-2 session adoption already proved local availability
-        # before switching, so it answers without the (still failing) probe.
+    backend = resolve_embedding_backend(_backend_name())
+    available = backend.available()
+    fallback = backend.fallback_name
+    if not available and fallback is not None:
         with _BACKEND_CACHE_LOCK:
-            session_backend = _SESSION_BACKEND_OVERRIDE
-        if session_backend:
-            return True
-        return _server_probe_available()
-    # local (default) — fall back to hash when sentence_transformers missing
-    try:
-        import sentence_transformers  # noqa: F401
+            _EFFECTIVE_BACKEND_CACHE["effective"] = fallback
         return True
-    except ImportError:
-        with _BACKEND_CACHE_LOCK:
-            _EFFECTIVE_BACKEND_CACHE["effective"] = "hash"
-        return True
+    return available
+
+
+def _available_openai() -> bool:
+    return bool(os.environ.get("OPENAI_API_KEY"))
 
 
 def install_hint() -> str:
@@ -492,20 +495,7 @@ def _effective_backend() -> str:
     cached: Optional[str] = _EFFECTIVE_BACKEND_CACHE["effective"]
     if cached is not None:
         return cached
-    backend = _backend_name()
-    if backend == "local":
-        try:
-            import sentence_transformers  # noqa: F401
-            resolved = "local"
-        except ImportError:
-            resolved = "hash"
-    else:
-        resolved = "server" if backend in _SERVER_FAMILY else backend
-        if resolved == "server":
-            with _BACKEND_CACHE_LOCK:
-                session_backend = _SESSION_BACKEND_OVERRIDE
-            if session_backend:
-                resolved = session_backend
+    resolved = resolve_effective_backend(_backend_name())
     with _BACKEND_CACHE_LOCK:
         cached = _EFFECTIVE_BACKEND_CACHE["effective"]
         if cached is None:
@@ -1226,14 +1216,85 @@ def _embed_hash(texts: Sequence[str]) -> Tuple[List[bytes], int]:
 
 def _embed(texts: Sequence[str]) -> Tuple[List[bytes], int]:
     """Dispatch to the effective backend (after fallback). Returns (blobs, dim)."""
-    backend = _effective_backend()
-    if backend == "hash":
-        return _embed_hash(texts)
-    if backend == "openai":
-        return _embed_openai(texts)
-    if backend == "server":
-        return _embed_server(texts)
-    return _embed_local(texts)
+    return resolve_embedding_backend(_effective_backend()).embed(texts)
+
+
+def _server_adapter_effective() -> str:
+    with _BACKEND_CACHE_LOCK:
+        return _SESSION_BACKEND_OVERRIDE or "server"
+
+
+def _server_adapter_available() -> bool:
+    with _BACKEND_CACHE_LOCK:
+        if _SESSION_BACKEND_OVERRIDE:
+            return True
+    return _server_probe_available()
+
+
+def _local_adapter_effective() -> str:
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        return "hash"
+    return "local"
+
+
+def _local_adapter_available() -> bool:
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _register_backend_adapters() -> None:
+    server_backend = CallableEmbeddingBackend(
+        canonical_name="server",
+        fallback_name=None,
+        _effective_name=_server_adapter_effective,
+        _is_available=_server_adapter_available,
+        _model_for_corpus=lambda corpus: _model_server(corpus),
+        _transport=lambda texts: _embed_server(texts),
+    )
+    register_embedding_backend(
+        "hash",
+        CallableEmbeddingBackend(
+            canonical_name="hash",
+            fallback_name=None,
+            _effective_name=lambda: "hash",
+            _is_available=lambda: True,
+            _model_for_corpus=lambda corpus: _model_hash(corpus),
+            _transport=lambda texts: _embed_hash(texts),
+        ),
+    )
+    register_embedding_backend(
+        "openai",
+        CallableEmbeddingBackend(
+            canonical_name="openai",
+            fallback_name=None,
+            _effective_name=lambda: "openai",
+            _is_available=lambda: _available_openai(),
+            _model_for_corpus=lambda corpus: _model_openai(corpus),
+            _transport=lambda texts: _embed_openai(texts),
+        ),
+    )
+    register_embedding_backend("server", server_backend)
+    register_embedding_backend("omlx", server_backend)
+    register_embedding_backend("ollama", server_backend)
+    register_embedding_backend(
+        "local",
+        CallableEmbeddingBackend(
+            canonical_name="local",
+            fallback_name="hash",
+            _effective_name=_local_adapter_effective,
+            _is_available=_local_adapter_available,
+            _model_for_corpus=lambda corpus: _model_local(corpus),
+            _transport=lambda texts: _embed_local(texts),
+        ),
+    )
+
+
+_register_backend_adapters()
 
 
 # ---------------------------------------------------------------------------

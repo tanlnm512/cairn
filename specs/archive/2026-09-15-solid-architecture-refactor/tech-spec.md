@@ -403,3 +403,80 @@ survey.md's cited evidence or spec.md's own FR/scope text.
   `routes/graph.py`; `embeddings_status`/`database` land in `settings.py`
   since both are system-configuration surfaces, which is a judgment call this
   decision records rather than leaving implicit.
+
+### D-007: T005 leaves graph-builder repointing to T006/T008
+- **Context**: T005 owns only `src/cairn/parsers/factory.py`; `src/cairn/graph/builder.py`
+  is intentionally unchanged until its assigned follow-up tasks.
+- **Decision**: the T005 acceptance check for the graph-builder import count applies
+  after T008 lands; T005 is complete when the parser-adapter suite passes against the
+  new factory.
+- **Consequences**: T006 must move memoization into the factory and remove dead parser
+  state before T008 repoints the two graph-builder call sites.
+
+### D-008: Incremental parser selection uses the builder module attribute
+- **Context**: `tests/test_workflow_audit_fixes.py` patches `builder.get_parser` to
+  simulate parser failure and assert rollback behavior.
+- **Decision**: `src/cairn/graph/builder.py` imports `get_parser` from
+  `src/cairn/parsers/factory.py`; `src/cairn/graph/incremental.py` calls it through
+  `builder.get_parser` rather than binding the factory function directly.
+- **Consequences**: parser selection is factory-owned while the existing builder patch
+  seam and transactional reindex behavior remain compatible.
+
+### D-009: CLI system package preserves tested private imports
+- **Context**: existing tests import `_PASS`, `_WARN`, `_FAIL`, and `_check_ann` from
+  the `cairn.cli.system` boundary.
+- **Decision**: `src/cairn/cli/system/__init__.py` re-exports those existing private
+  names alongside the public command registrations.
+- **Consequences**: command implementations may live in family modules without breaking
+  tests and callers that rely on the former flat-module import path.
+
+### D-010: Dashboard controllers preserve original route precedence
+- **Context**: Starlette matches routes in registration order; moving
+  `/knowledge/graph/inspect` after `/knowledge/{family}/{slug}` makes the inspect
+  fragment resolve as a document route.
+- **Decision**: controllers preserve the route order in the pre-refactor app, with
+  static/fragment routes registered before broader parameterized routes; knowledge,
+  wiki-repo, export, favicon, and parity handlers live in their domain controllers.
+- **Consequences**: route behavior remains stable while `create_app` delegates
+  request handlers to controller modules.
+
+### D-011: Every LLM operation carries an explicit timing bound
+- **Context**: closing verification found that the protocol declared a timeout only on
+  `synthesize`; queue operations ignored it, and subprocess revise/judge/extract used an
+  implicit default.
+- **Decision**: `synthesize`, `revise`, `judge`, and `extract` accept `timeout`; queue
+  polling combines that call bound with the backend maximum, and subprocess calls and
+  fallbacks propagate the same bound. TC-017 gains direct short-bound tests.
+- **Consequences**: callers retain backward-compatible defaults while every backend
+  operation has a finite, testable wait.
+
+### D-012: Static-complexity gate uses Ruff complexity rules and fixed category baselines
+- **Context**: the refactor needs a measurable guard against increasing static
+  complexity across affected modules.
+- **Decision**: use Ruff rules `C901`, `PLR0912`, `PLR0913`, and `PLR0915`.
+  The baseline category counts are `complexity=88`, `branches=52`,
+  `statements=37`, and `args=67`; the pass criterion is that current counts in
+  every category must not exceed their respective baselines.
+- **Consequences**: refactor acceptance includes comparing current category
+  counts against this fixed baseline; any category count above baseline fails
+  the gate.
+
+### D-013: Embedding backends receive transport functions from `embeddings.py`
+- **Context**: the backend seam must stay one-way while generic adapters own
+  backend selection and transport-specific functions remain available to them.
+- **Decision**: `src/cairn/graph/embeddings.py` owns the transport functions and
+  injects them into the generic backend adapters in
+  `src/cairn/graph/embed_backends.py`; `src/cairn/graph/embed_backends.py` must
+  not import `src/cairn/graph/embeddings.py`, eliminating the reverse seam.
+- **Consequences**: the permitted dependency direction is
+  `src/cairn/graph/embeddings.py` → `src/cairn/graph/embed_backends.py`;
+  adapters receive and invoke injected transport functions without a reverse
+  import.
+
+### D-014: T029 acceptance uses the dashboard app suite for wiki controller coverage
+- **Context**: the T029 acceptance command named a wiki-only test path that does not
+  exist; wiki behavior is covered by the dashboard app suite.
+- **Decision**: use `tests/test_dashboard_app.py` plus the semantic fusion and rerank
+  suites as the T029 behavior check.
+- **Consequences**: complexity-gate verification remains executable without adding a
+  redundant test file.

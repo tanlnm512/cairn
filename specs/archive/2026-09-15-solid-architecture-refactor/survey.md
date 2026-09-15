@@ -1,6 +1,6 @@
 # Survey: solid-architecture-refactor
 
-**Baseline**: 06c977da3b0f078169d82fd9ac20a1e3ca89f66e (HEAD at survey time, `git rev-parse HEAD`)
+**Baseline**: 0.20.2 @ 06c977da3b0f078169d82fd9ac20a1e3ca89f66e
 Context read first: `specs/context/structure.md` (baseline 0.16.0 @ fe7a7f09, refreshed dc9882b/0.20.0),
 `specs/context/tech.md`. This is not the repo's first spec — context files not rewritten.
 

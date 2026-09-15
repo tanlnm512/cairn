@@ -1,6 +1,6 @@
 # Spec: solid architecture refactor
 
-**Status**: draft
+**Status**: done
 **Created**: 2026-09-15
 **Branch**: `codex/solid-architecture-refactor`
 
@@ -77,7 +77,7 @@ As a maintainer, I want file, symbol, import, and edge writes isolated behind re
 - **FR-008**: WHEN any existing dashboard route is requested, the system SHALL preserve its URL, method, route name, response shape, rendering behavior, and status semantics.
 - **FR-009**: The system shall compose semantic search from explicit query, retrieval, fusion, rerank, enrichment, telemetry, and result-assembly stages.
 - **FR-010**: WHEN semantic search encounters a failed or unavailable stage, the system SHALL preserve the existing degradation path, result fields, provenance, ranking semantics, and telemetry event semantics.
-- **FR-011**: The system shall expose LLM synthesis and extraction through contracts with bounded timeout and malformed-output behavior.
+- **FR-011**: The system shall expose LLM synthesis, revision, judgment, and extraction through contracts with bounded timeout and malformed-output behavior.
 - **FR-012**: WHEN either LLM backend handles extraction output, the system SHALL skip malformed JSON records consistently.
 - **FR-013**: The system shall organize operational CLI implementations by command family and registered health checks.
 - **FR-014**: WHEN an existing system command runs, the system SHALL preserve command names, human output semantics, JSON output contracts, exit behavior, and redaction rules.
