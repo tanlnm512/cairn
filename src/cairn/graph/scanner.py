@@ -51,6 +51,7 @@ EXTENSION_MAP = {
     ".php5": "php",
     ".rb": "ruby",
     ".rbw": "ruby",
+    ".rs": "rust",
     ".cs": "csharp",
     ".csx": "csharp",
     ".m": "objc",
@@ -128,6 +129,7 @@ REASON_GITIGNORED = "gitignored"
 REASON_CONFIG_EXCLUDE = "config_exclude"
 REASON_SIZE_CAP = "size_cap"
 REASON_MINIFIED = "minified_asset"
+REASON_PARSER_UNAVAILABLE = "parser_unavailable"
 
 # Workspace root resolved from the current context (see src/paths.py):
 #   CAIRN_WORKSPACE env > registered ancestor > cwd. Resolved at import time;
@@ -158,29 +160,95 @@ class SkipInfo:
     size_bytes: Optional[int] = None
 
 
-def discover_repos(workspace: str = DEFAULT_WORKSPACE) -> List[Path]:
-    """Return all immediate subdirectories of `workspace` that contain a `.git`.
+@dataclass(frozen=True)
+class RepositoryRecord:
+    repo_id: str
+    path: Path
 
-    Falls back to treating the workspace root itself as a repo if no child
-    directories contain a `.git` but the workspace root does.  This supports
-    the common single-repo use-case where ``cairn init`` is run inside the
-    repository rather than in a parent directory containing multiple repos.
-    """
-    root = Path(workspace)
-    if not root.is_dir():
-        return []
-    repos = []
+
+class RepositoryPath(Path):
+    """Path carrying the stable repository id used by graph storage."""
+
+    __slots__ = ("repo_id",)
+    repo_id: str
+
+
+def _repository_path(record: RepositoryRecord) -> RepositoryPath:
+    path = RepositoryPath(str(record.path))
+    path.repo_id = record.repo_id
+    return path
+
+
+def _descendant_directories(root: Path) -> Iterator[Path]:
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or child.is_symlink():
+            continue
+        if child.name in DEFAULT_SKIP_DIRS or child.name.lower() in DEFAULT_SKIP_DIRS:
+            continue
+        yield child
+        yield from _descendant_directories(child)
+
+
+def _top_level_records(root: Path) -> list[RepositoryRecord]:
+    records = []
     for child in sorted(root.iterdir()):
         if not child.is_dir():
             continue
         if child.name in DEFAULT_SKIP_DIRS or child.name.lower() in DEFAULT_SKIP_DIRS:
             continue
         if (child / ".git").exists():
-            repos.append(child)
-    # Single-repo fallback: workspace root is itself a git repo.
-    if not repos and (root / ".git").exists():
-        repos.append(root)
-    return repos
+            records.append(RepositoryRecord(child.name, child))
+    if records:
+        return records
+    if (root / ".git").exists():
+        return [RepositoryRecord(root.name, root)]
+    return []
+
+
+def discover_repo_records(workspace: str = DEFAULT_WORKSPACE) -> list[RepositoryRecord]:
+    """Return stable ids and roots for every repository selected by config."""
+    root = Path(workspace)
+    if not root.is_dir():
+        return []
+
+    top_level = _top_level_records(root)
+    records: list[RepositoryRecord] = []
+    workspace_config = None
+    for record in top_level:
+        records.append(record)
+        if workspace_config is None:
+            from .config import load_config
+
+            workspace_config = load_config(root)
+        include_nested = workspace_config.include_nested_repos or (
+            load_config(record.path).include_nested_repos
+        )
+        if not include_nested:
+            continue
+
+        for candidate in _descendant_directories(record.path):
+            has_git = (candidate / ".git").exists()
+            if not has_git:
+                continue
+            relative = candidate.relative_to(record.path).as_posix()
+            records.append(
+                RepositoryRecord(f"{record.repo_id}/{relative}", candidate)
+            )
+    return sorted(records, key=lambda item: str(item.path))
+
+
+def discover_repos(workspace: str = DEFAULT_WORKSPACE) -> List[Path]:
+    """Return repository paths; nested repositories require opt-in config.
+
+    Falls back to treating the workspace root itself as a repo if no child
+    directories contain a `.git` but the workspace root does.  This supports
+    the common single-repo use-case where ``cairn init`` is run inside the
+    repository rather than in a parent directory containing multiple repos.
+    """
+    return [
+        _repository_path(record)
+        for record in discover_repo_records(workspace)
+    ]
 
 
 def is_single_repo_workspace(workspace: str = DEFAULT_WORKSPACE) -> bool:
@@ -207,6 +275,9 @@ def resolve_repo_path(workspace: str, repo_name: str) -> Path:
     Multi-repo: ``workspace/repo_name``
     Single-repo: the workspace root itself (repo_name matches root dir name).
     """
+    for record in discover_repo_records(workspace):
+        if record.repo_id == repo_name:
+            return _repository_path(record)
     ws = Path(workspace)
     if is_single_repo_workspace(workspace):
         return ws
@@ -231,7 +302,7 @@ def resolve_file_path(workspace: str, repo_id: str, stored_path: str) -> str:
 def infer_repo_for_path(abs_path: str, workspace: str) -> Optional[str]:
     """Infer the repo name for an absolute file path under the workspace.
 
-    Multi-repo: first path component under workspace is the repo name.
+    Multi-repo: the longest matching repository root owns the path.
     Single-repo: workspace root name is the repo name (no sub-repo directory).
     """
     root = Path(workspace).resolve()
@@ -241,9 +312,16 @@ def infer_repo_for_path(abs_path: str, workspace: str) -> Optional[str]:
         return None
     if not rel.parts:
         return None
-    if is_single_repo_workspace(str(root)):
-        return root.name
-    return rel.parts[0]
+    resolved_path = Path(abs_path).resolve()
+    matching = [
+        record
+        for record in discover_repo_records(workspace)
+        if resolved_path != record.path
+        and str(resolved_path).startswith(str(record.path.resolve()) + os.sep)
+    ]
+    if matching:
+        return max(matching, key=lambda record: len(record.path.parts)).repo_id
+    return None
 
 
 def file_sha256(path: Path) -> str:
@@ -457,6 +535,28 @@ def _is_skipped(path: Path, repo_root: Path) -> bool:
     return not should_index
 
 
+def _iter_repo_files(repo_path: Path) -> Iterator[Path]:
+    boundaries = {
+        str(path.resolve())
+        for path in _descendant_directories(repo_path)
+        if (path / ".git").exists()
+    }
+    for directory, names, files in os.walk(repo_path):
+        kept = []
+        for name in sorted(names):
+            child = Path(directory) / name
+            if child.is_symlink():
+                continue
+            if name in DEFAULT_SKIP_DIRS or name.lower() in DEFAULT_SKIP_DIRS:
+                continue
+            if str(child.resolve()) in boundaries:
+                continue
+            kept.append(name)
+        names[:] = kept
+        for name in sorted(files):
+            yield Path(directory) / name
+
+
 def iter_source_files(repo_path: Path) -> Iterator[Path]:
     """Yield source files under a repo that pass the 4-layer filter.
 
@@ -466,7 +566,7 @@ def iter_source_files(repo_path: Path) -> Iterator[Path]:
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
     exclude_spec, include_spec = _build_config_spec(repo_path)
-    for path in repo_path.rglob("*"):
+    for path in _iter_repo_files(repo_path):
         if not path.is_file():
             continue
         if path.suffix not in EXTENSION_MAP:
@@ -485,13 +585,15 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
     SkipInfos so the builder can record both (symbols/edges for the former,
     skipped_files rows for the latter).
     """
+    repo_id = getattr(repo_path, "repo_id", repo_path.name)
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
     exclude_spec, include_spec = _build_config_spec(repo_path)
 
     files: List[FileInfo] = []
     skips: List[SkipInfo] = []
-    for path in repo_path.rglob("*"):
+    rust_grammar_available: Optional[bool] = None
+    for path in _iter_repo_files(repo_path):
         if not path.is_file():
             continue
         if path.suffix not in EXTENSION_MAP:
@@ -501,13 +603,29 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
         )
         rel = str(path.relative_to(repo_path))
         if should_index:
+            language = resolve_file_language(path.suffix, str(path))
+            if language == "rust":
+                if rust_grammar_available is None:
+                    from ..parsers._registry import is_language_available
+
+                    rust_grammar_available = is_language_available("rust")
+                if not rust_grammar_available:
+                    skips.append(
+                        SkipInfo(
+                            repo=repo_id,
+                            path=str(path),
+                            rel_path=rel,
+                            reason=REASON_PARSER_UNAVAILABLE,
+                        )
+                    )
+                    continue
             files.append(
                 FileInfo(
-                    repo=repo_path.name,
+                    repo=repo_id,
                     repo_path=str(repo_path),
                     path=str(path),
                     rel_path=rel,
-                    language=resolve_file_language(path.suffix, str(path)),
+                    language=language,
                     hash=file_sha256(path),
                 )
             )
@@ -519,7 +637,7 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
                 pass
             skips.append(
                 SkipInfo(
-                    repo=repo_path.name,
+                    repo=repo_id,
                     path=str(path),
                     rel_path=rel,
                     reason=reason,

@@ -1,6 +1,6 @@
 # MCP Tools
 
-Read this when you need the tool surface: what the 22 tools are, how they're
+Read this when you need the tool surface: what the 24 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
 "Tool Quirks" table in [AGENTS.md](../AGENTS.md) — it is kept there so every
 agent session loads it.
@@ -10,7 +10,7 @@ agent session loads it.
 - Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
 - Transports: **stdio** (default, one process per client) or **SSE daemon**
   on `:9876` (`cairn serve start|stop|status|restart`, `run` for foreground).
-- Boot sequence (`server.py:run`): verify exactly 22 tools registered →
+- Boot sequence (`server.py:run`): verify exactly 24 tools registered →
   parent-death watchdog (stdio) → boot catch-up reindex (`ensure_fresh_force`)
   → memory decay → live file watcher (`[watch]` extra).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
@@ -18,17 +18,17 @@ agent session loads it.
 - `CAIRN_READ_ONLY=1` makes the server refuse write tools.
 - Resource `cairn://status` exposes live server status.
 
-## The 22 tools by layer
+## The 24 tools by layer
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-components-dark.png">
-  <img src="diagrams/c4-components.png" alt="MCP server components: boot and lifecycle verifies the 22-tool FastMCP surface; four tool groups dispatch to the graph engine, hybrid retrieval, and knowledge and memory">
+  <img src="diagrams/c4-components.png" alt="MCP server components: boot and lifecycle verifies the 24-tool FastMCP surface; four tool groups dispatch to the graph engine, hybrid retrieval, and knowledge and memory">
 </picture>
 
 Open [diagrams/c4-components.html](diagrams/c4-components.html) for the
 full-size version.
 
-**L1 — Graph** (`tools_graph.py`, 9):
+**L1 — Graph** (`tools_graph.py`, 11):
 
 | Tool | Purpose |
 |---|---|
@@ -38,6 +38,8 @@ full-size version.
 | `impact_analysis` | recursive blast radius (precise; pair with `cross_repo_deps` for public APIs) |
 | `semantic_search` | the hybrid pipeline from [retrieval.md](retrieval.md) |
 | `search_symbols` | FTS5 name search (wildcards, substrings, camelCase) |
+| `repo_map` | deterministic repository orientation with counts, hubs, hotspots, and dropped counts |
+| `file_api` | body-free symbol records for one indexed file; `signature` is null when unavailable |
 | `cross_repo_deps` | cross-repo consumers of a repo's API |
 | `visualize_graph` | Mermaid/DOT/JSON rendering of a subgraph |
 

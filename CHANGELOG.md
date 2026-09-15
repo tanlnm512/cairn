@@ -14,6 +14,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Query-time freshness: every graph MCP tool and CLI query command probes
+  `(size, mtime)` drift and reindexes changed files before answering;
+  `CAIRN_NO_REFRESH=1` / `--no-refresh` and read-only stores answer from the
+  stored graph with a probe-derived staleness banner (no `[watch]` extra
+  required).
+- `cairn blast` computes the reverse-edge blast radius of a git diff
+  (working tree vs `HEAD`, or `--base <ref>` vs merge base) with
+  text/markdown/mermaid/json renderers, precise edges by default (`--fuzzy`
+  opt-in), innermost-symbol seeding by stored spans, and id-based traversal.
+- `cairn map` (CLI + MCP `repo_map`): deterministic repo orientation —
+  per-repo directory clusters with counts, in-degree hubs, global hotspots,
+  explicit dropped counts; zero LLM.
+- MCP `file_api`: signature-only symbol surface per file (kind, qualified
+  name, synthesized signature, span; never bodies) with repo disambiguation.
+- `cairn grep`: regex search over indexed files grouped by innermost
+  enclosing symbol, ranked by in-edge coupling, with `-i`/`--fixed`/`--in`
+  and explicit truncation counts.
+- Wiki/compass pages preserve human-authored `## Notes` sections
+  byte-identically across regeneration; the critic does not evaluate Notes
+  content.
+- `cairn viz --export FILE.html` writes a single self-contained HTML graph
+  view (inline vis-network, no network assets).
+- `cairn build --lsp`: opt-in pyright stdio pass upgrades uniquely resolvable
+  ambiguous Python edges to `exact`; missing/failing server is a no-op with a
+  notice; existing `exact` edges are never downgraded.
+- Rust (`.rs`) indexing via a generic tree-sitter tier (pinned
+  `tree-sitter-rust`); call edges stay `unresolved` (never `exact`).
+- `discover_repos` optionally includes initialized submodules and nested
+  repos (`include_nested_repos`, default off, prefixed repo ids); linked git
+  worktrees seed an independent store from the main checkout then refresh
+  drift. MCP inventory is now 24 tools.
 - `cairn dataflow build --max-symbols N` caps the public symbols indexed per
   run; `CAIRN_DATAFLOW_MAX_SYMBOLS` sets the cap for every builder entry point
   (`cairn build`, `cairn sync`, `cairn dataflow build`). The partial-index

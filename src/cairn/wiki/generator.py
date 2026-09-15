@@ -22,7 +22,11 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import List, Tuple
 
-from ..compass.critic import CriticResult, critic_concept
+from ..compass.critic import (
+    CriticResult,
+    critic_concept,
+    preserved_concept_notes,
+)
 from ..graph.queries import cross_repo_deps, get_stats
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
@@ -99,6 +103,7 @@ def _graph_derived_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) 
         body_parts.append("(none)")
 
     body = "\n".join(body_parts) + "\n"
+    concept_id = f"reports/architecture/{repo}"
     concept = OKFConcept(
         type="Architecture-Report",
         title=f"{repo} Architecture",
@@ -106,7 +111,8 @@ def _graph_derived_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) 
         resource=repo,
         tags=[repo, "architecture"],
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        concept_id=f"reports/architecture/{repo}",
+        concept_id=concept_id,
         body=body,
     )
+    concept.body = preserved_concept_notes(bundle, concept_id, body)
     return [concept]

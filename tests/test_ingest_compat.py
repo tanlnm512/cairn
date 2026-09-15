@@ -3,7 +3,7 @@
 Covers the validation-contract behaviors: VAL-INGEST-017 (a relationship-
 free doc ingests exactly as before -- same core keys and knowledge
 extensions, embedding and search unchanged) and VAL-INGEST-018 (the ingest
-flag set and the 22-tool MCP boot verification are unchanged), plus the
+flag set and MCP boot verification hold), plus the
 dangling-pointer warnings: a declared ``relates_to`` pointer matching
 neither a concept id nor a resource path is surfaced in ingest dry-run and
 ``cairn knowledge rebuild`` output -- naming the doc and the pointer --
@@ -219,7 +219,7 @@ class TestPlainDocBackwardsCompat:
         assert "warning" not in result.output.lower()
 
 
-# --- VAL-INGEST-018: flag set + 22-tool MCP surface unchanged ---
+# --- VAL-INGEST-018: flag set + MCP boot guard ---
 
 
 class TestSurfacesUnchanged:
@@ -236,11 +236,11 @@ class TestSurfacesUnchanged:
         ):
             assert flag in result.output
 
-    def test_mcp_boot_verifies_exactly_22_tools(self):
+    def test_mcp_boot_verifies_exactly_24_tools(self):
         from cairn.mcp_server.server import _EXPECTED_TOOL_COUNT, verify_tool_count
 
         verify_tool_count()  # raises AssertionError on drift
-        assert _EXPECTED_TOOL_COUNT == 22
+        assert _EXPECTED_TOOL_COUNT == 24
 
 
 # --- dangling relates_to pointers are surfaced, never silent ---

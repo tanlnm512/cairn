@@ -1,7 +1,7 @@
 """L1 graph MCP tools: find_definition, get_callers, get_callees,
-impact_analysis, explore, semantic_search, search_symbols, cross_repo_deps,
-plus visualize_graph (a graph renderer, filed under L4 but structurally belongs
-with the graph-query tools).
+impact_analysis, explore, semantic_search, search_symbols, repo_map, file_api,
+cross_repo_deps, plus visualize_graph (a graph renderer, filed under L4 but
+structurally belongs with the graph-query tools).
 
 Each tool is decorated with @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 on the shared FastMCP instance from _server_core, and wrapped with the
@@ -20,6 +20,7 @@ from ._server_core import (
     _append_embed_degradation_footnote,
     _bundle,
     _conn,
+    _fresh_graph,
     _read_only_mode,
     _repo_of,
     _session_id,
@@ -47,6 +48,15 @@ def _clamp(value, lo, hi):
     return max(lo, min(v, hi))
 
 
+def _with_freshness(text: str, freshness) -> str:
+    banner = freshness.banner()
+    return f"{banner}\n{text}" if banner else text
+
+
+def _prepend_banner(text: str, banner: str) -> str:
+    return f"{banner}\n{text}" if banner else text
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def find_definition(name: str) -> str:
@@ -64,14 +74,16 @@ def find_definition(name: str) -> str:
 
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         rows = queries.find_definition(conn, name)
     finally:
         conn.close()
     if not rows:
-        return (
+        return _with_freshness(
             f"No definition found for '{name}'. The name may be misspelled, "
             f"ambiguous, or the symbol lives outside the indexed workspace. "
-            f"Try search_symbols(\"{name}\") to find near matches."
+            f"Try search_symbols(\"{name}\") to find near matches.",
+            freshness,
         )
     out = []
     for r in rows:
@@ -79,7 +91,7 @@ def find_definition(name: str) -> str:
             f"{r['file_path']}:{r['line_start']}  {r['kind']} "
             f"{r['qualified_name'] or r['name']}  ({r['repo']})"
         )
-    return "\n".join(out)
+    return _with_freshness("\n".join(out), freshness)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
@@ -125,6 +137,7 @@ def get_callers_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         rows = queries.get_callers(conn, name, fuzzy=fuzzy, limit=limit)
         used_fallback = False
         if not rows and not fuzzy:
@@ -132,7 +145,11 @@ def get_callers_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
             used_fallback = True
         # Staleness banner: check while conn is open; only relevant when there
         # are results (an empty answer can't be "stale").
-        banner = _staleness_banner(conn, [r["file_path"] for r in rows]) if rows else ""
+        banner = freshness.banner() or (
+            _staleness_banner(conn, [r["file_path"] for r in rows])
+            if rows
+            else ""
+        )
     finally:
         conn.close()
 
@@ -179,7 +196,7 @@ def _render_callers(data: dict) -> str:
         )
     if data["hit_limit"]:
         out.append("  ... hit the limit cap; pass a higher limit for more.")
-    return "\n".join(out)
+    return _prepend_banner("\n".join(out), data.get("stale_banner", ""))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
@@ -216,6 +233,7 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         rows = queries.get_callees(conn, name, fuzzy=fuzzy, limit=limit)
         used_fallback = False
         if not rows and not fuzzy:
@@ -232,6 +250,7 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
         "count": len(rows),
         "used_fallback": used_fallback,
         "hit_limit": hit_limit,
+        "stale_banner": freshness.banner(),
         "callees": [
             {
                 "name": r["callee_name"],
@@ -247,7 +266,11 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
 def _render_callees(data: dict) -> str:
     """Render the structured ``get_callees_data`` result as the prose return."""
     if data["count"] == 0:
-        return f"No callees found for '{data['symbol']}' (checked precise and fuzzy)."
+        return _prepend_banner(
+            f"No callees found for '{data['symbol']}' "
+            "(checked precise and fuzzy).",
+            data.get("stale_banner", ""),
+        )
     if data["used_fallback"]:
         out = [
             f"0 precise callees for '{data['symbol']}'; {data['count']} fuzzy "
@@ -261,7 +284,7 @@ def _render_callees(data: dict) -> str:
         out.append(f"  {c['name']}{tag}  {c['file_path']}:{c['line']}")
     if data["hit_limit"]:
         out.append("  ... hit the limit cap; pass a higher limit for more.")
-    return "\n".join(out)
+    return _prepend_banner("\n".join(out), data.get("stale_banner", ""))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
@@ -313,6 +336,7 @@ def impact_analysis(
     limit = _clamp(limit, 1, 1000)   # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         # Cached path: read precomputed dataflow table (O(1)).
         if cached:
             from cairn.graph.dataflow import get_dataflow as _get_dataflow
@@ -330,7 +354,7 @@ def impact_analysis(
                 else:
                     out.append("  Cross-repo consumers: (none)")
                 out.append("(from precomputed cache — run `cairn dataflow build` to refresh)")
-                return "\n".join(out)
+                return _with_freshness("\n".join(out), freshness)
             # No cache entry — fall through to live analysis below.
 
         # Live path: recursive caller traversal.
@@ -340,6 +364,7 @@ def impact_analysis(
         conn.close()
 
     data = impact_analysis_data(result, xref, name=name, fuzzy=fuzzy, limit=limit)
+    data["stale_banner"] = freshness.banner()
     if structured:
         return ImpactAnalysisResult.model_validate(data)
     return _render_impact_analysis(data, limit=limit)
@@ -401,7 +426,7 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
     if dependents:
         consumer_list = ", ".join(f"{d['repo']} (x{d['count']})" for d in dependents[:5])
         out.append(f"Cross-repo: {len(dependents)} repo(s) depend — {consumer_list}")
-    return "\n".join(out)
+    return _prepend_banner("\n".join(out), data.get("stale_banner", ""))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -443,6 +468,7 @@ def explore(query: str) -> str:
     conn = _conn()
     tribal: list = []
     try:
+        freshness = _fresh_graph(conn)
         result = queries.explore(conn, query)
         if result["seeds"]:
             from cairn.graph import note_contention
@@ -476,8 +502,12 @@ def explore(query: str) -> str:
     hops = result["dispatch_hops"]
 
     if not seeds:
-        return _append_embed_degradation_footnote(
-            f"No symbols matching '{query}'. Try a broader query or use search_symbols."
+        return _with_freshness(
+            _append_embed_degradation_footnote(
+                f"No symbols matching '{query}'. "
+                "Try a broader query or use search_symbols."
+            ),
+            freshness,
         )
 
     out = [f'=== explore: "{query}" ===']
@@ -569,7 +599,9 @@ def explore(query: str) -> str:
                 out.append(f"    How to apply: {apply_line}")
     else:
         out.append("  (none)")
-    return _append_embed_degradation_footnote("\n".join(out))
+    return _with_freshness(
+        _append_embed_degradation_footnote("\n".join(out)), freshness
+    )
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
@@ -623,28 +655,25 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
     """
     from cairn.graph import embeddings as emb
 
-    if not emb.embeddings_available():
-        return emb.install_hint()
-
-    # Surface the dep-free hash fallback once per process: under it the cosine
-    # signal is token-overlap only, not real semantic meaning. Provenance on
-    # each result (semantic (hash backend) / fused(bm25+semantic, hash)) carries
-    # the signal on every call; this warning catches a caller reading just the
-    # score/label.
-    emb.warn_hash_fallback_once(logger, context="semantic_search")
-
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
+        if not emb.embeddings_available():
+            return _with_freshness(emb.install_hint(), freshness)
+
+        emb.warn_hash_fallback_once(logger, context="semantic_search")
+
         # Do NOT lazily embed during a search query -- embed_all() writes contend
         # with the daemon's WAL lock and fails with "database is locked". Embedding
         # is a build-time operation (`cairn embed`).
         if emb.embed_count(conn) == 0:
-            return (
+            return _with_freshness(
                 "Semantic index is empty. Run `cairn embed` once to index the "
                 "corpus (build-time, ~1-2 min for 50k symbols), then retry "
                 "this query. Embedding is not done lazily during search to "
-                "avoid write-lock contention with the running server."
+                "avoid write-lock contention with the running server.",
+                freshness,
             )
         from cairn.graph import queries
         rows = queries.semantic_search(conn, query, limit=limit, include_callers=include_callers, rerank=rerank)
@@ -654,6 +683,7 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
     data = {
         "query": query,
         "count": len(rows),
+        "stale_banner": freshness.banner(),
         "matches": [
             {
                 "kind": r["kind"],
@@ -675,7 +705,10 @@ def semantic_search(query: str, limit: int = 20, include_callers: bool = False, 
     if structured:
         return SemanticSearchResult.model_validate(data)
     return _append_embed_degradation_footnote(
-        _render_semantic_search(data, include_callers=include_callers)
+        _prepend_banner(
+            _render_semantic_search(data, include_callers=include_callers),
+            data["stale_banner"],
+        )
     )
 
 
@@ -685,12 +718,13 @@ def _render_semantic_search(data: dict, include_callers: bool = False) -> str:
     rows = data["matches"]
     if not rows:
         fusion_on = os.environ.get("CAIRN_FUSION", "1") != "0"
-        return (
+        return _prepend_banner(
             f"No matches for '{query}' -- neither the vector scan nor the "
             f"BM25 fallback found anything{'' if fusion_on else ' above the cosine threshold'}. "
             "The corpus may not be embedded yet (run `cairn embed` to index), or the "
             "wording may not match any token. Try search_symbols(\"...\") for a "
-            "lexical match, or rephrase with more specific terms."
+            "lexical match, or rephrase with more specific terms.",
+            data.get("stale_banner", ""),
         )
     out = [f"=== semantic_search: \"{query}\" ({len(rows)} match(es)) ==="]
     for r in rows:
@@ -762,6 +796,7 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
 
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         rows = queries.search_symbols(conn, pattern, kind=kind or None)
     finally:
         conn.close()
@@ -789,6 +824,7 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
         "count": len(returned),
         "total_count": len(rows),
         "truncated": len(rows) > SHOWN,
+        "stale_banner": freshness.banner(),
         "symbols": [
             {
                 "kind": r["kind"],
@@ -807,11 +843,12 @@ def _render_search_symbols(data: dict) -> str:
     # total_count is the full DB match count; count is how many were shipped.
     total_count = data.get("total_count", data["count"])
     if total_count == 0:
-        return (
+        return _prepend_banner(
             f"No symbols matching '{data['pattern']}'. The token may not be indexed or "
             f"may use different casing/wording. Try a broader pattern (fewer "
             f"characters, a leading wildcard), or semantic_search(\"{data['pattern']}\") "
-            f"to match by meaning."
+            f"to match by meaning.",
+            data.get("stale_banner", ""),
         )
     out = [f"{total_count} symbols matching '{data['pattern']}':"]
     for s in data["symbols"]:
@@ -820,7 +857,99 @@ def _render_search_symbols(data: dict) -> str:
         )
     if data["truncated"]:
         out.append(f"  ... and {total_count - len(data['symbols'])} more")
-    return "\n".join(out)
+    return _prepend_banner("\n".join(out), data.get("stale_banner", ""))
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
+@instrument
+def repo_map(structured: bool = False) -> str | dict:
+    """Return a deterministic repository orientation map.
+
+    Groups directory clusters per repository with file, symbol, and edge
+    counts; ranks hubs by incoming edges; and reports workspace hotspots.
+    Every capped array includes its dropped count.
+
+    structured: when True, returns the canonical map object instead of text.
+    """
+    from cairn.graph.repo_map import build_repo_map
+
+    conn = _conn()
+    try:
+        freshness = _fresh_graph(conn)
+        result = build_repo_map(conn)
+    finally:
+        conn.close()
+    if structured:
+        return result
+    return _with_freshness(_render_repo_map(result), freshness)
+
+
+def _render_repo_map(result: dict) -> str:
+    """Render the canonical repository map as bounded prose."""
+    lines = []
+    for scope in result["repos"]:
+        lines.append(f"Repository {scope['repo']}")
+        for cluster in scope["clusters"]:
+            lines.append(
+                f"  {cluster['path']}: {cluster['files']} files, "
+                f"{cluster['symbols']} symbols, {cluster['edges']} edges"
+            )
+            for hub in cluster["hubs"]:
+                lines.append(
+                    f"    {hub['qualified_name']} "
+                    f"({hub['path']}, in-degree {hub['incoming']})"
+                )
+            lines.append(f"    dropped hubs: {cluster['dropped_hubs']}")
+        lines.append(f"  dropped clusters: {scope['dropped_clusters']}")
+    lines.append("Workspace hotspots")
+    for hotspot in result["hotspots"]:
+        lines.append(
+            f"  {hotspot['repo']}:{hotspot['path']} "
+            f"{hotspot['qualified_name']} (in-degree {hotspot['incoming']})"
+        )
+    lines.append(f"  dropped hotspots: {result['dropped_hotspots']}")
+    return "\n".join(lines)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
+@instrument
+def file_api(
+    path: str, repo: str | None = None, structured: bool = False
+) -> str | list[dict]:
+    """Return every stored symbol in one indexed file without bodies.
+
+    Each record has name, kind, qualified name, signature text or null, and
+    inclusive line span. A null signature means no signature signal was stored.
+
+    repo: repository id required when the same relative path exists in
+    multiple indexed repositories.
+    structured: when True, returns the symbol records instead of text.
+    """
+    from cairn.graph.file_api import file_api as graph_file_api
+
+    conn = _conn()
+    try:
+        freshness = _fresh_graph(conn)
+        symbols = graph_file_api(conn, path, repo=repo)
+    finally:
+        conn.close()
+    if structured:
+        return symbols
+    return _with_freshness(_render_file_api(path, symbols), freshness)
+
+
+def _render_file_api(path: str, symbols: list[dict]) -> str:
+    """Render file symbols with signatures and spans, never bodies."""
+    if not symbols:
+        return f"No indexed symbols in '{path}'."
+    lines = [f"{len(symbols)} symbols in '{path}':"]
+    for symbol in symbols:
+        signature = symbol["signature"] or "signature unavailable"
+        lines.append(
+            f"  {symbol['kind']} {signature} "
+            f"[{symbol['line_start']}, {symbol['line_end']}]"
+        )
+    return "\n".join(lines)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -835,6 +964,7 @@ def cross_repo_deps(repo: str, limit: int = 50) -> str:
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         result = queries.cross_repo_deps(conn, repo)
     finally:
         conn.close()
@@ -856,7 +986,7 @@ def cross_repo_deps(repo: str, limit: int = 50) -> str:
             out.append(f"  ... and {len(dependents) - limit} more")
     else:
         out.append("  (none)")
-    return "\n".join(out)
+    return _with_freshness("\n".join(out), freshness)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))

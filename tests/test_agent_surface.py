@@ -379,9 +379,8 @@ def test_tool_count_string_matches_server():
     """The "N tools across M layers" string must match the server's
     ``_EXPECTED_TOOL_COUNT``.
 
-    Catches drift where a tool is added/removed and the installer blurb (and the
-    on-disk AGENTS.md) still advertise the old count. The previous regression
-    was "24 tools" lingering after the count became 26.
+    Catches tool-add/remove drift between the server count and the installer
+    blurb or on-disk AGENTS.md.
     """
     # Authoritative count lives in the server source.
     server_src = (SRC / "mcp_server" / "server.py").read_text(encoding="utf-8")
@@ -440,8 +439,8 @@ def test_skill_tool_index_lists_all_registered_tools():
     """
     registered = _scrape_mcp_tool_names()
     assert registered, "no @mcp.tool() functions scraped from tools_*.py"
-    assert len(registered) == 22, (
-        f"expected 22 registered tools, scraper found {len(registered)}: "
+    assert len(registered) == 24, (
+        f"expected 24 registered tools, scraper found {len(registered)}: "
         f"{sorted(registered)}"
     )
 

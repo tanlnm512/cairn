@@ -29,6 +29,7 @@ from ..okf.concept import OKFConcept
 
 # Cap revise cycles to bound the generator->critic->revise loop.
 from ..llm.tasks import MAX_REVISE_CYCLES
+from .critic import preserved_concept_notes
 
 # LIKE escape char: literal '%'/'_' in module paths must not act as wildcards.
 LIKE_ESCAPE_CHAR = "\\"
@@ -129,7 +130,7 @@ def generate_compass(
     tags = [repo_filter] if repo_filter else []
     tags += [t for t in module_path.split("/") if t]
 
-    return OKFConcept(
+    concept = OKFConcept(
         type="Compass",
         title=title,
         description=f"Navigation guide for {module_path}",
@@ -139,6 +140,8 @@ def generate_compass(
         concept_id=concept_id,
         body=body,
     )
+    concept.body = preserved_concept_notes(bundle, concept_id, body)
+    return concept
 
 
 # --- helpers -------------------------------------------------------------
@@ -397,6 +400,7 @@ def generate_compass_with_llm(
         concept_id=concept_id,
         body=draft,
     )
+    concept.body = preserved_concept_notes(bundle, concept_id, draft)
     return {
         "concept": concept,
         "mode": "llm",

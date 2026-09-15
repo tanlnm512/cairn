@@ -30,7 +30,7 @@ lives alongside it and is loaded on demand:
 
 Full descriptions: `references/tools.md`. Names by layer:
 
-- **Graph (L1):** explore, semantic_search, find_definition, get_callers, get_callees, impact_analysis, search_symbols, cross_repo_deps, visualize_graph
+- **Graph (L1):** explore, semantic_search, find_definition, get_callers, get_callees, impact_analysis, search_symbols, repo_map, file_api, cross_repo_deps, visualize_graph
 - **Knowledge Base + Compass (L2/3):** search_knowledge, get_compass, trace_flow, generate_flow
 - **Memory (L4):** recall_memory, record_memory
 - **Knowledge Documents (L5):** knowledge_add, knowledge_search, knowledge_delete, knowledge_status, trace_workflow, wiki_generate

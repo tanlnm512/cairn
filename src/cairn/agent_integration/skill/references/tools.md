@@ -11,6 +11,8 @@ server. SKILL.md keeps only a name index — come here for the details.
 - `get_callees(name, fuzzy=False, limit=200, structured=False)` -- What this function calls (precise drops stdlib/external; fuzzy includes them). `structured=True` returns a typed result object instead of the rendered text.
 - `impact_analysis(name, depth=5, fuzzy=False, cached=False, limit=500, structured=False)` -- Recursive what-breaks (within-repo). `cached=True` uses the precomputed dataflow index (run `cairn dataflow build` first) — the default `cached=False` walks the live caller graph. `structured=True` returns a typed result object instead of the rendered text. See `references/golden-rules.md` Rule 6 before calling this on a common/lifecycle name.
 - `search_symbols(pattern, kind="", structured=False)` -- Lexical BM25 FTS5 symbol search. `structured=True` returns a typed result object instead of the rendered text.
+- `repo_map(structured=False)` -- Deterministic repository orientation map with directory clusters, counts, hubs, hotspots, and dropped counts. `structured=True` returns the canonical map object.
+- `file_api(path, structured=False)` -- Body-free symbol records for one indexed file. A null signature means no signature signal was stored. `structured=True` returns the symbol records.
 - `cross_repo_deps(repo, limit=50)` -- Cross-repo dependency map
 - `visualize_graph(scope, symbol?, module?, repo?, depth=3, format="mermaid")` -- Mermaid/DOT/JSON diagram of a symbol/module/impact/repo/deps scope
 

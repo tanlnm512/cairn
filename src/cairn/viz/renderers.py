@@ -1,7 +1,9 @@
-"""Mermaid, DOT, and JSON renderers for a {nodes, edges, metadata} graph."""
+"""Mermaid, DOT, JSON, and self-contained HTML renderers for a graph."""
 from __future__ import annotations
 
+import html
 import json
+from importlib import resources
 from typing import Dict
 
 
@@ -59,6 +61,45 @@ def to_json(graph: Dict) -> str:
     return json.dumps(graph, indent=2, default=str)
 
 
+def to_html(graph: Dict) -> str:
+    """Render a graph as one self-contained HTML document.
+
+    The page inlines the dashboard's local vis-network viewer, the graph
+    JSON escaped for a script context, and the Mermaid source as a text
+    fallback; it references no network assets.
+    """
+    meta = graph.get("metadata", {})
+    focus = meta.get("symbol") or meta.get("module") or meta.get("repo") or ""
+    scope = meta.get("scope", "graph")
+    title = html.escape(f"cairn viz — {scope}: {focus}" if focus else f"cairn viz — {scope}")
+    return "\n".join([
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>{title}</title>",
+        f"<style>{_HTML_CSS}</style>",
+        "</head>",
+        "<body>",
+        f"<h1>{title}</h1>",
+        '<div id="cairn-graph" aria-label="Selected graph scope"></div>',
+        "<details>",
+        "<summary>Mermaid source</summary>",
+        f'<pre class="mermaid-source">{_html_text(to_mermaid(graph))}</pre>',
+        "</details>",
+        '<script type="application/json" id="cairn-graph-data">',
+        _script_json(graph),
+        "</script>",
+        "<script>",
+        _viewer_js(),
+        "</script>",
+        f"<script>{_HTML_BOOTSTRAP}</script>",
+        "</body>",
+        "</html>",
+    ]) + "\n"
+
+
 def embed(graph: Dict) -> str:
     """Wrap Mermaid output in an OKF-compatible markdown block."""
     meta = graph.get("metadata", {})
@@ -101,6 +142,71 @@ def _mermaid_esc(text: str) -> str:
         .replace("]", "\\]")
         .replace("\n", " ")
     )
+
+
+def _script_json(value) -> str:
+    """JSON escaped for embedding inside a ``<script>`` element."""
+    return (
+        json.dumps(value, default=str)
+        .replace("<", "\\u003c")
+        .replace(" ", "\\u2028")
+        .replace(" ", "\\u2029")
+    )
+
+
+def _html_text(text: str) -> str:
+    """Escape text for an HTML text node while keeping ``-->`` readable."""
+    return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def _viewer_js() -> str:
+    """The dashboard's bundled vis-network build, without its source-map pointer."""
+    text = (
+        resources.files("cairn.dashboard")
+        .joinpath("static/vis-network.min.js")
+        .read_text(encoding="utf-8")
+    )
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.startswith("//# sourceMappingURL=")
+    )
+
+
+_HTML_CSS = """
+:root { color-scheme: light dark; }
+body { margin: 0; padding: 1rem; font: 14px/1.5 system-ui, sans-serif; }
+#cairn-graph { height: 75vh; border: 1px solid #888; border-radius: 8px; }
+details { margin-top: 1rem; }
+pre { overflow-x: auto; padding: 0.75rem; border: 1px solid #888; border-radius: 8px; }
+"""
+
+_HTML_BOOTSTRAP = """
+(function () {
+  var payload = JSON.parse(
+    document.getElementById("cairn-graph-data").textContent
+  );
+  var nodes = payload.nodes.map(function (n) {
+    var tip = n.kind ? n.id + " (" + n.kind + ")" : n.id;
+    return { id: n.id, label: n.id, title: tip };
+  });
+  var edges = payload.edges
+    .filter(function (e) { return e.source && e.target; })
+    .map(function (e) {
+      return {
+        from: e.source,
+        to: e.target,
+        label: e.label || e.kind || undefined,
+        arrows: "to",
+      };
+    });
+  new vis.Network(
+    document.getElementById("cairn-graph"),
+    { nodes: nodes, edges: edges },
+    { interaction: { hover: true } }
+  );
+})();
+"""
 
 
 _SHAPES = {
