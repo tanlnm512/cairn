@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Merge queue: once the queue is enabled on main's branch protection, the
+  # full matrix below gates the queued merge itself (same triggers as push).
+  merge_group:
 
 permissions:
   contents: read
@@ -28,23 +31,25 @@ jobs:
   security:
     name: Security (pip-audit + bandit)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+      - uses: astral-sh/setup-uv@v10.1.0
+      # Every job installs from the committed uv.lock (exact pinned set) via
+      # `uv sync` -- the lockfile is the dependency set CI tests, not a fresh
+      # pip resolution. `uv run --no-sync` then executes from that venv.
+      # [otlp] rides the audit: it's a user-facing install surface
+      # (pip install cairn-intel[otlp]) -- a CVE there must fail this gate.
       - name: Install (with dev + otlp extras)
-        run: |
-          python -m pip install --upgrade pip
-          # [otlp] rides the audit too: it's a user-facing install surface
-          # (pip install cairn-intel[otlp]) -- a CVE there must fail this gate.
-          pip install -e ".[dev,otlp]"
+        run: uv sync --extra dev --extra otlp
       - name: pip-audit (hard gate -- known-vulnerable deps fail here)
-        run: pip-audit
+        run: uv run --no-sync pip-audit
       - name: bandit (advisory)
         continue-on-error: true
-        run: bandit -r src -ii -ll -s B608
+        run: uv run --no-sync bandit -r src -ii -ll -s B608
 
   # --- Type checking: HARD gate --------------------------------------------
   # mypy runs clean at default settings (--ignore-missing-imports because
@@ -54,18 +59,17 @@ jobs:
   typecheck:
     name: Type check (mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Install (with dev extras)
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --extra dev
       - name: mypy
-        run: mypy --ignore-missing-imports src
+        run: uv run --no-sync mypy --ignore-missing-imports src
 
   # --- Conventional Commit PR-title gate (hard) ---------------------------
   # Mirrors the commitizen convention that `cz bump` derives the SemVer bump
@@ -106,6 +110,7 @@ jobs:
   pre-commit:
     name: pre-commit (all local gates)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -116,10 +121,11 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - name: Install pre-commit
-        run: pip install "pre-commit>=4.0"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
       - name: Run all hooks
-        run: pre-commit run --all-files
+        run: uv run --no-sync pre-commit run --all-files
 
   # --- Dependency review for PRs (supply-chain, complements pip-audit) -----
   # pip-audit scans the fully-resolved environment; this checks the *delta* a
@@ -142,11 +148,12 @@ jobs:
       fail-fast: false
       matrix:
         # pyproject declares >=3.10; cover the supported CPython range.
-        # PRs run the ceiling leg only (with xdist, minutes); every push to
-        # main runs the FULL matrix, so a merge is always fully covered
-        # before a release tag can be cut. 3.14 is declared in classifiers
+        # PRs run the ceiling leg only (with xdist, minutes); every
+        # merge-group entry and push to main runs the FULL matrix, so a
+        # merge is always fully covered (with the queue enabled, the gate
+        # runs on the queued merge itself). 3.14 is declared in classifiers
         # but very new -- wheel gaps fail loudly here, not silently pass.
-        python-version: ${{ github.event_name == 'push' && fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') || fromJSON('["3.14"]') }}
+        python-version: ${{ github.event_name != 'pull_request' && fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') || fromJSON('["3.14"]') }}
 
     steps:
       - uses: actions/checkout@v5
@@ -155,44 +162,45 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Install (with dev + ingest extras)
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,ingest]"
+        run: uv sync --extra dev --extra ingest --python ${{ matrix.python-version }}
 
       - name: Validate skill eval specs
-        run: python scripts/run_skill_evals.py
+        run: uv run --no-sync python scripts/run_skill_evals.py
 
       - name: Run core smoke subset
-        run: pytest -m core -q
+        run: uv run --no-sync pytest -m core -q
 
       - name: Run full test suite
         run: |
-          # Coverage rides one leg only (3.12, main pushes): collecting it on
-          # every matrix leg is redundant signal at ~real minutes each.
-          # The infra tier (bench/dataset/soak tests) is excluded on PR legs
-          # and run by the dedicated step below on every main push — no
-          # addopts on purpose: the bench job's `-k t2` gate runs without -m.
-          # -n auto: pytest-xdist across the runner's cores; --durations keeps
-          # per-test hot spots visible in the job log.
+          # Coverage rides one leg only (3.12, non-PR events): collecting it
+          # on every matrix leg is redundant signal at ~real minutes each.
+          # The infra tier (bench/dataset/soak tests) is excluded from PR
+          # legs and run by the dedicated step below on every non-PR event —
+          # no addopts on purpose: the bench job's `-k t2` gate runs without
+          # -m. -n auto: pytest-xdist across the runner's cores; --durations
+          # keeps per-test hot spots visible in the job log.
           if [ "${{ matrix.python-version }}" = "3.12" ]; then
-            pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
+            uv run --no-sync pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
           else
-            pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml
+            uv run --no-sync pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml
           fi
 
-      - name: Run infra tier (main pushes only)
+      - name: Run infra tier (non-PR events only)
         # The bench/dataset/soak infrastructure tier: excluded from PR legs
-        # above, but every merge runs it so the tier can never rot.
-        if: github.event_name == 'push' && matrix.python-version == '3.12'
-        run: pytest -q -m infra
+        # above, but every merge-group entry and main push runs it so the
+        # tier can never rot.
+        if: github.event_name != 'pull_request' && matrix.python-version == '3.12'
+        run: uv run --no-sync pytest -q -m infra
 
       - name: Publish test summary
         if: always()
         run: |
-          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          # stdlib-only summary; system python3, no project venv needed.
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import xml.etree.ElementTree as ET
           import os
           path = "test-results.xml"
@@ -221,7 +229,7 @@ jobs:
       - name: Coverage summary
         if: always() && matrix.python-version == '3.12'
         run: |
-          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import xml.etree.ElementTree as ET
           try:
               root = ET.parse("coverage.xml").getroot()
@@ -256,15 +264,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Install (with dev extras)
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --extra dev
 
       - name: Verify DS-v2 ground-truth seal (558 expectations, both corpora)
-        run: python benchmarks/datasource/ds2/verify_dataset.py
+        run: uv run --no-sync python benchmarks/datasource/ds2/verify_dataset.py
 
   # Packaging canary, MAIN PUSHES ONLY: verifies `python -m build` (sdist +
   # wheel) stays green on every merge so packaging breakage surfaces between
@@ -274,8 +280,9 @@ jobs:
   # merge commit itself.
   build:
     name: Build wheel + sdist
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: test
     steps:
       - uses: actions/checkout@v5
@@ -283,18 +290,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Build distributions
         run: |
-          python -m pip install --upgrade pip build
-          python -m build
+          uv sync --extra dev
+          uv run --no-sync python -m build
 
       - name: Verify the wheel imports
         run: |
-          python -m pip install --upgrade pip
-          pip install dist/*.whl
-          python -c "import cairn; print('ok')"
+          uv pip install --python .venv/bin/python dist/*.whl
+          uv run --no-sync python -c "import cairn; print('ok')"
 
       - uses: actions/upload-artifact@v6
         with:
@@ -324,6 +330,7 @@ jobs:
   bench:
     name: Bench (advisory baseline comparison)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write  # post the advisory comparison comment
@@ -333,7 +340,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+      - uses: astral-sh/setup-uv@v10.1.0
 
       # Restore the newest main-minted rolling baseline (same hosted runner
       # class). The exact key embeds the run id so it always misses by
@@ -352,9 +359,7 @@ jobs:
             bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+        run: uv sync
 
       # T1 content pin (FR-001/AC2): regenerate the corpus from the manifest
       # recipe and assert the pinned tree-hash + counts. This is the one
@@ -363,7 +368,7 @@ jobs:
       # Size 300 = the perf default `cairn bench` itself uses (--n-files);
       # the full 5000 pin would burn CI minutes for no extra signal here.
       - name: Verify benchmark datasource (T1 content pin)
-        run: python scripts/verify_datasource.py --size 300
+        run: uv run --no-sync python scripts/verify_datasource.py --size 300
 
       # T2 checks (FR-002/AC3+AC4). The size-budget half needs NO extra step:
       # since T007, verify_datasource.py measures both budget scopes (t2/ <=
@@ -378,8 +383,8 @@ jobs:
       # from collecting the vendored upstream's own test files.
       - name: T2 smoke test (vendored snapshot build+query)
         run: |
-          pip install -e ".[test]"
-          pytest tests/ -q -k t2
+          uv sync --extra test
+          uv run --no-sync pytest tests/ -q -k t2
 
       # Rolling comparison: prefer the restored main-minted baseline
       # (same hosted class, deltas meaningful); cold start falls back to
@@ -400,7 +405,7 @@ jobs:
           else
             BASE="--baseline DS-v1"
           fi
-          cairn bench --suite perf --embed-backend hash --repeats 3 \
+          uv run --no-sync cairn bench --suite perf --embed-backend hash --repeats 3 \
             --json --save bench-current.json \
             $BASE
 
@@ -430,7 +435,7 @@ jobs:
       - name: Compare vs baseline (advisory summary)
         if: always()
         continue-on-error: true
-        run: python .github/scripts/bench_compare.py
+        run: uv run --no-sync python .github/scripts/bench_compare.py
 
       - name: Upload bench result
         if: always()
