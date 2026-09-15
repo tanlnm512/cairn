@@ -142,13 +142,11 @@ jobs:
       fail-fast: false
       matrix:
         # pyproject declares >=3.10; cover the supported CPython range.
-        # PRs run the floor+ceiling legs only (3.10/3.14 -- where
-        # version-specific and tree-sitter/sqlite-vec wheel-gap breakage
-        # lives); every push to main runs the FULL matrix, so a merge is
-        # always fully covered before a release tag can be cut. 3.14 is
-        # declared in classifiers but very new -- wheel gaps fail loudly
-        # here, not silently pass.
-        python-version: ${{ github.event_name == 'push' && fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') || fromJSON('["3.10", "3.14"]') }}
+        # PRs run the ceiling leg only (with xdist, minutes); every push to
+        # main runs the FULL matrix, so a merge is always fully covered
+        # before a release tag can be cut. 3.14 is declared in classifiers
+        # but very new -- wheel gaps fail loudly here, not silently pass.
+        python-version: ${{ github.event_name == 'push' && fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') || fromJSON('["3.14"]') }}
 
     steps:
       - uses: actions/checkout@v5
@@ -177,10 +175,12 @@ jobs:
           # The infra tier (bench/dataset/soak tests) is excluded on PR legs
           # and run by the dedicated step below on every main push — no
           # addopts on purpose: the bench job's `-k t2` gate runs without -m.
+          # -n auto: pytest-xdist across the runner's cores; --durations keeps
+          # per-test hot spots visible in the job log.
           if [ "${{ matrix.python-version }}" = "3.12" ]; then
-            pytest -q -m "not infra" --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
+            pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
           else
-            pytest -q -m "not infra" --junitxml=test-results.xml
+            pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml
           fi
 
       - name: Run infra tier (main pushes only)

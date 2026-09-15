@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Dataflow builds upsert rows in batches and compute the repo-keyed
   `cross_repo_deps` payload once per repo per run instead of once per symbol.
+- CI test legs run the suite under pytest-xdist (`-n auto --durations=25`);
+  PR legs run the Python 3.14 ceiling only — the full 3.10-3.14 matrix still
+  gates every push to main. Eval-path tests pin the dep-free hash embedder,
+  keeping the semantic model out of the retrieval loop.
 
 
 ## [0.20.2] - 2026-09-13
