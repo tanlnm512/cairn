@@ -529,3 +529,67 @@ def test_empty_radius_exits_zero_and_states_no_dependents(tmp_path, monkeypatch)
 
     assert result.exit_code == 0
     assert "No dependents" in result.stdout
+
+
+@pytest.mark.parametrize("case", ["unindexed", "deleted"])
+def test_no_seed_empty_radius_still_states_no_dependents(
+    tmp_path, monkeypatch, case
+):
+    graph_files = {"edges": []}
+    if case == "deleted":
+        graph_files["leaf.py"] = [("changed", "function", 1, 2)]
+    _workspace, repo, db_path = _prepare_workspace(
+        tmp_path,
+        monkeypatch,
+        files={"leaf.py": "def changed():\n    return 1\n"},
+        graph_files=graph_files,
+    )
+    leaf = repo / "leaf.py"
+    if case == "unindexed":
+        leaf.write_text(
+            leaf.read_text().replace("    return 1", "    return 11"),
+            encoding="utf-8",
+        )
+    else:
+        leaf.unlink()
+    monkeypatch.setenv("CAIRN_DB", str(db_path))
+
+    result = _run_blast(db_path, "--no-refresh")
+
+    assert result.exit_code == 0
+    assert "No dependents" in result.stdout
+
+
+def test_mermaid_renders_every_dependency_with_unique_nodes():
+    from cairn.graph.blast import render_blast
+
+    result = {
+        "basis": {"kind": "worktree", "base": "HEAD"},
+        "seeds": [
+            {
+                "id": "seed-one",
+                "name": "a-b",
+                "file_path": "one.py",
+            },
+            {
+                "id": "seed-two",
+                "name": "a_b",
+                "file_path": "two.py",
+            },
+        ],
+        "radius": [
+            {
+                "symbol": "dependent",
+                "file": "dependent.py",
+                "repo": "demo",
+                "depth": 0,
+                "depends_on": ["a-b", "a_b"],
+                "depends_on_ids": ["seed-one", "seed-two"],
+            }
+        ],
+    }
+
+    rendered = render_blast(result, "mermaid")
+    edges = [line.strip() for line in rendered.splitlines() if " --> " in line]
+
+    assert edges == ["a_b --> dependent", "a_b_2 --> dependent"]

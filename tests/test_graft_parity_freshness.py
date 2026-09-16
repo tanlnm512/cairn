@@ -262,6 +262,21 @@ def test_read_only_store_answers_with_drift_report_and_no_writes(
     assert freshness.reindexed_paths == []
 
 
+def test_mcp_callers_stale_banner_appears_once(freshness, monkeypatch):
+    import cairn.mcp_server.tools_graph as tools_graph
+
+    db_path = freshness.activate("callers-stale-banner")
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    monkeypatch.setenv("CAIRN_NO_REFRESH", "1")
+    monkeypatch.setattr(tools_graph, "_conn", lambda: connection)
+
+    result = tools_graph.get_callers(OLD_NAME)
+
+    assert OLD_NAME in result
+    assert result.count("Stale graph") == 1
+
+
 def test_clean_tree_is_quiet_and_does_not_reindex(freshness, monkeypatch):
     from cairn.cli import main
 

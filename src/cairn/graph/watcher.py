@@ -135,7 +135,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
     changed: list[str] = []
 
     for repo_path in scanner_mod.discover_repos(workspace):
-        repo_name = repo_path.name
+        repo_name = scanner_mod.repository_id(repo_path)
         try:
             file_rows = conn.execute(
                 "SELECT path, size, mtime FROM files WHERE repo_id = ?",

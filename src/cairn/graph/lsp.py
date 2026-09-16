@@ -42,6 +42,7 @@ class PyrightStdioTransport:
         self._next_id = 1
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
         self._reader = threading.Thread(
             target=self._read_responses, name="cairn-pyright-reader", daemon=True
         )
@@ -69,12 +70,30 @@ class PyrightStdioTransport:
                 message = json.loads(body.decode("utf-8"))
             except (KeyError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
+            if "method" in message:
+                if "id" in message:
+                    self._reject_server_request(message["id"])
+                continue
             request_id = message.get("id")
             if isinstance(request_id, int):
                 with self._lock:
                     pending = self._pending.get(request_id)
                 if pending is not None:
                     pending.put(message)
+
+    def _reject_server_request(self, request_id: Any) -> None:
+        response = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": -32601,
+                "message": "Cairn does not accept server-to-client requests",
+            },
+        }
+        try:
+            self._write_message(response)
+        except (BrokenPipeError, OSError, RuntimeError):
+            return
 
     def _send(self, method: str, params: Any, request_id: int | None) -> None:
         message: dict[str, Any] = {
@@ -84,18 +103,22 @@ class PyrightStdioTransport:
         }
         if request_id is not None:
             message["id"] = request_id
+        self._write_message(message)
+
+    def _write_message(self, message: dict[str, Any]) -> None:
         body = json.dumps(message, separators=(",", ":")).encode("utf-8")
-        frame = (
-            f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
-        )
+        frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
         stdin = self._process.stdin
         if stdin is None:
             raise RuntimeError("pyright stdin is closed")
-        try:
-            stdin.write(frame)
-            stdin.flush()
-        except (BrokenPipeError, OSError) as error:
-            raise RuntimeError("pyright exited before accepting a request") from error
+        with self._write_lock:
+            try:
+                stdin.write(frame)
+                stdin.flush()
+            except (BrokenPipeError, OSError) as error:
+                raise RuntimeError(
+                    "pyright exited before accepting a request"
+                ) from error
 
     def request(self, method: str, params: Any) -> Any:
         with self._lock:

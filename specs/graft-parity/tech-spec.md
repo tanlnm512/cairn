@@ -556,3 +556,28 @@ pins the old no-Rust coverage; new Rust tests own that contract.
 - **Consequences**: Repository discovery keeps `repo_id` attributes and
   path-comparison behavior on all supported runtimes. Cost: one runtime
   capability check at module import.
+
+### D-016: Review fixes bind nested updates, JSON-RPC, and rendering to stable identities
+- **Context**: Review found freshness, incremental update, hook installation,
+  and sync paths reconstructing nested repository ids from path names in
+  `src/cairn/cli/system/sync.py`, `src/cairn/cli/uninstall.py`, and
+  `src/cairn/hooks/git_hooks.py`;
+  `src/cairn/graph/lsp.py` treating server requests as responses;
+  `src/cairn/graph/blast.py` dropping multi-parent Mermaid edges and silent
+  no-seed empty radii; and `src/cairn/mcp_server/tools_graph.py` emitting the
+  staleness banner twice.
+- **Decision**: Use the `RepositoryPath.repo_id` fallback through one scanner
+  helper across update/sync/hook consumers; reject JSON-RPC server requests
+  without consuming pending client responses; render every blast dependency
+  with unique Mermaid node ids and explicit no-dependent output; and prepend
+  the callers staleness banner exactly once. Tests cover nested refresh,
+  nested incremental update, nested hooks, interleaved JSON-RPC traffic,
+  no-seed radii, multi-dependency rendering, and single-banner output in
+  `tests/test_graft_parity_repos.py`, `tests/test_graft_parity_lsp.py`,
+  `tests/test_graft_parity_blast.py`, and
+  `tests/test_graft_parity_freshness.py`.
+- **Consequences**: Nested repositories remain addressable by their prefixed
+  ids on every update surface, transport response matching is method-aware,
+  and text/Markdown/Mermaid outputs preserve all computed dependency edges.
+  Cost: blast JSON gains additive `depends_on_ids` and radius `symbol_id`
+  fields for identity-preserving rendering.

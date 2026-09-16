@@ -141,7 +141,10 @@ def _remove_hooks(ws: str, dry_run: bool) -> None:
     try:
         from ..graph import scanner as scanner_mod
         from ..hooks.git_hooks import uninstall_hooks
-        repos = [r.name for r in scanner_mod.discover_repos(ws)]
+        repos = [
+            scanner_mod.repository_id(r)
+            for r in scanner_mod.discover_repos(ws)
+        ]
     except Exception as e:
         click.echo(f"  (skipped: {e})")
         return

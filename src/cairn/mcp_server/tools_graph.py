@@ -188,8 +188,6 @@ def _render_callers(data: dict) -> str:
         ]
     else:
         out = [f"{data['count']} callers of '{data['symbol']}':"]
-    if data["stale_banner"]:
-        out.insert(0, data["stale_banner"])
     for c in data["callers"]:
         out.append(
             f"  {c['kind']} {c['name']}  {c['file_path']}:{c['line']}  ({c['repo']})"

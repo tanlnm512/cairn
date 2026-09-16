@@ -372,7 +372,14 @@ def incremental_update(
     started = time.time()
     conn = get_db(db_path, busy_timeout_ms=20000)
     try:
-        repos = [repo] if repo else [r.name for r in scanner_mod.discover_repos(workspace)]
+        repos = (
+            [repo]
+            if repo
+            else [
+                scanner_mod.repository_id(r)
+                for r in scanner_mod.discover_repos(workspace)
+            ]
+        )
         all_paths: list[str] = []
         for r in repos:
             repo_path = scanner_mod.resolve_repo_path(workspace, r)
@@ -848,7 +855,7 @@ def _changed_via_stat(repo_path: Path, conn) -> List[str]:
     exists, or if a new source file appears that isn't in the table. Returns
     repo-relative paths.
     """
-    repo_name = repo_path.name
+    repo_name = scanner_mod.repository_id(repo_path)
     try:
         file_rows = conn.execute(
             "SELECT path, size, mtime FROM files WHERE repo_id = ?",
@@ -912,7 +919,10 @@ def incremental_via_rebuild(
     Detects which repos have uncommitted changes and rebuilds just those --
     faster than a full rebuild, and reuses the tested builder path.
     """
-    repos_all = [r.name for r in scanner_mod.discover_repos(workspace)]
+    repos_all = [
+        scanner_mod.repository_id(r)
+        for r in scanner_mod.discover_repos(workspace)
+    ]
     if repo:
         target_repos = [repo]
     else:
@@ -925,4 +935,3 @@ def incremental_via_rebuild(
     for r in target_repos:
         builder.build_graph(workspace=workspace, repo_filter=r, db_path=db_path)
     return {"repos_rebuilt": target_repos}
-

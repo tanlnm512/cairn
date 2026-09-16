@@ -252,36 +252,67 @@ def _radius(
 
 
 def _annotate_radius(conn, seeds: list[dict], radius: list[dict]) -> None:
+    seed_ids = {seed["id"] for seed in seeds}
     seed_names = {seed["name"] for seed in seeds}
     by_depth = sorted(radius, key=lambda row: row["depth"])
     for row in radius:
-        earlier = {
+        earlier_names = {
             other["symbol"]
             for other in by_depth
             if other["depth"] < row["depth"]
         }
-        targets = seed_names | earlier
-        matches = list(
-            conn.execute(
-                "SELECT e.target_id, COALESCE(t.name, e.target_name) AS target, "
-                "e.resolution FROM edges e "
-                "JOIN symbols source ON e.source_id = source.id "
-                "JOIN files source_file ON source.file_id = source_file.id "
-                "LEFT JOIN symbols t ON e.target_id = t.id "
-                "WHERE source.name = ? AND source_file.path = ? "
-                "AND source_file.repo_id = ?",
-                (row["symbol"], row["file"], row["repo"]),
-            )
-        )
-        applicable = [match for match in matches if match["target"] in targets]
+        row_earlier_keys = {
+            (other["symbol"], other["file"], other["repo"])
+            for other in by_depth
+            if other["depth"] < row["depth"]
+        }
+        matches = conn.execute(
+            "SELECT source.id AS source_id, e.target_id, "
+            "COALESCE(t.name, e.target_name) AS target, "
+            "target_file.path AS target_file, "
+            "target_file.repo_id AS target_repo, e.resolution "
+            "FROM edges e "
+            "JOIN symbols source ON e.source_id = source.id "
+            "JOIN files source_file ON source.file_id = source_file.id "
+            "LEFT JOIN symbols t ON e.target_id = t.id "
+            "LEFT JOIN files target_file ON t.file_id = target_file.id "
+            "WHERE source.name = ? AND source_file.path = ? "
+            "AND source_file.repo_id = ?",
+            (row["symbol"], row["file"], row["repo"]),
+        ).fetchall()
+
+        def target_identity(match) -> tuple[str, str | None, str | None]:
+            return (match["target"], match["target_file"], match["target_repo"])
+
+        def is_applicable(match) -> bool:
+            if match["target_id"] is None:
+                return match["target"] in seed_names | earlier_names
+            return match["target_id"] in seed_ids or target_identity(
+                match
+            ) in row_earlier_keys
+
+        applicable = [match for match in matches if is_applicable(match)]
+        row["symbol_id"] = matches[0]["source_id"] if matches else None
         if applicable:
-            applicable.sort(key=lambda match: match["resolution"] == "exact")
+            applicable.sort(key=lambda match: match["resolution"] != "exact")
             row["depends_on"] = sorted(
                 {match["target"] for match in applicable}
+            )
+            row["depends_on_ids"] = sorted(
+                {
+                    match["target_id"]
+                    for match in applicable
+                    if match["target_id"] is not None
+                    and (
+                        match["target_id"] in seed_ids
+                        or target_identity(match) in row_earlier_keys
+                    )
+                }
             )
             row["resolution"] = applicable[0]["resolution"] or "unresolved"
         else:
             row["depends_on"] = sorted(seed_names)
+            row["depends_on_ids"] = sorted(seed_ids)
             row["resolution"] = "exact"
 
 
@@ -318,6 +349,8 @@ def _render_text(result: dict) -> str:
                 )
         else:
             lines.append("  No dependents")
+    if not result["areas"]:
+        lines.extend(["", "Dependents:", "  No dependents"])
     return "\n".join(lines) + "\n"
 
 
@@ -340,11 +373,32 @@ def _render_markdown(result: dict) -> str:
         else:
             lines.append("- No dependents")
         lines.append("")
+    if not result["areas"]:
+        lines.extend(["## Dependents", "", "- No dependents", ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _mermaid_id(name: str) -> str:
-    return "".join(char if char.isalnum() else "_" for char in name)[:80]
+def _mermaid_esc(text: str) -> str:
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("|", "\\|")
+        .replace("\n", " ")
+    )
+
+
+def _mermaid_id(name: str, used: set[str]) -> str:
+    base = "".join(char if char.isalnum() else "_" for char in name)[:80]
+    candidate = base or "node"
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
 
 
 def _render_mermaid(result: dict) -> str:
@@ -352,17 +406,53 @@ def _render_mermaid(result: dict) -> str:
     if not result["radius"]:
         lines.append("    %% No dependents")
         return "\n".join(lines) + "\n"
-    nodes = {}
+    node_ids: dict[str, str] = {}
+    nodes_by_name: dict[str, list[str]] = {}
+    nodes_by_symbol_id: dict[str, str] = {}
+    used_ids: set[str] = set()
+
+    def add_node(
+        key: str, symbol: str, label: str, symbol_id: str | None
+    ) -> None:
+        node_id = _mermaid_id(symbol, used_ids)
+        node_ids[key] = node_id
+        nodes_by_name.setdefault(symbol, []).append(node_id)
+        if symbol_id is not None:
+            nodes_by_symbol_id[symbol_id] = node_id
+        lines.append(f'    {node_id}["{_mermaid_esc(label)}"]')
+
     for seed in result["seeds"]:
-        nodes[seed["name"]] = _mermaid_id(seed["name"])
+        add_node(
+            f"seed:{seed['id']}",
+            seed["name"],
+            f"{seed['name']} ({seed['file_path']})",
+            seed["id"],
+        )
     for row in result["radius"]:
-        nodes.setdefault(row["symbol"], _mermaid_id(row["symbol"]))
-    for name, node_id in nodes.items():
-        lines.append(f'    {node_id}["{name}"]')
+        key = row.get("symbol_id") or (
+            f"radius:{row['repo']}:{row['file']}:{row['symbol']}"
+        )
+        if key not in node_ids:
+            add_node(
+                key,
+                row["symbol"],
+                f"{row['symbol']} ({row['file']})",
+                row.get("symbol_id"),
+            )
     for row in result["radius"]:
-        source = nodes.get(row.get("depends_on", [None])[0], row.get("depends_on", [None])[0])
-        target = nodes[row["symbol"]]
-        if source:
+        target_key = row.get("symbol_id") or (
+            f"radius:{row['repo']}:{row['file']}:{row['symbol']}"
+        )
+        target = node_ids[target_key]
+        sources: set[str] = set()
+        for symbol_id in row.get("depends_on_ids", []):
+            source = nodes_by_symbol_id.get(symbol_id)
+            if source is not None:
+                sources.add(source)
+        if not sources:
+            for dependency in row.get("depends_on", []):
+                sources.update(nodes_by_name.get(dependency, []))
+        for source in sorted(sources):
             lines.append(f"    {source} --> {target}")
     return "\n".join(lines) + "\n"
 

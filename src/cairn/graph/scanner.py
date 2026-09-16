@@ -186,6 +186,11 @@ def _repository_path(record: RepositoryRecord) -> RepositoryPath:
     return path
 
 
+def repository_id(repo_path: Path) -> str:
+    """Return the stable repository id carried by a discovered repo path."""
+    return getattr(repo_path, "repo_id", repo_path.name)
+
+
 def _descendant_directories(root: Path) -> Iterator[Path]:
     for child in sorted(root.iterdir()):
         if not child.is_dir() or child.is_symlink():
@@ -592,7 +597,7 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
     SkipInfos so the builder can record both (symbols/edges for the former,
     skipped_files rows for the latter).
     """
-    repo_id = getattr(repo_path, "repo_id", repo_path.name)
+    repo_id = repository_id(repo_path)
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
     exclude_spec, include_spec = _build_config_spec(repo_path)

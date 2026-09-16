@@ -503,7 +503,10 @@ def install(
             from ..graph import scanner as scanner_mod
             from ..hooks.git_hooks import install_hooks
 
-            repos = [r.name for r in scanner_mod.discover_repos(workspace)]
+            repos = [
+                scanner_mod.repository_id(r)
+                for r in scanner_mod.discover_repos(workspace)
+            ]
             git_installed = install_hooks(repos, workspace)
         except ValueError as e:
             # Security guard (shell-injection repo-name check) rejected a repo.

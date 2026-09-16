@@ -11,7 +11,7 @@ def _repo_file_changes(conn, workspace, repo_path):
     """Return files in one repository whose stored path, size, or mtime changed."""
     from ...graph import scanner as scanner_mod
 
-    repo_name = repo_path.name
+    repo_name = scanner_mod.repository_id(repo_path)
     try:
         file_rows = conn.execute(
             "SELECT path, size, mtime FROM files WHERE repo_id = ?",

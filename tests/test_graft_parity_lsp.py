@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+import json
+import queue
+import threading
 from pathlib import Path
+from types import SimpleNamespace
+from io import BytesIO
 
 import pytest
 
@@ -46,6 +51,23 @@ class FailingJsonRpcTransport:
 
     def close(self):
         pass
+
+
+class _FakeStdin:
+    def __init__(self):
+        self.chunks: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.chunks.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        return None
+
+
+def _frame(message: dict) -> bytes:
+    body = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
 
 
 def _workspace(tmp_path: Path, name: str) -> tuple[str, Path]:
@@ -122,6 +144,7 @@ def test_language_server_pass_is_flag_gated(
         verbose=False,
         **kwargs,
     )
+
     conn = sqlite3.connect(str(tmp_path / "flag-gated.db"))
     conn.row_factory = sqlite3.Row
     try:
@@ -135,6 +158,51 @@ def test_language_server_pass_is_flag_gated(
     assert transport.requests == []
     assert transport.lifecycle == []
     assert transport.closed is False
+
+
+def test_server_requests_do_not_consume_pending_responses() -> None:
+    from cairn.graph.lsp import PyrightStdioTransport
+
+    transport = object.__new__(PyrightStdioTransport)
+    transport._pending = {}
+    transport._lock = threading.Lock()
+    transport._write_lock = threading.Lock()
+    response = queue.Queue()
+    with transport._lock:
+        transport._pending[2] = response
+
+    stdin = _FakeStdin()
+    payload = b"".join(
+        [
+            _frame(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "server-1",
+                    "method": "workspace/configuration",
+                    "params": {"items": []},
+                }
+            ),
+            _frame(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": [{"uri": "file:///tmp/one.py"}],
+                }
+            ),
+            _frame({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics"}),
+        ]
+    )
+    transport._process = SimpleNamespace(stdout=BytesIO(payload), stdin=stdin)
+
+    transport._read_responses()
+
+    assert response.get_nowait()["result"] == [{"uri": "file:///tmp/one.py"}]
+    written = b"".join(stdin.chunks)
+    header, _, body = written.partition(b"\r\n\r\n")
+    assert header.startswith(b"Content-Length: ")
+    rejection = json.loads(body)
+    assert rejection["id"] == "server-1"
+    assert rejection["error"]["code"] == -32601
 
 
 @pytest.mark.parametrize(

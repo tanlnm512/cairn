@@ -13,7 +13,11 @@ import pytest
 from click.testing import CliRunner
 
 from cairn.graph.builder import build_graph
-from cairn.graph.scanner import discover_repos, resolve_repo_path
+from cairn.graph.scanner import (
+    discover_repos,
+    repository_id,
+    resolve_repo_path,
+)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -118,6 +122,96 @@ def test_opted_in_repositories_use_prefixed_ids(
             ("parent/nested/child", "child.py"),
             ("parent/libs/dependency", "dep.py"),
         }
+
+
+def test_nested_repository_drift_uses_the_prefixed_repo_id(
+    tmp_path: Path, nested_workspace: Path
+) -> None:
+    from cairn.graph.watcher import refresh_for_query
+
+    parent = nested_workspace
+    child = parent / "nested" / "child"
+    (parent / "cairn.json").write_text(
+        json.dumps({"include_nested_repos": True}), encoding="utf-8"
+    )
+
+    with _build(parent, tmp_path / "nested-drift.db") as conn:
+        (child / "child.py").write_text(
+            "def refreshed_child():\n    return 2\n", encoding="utf-8"
+        )
+        report = refresh_for_query(conn, str(parent), repair=True)
+
+        assert report.repaired is True
+        assert [Path(path).name for path in report.drifted_paths] == [
+            "child.py"
+        ]
+        names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT s.name FROM symbols s "
+                "JOIN files f ON f.id = s.file_id "
+                "WHERE f.repo_id = 'parent/nested/child' "
+                "AND s.kind != 'module'"
+            ).fetchall()
+        }
+
+    assert names == {"refreshed_child"}
+
+
+def test_nested_repository_incremental_update_uses_the_prefixed_repo_id(
+    tmp_path: Path, nested_workspace: Path
+) -> None:
+    from cairn.graph.incremental import incremental_update
+
+    parent = nested_workspace
+    child = parent / "nested" / "child"
+    (parent / "cairn.json").write_text(
+        json.dumps({"include_nested_repos": True}), encoding="utf-8"
+    )
+    db_path = tmp_path / "nested-incremental.db"
+
+    with _build(parent, db_path) as conn:
+        (child / "child.py").write_text(
+            "def incrementally_refreshed():\n    return 2\n",
+            encoding="utf-8",
+        )
+        summary = incremental_update(workspace=str(parent), db_path=str(db_path))
+        names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT s.name FROM symbols s "
+                "JOIN files f ON f.id = s.file_id "
+                "WHERE f.repo_id = 'parent/nested/child' "
+                "AND s.kind != 'module'"
+            ).fetchall()
+        }
+
+    assert summary["files_reindexed"] == 1
+    assert summary["errors"] == []
+    assert names == {"incrementally_refreshed"}
+
+
+def test_nested_repository_hook_uses_the_prefixed_repo_id(
+    nested_workspace: Path,
+) -> None:
+    from cairn.hooks.git_hooks import install_hooks, uninstall_hooks
+
+    parent = nested_workspace
+    child = parent / "nested" / "child"
+    (parent / "cairn.json").write_text(
+        json.dumps({"include_nested_repos": True}), encoding="utf-8"
+    )
+    child_id = repository_id(
+        next(path for path in discover_repos(str(parent)) if path == child)
+    )
+
+    assert child_id == "parent/nested/child"
+    assert install_hooks([child_id], str(parent)) == [child_id]
+    hook_path = child / ".git" / "hooks" / "post-commit"
+    assert '--repo "parent/nested/child"' in hook_path.read_text(
+        encoding="utf-8"
+    )
+    assert uninstall_hooks([child_id], str(parent)) == [child_id]
 
 
 def test_uninitialized_submodule_is_skipped_when_opted_in(
