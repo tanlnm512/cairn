@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning names the env var and flag.
 
 ### Changed
+- The `[ingest]` extra pins `onnxruntime<1.24` on Python 3.10 so
+  `pymupdf-layout` resolves to an installable wheel set.
 - Dataflow builds upsert rows in batches and compute the repo-keyed
   `cross_repo_deps` payload once per repo per run instead of once per symbol.
 - CI test legs run the suite under pytest-xdist (`-n auto --durations=25`);
