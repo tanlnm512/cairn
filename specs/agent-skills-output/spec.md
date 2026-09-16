@@ -1,6 +1,6 @@
 # Spec: agent-skills-output
 
-**Status**: draft
+**Status**: approved
 **Created**: 2026-09-16
 **Branch**: `feat/agent-skills-output`
 
@@ -42,8 +42,8 @@ pre-packaged module context it can load on demand.
 **Acceptance criteria** (each traces to an FR below):
 - AC1: Given an indexed workspace and a module selector, When
   `cairn skill generate` runs, Then a `SKILL.md` is written with frontmatter
-  (name, description, load triggers) and a body containing the compass
-  excerpt, top-K symbols by structural centrality, and top-N relevant
+  (name, description carrying the load trigger) and a body containing the
+  compass excerpt, top-K symbols by structural centrality, and top-N relevant
   memories (FR-001, FR-002).
 - AC2: Given the deterministic default, When generation runs, Then no LLM is
   invoked (FR-003).
@@ -69,15 +69,25 @@ generated skill to exist in the graph.
   task queue behind the deterministic critic.
 - **FR-004**: The deterministic critic shall verify every symbol reference in
   a generated skill against the graph before the skill is written.
-- **FR-005**: The output format shall be [NEEDS CLARIFICATION: Anthropic's SKILL.md format as the primary target, a neutral structured-markdown format, or both (Anthropic primary + neutral export)? The proposal leaves standardization open.]
+- **FR-005**: The output format shall be Anthropic's SKILL.md layout — YAML
+  frontmatter (`name`, `description`) plus a markdown body and optional
+  `references/` files — matching the static skill `cairn install-agents`
+  already distributes, so every skill-compatible client that discovers that
+  layout today loads generated skills with no manual assembly. The
+  `description` frontmatter carries the load trigger wording.
+- **FR-006**: `cairn skill generate` shall write to the workspace's
+  `.agents/skills/cairn-<slug>/SKILL.md` by default, with an `--output`
+  override; per-client install-agents distribution of generated skills is
+  a documented follow-up, not MVP scope.
 
 ## Scope
 **In**: generation command, selector resolution, centrality ranking, critic
-verification, deterministic output, optional LLM polish via task queue,
-tests; distribution rides the existing install-agents per-client wiring.
-**Out (deferred)**: per-agent-client format variants beyond FR-005's ruling;
-skill marketplace/publishing; skill versioning and diffing; non-markdown
-skill bodies.
+verification, deterministic output, `.agents/skills/` default landing with
+`--output` override, optional LLM polish via task queue, tests.
+**Out (deferred)**: per-client install-agents distribution of generated
+skills (documented follow-up); skill marketplace/publishing; skill versioning
+and diffing; non-markdown skill bodies; a neutral export format (no consumer
+today).
 
 ## Assumptions & risks
 - Assumption: skill-format adoption continues across agent clients; the
