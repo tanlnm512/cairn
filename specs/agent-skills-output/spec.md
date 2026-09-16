@@ -1,6 +1,6 @@
 # Spec: agent-skills-output
 
-**Status**: approved
+**Status**: done
 **Created**: 2026-09-16
 **Branch**: `feat/agent-skills-output`
 

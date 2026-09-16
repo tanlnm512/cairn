@@ -8,10 +8,10 @@ Status reflects code state per [survey.md](survey.md), not intent.
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 4     | 0    |
-| 2     | 3     | 0    |
-| 3     | 2     | 0    |
-| **Σ** | 9     | 0    |
+| 1 | 4 | 4 |
+| 2 | 3 | 3 |
+| 3 | 2 | 2 |
+| **Σ** | 9 | 9 |
 
 ## Phase 1: Skill generation core (FR-001, FR-005, FR-006)
 <!-- Checkpoint (plan, After Phase 1): the module skill was written —
@@ -19,28 +19,32 @@ Status reflects code state per [survey.md](survey.md), not intent.
      `head -n 6` shows `name:` and `description:` frontmatter; the `--output`
      variant lands `test -f /tmp/sk/SKILL.md`; body has compass, symbol, memory
      sections; layout parity vs the static skill (survey S1, TC-003). -->
-- [ ] T001 [P] Resolve skill selectors to candidate symbols — new `src/cairn/skillgen/__init__.py`, `src/cairn/skillgen/selector.py`, red-first `tests/test_skillgen_selector.py` (FR-001)
+- [x] T001 (fix 1/5) [P] Resolve skill selectors to candidate symbols — new `src/cairn/skillgen/__init__.py`, `src/cairn/skillgen/selector.py`, red-first `tests/test_skillgen_selector.py` (FR-001)
+  - done 2026-09-16 — pytest tests/test_skillgen_selector.py -q — 8 passed (incl. module-kind shadowing regression)
   - Exposes `resolve_selector(conn, selector) -> SelectorResolution` with fields `candidates: list[str]` (qualified symbol names) and `unmatched: list[str]` — the shared contract later tasks consume.
   - Selector forms (TC-005, TC-006): module name, directory prefix, explicit symbol list; resolved via existing graph queries, strictly read-only.
   - Unresolvable selector fails fast listing the unmatched candidates — no partial skill (TC-014).
   - Red-first per C-02; `tmp_path` workspaces; no eager `cairn.cli` imports in the test module (C-04).
   - Verify before implementing: `grep -rn "skillgen" src/cairn/` → no matches (survey: no assembly, no skill module).
   - Acceptance: `.venv/bin/pytest tests/ -k "skillgen and selector" -q`
-- [ ] T002 (after T001) Assemble the skill draft from compass, symbols, and memory — `src/cairn/skillgen/assembly.py`, red-first `tests/test_skillgen_assembly.py` (FR-001)
+- [x] T002 (after T001) Assemble the skill draft from compass, symbols, and memory — `src/cairn/skillgen/assembly.py`, red-first `tests/test_skillgen_assembly.py` (FR-001)
+  - done 2026-09-16 — pytest tests/test_skillgen_assembly.py -q — 13 passed (ranked-contract re-pin)
   - Chained: consumes T001's `resolve_selector(conn, selector) -> SelectorResolution` and joins the same new package.
   - Exposes `assemble_draft(conn, resolution, top_k, top_n) -> SkillDraft` with fields `module: str`, `compass_body: str`, `symbols: list[str]`, `memories: list[str]`, `ranking_tier: str` — the contract T004 and T007 consume.
   - Phase 1 symbol selection is plain inclusion of resolved candidates in stable order, capped by `top_k` (default 20); ranking is Phase 2 (plan milestone note).
   - Compass body via the reader behind `get_compass` (`_get_compass`, `src/cairn/compass/router.py:245`); top-N memories (default 5) via `search_memory` (`src/cairn/memory/promotion.py:242`) called as-is — 14 precise callers, no signature changes (TC-004); default tiers only, superseded stay hidden.
   - Generated skill contains a compass excerpt even for a module with zero memories (TC-015).
   - Acceptance: `.venv/bin/pytest tests/ -k "skillgen and assembly" -q`
-- [ ] T003 [P] Emit SKILL.md in the distributed layout and land it — `src/cairn/skillgen/emitter.py`, red-first `tests/test_skillgen_emit.py` (FR-005, FR-006)
+- [x] T003 [P] Emit SKILL.md in the distributed layout and land it — `src/cairn/skillgen/emitter.py`, red-first `tests/test_skillgen_emit.py` (FR-005, FR-006)
+  - done 2026-09-16 — pytest tests/test_skillgen_emit.py -q — 15 passed
   - Exposes `render_skill(name, description, sections) -> str` — sections are ordered `(heading, markdown)` pairs, the return value is the exact SKILL.md bytes — plus `landing_dir(workspace, slug) -> Path`; the contracts T004, T006, T007 consume.
   - Frontmatter emitted with the present `pyyaml>=6.0` (`pyproject.toml:45`) — zero new dependencies (D-003); `description` carries deterministic template-rendered load-trigger wording, never LLM-written (D-006); optional `references/` split for long sections.
   - Layout mirrors the static package `src/cairn/agent_integration/skill/SKILL.md` (frontmatter name/description + body; package shape per `src/cairn/agent_install/merge.py:97`) — generated frontmatter parses as the same name/description shape the static skill ships (TC-002, TC-003).
   - Default landing `<workspace>/.agents/skills/cairn-<slug>/`; `--output` overrides the directory (TC-001, TC-013); slug derives from the module stem — TC-001 pins the `cairn-` prefix via glob, not exact spelling.
   - Command output note states uninstall leaves `cairn-<slug>/` in place (D-004: the exact-name `cairn` guard at `src/cairn/agent_install/merge.py:393` is not modified); `src/cairn/agent_install/` is otherwise untouched (D-001).
   - Acceptance: `.venv/bin/pytest tests/ -k "skillgen and emit" -q`
-- [ ] T004 (after T002, after T003) Wire the `cairn skill generate` CLI — new `src/cairn/cli/skill.py`, registration in `src/cairn/cli/__init__.py`, red-first `tests/test_skillgen_cli.py` (FR-001)
+- [x] T004 (after T002, after T003) Wire the `cairn skill generate` CLI — new `src/cairn/cli/skill.py`, registration in `src/cairn/cli/__init__.py`, red-first `tests/test_skillgen_cli.py` (FR-001)
+  - done 2026-09-16 — pytest tests/test_skillgen_cli.py -q — 7 passed; live: cairn skill generate compass --output /tmp/skillcheck
   - Chained: consumes T001's `resolve_selector`, T002's `assemble_draft(conn, resolution, top_k, top_n) -> SkillDraft`, and T003's `render_skill` + `landing_dir` — the pipeline is resolve → assemble → render → write to the default landing or `--output`.
   - Command shape: `cairn skill generate SELECTOR [--output DIR] [--top-k K] [--top-n N]` with defaults top-k 20, top-n 5; one-module-per-command Click layout (peers `src/cairn/cli/wiki.py`, `src/cairn/cli/map.py`).
   - Import-light module — C-04 forbids eager `cairn.cli` imports in test modules.
@@ -54,21 +58,24 @@ Status reflects code state per [survey.md](survey.md), not intent.
      matches the dataflow index / repo_map rows on a fixture graph (unit test);
      critic identity tests (`tests/test_scoring_fixes.py::TestCriticDedup`)
      still pass. -->
-- [ ] T005 [P] (after T001) Rank candidates by structural centrality in two tiers — `src/cairn/skillgen/ranking.py`, red-first `tests/test_skillgen_ranking.py` (FR-002)
+- [x] T005 [P] (after T001) Rank candidates by structural centrality in two tiers — `src/cairn/skillgen/ranking.py`, red-first `tests/test_skillgen_ranking.py` (FR-002)
+  - done 2026-09-16 — pytest tests/test_skillgen_ranking.py -q — 7 passed (closure + degree tiers)
   - Chained on T001 for input shape; otherwise parallel with T006 (disjoint files, plan parallelization map).
   - Exposes `rank_candidates(conn, candidates) -> RankedSymbols` with fields `symbols: list[str]` (score desc, then qualified name asc — total order) and `tier: str` (`closure` or `degree`) — the contract T007 consumes.
   - Closure tier: aggregate transitive impact from the closure store built by `build_transitive_closure` (`src/cairn/graph/dataflow.py:229`) — read-only, never mutates closure or graph tables; availability gated the way `impact_analysis` gates via `closure_available` (`src/cairn/graph/dataflow.py:576`, usage pattern `src/cairn/graph/traversal.py:228`).
   - Degrade tier (D-002): direct in/out degree from `build_repo_map` (`src/cairn/graph/repo_map.py:160`) rows `_SymbolRow.incoming/outgoing` (`src/cairn/graph/repo_map.py:21-22`); a closure-absent workspace still generates, and the skill records which tier produced its ranking (TC-007, TC-008).
   - Existence filter: a candidate is included only if its definition resolves in the graph.
   - Acceptance: `.venv/bin/pytest tests/ -k "skillgen and ranking" -q`
-- [ ] T006 [P] (after T003) Gate every generated body through the deterministic critic before write — `src/cairn/skillgen/gate.py`, red-first `tests/test_skillgen_gate.py` (FR-004)
+- [x] T006 [P] (after T003) Gate every generated body through the deterministic critic before write — `src/cairn/skillgen/gate.py`, red-first `tests/test_skillgen_gate.py` (FR-004)
+  - done 2026-09-16 — pytest tests/test_skillgen_gate.py tests/test_scoring_fixes.py -q — 12+10 passed (critic identity intact)
   - Chained on T003 for the rendered-bytes input shape; otherwise parallel with T005 (disjoint files, plan parallelization map).
   - Exposes `verify_draft(conn, rendered) -> GateResult` with outcomes `ok` or `rejected(failing_refs)` — the contract T007 and T009 consume.
   - Wraps `validate_paths` (`src/cairn/compass/critic.py:202`) consume-only — critic.py internals are never modified; they are identity-coupled with memory scoring (`tests/test_scoring_fixes.py::TestCriticDedup` stays green).
   - Synchronous and in-process, not a queue stage (D-005); unconditional for deterministic and polished bodies; a hand-planted bogus backtick symbol rejects the skill — nothing written, non-zero exit, failing refs listed (TC-011, TC-012).
   - The gate runs on the exact bytes destined for disk: validate after `render_skill`, never validate a draft and then re-render.
   - Acceptance: `.venv/bin/pytest tests/ -k "skillgen and gate" -q` and `.venv/bin/pytest tests/test_scoring_fixes.py -q`
-- [ ] T007 (after T005, after T006) Integrate ranking and the critic gate into the generate pipeline — `src/cairn/skillgen/assembly.py`, `src/cairn/skillgen/emitter.py` write path, `src/cairn/cli/skill.py`, red-first `tests/test_skillgen_pipeline.py` (FR-002, FR-004)
+- [x] T007 (after T005, after T006) Integrate ranking and the critic gate into the generate pipeline — `src/cairn/skillgen/assembly.py`, `src/cairn/skillgen/emitter.py` write path, `src/cairn/cli/skill.py`, red-first `tests/test_skillgen_pipeline.py` (FR-002, FR-004)
+  - done 2026-09-16 — pytest tests/test_skillgen_pipeline.py -q — 8 passed; proofs TC-007/TC-011/TC-012 green live
   - Chained: consumes T005's `rank_candidates(conn, candidates) -> RankedSymbols` and T006's `verify_draft(conn, rendered) -> GateResult`, and edits the Phase 1 files those wrap.
   - Symbol selection switches from plain inclusion to ranked top-K — a very large module yields a bounded skill, not the whole module (TC-008).
   - The gate wraps the write step: `verify_draft` runs between `render_skill` and the file write; rejection exits non-zero and leaves no file on disk (TC-012).
@@ -80,12 +87,14 @@ Status reflects code state per [survey.md](survey.md), not intent.
      test asserts no LLM client is constructed on the default path; a polish run
      is visible via `cairn task list --status pending`, and after `complete` the
      result passes the critic before write; `pre-commit run --all-files` green. -->
-- [ ] T008 (after T007) Prove the deterministic default — byte-identical reruns, no LLM — `src/cairn/skillgen/` pipeline ordering, red-first `tests/test_skillgen_determinism.py` (FR-003)
+- [x] T008 (after T007) Prove the deterministic default — byte-identical reruns, no LLM — `src/cairn/skillgen/` pipeline ordering, red-first `tests/test_skillgen_determinism.py` (FR-003)
+  - done 2026-09-16 — pytest tests/test_skillgen_determinism.py -q — 3 passed (byte-identical reruns incl. cross-hash-seed; no LLM client on default path)
   - Chained: pins total ordering across T005's ranking tie-breaks and the T007 assembly output, so it follows the integration it constrains.
   - Same selector twice yields byte-identical SKILL.md (tech-spec verify anchor): total tie-break (score desc, qualified name asc), stable memory order from `search_memory` rank order, no timestamps or set-iteration order in the draft or frontmatter (D-006 template wording).
   - A test asserts no LLM client is constructed on the default path — default generation never touches the LLM path (TC-009).
   - Acceptance: `.venv/bin/pytest tests/ -k "skillgen and determinism" -q`; two-run `diff` empty on the TC-001 fixture workspace.
-- [ ] T009 (after T008) Add `--polish` through the LLM task queue behind the critic — `src/cairn/cli/skill.py`, polish stage in `src/cairn/skillgen/`, red-first `tests/test_skillgen_polish.py` (FR-003)
+- [x] T009 (fix 1/5) (after T008) Add `--polish` through the LLM task queue behind the critic — `src/cairn/cli/skill.py`, polish stage in `src/cairn/skillgen/`, red-first `tests/test_skillgen_polish.py` (FR-003)
+  - done 2026-09-16 — pytest tests/test_skillgen_polish.py -q — 9 passed; live worker flow: claim → complete (quality 1.00) → polished body applied through gate
   - Chained: shares the `src/cairn/cli/skill.py` flag surface and the pipeline write path with T008.
   - `--polish` never invokes an LLM in-process: it enqueues one polish task through the existing queue API — `create_task` / `read_result` (`src/cairn/llm/tasks.py`), the mechanism `run_wiki_generate` uses (`src/cairn/wiki/pipeline.py:210`; precedent `generate_wiki_with_critic`, `src/cairn/wiki/generator.py:41`); the queued task is visible via `cairn task list --status pending` (TC-010).
   - The polished result re-enters T006's `verify_draft(conn, rendered) -> GateResult` and only then replaces the deterministic body — the gate stays unconditional (D-005).

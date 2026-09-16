@@ -310,3 +310,55 @@ the session audit recorded in § Impact analysis.
   module name (what the skill covers, when to load it).
 - **Consequences**: trigger quality is bounded by the template; `--polish`
   may improve wording, but only through the queue + gate path (D-005).
+
+### D-007: Phase-1 assembly test re-pinned to the ranked contract
+- **Context**: T007's mandate (FR-002) replaces Phase-1 plain-inclusion symbol
+  ordering with `rank_candidates` top-K; `tests/test_skillgen_assembly.py`'s
+  `test_symbols_are_candidates_in_stable_order_capped_by_top_k` asserted the
+  Phase-1 sorted-candidates order, which no default can satisfy alongside
+  ranked selection (structure edges give module/class symbols positive
+  degree over zero-degree members).
+- **Decision**: the assembly test pins membership + cap plus equality with
+  `rank_candidates(conn, res.candidates).symbols[:top_k]` (fix round 1,
+  re-briefed to T002's owner); assembly behavior itself is unchanged from
+  T007's integration.
+- **Consequences**: the Phase-1 stable-order expectation is no longer
+  pinned anywhere (ranking's own determinism test covers total order);
+  empty-resolution drafts keep the `unranked` tier contract.
+
+### D-008: `skill-polish` completion exemption in the task-queue critic
+- **Context**: `cairn task complete <id> --result-file` passes a graph conn
+  into `complete_task`, whose generic critic scores quality by compass/flow
+  section headings (`_DEFAULT_SECTION_VOCAB`, `src/cairn/compass/critic.py`);
+  a skill-polish result scores 0.0 and revise-loops to dropped, so the
+  documented worker flow can never complete a polish task (the queue-API
+  completion path works; T009's tests exercise it).
+- **Decision**: add a `skill-polish` branch to `src/cairn/llm/tasks.py`'s
+  completion critic mirroring the wiki-catalog/doc-link critic-exemption
+  precedent; the skill's own write gate remains skillgen's `verify_draft`
+  (D-005) — the queue critic only stops section-vocab scoring for this
+  task kind. Files named by this decision: `src/cairn/llm/tasks.py`,
+  `tests/test_skillgen_polish.py`.
+- **Consequences**: without it, `--polish`'s printed worker instruction is
+  non-functional; with it, polish results carry the same completion
+  semantics as wiki tasks. The `---`-in-facts OKF round-trip trap is
+  separately recorded as a memory (bodies never ride in facts).
+
+### D-009: Module-kind rows excluded from exact-symbol matching
+- **Context**: with `pkg_a/__init__.py` present, the graph indexes a
+  module-kind symbol named `pkg_a`; the selector's exact-symbol tier matched
+  it first and shadowed module-path resolution, so `skill generate pkg_a`
+  packaged only the module symbol (closing-audit finding on TC-007/TC-002
+  fixtures; fix round 1 on T001).
+- **Decision**: `src/cairn/skillgen/selector.py`'s exact-symbol matching
+  excludes `kind='module'` rows (packaging artifacts, not API surface); a
+  token naming a module falls through to module-path resolution and returns
+  the module's contents. Explicit function/class lists are unchanged
+  (TC-006). Files named by this decision: `src/cairn/skillgen/selector.py`,
+  `tests/test_skillgen_selector.py`.
+- **Consequences**: a root-level single-FILE module (e.g. `sub_mod.py` →
+  module-kind row `sub_mod`) is unresolvable by bare token — excluded from
+  exact match, and module-path resolution matches directories, not files —
+  so such a request fails fast with the token listed unmatched (workaround:
+  select the file's symbols explicitly). Accepted limitation: fail-fast is
+  the honest outcome versus the previous degenerate one-symbol skill.

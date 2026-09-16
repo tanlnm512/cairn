@@ -406,14 +406,16 @@ def complete_task(
 
             # Wiki pages are scored on the Sources footer, not compass
             # sections. The catalog outline is JSON validated
-            # deterministically by the pipeline's refine step, and doc-link
+            # deterministically by the pipeline's refine step, doc-link
             # results by the dedicated concept-id existence check above
-            # (both before this point), so both are critic-exempt — the
-            # vocab gate would fail every valid result.
+            # (both before this point), and skill-polish results by
+            # skillgen's verify_draft at the skill write, so all three are
+            # critic-exempt — the vocab gate would fail every valid result.
             wiki_page = task.task_kind.startswith("wiki-page")
             catalog_task = task.task_kind == "wiki-catalog"
             doc_link_task = task.task_kind == "doc-link"
-            if catalog_task or doc_link_task:
+            skill_polish_task = task.task_kind == "skill-polish"
+            if catalog_task or doc_link_task or skill_polish_task:
                 from ..compass.critic import CriticResult
 
                 critic_result = CriticResult(
