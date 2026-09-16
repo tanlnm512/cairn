@@ -142,6 +142,7 @@ ingest = [
     "pymupdf4llm>=1.28",
     "mammoth>=1.11",
     "markdownify>=0.13",
+    "onnxruntime<1.24; python_version < '3.11'",
 ]
 
 [project.scripts]
