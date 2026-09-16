@@ -13,9 +13,17 @@ explore/blast when changed code touches a taint path.
 
 ## Why
 As agents write more code, security analysis belongs in the agent's own
-context loop. Cairn's call graph plus precomputed dataflow tables are the
-right substrate; adding labeled sources/sinks and propagation is incremental
-to structures that already exist.
+context loop. Cairn's graph layer already maintains the exact substrate
+taint analysis runs on: `dataflow.py` materializes a precomputed index of
+within-repo impact chains for public symbols and a `transitive_edges`
+closure table that answers multi-hop caller→callee reachability in one
+indexed statement, and every edge carries a resolution label
+(`exact`/`ambiguous`/`unresolved`) that taint propagation can gate on — the
+same precision contract `impact_analysis` already exposes via precise vs
+fuzzy modes. Adding labeled sources/sinks and a propagation pass over
+those structures is incremental; the honest boundary is that propagation
+stays call-graph-level (no intra-procedural modeling), which the spec
+states explicitly.
 
 ## Business value
 Agents and reviewers see which changes touch user-input-to-dangerous-sink

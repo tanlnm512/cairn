@@ -16,6 +16,14 @@ community trusts standard benchmarks. RepoGraph published +32.8% on
 SWE-bench with repo-level code graphs — without a comparable number,
 cairn's claims are self-referential.
 
+The measurement machinery already exists and only needs a new task source:
+`bench/agent_suite.py` runs the exact two-arm shape this spec needs — a
+deterministic cairn-equipped arm versus a grep+read control agent over a
+corpus, reporting tokens/tool-calls/wall-clock — and the self-demo test
+already proves the CI-rot-prevention pattern (cairn indexes itself in CI).
+An SWE-bench arm re-points that harness at public task inputs; it does not
+invent a new benchmarking methodology.
+
 ## Business value
 A reproducible, CI-protected benchmark number on a public benchmark set that
 third parties can rerun. Success: README publishes with/without-cairn

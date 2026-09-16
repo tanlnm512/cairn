@@ -17,9 +17,16 @@ pre-packaged, lazily-loaded skills. Emitting cairn's existing knowledge in
 that format is a format conversion over data cairn already holds — low
 effort, high leverage.
 
-Cairn already ships one static skill (the task-queue usage skill installed
-per client by `cairn install-agents`); this spec adds dynamic per-module
-generation and reuses that existing per-client distribution path.
+The conversion surface is already built and proven. Cairn ships one static
+skill package (`agent_integration/skill/`, a `SKILL.md` plus
+`references/`/`scripts/`/`evals/`) that `cairn install-agents` merges into
+each client's skill directory, with client-specific fallback paths already
+mapped. Every content input a per-module skill needs is exposed by an
+existing reader: module compass via `get_compass`, ranked symbols via
+stored graph rows (`repo_map` already computes per-symbol in/out degree),
+memory via the recall/search API, and verification via the deterministic
+critic. What is missing is assembly: nothing generates a skill body from a
+selector today.
 
 ## Business value
 Any skill-compatible agent (Claude Code and others adopting the format) gets

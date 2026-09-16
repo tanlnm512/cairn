@@ -11,10 +11,17 @@ queries merge per-store results with per-repo attribution, and
 federation — the local-first answer to organization-scale code search.
 
 ## Why
-Cross-repo context is a confirmed agent need; cairn's `cross_repo_deps`
-maps structural dependencies but meaning-level search stops at one store.
-Sourcegraph occupies enterprise code search as SaaS; cairn's angle is
-local-first and free.
+Cross-repo context is a confirmed agent need. Cairn's structural reach
+today is bounded by one store: `cross_repo_deps` maps dependencies across
+repos indexed into the same database via namespaces, and every retrieval
+tool queries the resolved workspace's store only — meaning-level search
+stops at the store boundary even though the workspace registry
+(`~/.cairn/workspaces.json`, written by `cairn init`) already
+enumerates every store on the machine. Federation is a fan-out query over
+that registry; per-store ranks merge with the same reciprocal-rank fusion
+the hybrid retrieval stack already uses for BM25+vector merging, so
+incomparable store scores need no new theory. Sourcegraph occupies
+enterprise code search as SaaS; cairn's angle is local-first and free.
 
 ## Business value
 Teams answer "which repos have authentication logic like ours?" across all
@@ -39,10 +46,10 @@ As an agent, I want natural-language answers across all repos.
   Then the answer routes across stores with per-repo context attribution (FR-003).
 
 ## Requirements
-- **FR-001**: The system shall provide federated `semantic_search`/
-  `cairn semantic --all-repos` querying every registered workspace store and
-  merging results with per-repo attribution, using lexical fallback where a
-  store lacks embeddings.
+- **FR-001**: The system shall provide federated semantic search — exposed
+  as an MCP tool and a new CLI command — querying every registered
+  workspace store and merging results with per-repo attribution, using
+  lexical fallback where a store lacks embeddings.
 - **FR-002**: WHERE stores share a compatible embedding backend, the
   federation shall optionally use one shared backend; otherwise each store
   serves its own vectors with results fused at rank level.

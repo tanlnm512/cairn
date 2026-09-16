@@ -12,9 +12,14 @@ over HTTP, no CLI or MCP configuration required from the user.
 
 ## Why
 The dashboard is a good start but not inline; developers who never touch a
-CLI or MCP config need a zero-config visual surface. VS Code has the largest
-install base; JetBrains covers enterprise Java/Kotlin teams where cairn's
-graph is strongest.
+CLI or MCP config need a zero-config visual surface. The server side of an
+extension already exists in two proven shapes: the dashboard (a
+starlette/jinja2/uvicorn app on loopback with routes for graph, memory,
+knowledge, and wiki data) demonstrates local HTTP + JSON rendering over the
+store, and the SSE daemon demonstrates an auto-managed background server.
+An extension is a new render surface over that infrastructure, not a new
+backend. VS Code has the largest install base; JetBrains covers enterprise
+Java/Kotlin teams where cairn's graph is strongest.
 
 ## Business value
 Cairn reaches IDE-native developers with zero agent setup. Success: the

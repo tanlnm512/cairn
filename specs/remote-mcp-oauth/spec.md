@@ -11,15 +11,23 @@ transport) and authorizing clients via OAuth 2.1 with PKCE, so cloud agents
 and team members reach one shared cairn store without local process access.
 
 ## Why
-The MCP ecosystem's 2026 default is remote, OAuth-secured servers. Cairn
-today ships stdio (default) plus an unauthenticated local SSE daemon
-(`cairn serve --port`, launchd-managed, read-only by default) — no
-Streamable HTTP, no authentication, no per-workspace authorization. That
-blocks team deployments behind an identity provider, cloud agents that
-cannot reach a user's machine, and enterprise procurement that requires
-authenticated access. Local-first remains the default mode; remote is an
-additive opt-in that never changes the query path or the verification
-contract.
+The MCP ecosystem's 2026 default is remote, OAuth-secured servers. Cairn's
+serving surface today is exactly two transports, both loopback and
+unauthenticated: per-client stdio (`cairn serve`, read-write) and a shared
+SSE daemon (`cairn serve --port`, launchd-managed, read-only by default) —
+`mcp_server/server.py` accepts only `stdio`/`sse`, and no layer of the
+request path examines a principal. That blocks team deployments behind an
+identity provider, cloud agents that cannot reach a user's machine, and
+enterprise procurement that requires authenticated access.
+
+The substrate for remote serving already exists: the pinned `mcp` SDK
+(requirement `>=0.9`) ships Streamable HTTP support with uvicorn/starlette
+as core dependencies, and the daemon lifecycle (launchd plist, stray-server
+sweep, health check) already models a long-lived shared server. The
+remaining work is transport wiring, an auth middleware in front of the same
+tool registry, and per-workspace routing — not a new server architecture.
+Local-first remains the default mode; remote is an additive opt-in that
+never changes the query path or the verification contract.
 
 ## Business value
 Teams run one shared cairn store; cloud-hosted agents consume cairn's 24

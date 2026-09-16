@@ -13,10 +13,22 @@ structural centrality.
 
 ## Why
 Aider's graph-ranked repo map remains the best compact-context mechanism;
-cairn holds strictly richer inputs (resolution-labeled edges, precomputed
-transitive impact, semantic search, memory, compass) but exposes them only
-as separate queries. The pack turns cairn into the one-shot context
+cairn holds strictly richer inputs but exposes them only as separate
+queries: candidate finding (`semantic_search` with lexical fallback),
+multi-hop structure (`transitive_edges` closure plus `impact_analysis`'s
+precomputed index mode), module context (`get_compass`), and tribal
+knowledge (memory recall). The pack turns cairn into the one-shot context
 primitive an agent calls once before writing code.
+
+The nearest existing surface, `repo_map`, already ranks symbols by stored
+in/out degree but emits fixed-cap clusters/hubs with no task relevance and
+no token budget. Token accounting has a shared precedent (the
+chars-per-token constant the bench suite uses, plus the dashboard's
+tokenizer wrapper), so budget fitting reuses a defined cost model.
+Honest boundary: transitive reach is materialized to a fixed closure depth,
+so centrality is depth-capped, and semantic seeds are mid-band without the
+embeddings extra — the pipeline compensates with lexical fallback and graph
+expansion.
 
 ## Business value
 Agents get complete task context in one call within a stated token budget,

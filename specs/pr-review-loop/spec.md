@@ -15,9 +15,16 @@ benefits.
 ## Why
 Review comment → persistent behavioral rule is the proven self-improving
 agent pattern. Cairn's memory system (decisions, patterns, mistakes,
-workarounds — symbol-keyed with lifecycles) is the substrate, and
-`cairn blast` already computes diff-based reverse-dependency radius; nothing
-today connects PR outcomes back to memory writes.
+workarounds — symbol-keyed with tier lifecycles and decay) is the substrate,
+and `cairn blast` already does the hardest half of review context: it seeds
+symbols from a git diff against a base ref and computes the precise reverse-
+dependency radius (fuzzy opt-in), refreshing drifted files first when asked.
+Two more existing pieces close the loop cheaply: stored symbol spans
+(`symbols.line_start`/`line_end`) map a review comment's file+line to the
+enclosing symbol, and the memory store already has an auto-capture
+precedent — the recurrence-gated failure-signature capture
+(`memory_failure_signatures`) that decides what is worth recording without
+human steps. Nothing today connects PR outcomes back to memory writes.
 
 ## Business value
 Agents stop repeating review-flagged mistakes: accepted comments become

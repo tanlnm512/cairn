@@ -16,6 +16,17 @@ Multi-agent development (sub-agents, forked threads) is common; agents
 duplicate learnings and collide on overlapping edits. Cairn already holds
 one store with symbol-keyed memory — it needs only the coordination surface.
 
+The concurrency substrate is real and battle-tested: the store runs in WAL
+journal mode with a busy timeout on every connection, and the shared SSE
+daemon exists precisely because per-client stdio servers contended for the
+database lock.
+Session-scoped activity is already recorded — memory reference tracking is
+session-keyed (`memory_refs`), MCP tool usage lands in `tool_metrics`, and
+the telemetry sink emits named events with session ids — so "who touched
+what recently" is a query over existing tables, not new instrumentation.
+What is missing is agent identity, a sharing visibility rule, and the
+overlap check itself.
+
 ## Business value
 Parallel agents stop re-deriving each other's findings and stop colliding on
 the same symbols. Success: two concurrent agents in a fixture workspace —

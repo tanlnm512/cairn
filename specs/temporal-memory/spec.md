@@ -14,8 +14,16 @@ shows a symbol's memory history.
 ## Why
 Zep's bi-temporal model leads agent-memory benchmarks; temporal reasoning —
 what was true when a decision was made — matters in codebases where symbols
-get renamed and refactored. Cairn's decay/promotion lifecycle exists but has
-no temporal validity or point-in-time recall.
+get renamed and refactored. Cairn's lifecycle machinery stops at tier
+movement: promote/demote/decay re-tier memories by score and age, and
+`cairn validate-paths` (via the compass critic) already detects stale
+file/symbol references and can mark concepts stale — but staleness is a
+boolean flag with no validity interval, no successor link, and no way to
+ask what was true before the flag was set. Recall itself already recomputes
+reference liveness per query, so the system knows a memory cites dead
+symbols; it just forgets when that became true. Adding `valid_from`/
+`valid_until` turns that boolean into an interval and makes the existing
+stale detector the write-time trigger for auto-invalidation.
 
 ## Business value
 Decisions stay auditable across refactorings: users can answer "what did we
@@ -45,9 +53,9 @@ not delete them.
 - **FR-001**: The memory store shall carry `valid_from` (default: creation
   time) and `valid_until` (nullable) on every memory record, added
   additively with a migration for existing rows.
-- **FR-002**: `recall_memory`/`cairn memory recall` shall support
-  `--as-of <date>` returning only memories valid at that date; default recall
-  shall return only currently-valid memories.
+- **FR-002**: Recall surfaces (MCP `recall_memory`, CLI `cairn memory
+  search`) shall support `--as-of <date>` returning only memories valid at
+  that date; default recall shall return only currently-valid memories.
 - **FR-003**: WHEN a build detects a memory's referenced symbol renamed or
   removed, the system shall set `valid_until` to the build time rather than
   deleting, and record a successor-symbol link where the graph identifies
