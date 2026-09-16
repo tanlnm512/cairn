@@ -18,7 +18,10 @@ def hooks_install(workspace, cairn_dir):
     from ..graph import scanner as scanner_mod
     from ..hooks.git_hooks import install_hooks
 
-    repos = [r.name for r in scanner_mod.discover_repos(workspace)]
+    repos = [
+        scanner_mod.repository_id(r)
+        for r in scanner_mod.discover_repos(workspace)
+    ]
     installed = install_hooks(repos, workspace, cairn_dir)
     click.echo(f"Installed post-commit hooks in {len(installed)} repos: {', '.join(installed)}")
 
@@ -29,7 +32,10 @@ def hooks_uninstall(workspace):
     from ..graph import scanner as scanner_mod
     from ..hooks.git_hooks import uninstall_hooks
 
-    repos = [r.name for r in scanner_mod.discover_repos(workspace)]
+    repos = [
+        scanner_mod.repository_id(r)
+        for r in scanner_mod.discover_repos(workspace)
+    ]
     removed = uninstall_hooks(repos, workspace)
     click.echo(f"Removed hooks from {len(removed)} repos: {', '.join(removed)}")
 
@@ -46,9 +52,17 @@ def hooks_uninstall(workspace):
 @click.option("--depth", default=3, type=int, help="Traversal depth (scope=impact)")
 @click.option("--output", default=None, help="Write to file instead of stdout")
 @click.option("--embed", "do_embed", is_flag=True, help="Wrap in OKF markdown block")
+@click.option(
+    "--export",
+    "export_path",
+    default=None,
+    help="Write one self-contained HTML file (overrides --format; not valid with --output)",
+)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
-def viz(fmt, scope, symbol, module, repo, depth, output, do_embed, db):
+def viz(fmt, scope, symbol, module, repo, depth, output, do_embed, export_path, db):
     """Generate visual diagrams from the graph."""
+    if export_path and output:
+        raise click.UsageError("--export and --output are mutually exclusive.")
     from ..viz import query as vq
     from ..viz import renderers as vr
 
@@ -68,6 +82,13 @@ def viz(fmt, scope, symbol, module, repo, depth, output, do_embed, db):
             graph = {"nodes": [], "edges": [], "metadata": {}}
     finally:
         conn.close()
+
+    if export_path:
+        from ..agent_install.merge import _atomic_write_text
+
+        _atomic_write_text(Path(export_path), vr.to_html(graph))
+        click.echo(f"Wrote {export_path}")
+        return
 
     if fmt == "mermaid":
         out = vr.embed(graph) if do_embed else vr.to_mermaid(graph)

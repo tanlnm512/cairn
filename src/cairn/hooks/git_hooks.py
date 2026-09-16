@@ -8,22 +8,17 @@ from typing import List
 from ..graph.scanner import resolve_repo_path
 from ..paths import cairn_home_env
 
-# SECURITY: repo names are interpolated into a bash script (POST_COMMIT_TEMPLATE)
-# that is executed on every `git commit`. Repo names arrive unsanitized from
-# scanner.discover_repos() (child.name of a workspace subdirectory), so a
-# maliciously-named workspace subdir such as `foo"; rm -rf $HOME; echo "` would
-# inject arbitrary shell. This strict allowlist rejects anything that is not a
-# safe filename token before it can reach the template.
-_REPO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# Repository ids are interpolated into a bash script. Slash-separated nested
+# ids are allowed; every segment must contain only safe filename characters.
+_REPO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 
 
 def _validate_repo_name(repo: str) -> str:
     """Reject repo names that are unsafe to interpolate into the bash hook.
 
-    Raises ValueError if `repo` contains any character outside
-    [A-Za-z0-9._-]. Returns `repo` unchanged on success.
+    Raises ValueError for a repository id outside the shell-safe allowlist.
     """
-    if not isinstance(repo, str) or not _REPO_NAME_RE.match(repo):
+    if not isinstance(repo, str) or not _REPO_NAME_RE.fullmatch(repo):
         raise ValueError(
             f"Invalid repo name (security: shell-injection guard): {repo!r}"
         )

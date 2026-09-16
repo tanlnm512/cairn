@@ -18,8 +18,8 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
-graph** (14 languages), fuses it with **code-grounded tribal memory**, compass,
-and wiki, and serves all of it through one MCP server (22 tools) + a `cairn`
+graph** (15 languages), fuses it with **code-grounded tribal memory**, compass,
+and wiki, and serves all of it through one MCP server (24 tools) + a `cairn`
 CLI. The product is a **verification contract**: every `exact` edge is actually
 resolved, every symbol in a synthesized doc is graph-verified by a
 deterministic critic, and the LLM never sits in the query path.
@@ -94,7 +94,7 @@ client configs.
 
 ## Language Support
 
-Fourteen languages, one uniform contract: definitions, call edges (labeled
+Fifteen languages, one uniform contract: definitions, call edges (labeled
 `exact` / `ambiguous` / `unresolved`), references, and inheritance wherever the
 grammar carries them. `.h` headers are sniffed to Objective-C / C++ / C.
 
@@ -114,6 +114,7 @@ grammar carries them. `.h` headers are sniffed to Objective-C / C++ / C.
 | C# | `.cs` `.csx` | Full |
 | C | `.c` | Full · `.h` sniffed |
 | C++ | `.cpp` `.cc` `.cxx` `.hpp` | Full · `.h` sniffed |
+| Rust | `.rs` | Generic tier · pinned grammar; call edges stay `unresolved` |
 
 Not indexed (yet): Vue / Svelte single-file components, CSS, HTML. Details:
 [docs/indexing.md](docs/indexing.md).
@@ -195,7 +196,7 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   gating CI.
 - **100% local** — one SQLite store under `~/.cairn`; no network calls, no
   telemetry egress (OTLP export is opt-in and best-effort).
-- **Agent-first surfaces** — the same store backs 22 MCP tools and the CLI;
+- **Agent-first surfaces** — the same store backs 24 MCP tools and the CLI;
   `cairn install-agents` wires every detected client in one command.
 - **Local dashboard** — `cairn dashboard` opens a loopback web console at
   `127.0.0.1:8765`: interactive graph with symbol search, recorded
@@ -278,9 +279,12 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 |---------|--------------|
 | `cairn serve` | Run the stdio MCP server |
 | `cairn dashboard` | Local web console, loopback :8765 (views + Settings) |
-| `cairn build` / `cairn update` | Full build (first run) / incremental reindex |
+| `cairn build [--lsp]` / `cairn update` | Full build (`--lsp` optionally upgrades ambiguous Python calls with pyright) / incremental reindex |
 | `cairn def <symbol>` | Find a symbol's definition |
 | `cairn impact <symbol>` | Within-repo blast radius (precise default; `--fuzzy` to audit) |
+| `cairn blast` | Diff-based reverse-dependency radius (`--base <ref>`, text/markdown/mermaid/json, precise default with `--fuzzy` opt-in; empty radius exits 0, unknown base reports fetch-depth guidance) |
+| `cairn map` | Deterministic repository orientation: directory clusters, counts, hubs, hotspots, and dropped counts (`--json`; capped with `--max-clusters` / `--max-hubs` / `--max-hotspots`) |
+| `cairn grep <pattern>` | Regex or literal search across indexed files, grouped by enclosing symbol (`-i`, `--fixed`, `--in <prefix>`, `--max-hits`; reports dropped hits/groups) |
 | `cairn ask "<question>"` | Natural-language query routed across all layers |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue |
@@ -294,11 +298,11 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## MCP Tools
 
-22 tools across four layers — same store as the CLI:
+24 tools across four layers — same store as the CLI:
 
 | Layer | Tools |
 |-------|-------|
-| **graph** (9) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `explore` (the aggregator — recommended first call), `visualize_graph` |
+| **graph** (11) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `visualize_graph` |
 | **compass + knowledge base** (5) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
 | **memory** (2) | tribal memory: `recall_memory`, `record_memory` (lifecycle verbs are CLI-only: `cairn memory digest|evolve|promote|demote|forget|decay`) |
 | **knowledge** (6) | OKF business docs / workflows: add / search / status / delete / `trace_workflow` / `wiki_generate` |
@@ -306,6 +310,12 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 Per-tool shapes and examples: [docs/mcp-tools.md](docs/mcp-tools.md).
 
 ## Configuration
+
+Workspace `cairn.json` may set `"include_nested_repos": true` to index
+initialized submodules and nested child repositories under prefixed repo ids;
+the default is `false`. A linked worktree without a store is seeded from the
+main checkout graph and then refreshed for worktree drift; the main store is
+never mutated.
 
 The default install is dependency-light and network-free. Opt in with extras:
 

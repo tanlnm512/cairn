@@ -75,6 +75,7 @@ def _serve_foreground(db, port, read_only=None):
     store = resolve_store()
     os.environ["CAIRN_DB"] = db or str(store.db)
     os.environ["CAIRN_KNOWLEDGE"] = str(store.knowledge)
+    os.environ["CAIRN_WORKSPACE"] = str(store.workspace)
     # Default: the shared SSE daemon runs read-only (contention-safe); a
     # foreground stdio server keeps read-write for interactive use.
     if read_only is None:

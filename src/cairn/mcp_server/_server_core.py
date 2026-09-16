@@ -98,6 +98,15 @@ def _read_only_mode() -> bool:
     return os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes")
 
 
+def _fresh_graph(conn):
+    """Probe graph freshness on the caller's connection before a graph read."""
+    from cairn.graph.watcher import refresh_for_query
+
+    return refresh_for_query(
+        conn, repair=False if _read_only_mode() else None
+    )
+
+
 # --- Read-connection reuse (perf phase P5) -----------------------------------
 #
 # Every tool call used to open a fresh SQLite connection (open + WAL/

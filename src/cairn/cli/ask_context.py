@@ -43,9 +43,22 @@ def ask(question, db, knowledge, as_json):
 @main.command()
 @click.argument("file_path")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def context(file_path, knowledge):
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+def context(file_path, knowledge, refresh):
     """Load relevant context (compass + memory + wiki) for a file."""
+    from ..paths import resolve_store
+    from .query import _refresh_conn
     from ..okf.bundle import OKFBundle
+
+    conn = get_db(str(resolve_store().db))
+    try:
+        _refresh_conn(conn, refresh)
+    finally:
+        conn.close()
 
     bundle = OKFBundle(knowledge)
     parts = [p for p in file_path.split("/") if p]
@@ -70,5 +83,3 @@ def context(file_path, knowledge):
                     out.append(f"  {c.description}")
                 break
     click.echo("\n".join(out))
-
-

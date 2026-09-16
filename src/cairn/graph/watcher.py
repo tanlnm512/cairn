@@ -28,6 +28,7 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import scanner as scanner_mod
@@ -56,6 +57,76 @@ def invalidate_gitignore_cache(path: str):
 # Core freshness check
 # ---------------------------------------------------------------------------
 
+
+@dataclass(frozen=True)
+class FreshnessReport:
+    """Observed index drift and whether the query repaired it."""
+
+    drifted_paths: tuple[str, ...]
+    repaired: bool
+
+    def banner(self) -> str:
+        if not self.drifted_paths:
+            return ""
+        paths = list(self.drifted_paths)
+        shown = ", ".join(paths[:3])
+        if len(paths) > 3:
+            shown += f", +{len(paths) - 3} more"
+        return f"Stale graph: {len(paths)} file(s) not refreshed: {shown}"
+
+
+def refresh_for_query(
+    conn: sqlite3.Connection,
+    workspace: str | None = None,
+    *,
+    repair: bool | None = None,
+) -> FreshnessReport:
+    """Probe indexed files and optionally repair drift before a graph read."""
+    if repair is None:
+        disabled = os.environ.get("CAIRN_NO_REFRESH", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        repair = not disabled
+    if workspace is None:
+        from ..paths import resolve_workspace
+
+        workspace = str(resolve_workspace())
+
+    drifted = tuple(sorted(set(_detect_changed(conn, workspace))))
+    if not drifted or not repair:
+        return FreshnessReport(drifted, repaired=False)
+
+    _repair_changed(conn, workspace, drifted, strict=True)
+    return FreshnessReport(drifted, repaired=True)
+
+
+def _repair_changed(
+    conn: sqlite3.Connection,
+    workspace: str,
+    drifted: tuple[str, ...],
+    *,
+    strict: bool,
+) -> int:
+    for path in drifted:
+        if path.endswith(".gitignore"):
+            invalidate_gitignore_cache(path)
+
+    from .incremental import reindex_paths
+
+    result = reindex_paths(conn, workspace, list(drifted))
+    errors = result.get("errors", [])
+    if errors:
+        raise RuntimeError(f"graph refresh failed: {'; '.join(errors)}")
+    repaired = result.get("reindexed", 0) + result.get("deleted", 0)
+    if strict and repaired != len(drifted):
+        raise RuntimeError(
+            f"graph refresh incomplete: {repaired}/{len(drifted)} file(s)"
+        )
+    return repaired
+
+
 def _detect_changed(conn, workspace: str) -> list[str]:
     """Compare files table (size, mtime) against disk. Return changed paths.
 
@@ -64,7 +135,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
     changed: list[str] = []
 
     for repo_path in scanner_mod.discover_repos(workspace):
-        repo_name = repo_path.name
+        repo_name = scanner_mod.repository_id(repo_path)
         try:
             file_rows = conn.execute(
                 "SELECT path, size, mtime FROM files WHERE repo_id = ?",
@@ -120,16 +191,9 @@ def _do_catch_up(conn, workspace: str) -> int:
     changed = _detect_changed(conn, workspace)
     if not changed:
         return 0
-
-    # Invalidate gitignore cache if any .gitignore files changed
-    gitignore_changes = [p for p in changed if p.endswith(".gitignore")]
-    for gitignore_path in gitignore_changes:
-        invalidate_gitignore_cache(gitignore_path)
-
-    from .incremental import reindex_paths
-
-    result = reindex_paths(conn, workspace, changed)
-    return result["reindexed"] + result["deleted"]
+    return _repair_changed(
+        conn, workspace, tuple(sorted(set(changed))), strict=False
+    )
 
 
 # ---------------------------------------------------------------------------

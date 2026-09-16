@@ -4,7 +4,8 @@ Centralizes tree-sitter runtime setup so each language parser only deals with
 AST traversal. Uses tree-sitter 0.26 + per-language wheels (tree-sitter-java,
 tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
 tree-sitter-javascript, tree-sitter-dart, tree-sitter-objc, tree-sitter-php,
-tree-sitter-ruby, tree-sitter-c-sharp, tree-sitter-c, tree-sitter-cpp); the
+tree-sitter-ruby, tree-sitter-rust, tree-sitter-c-sharp, tree-sitter-c,
+tree-sitter-cpp); the
 Kotlin grammar is vendored in-tree as the cairn._tree_sitter_kotlin
 extension.
 
@@ -38,6 +39,15 @@ def get_parser(language: str) -> Parser:
     """
     capsule = _load_language_capsule(language)
     return Parser(Language(capsule))
+
+
+def is_language_available(language: str) -> bool:
+    """Return whether the language capsule can be loaded."""
+    try:
+        _load_language_capsule(language)
+    except Exception:
+        return False
+    return True
 
 
 # Languages whose wheel doesn't expose a plain language() function. Each entry
@@ -128,6 +138,7 @@ def _load_language_module(language: str):
         "objc": "tree_sitter_objc",
         "go": "tree_sitter_go",
         "ruby": "tree_sitter_ruby",
+        "rust": "tree_sitter_rust",
         "csharp": "tree_sitter_c_sharp",
         "c": "tree_sitter_c",
         "cpp": "tree_sitter_cpp",
