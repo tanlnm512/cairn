@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
-def recall_memory(query: str, tier: str = "", include_superseded: bool = False) -> str:
+def recall_memory(
+    query: str, tier: str = "", include_superseded: bool = False, *, as_of: str | None = None
+) -> str:
     """Search past decisions, patterns, mistakes, workarounds. Increments refs.
 
     Each result shows a live-recomputed refs-verified fraction (backtick-quoted
@@ -33,6 +35,12 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
     By default superseded (revised) memories are hidden -- only the latest
     version of a decision is returned. Set include_superseded=true to audit
     the full revision history (each superseded memory points to its successor).
+
+    By default only memories valid now are returned. Pass as_of (ISO-8601
+    date or datetime, e.g. "2026-01-15") to recall as of that instant:
+    memories created after it are hidden, memories closed before it are
+    dropped. A malformed as_of raises ValueError. Validity and
+    include_superseded are orthogonal filters.
 
     Example:
         recall_memory("ApiFactory backoff")
@@ -49,7 +57,7 @@ def recall_memory(query: str, tier: str = "", include_superseded: bool = False) 
     try:
         results = search_memory(
             conn, bundle, query, tier=tier or None, session_id=_session_id(),
-            include_superseded=include_superseded,
+            include_superseded=include_superseded, as_of=as_of,
         )
     except Exception:
         conn.close()

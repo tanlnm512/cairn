@@ -6,7 +6,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
@@ -82,7 +82,7 @@ def capture_memory(
         if _is_session_bookkeeping(title, body):
             tier = "raw"
             concept.extensions["memory_triage"] = "session-bookkeeping"
-        path = store_mod.store_memory(concept, bundle, tier=tier)
+        path = store_mod.store_memory(concept, bundle, tier=tier, conn=conn)
 
         # Flip the old memory to is_latest=false AFTER the new one is safely on disk.
         if superseded_id:
@@ -239,6 +239,80 @@ def _lexical_memory_match(concepts, query):
     return [c for _, c in scored]
 
 
+def _parse_instant(value) -> Optional[datetime]:
+    """Parse an ISO-8601 date/timestamp to an aware datetime.
+
+    Date-only values are midnight UTC; absent or malformed values yield None.
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _instant_key(instant: datetime) -> str:
+    """Fixed-width UTC sort key for an instant; equal-width keys of this
+    form order chronologically under plain string comparison.
+    """
+    u = instant.astimezone(timezone.utc)
+    return (
+        f"{u.year:04d}-{u.month:02d}-{u.day:02d}"
+        f"T{u.hour:02d}:{u.minute:02d}:{u.second:02d}.{u.microsecond:06d}"
+    )
+
+
+# valid_from/valid_until strings repeat across concepts and queries (creation
+# timestamps are second-resolution), so each distinct bound is normalized to a
+# sort key once; per-concept validity checks are then string comparisons only.
+# A cached None marks a malformed bound (lenient open interval).
+_BOUND_KEYS: Dict[Any, Optional[str]] = {}
+_BOUND_KEYS_MAX = 4096
+
+
+def _bound_key(value) -> Optional[str]:
+    """Sort key for a validity bound, memoized per distinct value.
+
+    None means absent or malformed -- a lenient open bound, decided by
+    :func:`_parse_instant` so every accepted ISO-8601 shape (offsets,
+    date-only, rollovers) normalizes through the same parser.
+    """
+    if not value:
+        return None
+    try:
+        return _BOUND_KEYS[value]
+    except KeyError:
+        pass
+    except TypeError:  # unhashable extension value: parse without caching
+        dt = _parse_instant(value)
+        return _instant_key(dt) if dt is not None else None
+    dt = _parse_instant(value)
+    key = _instant_key(dt) if dt is not None else None
+    if len(_BOUND_KEYS) < _BOUND_KEYS_MAX:
+        _BOUND_KEYS[value] = key
+    return key
+
+
+def _valid_at(c: OKFConcept, query_key: str) -> bool:
+    """True iff the memory's validity interval contains the query instant.
+
+    ``query_key`` is the query instant's sort key from :func:`_instant_key`,
+    so both bounds are checked by string comparison. A memory is visible at
+    the instant iff ``valid_from <= instant`` and (``valid_until`` is open or
+    ``> instant``). Missing or malformed bounds are lenient (treated as
+    open), matching the pre-feature default of ``memory_is_latest``.
+    """
+    valid_from = _bound_key(c.extensions.get("valid_from"))
+    if valid_from is not None and valid_from > query_key:
+        return False
+    valid_until = _bound_key(c.extensions.get("valid_until"))
+    if valid_until is not None and valid_until <= query_key:
+        return False
+    return True
+
+
 def search_memory(
     conn: sqlite3.Connection,
     bundle: OKFBundle,
@@ -246,6 +320,8 @@ def search_memory(
     tier: Optional[str] = None,
     session_id: Optional[str] = None,
     include_superseded: bool = False,
+    *,
+    as_of: Optional[str] = None,
 ) -> List[OKFConcept]:
     """Search tribal + canonical memories via fused lexical + semantic ranking.
 
@@ -257,14 +333,24 @@ def search_memory(
     (pure lexical results) until at least one memory has been embedded --
     embedding happens out-of-band at capture/evolve time, not here. Superseded
     memories (``memory_is_latest: false``) are filtered out by default; pass
-    ``include_superseded=True`` to traverse the version chain.
+    ``include_superseded=True`` to traverse the version chain. ``as_of``
+    (ISO-8601 date/timestamp; ``None`` = now) restricts results to memories
+    valid at that instant, independent of ``include_superseded``.
     """
+    if as_of is not None:
+        instant = _parse_instant(as_of)
+        if instant is None:
+            raise ValueError(f"as_of must be an ISO-8601 date, got {as_of!r}")
+    else:
+        instant = datetime.now(timezone.utc)
+    query_key = _instant_key(instant)
+
     def _visible(c: OKFConcept) -> bool:
         if tier and not c.extensions.get("memory_tier", "").startswith(tier):
             return False
         if not include_superseded and c.extensions.get("memory_is_latest", True) is False:
             return False
-        return True
+        return _valid_at(c, query_key)
 
     lexical_hits = [
         c for c in bundle.search(query, limit=20)
@@ -288,7 +374,8 @@ def search_memory(
                 seen.add(c.concept_id)
 
     semantic_hits = _semantic_memory_search(
-        conn, bundle, query, tier=tier, include_superseded=include_superseded
+        conn, bundle, query, tier=tier, include_superseded=include_superseded,
+        query_key=query_key,
     )
     # Overwrite (not setdefault): the semantic object already carries the
     # provenance stamp that needs to survive into the returned result, so it
@@ -336,6 +423,7 @@ def _semantic_memory_search(
     tier: Optional[str] = None,
     limit: int = 20,
     include_superseded: bool = False,
+    query_key: Optional[str] = None,
 ) -> List[OKFConcept]:
     """Cosine scan over persisted memory_embeddings, ranked by best-matching chunk.
 
@@ -343,8 +431,12 @@ def _semantic_memory_search(
     backfill has run) or on any error -- never raises, mirroring
     knowledge/search.py's _semantic_search. A memory can have multiple
     embedded chunks (see chunk_memory_body); this dedupes to one entry per
-    concept_id, keeping its single best-scoring chunk's rank.
+    concept_id, keeping its single best-scoring chunk's rank. ``query_key``
+    (the query instant's :func:`_instant_key` sort key; None = now) bounds
+    the validity interval a candidate must cover.
     """
+    if query_key is None:
+        query_key = _instant_key(datetime.now(timezone.utc))
     try:
         from cairn.graph import embeddings as emb
         from cairn.retrieval import cosine_scan
@@ -381,6 +473,8 @@ def _semantic_memory_search(
             if tier and not concept.extensions.get("memory_tier", "").startswith(tier):
                 continue
             if not include_superseded and concept.extensions.get("memory_is_latest", True) is False:
+                continue
+            if not _valid_at(concept, query_key):
                 continue
             concept.extensions["provenance"] = prov
             out.append(concept)
@@ -486,15 +580,15 @@ def batch_critic(
         old_id = concept.concept_id  # capture before re-tier for cleanup
         if signals["score"] < 0.3:
             decision = Decision.ARCHIVE
-            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
+            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
             dropped += 1
         elif new_tier == "tribal":
             decision = Decision.PROMOTE
-            store_mod.store_memory(concept, bundle, tier="tribal", old_id=old_id)
+            store_mod.store_memory(concept, bundle, tier="tribal", old_id=old_id, conn=conn)
             tribal += 1
         else:
             decision = Decision.KEEP_DRAFT
-            store_mod.store_memory(concept, bundle, tier="drafts", old_id=old_id)
+            store_mod.store_memory(concept, bundle, tier="drafts", old_id=old_id, conn=conn)
             promoted += 1  # remains a candidate
         _append_promotion(concept, decision, signals["score"])
     return {"processed": len(drafts), "tribal": tribal, "dropped": dropped, "remaining_drafts": promoted}
@@ -515,14 +609,14 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, 
             ts = concept.timestamp
             if ts and _age_days(ts) > raw_max_days:
                 old_id = concept.concept_id
-                store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
+                store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
                 expired += 1
         for concept in store_mod.list_memories(bundle, tier="tribal"):
             ts = concept.timestamp
             age = _age_days(ts) if ts else 0
             if age > tribal_max_stale:
                 old_id = concept.concept_id
-                store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id)
+                store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
                 archived += 1
     reaped = 0
     if conn is not None and (expired or archived):
@@ -707,7 +801,7 @@ def evolve_memory(
         signals = score_memory(concept, conn, bundle)
         apply_score(concept, signals)
         tier = store_mod.tier_for_score(signals["score"])
-        new_path = store_mod.store_memory(concept, bundle, tier=tier)
+        new_path = store_mod.store_memory(concept, bundle, tier=tier, conn=conn)
         _mark_superseded(bundle, old.concept_id, new_path)
         _append_promotion(concept, "evolve", signals["score"])
         return {"path": new_path, "tier": tier, "signals": signals, "superseded": old.concept_id}

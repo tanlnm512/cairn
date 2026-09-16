@@ -1,4 +1,4 @@
-"""Memory CLI: the memory group and 14 subcommands."""
+"""Memory CLI: the memory group and its subcommands."""
 from __future__ import annotations
 
 import click
@@ -101,17 +101,27 @@ def memory_evolve(memory_path, title, body, db, knowledge):
 @memory.command("search")
 @click.argument("query")
 @click.option("--tier", default=None)
+@click.option("--as-of", default=None,
+              help="Only memories valid at this ISO-8601 date/time.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_search(query, tier, db, knowledge):
-    """Search past memories. Shows a live refs-verified fraction per result."""
+def memory_search(query, tier, as_of, db, knowledge):
+    """Search past memories. Shows a live refs-verified fraction per result.
+
+    Only memories valid at --as-of are returned; the default (now) shows
+    only currently-valid memories.
+    """
     from ..memory.promotion import search_memory
     from ..memory.scoring import _graph_verification
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    results = search_memory(conn, bundle, query, tier=tier, session_id="cli")
+    try:
+        results = search_memory(conn, bundle, query, tier=tier, session_id="cli", as_of=as_of)
+    except ValueError as exc:
+        conn.close()
+        raise click.UsageError(str(exc)) from exc
     if not results:
         conn.close()
         click.echo(f"No memories matching '{query}'.")
@@ -129,6 +139,55 @@ def memory_search(query, tier, db, knowledge):
     if hint:
         click.echo(hint)
     conn.close()
+
+
+@memory.command("timeline")
+@click.argument("symbol")
+@click.option("--db", default=str(DEFAULT_DB_PATH),
+              help="Graph DB path (unused; validity renders from concept extensions).")
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def memory_timeline(symbol, db, knowledge):
+    """Temporal history of memories citing SYMBOL.
+
+    A memory matches when it cites SYMBOL in a backtick symbol ref (the same
+    extraction the stale path uses) or mentions it in plain text. Rows are
+    ordered by valid_from; each shows the validity window, recorded successor
+    link, and current tier/score.
+    """
+    from cairn.refs import extract_symbol_refs
+
+    from ..memory.store import list_memories
+    from ..okf.bundle import OKFBundle
+
+    bundle = OKFBundle(knowledge)
+    matches = []
+    for c in list_memories(bundle):
+        refs = [r[:-2] if r.endswith("()") else r
+                for r in extract_symbol_refs(c.body or "")]
+        cited = any(r == symbol or r.endswith("." + symbol) for r in refs)
+        if not cited:
+            hay = f"{c.title} {c.description} {c.body}".lower()
+            if symbol.lower() not in hay:
+                continue
+        matches.append(c)
+    matches.sort(
+        key=lambda c: c.extensions.get("valid_from") or c.timestamp or ""
+    )
+
+    if not matches:
+        click.echo(f"No memories citing '{symbol}'.")
+        return
+    click.echo(f"Timeline for '{symbol}' ({len(matches)} memory(ies)):")
+    for c in matches:
+        ext = c.extensions
+        start = (ext.get("valid_from") or c.timestamp or "unknown")[:10]
+        until = ext.get("valid_until")
+        window = f"{start} -> {until[:10]}" if until else f"{start} -> present"
+        line = (f"  {window}  [{ext.get('memory_tier', '?')} "
+                f"{ext.get('memory_score', '?')}] {c.title}  ({c.concept_id})")
+        if ext.get("successor_symbol"):
+            line += f"  successor: {ext['successor_symbol']}"
+        click.echo(line)
 
 
 @memory.command("capture")

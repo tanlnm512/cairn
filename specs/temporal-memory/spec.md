@@ -1,6 +1,7 @@
 # Spec: temporal-memory
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user's standing instruction ("implement all specs except remote-mcp-oauth until done") recorded as the execution go-ahead; spec-set digest: 11 tasks / 4 phases, check.py 0 fail, 2 EARS line-wrap warnings (cosmetic).
 **Created**: 2026-09-16
 **Branch**: `feat/temporal-memory`
 

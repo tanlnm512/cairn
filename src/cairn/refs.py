@@ -4,15 +4,16 @@ Shared by the compass critic (L2) and memory scoring (L4) so the two layers
 agree on what counts as a "verified" file/symbol reference without either
 importing the other.
 
-Scope: deterministic backtick-ref extraction and graph existence checks only.
-Critic-specific heuristics (prose-heavy warnings, thresholds) stay in
-``compass/critic.py`` -- they are not shared with memory scoring.
+Scope: deterministic backtick-ref extraction, graph existence checks, and
+successor-identity resolution. Critic-specific heuristics (prose-heavy
+warnings, thresholds) stay in ``compass/critic.py`` -- they are not shared
+with memory scoring.
 """
 from __future__ import annotations
 
 import re
 import sqlite3
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 # --- shared patterns ------------------------------------------------------
 
@@ -169,3 +170,78 @@ def symbol_exists(conn: sqlite3.Connection, name: str) -> bool:
         return row is not None
 
     return False
+
+
+# --- successor resolution ---------------------------------------------------
+
+def successor_candidates(
+    conn: sqlite3.Connection, ref: str, file_scope_refs: List[str] = ()
+) -> List[str]:
+    """Live symbols sharing a dead symbol ref's identity anchors.
+
+    Anchors knowable for a dead ref: the qualified-name prefix of a dotted
+    ref, and the file scope — the concept's still-live file refs. A
+    candidate must satisfy every knowable anchor; a ref with no knowable
+    anchor yields no candidates. Returns successor identities
+    (qualified_name, else name), one per distinct symbol.
+    """
+    bare = ref[:-2] if ref.endswith("()") else ref
+    prefix, _, _ = bare.rpartition(".")
+    clauses = []
+    params: List[str] = []
+    if prefix:
+        esc = _escape_like(prefix)
+        clauses.append(
+            "(s.qualified_name LIKE ? ESCAPE '\\'"
+            " OR s.qualified_name LIKE ? ESCAPE '\\')"
+        )
+        params.extend((esc + ".%", "%." + esc + ".%"))
+    scope_clauses = []
+    for file_ref in file_scope_refs:
+        if not file_exists(conn, file_ref):
+            continue
+        scope_clauses.append(_path_match_sql("f.path"))
+        params.extend(_path_match_params(file_ref))
+        # Repo-qualified ref (`repo/src/x.py`): validate the remainder
+        # within that repo, matching file_exists' bridge arm.
+        rid, _, rest = file_ref.partition("/")
+        if rest:
+            scope_clauses.append(
+                "f.repo_id = ? AND " + _path_match_sql("f.path")
+            )
+            params.extend((rid, *_path_match_params(rest)))
+    if scope_clauses:
+        clauses.append("(" + " OR ".join(scope_clauses) + ")")
+    if not clauses:
+        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name"
+        " FROM symbols s JOIN files f ON f.id = s.file_id"
+        " WHERE " + " AND ".join(clauses),
+        params,
+    ).fetchall()
+    by_id = {row[0]: (row[2] or row[1]) for row in rows}
+    return list(by_id.values())
+
+
+def resolve_successor(conn: sqlite3.Connection, body: str) -> Optional[str]:
+    """Successor symbol for a memory body's dead symbol refs, or None.
+
+    A dead ref contributes its link only when exactly one candidate shares
+    its identity anchors; the body links only when the contributed links
+    name one and the same symbol.
+    """
+    dead = [
+        ref for ref in extract_symbol_refs(body)
+        if not symbol_exists(conn, ref)
+    ]
+    if not dead:
+        return None
+    file_refs = extract_file_refs(body)
+    links = []
+    for ref in dead:
+        candidates = successor_candidates(conn, ref, file_refs)
+        if len(candidates) == 1:
+            links.append(candidates[0])
+    distinct = list(dict.fromkeys(links))
+    return distinct[0] if len(distinct) == 1 else None

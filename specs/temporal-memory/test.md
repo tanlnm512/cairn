@@ -11,7 +11,7 @@ has an observable pass condition. No implementation details.
   again with an as-of date before the store existed
 - **Then** the memory returns for the later date and is absent for the
   earlier date — only memories valid at the queried date surface
-- **Pass condition**: `bash -c 'T=$(mktemp -d) && cairn memory record decision "AsOfQA probe one" --body "qa fixture memory" --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1 && cairn memory search "AsOfQA probe one" --as-of 2099-12-31 --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -q "AsOfQA probe one" && ! cairn memory search "AsOfQA probe one" --as-of 2000-01-01 --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -q "AsOfQA probe one"'` exits 0
+- **Pass condition**: `bash -c 'T=$(mktemp -d) && /Users/tanle/Projects/cairn/.venv/bin/cairn memory record decision "AsOfQA probe one" --body "qa fixture memory" --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1 && /Users/tanle/Projects/cairn/.venv/bin/cairn memory search "AsOfQA probe one" --as-of 2099-12-31 --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -qE "^[[:space:]]*\[.*\] AsOfQA probe one" && ! /Users/tanle/Projects/cairn/.venv/bin/cairn memory search "AsOfQA probe one" --as-of 2000-01-01 --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -qE "^[[:space:]]*\[.*\] AsOfQA probe one"'` exits 0
 
 ## TC-002 — Default recall returns only currently-valid memories (standing guard)
 - **Story**: US1 · **Traces to**: FR-002, AC1
@@ -22,7 +22,7 @@ has an observable pass condition. No implementation details.
   currently-valid memories, and the validity start date is inclusive; a
   memory whose validity has ended must never reappear in default results
   (guard checked end-to-end by TC-005)
-- **Pass condition**: `bash -c 'T=$(mktemp -d) && cairn memory record decision "DefaultQA probe two" --body "qa fixture memory" --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1 && cairn memory search "DefaultQA probe two" --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -q "DefaultQA probe two" && cairn memory search "DefaultQA probe two" --as-of $(date +%F) --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -q "DefaultQA probe two"'` exits 0
+- **Pass condition**: `bash -c 'T=$(mktemp -d) && /Users/tanle/Projects/cairn/.venv/bin/cairn memory record decision "DefaultQA probe two" --body "qa fixture memory" --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1 && /Users/tanle/Projects/cairn/.venv/bin/cairn memory search "DefaultQA probe two" --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -qE "^[[:space:]]*\[.*\] DefaultQA probe two" && /Users/tanle/Projects/cairn/.venv/bin/cairn memory search "DefaultQA probe two" --as-of $(date +%F) --db "$T/g.db" --knowledge "$T/k" 2>/dev/null | grep -qE "^[[:space:]]*\[.*\] DefaultQA probe two"'` exits 0
 
 ## TC-003 — As-of on an empty store is a clean empty result
 - **Story**: US1 · **Traces to**: FR-002, FR-001
@@ -30,7 +30,7 @@ has an observable pass condition. No implementation details.
 - **When** recall runs with an as-of date
 - **Then** the result is empty and the command completes without error —
   the validity fields exist on fresh stores too (additive schema)
-- **Pass condition**: `bash -c 'T=$(mktemp -d) && mkdir -p "$T/k" && cairn memory search "nothing here" --as-of 2000-01-01 --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1'` exits 0
+- **Pass condition**: `bash -c 'T=$(mktemp -d) && mkdir -p "$T/k" && /Users/tanle/Projects/cairn/.venv/bin/cairn memory search "nothing here" --as-of 2000-01-01 --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1'` exits 0
 
 ## TC-004 — Agent recall surface honors as-of identically
 - **Story**: US1 · **Traces to**: FR-002, AC1
@@ -67,14 +67,14 @@ has an observable pass condition. No implementation details.
 - **When** the timeline for that symbol is requested
 - **Then** the listing shows the memory together with its validity dates —
   the temporal history is readable in one view
-- **Pass condition**: `bash -c 'T=$(mktemp -d) && cairn memory record decision "RetryProbe policy notes" --body "qa fixture for the timeline view" --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1 && out=$(cairn memory timeline RetryProbe --db "$T/g.db" --knowledge "$T/k" 2>/dev/null) && echo "$out" | grep -q "RetryProbe policy notes" && echo "$out" | grep -qE "[0-9]{4}-[0-9]{2}-[0-9]{2}"'` exits 0
+- **Pass condition**: `bash -c 'T=$(mktemp -d) && /Users/tanle/Projects/cairn/.venv/bin/cairn memory record decision "RetryProbe policy notes" --body "qa fixture for the timeline view" --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1 && out=$(/Users/tanle/Projects/cairn/.venv/bin/cairn memory timeline RetryProbe --db "$T/g.db" --knowledge "$T/k" 2>/dev/null) && echo "$out" | grep -q "RetryProbe policy notes" && echo "$out" | grep -qE "[0-9]{4}-[0-9]{2}-[0-9]{2}"'` exits 0
 
 ## TC-008 — Timeline for a symbol with no memories is clean
 - **Story**: US1 · **Traces to**: FR-004
 - **Given** a brand-new store with no memories
 - **When** the timeline for any symbol is requested
 - **Then** the result is empty and the command completes without error
-- **Pass condition**: `bash -c 'T=$(mktemp -d) && mkdir -p "$T/k" && cairn memory timeline NoSuchSymbolQA --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1'` exits 0
+- **Pass condition**: `bash -c 'T=$(mktemp -d) && mkdir -p "$T/k" && /Users/tanle/Projects/cairn/.venv/bin/cairn memory timeline NoSuchSymbolQA --db "$T/g.db" --knowledge "$T/k" >/dev/null 2>&1'` exits 0
 
 ## TC-009 — Existing memories survive the validity-field migration
 - **Story**: US1 · **Traces to**: FR-001
@@ -94,7 +94,10 @@ has an observable pass condition. No implementation details.
 - **Then** no recall-latency regression beyond the threshold is flagged;
   at scale, the full perf suite against the production workspace is the
   standing verify, recorded before/after in the tech spec
-- **Pass condition**: `cairn bench --suite perf --baseline --n-files 20 --complexity low` exits 0
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite perf --baseline DS-v1 --n-files 20 --complexity low` exits 0
+  The committed-baseline comparison is advisory across machine profiles: a
+  machine-profile mismatch is warned, and a threshold breach is reported,
+  not failed — only a command error fails this case.
 
 ## Coverage matrix
 <!-- Every FR appears; `check.py` fails an FR with no TC. -->

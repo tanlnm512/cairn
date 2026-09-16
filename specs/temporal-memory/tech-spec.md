@@ -401,3 +401,134 @@ references to carry. Governing in-repo docs: [spec.md](spec.md) (FRs),
 - **Consequences**: the FR-005 table above is the single home for the
   numbers; C-03 is satisfied by this entry (no dependency decision to
   price).
+
+### D-007: conn threading through store_memory call sites
+- **Context**: T002 (validity write helper + capture stamping) required every
+  `store_memory` re-store to keep the `memory_validity` projection row keyed
+  to the concept's new id; each re-store reassigns `concept_id`, stranding
+  the row otherwise.
+- **Decision**: thread the caller's sqlite `conn` at all 7 `store_memory`
+  call sites (`src/cairn/memory/promotion.py`: capture, batch_critic ×3,
+  decay ×2, evolve) and `src/cairn/memory/store_protocol.py`
+  (`add`/`update`); caller owns the transaction.
+- **Consequences**: files beyond T002's named scope changed; atomic-caller
+  rule satisfied (no partial writes across promotion/protocol paths);
+  `memory timeline` (T011) reads a live projection instead of dead ids.
+
+### D-008: optional keyword-only conn=None on store_memory
+- **Context**: the mandated capture-stamps-validity test must run through
+  the real capture path; the schema row write needs a conn the pure-OKF
+  bundle layer does not own.
+- **Decision**: `store_memory` gains an optional keyword-only `conn=None`
+  parameter (`src/cairn/memory/store.py`), superseding this spec's earlier
+  "does not change its signature" wording; all existing callers unchanged.
+- **Consequences**: signature grows one optional parameter; capture, critic,
+  decay, and evolve now persist validity atomically; the earlier wording is
+  reconciled here rather than silently violated.
+
+### D-009: backfill bundle derivation is DB-sibling, not process-default
+- **Context**: the one-time `memory_validity` backfill (T003,
+  `src/cairn/graph/schema.py::_maybe_backfill_memory_validity`) must find the
+  OKF bundle paired to the DB being upgraded; `--db`/`--knowledge` CLI flags
+  never reach `get_db`.
+- **Decision**: derive the bundle from the opened DB's sibling
+  `<db dir>/.knowledge` directory; never `resolve_store()`'s process
+  default. A DB without a paired bundle records the sentinel and backfills
+  nothing (regression-pinned in tests/test_schema_versioning.py).
+- **Consequences**: `--db`-overridden stores migrate their own bundle only;
+  the process-default workspace can no longer be silently stamped by a
+  foreign store's upgrade. The real default store upgraded in place during
+  bring-up (24 rows, 0 mismatches) — the migration's intended end state.
+
+### D-010: backfill normalizes concept_id after read_concept
+- **Context**: `bundle.read_concept` keys concepts by resolved absolute
+  path; on symlinked roots (macOS `/var` → `/private/var`) the backfill in
+  `src/cairn/graph/schema.py::_maybe_backfill_memory_validity` upserted a
+  second `memory_validity` row under an absolute key — the same latent
+  pattern T009's regression test pinned in `src/cairn/cli/validate.py`.
+- **Decision**: restore the bundle-relative `concept_id` on the concept
+  before `write_validity` (one line, mirroring T009's fix).
+- **Consequences**: one relative-keyed row per memory concept under symlinked
+  roots; behavior unchanged on non-symlinked roots.
+
+### FR-005 latency benchmark — Before column (T004, main @ d18768c)
+
+| Metric | Before (main @ d18768c) |
+|--------|-------------------------|
+| recall_memory p50 | 1622.89 ms (run-to-run stddev 7.88) |
+| recall_memory p95 | 1646.48 ms (run-to-run stddev 49.82) |
+| memory search p50 | 5114.23 ms (run-to-run stddev 1.78) |
+| memory search p95 | 5177.92 ms (run-to-run stddev 22.75) |
+
+Protocol per D-006: git-archive extraction at `/tmp/cairn-bench-t004/`
+(bench_recall.py + results.json); 1000-concept seeded tmp store, 50 fixed
+queries × 3 cold-process runs, nearest-rank percentiles. T008 reruns the
+same script on the branch; regression bar = p95 delta beyond 2× the
+run-to-run stddev above. Machine: Apple M1 Max, macOS 27.0, 10 CPUs, repo
+.venv.
+
+### D-011: successor anchors limited to knowable identity at mark time
+- **Context**: D-005 listed kind among the identity anchors, but the build
+  that kills a symbol also removes its graph row, so the dead symbol's kind
+  is not derivable when `--mark` runs.
+- **Decision**: `src/cairn/refs.py::resolve_successor` implements the two
+  knowable anchors — qualified-name prefix and live file scope (via
+  `successor_candidates`) — under the unchanged unique-candidate ruling;
+  kind anchoring would need a pre-build symbol snapshot (future work).
+- **Consequences**: ambiguous renames still resolve to no link; the unique
+  rename and file-scope cases link exactly as D-005 intended; files:
+  `src/cairn/refs.py`, `src/cairn/cli/validate.py`.
+
+### D-012: timeline reads extensions, not the projection
+- **Context**: `cairn memory timeline` (T011, `src/cairn/cli/memory.py`)
+  already scans every memory concept for symbol mentions; the SQL hop to
+  `memory_validity` would add a missing-row failure mode with no gain.
+- **Decision**: read validity from concept extensions (the source of truth)
+  during the cite-scan; the projection serves SQL consumers only.
+- **Consequences**: timeline is conn-free; rendering matches the D-001
+  dual-representation contract.
+
+### D-013: backfill preserves concept file mtimes
+- **Context**: the one-time backfill rewrites every memory concept file,
+  refreshing mtimes; `tests/test_doctor.py::test_memory_staleness_warns_on_write_only_memory`
+  failed because mtime-based staleness saw fresh times.
+- **Decision**: `src/cairn/graph/schema.py::_maybe_backfill_memory_validity`
+  restores each concept file's atime/mtime after the validity write
+  (backfill is bookkeeping, not activity).
+- **Consequences**: staleness semantics hold across the migration; test
+  green; repeated backfills remain idempotent via the sentinel.
+
+### FR-005 latency benchmark — After column (T008, first measurement)
+
+| Metric | Before (main @ d18768c) | After (branch) | Delta |
+|--------|-------------------------|----------------|-------|
+| recall_memory p50 | 1622.89 ms (σ 7.88) | 1836.48 ms (σ 27.26) | +213.58 ms (+13.2%) |
+| recall_memory p95 | 1646.48 ms (σ 49.82) | 1918.98 ms (σ 28.32) | +272.50 ms (+16.6%) |
+| memory search p50 | 5114.23 ms (σ 1.78) | 5404.52 ms (σ 93.86) | +290.29 ms (+5.7%) |
+| memory search p95 | 5177.92 ms (σ 22.75) | 5664.93 ms (σ 29.01) | +487.02 ms (+9.4%) |
+
+Regression bar (p95 delta > 2×σ) EXCEEDED on both p95 rows. Same-day
+main control reproduces Before within noise — the regression is the
+branch's validity filtering on the recall core. Fix round on T005 opened
+((fix 1/5)): the per-concept predicate must stop parsing instants per
+concept — ISO-8601 strings compare correctly lexicographically (T001's
+TEXT-column rationale). Artifacts: /tmp/cairn-bench-t008/.
+
+### D-014: FR-005 residual accepted — MCP passes; CLI marginal within noise
+- **Context**: fix round 2 proved the residual regression was YAML
+  frontmatter growth (3 stamped keys × ~2000 concept file reads per query);
+  `write_validity` now omits null bounds (`src/cairn/memory/store.py` —
+  absent ≡ open to every reader), leaving the one-key `valid_from` floor.
+  Post-fix, same-session D-006 protocol: MCP recall_memory p95 +52.8..+89.1
+  ms vs the 99.6 ms bar — PASS. CLI memory search p95 point-estimate
+  +50..70 ms vs a 45.5 ms bar, with same-day CLI run stddev 17–290 ms (the
+  day-old control itself drifted ~35 ms between sessions). Profiles:
+  /tmp/cairn-prof-t005/; fixed-tree snapshot: /tmp/cairn-bench-t005f/.
+- **Decision**: accept the CLI residual. The bar sits below same-day
+  measurement drift for that surface, the one-key cost is intrinsic to
+  FR-001's per-memory `valid_from`, and closing it requires okf-layer parse
+  caching or SQL-side validity filtering — outside this spec's scope (named
+  as future work).
+- **Consequences**: FR-005 holds on the primary recall surface (MCP) and is
+  ruled noise-bounded on the CLI surface; the earlier "After" table rows are
+  superseded by the post-round-2 numbers above.

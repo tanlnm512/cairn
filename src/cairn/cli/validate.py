@@ -34,29 +34,61 @@ def validate(knowledge):
 @click.option("--mark", is_flag=True, help="Mark stale concepts (set stale=true in extensions).")
 def validate_paths(db, knowledge, mark):
     """Check all concepts for stale file/symbol references against the graph."""
+    from datetime import datetime, timezone
+
     from cairn.compass.critic import validate_paths as _validate
+    from cairn.memory.store import write_validity
     from cairn.okf.bundle import OKFBundle
+    from cairn.refs import resolve_successor
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    stale = _validate(conn, bundle)
-    conn.close()
+    try:
+        stale = _validate(conn, bundle)
 
-    if not stale:
-        click.echo("All concepts have valid references (0 stale).")
-        return
+        if not stale:
+            click.echo("All concepts have valid references (0 stale).")
+            return
 
-    for entry in stale:
-        cid = entry["concept_id"]
-        score = entry["verified"]
-        click.echo(f"  [STALE] {cid}  (verified: {score})")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for entry in stale:
+            cid = entry["concept_id"]
+            score = entry["verified"]
+            click.echo(f"  [STALE] {cid}  (verified: {score})")
+            if mark:
+                try:
+                    c = bundle.read_concept(cid)
+                    # read_concept keys the concept by its resolved file path;
+                    # restore the bundle-relative id so the validity projection
+                    # upserts the existing row instead of adding a duplicate.
+                    c.concept_id = cid
+                    c.extensions["stale"] = True
+                    if cid.startswith("memory/"):
+                        # Memory records auto-invalidate at build time; an
+                        # existing interval or successor link is preserved.
+                        successor = c.extensions.get("successor_symbol")
+                        if not successor:
+                            successor = resolve_successor(conn, c.body or "")
+                        write_validity(
+                            c,
+                            valid_from=(
+                                c.extensions.get("valid_from")
+                                or c.timestamp
+                                or now
+                            ),
+                            valid_until=c.extensions.get("valid_until") or now,
+                            successor_symbol=successor,
+                            bundle=bundle,
+                            conn=conn,
+                        )
+                    else:
+                        bundle.write_concept(c)
+                except Exception as e:
+                    click.echo(f"    (mark failed: {e})")
         if mark:
-            try:
-                c = bundle.read_concept(cid)
-                c.extensions["stale"] = True
-                bundle.write_concept(c)
-            except Exception as e:
-                click.echo(f"    (mark failed: {e})")
+            conn.commit()
+    finally:
+        conn.close()
 
     action = "marked" if mark else "found"
     click.echo(f"\n{action} {len(stale)} stale concept(s).")

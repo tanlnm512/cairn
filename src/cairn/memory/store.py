@@ -96,12 +96,77 @@ def create_memory(
     )
 
 
-def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = None, old_id: Optional[str] = None):
+def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize a concept_id to bundle-relative (from_file sets absolute paths)."""
+    try:
+        return str(Path(concept_id).relative_to(bundle.root))
+    except ValueError:
+        return concept_id
+
+
+def write_validity(
+    concept: OKFConcept,
+    *,
+    valid_from: str,
+    valid_until: Optional[str] = None,
+    successor_symbol: Optional[str] = None,
+    bundle: Optional[OKFBundle] = None,
+    conn=None,
+) -> None:
+    """Stamp a memory concept's validity interval and mirror the
+    ``memory_validity`` projection row.
+
+    Extensions are the source of truth; the SQL row is the indexed
+    projection. The call writes the full interval: a None bound is
+    cleared -- its extensions key is removed and the SQL column is NULL.
+    ``bundle`` persists the concept via
+    write_concept and keys the row by the bundle-relative concept_id;
+    ``conn`` upserts the projection row (caller owns the transaction).
+    """
+    if not valid_from:
+        raise ValueError("valid_from is required")
+    cid = concept.concept_id
+    if not cid:
+        raise ValueError("concept_id is required")
+    concept.extensions["valid_from"] = valid_from
+    for key, value in (("valid_until", valid_until),
+                       ("successor_symbol", successor_symbol)):
+        if value is None:
+            concept.extensions.pop(key, None)
+        else:
+            concept.extensions[key] = value
+    if bundle is not None:
+        cid = _rel_id(bundle, cid)
+        bundle.write_concept(concept)
+    if conn is not None:
+        conn.execute(
+            "INSERT INTO memory_validity"
+            " (concept_id, valid_from, valid_until, successor_symbol)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(concept_id) DO UPDATE SET"
+            " valid_from = excluded.valid_from,"
+            " valid_until = excluded.valid_until,"
+            " successor_symbol = excluded.successor_symbol",
+            (cid, valid_from, valid_until, successor_symbol),
+        )
+
+
+def store_memory(
+    concept: OKFConcept,
+    bundle: OKFBundle,
+    tier: Optional[str] = None,
+    old_id: Optional[str] = None,
+    conn=None,
+):
     """Write a memory concept to its tier directory.
 
     The tier is read from concept.extensions['memory_tier'] unless overridden.
     When old_id is provided and differs from the new location, the old file
-    is unlinked to prevent orphan files on re-tiering.
+    is unlinked to prevent orphan files on re-tiering. A missing
+    ``valid_from`` is stamped with the concept's creation time; an existing
+    interval is preserved. When ``conn`` is provided, the ``memory_validity``
+    projection row follows the (possibly new) concept_id; the caller owns
+    the transaction.
     """
     t = tier or concept.extensions.get("memory_tier", "drafts")
     slug = slugify(concept.title or "") or "memory"
@@ -122,12 +187,28 @@ def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = N
         concept.concept_id = f"{TIER_DIRS[t]}/{slug}-{unique_suffix}"
     # Keep tier metadata in sync with file location.
     concept.extensions["memory_tier"] = t
-    bundle.write_concept(concept)
+    write_validity(
+        concept,
+        valid_from=(
+            concept.extensions.get("valid_from")
+            or concept.timestamp
+            or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ),
+        valid_until=concept.extensions.get("valid_until") or None,
+        successor_symbol=concept.extensions.get("successor_symbol") or None,
+        bundle=bundle,
+        conn=conn,
+    )
     # Clean up old tier file only when old_id is explicitly provided.
     if old_id and old_id != concept.concept_id:
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():
             old_file.unlink()
+        if conn is not None:
+            conn.execute(
+                "DELETE FROM memory_validity WHERE concept_id = ?",
+                (_rel_id(bundle, old_id),),
+            )
     return concept.concept_id
 
 
@@ -205,11 +286,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
             if not (resolved == "memory/" or resolved.startswith("memory/")):
                 return False
             cid = concept.concept_id
-            # Normalize to relative for DB lookup.
-            try:
-                cid = str(Path(cid).relative_to(bundle.root))
-            except ValueError:
-                pass
+            cid = _rel_id(bundle, cid)
         # Route the file path through the write-path validator so a malformed
         # concept_id can't escape the bundle root via the delete path. Raises
         # ValueError if cid escapes root; treat that as "nothing to delete".
@@ -254,13 +331,9 @@ def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw",
         except ValueError:
             return None  # invalid tier name
         # Normalize concept_id to relative (from_file sets absolute paths).
-        old_id = concept.concept_id
-        try:
-            old_id = str(Path(old_id).relative_to(bundle.root))
-        except ValueError:
-            pass  # keep as-is if not under bundle root
+        old_id = _rel_id(bundle, concept.concept_id)
         concept.extensions["memory_tier"] = target_tier
-        new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id)
+        new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id, conn=conn)
         # Carry the embedding forward in place (a demote never changes content,
         # so re-embedding would be wasted work). old_id is already relative here.
         # Import via the cairn.graph public surface per the layering rule.
