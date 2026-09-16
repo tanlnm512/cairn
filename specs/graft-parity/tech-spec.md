@@ -547,3 +547,12 @@ pins the old no-Rust coverage; new Rust tests own that contract.
   Parked debt: the 12 PNG derivatives (`c4*.png`, `readme-architecture*.png`,
   `system-architecture*.png`) still render 22 and need regeneration by whoever
   owns the diagram toolchain.
+
+### D-015: Repository paths use the broadest supported concrete pathlib base
+- **Context**: `src/cairn/graph/scanner.py` must carry stable repository ids on
+  `Path` subclasses across every Python runtime named by `pyproject.toml`.
+- **Decision**: Select the concrete POSIX/Windows base when the runtime `Path`
+  class does not provide its own path parser; use `Path` directly when it does.
+- **Consequences**: Repository discovery keeps `repo_id` attributes and
+  path-comparison behavior on all supported runtimes. Cost: one runtime
+  capability check at module import.
