@@ -167,7 +167,7 @@ class RepositoryRecord:
 
 
 # Use the concrete base where Path itself remains abstract.
-_RepositoryPathBase = (
+_RepositoryPathBase: type = (
     Path if hasattr(Path, "parser")
     else (WindowsPath if os.name == "nt" else PosixPath)
 )
