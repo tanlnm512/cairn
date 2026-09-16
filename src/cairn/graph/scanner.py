@@ -17,7 +17,7 @@ import hashlib
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PosixPath, WindowsPath
 from typing import Iterator, List, Optional, Tuple
 
 import pathspec
@@ -166,7 +166,14 @@ class RepositoryRecord:
     path: Path
 
 
-class RepositoryPath(Path):
+# Use the concrete base where Path itself remains abstract.
+_RepositoryPathBase = (
+    Path if hasattr(Path, "parser")
+    else (WindowsPath if os.name == "nt" else PosixPath)
+)
+
+
+class RepositoryPath(_RepositoryPathBase):
     """Path carrying the stable repository id used by graph storage."""
 
     __slots__ = ("repo_id",)
