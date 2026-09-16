@@ -1,6 +1,8 @@
 # Survey: ide-extensions
 
-**Created**: 2026-09-16 | **Baseline**: codex/docs-level-up-specs @ 1af3b35
+**Created**: 2026-09-16 | **Baseline**: main @ d18768c (delta re-survey 2026-09-17 —
+19 files changed since 1af3b35, all skillgen/CLI-skill; none cited by any item, so
+items are carried byte-identical with every citation re-verified this session)
 The survey node's output — the single source of truth for code state. Every citation
 in the other four docs must trace to a line here. Evidence is pasted
 verbatim from grep/read output in the session that wrote it.

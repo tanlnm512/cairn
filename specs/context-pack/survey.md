@@ -1,6 +1,6 @@
 # Survey: context-pack
 
-**Created**: 2026-09-16 | **Baseline**: codex/docs-level-up-specs @ 1af3b35
+**Created**: 2026-09-16 | **Baseline**: d18768c
 The survey node's output — the single source of truth for code state. Every citation
 in the other four docs must trace to a line here. Evidence is pasted
 verbatim from grep/read output in the session that wrote it.
@@ -40,7 +40,10 @@ item S5: "Compass + memory readers exist for pack enrichment"
 ```
 
 ## Supporting evidence
-No `cairn pack` command exists (src/cairn/cli/ has no pack module). The bench suite's
+No `cairn pack` command exists: `ls src/cairn/cli/` lists no pack module, a grep for
+`def pack|name="pack"` across src/cairn/cli/ returns zero hits, and the command-module
+import block (src/cairn/cli/__init__.py:23-46) imports agents through wiki with no pack.
+The bench suite's
 fit measurement would extend `bench/agent_suite.py`, whose task objects already carry
 per-arm token/tool-call accounting.
 

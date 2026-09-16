@@ -1,6 +1,6 @@
 # Survey: taint-tracking
 
-**Created**: 2026-09-16 | **Baseline**: codex/docs-level-up-specs @ 1af3b35
+**Created**: 2026-09-16 | **Baseline**: codex/docs-level-up-specs @ d18768c
 The survey node's output — the single source of truth for code state. Every citation
 in the other four docs must trace to a line here. Evidence is pasted
 verbatim from grep/read output in the session that wrote it.
@@ -34,7 +34,10 @@ item S4: "explore/blast are the warning surfaces"
 ```
 
 ## Supporting evidence
-No taint/source/sink code exists anywhere (`grep -rn "taint" src/cairn/` → none).
+No taint/source/sink code exists in Python source (`grep -rni "taint" src/cairn/
+--include="*.py"` → none). Sole raw `grep -rn "taint" src/cairn/` hit:
+src/cairn/dashboard/static/chunks/mermaid.esm.min/dagre-MPVFI544.mjs:4 (the word
+"tainted" inside the vendored minified mermaid bundle — not taint code).
 The work is a new pass over stored edges plus config; per proposal §6.3 no new
 runtime dependency is required (pure graph traversal).
 

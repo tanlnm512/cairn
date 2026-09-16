@@ -61,7 +61,11 @@ As an agent editing code, I want to know my change touches a taint path.
   contract.
 - **FR-004**: `explore` and `cairn blast` shall surface a warning WHERE
   queried/changed code intersects a known taint path.
-- **FR-005**: The default source/sink set shall be [NEEDS CLARIFICATION: ship framework-aware defaults (Express, Django, Rails, Spring common entry/sink points) or require explicit configuration? Defaults aid onboarding but risk false positives — the proposal leaves this open.]
+- **FR-005**: The default source/sink set shall ship generic call-name-keyed
+  defaults (per FR-001) overridable via workspace config; framework-aware
+  packs (Express, Django, Rails, Spring entry/sink points) are deferred
+  (ruled 2026-09-17: false-positive risk over untested parser coverage
+  outweighs onboarding aid).
 
 ## Scope
 **In**: source/sink config, propagation pass, taint query command, explore/
