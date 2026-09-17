@@ -3,7 +3,8 @@
 Routes: landing, workspaces overview, projects, graph (plus its
 /graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
 history, tokens (plus their .csv/.json exports), chains, health, memory,
-tasks, wiki (list plus per-page detail), settings, embeddings — the
+tasks, wiki (list plus per-page detail), editor (the /editor/* JSON the
+IDE extensions consume), settings, embeddings — the
 settings section carries the
 app's only POST routes (/settings/save, /settings/parity-check); the
 embeddings status view and everything else stay GET-only so the read-only
@@ -348,6 +349,7 @@ def create_app(
     from .routes import (
         DashboardContext,
         core,
+        editor,
         graph,
         history,
         knowledge,
@@ -377,6 +379,7 @@ def create_app(
     knowledge.register(routes, context)
     wiki.register(routes, context)
     settings.register(routes, context)
+    editor.register(routes, context)
     routes.append(
         Mount(
             "/static",

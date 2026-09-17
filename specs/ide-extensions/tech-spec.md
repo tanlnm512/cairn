@@ -261,3 +261,24 @@ C-04 test isolation shape the API and extension test tasks),
 - **Consequences**: in-repo freedom to refactor behind the contract; the
   extension repo reads the frozen shapes as its API; contract-test updates
   are the single review gate for any post-freeze shape change.
+
+### D-015: JetBrains tasks struck — separate repo, spec-deferred
+- **Context**: T010-T012 name a JetBrains plugin in a separate repository
+  (per D-001 sequencing); specs/ide-extensions/spec.md's Scope explicitly
+  defers the second IDE ("Out: the second IDE (scoped, not forgotten)");
+  FR-005's ruling records VS Code first with JetBrains as the follow-on.
+- **Decision**: strike T010-T012 from this plan. Creating an external
+  repository is a user decision; the JetBrains leg belongs to its own
+  spec+repo when activated, consuming the same frozen D-004 contract.
+- **Consequences**: this plan ships the VS Code extension at full feature
+  depth (FR-001..FR-005); FR-006 remains a recorded follow-on, satisfied
+  structurally by the frozen contract both IDEs share.
+
+### D-016: extension lives in-repo at extensions/vscode/
+- **Context**: earlier survey/tech-spec prose said "separate repository";
+  the extension ships as a tree in this repo (npm devDeps confined to its
+  package.json, zero runtime deps, no Python-wheel impact).
+- **Decision**: keep the extension in-repo under `extensions/vscode/` for
+  this plan; extraction to its own repository is a future move if needed.
+- **Consequences**: one clone builds both server and extension; D-015's
+  JetBrains follow-on would decide its own placement when activated.

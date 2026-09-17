@@ -1,0 +1,6 @@
+src/**
+test/**
+out/test/**
+tsconfig.json
+.gitignore
+package-lock.json

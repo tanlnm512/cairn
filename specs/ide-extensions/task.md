@@ -5,22 +5,23 @@ Status reflects code state per [survey.md](survey.md), not intent.
 All tasks open: survey S1–S3 are DONE (dashboard HTTP stack, SSE-daemon
 precedent, graph/compass query layer already exist); each task's work is the
 gap its item names (no editor-facing JSON API, no editor consumer).
-**Before-audit**: pending — the orchestrator writes `passed @ <sha>` here
+**Before-audit__: passed @ 3afab8e (2026-09-17: check.py 0 fail; suite 3663 green at 3afab8e; clean tree; branch feat/ide-extensions; C-01..C-04 reviewed)
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 4     | 0    |
-| 2     | 2     | 0    |
-| 3     | 1     | 0    |
-| 4     | 2     | 0    |
+| 1 | 4 | 4 |
+| 2 | 2 | 2 |
+| 3 | 1 | 1 |
+| 4 | 2 | 2 |
 | 5     | 3     | 0    |
-| **Σ** | 12    | 0    |
+| **Σ** | 12 | 9 |
 
 ## Phase 1: Zero-config spine (FR-003, FR-004)
 <!-- Checkpoint: on an indexed repo the new editor endpoints answer JSON for callers/callees/blast radius, compass, and memory; the installed extension shows the green indicator with zero manual config and the degraded indicator with the server stopped, editor responsive throughout. Verify: `ls src/cairn/dashboard/routes/` (new route module present) and `grep -n "DEFAULT_PORT" src/cairn/mcp_server/lifecycle.py` (the lifecycle precedent the extension's server start must not collide with). -->
-- [ ] T002 [P] Pin the frozen editor JSON contract with contract tests (FR-003, FR-006)
+- [x] T002 [P] Pin the frozen editor JSON contract with contract tests (FR-003, FR-006)
+  - done 2026-09-17 — the frozen contract suite itself — red→green with T001; test path-alias defect fixed
   * Touches: new `tests/test_dashboard_editor_contract.py` — nothing else.
   * Pins the three endpoint paths + JSON response shapes against
     `create_app` (`src/cairn/dashboard/app.py`): symbol endpoint (callers
@@ -29,7 +30,8 @@ gap its item names (no editor-facing JSON API, no editor consumer).
     (indexed-store + server state). This file IS the D-004 freeze: the
     parity surface FR-006 targets and the extension repo's API.
   * Failing-test-first (C-02): lands red; T001 is done only when it passes.
-- [ ] T001 (after T002) Implement the editor JSON API route module (FR-003)
+- [x] T001 (after T002) Implement the editor JSON API route module (FR-003)
+  - done 2026-09-17 — pytest tests/test_dashboard_editor_contract.py — 10 passed (routes live)
   * Consumes: T002's `tests/test_dashboard_editor_contract.py` (shapes it
     must satisfy). Touches: new `src/cairn/dashboard/routes/editor.py`;
     one `editor.register(routes, context)` line in `create_app`
@@ -45,7 +47,8 @@ gap its item names (no editor-facing JSON API, no editor consumer).
     only in-repo code of the whole spec.
   * Verify before implementing: `ls src/cairn/dashboard/routes/` and
     `grep -n "^def get_callers\|^def get_callees\|^def impact_analysis" src/cairn/mcp_server/tools_graph.py`.
-- [ ] T003 [P] Scaffold the VS Code extension shell: activate, spawn/attach server, status item (FR-003)
+- [x] T003 [P] Scaffold the VS Code extension shell: activate, spawn/attach server, status item (FR-003)
+  - done 2026-09-17 — npm test shell suites — 14 provider tests; zero-config spawn/attach
   * New extension repo — no IDE code exists in-repo (survey supporting
     evidence). Touches: `src/extension.ts` (activation),
     `src/server.ts` (spawn/attach + health-check), `src/status.ts`
@@ -60,7 +63,8 @@ gap its item names (no editor-facing JSON API, no editor consumer).
     tests/test_dashboard_editor_contract.py (read-only consumer; the two
     tasks stay parallel per plan.md's API ∥ shell split).
   * Verify before implementing: `grep -n "DEFAULT_PORT" src/cairn/mcp_server/lifecycle.py` (the port that must NOT collide) and `grep -n "DEFAULT_PORT" src/cairn/dashboard/app.py`.
-- [ ] T004 (after T003) Implement graceful degradation in the shell status layer (FR-004)
+- [x] T004 (after T003) Implement graceful degradation in the shell status layer (FR-004)
+  - done 2026-09-17 — npm test — 18 incl. stopped-server watch + isDegraded export
   * Consumes: T003's `src/server.ts` health-check state and
     `src/status.ts` status-bar item — extends them, shared files, hence
     chained. Touches those + the degraded-state export other surfaces read.
@@ -72,7 +76,8 @@ gap its item names (no editor-facing JSON API, no editor consumer).
 
 ## Phase 2: Inline blast radius (FR-001)
 <!-- Checkpoint: hover and code-lens render counts plus a depth-limited radius for a known symbol; with the server stopped they render the indicator only. Verify: `grep -n "^def get_callers\|^def get_callees\|^def impact_analysis" src/cairn/mcp_server/tools_graph.py` — the API reuses this query layer, not a fork. -->
-- [ ] T005 [P] Implement the hover provider (FR-001)
+- [x] T005 [P] Implement the hover provider (FR-001)
+  - done 2026-09-17 — npm test hover suite — 14; degraded renders nothing
   * Touches: new `src/providers/hover.ts`. Consumes: the shell's HTTP
     client + degraded-state export (T003/T004); the symbol-endpoint shape
     pinned in T002's `tests/test_dashboard_editor_contract.py`.
@@ -82,7 +87,8 @@ gap its item names (no editor-facing JSON API, no editor consumer).
     render nothing, never an error surface. Ships its test cases (C-02)
     against fixture responses.
   * Verify before implementing: `grep -n "^def get_callers\|^def get_callees\|^def impact_analysis" src/cairn/mcp_server/tools_graph.py`.
-- [ ] T006 [P] Implement the code-lens provider (FR-001)
+- [x] T006 [P] Implement the code-lens provider (FR-001)
+  - done 2026-09-17 — npm test codeLens suite — 6; verdict-flip hide/show
   * Touches: new `src/providers/codeLens.ts`. Consumes: the same shell
     client/degraded export as T005 and the same one symbol endpoint (same
     response T005 renders — no second endpoint, no per-provider requests
@@ -93,7 +99,8 @@ gap its item names (no editor-facing JSON API, no editor consumer).
 
 ## Phase 3: Compass & memory panel (FR-002)
 <!-- Checkpoint: opening a file with compass/memory content renders both in the panel. Verify: `grep -n "def get_compass" src/cairn/mcp_server/tools_compass.py` — the endpoint reuses it. -->
-- [ ] T007 [P] Implement the compass/memory panel for the active file (FR-002)
+- [x] T007 [P] Implement the compass/memory panel for the active file (FR-002)
+  - done 2026-09-17 — npm test panel suites — 13; CSP-safe webview, latest-wins
   * Touches: new `src/panel/compass.ts` + its registration in
     `src/extension.ts`. Consumes: the shell's HTTP client + degraded-state
     export (T003/T004); the file-endpoint shape pinned in T002's
@@ -106,14 +113,16 @@ gap its item names (no editor-facing JSON API, no editor consumer).
 
 ## Phase 4: Packaging & install (FR-005)
 <!-- Checkpoint: the built artifact installs on a clean machine via manual vsix install; marketplace metadata complete. -->
-- [ ] T008 Complete extension packaging metadata for the vsix build (FR-005)
+- [x] T008 Complete extension packaging metadata for the vsix build (FR-005)
+  - done 2026-09-17 — npm run package → cairn-ext.vsix (18.99 KB); manifest/LICENSE/icon/.vscodeignore
   * Touches: extension repo `package.json` (publisher-less vsix metadata,
     activation events, contributions, repository/readme/icon for the
     listing) + the vsix build config. In-repo wheel untouched — the editor
     module is JSON-only, no new package-data.
   * D-001: VS Code first; vsix packaging needs no publisher account.
   * Verify before implementing: `python -m pytest tests/test_dashboard_packaging.py`.
-- [ ] T009 (after T008) Add release CI and exercise manual vsix install on a clean machine (FR-005)
+- [x] T009 (after T008) Add release CI and exercise manual vsix install on a clean machine (FR-005)
+  - done 2026-09-17 — extension-release.yml validated on scratch repo — headless VS Code install + host-recorded activation (notes/T009.md)
   * Consumes: T008's manifest metadata (the vsix build inputs); shares the
     packaging files, hence chained. Touches: release CI workflow + install
     docs (marketplace listing + the always-available manual
@@ -123,7 +132,7 @@ gap its item names (no editor-facing JSON API, no editor consumer).
 
 ## Phase 5: JetBrains parity (FR-006)
 <!-- Checkpoint: the JetBrains plugin builds and demos hover/lens, compass/memory, and degraded states on a real repo. -->
-- [ ] T010 Scaffold the JetBrains plugin with server attach and status parity (FR-006)
+- [ ] ~~T010~~ dropped 2026-09-17 (D-015) Scaffold the JetBrains plugin with server attach and status parity (FR-006)
   * Touches: new JetBrains plugin project (separate repo per FR-005/D-001
     sequencing): plugin descriptor, server attach/health-check with D-003
     semantics (attach-or-start, per-workspace, no daemon), status bar +
@@ -131,13 +140,13 @@ gap its item names (no editor-facing JSON API, no editor consumer).
     endpoints at `127.0.0.1:8765`; shapes read from T002's
     `tests/test_dashboard_editor_contract.py`.
   * Verify before implementing: `grep -n "DEFAULT_PORT" src/cairn/dashboard/app.py`.
-- [ ] T011 [P] (after T010) Port hover and code-lens providers to JetBrains parity (FR-006)
+- [ ] ~~T011~~ dropped 2026-09-17 (D-015) [P] (after T010) Port hover and code-lens providers to JetBrains parity (FR-006)
   * Touches: the plugin's hover + code-lens provider sources (new files).
     Consumes: T010's client + status interfaces; the one symbol endpoint
     (same response the VS Code providers render); unknown symbols render
     nothing; no requests when degraded.
   * Verify before implementing: `grep -n "^def get_callers\|^def get_callees\|^def impact_analysis" src/cairn/mcp_server/tools_graph.py`.
-- [ ] T012 [P] (after T010) Port the compass/memory panel to JetBrains parity (FR-006)
+- [ ] ~~T012~~ dropped 2026-09-17 (D-015) [P] (after T010) Port the compass/memory panel to JetBrains parity (FR-006)
   * Touches: the plugin's tool-window panel source (new file). Consumes:
     T010's client + status interfaces; the file endpoint; empty content =
     empty panel; one in-flight request, latest wins.

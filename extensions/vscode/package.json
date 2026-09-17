@@ -1,0 +1,44 @@
+{
+  "name": "cairn",
+  "displayName": "cairn — code intelligence",
+  "description": "Codebase intelligence from the local cairn server, inline in VS Code: blast radius, compass, and memory for the active workspace.",
+  "version": "0.1.0",
+  "publisher": "cairn",
+  "private": true,
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tanlnm512/cairn.git"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "cairn",
+    "code-intelligence",
+    "blast-radius",
+    "compass",
+    "call-graph"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node --test out/test/*.test.js",
+    "package": "vsce package -o cairn-ext.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.3.0",
+    "typescript": "^5.9.0"
+  }
+}
