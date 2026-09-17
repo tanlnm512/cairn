@@ -29,6 +29,14 @@ one (common-name impact) where the control arm *must* over-read — every file
 mentions ``method_N`` — which is the honest point of the comparison: cairn's
 resolved-edge answer vs grep's lexical match on a colliding name.
 
+A seventh pair (``pack-fit-rate``) registers only when the pack pipeline
+(``cairn.pack``) is installed: the cairn arm requests one pack for a fixed
+token budget, and the pair reports the pack's context cost against the same
+grep/read control plus the fit rate — the fraction of seeded target symbols
+present in the in-budget block (per-task ``fit`` in the report). The pack
+reads the workspace-local OKF bundle; generated corpora ship none, so
+enrichment coverage is empty and the measurement stays machine-independent.
+
 Report medians over ``runs`` measured runs; the call/char counts are
 deterministic within a build (same corpus + seed), wall time is not. One
 caveat: symbol ids are random per build, so a tie-bounded result set
@@ -48,14 +56,18 @@ import sqlite3
 import statistics
 import time
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from .corpus import DEFAULT_SEED, corpus_stats
 
 # Token proxy shared by the embeddings chunker and the MCP result cap: ~4
 # chars per token. Every "est_tokens" number in this suite is chars / 4.
 CHARS_PER_TOKEN = 4
+
+# Fixed token budget the pack-fit-rate arm requests its pack within.
+_PACK_BUDGET_TOKENS = 4000
 
 # Bound on how many names one control-arm alternation grep chases per hop.
 # Keeps the regex (and the recipe) bounded on dense corpora; the first 40 in
@@ -161,6 +173,19 @@ class _ControlAgent:
         return "|".join(re.escape(n) for n in bounded)
 
 
+@dataclass(frozen=True)
+class _FitResult:
+    """One pack-arm fit sample: seeded targets found in the fitted content."""
+
+    hits: int
+    total: int
+    tokenizer_mode: str
+
+    @property
+    def rate(self) -> float:
+        return self.hits / self.total if self.total else 0.0
+
+
 @dataclass
 class _Task:
     """One task-shaped question with both arms' scripted call sequences."""
@@ -169,6 +194,8 @@ class _Task:
     question: str
     cairn_calls: Callable[[sqlite3.Connection, _CairnArm, Dict[str, str]], Any]
     control_calls: Callable[[_ControlAgent, Dict[str, str]], Any]
+    # True when the cairn recipe returns a _FitResult (pack-fit-rate only).
+    measures_fit: bool = False
 
 
 # --- the six task recipes --------------------------------------------------
@@ -277,9 +304,55 @@ def _control_common_impact(agent, t):
     agent.read(hits)
 
 
-def _build_tasks(targets: Dict[str, str]) -> List[_Task]:
-    """The six tasks, with question text bound to the seeded targets."""
+def _pack_question(t: Dict[str, str]) -> str:
+    """The pack arm's task text, phrased around the seeded targets."""
+    return (
+        f"Assemble the working context for changes to {t['target_class']} "
+        f"and {t['common_method']}, tracing the {t['entry_method']} flow "
+        f"and the {t['concept_class']} cluster"
+    )
+
+
+def _fit_targets(t: Dict[str, str]) -> List[str]:
+    """The seeded symbols whose presence in the pack the fit rate measures."""
     return [
+        t["target_class"],
+        t["entry_method"],
+        t["common_method"],
+        t["concept_class"],
+    ]
+
+
+def _cairn_pack_fit(conn, arm, t):
+    from cairn.dashboard.tokenizer import active_tokenizer_mode
+    from cairn.okf import OKFBundle
+    from cairn.pack import build_pack
+
+    bundle = OKFBundle(t["knowledge_root"])
+    result = build_pack(conn, bundle, _pack_question(t), _PACK_BUDGET_TOKENS)
+    # One pack request counts as one call. The fitted item content is the
+    # budget-bounded deliverable (the header only echoes the request), so it
+    # is both the context cost and the fit substrate, and the per-call
+    # result cap does not apply.
+    arm.calls += 1
+    content = "\n".join(item.text for item in result.items)
+    arm.chars += len(content)
+    targets = _fit_targets(t)
+    hits = sum(1 for name in targets if name in content)
+    return _FitResult(
+        hits=hits, total=len(targets), tokenizer_mode=active_tokenizer_mode()
+    )
+
+
+def _control_pack_fit(agent, t):
+    hits = agent.grep(agent.grep_pattern(_fit_targets(t)), regex=True)
+    agent.read(hits)
+
+
+def _build_tasks(targets: Dict[str, str]) -> List[_Task]:
+    """The six task pairs with question text bound to the seeded targets,
+    plus the pack-fit-rate pair when the pack pipeline is installed."""
+    tasks = [
         _Task(
             label="definition-lookup",
             question=f"Where is {targets['target_class']} defined?",
@@ -317,6 +390,17 @@ def _build_tasks(targets: Dict[str, str]) -> List[_Task]:
             control_calls=_control_common_impact,
         ),
     ]
+    # Availability probe only — the recipe imports cairn.pack at run time,
+    # keeping the six base tasks runnable without the pipeline.
+    if find_spec("cairn.pack") is not None:
+        tasks.append(_Task(
+            label="pack-fit-rate",
+            question=_pack_question(targets),
+            cairn_calls=_cairn_pack_fit,
+            control_calls=_control_pack_fit,
+            measures_fit=True,
+        ))
+    return tasks
 
 
 def _select_targets(conn: sqlite3.Connection, seed: int) -> Dict[str, str]:
@@ -414,6 +498,9 @@ class TaskEffort:
     question: str
     cairn: ArmEffort
     control: ArmEffort
+    # Pack-arm fit measurement (pack-fit-rate task only): rate, hits, total,
+    # requested budget, and the tokenizer mode the pack's costs used.
+    fit: Optional[Dict[str, Any]] = None
 
     def _reduction(self, cairn_val: float, control_val: float) -> float:
         if control_val <= 0:
@@ -421,7 +508,7 @@ class TaskEffort:
         return (1 - cairn_val / control_val) * 100
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "label": self.label,
             "question": self.question,
             "cairn": self.cairn.to_dict(),
@@ -436,6 +523,9 @@ class TaskEffort:
                 ),
             },
         }
+        if self.fit is not None:
+            payload["fit"] = self.fit
+        return payload
 
 
 @dataclass
@@ -484,6 +574,7 @@ class AgentReport:
         rows = []
         for t in self.tasks:
             red = t.to_dict()["reduction"]
+            fit = "-" if t.fit is None else f"{t.fit['rate']:.0%} ({t.fit['hits']}/{t.fit['total']})"
             rows.append([
                 t.label,
                 str(t.cairn.tool_calls),
@@ -491,6 +582,7 @@ class AgentReport:
                 f"{t.cairn.est_tokens:,}",
                 f"{t.control.est_tokens:,}",
                 f"{red['tokens_pct']:.0f}%",
+                fit,
                 f"{t.cairn.wall_seconds * 1000:.0f}",
                 f"{t.control.wall_seconds * 1000:.0f}",
             ])
@@ -502,6 +594,7 @@ class AgentReport:
             f"{c.est_tokens:,}",
             f"{k.est_tokens:,}",
             f"{(1 - c.est_tokens / k.est_tokens) * 100:.0f}%" if k.est_tokens else "-",
+            "-",
             f"{c.wall_seconds * 1000:.0f}",
             f"{k.wall_seconds * 1000:.0f}",
         ])
@@ -510,7 +603,7 @@ class AgentReport:
             f" {self.runs} runs, seed {self.seed:#x}, tokens = chars/{CHARS_PER_TOKEN})",
             columns=[
                 "task", "cairn calls", "grep calls",
-                "cairn tok", "grep tok", "tok saved",
+                "cairn tok", "grep tok", "tok saved", "fit",
                 "cairn ms", "grep ms",
             ],
             rows=rows,
@@ -608,6 +701,10 @@ def run_agent_suite(
             build_transitive_closure(conn)
 
             targets = _select_targets(conn, seed)
+            # The pack arm reads the workspace-local OKF bundle; generated
+            # corpora ship none, so enrichment coverage is empty and the
+            # measurement stays machine-independent.
+            targets["knowledge_root"] = str(Path(workspace) / ".knowledge")
             report = AgentReport(
                 corpus=corpus_stats(Path(workspace)),
                 seed=seed,
@@ -618,10 +715,13 @@ def run_agent_suite(
             for task in _build_tasks(targets):
                 cairn_runs: List[dict] = []
                 control_runs: List[dict] = []
+                fit_samples: List[_FitResult] = []
                 for _ in range(runs):
                     arm = _CairnArm(conn)
                     t0 = time.perf_counter()
-                    task.cairn_calls(conn, arm, targets)
+                    result = task.cairn_calls(conn, arm, targets)
+                    if task.measures_fit:
+                        fit_samples.append(result)
                     cairn_runs.append({
                         "calls": arm.calls,
                         "chars": arm.chars,
@@ -646,11 +746,24 @@ def run_agent_suite(
                         wall_seconds=float(statistics.median(s["wall"] for s in samples)),
                     )
 
+                fit = None
+                if task.measures_fit and fit_samples:
+                    hits = int(statistics.median(f.hits for f in fit_samples))
+                    total = int(statistics.median(f.total for f in fit_samples))
+                    fit = {
+                        "rate": round(hits / total, 3) if total else 0.0,
+                        "hits": hits,
+                        "total": total,
+                        "budget_tokens": _PACK_BUDGET_TOKENS,
+                        "tokenizer_mode": fit_samples[0].tokenizer_mode,
+                    }
+
                 report.tasks.append(TaskEffort(
                     label=task.label,
                     question=task.question,
                     cairn=_median_arm(cairn_runs),
                     control=_median_arm(control_runs),
+                    fit=fit,
                 ))
                 if progress:
                     last = report.tasks[-1]

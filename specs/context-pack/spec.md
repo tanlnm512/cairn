@@ -1,6 +1,7 @@
 # Spec: context-pack
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user standing instruction ("implement all specs except remote-mcp-oauth until done"); 11 tasks/4 phases, check.py 0 fail.
 **Created**: 2026-09-16
 **Branch**: `feat/context-pack`
 

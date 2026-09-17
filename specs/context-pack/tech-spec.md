@@ -346,3 +346,41 @@ flagged for surveyor promotion: `_read_source_spans` at
 `idx_transitive_target_id` index (`src/cairn/graph/schema.py:407`);
 `closure_available` (`src/cairn/graph/dataflow.py`); the CLI command shape
 (`src/cairn/cli/map.py`); the test pins listed in the sweep above.
+
+### T011 fit-rate measurement (recorded)
+`cairn bench --suite agent`, default corpus (301 files / 63,900 lines, seed
+49374, medians over 3 runs, pack budget 4000 tokens, exact bge-m3 tokenizer;
+determinism verified over 2 full suite runs):
+
+| metric | cairn arm | grep/read control |
+|---|---|---|
+| tool calls | 1 | 301 |
+| context cost (est. tokens) | 1,218 / 1,160* | 429,600 |
+| fit (seeded targets in pack) | 0.50 (2/4) | 4/4 |
+| target ≥ 0.85 | NOT MET | — |
+
+*two runs; drift is the documented tie-bound seed swap (−4.8%, below the
+15% compare gate). Token reduction vs control: 99.7%.
+
+### D-012: seed union — lexical anchors ride alongside semantic seeds
+- **Context**: T011 measured fit 0.50 against the ≥0.85 target; both misses
+  (`Cls0010_4`, `Cls0038_3`) never entered the candidate pool
+  (in_pool=0, budget 46% unused) — semantic ranking places opaque class
+  names below method bodies; FR-001's embeddings-absent-only lexical
+  fallback cannot compensate when embeddings ARE present.
+- **Decision**: the seed stage unions semantic seeds with lexical
+  term-mode matches (class/symbol-name anchors via the existing
+  `search_symbols_terms` surface); semantic ranking stays primary, lexical
+  anchors only add candidates the semantic leg misses. This extends
+  FR-001's "lexical fallback" compensation to the present-embeddings case,
+  per the spec's own risk mitigation ("lexical fallback plus graph
+  expansion compensates; fit-rate arm measures honestly").
+- **Consequences**: seed recall improves on name-heavy corpora; SEED_LIMIT
+  still caps the union; determinism contract unchanged; fix round on the
+  T001 seed stage.
+
+- Addendum (fix round 1): the union is head-shared — `SEMANTIC_SEED_LIMIT = 5`
+  caps the semantic leg's head slots (semantic_search returns full-width
+  lists, so an uncapped head would make the union a no-op); lexical-only
+  additions fill to `SEED_LIMIT`. Post-fix measurement: fit 1.00 (4/4),
+  deterministic across two full suite runs.
