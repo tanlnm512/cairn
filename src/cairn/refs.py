@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 # --- shared patterns ------------------------------------------------------
 
@@ -175,7 +175,7 @@ def symbol_exists(conn: sqlite3.Connection, name: str) -> bool:
 # --- successor resolution ---------------------------------------------------
 
 def successor_candidates(
-    conn: sqlite3.Connection, ref: str, file_scope_refs: List[str] = ()
+    conn: sqlite3.Connection, ref: str, file_scope_refs: Sequence[str] = ()
 ) -> List[str]:
     """Live symbols sharing a dead symbol ref's identity anchors.
 
