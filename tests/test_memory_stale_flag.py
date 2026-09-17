@@ -16,7 +16,6 @@ import pytest
 
 from cairn.graph.schema import _apply_schema
 from cairn.memory.promotion import capture_memory
-from cairn.mcp_server import tools_memory
 from cairn.okf.bundle import OKFBundle
 
 
@@ -48,14 +47,17 @@ def bundle(tmp_path):
     return OKFBundle(str(tmp_path / "knowledge"))
 
 
-def _recall(query: str, db, bundle) -> str:
+def _recall(query: str, db, bundle, monkeypatch) -> str:
     """Invoke recall_memory with monkeypatched module-level connection helpers.
 
     recall_memory calls `_conn()` directly (not as a context manager) and
     closes it with .close(), so the patch returns a fresh wrapper each call.
     To keep the test DB alive across the close, we hand out the same connection
-    and make .close() a no-op.
+    and make .close() a no-op. Both helpers are patched via monkeypatch so
+    they are restored after each test and cannot leak into later modules.
     """
+    from cairn.mcp_server import tools_memory
+
     class _TestConn:
         """Wraps the real conn so recall_memory's .close() doesn't kill the fixture."""
         def __getattr__(self, name):
@@ -64,12 +66,12 @@ def _recall(query: str, db, bundle) -> str:
             pass  # keep the fixture connection alive for the next recall
 
     # Patch the module-level helpers used by recall_memory.
-    tools_memory._conn = lambda: _TestConn()
-    tools_memory._bundle = lambda: bundle
+    monkeypatch.setattr(tools_memory, "_conn", lambda: _TestConn())
+    monkeypatch.setattr(tools_memory, "_bundle", lambda: bundle)
     return tools_memory.recall_memory(query)
 
 
-def test_recall_flags_stale_when_cited_symbol_deleted(db, bundle):
+def test_recall_flags_stale_when_cited_symbol_deleted(db, bundle, monkeypatch):
     """A memory citing a symbol that is later removed → STALE flag on recall."""
     # Record a memory backtick-citing `login` (which exists in the graph).
     capture_memory(
@@ -78,7 +80,7 @@ def test_recall_flags_stale_when_cited_symbol_deleted(db, bundle):
         confidence=0.8,
     )
     # Recall while the symbol still exists → no STALE.
-    out = _recall("login", db, bundle)
+    out = _recall("login", db, bundle, monkeypatch)
     assert "[STALE]" not in out, out
     assert "refs-verified=1.0" in out, out
 
@@ -87,14 +89,14 @@ def test_recall_flags_stale_when_cited_symbol_deleted(db, bundle):
     db.commit()
 
     # Recall again → now STALE, fraction < 1.0.
-    out = _recall("login", db, bundle)
+    out = _recall("login", db, bundle, monkeypatch)
     assert "[STALE]" in out, out
     assert "verify before relying" in out, out
     # The fraction dropped below 1.0.
     assert "refs-verified=0.0" in out, out
 
 
-def test_recall_no_stale_flag_for_memory_without_refs(db, bundle):
+def test_recall_no_stale_flag_for_memory_without_refs(db, bundle, monkeypatch):
     """A memory with no backtick refs scores 1.0 (neutral) → never STALE.
 
     Guards against false positives: prose-only memories must not be flagged.
@@ -104,24 +106,24 @@ def test_recall_no_stale_flag_for_memory_without_refs(db, bundle):
         body="We deploy on Tuesdays. Why: low-traffic window.",
         confidence=0.7,
     )
-    out = _recall("deploy", db, bundle)
+    out = _recall("deploy", db, bundle, monkeypatch)
     assert "[STALE]" not in out, out
     # Zero refs → surfaced as "n/a (0 refs)", NOT a misleading 1.0.
     assert "refs-verified=n/a (0 refs)" in out, out
 
 
-def test_recall_no_stale_flag_for_real_refs(db, bundle):
+def test_recall_no_stale_flag_for_real_refs(db, bundle, monkeypatch):
     """A memory citing a symbol that still exists → no STALE."""
     capture_memory(
         db, bundle, type_="workaround", title="auth workaround",
         body="Call `login()` twice on 401. Why: token race.",
         confidence=0.7,
     )
-    out = _recall("auth", db, bundle)
+    out = _recall("auth", db, bundle, monkeypatch)
     assert "[STALE]" not in out, out
 
 
-def test_recall_partial_stale_when_one_of_two_refs_gone(db, bundle):
+def test_recall_partial_stale_when_one_of_two_refs_gone(db, bundle, monkeypatch):
     """Partial stale: 2 backtick refs, delete 1 → fraction 0.5 → STALE.
 
     Covers the 0 < fraction < 1 middle case (only 0.0 and 1.0 were tested
@@ -139,13 +141,13 @@ def test_recall_partial_stale_when_one_of_two_refs_gone(db, bundle):
         confidence=0.7,
     )
     # Both exist → no stale, fraction 1.0.
-    out = _recall("auth", db, bundle)
+    out = _recall("auth", db, bundle, monkeypatch)
     assert "[STALE]" not in out, out
     assert "refs-verified=1.0" in out, out
     # Delete one of the two → fraction 0.5 → stale.
     db.execute("DELETE FROM symbols WHERE name = 'logout'")
     db.commit()
-    out = _recall("auth", db, bundle)
+    out = _recall("auth", db, bundle, monkeypatch)
     assert "[STALE]" in out, out
     assert "refs-verified=0.5" in out, out
 
@@ -167,7 +169,7 @@ def test_recall_does_not_crash_when_verification_raises(db, bundle, monkeypatch)
     # Patch where recall_memory imports it from.
     import cairn.memory.scoring as scoring
     monkeypatch.setattr(scoring, "_graph_verification", _boom)
-    out = _recall("login", db, bundle)
+    out = _recall("login", db, bundle, monkeypatch)
     # Did not crash; STALE not flagged (can't compute); '?' surfaced.
     assert "[STALE]" not in out, out
     assert "refs-verified=?" in out, out

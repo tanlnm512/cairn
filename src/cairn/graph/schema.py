@@ -330,6 +330,22 @@ CREATE TABLE IF NOT EXISTS memory_validity (
 CREATE INDEX IF NOT EXISTS idx_memory_validity_from ON memory_validity(valid_from);
 CREATE INDEX IF NOT EXISTS idx_memory_validity_until ON memory_validity(valid_until);
 
+-- Per-agent symbol activity for the shared memory bus: kind='share' rows make
+-- a memory visible to other agents' recall on that symbol, kind='intent' rows
+-- stamp edit intent for the overlap check. memory_id is a bare memory
+-- concept_id pointer, nullable -- no FK: concept_ids are bundle paths, not DB
+-- rows (memory_embeddings convention). Additive-only: plain CREATE TABLE IF
+-- NOT EXISTS rides the idempotent executescript in _apply_schema with NO
+-- MIGRATIONS entry -- the same pattern memory_validity used.
+CREATE TABLE IF NOT EXISTS agent_symbols (
+    agent_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    memory_id TEXT,
+    kind TEXT NOT NULL,
+    ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_symbols_symbol_ts ON agent_symbols(symbol, ts);
+
 -- precomputed dataflow index for public/exported symbols. Within-repo
 -- impacted symbols and cross-repo consumer repos are materialised so lookups
 -- are O(1) instead of re-running impact_analysis + cross_repo_deps on each

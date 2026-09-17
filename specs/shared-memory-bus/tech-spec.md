@@ -276,3 +276,32 @@ first) and never on read-only opens.
 - **Consequences**: shared memories age under the existing lifecycle (no
   second lifecycle to synchronize); deleting a memory leaves dangling share
   rows that recall filters by existence.
+
+### D-009: cross-plan test-isolation repair rides this branch
+- **Context**: reversed-order run (`tests/test_memory_stale_flag.py` before
+  `tests/test_mcp_degradation_footnote.py`) failed 3 footnote tests with
+  `Cannot operate on a closed database` — a module-order leak present since
+  temporal-memory's commit 3fb556e (its caller-conn writes removed the
+  fallbacks that silently absorbed the closed conn).
+- **Decision**: repair landed here, test-only
+  (`tests/test_memory_stale_flag.py`): monkeypatch-based rebinding of
+  `tools_memory._conn`/`_bundle` (auto-restored) replaces raw
+  module-attribute assignment; eager `cairn.mcp_server` import removed (C-04).
+- **Consequences**: both module orders green (17 passed either way); full
+  suite 3398 passed; production code unchanged; recorded for the temporal
+  plan's lineage since it surfaced through that feature's write path.
+
+### D-010: one shared read-through helper (reuse rule)
+- **Context**: T006 and T007 each shipped a line-faithful twin of the
+  agent read-through merge (CLI `_shared_search_entries`, MCP
+  `_shared_recall_entries`) — two call sites, duplicated logic, violating
+  the reuse rule until an owner could edit both files safely.
+- **Decision**: extract `shared_recall_entries(conn, bundle, agent_id,
+  query, *, tier, include_superseded, as_of, result_ids)` into
+  `src/cairn/memory/store.py` beside its write-side siblings; both surfaces
+  rewire to it; the per-caller contract difference (MCP's
+  include_superseded knob) is a documented parameter. Twins deleted
+  (~80 net lines removed).
+- **Consequences**: byte-identical behavior on both surfaces (56-test
+  anchor set green; superseded knob demo verified); future read-through
+  fixes land in one place.

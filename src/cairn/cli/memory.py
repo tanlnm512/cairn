@@ -98,22 +98,51 @@ def memory_evolve(memory_path, title, body, db, knowledge):
     )
 
 
+def _parse_symbol_list(symbols: str) -> list[str]:
+    """Split a comma-separated --symbols value; rejects empty entries."""
+    symbol_list = [s.strip() for s in symbols.split(",")]
+    if not all(symbol_list):
+        raise click.UsageError("--symbols requires a non-empty comma-separated list.")
+    return symbol_list
+
+
+def _require_agent_id(agent_id: str) -> str:
+    """Validate a caller agent id for the share/check surface; UsageError on bad id."""
+    from ..memory.store import validate_agent_id
+
+    try:
+        return validate_agent_id(agent_id)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+
 @memory.command("search")
 @click.argument("query")
 @click.option("--tier", default=None)
 @click.option("--as-of", default=None,
               help="Only memories valid at this ISO-8601 date/time.")
+@click.option("--agent", default=None,
+              help="Agent id doing the search ([A-Za-z0-9._-], <=64 chars): "
+                   "merges other agents' shared memories for the queried "
+                   "symbols into the results.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_search(query, tier, as_of, db, knowledge):
+def memory_search(query, tier, as_of, agent, db, knowledge):
     """Search past memories. Shows a live refs-verified fraction per result.
 
     Only memories valid at --as-of are returned; the default (now) shows
     only currently-valid memories.
+
+    With --agent, other agents' shared memories for the queried symbols are
+    merged in, each carrying a "shared by" attribution line. Omitted, the
+    single-agent path runs: identical output, no sharing query.
     """
     from ..memory.promotion import search_memory
     from ..memory.scoring import _graph_verification
     from ..okf.bundle import OKFBundle
+
+    if agent is not None:
+        _require_agent_id(agent)
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
@@ -122,6 +151,17 @@ def memory_search(query, tier, as_of, db, knowledge):
     except ValueError as exc:
         conn.close()
         raise click.UsageError(str(exc)) from exc
+    # Read-through merge, gated on --agent: the default path runs no sharing
+    # query and prints the search output unchanged.
+    shared_by_id: dict = {}
+    if agent is not None:
+        from ..memory.store import shared_recall_entries
+
+        extra, shared_by_id = shared_recall_entries(
+            conn, bundle, agent, query, tier=tier, as_of=as_of,
+            result_ids={c.concept_id for c in results},
+        )
+        results.extend(extra)
     if not results:
         conn.close()
         click.echo(f"No memories matching '{query}'.")
@@ -134,6 +174,9 @@ def memory_search(query, tier, as_of, db, knowledge):
         except Exception:
             refs = "?"
         click.echo(f"  [{t} {score}, refs-verified={refs}] {c.title}  ({c.concept_id})")
+        attribution = shared_by_id.get(c.concept_id)
+        if attribution:
+            click.echo(f"    {attribution}")
     from ..graph.embeddings import unembedded_memory_hint
     hint = unembedded_memory_hint(conn, bundle)
     if hint:
@@ -571,4 +614,102 @@ def memory_consolidate(knowledge):
     bundle = OKFBundle(knowledge)
     count = consolidate_memories(bundle)
     click.echo(f"Consolidated {count} raw memories into tribal knowledge.")
+
+
+@memory.command("share")
+@click.argument("memory_id", required=False)
+@click.option("--agent", "agent_id", required=True,
+              help="Caller agent id: non-empty, <=64 chars, [A-Za-z0-9._-].")
+@click.option("--symbols", required=True,
+              help="Comma-separated symbols the share covers.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def memory_share(memory_id, agent_id, symbols, db):
+    """Share MEMORY_ID with other agents for a set of symbols.
+
+    MEMORY_ID is an optional memory concept id; a share without one records
+    symbol-level sharing only. Other agents' recall for these symbols
+    surfaces the share. Re-sharing an existing (agent, symbol, memory)
+    row inserts nothing and exits 0.
+    """
+    from ..memory.store import share_memory
+
+    memory_id = memory_id or None
+    symbol_list = _parse_symbol_list(symbols)
+    _require_agent_id(agent_id)
+
+    conn = get_db(db)
+    try:
+        inserted = share_memory(agent_id, symbol_list, memory_id=memory_id, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+    if inserted:
+        click.echo(f"Shared for agent '{agent_id}': "
+                   f"{', '.join(symbol_list)} ({inserted} new row(s)).")
+    else:
+        click.echo(f"Nothing new recorded: agent '{agent_id}' "
+                   f"already shares these symbols.")
+
+
+@memory.command("check")
+@click.option("--agent", "agent_id", required=True,
+              help="Caller agent id: non-empty, <=64 chars, [A-Za-z0-9._-].")
+@click.option("--symbols", required=True,
+              help="Comma-separated symbols about to be edited.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+def memory_check(agent_id, symbols, db):
+    """Record edit intent on a symbol set; warn on other agents' recent overlap.
+
+    Records the caller's kind='intent' rows so other agents' later checks
+    see the intent, then reports other agents' recent share/intent rows
+    intersecting the symbol set: one warning line per other agent, naming
+    the agent and the overlapping symbols. Exits 0 with or without overlap.
+    """
+    from datetime import datetime, timezone
+
+    from ..memory.store import check_overlap
+
+    symbol_list = _parse_symbol_list(symbols)
+    _require_agent_id(agent_id)
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = get_db(db)
+    try:
+        for symbol in symbol_list:
+            # Refresh an existing intent's ts so repeat checks stay inside
+            # the recency window instead of pinning the first check's ts.
+            cur = conn.execute(
+                "UPDATE agent_symbols SET ts = ?"
+                " WHERE agent_id = ? AND symbol = ? AND kind = 'intent'"
+                " AND memory_id IS NULL",
+                (ts, agent_id, symbol),
+            )
+            if not cur.rowcount:
+                conn.execute(
+                    "INSERT INTO agent_symbols (agent_id, symbol, memory_id, kind, ts)"
+                    " VALUES (?, ?, NULL, 'intent', ?)",
+                    (agent_id, symbol, ts),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+    ro_conn = get_db(db, read_only=True)
+    try:
+        conflicts = check_overlap(agent_id, symbol_list, conn=ro_conn)
+    finally:
+        ro_conn.close()
+
+    if not conflicts:
+        click.echo(f"No overlap: no other agent has recent activity "
+                   f"on {', '.join(symbol_list)}.")
+        return
+    by_agent: dict = {}
+    for other_agent, symbol, _kind, _ts in conflicts:
+        syms = by_agent.setdefault(other_agent, [])
+        if symbol not in syms:
+            syms.append(symbol)
+    for other_agent, syms in by_agent.items():
+        click.echo(f"Overlap warning: agent '{other_agent}' has recent "
+                   f"activity on {', '.join(syms)}")
 

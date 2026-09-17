@@ -205,6 +205,36 @@ def test_invariant_schema_migration_idempotent(fresh_db):
     )
 
 
+def test_invariant_agent_symbols_schema_idempotent(fresh_db):
+    """Invariant: the agent_symbols table and its (symbol, ts) index exist
+    after schema apply, and a second application neither raises nor drops
+    them."""
+    conn = fresh_db  # already had _apply_schema run by the fixture
+
+    # Second application must be a no-op, not raise.
+    _apply_schema(conn)
+
+    agent_symbol_cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(agent_symbols)").fetchall()
+    }
+    assert agent_symbol_cols == {"agent_id", "symbol", "memory_id", "kind", "ts"}, (
+        "agent_symbols should exist with exactly the share/intent columns "
+        f"after schema apply (got {sorted(agent_symbol_cols)})"
+    )
+
+    index_cols = [
+        row["name"]
+        for row in conn.execute(
+            "PRAGMA index_info(idx_agent_symbols_symbol_ts)"
+        ).fetchall()
+    ]
+    assert index_cols == ["symbol", "ts"], (
+        "idx_agent_symbols_symbol_ts should cover (symbol, ts) in that order "
+        f"(got {index_cols})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 5. resolution='exact' implies target_id IS NOT NULL.
 # ---------------------------------------------------------------------------

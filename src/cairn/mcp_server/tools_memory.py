@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def recall_memory(
-    query: str, tier: str = "", include_superseded: bool = False, *, as_of: str | None = None
+    query: str,
+    tier: str = "",
+    include_superseded: bool = False,
+    *,
+    as_of: str | None = None,
+    agent: str | None = None,
 ) -> str:
     """Search past decisions, patterns, mistakes, workarounds. Increments refs.
 
@@ -42,6 +47,12 @@ def recall_memory(
     dropped. A malformed as_of raises ValueError. Validity and
     include_superseded are orthogonal filters.
 
+    Pass agent (a caller-supplied agent id, [A-Za-z0-9._-], <=64 chars) to
+    merge other agents' shared memories for the queried symbols into the
+    results, each carrying a "shared by" attribution line. Omitted (the
+    default), the single-agent path runs: identical output, no sharing
+    query. A malformed agent raises ValueError.
+
     Example:
         recall_memory("ApiFactory backoff")
         ->  2 memories matching 'ApiFactory backoff':
@@ -52,6 +63,10 @@ def recall_memory(
     from cairn.memory.promotion import search_memory
     from cairn.memory.scoring import _graph_verification
 
+    if agent is not None:
+        from cairn.memory.store import shared_recall_entries, validate_agent_id
+
+        validate_agent_id(agent)
     bundle = _bundle()
     conn = _conn()
     try:
@@ -62,6 +77,17 @@ def recall_memory(
     except Exception:
         conn.close()
         raise
+
+    # Read-through merge, gated on agent: the default path runs no sharing
+    # query and returns the search output unchanged.
+    shared_by_id: dict = {}
+    if agent is not None:
+        extra, shared_by_id = shared_recall_entries(
+            conn, bundle, agent, query, tier=tier or None,
+            include_superseded=include_superseded, as_of=as_of,
+            result_ids={c.concept_id for c in results},
+        )
+        results.extend(extra)
 
     if not results:
         conn.close()
@@ -125,6 +151,9 @@ def recall_memory(
                 out.append("    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory")
             if c.description:
                 out.append(f"    {c.description}")
+            attribution = shared_by_id.get(getattr(c, "concept_id", None))
+            if attribution:
+                out.append(f"    {attribution}")
         # Footnote: surface the gap when some memories lack embeddings (e.g.
         # after an upgrade, before `cairn memory embed` has run) so the user
         # knows semantic recall is partial. Read-only; never writes.
