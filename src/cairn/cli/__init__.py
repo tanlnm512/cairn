@@ -38,6 +38,7 @@ from . import query        # noqa: F401
 from . import serve        # noqa: F401
 from . import skill        # noqa: F401
 from . import system       # noqa: F401
+from . import taint        # noqa: F401
 from . import task         # noqa: F401
 from . import tree         # noqa: F401
 from . import uninstall    # noqa: F401

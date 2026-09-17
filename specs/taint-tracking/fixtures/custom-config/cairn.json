@@ -1,0 +1,6 @@
+{
+  "taint": {
+    "sources": {"queue-msg": ["receive_job"]},
+    "sinks": {"render": ["render_template"]}
+  }
+}
