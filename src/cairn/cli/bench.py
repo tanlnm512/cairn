@@ -6,6 +6,9 @@ Three suites, mirroring how ``cairn eval`` and ``cairn metrics`` already work:
   cairn bench --suite perf                 # explicit (default)
   cairn bench --suite scaling --sizes 100,500,1000,5000
   cairn bench --suite agent                # tool calls + context cost vs grep
+  cairn bench --suite swe-bench            # pinned SWE-bench subset, both arms
+  cairn bench --suite swe-bench --smoke    # first 2 pinned tasks
+  cairn bench --suite swe-bench --slice 0:10 --manifest PATH
   cairn bench --workspace PATH             # perf/agent against an existing repo
   cairn bench --json                       # JSON for CI
   cairn bench --save baseline.json         # save a baseline
@@ -14,17 +17,20 @@ Three suites, mirroring how ``cairn eval`` and ``cairn metrics`` already work:
 
 Exit-code contract: 0 = clean; 1 = usage / baseline-resolution error (unknown
 ``--baseline`` version, ``--baseline`` + ``--compare`` together, missing
-``--compare`` file); 2 = regressions found by the comparison (the CI signal).
+``--compare`` file, swe-bench manifest/checkout/empty-selection error);
+2 = regressions found by the comparison (the CI signal).
 A machine-profile mismatch between the current run and a ``--baseline``
 artifact only WARNS and never changes the exit code (warn, never
 normalize) -- timing comparisons across machines stay advisory.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -111,6 +117,194 @@ def _resolve_baseline_file(version: str, suite: str) -> Path:
     return baseline_file
 
 
+# Task count for the swe-bench smoke slice (--smoke).
+SWE_BENCH_SMOKE_TASKS = 2
+
+
+def _default_swe_bench_manifest() -> Path | None:
+    """Locate the frozen swe-bench pin manifest; None when absent.
+
+    Same two-candidate precedence as the datasource defaults: the working
+    directory first (how CI and maintainers invoke ``cairn bench``), then
+    the source tree the package lives in.
+    """
+    name = Path("benchmarks") / "datasource" / "swe-bench-subset.json"
+    candidates = [
+        Path.cwd() / name,
+        Path(__file__).resolve().parents[3] / name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _parse_swe_bench_slice(text: str) -> slice:
+    """Parse a START:END positional slice over the pinned subset; exits 1 on
+    malformed bounds."""
+    from . import display
+
+    parts = text.split(":")
+    if not text.strip() or len(parts) != 2:
+        display.error(f"--slice expects START:END (e.g. 0:2), got {text!r}")
+        sys.exit(1)
+    try:
+        start = int(parts[0]) if parts[0].strip() else 0
+        stop = int(parts[1]) if parts[1].strip() else None
+    except ValueError:
+        display.error(f"--slice expects integer bounds, got {text!r}")
+        sys.exit(1)
+    if start < 0 or (stop is not None and stop < 0):
+        display.error(f"--slice bounds must be non-negative, got {text!r}")
+        sys.exit(1)
+    return slice(start, stop)
+
+
+def _swe_bench_workspaces(
+    tasks: list[dict], cache_root: Path | None = None, *, quiet: bool = False
+) -> dict[str, str]:
+    """Map each task's instance_id to its checked-out workspace tree.
+
+    Workspaces live under ``<CAIRN_HOME>/cache/swe-bench/<repo>-<base_commit>``
+    -- keyed by the commit sha, so a directory's presence means that exact
+    content is already checked out and the clone is skipped (warm reruns
+    never touch the network). The clone stages into a pid-suffixed temp dir
+    and is renamed into place; a run that loses the rename to a concurrent
+    run uses the winner's checkout. ``quiet`` suppresses progress output
+    (machine-readable stdout).
+    """
+    from . import display
+
+    if cache_root is None:
+        home = os.environ.get("CAIRN_HOME", str(Path.home() / ".cairn"))
+        cache_root = Path(os.path.expanduser(home)) / "cache" / "swe-bench"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    workspaces: dict[str, str] = {}
+    for task in tasks:
+        repo, sha = task["repo"], task["base_commit"]
+        target = cache_root / f"{repo.replace('/', '__')}-{sha}"
+        workspaces[task["instance_id"]] = str(target)
+        if (target / ".git").is_dir():
+            continue
+        if not quiet:
+            display.dim(f"swe-bench: checking out {repo} @ {sha[:12]} (one-time clone)...")
+        staging = cache_root / f".tmp-{sha[:12]}-{os.getpid()}"
+        shutil.rmtree(staging, ignore_errors=True)
+        try:
+            subprocess.run(
+                ["git", "clone", "--quiet", "--filter=blob:none",
+                 f"https://github.com/{repo}.git", str(staging)],
+                env=git_env, check=True, capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(staging), "checkout", "--quiet", sha],
+                env=git_env, check=True, capture_output=True, text=True,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("checking out SWE-bench workspaces needs git on PATH") from exc
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip().splitlines()
+            raise RuntimeError(
+                f"checkout of {repo} @ {sha[:12]} failed: "
+                f"{detail[-1] if detail else exc}"
+            ) from exc
+        try:
+            os.replace(staging, target)
+        except OSError:
+            # Target already populated (e.g. by a concurrent run): use it.
+            shutil.rmtree(staging, ignore_errors=True)
+    return workspaces
+
+
+def _swe_bench_stamp(
+    base: dict, manifest: dict, manifest_path: Path, slice_label: str | None
+) -> dict:
+    """Swe-bench artifact stamp: pinned revision + manifest digest + size.
+
+    Replaces only the ``dataset`` block of the invocation stamp; the shared
+    stamp builder's output gains no keys.
+    """
+    from cairn.bench.swe_bench import DATASET_NAME
+
+    dataset = {
+        "name": manifest.get("dataset", DATASET_NAME),
+        "schema": manifest["schema"],
+        "revision_sha": manifest["dataset_revision_sha"],
+        "manifest_digest": hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest(),
+        "instance_count": len(manifest["subset"]),
+    }
+    if slice_label:
+        dataset["slice"] = slice_label
+    return {**base, "dataset": dataset}
+
+
+def _persistable_swe_bench_report(report: dict) -> dict:
+    """Suite report kept for persistence: the wall-clock figures removed.
+
+    Reruns must persist identical reports, so only the deterministic call and
+    token figures are kept; ``wall_ms``/``time_ratio`` never persist.
+    """
+    def arm(arm_dict: dict) -> dict:
+        return {k: v for k, v in arm_dict.items() if k != "wall_ms"}
+
+    tasks = []
+    for row in report["tasks"]:
+        row = dict(row)
+        row["cairn"] = arm(row["cairn"])
+        row["control"] = arm(row["control"])
+        row["reduction"] = {
+            k: v for k, v in row["reduction"].items() if k != "time_ratio"
+        }
+        tasks.append(row)
+    return {
+        "tasks": tasks,
+        "medians": {name: arm(arm_dict) for name, arm_dict in report["medians"].items()},
+        "runs": report["runs"],
+        "chars_per_token": report["chars_per_token"],
+    }
+
+
+def _render_swe_bench_report(payload: dict) -> None:
+    """Per-task effort rows for both arms plus the cross-task medians."""
+    from . import display
+
+    rows = []
+    for row in payload["tasks"]:
+        cairn, control = row["cairn"], row["control"]
+        rows.append([
+            row["instance_id"],
+            str(cairn["tool_calls"]),
+            str(control["tool_calls"]),
+            f"{cairn['est_tokens']:,}",
+            f"{control['est_tokens']:,}",
+            f"{row['reduction']['tokens_pct']:.0f}%",
+        ])
+    med_cairn = payload["medians"]["cairn"]
+    med_control = payload["medians"]["control"]
+    rows.append([
+        "MEDIAN",
+        str(med_cairn["tool_calls"]),
+        str(med_control["tool_calls"]),
+        f"{med_cairn['est_tokens']:,}",
+        f"{med_control['est_tokens']:,}",
+        (
+            f"{(1 - med_cairn['est_tokens'] / med_control['est_tokens']) * 100:.0f}%"
+            if med_control["est_tokens"]
+            else "-"
+        ),
+    ])
+    display.print_table(
+        f"cairn SWE-bench benchmark  ({len(payload['tasks'])} tasks,"
+        f" {payload['runs']} runs, tokens = chars/{payload['chars_per_token']})",
+        columns=[
+            "task", "cairn calls", "grep calls",
+            "cairn tok", "grep tok", "tok saved",
+        ],
+        rows=rows,
+    )
+
+
 def _render_baseline_header(version: str, path: Path, data: dict) -> None:
     """Print the dataset-version header for a ``--baseline`` comparison.
 
@@ -190,7 +384,7 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
 @main.command()
 @click.option(
     "--suite",
-    type=click.Choice(["perf", "scaling", "agent"]),
+    type=click.Choice(["perf", "scaling", "agent", "swe-bench"]),
     default="perf",
     help="Which benchmark suite to run.",
 )
@@ -247,7 +441,27 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
     "--runs",
     default=3,
     type=int,
-    help="Measured runs per task (agent suite; medians reported).",
+    help="Measured runs per task (agent/swe-bench suites; medians reported).",
+)
+@click.option(
+    "--slice",
+    "slice_expr",
+    default=None,
+    help="Swe-bench suite: START:END positional slice of the pinned subset (e.g. 0:2).",
+)
+@click.option(
+    "--manifest",
+    default=None,
+    help=(
+        "Swe-bench suite: pin manifest path "
+        "(default: benchmarks/datasource/swe-bench-subset.json)."
+    ),
+)
+@click.option(
+    "--smoke",
+    is_flag=True,
+    default=False,
+    help=f"Swe-bench suite: run the first {SWE_BENCH_SMOKE_TASKS} pinned tasks.",
 )
 def bench(
     suite,
@@ -263,8 +477,11 @@ def bench(
     threshold,
     repeats,
     runs,
+    slice_expr,
+    manifest,
+    smoke,
 ):
-    """Run performance, scalability, or agent-effort benchmarks."""
+    """Run performance, scalability, agent-effort, or SWE-bench benchmarks."""
     from . import display
     from cairn.bench import (
         generate_corpus,
@@ -274,6 +491,51 @@ def bench(
     )
     from cairn.bench.agent_suite import compare_agent_reports, run_agent_suite
     from cairn.bench.datasource import build_artifact_stamp
+
+    # Swe-bench-only flags on another suite are a usage error, not a silent
+    # ignore; the manifest itself is resolved + validated before any suite
+    # work so a bad pin fails promptly (same discipline as --baseline).
+    for flag, value in (("--smoke", smoke), ("--slice", slice_expr), ("--manifest", manifest)):
+        if value and suite != "swe-bench":
+            display.error(f"{flag} applies to the swe-bench suite only.")
+            sys.exit(1)
+    swe_slice: slice | None = None
+    slice_label: str | None = None
+    manifest_path: Path | None = None
+    pin_manifest: dict | None = None
+    if suite == "swe-bench":
+        if smoke and slice_expr:
+            display.error("--smoke and --slice are mutually exclusive: pass one, not both.")
+            sys.exit(1)
+        from cairn.bench.swe_bench import load_pin_manifest
+
+        manifest_path = Path(manifest) if manifest else _default_swe_bench_manifest()
+        if manifest_path is None:
+            display.error(
+                "Pin manifest not found: benchmarks/datasource/swe-bench-subset.json "
+                "(or pass --manifest PATH)."
+            )
+            sys.exit(1)
+        try:
+            pin_manifest = load_pin_manifest(manifest_path)
+        except (OSError, ValueError) as exc:
+            display.error(str(exc))
+            sys.exit(1)
+        if smoke:
+            swe_slice = slice(0, SWE_BENCH_SMOKE_TASKS)
+            slice_label = f"0:{SWE_BENCH_SMOKE_TASKS}"
+        elif slice_expr:
+            swe_slice = _parse_swe_bench_slice(slice_expr)
+            slice_label = slice_expr
+        else:
+            swe_slice = slice(None)
+        start, stop, _ = swe_slice.indices(len(pin_manifest["subset"]))
+        if start >= stop:
+            display.error(
+                f"--slice {slice_label} selects 0 of {len(pin_manifest['subset'])} "
+                "pinned tasks"
+            )
+            sys.exit(1)
 
     # Artifact stamp: computed once per invocation, applied beside the
     # timestamp at every payload site below -- never inside to_dict.
@@ -318,6 +580,47 @@ def bench(
                 report.to_table()
             else:
                 # Same content as report.to_json() plus the timestamp above.
+                click.echo(json.dumps(payload, indent=2))
+        elif suite == "swe-bench":
+            # Manifest already resolved + validated above (fail promptly);
+            # the first run fetches the pinned split and clones the task
+            # repos, warm reruns are fully offline.
+            from cairn.bench.swe_bench import load_tasks
+            from cairn.bench.swe_bench_suite import run_swe_bench_suite
+
+            if not as_json:
+                display.info(
+                    f"Loading pinned task rows (revision "
+                    f"{pin_manifest['dataset_revision_sha'][:12]})..."
+                )
+            try:
+                tasks = load_tasks(pin_manifest)
+            except (ImportError, OSError, ValueError) as exc:
+                display.error(str(exc))
+                sys.exit(1)
+            start, stop, _ = swe_slice.indices(len(tasks))
+            tasks = tasks[start:stop]
+            try:
+                workspaces = _swe_bench_workspaces(tasks, quiet=as_json)
+                db_path_dir = Path(tempfile.mkdtemp(prefix="cg_bench_db_"))
+                tmp_db = db_path_dir
+                report = run_swe_bench_suite(
+                    tasks,
+                    workspaces,
+                    str(db_path_dir / "bench.db"),
+                    runs=runs,
+                )
+            except (RuntimeError, ValueError) as exc:
+                display.error(str(exc))
+                sys.exit(1)
+            # No timestamp and no wall-clock figures here: the persisted
+            # swe-bench report must be identical across reruns; the stamp
+            # carries the pin identity instead.
+            payload = _persistable_swe_bench_report(report)
+            payload.update(_swe_bench_stamp(stamp, pin_manifest, manifest_path, slice_label))
+            if not as_json:
+                _render_swe_bench_report(payload)
+            else:
                 click.echo(json.dumps(payload, indent=2))
         else:
             # Perf or agent suite: use the given workspace, else generate a corpus.
@@ -381,7 +684,7 @@ def bench(
                 _warn_machine_profile_mismatch(
                     stamp["machine_profile"], baseline_data.get("machine_profile")
                 )
-            if suite == "agent":
+            if suite in ("agent", "swe-bench"):
                 deltas = compare_agent_reports(baseline_data, payload, threshold=threshold)
                 base_key, cur_key, base_col, cur_col = (
                     "baseline_tokens", "current_tokens", "baseline tok", "current tok",

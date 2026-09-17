@@ -376,3 +376,48 @@ From [research.md](research.md):
 - **Consequences**: all exact-shape pins stay green; additive payload keys
   remain safe for `.github/scripts/bench_compare.py`'s `.get` reads
   `[grep: datasource.py:393-398]`.
+
+### D-011: id-masking in token accounting for build-independence
+- **Context**: graph ids are `uuid4().hex` at build time, so counting raw
+  payload chars would make `est_tokens` a function of build randomness —
+  breaking FR-002's fresh-build determinism.
+- **Decision**: `run_swe_bench_suite`'s `_StableCairnArm` masks full-value
+  32-hex id strings to `<id>` (recursively over row/dict/list results)
+  before `_payload_chars` counts; all stable bytes still count.
+- **Consequences**: reported token numbers are build-independent and
+  reproducible by third parties; relative comparisons unaffected (both
+  arms measured identically where applicable; the control arm greps
+  files and carries no graph ids).
+
+### D-012: checkout helper lives at the CLI layer
+- **Context**: the tech-spec sketched `base_commit` checkout inside the
+  loader module, but the loader's tested contract (T003/T004) ships no
+  checkout, and the CLI owns the workspace-mapping input to
+  `run_swe_bench_suite`.
+- **Decision**: `_swe_bench_workspaces` (content-addressed cache,
+  blobless clone + rename-promoted checkout) lives in
+  `src/cairn/cli/bench.py`.
+- **Consequences**: loader stays pure manifest→task-dicts; relocation to
+  the loader seam would be a future refactor if a second consumer needs it.
+
+### D-013: no timestamp in the swe-bench persisted payload
+- **Context**: the additive stamping pattern sits beside
+  `payload['timestamp']`, but TC-002's byte-identical rerun contract forbids
+  a wall timestamp in the persisted report.
+- **Decision**: the swe-bench payload carries no `timestamp`;
+  `_swe_bench_stamp` (dataset block: name, schema, revision sha, manifest
+  digest, count, slice) alone carries artifact identity; wall_ms/time_ratio
+  stripped from persisted rows and medians.
+- **Consequences**: saves are byte-identical across reruns; live wall-clock
+  still prints to the terminal.
+
+### D-014: TC-009's proof is core-leg collection, not a workflow grep
+- **Context**: the plan's no-workflow-edit resolution (D-005) runs the
+  smoke on every PR via the existing required `-m core` leg; TC-009's
+  literal grep for "swe-bench" in .github/workflows cannot pass without a
+  workflow edit the plan forbids.
+- **Decision**: FR-004's smoke gate is proven by `-m core` collection of
+  tests/test_swe_bench_smoke.py (the self-demo pattern); TC-009 re-anchors
+  to that collection check.
+- **Consequences**: every PR runs the smoke with zero workflow surface
+  added; the literal grep form is retired.

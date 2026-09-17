@@ -25,6 +25,7 @@ of the closed campaign, scripts recoverable from git history.
 | `benchmarks/datasource/ds2/power-analysis.json` | `benchmarks/datasource/ds2/power-analysis.md` |
 | `benchmarks/datasource/ds2/second-corpus/attrs-26.1.0/provenance.json` | `benchmarks/datasource/ds2/second-corpus/DECISION.md` |
 | `benchmarks/datasource/manifest.json` | `benchmarks/datasource/ds2/ground_truth/AUTHORING.md`, `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md` |
+| `benchmarks/datasource/swe-bench-subset.json` | `docs/benchmarks.md` |
 | `benchmarks/datasource/t2/provenance.json` | `benchmarks/datasource/ds2/second-corpus/DECISION.md` |
 | `benchmarks/quality/ablation.json` | `benchmarks/quality/MEASURE.md`, `benchmarks/quality/ablation.md`, `benchmarks/datasource/ds2/power-analysis.md`, `benchmarks/datasource/ds2/ground_truth/VERIFICATION.md`, `benchmarks/quality/fr003-calibration/README.md` |
 | `benchmarks/quality/fr003-calibration/analysis.json` | `benchmarks/quality/fr003-calibration/README.md`, `benchmarks/datasource/ds2/power-analysis.md` |

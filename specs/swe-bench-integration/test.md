@@ -23,7 +23,7 @@ Business terms used throughout:
 - **Then** the output shows, for every task executed, the token count and
   tool-call count for each of the two arms (with tools and baseline), followed
   by a median for each metric for each arm; no LLM is invoked at any point
-- **Pass condition**: `cairn bench --suite swe-bench --smoke`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite swe-bench --smoke`
 
 ## TC-002 — Reruns reproduce the metrics report exactly
 - **Story**: US1 · **Traces to**: FR-002, AC1
@@ -33,7 +33,7 @@ Business terms used throughout:
 - **Then** the two persisted metrics reports are identical — same per-task
   rows, same medians, same arm ordering; wall-clock duration is not part of
   the reproducibility contract and stays outside the persisted report
-- **Pass condition**: `cairn bench --suite swe-bench --smoke --save /tmp/swe-bench-rerun-a.json && cairn bench --suite swe-bench --smoke --save /tmp/swe-bench-rerun-b.json && diff /tmp/swe-bench-rerun-a.json /tmp/swe-bench-rerun-b.json`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite swe-bench --smoke --save /tmp/swe-bench-rerun-a.json && /Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite swe-bench --smoke --save /tmp/swe-bench-rerun-b.json && diff /tmp/swe-bench-rerun-a.json /tmp/swe-bench-rerun-b.json`
 
 ## TC-003 — Standing guard: the deterministic arm operates offline
 - **Story**: US1 · **Traces to**: FR-002
@@ -43,7 +43,7 @@ Business terms used throughout:
 - **Then** the run completes and reports medians for both arms; if any part of
   the measured agent loop ever starts needing network or model access, this
   case fails
-- **Pass condition**: `cairn bench --suite swe-bench --smoke && env HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 cairn bench --suite swe-bench --smoke`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite swe-bench --smoke && env HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 /Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite swe-bench --smoke`
 
 ## TC-004 — Boundary: an empty task selection fails explicitly
 - **Story**: US1 · **Traces to**: FR-001
@@ -106,7 +106,7 @@ Business terms used throughout:
 - **Then** a CI job runs the suite in smoke-subset mode (the same entry a
   developer runs locally), the job is required for merge, and the smoke
   subset is sized to finish in seconds
-- **Pass condition**: `grep -rq swe-bench .github/workflows`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m pytest -m core --collect-only -q | grep swe_bench_smoke`
 
 ## TC-010 — Standing guard: a broken suite turns CI red
 - **Story**: US1 · **Traces to**: FR-004
@@ -126,7 +126,7 @@ Business terms used throughout:
 - **Then** the run completes and reports medians; if an LLM-in-the-loop
   dependency ever creeps into the default path before the deferred arm ships
   as its own spec, this case fails
-- **Pass condition**: `env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY cairn bench --suite swe-bench --smoke`
+- **Pass condition**: `env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY /Users/tanle/Projects/cairn/.venv/bin/cairn bench --suite swe-bench --smoke`
 
 ## TC-012 — Standing guard: published results carry efficiency medians only
 - **Story**: US2 · **Traces to**: FR-005

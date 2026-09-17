@@ -1,6 +1,7 @@
 # Spec: swe-bench-integration
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user standing instruction ("implement all specs except remote-mcp-oauth until done"); 11 tasks/3 phases, check.py 0 fail; LLM arm deferred per FR-005 ruling (D-003 metric scope).
 **Created**: 2026-09-16
 **Branch**: `feat/swe-bench-integration`
 

@@ -145,6 +145,15 @@ ingest = [
     "onnxruntime<1.24; python_version < '3.11'",
 ]
 
+# SWE-bench bench suite: `datasets` fetches the pinned task inputs in
+# src/cairn/bench/swe_bench.py (lazy import -- installs without this extra
+# never touch it). Bench-only per D-004: core wheel and platform matrix
+# unchanged; no `swebench` harness dep (resolve-rate machinery for the
+# deferred LLM arm, FR-005).
+bench = [
+    "datasets>=4.0",
+]
+
 [project.scripts]
 cairn = "cairn.cli:main"
 

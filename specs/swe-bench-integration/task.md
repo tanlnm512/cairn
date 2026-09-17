@@ -2,16 +2,16 @@
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 Status reflects code state per [survey.md](survey.md), not intent.
-**Before-audit**: pending — the orchestrator writes `passed @ <sha>` here
+**Before-audit**: passed @ ecd55bd (2026-09-17: check.py 0 fail; suite 3631 green at ecd55bd; clean tree; branch feat/swe-bench-integration; 0/11 pre-done; C-01..C-04 reviewed — C-03: datasets dep rides D-004 as a bench extra, not runtime)
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 4     | 0    |
-| 2     | 4     | 0    |
-| 3     | 3     | 0    |
-| **Σ** | 11    | 0    |
+| 1 | 4 | 4 |
+| 2 | 4 | 4 |
+| 3 | 3 | 3 |
+| **Σ** | 11 | 11 |
 
 ## Phase 1: Pinned SWE-bench task source (FR-002)
 <!-- Checkpoint (plan, After Phase 1): loader run twice with network disabled
@@ -24,7 +24,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
      sections already ignored, tech-spec grep). The plan milestone's "swebench
      harness pinned as dev-only dep" cell is superseded by D-004: `datasets`
      in a `bench` extra; no swebench harness. -->
-- [ ] T001 [P] Pin `datasets` behind a new `bench` optional extra — `pyproject.toml` (FR-002)
+- [x] T001 [P] Pin `datasets` behind a new `bench` optional extra — `pyproject.toml` (FR-002)
+  - done 2026-09-17 — bench extra datasets>=4.0 pinned (lock 5.0.1); pip-audit green; default install dep-free
   - C-03 gate satisfied by D-004: `datasets` goes in a new `bench` entry under
     `[project.optional-dependencies]`; core wheel and platform matrix
     unchanged. No `swebench` harness dependency in this spec (D-004 — it is
@@ -36,7 +37,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     CI Security pip-audit leg stays green with the extra's tree.
   - [P] with T003 — disjoint files (this manifest-only change vs the new
     loader test module).
-- [ ] T002 (after T001) Freeze the 50-instance subset manifest — new `benchmarks/datasource/swe-bench-subset.json` (FR-002)
+- [x] T002 (after T001) Freeze the 50-instance subset manifest — new `benchmarks/datasource/swe-bench-subset.json` (FR-002)
+  - done 2026-09-17 — manifest verified — 50 ids @ revision 6ec7bb89, integrity-checked parquet
   - Consumes T001's installed `datasets`: one online enumeration of SWE-bench
     Lite `test` at the pinned dataset revision sha, then freeze the ordered
     subset — the first 50 instance ids in dataset order (the positional-slice
@@ -48,7 +50,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Verify before implementing (tech-spec): `python -c "import json; json.load(open('benchmarks/datasource/swe-bench-subset.json'))"`
     parses; every id exists in Lite `test` at the revision (asserted by the
     loader once T004 lands).
-- [ ] T003 [P] Write the failing loader tests — new `tests/test_swe_bench_loader.py` (FR-002)
+- [x] T003 [P] Write the failing loader tests — new `tests/test_swe_bench_loader.py` (FR-002)
+  - done 2026-09-17 — 31 loader contract tests (red→green with T004)
   - C-02 test-first; red bar is the absent loader module. Covers: pin-file
     validation before any fetch (ordered unique instance ids, revision sha
     hex, malformed schema rejected); the five-field projection
@@ -61,7 +64,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Verify before implementing (tech-spec): `uv run pytest tests/test_swe_bench_loader.py -q` — red.
   - [P] with T001 — disjoint files (new test module vs the packaging
     manifest only).
-- [ ] T004 (after T002) (after T003) Implement the SWE-bench loader — new `src/cairn/bench/swe_bench.py` (FR-002)
+- [x] T004 (after T002) (after T003) Implement the SWE-bench loader — new `src/cairn/bench/swe_bench.py` (FR-002)
+  - done 2026-09-17 — pytest tests/test_swe_bench_loader.py — 31 passed
   - Greens T003. Consumes T002's manifest format `{schema,
     dataset_revision_sha, subset, reported}` — validated before any fetch.
     New sibling of `corpus.py`/`datasource.py` in `src/cairn/bench/` (survey
@@ -87,7 +91,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
      report diff empty. The `--suite swe-bench` choice token is the one shared
      contract between the suite and CLI tracks (plan parallelization map);
      the integration task anchors this checkpoint. -->
-- [ ] T005 [P] Write the failing suite tests — new `tests/test_swe_bench_suite.py` (FR-001)
+- [x] T005 [P] Write the failing suite tests — new `tests/test_swe_bench_suite.py` (FR-001)
+  - done 2026-09-17 — suite contract tests (red→green with T006)
   - C-02 test-first; red bar is the absent suite module. Asserts over a local
     fixture task set (five-field dicts, no network): both arms report
     non-zero effort per task; per-task rows keyed by `instance_id` with
@@ -100,7 +105,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Verify before implementing: `uv run pytest tests/test_swe_bench_suite.py -q` — red.
   - [P] with T007 — disjoint files (this test module vs the bench CLI
     module only).
-- [ ] T006 (after T004) (after T005) Implement the swe-bench suite runner — new `src/cairn/bench/swe_bench_suite.py` (FR-001)
+- [x] T006 (after T004) (after T005) Implement the swe-bench suite runner — new `src/cairn/bench/swe_bench_suite.py` (FR-001)
+  - done 2026-09-17 — pytest tests/test_swe_bench_suite.py — 12 passed; D-011 id-masking determinism
   - Greens T005. Consumes T004's loader output (five-field task inputs) and
     accepts an injected task iterable so the CI smoke (T009) can run fixture
     tasks without the fetch branch. Exports module-level `run_swe_bench_suite`
@@ -120,7 +126,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     within a build, wall time advisory (tech-spec grep agent_suite.py:32-36).
   - Verify before implementing: `uv run pytest tests/test_swe_bench_suite.py -q` green;
     the arms-reuse grep from the phase checkpoint unchanged.
-- [ ] T007 [P] Extend the bench CLI with the swe-bench suite — `src/cairn/cli/bench.py` (FR-001, FR-002)
+- [x] T007 [P] Extend the bench CLI with the swe-bench suite — `src/cairn/cli/bench.py` (FR-001, FR-002)
+  - done 2026-09-17 — 111 bench tests green; TC-001/002/003 proofs PASS; D-012/D-013
   - The `--suite` click.Choice (bench.py:193, tech-spec grep) gains
     `swe-bench`; new `--slice` and `--manifest` options, manifest defaulting
     to benchmarks/datasource/swe-bench-subset.json.
@@ -140,7 +147,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     every exact-traffic pin stays green (D-007).
   - [P] with T005 — disjoint files (the bench CLI module vs the new suite
     test module only).
-- [ ] T008 (after T006) (after T007) Wire and verify the end-to-end suite run — integration (FR-001, FR-002)
+- [x] T008 (after T006) (after T007) Wire and verify the end-to-end suite run — integration (FR-001, FR-002)
+  - done 2026-09-17 — pytest tests/test_swe_bench_cli.py — 9 passed; byte-identical rerun pinned
   - Consumes `run_swe_bench_suite` (T006) and the `--suite swe-bench` dispatch
     (T007): the CLI branch calls the real runner, applies the swe-bench
     stamp, and prints per-task + median rows for both arms.
@@ -160,7 +168,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
      plan's "new CI job" assumption is resolved by D-005: the smoke is a
      `-m core`-marked test collected by the existing per-PR `-m core` leg
      (ci.yml:175, tech-spec grep) — no workflow edit. -->
-- [ ] T009 (after T008) Write the hermetic CI smoke test — new `tests/test_swe_bench_smoke.py` (FR-004)
+- [x] T009 (after T008) Write the hermetic CI smoke test — new `tests/test_swe_bench_smoke.py` (FR-004)
+  - done 2026-09-17 — -m core leg collects smoke (27 passed leg); D-014 reconciliation
   - `pytestmark = pytest.mark.core` — the self-demo CI-gating pattern
     (test_self_demo.py:30, tech-spec grep; survey S2), collected automatically
     by the per-PR `-m core` leg; no new CI job and no workflow edit (D-005).
@@ -172,7 +181,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     rows, medians, stamp) per T005's contract.
   - Verify before implementing (tech-spec): `uv run pytest -m core -q` —
     the smoke is collected and green.
-- [ ] T010 (after T008) Write the methodology docs and README pointer — new `docs/benchmarks.md` (FR-003)
+- [x] T010 (after T008) Write the methodology docs and README pointer — new `docs/benchmarks.md` (FR-003)
+  - done 2026-09-17 — docs/benchmarks.md + README published medians (empirical 50-task run): 84.6%/99.0% reduction
   - Consumes T008's stamped medians and the exact command sequence that
     produced them.
   - Contents: metric-class definition — efficiency medians (tool calls +
@@ -188,7 +198,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
     gains a pointer from the Measured Results section to the new doc.
   - Verify before implementing (tech-spec): follow the documented commands on
     a fresh clone — they run as written.
-- [ ] T011 (after T009) (after T010) Verify fresh-clone reproduction and assert the FR-005 scope guard (FR-003, FR-005, FR-004)
+- [x] T011 (after T009) (after T010) Verify fresh-clone reproduction and assert the FR-005 scope guard (FR-003, FR-005, FR-004)
+  - done 2026-09-17 — fresh-clone EXACT-MATCH reproduction (notes/T011.md); FR-005 scope guard PASS
   - Clean clone → documented commands only → medians match the published
     numbers (plan Phase 3 checkpoint; FR-003).
   - CI green with the smoke collected by the `-m core` leg (FR-004; D-005).
