@@ -1,0 +1,89 @@
+# Advisory pre-submit review: warns on pull requests whose diffs touch
+# symbols with recorded mistake/pattern memories. Findings are informational
+# only -- the run never fails and never blocks the pull request.
+name: Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: cairn review --pre-submit (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Advisory: no infrastructure failure may redden the check.
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write # post the findings comment
+    env:
+      # Deterministic embedder: graph build stays offline and reproducible.
+      CAIRN_EMBED_BACKEND: hash
+      # Mistake/pattern memories ride the repo in this bundle; a fresh
+      # runner store starts memory-empty and would key nothing.
+      CAIRN_KNOWLEDGE: ${{ github.workspace }}/.cairn-knowledge
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The pre-submit diff is HEAD vs main's merge base; the engine
+          # resolves `main` locally and requires full history.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v10.1.0
+
+      # Pinned install: the CLI under review comes from this checkout's
+      # committed uv.lock, never from a registry pull.
+      - name: Install cairn from this checkout
+        run: uv sync
+
+      - name: Index workspace graph
+        run: uv run --no-sync cairn build
+
+      # checkout creates only origin/* refs; the engine's merge-base needs a
+      # local `main` to resolve.
+      - name: Materialize the pre-submit base ref
+        run: git branch main origin/main
+
+      # Zero findings render as empty output: the file stays empty and the
+      # comment step posts nothing. Exit 0 even with findings (no --gate).
+      - name: Run pre-submit review
+        run: |
+          uv run --no-sync cairn review --pre-submit --format markdown > review-findings.md
+          cat review-findings.md
+
+      - name: Post findings comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ ! -s review-findings.md ]; then
+            echo "No findings; no comment posted."
+            exit 0
+          fi
+          marker='<!-- cairn-review-pre-submit -->'
+          { echo "$marker"; cat review-findings.md; } > review-comment.md
+          number="${{ github.event.number }}"
+          comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" \
+            | head -n1)"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/$number/comments/$comment_id" \
+              -f "body=$(cat review-comment.md)" > /dev/null
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$number/comments" \
+              -f "body=$(cat review-comment.md)" > /dev/null
+          fi

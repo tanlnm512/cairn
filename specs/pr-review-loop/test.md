@@ -32,6 +32,12 @@ against `main`:
   - `orphan-line-comment.json` — accepted comment "do not swallow errors"
     pinned to a line of `changelog.md` outside any module.
 
+Auto pass conditions invoke the repo cairn binary
+(`/Users/tanle/Projects/cairn/.venv/bin/cairn`), pin every store location
+inside the fixture root (`CAIRN_HOME`, `CAIRN_DB`, `CAIRN_KNOWLEDGE`,
+`CAIRN_WORKSPACE`), and run under `PATH="/usr/bin:$PATH"` so the fixture
+build uses the system git. The user store is never touched.
+
 ## TC-001 — Pack assembles all four context layers
 
 - **Story**: US1 · **Traces to**: FR-001
@@ -40,7 +46,7 @@ against `main`:
 - **Then** one output lists the dependents (`reporting`, `api`) and cites
   the mistake, the navigation entry, and the architecture page — a reviewer
   needs no separate lookups
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh pack && cairn review --base main --format text > pack.out && grep -q reporting pack.out && grep -q api pack.out && grep -qi regex pack.out && grep -qi ownership pack.out && grep -qi invariant pack.out && rm pack.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/pack"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh pack "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main --format text > pack.out && grep -q reporting pack.out && grep -q api pack.out && grep -qi regex pack.out && grep -qi ownership pack.out && grep -qi invariant pack.out && rm pack.out'`
 
 ## TC-002 — Pack renders in text and in markdown
 
@@ -49,7 +55,7 @@ against `main`:
 - **When** the pack is requested as markdown, then as text
 - **Then** the markdown rendering is structured markdown (headings), and
   both renderings carry the pack content
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh pack && cairn review --base main --format markdown | grep -q '^#' && cairn review --base main --format text | grep -q reporting`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/pack"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh pack "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main --format markdown | grep -q "^#" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main --format text | grep -q reporting'`
 
 ## TC-003 — Change with no dependents
 
@@ -59,7 +65,7 @@ against `main`:
 - **When** the review pack is produced for the diff against `main`
 - **Then** the command exits 0 and the output states the change has no
   dependents
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh banner && cairn review --base main > banner.out && grep -qiE "no (downstream |reverse )?dependents|zero dependents" banner.out && rm banner.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/banner"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh banner "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main > banner.out && grep -qiE "no (downstream |reverse )?dependents|zero dependents" banner.out && rm banner.out'`
 
 ## TC-004 — Change with no enrichment available
 
@@ -69,7 +75,7 @@ against `main`:
 - **When** the review pack is produced for the diff against `main`
 - **Then** the command exits 0, the dependents statement is present, and no
   memory guidance is cited
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh banner && cairn review --base main > banner.out && grep -qiE "no (downstream |reverse )?dependents|zero dependents" banner.out && ! grep -qi regex banner.out && rm banner.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/banner"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh banner "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main > banner.out && grep -qiE "no (downstream |reverse )?dependents|zero dependents" banner.out && ! grep -qi regex banner.out && rm banner.out'`
 
 ## TC-005 — Pre-submit surfaces each matching memory as a warning
 
@@ -81,7 +87,7 @@ against `main`:
 - **Then** each keyed memory surfaces as a warning carrying its recorded
   guidance, and the command exits 0 (matching memories alone do not fail
   the check)
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh guard && cairn review --pre-submit > guard.out && grep -qi regex guard.out && grep -qi backoff guard.out && rm guard.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/guard"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh guard "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --pre-submit > guard.out && grep -qi regex guard.out && grep -qi backoff guard.out && rm guard.out'`
 
 ## TC-006 — Pre-submit with no keyed matches stays silent
 
@@ -90,7 +96,7 @@ against `main`:
   are keyed to the changed module
 - **When** the pre-submit check runs
 - **Then** no warnings appear and the command exits 0
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh quiet && cairn review --pre-submit > quiet.out && ! grep -qi regex quiet.out && ! grep -qi backoff quiet.out && rm quiet.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/quiet"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh quiet "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --pre-submit > quiet.out && ! grep -qi regex quiet.out && ! grep -qi backoff quiet.out && rm quiet.out'`
 
 ## TC-007 — Memories of other types never warn
 
@@ -99,7 +105,7 @@ against `main`:
   `ledger` and the pending change touches `ledger`
 - **When** the pre-submit check runs
 - **Then** the decision does not produce a warning and the command exits 0
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh types && cairn review --pre-submit > types.out && ! grep -qi "cache-first" types.out && rm types.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/types"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh types "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --pre-submit > types.out && ! grep -qi "cache-first" types.out && rm types.out'`
 
 ## TC-008 — Gating configured turns matches into failure
 
@@ -108,7 +114,7 @@ against `main`:
   mistake matches the change
 - **When** the pre-submit check runs
 - **Then** the command exits non-zero and the warning is still listed
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh gate && { cairn review --pre-submit --gate > gate.out; test $? -ne 0; } && grep -qi regex gate.out && rm gate.out`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/gate"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh gate "$T" && cd "$T/ws" && { /Users/tanle/Projects/cairn/.venv/bin/cairn review --pre-submit --gate > gate.out; test $? -ne 0; } && grep -qi regex gate.out && rm gate.out'`
 
 ## TC-009 — Accepted comment becomes a keyed, linked memory
 
@@ -119,7 +125,7 @@ against `main`:
 - **Then** a memory carrying the comment's guidance exists, is keyed to
   `ledger`, links the pull-request thread, and is visible through the
   standard memory listing
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh capture && cairn review --capture-event tests/fixtures/review-loop/events/resolved-comment.json && cairn memory list | grep -qi regex && cairn memory list | grep -q ledger && cairn memory list | grep -q "pull/42"`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/capture"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh capture "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --capture-event /Users/tanle/Projects/cairn/tests/fixtures/review-loop/events/resolved-comment.json && /Users/tanle/Projects/cairn/.venv/bin/cairn memory list | grep -qi regex && /Users/tanle/Projects/cairn/.venv/bin/cairn memory list | grep -q ledger && /Users/tanle/Projects/cairn/.venv/bin/cairn memory list | grep -q "pull/42"'`
 
 ## TC-010 — Open (unresolved) comment records nothing
 
@@ -127,7 +133,7 @@ against `main`:
 - **Given** the `capture` workspace, with the same comment still open
 - **When** the capture hook processes the event
 - **Then** no memory carrying that guidance is recorded
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh capture && cairn review --capture-event tests/fixtures/review-loop/events/unresolved-comment.json && ! cairn memory list | grep -qi regex`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/capture"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh capture "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --capture-event /Users/tanle/Projects/cairn/tests/fixtures/review-loop/events/unresolved-comment.json && ! /Users/tanle/Projects/cairn/.venv/bin/cairn memory list | grep -qi regex'`
 
 ## TC-011 — Comment outside any module degrades to file level
 
@@ -137,7 +143,7 @@ against `main`:
 - **When** the capture hook processes the event
 - **Then** a memory carrying that guidance is recorded, keyed to the file
   rather than dropped
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh capture && cairn review --capture-event tests/fixtures/review-loop/events/orphan-line-comment.json && cairn memory list | grep -qi swallow && cairn memory list | grep -q "changelog.md"`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/capture"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh capture "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn review --capture-event /Users/tanle/Projects/cairn/tests/fixtures/review-loop/events/orphan-line-comment.json && /Users/tanle/Projects/cairn/.venv/bin/cairn memory list | grep -qi swallow && /Users/tanle/Projects/cairn/.venv/bin/cairn memory list | grep -q "changelog.md"'`
 
 ## TC-012 — Pull-request run posts findings as a PR comment
 
@@ -166,7 +172,7 @@ against `main`:
   the standalone blast command and the standalone memory search
 - **Then** they report the same facts: the pack composes existing surfaces
   rather than reimplementing them, and diverges the moment it stops doing so
-- **Pass condition**: `bash tests/fixtures/review-loop/prepare.sh pack && cairn blast --base main | grep -q reporting && cairn review --base main | grep -q reporting && cairn memory search regex | grep -qi regex && cairn review --base main | grep -qi regex && cairn memory search backoff | grep -qi backoff && cairn review --pre-submit | grep -qi backoff`
+- **Pass condition**: `PATH="/usr/bin:$PATH" bash -c 'T="${TMPDIR:-/tmp}/cairn-review-loop-fixture/pack"; export CAIRN_BIN="/Users/tanle/Projects/cairn/.venv/bin/cairn" CAIRN_HOME="$T/home" CAIRN_DB="$T/store/graph.kg" CAIRN_KNOWLEDGE="$T/store/.knowledge" CAIRN_WORKSPACE="$T/ws" CAIRN_EMBED_BACKEND=hash; bash tests/fixtures/review-loop/prepare.sh pack "$T" && cd "$T/ws" && /Users/tanle/Projects/cairn/.venv/bin/cairn blast --base main | grep -q reporting && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main | grep -q reporting && /Users/tanle/Projects/cairn/.venv/bin/cairn memory search regex | grep -qi regex && /Users/tanle/Projects/cairn/.venv/bin/cairn review --base main | grep -qi regex && /Users/tanle/Projects/cairn/.venv/bin/cairn memory search backoff | grep -qi backoff && /Users/tanle/Projects/cairn/.venv/bin/cairn review --pre-submit | grep -qi backoff'`
 
 ## Coverage matrix
 

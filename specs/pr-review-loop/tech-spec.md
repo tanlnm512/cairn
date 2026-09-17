@@ -270,3 +270,14 @@ it, never wrap or alter it.
 - **Consequences**: one registration point and one help surface; the
   mutual-exclusion check lives in the CLI wrapper, keeping the engine
   callable as three plain functions (testable without the CLI, per C-04).
+
+### D-011: CI memory seeding via committed bundle
+- **Context**: T010's live validation proved the workflow's comment path,
+  but as authored findings can never fire on a real repo — the CI store is
+  fresh per runner and review.yml seeded no memories (silently green under
+  continue-on-error; scratch-repo PR 3 evidence in notes/T010.md).
+- **Decision**: commit a seed OKF bundle at `.cairn-knowledge/` and point
+  the workflow's `CAIRN_KNOWLEDGE` at it, so mistake/pattern memories ride
+  the repo and findings are reproducible from a clean clone.
+- **Consequences**: the seed bundle is reviewable content; PRs touching
+  keyed symbols get warnings in CI; no store cache needed.
