@@ -11,9 +11,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.21.0] - 2026-09-17
 
 ### Added
+- Bi-temporal memory: every memory carries `valid_from`/`valid_until`
+  (additive `memory_validity` projection + concept extensions, one-time
+  backfill); `recall_memory`/`cairn memory search` accept as-of dates;
+  `cairn validate-paths --mark` expires stale-reference memories at build
+  time with unique-successor links instead of deleting; `cairn memory
+  timeline <symbol>` renders a symbol's memory history.
+- Multi-agent memory coordination: `cairn memory share --agent <id>
+  --symbols a,b,c` publishes a learning to other agents' recall; `cairn
+  memory check` warns on other agents' recent symbol activity (7-day
+  window); `search --agent` / `recall_memory(agent=...)` merge shared
+  entries with attribution; sharing unused keeps single-agent behavior
+  byte-identical.
+- Security-aware blast radius: configurable taint sources/sinks (generic
+  call-name defaults, `cairn.json` `taint` overrides), inter-procedural
+  propagation over precise call edges (`--fuzzy` opt-in, depth-capped),
+  `cairn taint --from --to` path tracing, and taint-path warnings in
+  `explore` and `cairn blast` output.
+- Closed review loop: `cairn review --base <ref>` emits a structured
+  review-context pack (blast radius + memories + compass + wiki);
+  `--pre-submit [--gate]` warns on mistake/pattern memories keyed to the
+  diff; `--capture-event` records resolved review comments as draft-tier
+  symbol-keyed memories; advisory `.github/workflows/review.yml` posts
+  findings as PR comments from a committed seed bundle.
+- `cairn pack --task <text> --budget <tokens>`: one-shot token-budgeted
+  context block — semantic+lexical seed union, one-hop precise expansion,
+  closure-gated centrality ranking, greedy budget fitting with per-class
+  drop reporting, and per-symbol source/blast/compass/memory enrichment;
+  deterministic, offline, no LLM. Bench `pack-fit-rate` arm: fit 1.00 at
+  99.7% token reduction vs the grep baseline.
+- Cross-repo federation: `federated_search` MCP tool (inventory is now 25
+  tools) and `cairn federated-search` merge per-store results with
+  per-repo attribution and rank-level RRF fusion (lexical fallback for
+  embedding-less stores, named dropped-store states); `cairn ask
+  --all-repos` composes per-repo answers; opt-in `--shared-embed` serves
+  stamp-compatible stores from one embedding backend.
+- `cairn bench --suite swe-bench`: deterministic (no-LLM) two-arm
+  efficiency measurement over a pinned 50-instance SWE-bench_Lite subset
+  (frozen manifest at a recorded HF revision; `datasets` rides the new
+  `bench` extra); byte-identical reruns, hermetic `-m core` CI smoke;
+  published medians: 84.6% tool-call / 99.0% token reduction vs the
+  grep/read control, fresh-clone reproducible (resolve-rate intentionally
+  out of scope for the deterministic arm).
+- VS Code extension (`extensions/vscode/`, vsix package): zero-config
+  adopt-or-spawn of the local dashboard server, status item with graceful
+  degradation (unindexed/stopped-server states), hover blast radius,
+  caller/callee code-lens counts, and a compass/memory panel — over frozen
+  editor JSON routes (`/editor/symbol|file|status`) on the dashboard app;
+  tag-triggered `extension-release.yml` builds the vsix and validates
+  install + activation on a headless clean machine.
 - Query-time freshness: every graph MCP tool and CLI query command probes
   `(size, mtime)` drift and reindexes changed files before answering;
   `CAIRN_NO_REFRESH=1` / `--no-refresh` and read-only stores answer from the
@@ -44,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `discover_repos` optionally includes initialized submodules and nested
   repos (`include_nested_repos`, default off, prefixed repo ids); linked git
   worktrees seed an independent store from the main checkout then refresh
-  drift. MCP inventory is now 24 tools.
+  drift.
 - `cairn dataflow build --max-symbols N` caps the public symbols indexed per
   run; `CAIRN_DATAFLOW_MAX_SYMBOLS` sets the cap for every builder entry point
   (`cairn build`, `cairn sync`, `cairn dataflow build`). The partial-index
