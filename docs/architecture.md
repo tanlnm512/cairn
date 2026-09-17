@@ -36,7 +36,7 @@ through a decoupled task queue.
 
 | Surface | Module | Facts |
 |---|---|---|
-| MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 24 tools (verified at boot); `cairn://status` resource |
+| MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 25 tools (verified at boot); `cairn://status` resource |
 | CLI | `src/cairn/cli/` | Click; entry point `cairn` → `cairn.cli:main`; see [cli-reference.md](cli-reference.md) |
 | Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json`; knowledge views — `/knowledge` catalog, `/knowledge/{family}/{slug}` detail with relationship panels, `/knowledge/graph` relationship canvas — render from the OKF bundle + derived `knowledge_edges` index |
 
@@ -94,7 +94,7 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `hooks/` | git hooks and lifecycle hooks |
 | `knowledge/` | document knowledge: staged ingestion (`knowledge/ingest/`) + semantic retrieval |
 | `llm/` | agent-decoupled LLM task queue |
-| `mcp_server/` | the 24-tool MCP surface |
+| `mcp_server/` | the 25-tool MCP surface |
 | `memory/` | tiered agent memory (raw → drafts → tribal → archived) |
 | `okf/` | Open Knowledge Format concept model and bundle |
 | `parsers/` | tree-sitter parsers (15 languages) |

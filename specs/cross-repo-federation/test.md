@@ -20,7 +20,7 @@ audit.
 - **When** a federated search runs for that topic
 - **Then** one merged ranking returns, with relevant hits from every store,
   each hit naming the repo it came from and carrying a score
-- **Pass condition**: `python3 -m unittest tests.test_federation.FederatedSearchTests.test_merged_hits_carry_repo_attribution`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.FederatedSearchTests.test_merged_hits_carry_repo_attribution`
 
 ## TC-002 — A store without embeddings still contributes
 - **Story**: US1 · **Traces to**: FR-001
@@ -29,7 +29,7 @@ audit.
 - **When** a federated search runs for a topic both stores cover
 - **Then** the lexical-only store's relevant hits appear in the merged
   results with attribution — the store is served, not dropped
-- **Pass condition**: `python3 -m unittest tests.test_federation.FederatedSearchTests.test_lexical_only_store_still_contributes`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.FederatedSearchTests.test_lexical_only_store_still_contributes`
 
 ## TC-003 — Federated search is reachable from both surfaces
 - **Story**: US1 · **Traces to**: FR-001
@@ -38,7 +38,7 @@ audit.
   federated search CLI command with the same query
 - **Then** federated search is offered as an agent tool, and the CLI command
   returns the same merged, attributed results for the same query
-- **Pass condition**: `python3 -m unittest tests.test_federation.FederatedSearchTests.test_tool_and_cli_surfaces_agree`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.FederatedSearchTests.test_tool_and_cli_surfaces_agree`
 
 ## TC-004 — A shared embedding backend is an option where compatible
 - **Story**: US1 · **Traces to**: FR-002
@@ -47,7 +47,7 @@ audit.
 - **When** a federated search runs with the shared-backend option in use
 - **Then** results are correct and attributed exactly as when each store
   serves its own — sharing is an option and never changes what callers get
-- **Pass condition**: `python3 -m unittest tests.test_federation.EmbeddingBackendTests.test_shared_backend_option_returns_attributed_results`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.EmbeddingBackendTests.test_shared_backend_option_returns_attributed_results`
 
 ## TC-005 — Different backends still merge into one ranking
 - **Story**: US1 · **Traces to**: FR-002
@@ -65,10 +65,10 @@ audit.
 - **Story**: US2 · **Traces to**: FR-003, AC1
 - **Given** at least two registered stores, each holding distinct context
   relevant to the question
-- **When** `cairn ask --all-repos "<question>"` runs
+- **When** `/Users/tanle/Projects/cairn/.venv/bin/cairn ask --all-repos "<question>"` runs
 - **Then** the composed answer draws on both stores and every piece of
   context it uses names the repo it came from
-- **Pass condition**: `python3 -m unittest tests.test_federation.FederatedAskTests.test_ask_all_repos_attributes_context_per_repo`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.FederatedAskTests.test_ask_all_repos_attributes_context_per_repo`
 
 ## TC-007 — A missing store is named, not skipped
 - **Story**: US1 · **Traces to**: FR-004
@@ -77,7 +77,7 @@ audit.
 - **Then** the healthy stores' results return, the missing store is
   explicitly named as unavailable, and the agent-consumable output carries
   the same store report as the human-readable one
-- **Pass condition**: `python3 -m unittest tests.test_federation.UnavailableStoreTests.test_missing_store_is_named`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.UnavailableStoreTests.test_missing_store_is_named`
 
 ## TC-008 — An unindexed store is named, not skipped
 - **Story**: US1 · **Traces to**: FR-004
@@ -86,7 +86,7 @@ audit.
 - **When** a federated search runs
 - **Then** healthy results return and the unindexed store is explicitly named
   as unavailable
-- **Pass condition**: `python3 -m unittest tests.test_federation.UnavailableStoreTests.test_unindexed_store_is_named`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.UnavailableStoreTests.test_unindexed_store_is_named`
 
 ## TC-009 — A locked store is named, not skipped
 - **Story**: US1 · **Traces to**: FR-004
@@ -95,7 +95,7 @@ audit.
 - **When** a federated search runs
 - **Then** the locked store is explicitly named as unavailable and the rest
   of the federation answers
-- **Pass condition**: `python3 -m unittest tests.test_federation.UnavailableStoreTests.test_locked_store_is_named`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.UnavailableStoreTests.test_locked_store_is_named`
 
 ## TC-010 — No registered stores gets an explicit answer
 - **Story**: US1 · **Traces to**: FR-004
@@ -103,7 +103,7 @@ audit.
 - **When** a federated search or an all-repos ask runs
 - **Then** the response states plainly that no stores are registered — not a
   crash, not a silent empty success
-- **Pass condition**: `python3 -m unittest tests.test_federation.UnavailableStoreTests.test_empty_registry_reports_clearly`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.UnavailableStoreTests.test_empty_registry_reports_clearly`
 
 ## TC-011 — Existing single-repo behavior never changes (standing guard)
 - **Story**: US1, US2 · **Traces to**: FR-005
@@ -113,7 +113,7 @@ audit.
 - **Then** behavior and results match the single-repo contract exactly; in
   particular nothing from another registered repo ever appears in a default
   path
-- **Pass condition**: `python3 -m unittest tests.test_federation.SingleStoreBaselineTests.test_default_commands_stay_single_store`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.SingleStoreBaselineTests.test_default_commands_stay_single_store`
 
 ## TC-012 — Empty questions are rejected before any store is queried
 - **Story**: US2 · **Traces to**: FR-003
@@ -122,7 +122,7 @@ audit.
   (likewise a federated search with an empty query)
 - **Then** a clear input error returns before any store is touched, and the
   failure is routable from the command's exit status alone
-- **Pass condition**: `python3 -m unittest tests.test_federation.FederatedAskTests.test_blank_input_rejected_before_querying`
+- **Pass condition**: `/Users/tanle/Projects/cairn/.venv/bin/python -m unittest tests.test_federation.FederatedAskTests.test_blank_input_rejected_before_querying`
 
 ## Coverage matrix
 <!-- Every FR appears; `check.py` fails an FR with no TC. -->

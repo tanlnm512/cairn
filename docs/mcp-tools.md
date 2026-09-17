@@ -1,6 +1,6 @@
 # MCP Tools
 
-Read this when you need the tool surface: what the 24 tools are, how they're
+Read this when you need the tool surface: what the 25 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
 "Tool Quirks" table in [AGENTS.md](../AGENTS.md) — it is kept there so every
 agent session loads it.
@@ -10,7 +10,7 @@ agent session loads it.
 - Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
 - Transports: **stdio** (default, one process per client) or **SSE daemon**
   on `:9876` (`cairn serve start|stop|status|restart`, `run` for foreground).
-- Boot sequence (`server.py:run`): verify exactly 24 tools registered →
+- Boot sequence (`server.py:run`): verify exactly 25 tools registered →
   parent-death watchdog (stdio) → boot catch-up reindex (`ensure_fresh_force`)
   → memory decay → live file watcher (`[watch]` extra).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
@@ -18,7 +18,7 @@ agent session loads it.
 - `CAIRN_READ_ONLY=1` makes the server refuse write tools.
 - Resource `cairn://status` exposes live server status.
 
-## The 24 tools by layer
+## The 25 tools by layer
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-components-dark.png">
@@ -42,6 +42,12 @@ full-size version.
 | `file_api` | body-free symbol records for one indexed file; `signature` is null when unavailable |
 | `cross_repo_deps` | cross-repo consumers of a repo's API |
 | `visualize_graph` | Mermaid/DOT/JSON rendering of a subgraph |
+
+**L1 — Federation** (`tools_federation.py`, 1):
+
+| Tool | Purpose |
+|---|---|
+| `federated_search` | one query across every registered workspace store: merged ranking, per-workspace attribution, lexical fallback for embedding-less stores, dropped stores named |
 
 **L2/L3 — Knowledge base + Compass** (`tools_compass.py`, 5):
 

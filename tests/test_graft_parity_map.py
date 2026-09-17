@@ -584,7 +584,7 @@ def test_mcp_tool_count_and_inventory_include_graph_surfaces() -> None:
         tool.name for tool in mcp._tool_manager.list_tools()
     }
     assert {"repo_map", "file_api"} <= tool_names
-    assert server._EXPECTED_TOOL_COUNT == 24
+    assert server._EXPECTED_TOOL_COUNT == 25
     server.verify_tool_count()
 
 

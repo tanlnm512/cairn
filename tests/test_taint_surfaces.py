@@ -176,12 +176,12 @@ def test_footnote_stays_last_line_over_the_taint_warning(explore_env):
 
 
 # ---------------------------------------------------------------------------
-# The warning rides existing tools: no surface may add an MCP tool
+# The warning rides existing tools: the count pin follows the server constant
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_tool_count_stays_24():
+def test_mcp_tool_count_stays_25():
     from cairn.mcp_server.server import _EXPECTED_TOOL_COUNT, verify_tool_count
 
-    assert _EXPECTED_TOOL_COUNT == 24
+    assert _EXPECTED_TOOL_COUNT == 25
     verify_tool_count()

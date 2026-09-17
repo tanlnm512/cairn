@@ -6,6 +6,7 @@ server. SKILL.md keeps only a name index — come here for the details.
 ## Layer 1: Structural Graph & Hybrid Retrieval
 - `explore(query)` -- **Recommended first call.** Performs 3-stage hybrid search (BM25 + BAAI/bge-m3 FP16 vectors + Cross-Encoder reranking) + 1-hop AST callers/callees + blast radius in one call
 - `semantic_search(query, limit=20, include_callers=False, structured=False)` -- 3-stage hybrid semantic search (bge-m3 dense 1024d + BM25 + sqlite-vec ANN index + Cross-Encoder rerank). `structured=True` returns a typed result object instead of the rendered text.
+- `federated_search(query, limit=20)` -- One query across every registered workspace store: merged ranking with per-workspace attribution (`@ <workspace>` per hit), lexical BM25 fallback for stores without embeddings, and missing/locked/unindexed stores named instead of silently skipped. Scores are rank-fused (RRF) -- trust rank order, not magnitude.
 - `find_definition(name)` -- Where a symbol is defined (tree-sitter AST bindings)
 - `get_callers(name, fuzzy=False, limit=200, structured=False)` -- Who calls this function (precise by default; fuzzy re-enables name-only matching). `structured=True` returns a typed result object instead of the rendered text.
 - `get_callees(name, fuzzy=False, limit=200, structured=False)` -- What this function calls (precise drops stdlib/external; fuzzy includes them). `structured=True` returns a typed result object instead of the rendered text.

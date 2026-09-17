@@ -273,3 +273,24 @@ runs): `src/cairn/mcp_server/server.py` (`verify_tool_count` boot guard),
 - **Context**: Design review: an MCP tool plus a CLI command duplicates the adapter layer (add-before-subtract smell).
 - **Decision**: Keep both — FR-001 mandates each surface explicitly; both stay thin (no logic outside the core).
 - **Consequences**: Any new federation option lands in the core signature once; adapters only translate arguments and rendering.
+
+### D-009: lexical fallback lives in the federation core
+- **Context**: D-007 assumed `semantic_search` degrades to bm25-only for
+  embedding-less stores; empirically the dense leg returns None → fusion
+  bails → empty result on such stores (verified on fixture stores).
+- **Decision**: `iter_stores`/the core gate per store via `_has_embeddings`;
+  embedding-less stores are served by the existing `search_symbols` (the
+  same sparse surface `semantic_search`'s bm25 leg uses), shaped to the hit
+  contract with `provenance="bm25"`. No engine change.
+- **Consequences**: FR-001's "lexical fallback where a store lacks
+  embeddings" holds via the core; `semantic_search` semantics untouched.
+
+### D-010: per-store re-pinning in iter_stores
+- **Context**: `resolve_store(workspace)` honors CAIRN_DB/CAIRN_KNOWLEDGE
+  env unconditionally (set by the MCP server lifecycle), so verbatim
+  per-store resolution would collapse every store onto the server's db.
+- **Decision**: `iter_stores()` resolves each registry entry then re-pins
+  db/knowledge to that entry's own store home; constraint documented at
+  the helper.
+- **Consequences**: fan-out visits distinct stores even under a
+  env-pinned server process; single-store behavior unchanged.
