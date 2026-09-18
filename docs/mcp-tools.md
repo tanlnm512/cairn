@@ -47,7 +47,7 @@ full-size version.
 
 | Tool | Purpose |
 |---|---|
-| `federated_search` | one query across every registered workspace store: merged ranking, per-workspace attribution, lexical fallback for embedding-less stores, dropped stores named |
+| `federated_search` | one query across every registered workspace store: merged ranking, per-workspace attribution, lexical fallback for embedding-less stores, dropped stores named; `shared_embed=true` opt-in serves stamp-compatible stores from one embedding backend |
 
 **L2/L3 — Knowledge base + Compass** (`tools_compass.py`, 5):
 

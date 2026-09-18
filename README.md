@@ -186,7 +186,30 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   API across registered repos; `impact_analysis` reports consumer reach.
 - **Code-grounded memory** — decisions / patterns / mistakes / workarounds,
   symbol-keyed, recalled alongside graph results; promotion and decay
-  lifecycles keep it honest.
+  lifecycles keep it honest. Bi-temporal semantics: every memory carries a
+  validity interval, `--as-of <date>` recall answers point-in-time queries,
+  renamed/removed symbols auto-expire their memories (successor-linked, never
+  deleted), and `cairn memory timeline <symbol>` shows the history.
+- **Multi-agent coordination** — `cairn memory share` publishes a learning to
+  other agents working the same store; `cairn memory check` warns before
+  editing symbols with another agent's recent activity. Unused sharing keeps
+  single-agent behavior byte-identical.
+- **Security-aware blast radius** — configurable taint sources/sinks
+  (generic defaults, workspace overrides) propagate over precise call edges;
+  `cairn taint --from --to` traces source-to-sink paths and `explore` /
+  `cairn blast` warn when changes intersect one.
+- **Closed review loop** — `cairn review` builds diff-scoped review packs
+  (blast radius + memories + compass + wiki), guards pre-submit against
+  recorded mistakes, and captures resolved review comments as new memories;
+  the bundled advisory GitHub Action posts findings on every PR.
+- **One-shot context packs** — `cairn pack --task "<text>" --budget <tokens>`
+  emits a single token-budgeted context block (ranked sources, blast lines,
+  compass, memories); deterministic, offline, no LLM. Measured fit-rate 1.00
+  at 99.7% token reduction vs a grep baseline.
+- **Cross-repo federation** — `federated_search` and `cairn federated-search`
+  merge results across every registered workspace store with per-repo
+  attribution; `cairn ask --all-repos` routes questions across the
+  federation; unavailable stores are named, never skipped.
 - **Docs as first-class knowledge** — `cairn knowledge ingest` stages
   markdown / PDF / DOCX (repo doc-trees or fed files) through a reviewable
   dry-run manifest before anything lands in the store; classification,
@@ -196,8 +219,11 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   gating CI.
 - **100% local** — one SQLite store under `~/.cairn`; no network calls, no
   telemetry egress (OTLP export is opt-in and best-effort).
-- **Agent-first surfaces** — the same store backs 24 MCP tools and the CLI;
-  `cairn install-agents` wires every detected client in one command.
+- **Agent-first surfaces** — the same store backs 25 MCP tools and the CLI;
+  `cairn install-agents` wires every detected client in one command. A VS
+  Code extension (hover blast radius, code-lens counts, compass/memory
+  panel, zero-config local server) installs from the `cairn-ext.vsix` on
+  each [release](https://github.com/tanlnm512/cairn/releases).
 - **Local dashboard** — `cairn dashboard` opens a loopback web console at
   `127.0.0.1:8765`: interactive graph with symbol search, recorded
   tool-call history and token usage (MCP + CLI, mode-labeled estimates),
@@ -302,9 +328,13 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 | `cairn blast` | Diff-based reverse-dependency radius (`--base <ref>`, text/markdown/mermaid/json, precise default with `--fuzzy` opt-in; empty radius exits 0, unknown base reports fetch-depth guidance) |
 | `cairn map` | Deterministic repository orientation: directory clusters, counts, hubs, hotspots, and dropped counts (`--json`; capped with `--max-clusters` / `--max-hubs` / `--max-hotspots`) |
 | `cairn grep <pattern>` | Regex or literal search across indexed files, grouped by enclosing symbol (`-i`, `--fixed`, `--in <prefix>`, `--max-hits`; reports dropped hits/groups) |
-| `cairn ask "<question>"` | Natural-language query routed across all layers |
+| `cairn ask "<question>"` | Natural-language query routed across all layers (`--all-repos` routes across every registered store with per-repo attribution) |
+| `cairn federated-search "QUERY"` | Semantic search across every registered workspace store (per-repo attribution, named dropped stores, `--shared-embed` opt-in) |
+| `cairn pack --task "<text>" --budget <N>` | One-shot token-budgeted context block: ranked sources, blast lines, compass excerpt, memories |
+| `cairn taint --from <src> --to <sink>` | Trace inter-procedural taint paths over precise call edges (`--fuzzy` opt-in, depth-capped) |
+| `cairn review` | Diff-scoped review pack (`--base`), pre-submit memory guard (`--pre-submit [--gate]`), comment capture (`--capture-event`) |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
-| `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue |
+| `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
 | `cairn upgrade` | In-place update from PyPI (`--check` to preview) |
 | `cairn eval` / `cairn bench` | Retrieval-quality / performance harnesses |

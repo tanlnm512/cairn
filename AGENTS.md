@@ -175,7 +175,15 @@ graph/compass/memory; `search_knowledge(query, type_filter="Wiki")` queries page
 - `cairn deps <repo>` -- cross-repo dependency map
 - `cairn context <file>` -- load context for a file
 - `cairn ask "<question>"` -- natural language query across all layers
+  (`--all-repos` fans out across every registered store)
+- `cairn federated-search "QUERY"` -- cross-store search with per-repo attribution
+- `cairn pack --task "<text>" --budget <N>` -- one-shot token-budgeted context block
+- `cairn taint --from <src> --to <sink>` -- taint path trace over precise edges
+- `cairn review --base <ref>` -- diff review pack; `--pre-submit` memory guard;
+  `--capture-event <file>` records resolved review comments as memory
 - `cairn memory record <type> "<title>"` -- capture a learning
+- `cairn memory share/check/timeline` -- multi-agent sharing, overlap check,
+  per-symbol history; `memory search --as-of <date>` for point-in-time recall
 
 ## Knowledge Files
 

@@ -1,7 +1,7 @@
 # Tech stack & conventions: cairn
 
 **Created**: 2026-08-28 | **Baseline**: 0.16.0 @ fe7a7f09edb015d6a8fb12cd5d0f1b06ed07f5c3
-**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey — mypy promoted from advisory to a hard gate in CI; test-runner line unchanged); re-verified @ 7663989 (2026-09-04 — ci.yml/pyproject/system.py line refs re-anchored); refreshed @ dc9882b (2026-09-11, remove-scip-exact-rate survey — extras re-anchored: `[scip]` block at pyproject.toml:126 with protobuf>=7.35.1, grpcio-tools dev dep at :87; version now 0.20.0)
+**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey — mypy promoted from advisory to a hard gate in CI; test-runner line unchanged); re-verified @ 7663989 (2026-09-04 — ci.yml/pyproject/system.py line refs re-anchored); refreshed @ dc9882b (2026-09-11, remove-scip-exact-rate survey — extras re-anchored: `[scip]` block at pyproject.toml:126 with protobuf>=7.35.1, grpcio-tools dev dep at :87; version now 0.20.0); refreshed @ 1a95264 (2026-09-18, post-0.21.0 docs pass — version 0.21.0; new `bench` extra carries `datasets>=4.0` for the SWE-bench arm; `.github/workflows/review.yml` advisory pre-submit and `extension-release.yml` vsix pipeline added; the VS Code extension's npm devDeps are confined to `extensions/vscode/package.json` — zero Python-wheel impact)
 Stack, build/test runners, and gates. Cited from pyproject.toml,
 .pre-commit-config.yaml, and .github/workflows/ci.yml read at baseline.
 
@@ -17,7 +17,8 @@ Stack, build/test runners, and gates. Cited from pyproject.toml,
   `dev` (pytest, pytest-cov, ruff, mypy==2.3.0, bandit, pip-audit, pre-commit,
   commitizen, grpcio-tools, build), `semantic` (sentence-transformers — torch,
   opt-in), `ann`, `scip` (protobuf), `otlp` (OTel SDK + exporter), `ingest`
-  (pymupdf4llm, mammoth, markdownify).
+  (pymupdf4llm, mammoth, markdownify), `bench` (datasets>=4.0 — SWE-bench arm
+  only; never a runtime dep).
 
 ## Build & run
 - Repo runner is `uv`. Canonical test invocation (pipeline standard, refreshed

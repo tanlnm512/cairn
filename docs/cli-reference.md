@@ -43,7 +43,11 @@ are read at process start, not per call.
 | `cairn grep <pattern>` | span-grouped search over indexed files |
 | `cairn deps <repo>` | cross-repo dependency map |
 | `cairn tree <path>` | file/module symbol tree |
-| `cairn ask "<question>"` | natural-language query across layers |
+| `cairn ask "<question>"` | natural-language query across layers (`--all-repos` fans out across registered stores) |
+| `cairn federated-search "QUERY"` | cross-store semantic search with per-repo attribution (`--limit`, `--json`, `--shared-embed`) |
+| `cairn pack --task "<text>" --budget <N>` | one-shot token-budgeted context block (`--json`; drops lowest-centrality content first and reports counts) |
+| `cairn taint --from <pattern> --to <pattern>` | inter-procedural taint path trace (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk) |
+| `cairn review` | review loop: `--base <ref>` context pack, `--pre-submit [--gate]` memory guard, `--capture-event <file>` comment capture |
 | `cairn context <file>` | compass + memory context for a file |
 
 ### `cairn blast`
@@ -107,7 +111,10 @@ Group: `cairn memory …`
 | Subcommand | Purpose |
 |---|---|
 | `record <type> "<title>"` | capture a memory (decision/pattern/mistake/workaround) |
-| `search` / `list` / `digest` / `stats` | recall and inspect |
+| `search` / `list` / `digest` / `stats` | recall and inspect (`search --as-of <date>` for point-in-time recall) |
+| `share --agent <id> --symbols a,b,c` | publish a memory to other agents' recall on the shared store |
+| `check --agent <id> --symbols a,b,c` | warn on other agents' recent activity on the symbol set |
+| `timeline <symbol>` | a symbol's memory history with validity intervals and successor links |
 | `evolve` / `promote` / `demote` / `forget` | lifecycle |
 | `decay` / `purge` / `consolidate` / `batch-critic` / `embed` / `capture` | maintenance |
 
