@@ -1,7 +1,7 @@
 """Taint warning surfaces over the change-intersect fixture: `cairn blast`
 and the explore tool.
 
-Each test copies the fixture workspace from specs/taint-tracking/fixtures
+Each test copies the fixture workspace from tests/fixtures/taint-tracking
 into tmp_path, builds the graph into a tmp DB, and scopes every CAIRN_*
 variable to the sandbox, so no store outside tmp_path is read or written
 (CONSTITUTION C-04; cairn.cli / cairn.mcp_server are imported lazily inside
@@ -20,7 +20,7 @@ import pytest
 from cairn.graph.builder import build_graph
 
 FIXTURES_ROOT = (
-    Path(__file__).resolve().parents[1] / "specs" / "taint-tracking" / "fixtures"
+    Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "taint-tracking"
 )
 
 FOOTNOTE = "degraded: rung 3 (server_down): check the embedding server"
