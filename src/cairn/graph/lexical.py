@@ -1,11 +1,4 @@
-"""Lexical symbol search (FTS5 + bm25 ranking, LIKE fallback).
-
-Handles pattern-to-FTS conversion and the bm25-ranked symbol search that
-``search_symbols`` exposes; degrades to a LIKE scan when FTS5 is unavailable
-or the MATCH query errors. ``search_symbols_terms`` is the
-term-mode entry point for enriched queries: OR-combined per-term prefix
-queries instead of one folded phrase.
-"""
+"""Lexical symbol search (FTS5 + bm25 ranking, LIKE fallback)."""
 from __future__ import annotations
 
 import logging

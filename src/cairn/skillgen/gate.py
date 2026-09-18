@@ -1,10 +1,4 @@
-"""Pre-write critic gate for generated skills.
-
-Routes the exact SKILL.md bytes destined for disk through the compass
-critic's ``validate_paths`` (consume-only, concept-adapted): any
-backtick-quoted file/symbol reference the graph cannot resolve rejects
-the draft (FR-004).
-"""
+"""Pre-write critic gate for generated skills."""
 from __future__ import annotations
 
 import sqlite3

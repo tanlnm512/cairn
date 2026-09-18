@@ -1,13 +1,4 @@
-"""Critic pass: fact-check OKF concepts (compass/wiki) against the L1 graph.
-
-A deterministic reference checker, NOT a general hallucination detector. It
-verifies only backtick-quoted references:
-  1. File paths mentioned in the concept body actually exist in the graph
-  2. Symbol references mentioned exist as symbols
-Plain prose statements with no backticks are NOT checked; prose-heavy bodies
-with few verifiable references raise a warning and face a stricter pass
-threshold. The LLM quality-judge is optional.
-"""
+"""Critic pass: fact-check OKF concepts (compass/wiki) against the L1 graph."""
 from __future__ import annotations
 
 import re

@@ -1,36 +1,4 @@
-"""Tree-sitter Ruby parser.
-
-Extracts modules, classes, methods, singleton methods, inheritance edges,
-call edges, and imports (``require`` / ``require_relative`` / ``load``) into
-the shared ParsedFile model.
-
-Node-type reference (tree-sitter-ruby):
-
-- ``module`` -> Symbol(class). Ruby modules serve as namespaces (and mixins);
-  both map to ``class`` since cairn has no separate "module" symbol kind.
-- ``class`` -> Symbol(class). The class name may be a plain ``constant`` or a
-  ``scope_resolution`` (``class A::B``). The optional ``superclass`` child
-  -> Edge(extends); the superclass name may be a ``constant`` or
-  ``scope_resolution`` (``< ::Base``, ``< User::Base``) -- the trailing
-  constant is recorded as the target so the resolver's bare-name index can
-  match it.
-- ``method`` -> Symbol(method). The name is an ``identifier`` child (operators
-  like ``def +`` are captured too -- see ``_method_name``).
-- ``singleton_method`` (``def obj.foo`` / ``def self.foo``) -> Symbol(method).
-- ``call`` -> Edge(calls). Every ``call`` node is a real call in tree-sitter-
-  ruby: zero-argument calls (``X.new``, ``user.name``), parenless calls, and
-  safe-navigation calls (``obj&.name``) are all ``call`` nodes. Calls with a
-  block (``each do ... end``, ``map { ... }``) are also calls, as is every
-  link of a chained call (``repo.find(1).update(x)`` records both ``find``
-  and ``update``). The proc-call shorthand ``p.(1)`` has no method
-  ``identifier`` and is skipped. Local-variable reads are plain
-  ``identifier`` nodes, not ``call`` nodes.
-- top-level ``call`` to ``require``/``require_relative``/``load`` -> Import.
-
-Ruby has no canonical qualified-name scheme; we scope-qualify via ``_scope``
-(the enclosing module/class stack), matching the convention used by the other
-non-JS-family parsers.
-"""
+"""Tree-sitter Ruby parser."""
 from __future__ import annotations
 
 import hashlib

@@ -1,21 +1,4 @@
-"""Server-rendered context for the dashboard shell chrome (topbar, nav).
-
-Everything every page shares lives here as pure functions over plain
-rows — no starlette imports, so importing this module never loads the
-server stack (the same guard the dashboard package is held to, pinned by
-test). Two owners:
-
-- :func:`shell_context` is the single source of truth for NAVIGATION:
-  the sidebar renders from ``nav.sections`` and the command palette's
-  view list from ``palette.views`` — both derive from NAV_SECTIONS, so
-  the two can never drift apart, and every href carries the store param
-  composed here.
-- :func:`selector_context` turns :func:`enumerate_stores
-  <cairn.dashboard.workspaces.enumerate_stores>` rows (stat-only, never
-  probed) into the topbar workspace selector's options; the label policy
-  — basename of the registered workspace path, key fallback for orphan
-  stores — is one function with one table-driven test.
-"""
+"""Server-rendered context for the dashboard shell chrome (topbar, nav)."""
 from __future__ import annotations
 
 from pathlib import Path

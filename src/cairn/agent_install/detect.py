@@ -1,8 +1,4 @@
-"""Client detection: which AI coding clients are present for a workspace.
-
-Also owns `claude_desktop_config_path` (the OS-specific global Desktop config
-path), which detection needs.
-"""
+"""Client detection: which AI coding clients are present for a workspace."""
 from __future__ import annotations
 
 import os

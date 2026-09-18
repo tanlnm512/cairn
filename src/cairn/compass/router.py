@@ -1,11 +1,4 @@
-"""Compass Router: classify natural-language intent and route across all 5 layers.
-
-Hybrid query strategy. When the graph layer fires, queries are expanded via
-multi-token BM25 search + 1-hop graph neighborhood traversal instead of a
-single CamelCase `find_definition` lookup. This gives meaningful results for
-natural-language queries like "where do we handle retries" that contain no
-CamelCase symbol name.
-"""
+"""Compass Router: classify natural-language intent and route across all 5 layers."""
 from __future__ import annotations
 
 import re

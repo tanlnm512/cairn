@@ -1,10 +1,4 @@
-"""Result dataclasses + rendering for the benchmark suites.
-
-``PerfReport`` holds per-operation ``TimingResult``s from the perf suite;
-``ScalingReport`` holds the size→time/DB-size curve from the scaling suite.
-Both render to a rich table (via ``cli/display.print_table``) for humans and
-to a JSON-serialisable dict for CI / baseline diffing.
-"""
+"""Result dataclasses + rendering for the benchmark suites."""
 from __future__ import annotations
 
 import json

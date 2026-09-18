@@ -1,13 +1,4 @@
-"""Scaling benchmark: how build/embed cost grows with corpus size.
-
-Answers "will cairn scale to a large monorepo?". Generates a synthetic
-corpus at each size in ``sizes``, builds + embeds it, and records build-time,
-embed-time, DB-size, resolve-rate, and peak memory. The resulting curve shows
-where the cost becomes superlinear.
-
-Each size is single-shot (scaling is about the curve shape, not precise p95);
-memory is captured via tracemalloc around the whole build+embed.
-"""
+"""Scaling benchmark: how build/embed cost grows with corpus size."""
 from __future__ import annotations
 
 import os

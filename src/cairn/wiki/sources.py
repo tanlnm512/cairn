@@ -1,10 +1,4 @@
-"""Sources-footer parsing and graph resolution for wiki pages.
-
-A wiki page ends in a `## Sources` footer naming the files it cited. This
-module extracts the footer entries (tolerating backtick list items and
-inline-link forms) and resolves them against the L1 graph so promotion
-carries only verified sources.
-"""
+"""Sources-footer parsing and graph resolution for wiki pages."""
 from __future__ import annotations
 
 import re

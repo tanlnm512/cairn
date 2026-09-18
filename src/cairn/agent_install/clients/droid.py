@@ -1,9 +1,4 @@
-"""Droid/Factory integration: config + install + uninstall, together.
-
-Droid reads the ``.factory/`` tree (skills, commands, droids) and registers
-MCP via ``droid mcp add`` when the CLI is present, falling back to a
-``.factory/mcp.json`` file when the CLI is absent or the add fails.
-"""
+"""Droid/Factory integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 import shutil

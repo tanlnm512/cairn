@@ -1,51 +1,4 @@
-"""Agent-effort benchmark: tool calls + context cost, cairn vs grep/read-only.
-
-Answers "how much agent harness does answering task-shaped questions cost,
-cairn's query tools vs a plain grep+read loop?". Where the perf suite measures
-*latency* of individual operations, this suite measures *agent effort*: how
-many tool calls a scripted agent issues per question and how much context
-those calls return (token proxy: chars / 4 — the same ~4-chars-per-token
-approximation the embeddings chunker uses, and the one
-``metric_buffering.MAX_RESULT_CHARS`` is calibrated against).
-
-Deterministic and CI-safe: no LLM, no network, no subprocesses. Both arms are
-fixed scripts over the same synthetic corpus (``generate_corpus``):
-
-- **cairn arm** — the queries-layer call sequence an agent would make per
-  task (``find_definition`` / ``get_callers`` / ``impact_analysis`` /
-  ``trace_flow`` / ``semantic_search``). Each call counts once; payload chars
-  are the JSON-serialized result an MCP client would receive, capped at
-  ``MAX_RESULT_CHARS`` so the result-size ceiling agents actually hit in
-  deployment is mirrored honestly.
-- **control arm** — a scripted grep/read loop (stdlib ``re`` over the corpus
-  files, deterministic sorted order) answering the same question without
-  cairn: grep the symbol name, read the matched files, follow hops by grepping
-  the names those files define or call. Each grep invocation and each file
-  read counts once; chars are the content of files actually read (matched
-  files only — an agent does not read the whole repo).
-
-The six tasks are chosen so both arms can genuinely answer them, including
-one (common-name impact) where the control arm *must* over-read — every file
-mentions ``method_N`` — which is the honest point of the comparison: cairn's
-resolved-edge answer vs grep's lexical match on a colliding name.
-
-A seventh pair (``pack-fit-rate``) registers only when the pack pipeline
-(``cairn.pack``) is installed: the cairn arm requests one pack for a fixed
-token budget, and the pair reports the pack's context cost against the same
-grep/read control plus the fit rate — the fraction of seeded target symbols
-present in the in-budget block (per-task ``fit`` in the report). The pack
-reads the workspace-local OKF bundle; generated corpora ship none, so
-enrichment coverage is empty and the measurement stays machine-independent.
-
-Report medians over ``runs`` measured runs; the call/char counts are
-deterministic within a build (same corpus + seed), wall time is not. One
-caveat: symbol ids are random per build, so a tie-bounded result set
-(``semantic_search``'s limit cutoff) can swap one near-tied row between
-rebuilds — observed drift is a few chars, far below the 15% compare gate.
-Reranker and embed backend are pinned (``CAIRN_RERANK=0``, hash backend) so
-results do not depend on optional extras or machine state; env vars are
-snapshot/restored like the perf suite does.
-"""
+"""Agent-effort benchmark: tool calls + context cost, cairn vs grep/read-only."""
 from __future__ import annotations
 
 import json
@@ -121,13 +74,7 @@ class _CairnArm:
 
 
 class _ControlAgent:
-    """Scripted grep/read-only agent (stdlib re, no subprocess).
-
-    Deterministic by construction: files are visited in sorted order and
-    every hop-following rule is a fixed regex recipe. ``grep`` is one tool
-    call returning the matched files (an rg-style invocation); ``read`` is one
-    tool call per file not read before in this task.
-    """
+    """Deterministic grep and file-reading agent used as an evaluation baseline."""
 
     def __init__(self, workspace: str):
         self.workspace = Path(workspace)

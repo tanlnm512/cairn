@@ -1,33 +1,4 @@
-"""SWE-bench bench suite: deterministic agent-effort loop over task inputs.
-
-Runs the loader's five-field task dicts (``instance_id``, ``repo``,
-``base_commit``, ``problem_statement``, ``environment_setup_commit``) through
-the agent-suite harness (:mod:`cairn.bench.agent_suite`) — a cairn-equipped
-arm vs a grep/read-only control arm — with no LLM, no network, no
-subprocesses. ``tasks`` and ``workspaces`` are injected by the caller (the
-CLI maps the loader's checked-out caches); this module never fetches and
-never imports ``datasets``.
-
-Per task, the probe target is the first code-like identifier in the
-problem statement (contains an underscore, a digit, or internal/all-uppercase;
-first-occurrence order, lexical determinism). The cairn arm plays the fixed
-locator sequence ``find_definition`` -> ``get_callers`` ->
-``impact_analysis(max_depth=3)``; the control arm greps the same name and
-reads the matched files. Each arm runs ``runs`` times; per-task effort is
-the run median, and ``medians`` are the cross-task medians.
-
-Effort accounting matches :mod:`cairn.bench.agent_suite` (tool calls, JSON
-payload chars capped at ``MAX_RESULT_CHARS``, token proxy chars /
-:data:`CHARS_PER_TOKEN`) with one addition: uuid-minted symbol/file/repo ids
-are masked before the char count. The ids differ across fresh builds of an
-identical corpus, so counting them would make ``est_tokens`` a function of
-build randomness; masked, calls and est_tokens reproduce exactly across
-reruns (FR-002) while every stable byte still counts.
-
-Env discipline matches ``run_agent_suite``: ``CAIRN_DB``,
-``CAIRN_EMBED_BACKEND``, ``CAIRN_RERANK`` are pinned for the build+queries
-and snapshot/restored around the run.
-"""
+"""SWE-bench bench suite: deterministic agent-effort loop over task inputs."""
 
 from __future__ import annotations
 

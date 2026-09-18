@@ -1,8 +1,4 @@
-"""Pure vector math helpers with no graph dependencies.
-
-Both cosine scan paths -- graph symbols and knowledge docs -- share the same
-implementation here.
-"""
+"""Pure vector math helpers with no graph dependencies."""
 from __future__ import annotations
 
 

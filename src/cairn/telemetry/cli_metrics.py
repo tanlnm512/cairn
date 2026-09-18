@@ -1,41 +1,4 @@
-"""CLI invocation metrics: the ``tool_metrics`` row builder + buffered flusher.
-
-CLI commands get the same observability as MCP tools: every ``cairn``
-invocation becomes one
-``tool_metrics`` row with ``tool_name = "cli:" + command_path``, timing,
-status, and a redacted argv summary. This module is the CLI-side sibling of
-:mod:`cairn.mcp_server.metric_buffering` -- it owns a buffer and its flush
-logic but no thread of its own: it registers ``_flush_cli_metrics`` with the
-shared telemetry sink (:mod:`cairn.telemetry.sink`) so events,
-tool_metrics, and CLI rows share one 30s flush cadence + one atexit drain
-(flush-on-clean-exit is the sink's atexit handler).
-
-Doctrine (mirrors ``metric_buffering`` / the shared sink):
-  * Telemetry is analytics, not correctness: recording never raises into the
-    caller, never holds a user lock, never blocks the command.
-  * Buffer then flush; the buffer is snapshotted WITHOUT clearing, so a
-    transient failure ("database is locked") leaves rows queued for the next
-    attempt -- no silent drops. ``deque(maxlen=2000)`` caps growth during a
-    long outage.
-  * Redact at the write chokepoint: argv routinely embeds paths, tokens, and
-    user text -- ``strip_private_data`` runs BEFORE a row is ever buffered,
-    then the summary is truncated to ``MAX_CLI_ARGS_SUMMARY_CHARS``.
-    ``error_message`` gets the same chokepoint plus a 500-char cap.
-  * Gates mirror ``metric_buffering._log_metric``: skip entirely when
-    ``CAIRN_TELEMETRY=off`` (master kill switch) or the process is read-only
-    (a mode=ro store would fail every flush and buffer indefinitely).
-
-Source stamping: every CLI row states ``source =
-'cli'`` explicitly -- the only two places in this module that know the
-column list are ``_INSERT_SQL`` and :func:`build_row`. MCP rows ride the
-table's ``DEFAULT 'mcp'`` (their INSERT names no source column), so no other
-writer of ``tool_metrics`` changes.
-
-Deliberately CLI-agnostic: no click imports, no MCP-server imports. The
-writable connection factory is injected via :func:`configure_conn` (CLI boot
-wires it against the resolved store); without a factory rows stay buffered --
-never an error, never a drop.
-"""
+"""CLI invocation metrics: the ``tool_metrics`` row builder + buffered flusher."""
 
 from __future__ import annotations
 

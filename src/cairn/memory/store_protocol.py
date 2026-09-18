@@ -1,13 +1,4 @@
-"""MemoryStore protocol: the swappable storage seam for the memory layer.
-
-Defines a 5-method storage protocol with no lifecycle opinions, plus a concrete
-``OKFMemoryStore`` adapter that wraps ``store.py`` functions against a fixed
-bundle+conn pair. The lifecycle logic (``promotion``/``scoring``/``critic``)
-is a *consumer* of a ``MemoryStore``: pass a mock store in tests and the
-lifecycle runs without materializing a filesystem bundle. Also defines the
-named ``Decision`` enum so ``batch_critic`` and ``promotion_history`` use
-auditable constants instead of bare thresholds and freeform action strings.
-"""
+"""MemoryStore protocol: the swappable storage seam for the memory layer."""
 from __future__ import annotations
 
 import sqlite3
@@ -19,12 +10,7 @@ from ..okf.concept import OKFConcept
 
 
 class Decision(str, Enum):
-    """Named lifecycle decision for a memory under critic/promotion review.
-
-    The ``value`` is the stable string persisted to ``promotion_history`` --
-    readers that treat ``action`` as a freeform string keep working
-    (``Decision.ARCHIVE.value == "archive"``).
-    """
+    """Lifecycle review decisions for memory concept promotion and archival."""
 
     NEW = "new"              # first capture / newly created
     PROMOTE = "promote"      # raised to a higher tier (drafts -> tribal)
@@ -36,13 +22,7 @@ class Decision(str, Enum):
 
 @runtime_checkable
 class MemoryStore(Protocol):
-    """Storage protocol for memory concepts. No lifecycle opinions.
-
-    The five methods are the full surface a memory lifecycle (capture, critic,
-    promote/demote, decay, search) needs. Higher layers call these instead of
-    reaching into ``OKFBundle`` directly; a test injects a mock implementation
-    to run the lifecycle without a filesystem bundle.
-    """
+    """Storage protocol defining CRUD and search operations for memory concepts."""
 
     def add(self, concept: OKFConcept, tier: Optional[str] = None,
             old_id: Optional[str] = None) -> str:
@@ -69,12 +49,7 @@ class MemoryStore(Protocol):
 
 
 class OKFMemoryStore:
-    """Concrete ``MemoryStore`` backed by ``store.py`` + an ``OKFBundle``.
-
-    Binds the bundle+conn once at construction so the protocol methods need no
-    further arguments. This is the production implementation; tests use a mock
-    or ``InMemoryMemoryStore``.
-    """
+    """Concrete MemoryStore implementation backed by SQLite and an OKF concept bundle."""
 
     def __init__(self, bundle: OKFBundle, conn: Optional[sqlite3.Connection] = None):
         self.bundle = bundle

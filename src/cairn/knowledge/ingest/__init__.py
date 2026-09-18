@@ -1,11 +1,4 @@
-"""Staged document ingestion into the knowledge store.
-
-Documentation sources — fed markdown files, repository doc trees, fed
-binary documents converted to markdown — pass one pipeline: normalize to
-markdown, parse and classify, stage an OKF outbox plus a dry-run manifest
-for review. The knowledge store is written only after explicit approval;
-staging never touches it.
-"""
+"""Staged document ingestion into the knowledge store."""
 from __future__ import annotations
 
 from collections.abc import Iterable

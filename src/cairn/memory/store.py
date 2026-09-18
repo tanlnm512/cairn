@@ -1,9 +1,4 @@
-"""Memory storage: tiered OKF files (raw/drafts/tribal/archived).
-
-Memories are OKF concepts with memory lifecycle extensions in frontmatter:
-  memory_status, memory_score, memory_signals, memory_tier, memory_type,
-  session_origin, promotion_history.
-"""
+"""Memory storage: tiered OKF files (raw/drafts/tribal/archived)."""
 from __future__ import annotations
 
 import re

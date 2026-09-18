@@ -1,10 +1,4 @@
-"""L5 wiki MCP tool: wiki_generate.
-
-Thin boundary over the wiki pipeline's public entry point
-(``cairn.wiki.pipeline.run_wiki_generate``): queue the wiki-page tasks for a
-repo's plan, or (with ``refine_catalog``) the wiki-catalog refinement task
-that precedes them.
-"""
+"""L5 wiki MCP tool: wiki_generate."""
 from __future__ import annotations
 
 from mcp.types import ToolAnnotations

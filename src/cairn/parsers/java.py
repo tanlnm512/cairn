@@ -1,8 +1,4 @@
-"""Tree-sitter Java parser.
-
-Extracts class/interface/enum declarations, methods, fields, call expressions,
-imports, and inheritance (extends/implements) into the shared ParsedFile model.
-"""
+"""Tree-sitter Java parser."""
 from __future__ import annotations
 
 from typing import List, Optional

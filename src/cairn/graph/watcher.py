@@ -1,26 +1,4 @@
-"""Boot-time catch-up + live file watching for a running `cairn serve`.
-
-Two freshness mechanisms live here:
-
-* **Boot catch-up** (:func:`ensure_fresh_force`) — a one-time stat()-based
-  check of the files table vs disk that absorbs edits made while no server
-  was running. Re-indexes only changed files.
-* **Live watching** (:class:`FileWatcherService`, FRESH-1) — a watchdog-based
-  observer started by ``cairn serve`` so the running server sees source edits
-  as they happen. Events are debounced into one ``incremental_update`` pass
-  per quiet window; ``pending_sync`` rows mark the changed files so
-  concurrent MCP readers (the staleness banner in ``_server_core``) surface
-  them immediately, before the pass completes.
-
-``invalidate_gitignore_cache`` clears the scanner's gitignore cache when a
-.gitignore changes (used by both paths).
-
-Live watching needs the optional ``[watch]`` extra (``watchdog>=3.0``);
-without it the service degrades to a logged no-op and freshness falls back
-to boot catch-up + explicit ``cairn update``. ``CAIRN_WATCH=0`` disables it
-even when watchdog is installed, and it never starts under
-``CAIRN_READ_ONLY`` (a read-only server must never write).
-"""
+"""Boot-time catch-up + live file watching for a running `cairn serve`."""
 from __future__ import annotations
 
 import logging
@@ -231,18 +209,7 @@ def _read_only_env() -> bool:
 
 
 class _DebouncingHandler:
-    """Duck-typed watchdog event handler (no watchdog import needed to define).
-
-    watchdog's observer only requires ``dispatch(event)`` on the scheduled
-    handler object (observers/api.py dispatch_events), so this class needs no
-    ``watchdog.events.FileSystemEventHandler`` base — which keeps this module
-    importable (and testable) without the ``[watch]`` extra installed.
-
-    The handler itself is trivial by design: filter, add to the pending set,
-    arm the debounce timer. Everything expensive (gitignore matching, DB
-    writes, reindex) happens on the timer thread, never on watchdog's
-    dispatch thread.
-    """
+    """Filesystem event handler that queues changes for debounced processing."""
 
     def __init__(self, service: "FileWatcherService"):
         self._service = service
@@ -256,40 +223,9 @@ class _DebouncingHandler:
 
 
 class FileWatcherService:
-    """Watches workspace repos and keeps the graph fresh while `cairn serve` runs.
+    """Monitors repository files and schedules incremental graph reindexing.
 
-    Wiring (mcp_server/server.py) constructs this with the SAME workspace and
-    db_path the server resolved (CAIRN_DB/store fallback) — passed explicitly
-    so the graph layer never imports the mcp_server package (layering).
-
-    Lifecycle: ``start()`` is idempotent (True = watching, False = disabled or
-    watchdog unavailable — a single info log, never an error). ``stop()``
-    cancels any pending flush and joins the observer cleanly; call it from the
-    server's shutdown path. The observer thread is daemonized so an abrupt
-    interpreter exit (the stdio parent-death watchdog's ``os._exit``) never
-    hangs on it.
-
-    Behavior per update pass (one per quiet window, on the timer thread):
-
-    1. Filter events down to source files (extension + the scanner's
-       4-layer filter — skip dirs, gitignore, config exclude, size cap).
-       ``.gitignore`` events invalidate the scanner's gitignore cache instead.
-    2. ``INSERT OR IGNORE`` a ``pending_sync`` row per changed file, in BOTH
-       the repo-relative and absolute forms — exactly the two forms
-       ``incremental.reindex_paths`` deletes on completion, and the
-       repo-relative form is what the MCP staleness banner matches (it
-       compares against ``files.path``, which is repo-relative). Concurrent
-       readers see the staleness banner from the moment the row lands.
-    3. Call ``incremental_update(workspace=..., db_path=...)`` under the
-       schema build lock. A concurrent CLI build/update holding the lock
-       raises ``RuntimeError``; that is absorbed (logged once until the next
-       success) and retried on the next event batch — the pending_sync rows
-       stay, so the banner keeps firing meanwhile.
-    4. After a successful pass, delete this batch's leftover pending_sync
-       rows (reindex_paths already cleared the paths it reindexed; the
-       leftovers are files whose edit restored identical content, so git diff
-       reported nothing and the row would otherwise linger as a false
-       "stale" marker forever).
+    Debounces filesystem modification events and runs incremental updates on a background timer.
     """
 
     def __init__(

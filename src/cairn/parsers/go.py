@@ -1,26 +1,4 @@
-"""Tree-sitter Go parser.
-
-Extracts structs, interfaces, type aliases, functions, methods (with their
-receiver type as ``parent_scope``), call expressions, struct/interface
-embedding (``embeds`` edges), and imports into the shared ParsedFile model.
-
-Go-specific shape notes:
-
-- ``type_declaration`` wraps one or more ``type_spec`` nodes. Each ``type_spec``
-  carries a ``type_identifier`` (the name) and one of ``struct_type`` /
-  ``interface_type`` / a type alias body.
-
-- ``function_declaration`` has no receiver; ``method_declaration`` does, and the
-  receiver type becomes the method's ``parent_scope``.
-
-- ``call_expression`` targets are either a bare ``identifier`` or a
-  ``selector_expression`` (``pkg.Foo()`` / ``recv.Method()``).
-
-- Imports: single (``import "fmt"``) or grouped (``import ( ... )``); the
-  spec's ``name`` child is the local alias, with blank/dot imports recording
-  none. Func symbols carry a parameter-count ``arity`` and call edges an
-  argument-count ``call_arity``; variadic params/args yield None.
-"""
+"""Tree-sitter Go parser."""
 from __future__ import annotations
 
 import hashlib

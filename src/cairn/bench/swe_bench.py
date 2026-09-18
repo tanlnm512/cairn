@@ -1,17 +1,4 @@
-"""SWE-bench task loader for the pinned Lite subset.
-
-The pin manifest (``benchmarks/datasource/swe-bench-subset.json``) carries
-the dataset revision sha and the ordered instance-id subset; validation
-runs before any fetch. ``fetch_dataset_rows`` is the network touchpoint:
-``load_dataset("princeton-nlp/SWE-bench_Lite", split="test",
-revision=<manifest sha>)`` through a lazy ``datasets`` import that raises
-an actionable ImportError when the ``bench`` extra is not installed.
-
-``load_tasks`` slices the fetched split to the manifest subset, in manifest
-order, projecting each row to the five-field task contract
-(:data:`TASK_FIELDS`); gold-patch fields never cross this seam. This module
-is the only one that knows the HF row schema.
-"""
+"""SWE-bench task loader for the pinned Lite subset."""
 from __future__ import annotations
 
 import re

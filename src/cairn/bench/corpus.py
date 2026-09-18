@@ -1,14 +1,4 @@
-"""Synthetic corpus generator for the benchmark suites.
-
-Produces a deterministic, parameterized Python source tree that exercises the
-full build pipeline (parse -> insert -> resolve -> embed) with a realistic-ish
-call graph: classes with methods, cross-file calls, and imports. Seeded so
-runs across machines/sessions are directly comparable.
-
-Each generated module imports a couple of siblings and calls methods on them,
-so the resolver has real edges to follow and the query battery has non-trivial
-blast radii rather than a flat list of isolated symbols.
-"""
+"""Synthetic corpus generator for the benchmark suites."""
 from __future__ import annotations
 
 import random

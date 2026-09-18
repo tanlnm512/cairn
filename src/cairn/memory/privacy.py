@@ -1,14 +1,4 @@
-"""Privacy filter: strip secrets from text before storing in memory.
-
-A regex-only floor (not a ceiling). Catches well-known secret shapes (API
-keys, bearer tokens, JWTs, connection strings with embedded credentials) and
-``<private>...</private>`` tags. It does NOT do entropy analysis or load
-actual secret values from env; for stronger guarantees, callers should add
-their own env-based redaction on top.
-
-Used by the auto-capture hook (``post_tool_failure``) so tool error output
-containing secrets is scrubbed before being stored as a raw ``mistake`` memory.
-"""
+"""Privacy filter: strip secrets from text before storing in memory."""
 from __future__ import annotations
 
 import re

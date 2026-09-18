@@ -1,11 +1,4 @@
-"""Shared core for the MCP server: the FastMCP singleton + conn/store helpers.
-
-Holds the single ``FastMCP("cairn")`` instance every tools_*.py module
-decorates, plus helpers: ``_conn`` (graph DB connection), ``_store`` (workspace
-store resolution), ``_bundle`` (the OKFBundle for the current workspace),
-``_session_id`` (memory_refs session id), and ``_repo_of`` (symbol -> repo
-lookup).
-"""
+"""Shared core for the MCP server: the FastMCP singleton + conn/store helpers."""
 
 from __future__ import annotations
 
@@ -107,30 +100,11 @@ def _fresh_graph(conn):
     )
 
 
-# --- Read-connection reuse (perf phase P5) -----------------------------------
-#
-# Every tool call used to open a fresh SQLite connection (open + WAL/
-# busy_timeout PRAGMAs + close). Thread-local pooling keeps one connection
-# per (thread, db path) alive for the server's lifetime instead. Guards:
-#
-# * Thread-local: sqlite3 connections are thread-affine by default and each
-#   tool call runs on one thread; no cross-thread sharing, so no
-#   ``check_same_thread=False`` is ever needed.
-# * Identity check: a full ``cairn build`` swaps the DB file atomically
-#   (``os.replace``), and a pooled connection would keep reading the
-#   unlinked old inode forever. Each ``_conn()`` call stats the path and
-#   reopens when (st_dev, st_ino) changes.
-# * ``close()`` on the wrapper is a no-op release, so tool bodies' existing
-#   ``finally: conn.close()`` keeps working unchanged.
-# * ``CAIRN_CONN_POOL=0`` disables pooling entirely (escape hatch).
+# --- Read-connection reuse ---------------------------------------------------
 
 
 class _PooledConnection:
-    """Delegating wrapper whose ``close()`` releases to the thread cache.
-
-    All attribute access (execute, cursor, row_factory, ...) delegates to the
-    underlying ``sqlite3.Connection``; only ``close()`` is intercepted.
-    """
+    """Delegating SQLite connection wrapper whose close() releases to the thread cache."""
 
     __slots__ = ("_conn",)
 

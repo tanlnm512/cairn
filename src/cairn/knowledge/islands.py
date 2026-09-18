@@ -1,21 +1,4 @@
-"""Doc-graph island detection and doc-link task queueing (D1).
-
-Connected components over the knowledge doc graph: nodes are ingested
-knowledge docs, edges are every ``knowledge_edges`` row (any relation,
-any kind). Islands are the components detached from the corpus, as
-pair-units worth one LLM linking pass each:
-
-- a component of exactly two docs (connected to each other, to nothing
-  else), or
-- a pair of singleton docs (no edges at all), paired in id order; an odd
-  singleton stays unpaired.
-
-Each pair-unit queues one ``doc-link`` task whose facts carry the member
-concept_ids. Completing such a task is gated by
-:mod:`cairn.knowledge.doc_link`. Queueing is idempotent: a member set
-that already has a doc-link task (any status) is skipped, so re-ingests
-never duplicate tasks.
-"""
+"""Doc-graph island detection and doc-link task queueing."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Set

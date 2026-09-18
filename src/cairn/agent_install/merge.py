@@ -1,10 +1,4 @@
-"""JSON merge primitives, file writers, and uninstall strip helpers.
-
-Schema-agnostic: these functions know how to deep-merge, idempotently write,
-and strip cairn entries from JSON config files for ANY client. Each
-client's config *shape* lives in its own ``clients/<name>.py`` module; the
-shape-specific bits are passed in via the ``config_key`` argument.
-"""
+"""JSON merge primitives, file writers, and uninstall strip helpers."""
 from __future__ import annotations
 
 import json

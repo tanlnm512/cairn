@@ -1,8 +1,4 @@
-"""Cursor integration: config + install + uninstall, together.
-
-Cursor reads ``.cursor/mcp.json`` (MCP), ``.cursor/rules/*.mdc`` (rules),
-``.cursor/subagents/*.json`` (subagents), and ``.cursor/hooks.json`` (hooks).
-"""
+"""Cursor integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,8 +1,4 @@
-"""Graph traversal: symbol lookup and caller/callee/impact queries.
-
-All functions take a sqlite3.Connection (from schema.get_db) and return
-sqlite3.Row objects (dict-like).
-"""
+"""Graph traversal: symbol lookup and caller/callee/impact queries."""
 from __future__ import annotations
 
 import sqlite3

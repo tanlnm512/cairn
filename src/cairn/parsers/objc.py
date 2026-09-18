@@ -1,46 +1,4 @@
-"""Tree-sitter Objective-C parser.
-
-tree-sitter-objc is a conventionally *nested* C-family grammar
-(protocol/interface/implementation bodies properly contain their members), so
-this parser uses the recursive per-child `_visit` dispatch.
-
-Node-type reference:
-  preproc_include                          -> Import (#import/#include)
-  protocol_declaration                     -> Symbol(protocol);
-                                               protocol_reference_list -> Edge(extends)
-  class_interface (@interface)             -> Symbol(class), or Symbol(category)
-                                               for the `@interface Name (Category)`
-                                               form; superclass -> Edge(extends);
-                                               parameterized_arguments (adopted
-                                               protocols) -> Edge(implements)
-  class_implementation (@implementation)   -> Symbol(class) / Symbol(category_impl)
-  property_declaration                     -> Symbol(property)
-  method_declaration (stub) /
-  method_definition (with body)            -> Symbol(method)
-  message_expression ([obj sel:arg])       -> Edge(calls)  (target = first
-                                               selector keyword only -- see
-                                               below); receiver typed via
-                                               the scope-ordered tracker or
-                                               the capitalized class-name
-                                               heuristic; call_arity counts
-                                               selector arguments
-  call_expression (plain C call, e.g. NSLog(...)) -> Edge(calls) with
-                                               call_arity from its
-                                               argument_list
-  method_declaration / method_definition   -> Symbol(method) with arity =
-                                               method_parameter count
-                                               (variadic `...` -> None)
-
-Selector simplification: a multi-keyword Objective-C selector like
-`doThing:withOption:` is recorded under just its FIRST keyword (`doThing`),
-both at the method definition site and at each call site, so the two stay
-consistent and name-resolvable.
-
-Known limitation -- header imports aren't indexed: `#import "Foo.h"` /
-`#import <Framework/Foo.h>` point at `.h` files, and `.h` is deliberately NOT
-in scanner.py's EXTENSION_MAP. The resolver's same-file and same-repo/global
-tiers still work normally.
-"""
+"""Tree-sitter Objective-C parser."""
 from __future__ import annotations
 
 import hashlib

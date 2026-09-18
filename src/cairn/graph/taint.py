@@ -1,11 +1,4 @@
-"""Taint source/sink registry: category -> exact call-name tables.
-
-Names are matched exactly against the call name recorded on call edges;
-for attribute calls that name is the attribute tail (``cursor.execute``
-records ``execute``). Matching is conservative: no heuristics, no
-framework-specific names. Workspace config overrides merge through
-``build_registry``.
-"""
+"""Taint source/sink registry: category -> exact call-name tables."""
 
 from __future__ import annotations
 

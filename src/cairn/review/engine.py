@@ -1,9 +1,4 @@
-"""Review pack engine: the diff blast radius plus review-context sections.
-
-Read-only consumer of the blast engine, the memory store, and the
-compass/wiki readers; ``seeds`` and ``changed_files`` from the blast result
-key the pack's enrichment sections.
-"""
+"""Review pack engine: the diff blast radius plus review-context sections."""
 
 from __future__ import annotations
 

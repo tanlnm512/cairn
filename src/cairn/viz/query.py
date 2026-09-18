@@ -1,8 +1,4 @@
-"""Visualization query layer: gather nodes/edges by scope.
-
-Scopes: symbol, neighbors, module, impact, repo, deps. Returns a uniform
-{nodes, edges, metadata} dict consumed by the mermaid/dot/json generators.
-"""
+"""Visualization query layer: gather nodes/edges by scope."""
 from __future__ import annotations
 
 import sqlite3

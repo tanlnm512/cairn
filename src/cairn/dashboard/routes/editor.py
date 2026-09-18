@@ -1,16 +1,4 @@
-"""Editor JSON API routes — the frozen contract IDE extensions consume.
-
-GET-only JSON on the dashboard app's loopback defaults:
-- ``/editor/symbol`` — identity, calls-only caller/callee counts, and the
-  precise depth-limited blast radius in one response.
-- ``/editor/file`` — the containing module's compass excerpt and the file's
-  relevant memories.
-- ``/editor/status`` — indexed-store and freshness state.
-
-Unknown or blank input answers the populated zero shape at 200 — never an
-error status. Endpoint paths and JSON shapes are frozen; changes require a
-versioned contract change consumed by every platform consumer.
-"""
+"""Editor JSON API routes — the frozen contract IDE extensions consume."""
 
 from __future__ import annotations
 

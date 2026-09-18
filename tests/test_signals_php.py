@@ -156,7 +156,7 @@ class TestSymbolArity:
         assert _symbol(pf, "f", "function").arity is None
 
     def test_property_symbol_has_no_arity(self):
-        pf = _parse(b"<?php\nclass C { public string \$role; }\n")
+        pf = _parse(b"<?php\nclass C { public string $role; }\n")
         assert _symbol(pf, "role", "property").arity is None
 
 
@@ -179,7 +179,7 @@ class TestCallArity:
 
     def test_spread_argument_degrades_to_none(self):
         # `foo(...$args)` passes an unknown count of arguments.
-        pf = _parse(b"<?php\nfunction c($args) { foo(...\$args); }\n")
+        pf = _parse(b"<?php\nfunction c($args) { foo(...$args); }\n")
         assert _call_edge(pf, "foo").call_arity is None
 
     def test_first_class_callable_degrades_to_none(self):
@@ -188,11 +188,11 @@ class TestCallArity:
         assert _call_edge(pf, "strlen").call_arity is None
 
     def test_member_call_arity(self):
-        pf = _parse(b"<?php\nfunction c($o) { \$o->m(a: 1); }\n")
+        pf = _parse(b"<?php\nfunction c($o) { $o->m(a: 1); }\n")
         assert _call_edge(pf, "m").call_arity == 1
 
     def test_nullsafe_member_call_arity(self):
-        pf = _parse(b"<?php\nfunction c($o) { \$o?->m(); }\n")
+        pf = _parse(b"<?php\nfunction c($o) { $o?->m(); }\n")
         assert _call_edge(pf, "m").call_arity == 0
 
     def test_scoped_call_arity(self):

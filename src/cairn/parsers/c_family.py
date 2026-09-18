@@ -1,35 +1,4 @@
-"""Tree-sitter C / C++ parser.
-
-A single shared traversal (``_CFamilyParser``) drives both grammars, since
-tree-sitter-cpp is a superset of tree-sitter-c at the node-type level. Two
-thin subclasses select the grammar per file. This mirrors the TypeScript /
-JavaScript pattern.
-
-Node-type reference (tree-sitter-c 0.23 + tree-sitter-cpp 0.23):
-
-- ``namespace_definition`` (C++ only) -> scope (its ``declaration_list`` body
-  is walked; the namespace is not itself a Symbol).
-- ``class_specifier`` (C++) / ``struct_specifier`` (C & C++) -> Symbol(class).
-  A struct's ``type_identifier`` is the name; C++ structs can have methods.
-  C++ ``base_class_clause`` -> Edge(extends).
-- ``function_definition`` -> Symbol(function) at file/namespace scope,
-  Symbol(method) when inside a class/struct body. The name lives under a
-  ``function_declarator`` child (``identifier`` or ``field_identifier``).
-- ``call_expression`` -> Edge(calls). The callee is an ``identifier`` (bare
-  call), a ``field_expression`` (``obj->method()`` / ``obj.method()``), a
-  ``qualified_identifier`` (``ns::func()``; C++ only), or a
-  ``template_function`` (``max_val<int>()``). Edges carry ``call_arity``
-  (argument_list named-child count) and ``receiver_type`` (inferred from the
-  receiver expression via a scope-ordered var->type tracker, or the
-  qualified_identifier ``scope`` when capitalized). Function symbols carry
-  ``arity`` when the parameter_list pins it exactly (no varargs/defaults).
-- ``preproc_include`` (``#include``) -> Import (``<stdio.h>`` or ``"foo.h"``).
-- ``type_definition`` (C ``typedef struct {...} Name``) -> the inner
-  ``struct_specifier`` is captured as a class symbol.
-
-C uses ``field_identifier`` and ``type_identifier`` for names; C++ uses
-``identifier`` and ``type_identifier``. Both are accepted.
-"""
+"""Tree-sitter C / C++ parser."""
 from __future__ import annotations
 
 import hashlib

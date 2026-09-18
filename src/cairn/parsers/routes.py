@@ -1,38 +1,4 @@
-"""Framework-aware route detection (URL -> code).
-
-Runs as a post-parse pass over an already-parsed ``ParsedFile`` (TypeScript/
-JavaScript only). It produces:
-
-  - route ``Symbol``s (``kind='route'``, ``metadata={'http_method', 'path',
-    'framework', 'handler', 'provenance'}``)
-  - ``references`` ``Edge``s from the route's name to its handler function/
-    class/method name
-
-The builder merges these into the ``ParsedFile``'s own ``symbols``/``edges``
-before the normal insert + resolver passes run. A route symbol is inserted
-into the SAME file as its handler, so the resolver's same-file tier resolves
-the route -> handler ``references`` edge exactly.
-
-Implemented detectors (scoped to this workspace's actual stack):
-
-  - **NestJS**: ``@Controller(prefix)`` class + ``@Get/@Post/@Put/@Delete/
-    @Patch/@Options/@Head/@All(path)`` method decorators (captured as
-    modifiers by ``src/parsers/typescript.py``). Structured, exact --
-    ``provenance='exact'``.
-  - **React Router**: JSX ``<Route path="..." element={<X/>}>`` and the
-    ``createBrowserRouter([{ path, element/Component }])`` config-array form.
-    Neither JSX nor object-literal route configs are represented in the
-    generic Symbol/Edge model the base parser produces, so this detector
-    does its own light regex pass over the file's raw source rather than a
-    second AST parse. Regex means it can miss reformatted/multi-line
-    variants -- tagged ``provenance='heuristic'``.
-  - **Next.js file-based routing**: route path inferred purely from the
-    file's location under a ``pages/`` or ``app/`` directory (App Router
-    requires the file be literally named ``page.*``). The handler is the
-    file's default export (inferred from raw source via ``export default``),
-    falling back to the first exported function/class, then the first
-    function/class -- tagged ``provenance='heuristic'``.
-"""
+"""Framework-aware route detection (URL -> code)."""
 from __future__ import annotations
 
 import re

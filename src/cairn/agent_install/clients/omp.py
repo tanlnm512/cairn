@@ -1,22 +1,4 @@
-"""omp (oh-my-pi CLI, https://omp.sh) integration: config + install + uninstall.
-
-omp discovers MCP servers from ``.omp/mcp.json`` (project) or
-``~/.omp/agent/mcp.json`` (user), schema-compatible with the shared
-``mcpServers.cairn`` shape cairn already writes for claude/cursor/droid
-(stdio: command+args; sse: type+url) -- see
-https://omp.sh/docs/mcp and mcp-config.md / mcp-protocol-transports.md in the
-oh-my-pi source (omp.sh itself blocks non-browser fetches, so the source
-docs are the primary reference). Reuses the default ``mcpServers`` merge/strip
-helpers unchanged.
-
-Subagents are native task-agent files -- one Markdown file per agent under
-``.omp/agents/<name>.md`` (project) or ``~/.omp/agent/agents/<name>.md``
-(user); frontmatter is `name`/`description` (required) + `tools` (CSV). omp's
-discovery explicitly skips `.claude/agents`, `.codex/agents`, `.gemini/agents`
-(different frontmatter contract), so this writes the ``.omp`` native format
-directly rather than relying on the cross-tool ``.agents/`` fallback -- see
-https://omp.sh/docs/subagents and docs/task-agent-discovery.md upstream.
-"""
+"""omp (oh-my-pi CLI, https://omp.sh) integration: config + install + uninstall."""
 from __future__ import annotations
 
 from pathlib import Path

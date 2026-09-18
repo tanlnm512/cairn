@@ -1,10 +1,4 @@
-"""Shared terminal display helpers for the cairn CLI.
-
-Provides a single rich Console (auto-detects TTY), a themed color palette,
-and a ``progress_bar()`` context manager for build/embed loops. TTY-aware:
-when stdout isn't a terminal, colors are stripped and progress bars degrade
-to plain ``N/M`` text.
-"""
+"""Shared terminal display helpers for the cairn CLI."""
 from __future__ import annotations
 
 import re
@@ -108,9 +102,6 @@ def print_table(title: Optional[str], columns: list[str], rows: list[list]) -> N
 
 
 # --- Non-TTY single-line progress -----------------------------------------
-# Rich's Progress, when stdout isn't a TTY, prints a NEW line on every refresh
-# instead of updating in place. This class mimics the slice of the Progress API
-# that cairn callers use but renders a single line with \r.
 
 class _SimpleTask:
     __slots__ = ("description", "total", "completed", "unit")
@@ -123,13 +114,7 @@ class _SimpleTask:
 
 
 class _PlainTextProgress:
-    """A minimal Progress-compatible renderer for non-TTY (piped/CI) output.
-
-    Renders one line that updates in place via carriage return. Redraws at
-    most once per 0.5s (time-throttled); description changes draw immediately
-    but throttled to 0.2s. Exposes ``_cg_task_id``, ``update()``, ``advance()``,
-    ``set_total()``, ``set_description()``, and ``tasks``.
-    """
+    """Progress renderer for non-interactive and piped terminal output."""
 
     def __init__(self, description: str, total: Optional[int], unit: str):
         self.tasks = [_SimpleTask(description, total, unit)]

@@ -1,17 +1,4 @@
-"""Typed layering of the ``ingest`` config section over built-in defaults.
-
-Raw shape (``cairn.json`` ``ingest`` key, kept raw by CairnConfig):
-
-    {
-      "classification": {"<title keyword>": "<doc_type>"},
-      "skip": {"add": ["<glob patterns>"], "disable": ["<categories>"]}
-    }
-
-Workspace classification rules are checked before the built-in doc-kind
-map; skip ``add`` patterns extend the built-in skip-list and ``disable``
-turns built-in categories off (e.g. re-admitting changelogs).
-Everything defaults to empty: a bare workspace runs on built-ins alone.
-"""
+"""Typed layering of the ``ingest`` config section over built-in defaults."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,9 +1,4 @@
-"""Tree-sitter Python parser.
-
-Extracts class/function definitions, calls, imports, base classes (inheritance
-as `extends` edges), decorators (`decorates`), and signature type annotations
-(`references`) into the shared ParsedFile model.
-"""
+"""Tree-sitter Python parser."""
 from __future__ import annotations
 
 import re

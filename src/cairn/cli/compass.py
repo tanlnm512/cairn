@@ -357,11 +357,10 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
-    """Find business flows (rich call chains) that lack a flow compass.
+    """Find business flows that lack a flow compass.
 
-    Lists functions/methods with >= --min-edges resolved outgoing calls that
-    don't yet have a `compass/flow-*` file, sorted by richness. Use
-    ``--generate`` to batch-generate flow compasses for all undocumented flows.
+    Lists functions and methods with >= --min-edges resolved outgoing calls that
+    lack a compass/flow-* concept. Use --generate to batch-generate flow compasses.
     """
     from ..compass.flow_gaps import detect_flow_gaps
     from ..okf.bundle import OKFBundle
@@ -401,7 +400,10 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
                 resource = entry.get("resource", name)
                 # Disambiguate title for collisions.
                 if entry.get("colliding"):
-                    display_title = f"Flow: {name} ({fname.replace('.kt', '').replace('.py', '')})"
+                    from pathlib import Path
+                    suffix = resource.split("#", 1)[1] if "#" in resource else fname
+                    suffix_stem = f"{Path(suffix).parent}/{Path(suffix).stem}" if "/" in suffix else Path(suffix).stem
+                    display_title = f"Flow: {name} ({suffix_stem})"
                 else:
                     display_title = f"Flow: {name}"
 

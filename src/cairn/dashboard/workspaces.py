@@ -1,17 +1,4 @@
-"""Enumeration of local cairn stores for the workspaces overview.
-
-The registry (``<cairn_home>/workspaces.json``) and the hash-keyed store
-directories under ``cairn_home`` are two independent records of what exists
-on this machine; :func:`enumerate_stores` unions them and classifies each
-store. Divergence — a registered key whose dir is gone, or an orphan store
-dir no registry entry points at — is data to render, never to repair: this
-module writes nothing anywhere.
-
-:func:`probe_store` / :func:`probe_stores` add the per-store metrics
-(size, freshness, tool-call count) on top — stat-first, with SQL opens
-only for counts and only budgeted. Every open
-is mode=ro; this module still writes nothing anywhere.
-"""
+"""Enumeration of local cairn stores for the workspaces overview."""
 from __future__ import annotations
 
 import json

@@ -1,9 +1,4 @@
-"""L4 memory MCP tools: recall_memory, record_memory.
-
-Each builds an OKFBundle via the shared ``_bundle()`` helper. Memory lifecycle
-operations (digest, evolve, promote, demote, forget, decay) are CLI-only:
-``cairn memory <verb>``.
-"""
+"""L4 memory MCP tools: recall_memory, record_memory."""
 from __future__ import annotations
 
 import logging

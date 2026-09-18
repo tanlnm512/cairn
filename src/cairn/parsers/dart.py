@@ -1,37 +1,4 @@
-"""Tree-sitter Dart parser (covers Flutter widgets/mixins/extensions too).
-
-Unlike Kotlin/Java/TypeScript, tree-sitter-dart represents two things as FLAT
-SIBLING SEQUENCES rather than proper parent/child nesting:
-
-  1. A function/method's signature and its body are siblings, not parent and
-     child: `method_signature` is immediately followed by a sibling
-     `function_body` in the same children list (e.g. inside `class_body`).
-  2. Postfix call chains (`obj.method(args)`) are a flat run of siblings too:
-     `identifier 'obj'`, `selector '.method'`, `selector '(args)'` all sit next
-     to each other in the same parent's children, rather than one nesting
-     inside a `call_expression` node.
-
-So this parser processes each container's children as an indexed list
-(``_process_siblings``) with lookahead, instead of the simple recursive
-per-child dispatch the other parsers use.
-
-Node-type reference:
-  import_or_export                      -> Import
-  class_definition / mixin_declaration   -> Symbol(class|mixin)
-  enum_declaration                       -> Symbol(enum)
-  extension_declaration                  -> Symbol(extension)
-  function_signature / constructor_signature / method_signature
-                                          -> Symbol(function|method|constructor)
-  declaration (field, or abstract method stub) -> Symbol(property) or Symbol(method)
-  identifier/this + selector(s) chain    -> Edge(calls)
-  superclass (extends + with)            -> Edge(extends|with)
-  interfaces (implements)                -> Edge(implements)
-
-qualified_name follows the same file-stem-prefix convention as
-src/parsers/typescript.py; imports of relative Dart specs (`./foo.dart`) are
-resolved and extension-stripped for the same reason. `package:` imports are
-left as opaque bare specs (external).
-"""
+"""Tree-sitter Dart parser (covers Flutter widgets/mixins/extensions too)."""
 from __future__ import annotations
 
 import hashlib

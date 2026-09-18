@@ -1,17 +1,4 @@
-"""LLM client: the boundary between cairn and any agent/LLM.
-
-Cairn never calls an LLM directly. This module provides:
-  - LLMClient protocol: synthesize/revise/judge/extract (all return strings/dicts)
-  - SubprocessBackend: runs an agent CLI synchronously (droid/opencode/claude)
-  - FileQueueBackend: writes a Task and waits for any agent to complete it
-
-Which backend is used is configured via env CAIRN_LLM_BACKEND:
-  unset | "file-queue" -> FileQueueBackend (fully decoupled; default)
-  "droid"  | "opencode" | "claude" -> SubprocessBackend with that CLI
-
-All backends degrade gracefully: if unavailable, cairn falls back to the
-deterministic graph-derived output (never fails, never hallucinates).
-"""
+"""LLM client: the boundary between cairn and any agent/LLM."""
 from __future__ import annotations
 
 import json
@@ -151,12 +138,7 @@ class FileQueueBackend:
 
 
 class SubprocessBackend:
-    """Synchronous: invokes an agent CLI (droid/opencode/claude exec).
-
-    Convenience for interactive use where you want results inline. The agent
-    must support a headless `exec` / `run` mode that takes a prompt and exits.
-    Falls back to FileQueueBackend if the CLI is missing.
-    """
+    """Synchronous LLM backend that invokes an external agent CLI."""
 
     def __init__(self, bundle: OKFBundle, cli: str = "droid"):
         self.bundle = bundle

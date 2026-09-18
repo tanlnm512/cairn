@@ -1,16 +1,4 @@
-"""cairn benchmark module: performance + scalability suites.
-
-Two complementary benchmarks, both stdlib-only (no pytest-benchmark/pyinstrument
-dependency):
-
-- :func:`run_perf_suite` — per-operation latency (build / embed / query
-  battery) with warmup + percentile distribution. Answers "did my change
-  regress?".
-- :func:`run_scaling_suite` — build/embed cost vs corpus-size curve. Answers
-  "will this scale to a large monorepo?".
-
-Both are exposed via the ``cairn bench`` CLI command (see ``cli/bench.py``).
-"""
+"""cairn benchmark module: performance + scalability suites."""
 from .corpus import generate_corpus, corpus_stats
 from .perf_suite import run_perf_suite
 from .report import PerfReport, ScalingReport, ScalingPoint, compare_reports

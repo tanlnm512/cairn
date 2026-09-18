@@ -1,19 +1,4 @@
-"""doc-link task results: parse, critic-check, apply inferred edges (D1).
-
-The deterministic gate for doc-link completions verifies that every
-proposed edge names concept_ids resolving to EXISTING knowledge docs,
-confines endpoints to the completing task's island members when the
-caller supplies them, and rejects self-referential edges
-(un-backticked prose is not checked). A rejected result
-performs no writes: the caller leaves the task in-progress and
-re-completable, with each error naming the offending reference.
-
-An accepted completion is written back as the durable record --
-``kind: inferred`` ``relates_to`` entries on BOTH docs' frontmatter
-(``supersedes`` mirrors to ``superseded-by`` and vice versa) -- and the
-derived index is rebuilt on the caller's connection so the inferred edge
-is queryable immediately. The caller owns the task-status transition.
-"""
+"""doc-link task results: parse, critic-check, apply inferred edges."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
