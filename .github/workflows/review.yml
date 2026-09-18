@@ -80,7 +80,7 @@ jobs:
             | head -n1)"
           if [ -n "$comment_id" ]; then
             gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/issues/$number/comments/$comment_id" \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
               -f "body=$(cat review-comment.md)" > /dev/null
           else
             gh api --method POST \

@@ -281,3 +281,14 @@ it, never wrap or alter it.
   the repo and findings are reproducible from a clean clone.
 - **Consequences**: the seed bundle is reviewable content; PRs touching
   keyed symbols get warnings in CI; no store cache needed.
+
+### D-012: comment PATCH path — issues/comments/{id}, not issues/{n}/comments/{id}
+- **Context**: PR #129's second run failed the comment step with 404; the
+  workflow PATCHed `repos/{o}/{r}/issues/{number}/comments/{id}`, an alias
+  GitHub accepts on some surfaces but 404s on PATCH here (verified
+  empirically both ways against the live comment).
+- **Decision**: `.github/workflows/review.yml` PATCHes
+  `repos/$GITHUB_REPOSITORY/issues/comments/$comment_id` (the documented
+  endpoint; the LIST/POST paths keep the issue number).
+- **Consequences**: reruns upsert the marker comment correctly; the
+  advisory check can no longer fail on dedup updates.
