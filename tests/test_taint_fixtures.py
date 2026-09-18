@@ -1,6 +1,6 @@
 """`cairn taint` contract over the spec fixtures: the auto pass conditions.
 
-Each test copies a fixture workspace from specs/taint-tracking/fixtures
+Each test copies a fixture workspace from tests/fixtures/taint-tracking
 into tmp_path, re-creates the `.git` repo marker (empty dirs do not
 survive clones), builds the graph, and drives the command through
 CliRunner. Hermeticity per CONSTITUTION C-04: `cairn.cli` is imported
@@ -19,7 +19,7 @@ import pytest
 from cairn.graph.builder import build_graph
 
 FIXTURES_ROOT = (
-    Path(__file__).resolve().parents[1] / "specs" / "taint-tracking" / "fixtures"
+    Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "taint-tracking"
 )
 
 # One probe per category-matrix micro-flow: every default source category
