@@ -1,0 +1,7 @@
+{
+  "resolved": true,
+  "file": "changelog.md",
+  "line": 1,
+  "body": "do not swallow errors",
+  "thread_url": "https://github.com/acme/fixture/pull/42#discussion_r2048"
+}

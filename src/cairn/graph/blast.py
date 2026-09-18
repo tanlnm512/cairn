@@ -7,6 +7,8 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from .config import load_config
+from .taint import build_registry, intersect_seeds
 from .traversal import impact_analysis
 from .watcher import refresh_for_query
 
@@ -477,7 +479,12 @@ def compute_blast(
     limit: int = 500,
     refresh: bool | None = None,
 ) -> dict:
-    """Refresh stored spans and return the reverse radius of a git diff."""
+    """Refresh stored spans and return the reverse radius of a git diff.
+
+    The result carries ``taint_paths``: taint paths whose entry or sink
+    symbol is a changed seed, computed over the workspace taint registry
+    with the query's precision (``fuzzy``).
+    """
     refresh_for_query(conn, repair=refresh)
     workspace_path = Path(workspace).resolve()
     basis, changed = _changed_files(conn, workspace_path, base)
@@ -486,6 +493,13 @@ def compute_blast(
         conn, seeds, fuzzy=fuzzy, limit=limit
     )
     _annotate_radius(conn, seeds, radius)
+    config = load_config(workspace_path)
+    taint_paths = intersect_seeds(
+        conn,
+        build_registry(config.taint_sources, config.taint_sinks),
+        {seed["name"] for seed in seeds},
+        fuzzy=fuzzy,
+    )
     deleted = [
         f"{item['repo']}:{item['path']}"
         for item in changed
@@ -501,4 +515,5 @@ def compute_blast(
         "unindexed_files": unindexed,
         "deleted_files": sorted(set(deleted)),
         "truncated": truncated,
+        "taint_paths": taint_paths,
     }

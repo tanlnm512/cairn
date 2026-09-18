@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import click
 
 from ..graph.blast import BlastBaseError, compute_blast, render_blast
+from ..graph.taint import format_taint_warning
 from .main import DEFAULT_DB_PATH, get_db
 
 
@@ -50,11 +52,17 @@ def blast(db, base, output_format, fuzzy, refresh, output):
     except BlastBaseError as error:
         raise click.ClickException(str(error)) from error
 
-    rendered = (
-        json.dumps(result, indent=2, sort_keys=True)
-        if output_format == "json"
-        else render_blast(result, output_format)
-    )
+    paths = result.get("taint_paths") or []
+    if output_format == "json":
+        payload = dict(result)
+        payload["taint_paths"] = [asdict(path) for path in paths]
+        rendered = json.dumps(payload, indent=2, sort_keys=True)
+    else:
+        rendered = render_blast(result, output_format)
+        if output_format in ("text", "markdown"):
+            warning = format_taint_warning(paths)
+            if warning:
+                rendered = f"{rendered}\n{warning}\n"
     if output is None:
         click.echo(rendered)
     else:

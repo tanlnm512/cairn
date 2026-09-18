@@ -1,0 +1,7 @@
+{
+  "resolved": true,
+  "file": "ledger.py",
+  "line": 6,
+  "body": "stop parsing dates with regex",
+  "thread_url": "https://github.com/acme/fixture/pull/42#discussion_r1984"
+}

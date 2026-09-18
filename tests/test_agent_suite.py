@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+from importlib.util import find_spec
+
 from cairn.bench.agent_suite import (
     CHARS_PER_TOKEN,
     AgentReport,
@@ -37,7 +39,28 @@ def _run_suite(tmp_path, name="agent", seed=0xC0DE, runs=RUNS):
 # --- suite shape ------------------------------------------------------------
 
 class TestAgentSuite:
-    def test_six_tasks_produce_effort_in_both_arms(self, tmp_path):
+    def test_tasks_produce_effort_in_both_arms(self, tmp_path):
+        report = _run_suite(tmp_path)
+        # Six base pairs; the pack-fit-rate pair joins when pack.py exists.
+        assert len(report.tasks) >= 6
+        for task in report.tasks:
+            assert task.question  # human-readable question bound to a target
+            for arm in (task.cairn, task.control):
+                assert arm.tool_calls >= 1
+                assert arm.chars >= 0
+                # The documented token proxy: chars / 4.
+                assert arm.est_tokens == arm.chars // CHARS_PER_TOKEN
+                assert arm.wall_seconds >= 0
+
+    def test_pack_fit_task_registers_and_reports_fit(self, tmp_path):
+        """With the runnable pack pipeline installed (emitter + CLI), the
+        7th pair requests one pack within the fixed budget and reports the
+        fit measurement (seeded targets present in the in-budget content);
+        base tasks carry no fit."""
+        # The pair consumes build_pack's fitted items, which only carry
+        # content once the emitter lands — gate on the pipeline being
+        # runnable end to end (the CLI module is its last phase-1 piece).
+        pytest.importorskip("cairn.cli.pack")
         report = _run_suite(tmp_path)
         labels = [t.label for t in report.tasks]
         assert labels == [
@@ -47,15 +70,23 @@ class TestAgentSuite:
             "entry-to-leaf-flow",
             "concept-search",
             "common-name-impact",
+            "pack-fit-rate",
         ]
-        for task in report.tasks:
-            assert task.question  # human-readable question bound to a target
-            for arm in (task.cairn, task.control):
-                assert arm.tool_calls >= 1
-                assert arm.chars >= 0
-                # The documented token proxy: chars / 4.
-                assert arm.est_tokens == arm.chars // CHARS_PER_TOKEN
-                assert arm.wall_seconds >= 0
+        task = report.tasks[-1]
+        assert task.cairn.tool_calls == 1  # one pack request
+        assert task.cairn.chars > 0  # a well-formed block is non-empty
+        assert task.control.tool_calls >= 1
+        assert task.fit is not None
+        assert set(task.fit) == {
+            "rate", "hits", "total", "budget_tokens", "tokenizer_mode",
+        }
+        assert task.fit["total"] == 4
+        assert 0 <= task.fit["hits"] <= task.fit["total"]
+        assert 0.0 <= task.fit["rate"] <= 1.0
+        assert task.fit["budget_tokens"] > 0
+        assert task.fit["tokenizer_mode"]
+        for other in report.tasks[:-1]:
+            assert other.fit is None
 
     def test_control_arm_overreads_on_common_name(self, tmp_path):
         """The collision task is where grep must over-read: control reads
@@ -92,11 +123,17 @@ class TestAgentSuite:
             # per build, so semantic_search's limit cutoff may swap a row).
             # Allow ~1% -- far below the 15% baseline-compare gate.
             assert a.cairn.tool_calls == b.cairn.tool_calls
+            if a.fit is not None:
+                # The pack arm renders whole symbol sections, so the same
+                # documented cross-rebuild seed swap can move more than the
+                # row-level tolerance; per-build determinism is the pack's
+                # own contract.
+                continue
             assert abs(a.cairn.chars - b.cairn.chars) <= max(64, a.cairn.chars // 100)
 
     def test_seed_changes_targets_not_task_set(self, tmp_path):
-        """A different seed may pick different targets but the six task
-        labels (the payload's stable shape) are fixed."""
+        """A different seed may pick different targets but the task labels
+        (the payload's stable shape) are fixed."""
         a = _run_suite(tmp_path, name="seed_a", seed=1)
         b = _run_suite(tmp_path, name="seed_b", seed=2)
         assert [t.label for t in a.tasks] == [t.label for t in b.tasks]
@@ -116,11 +153,22 @@ class TestAgentReportPayload:
         assert payload["chars_per_token"] == 4
         assert payload["embed_backend"] == "hash"
         assert payload["corpus"]["files"] >= N_FILES + 1  # + __init__.py
+        base = {"label", "question", "cairn", "control", "reduction"}
+        fit_tasks = []
         for task in payload["tasks"]:
-            assert set(task) == {"label", "question", "cairn", "control", "reduction"}
+            # "fit" rides only on the pack-fit-rate task; the base keys are
+            # exact on every task.
+            extra = set(task) - base
+            assert extra <= {"fit"}
+            if "fit" in task:
+                fit_tasks.append(task)
+                assert set(task["fit"]) == {
+                    "rate", "hits", "total", "budget_tokens", "tokenizer_mode",
+                }
             for arm in ("cairn", "control"):
                 assert set(task[arm]) == {"tool_calls", "chars", "est_tokens", "wall_ms"}
             assert set(task["reduction"]) == {"calls_pct", "tokens_pct", "time_ratio"}
+        assert len(fit_tasks) <= 1
         assert set(payload["totals"]) == {"cairn", "control", "reduction"}
 
     def test_totals_sum_task_medians(self, tmp_path):
@@ -208,7 +256,8 @@ class TestAgentCli:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
         assert "timestamp" in payload
-        assert len(payload["tasks"]) == 6
+        expected_tasks = 7 if find_spec("cairn.pack") else 6
+        assert len(payload["tasks"]) == expected_tasks
         assert payload["runs"] == 1
 
     def test_default_output_stays_human(self, tmp_path, monkeypatch):

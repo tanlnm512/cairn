@@ -10,12 +10,19 @@ dataclass. The actual matching (gitignore semantics, negations, ``**``) is done
 with :mod:`pathspec` in :mod:`src.graph.scanner`, which builds the combined
 ``PathSpec`` from the default skip set + gitignore + this config.
 
+The ``taint`` section holds source/sink override tables mapping a taint
+category to exact call names; the taint registry layers them over its
+built-in defaults.
+
 Example ``cairn.json``::
 
     {
       "exclude": ["static/", "**/vendor/**"],
       "include": ["vendor/lib/"],
-      "include_nested_repos": false
+      "taint": {
+        "sources": {"queue-msg": ["receive_job"]},
+        "sinks": {"render": ["render_template"]}
+      }
     }
 
 If no file is present, :func:`load_config` returns a default (empty) config and
@@ -26,7 +33,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Union
 
 
 @dataclass
@@ -45,6 +52,11 @@ class CairnConfig:
     ingestion pipeline (classification/skip overrides). It is kept raw
     here; the ingest package types and layers it over built-in defaults.
 
+    ``taint_sources`` / ``taint_sinks`` map taint category -> exact call
+    names (e.g. ``{"queue-msg": {"receive_job"}}``) and feed the taint
+    registry as override tables: a same-named category replaces its
+    default, a new category extends the set.
+
     ``include_nested_repos`` opts a repository into indexing initialized
     submodules and nested child repositories.
     """
@@ -53,6 +65,8 @@ class CairnConfig:
     include: List[str] = field(default_factory=list)
     repo_namespaces: Dict[str, str] = field(default_factory=dict)
     ingest: Dict[str, object] = field(default_factory=dict)
+    taint_sources: Dict[str, Set[str]] = field(default_factory=dict)
+    taint_sinks: Dict[str, Set[str]] = field(default_factory=dict)
     include_nested_repos: bool = False
     source: Optional[Path] = None  # the file these came from, for diagnostics
 
@@ -62,6 +76,8 @@ class CairnConfig:
             not self.exclude and not self.include
             and not self.repo_namespaces
             and not self.ingest
+            and not self.taint_sources
+            and not self.taint_sinks
             and not self.include_nested_repos
         )
 
@@ -71,6 +87,9 @@ _EXCLUDE_KEY = "exclude"
 _INCLUDE_KEY = "include"
 _REPO_NAMESPACES_KEY = "repo_namespaces"
 _INGEST_KEY = "ingest"
+_TAINT_KEY = "taint"
+_TAINT_SOURCES_KEY = "sources"
+_TAINT_SINKS_KEY = "sinks"
 _INCLUDE_NESTED_REPOS_KEY = "include_nested_repos"
 
 
@@ -107,6 +126,13 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
     include = _as_string_list(raw.get(_INCLUDE_KEY), path, _INCLUDE_KEY)
     repo_namespaces = _as_string_dict(raw.get(_REPO_NAMESPACES_KEY), path, _REPO_NAMESPACES_KEY)
     ingest = _as_dict(raw.get(_INGEST_KEY), path, _INGEST_KEY)
+    taint = _as_dict(raw.get(_TAINT_KEY), path, _TAINT_KEY)
+    taint_sources = _as_name_table(
+        taint.get(_TAINT_SOURCES_KEY), path, f"{_TAINT_KEY}.{_TAINT_SOURCES_KEY}"
+    )
+    taint_sinks = _as_name_table(
+        taint.get(_TAINT_SINKS_KEY), path, f"{_TAINT_KEY}.{_TAINT_SINKS_KEY}"
+    )
     include_nested_repos = _as_bool(
         raw.get(_INCLUDE_NESTED_REPOS_KEY), path, _INCLUDE_NESTED_REPOS_KEY
     )
@@ -115,6 +141,8 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
         include=include,
         repo_namespaces=repo_namespaces,
         ingest=ingest,
+        taint_sources=taint_sources,
+        taint_sinks=taint_sinks,
         include_nested_repos=include_nested_repos,
         source=path,
     )
@@ -181,6 +209,33 @@ def _as_string_dict(value, path: Path, key: str) -> Dict[str, str]:
         if k.strip() and v.strip():
             out[k.strip()] = v.strip()
     return out
+
+
+def _as_name_table(value, path: Path, key: str) -> Dict[str, Set[str]]:
+    """Coerce a JSON object into a taint category -> exact call-name table.
+
+    Each category's value parses through ``_as_string_list``; a declared
+    category is kept even when its name list is empty. Malformed tables
+    return ``{}`` and never crash the build.
+    """
+    if value is None:
+        return {}
+    import sys
+
+    if not isinstance(value, dict):
+        print(f"warning: {path}: '{key}' must be a JSON object mapping "
+              f"category -> call names; ignoring", file=sys.stderr)
+        return {}
+
+    out: Dict[str, Set[str]] = {}
+    for category, names in value.items():
+        if not isinstance(category, str) or not category.strip():
+            print(f"warning: {path}: '{key}' has a non-string category "
+                  f"({category!r}); skipping", file=sys.stderr)
+            continue
+        out[category.strip()] = set(_as_string_list(names, path, f"{key}.{category.strip()}"))
+    return out
+
 
 def _as_dict(value, path: Path, key: str) -> Dict[str, object]:
     """Return the raw JSON object for ``key``; ``{}`` on type mismatch.

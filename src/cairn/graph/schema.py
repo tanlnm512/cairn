@@ -312,6 +312,40 @@ CREATE TABLE IF NOT EXISTS memory_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model ON memory_embeddings(model);
 
+-- Derived, indexed projection of memory-concept validity intervals. One row
+-- per memory concept_id; the concept's extensions hold the source of truth,
+-- this table is the rebuildable mirror SQL consumers read. Dates are ISO-8601
+-- strings (lexicographic order = chronological order). successor_symbol names
+-- the replacement symbol recorded at invalidation, when exactly one was
+-- identifiable. No FK: concept_id is an OKF concept_id path, not a DB row
+-- (knowledge_embeddings convention). Additive-only: plain CREATE TABLE IF
+-- NOT EXISTS rides the idempotent executescript in _apply_schema with NO
+-- MIGRATIONS entry -- the same pattern knowledge_edges used.
+CREATE TABLE IF NOT EXISTS memory_validity (
+    concept_id TEXT PRIMARY KEY,   -- bare concept_id (e.g. "memory/tribal/foo-a1b2c3")
+    valid_from TEXT NOT NULL,      -- ISO-8601; validity start
+    valid_until TEXT,              -- ISO-8601; NULL = still valid
+    successor_symbol TEXT          -- replacement symbol; NULL = none recorded
+);
+CREATE INDEX IF NOT EXISTS idx_memory_validity_from ON memory_validity(valid_from);
+CREATE INDEX IF NOT EXISTS idx_memory_validity_until ON memory_validity(valid_until);
+
+-- Per-agent symbol activity for the shared memory bus: kind='share' rows make
+-- a memory visible to other agents' recall on that symbol, kind='intent' rows
+-- stamp edit intent for the overlap check. memory_id is a bare memory
+-- concept_id pointer, nullable -- no FK: concept_ids are bundle paths, not DB
+-- rows (memory_embeddings convention). Additive-only: plain CREATE TABLE IF
+-- NOT EXISTS rides the idempotent executescript in _apply_schema with NO
+-- MIGRATIONS entry -- the same pattern memory_validity used.
+CREATE TABLE IF NOT EXISTS agent_symbols (
+    agent_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    memory_id TEXT,
+    kind TEXT NOT NULL,
+    ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_symbols_symbol_ts ON agent_symbols(symbol, ts);
+
 -- precomputed dataflow index for public/exported symbols. Within-repo
 -- impacted symbols and cross-repo consumer repos are materialised so lookups
 -- are O(1) instead of re-running impact_analysis + cross_repo_deps on each
@@ -685,6 +719,108 @@ def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
         note_contention("schema.backfill_fts", error=e)
 
 
+MEMORY_VALIDITY_BACKFILL_KEY = "memory_validity.backfill"
+
+
+def _maybe_backfill_memory_validity(
+    conn: sqlite3.Connection,
+    *,
+    db_path: Optional[Path] = None,
+    knowledge_root: Optional[Path] = None,
+) -> None:
+    """One-time backfill of memory validity intervals onto a store that
+    predates them.
+
+    Sentinel-guarded via schema_meta, so it runs at most once per DB. For
+    every memory concept in the bundle, stamps ``valid_from`` into
+    extensions and upserts the ``memory_validity`` row via write_validity;
+    ``valid_until`` stays NULL. ``valid_from`` is the concept's existing
+    extension value, else its recorded creation timestamp (the frontmatter
+    ``timestamp``, which copies and checkouts preserve where file mtimes do
+    not), else now. Intervals already present are preserved. The bundle is
+    the store-layout sibling ``<db dir>/.knowledge`` of the opened DB --
+    never a process-default path, so a ``--db`` override cannot backfill a
+    foreign bundle. A missing or unreadable bundle records the sentinel
+    (nothing to backfill); a read or write failure leaves it unrecorded so
+    the next writable connect retries.
+    """
+    try:
+        done = conn.execute(
+            "SELECT 1 FROM schema_meta WHERE key = ?",
+            (MEMORY_VALIDITY_BACKFILL_KEY,),
+        ).fetchone()
+        if done:
+            return
+        if knowledge_root is not None:
+            root = Path(knowledge_root)
+        elif db_path is not None:
+            root = Path(db_path).parent / ".knowledge"
+        else:
+            root = None
+        if root is None or not root.is_dir():
+            # No paired bundle: nothing now or ever to backfill for this DB.
+            conn.execute(
+                "INSERT INTO schema_meta (key, value) VALUES (?, ?)",
+                (MEMORY_VALIDITY_BACKFILL_KEY, "applied"),
+            )
+            return
+        from datetime import datetime, timezone
+
+        from ..okf.bundle import OKFBundle
+
+        bundle = OKFBundle(str(root))
+        from cairn.memory.store import write_validity
+
+        with bundle.lock():
+            for cid in bundle.list_concepts(prefix="memory/"):
+                try:
+                    concept = bundle.read_concept(cid)
+                    # read_concept keys by resolved absolute path; symlinked
+                    # roots would otherwise project an absolute-keyed row.
+                    concept.concept_id = cid
+                except Exception as e:
+                    _logger.warning(
+                        "validity backfill: skipping unreadable concept %s: %s", cid, e
+                    )
+                    continue
+                # The backfill is bookkeeping, not activity: preserve the
+                # concept file's times so mtime-based staleness holds.
+                cpath = bundle.root / f"{cid}.md"
+                try:
+                    cst = cpath.stat()
+                except OSError:
+                    cst = None
+                write_validity(
+                    concept,
+                    valid_from=(
+                        concept.extensions.get("valid_from")
+                        or concept.timestamp
+                        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ),
+                    valid_until=concept.extensions.get("valid_until") or None,
+                    successor_symbol=concept.extensions.get("successor_symbol") or None,
+                    bundle=bundle,
+                    conn=conn,
+                )
+                if cst is not None:
+                    try:
+                        os.utime(cpath, (cst.st_atime, cst.st_mtime))
+                    except OSError:
+                        pass
+        conn.execute(
+            "INSERT INTO schema_meta (key, value) VALUES (?, ?)",
+            (MEMORY_VALIDITY_BACKFILL_KEY, "applied"),
+        )
+    except sqlite3.OperationalError as e:
+        # Locked or absent store: absorbed like _maybe_backfill_fts; the
+        # sentinel stays unrecorded so the next writable connect retries.
+        note_contention("schema.backfill_memory_validity", error=e)
+    except Exception as e:
+        # A failed migration must not wedge every connect; without the
+        # sentinel it re-runs on the next writable open.
+        _logger.warning("memory validity backfill deferred: %s", e)
+
+
 def _unicode61_tokens(text: str):
     """Yield the FTS5 unicode61 tokenization of ``text`` (approximate).
 
@@ -863,6 +999,7 @@ def get_db(
         if not already_initialized and not read_only:
             _apply_schema(conn)
             _maybe_backfill_fts(conn)
+            _maybe_backfill_memory_validity(conn, db_path=path)
             conn.commit()
             # Only flag initialized once the migration is durably committed.
             _INITIALIZED_PATHS.add(key)

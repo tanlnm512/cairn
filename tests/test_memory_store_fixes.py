@@ -1,15 +1,178 @@
 """Tests for memory store fixes (H4, H5)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 
+import pytest
 
+from cairn.graph.schema import get_db
 from cairn.memory.store import (
+    check_overlap,
     create_memory,
     delete_memory,
     get_memory,
+    share_memory,
     store_memory,
+    validate_agent_id,
 )
 from cairn.okf.bundle import OKFBundle
+
+
+def test_validate_agent_id_accepts_conforming_ids():
+    """Non-empty ids of at most 64 chars from [A-Za-z0-9._-] pass through."""
+    assert validate_agent_id("alpha-1") == "alpha-1"
+    assert validate_agent_id("codex.claw_01") == "codex.claw_01"
+    assert validate_agent_id("a" * 64) == "a" * 64
+
+
+def test_validate_agent_id_rejects_empty_and_oversized():
+    """Empty, None, and >64-char ids raise ValueError."""
+    for bad in ("", None):
+        with pytest.raises(ValueError):
+            validate_agent_id(bad)
+    for bad in ("a" * 65, "a" * 300):
+        with pytest.raises(ValueError):
+            validate_agent_id(bad)
+
+
+def test_validate_agent_id_rejects_out_of_charset():
+    """Characters outside [A-Za-z0-9._-] raise ValueError."""
+    for bad in ('../evil" --x', "a/b", "a b", "a\n", "agent#1", "café"):
+        with pytest.raises(ValueError):
+            validate_agent_id(bad)
+
+
+def test_share_memory_inserts_share_rows(fresh_db):
+    """share_memory records one (agent_id, symbol, memory_id, 'share', ts) row per symbol."""
+    inserted = share_memory(
+        "agentA", ["auth", "parser"], "memory/tribal/m-abc123", conn=fresh_db
+    )
+    assert inserted == 2
+    rows = fresh_db.execute(
+        "SELECT agent_id, symbol, memory_id, kind, ts FROM agent_symbols ORDER BY symbol"
+    ).fetchall()
+    assert [(r["agent_id"], r["symbol"], r["memory_id"], r["kind"]) for r in rows] == [
+        ("agentA", "auth", "memory/tribal/m-abc123", "share"),
+        ("agentA", "parser", "memory/tribal/m-abc123", "share"),
+    ]
+    assert all(r["ts"] for r in rows)
+
+
+def test_share_memory_is_idempotent(fresh_db):
+    """Re-sharing an already-recorded (agent_id, symbol, memory_id) inserts no duplicate rows."""
+    first = share_memory(
+        "agentA", ["auth", "hot"], "memory/tribal/m-abc123", conn=fresh_db
+    )
+    again = share_memory(
+        "agentA", ["auth", "hot"], "memory/tribal/m-abc123", conn=fresh_db
+    )
+    assert first == 2
+    assert again == 0
+    count = fresh_db.execute("SELECT COUNT(*) FROM agent_symbols").fetchone()[0]
+    assert count == 2
+
+
+def test_share_memory_does_not_commit(fresh_db):
+    """The caller owns the transaction boundary: an uncommitted share rolls back."""
+    share_memory("agentA", ["auth"], "memory/tribal/m-abc123", conn=fresh_db)
+    fresh_db.rollback()
+    count = fresh_db.execute("SELECT COUNT(*) FROM agent_symbols").fetchone()[0]
+    assert count == 0
+
+
+def test_share_memory_validates_agent_and_symbols(fresh_db):
+    """Invalid agent ids and empty/non-string symbols raise ValueError before any insert."""
+    for bad_agent in ("", None, "../evil", "a" * 65):
+        with pytest.raises(ValueError):
+            share_memory(bad_agent, ["auth"], conn=fresh_db)
+    for bad_symbols in (["auth", ""], [None], ["auth", 7]):
+        with pytest.raises(ValueError):
+            share_memory("agentA", bad_symbols, conn=fresh_db)
+    count = fresh_db.execute("SELECT COUNT(*) FROM agent_symbols").fetchone()[0]
+    assert count == 0
+
+
+def test_check_overlap_returns_other_agents_rows(fresh_db):
+    """check_overlap returns (agent_id, symbol, kind, ts) rows for other agents
+    on the queried symbols only; non-overlapping symbols are not reported."""
+    share_memory("agentA", ["auth", "session"], "memory/tribal/m-abc123", conn=fresh_db)
+    rows = check_overlap("agentB", ["auth", "users"], conn=fresh_db)
+    assert [(r[0], r[1], r[2]) for r in rows] == [("agentA", "auth", "share")]
+    assert all(r[3] for r in rows)
+
+
+def test_check_overlap_excludes_own_activity(fresh_db):
+    """An agent's own rows are never overlap."""
+    share_memory("agentB", ["auth"], "memory/tribal/m-def456", conn=fresh_db)
+    assert check_overlap("agentB", ["auth"], conn=fresh_db) == []
+
+
+def test_check_overlap_counts_intent_rows(fresh_db):
+    """Other agents' kind='intent' rows overlap, not only shares."""
+    share_memory("agentA", ["auth"], "memory/tribal/m-abc123", conn=fresh_db)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fresh_db.execute(
+        "INSERT INTO agent_symbols (agent_id, symbol, memory_id, kind, ts)"
+        " VALUES ('agentC', 'parser', NULL, 'intent', ?)",
+        (ts,),
+    )
+    rows = check_overlap("agentB", ["auth", "parser"], conn=fresh_db)
+    assert sorted((r[0], r[1], r[2]) for r in rows) == [
+        ("agentA", "auth", "share"),
+        ("agentC", "parser", "intent"),
+    ]
+
+
+def test_check_overlap_respects_recency_window(fresh_db):
+    """Rows older than the recency window are excluded; rows within it are kept."""
+    share_memory("agentA", ["fresh", "stale"], "memory/tribal/m-abc123", conn=fresh_db)
+    stale_ts = (datetime.now(timezone.utc) - timedelta(days=30)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    fresh_db.execute("UPDATE agent_symbols SET ts = ? WHERE symbol = 'stale'", (stale_ts,))
+    rows = check_overlap("agentB", ["fresh", "stale"], conn=fresh_db, recency_days=7)
+    assert [r[1] for r in rows] == ["fresh"]
+
+
+def test_check_overlap_empty_symbols_returns_no_rows(fresh_db):
+    """An empty symbol set intersects nothing."""
+    share_memory("agentA", ["auth"], "memory/tribal/m-abc123", conn=fresh_db)
+    assert check_overlap("agentB", [], conn=fresh_db) == []
+
+
+def test_check_overlap_validates_agent_and_symbols(fresh_db):
+    """Invalid agent ids and empty/non-string symbols raise ValueError."""
+    for bad_agent in ("", None, "../evil", "a" * 65):
+        with pytest.raises(ValueError):
+            check_overlap(bad_agent, ["auth"], conn=fresh_db)
+    for bad_symbols in (["auth", ""], [None], ["auth", 7]):
+        with pytest.raises(ValueError):
+            check_overlap("agentB", bad_symbols, conn=fresh_db)
+
+
+def test_check_overlap_writes_nothing(fresh_db):
+    """check_overlap is a pure read: the agent_symbols row set is unchanged."""
+    share_memory("agentA", ["auth"], "memory/tribal/m-abc123", conn=fresh_db)
+    check_overlap("agentB", ["auth"], conn=fresh_db)
+    count = fresh_db.execute("SELECT COUNT(*) FROM agent_symbols").fetchone()[0]
+    assert count == 1
+
+
+def test_check_overlap_runs_on_read_only_conn(tmp_path):
+    """The overlap read works through a mode=ro connection."""
+    db_path = str(tmp_path / "ro.db")
+    writable = get_db(db_path)
+    try:
+        share_memory("agentA", ["auth"], "memory/tribal/m-abc123", conn=writable)
+        writable.commit()
+    finally:
+        writable.close()
+    ro = get_db(db_path, read_only=True)
+    try:
+        rows = check_overlap("agentB", ["auth"], conn=ro)
+    finally:
+        ro.close()
+    assert [(r[0], r[1], r[2]) for r in rows] == [("agentA", "auth", "share")]
 
 
 def test_store_twice_same_title_distinct_ids_h4(tmp_path, fresh_db):

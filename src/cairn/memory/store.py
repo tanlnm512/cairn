@@ -6,7 +6,9 @@ Memories are OKF concepts with memory lifecycle extensions in frontmatter:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import re
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -37,6 +39,34 @@ def tier_for_score(score: float) -> str:
     if score < 0.5:
         return "drafts"
     return "tribal"
+
+
+AGENT_ID_MAX_LEN = 64
+_AGENT_ID_RE = re.compile(r"[A-Za-z0-9._-]+")
+OVERLAP_RECENCY_DAYS = 7
+
+
+def validate_agent_id(agent_id: str) -> str:
+    """Validate a caller-supplied agent id for the share/check surface.
+
+    Accepts a non-empty string of at most ``AGENT_ID_MAX_LEN`` characters
+    drawn from ``[A-Za-z0-9._-]`` and returns it unchanged; anything else
+    raises ``ValueError``.
+    """
+    if not isinstance(agent_id, str) or not agent_id:
+        raise ValueError("agent id must be a non-empty string")
+    if len(agent_id) > AGENT_ID_MAX_LEN:
+        raise ValueError(f"agent id exceeds {AGENT_ID_MAX_LEN} characters")
+    if not _AGENT_ID_RE.fullmatch(agent_id):
+        raise ValueError("agent id allows only [A-Za-z0-9._-]")
+    return agent_id
+
+
+def _validate_symbols(symbols: List[str]) -> None:
+    """Reject a symbols list containing non-string or empty entries."""
+    for symbol in symbols:
+        if not isinstance(symbol, str) or not symbol:
+            raise ValueError("symbols must be non-empty strings")
 
 
 def create_memory(
@@ -96,12 +126,77 @@ def create_memory(
     )
 
 
-def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = None, old_id: Optional[str] = None):
+def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize a concept_id to bundle-relative (from_file sets absolute paths)."""
+    try:
+        return str(Path(concept_id).relative_to(bundle.root))
+    except ValueError:
+        return concept_id
+
+
+def write_validity(
+    concept: OKFConcept,
+    *,
+    valid_from: str,
+    valid_until: Optional[str] = None,
+    successor_symbol: Optional[str] = None,
+    bundle: Optional[OKFBundle] = None,
+    conn=None,
+) -> None:
+    """Stamp a memory concept's validity interval and mirror the
+    ``memory_validity`` projection row.
+
+    Extensions are the source of truth; the SQL row is the indexed
+    projection. The call writes the full interval: a None bound is
+    cleared -- its extensions key is removed and the SQL column is NULL.
+    ``bundle`` persists the concept via
+    write_concept and keys the row by the bundle-relative concept_id;
+    ``conn`` upserts the projection row (caller owns the transaction).
+    """
+    if not valid_from:
+        raise ValueError("valid_from is required")
+    cid = concept.concept_id
+    if not cid:
+        raise ValueError("concept_id is required")
+    concept.extensions["valid_from"] = valid_from
+    for key, value in (("valid_until", valid_until),
+                       ("successor_symbol", successor_symbol)):
+        if value is None:
+            concept.extensions.pop(key, None)
+        else:
+            concept.extensions[key] = value
+    if bundle is not None:
+        cid = _rel_id(bundle, cid)
+        bundle.write_concept(concept)
+    if conn is not None:
+        conn.execute(
+            "INSERT INTO memory_validity"
+            " (concept_id, valid_from, valid_until, successor_symbol)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(concept_id) DO UPDATE SET"
+            " valid_from = excluded.valid_from,"
+            " valid_until = excluded.valid_until,"
+            " successor_symbol = excluded.successor_symbol",
+            (cid, valid_from, valid_until, successor_symbol),
+        )
+
+
+def store_memory(
+    concept: OKFConcept,
+    bundle: OKFBundle,
+    tier: Optional[str] = None,
+    old_id: Optional[str] = None,
+    conn=None,
+):
     """Write a memory concept to its tier directory.
 
     The tier is read from concept.extensions['memory_tier'] unless overridden.
     When old_id is provided and differs from the new location, the old file
-    is unlinked to prevent orphan files on re-tiering.
+    is unlinked to prevent orphan files on re-tiering. A missing
+    ``valid_from`` is stamped with the concept's creation time; an existing
+    interval is preserved. When ``conn`` is provided, the ``memory_validity``
+    projection row follows the (possibly new) concept_id; the caller owns
+    the transaction.
     """
     t = tier or concept.extensions.get("memory_tier", "drafts")
     slug = slugify(concept.title or "") or "memory"
@@ -122,13 +217,194 @@ def store_memory(concept: OKFConcept, bundle: OKFBundle, tier: Optional[str] = N
         concept.concept_id = f"{TIER_DIRS[t]}/{slug}-{unique_suffix}"
     # Keep tier metadata in sync with file location.
     concept.extensions["memory_tier"] = t
-    bundle.write_concept(concept)
+    write_validity(
+        concept,
+        valid_from=(
+            concept.extensions.get("valid_from")
+            or concept.timestamp
+            or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ),
+        valid_until=concept.extensions.get("valid_until") or None,
+        successor_symbol=concept.extensions.get("successor_symbol") or None,
+        bundle=bundle,
+        conn=conn,
+    )
     # Clean up old tier file only when old_id is explicitly provided.
     if old_id and old_id != concept.concept_id:
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():
             old_file.unlink()
+        if conn is not None:
+            conn.execute(
+                "DELETE FROM memory_validity WHERE concept_id = ?",
+                (_rel_id(bundle, old_id),),
+            )
     return concept.concept_id
+
+
+def share_memory(
+    agent_id: str,
+    symbols: List[str],
+    memory_id: Optional[str] = None,
+    *,
+    conn,
+) -> int:
+    """Record ``agent_id``'s share of ``symbols`` on the shared memory bus.
+
+    Inserts one ``(agent_id, symbol, memory_id, 'share', ts)`` row per
+    symbol into ``agent_symbols`` on the caller's writable ``conn``.
+    ``memory_id`` is a bare memory concept_id pointer (no existence check:
+    readers join to live memory rows). Re-sharing an already-recorded
+    (agent_id, symbol, memory_id) inserts nothing. ``agent_id`` is
+    validated per ``validate_agent_id``; symbols must be non-empty strings;
+    both raise ``ValueError`` before any insert. Returns the number of rows
+    inserted; the caller owns the transaction boundary (no commit here).
+    """
+    validate_agent_id(agent_id)
+    _validate_symbols(symbols)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    inserted = 0
+    for symbol in symbols:
+        cur = conn.execute(
+            "INSERT INTO agent_symbols (agent_id, symbol, memory_id, kind, ts)"
+            " SELECT ?, ?, ?, 'share', ?"
+            " WHERE NOT EXISTS ("
+            " SELECT 1 FROM agent_symbols"
+            " WHERE agent_id = ? AND symbol = ? AND memory_id IS ? AND kind = 'share')",
+            (agent_id, symbol, memory_id, ts, agent_id, symbol, memory_id),
+        )
+        if cur.rowcount and cur.rowcount > 0:
+            inserted += cur.rowcount
+    return inserted
+
+
+def check_overlap(
+    agent_id: str,
+    symbols: List[str],
+    *,
+    conn,
+    recency_days: int = OVERLAP_RECENCY_DAYS,
+) -> List[tuple]:
+    """Return other agents' recent ``agent_symbols`` activity on ``symbols``.
+
+    Each result is an ``(agent_id, symbol, kind, ts)`` tuple for a row whose
+    agent differs from ``agent_id``, whose symbol is in ``symbols``, and whose
+    ``ts`` falls within ``recency_days`` days of now (UTC, inclusive). Both
+    ``share`` and ``intent`` rows count. Pure read: safe on a read-only
+    ``mode=ro`` conn; writes nothing and does not commit. ``agent_id`` is
+    validated per ``validate_agent_id``, ``symbols`` per ``_validate_symbols``;
+    an empty ``symbols`` list returns no rows. Results order by symbol, ts,
+    agent_id.
+    """
+    validate_agent_id(agent_id)
+    _validate_symbols(symbols)
+    if recency_days < 1:
+        raise ValueError("recency_days must be at least 1")
+    if not symbols:
+        return []
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=recency_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    placeholders = ",".join("?" * len(symbols))
+    cur = conn.execute(
+        "SELECT agent_id, symbol, kind, ts FROM agent_symbols"
+        f" WHERE agent_id <> ? AND symbol IN ({placeholders}) AND ts >= ?"
+        " ORDER BY symbol, ts, agent_id",
+        (agent_id, *symbols, cutoff),
+    )
+    return [tuple(row) for row in cur.fetchall()]
+
+
+def shared_recall_entries(
+    conn,
+    bundle: OKFBundle,
+    agent_id: str,
+    query: str,
+    *,
+    tier: Optional[str] = None,
+    include_superseded: bool = False,
+    as_of: Optional[str] = None,
+    result_ids: set,
+) -> tuple[list, dict]:
+    """Other agents' shared memories relevant to ``query``, with attribution.
+
+    Returns ``(extra_concepts, attribution_by_concept_id)``: concepts the
+    caller's search did not already return, plus "shared by ..." lines keyed
+    by concept id for both the extra concepts and results already returned
+    by the search (``result_ids``). A memory qualifies when another agent has
+    a ``kind='share'`` ``agent_symbols`` row whose symbol appears as a whole
+    query token and the concept is live: present in the bundle, latest
+    version, and inside its validity window. ``include_superseded=True``
+    keeps non-latest versions; the default drops them. Rows pointing at
+    deleted memories are dropped. Share-row memory ids may be
+    bundle-relative or absolute; matching normalizes both sides to the
+    memory file's basename. A store whose ``agent_symbols`` table does not
+    exist yet (no writable open since the schema was added) yields no
+    entries. ``as_of`` is already validated by the caller's
+    ``search_memory`` run; a malformed value raises ``ValueError``.
+    """
+    from .promotion import _instant_key, _parse_instant, _valid_at
+
+    def _attribution(pairs) -> str:
+        by_agent: dict = {}
+        for row_agent, symbol in pairs:
+            by_agent.setdefault(row_agent, []).append(symbol)
+        return "shared by " + "; ".join(
+            f"{a} on '{', '.join(syms)}'" for a, syms in by_agent.items()
+        )
+
+    tokens = {t.lower() for t in re.split(r"[\s,;]+", query) if t}
+    if not tokens:
+        return [], {}
+    instant = _parse_instant(as_of) if as_of is not None else datetime.now(timezone.utc)
+    if instant is None:
+        raise ValueError(f"as_of must be an ISO-8601 date, got {as_of!r}")
+    query_key = _instant_key(instant)
+    try:
+        rows = conn.execute(
+            "SELECT agent_id, symbol, memory_id FROM agent_symbols"
+            " WHERE kind = 'share' AND agent_id <> ? ORDER BY ts",
+            (agent_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return [], {}
+    found_ids = {cid.rsplit("/", 1)[-1]: cid for cid in result_ids}
+    pairs_by_memory: dict = {}
+    attribution: dict = {}
+    for row_agent, symbol, memory_id in rows:
+        if not memory_id or str(symbol).lower() not in tokens:
+            continue
+        key = memory_id.rsplit("/", 1)[-1]
+        pair = (row_agent, symbol)
+        in_results = found_ids.get(key)
+        if in_results is not None:
+            # Already surfaced by the search: attach the attribution in place.
+            pairs = attribution.setdefault(in_results, [])
+            if pair not in pairs:
+                pairs.append(pair)
+            continue
+        entry = pairs_by_memory.get(key)
+        if entry is None:
+            pairs_by_memory[key] = (memory_id, [pair])
+        elif pair not in entry[1]:
+            entry[1].append(pair)
+    out = []
+    for memory_id, pairs in pairs_by_memory.values():
+        try:
+            c = bundle.read_concept(memory_id)
+        except Exception:
+            continue  # row orphaned by a since-deleted memory
+        if c is None:
+            continue
+        if tier and not c.extensions.get("memory_tier", "").startswith(tier):
+            continue
+        if not include_superseded and c.extensions.get("memory_is_latest", True) is False:
+            continue
+        if not _valid_at(c, query_key):
+            continue
+        out.append(c)
+        attribution[c.concept_id] = pairs
+    return out, {cid: _attribution(pairs) for cid, pairs in attribution.items()}
 
 
 def list_memories(
@@ -205,11 +481,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
             if not (resolved == "memory/" or resolved.startswith("memory/")):
                 return False
             cid = concept.concept_id
-            # Normalize to relative for DB lookup.
-            try:
-                cid = str(Path(cid).relative_to(bundle.root))
-            except ValueError:
-                pass
+            cid = _rel_id(bundle, cid)
         # Route the file path through the write-path validator so a malformed
         # concept_id can't escape the bundle root via the delete path. Raises
         # ValueError if cid escapes root; treat that as "nothing to delete".
@@ -254,13 +526,9 @@ def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw",
         except ValueError:
             return None  # invalid tier name
         # Normalize concept_id to relative (from_file sets absolute paths).
-        old_id = concept.concept_id
-        try:
-            old_id = str(Path(old_id).relative_to(bundle.root))
-        except ValueError:
-            pass  # keep as-is if not under bundle root
+        old_id = _rel_id(bundle, concept.concept_id)
         concept.extensions["memory_tier"] = target_tier
-        new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id)
+        new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id, conn=conn)
         # Carry the embedding forward in place (a demote never changes content,
         # so re-embedding would be wasted work). old_id is already relative here.
         # Import via the cairn.graph public surface per the layering rule.

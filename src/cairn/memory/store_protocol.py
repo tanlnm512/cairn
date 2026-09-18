@@ -83,7 +83,7 @@ class OKFMemoryStore:
     def add(self, concept: OKFConcept, tier: Optional[str] = None,
             old_id: Optional[str] = None) -> str:
         from .store import store_memory
-        return store_memory(concept, self.bundle, tier=tier, old_id=old_id)
+        return store_memory(concept, self.bundle, tier=tier, old_id=old_id, conn=self.conn)
 
     def get(self, path: str) -> Optional[OKFConcept]:
         from .store import get_memory
@@ -99,7 +99,7 @@ class OKFMemoryStore:
         # store_memory is already an upsert (write_concept uses os.replace),
         # so add and update share one implementation.
         from .store import store_memory
-        return store_memory(concept, self.bundle, tier=tier, old_id=old_id)
+        return store_memory(concept, self.bundle, tier=tier, old_id=old_id, conn=self.conn)
 
     def delete(self, memory_path: str) -> bool:
         from .store import delete_memory

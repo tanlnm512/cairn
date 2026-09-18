@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cairn-intel"
-version = "0.20.2"
+version = "0.21.0"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
@@ -145,6 +145,15 @@ ingest = [
     "onnxruntime<1.24; python_version < '3.11'",
 ]
 
+# SWE-bench bench suite: `datasets` fetches the pinned task inputs in
+# src/cairn/bench/swe_bench.py (lazy import -- installs without this extra
+# never touch it). Bench-only per D-004: core wheel and platform matrix
+# unchanged; no `swebench` harness dep (resolve-rate machinery for the
+# deferred LLM arm, FR-005).
+bench = [
+    "datasets>=4.0",
+]
+
 [project.scripts]
 cairn = "cairn.cli:main"
 
@@ -229,7 +238,7 @@ select = ["F"]
 # The custom template (.cz_templates/keepachangelog.j2) renders that draft in
 # the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
 # default `## X.Y.Z (YYYY-MM-DD)`.
-version = "0.20.2"
+version = "0.21.0"
 version_scheme = "pep440"
 tag_format = "v$version"
 update_changelog_on_bump = false

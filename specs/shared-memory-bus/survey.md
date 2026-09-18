@@ -1,6 +1,6 @@
 # Survey: shared-memory-bus
 
-**Created**: 2026-09-16 | **Baseline**: codex/docs-level-up-specs @ 1af3b35
+**Created**: 2026-09-16 | **Baseline**: codex/docs-level-up-specs @ d18768c
 The survey node's output — the single source of truth for code state. Every citation
 in the other four docs must trace to a line here. Evidence is pasted
 verbatim from grep/read output in the session that wrote it.
@@ -35,8 +35,14 @@ item S4: "Memory store API is the write chokepoint for sharing"
 
 ## Supporting evidence
 No `cairn memory share` or agent-registration command exists (cli/memory.py subcommands:
-record, evolve, search, capture, list, stats, digest, promote, decay, embed).
-MCP resources/subscriptions are not implemented anywhere in mcp_server/ today.
+record, evolve, search, capture, list, stats, digest, promote, decay, embed,
+batch-critic, forget, demote, purge, consolidate; memory group registered at
+src/cairn/cli/__init__.py:36; no `share` command or `--agent` option anywhere
+in src/cairn/cli/).
+One MCP resource exists: `@mcp.resource("cairn://status")`
+(src/cairn/mcp_server/_server_core.py:471) — a read-only index/build status
+block. No memory-content resource; no subscription/notification machinery
+(no `subscribe`/`notify` code in src/cairn/mcp_server/ or src/cairn/memory/).
 
 ## Rules
 - Every `file:line` pasted from grep/read in this survey — never from memory.

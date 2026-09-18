@@ -1,6 +1,7 @@
 # Spec: shared-memory-bus
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user standing instruction ("implement all specs except remote-mcp-oauth until done"); 11 tasks/3 phases, check.py 0 fail.
 **Created**: 2026-09-16
 **Branch**: `feat/shared-memory-bus`
 
@@ -60,7 +61,7 @@ As a single-agent user, I want zero behavior change.
 
 ## Requirements
 - **FR-001**: The system shall provide `cairn memory share --agent <id>
-  --symbols <list>` making the shared memory visible to other agents'
+  --symbols a,b,c` making the shared memory visible to other agents'
   recall for those symbols.
 - **FR-002**: The system shall provide overlap detection: before an agent
   edits a symbol set, a check against other agents' recent memory/edit
@@ -73,7 +74,10 @@ As a single-agent user, I want zero behavior change.
 - **FR-005**: Concurrent access shall be safe: reuse the store's existing
   WAL journal mode plus explicit locking; per-agent memory namespaces with
   read-through sharing.
-- **FR-006**: Agent identity shall use [NEEDS CLARIFICATION: MCP session IDs, a `cairn agent register` command, or caller-supplied ids with validation? The proposal leaves the identity mechanism open.]
+- **FR-006**: Agent identity shall use caller-supplied agent ids, validated
+  at the share/check surface (non-empty, length-capped, charset-sanitized);
+  MCP session ids are process-scoped and a registration command adds a step
+  without adding trust (ruled 2026-09-17).
 
 ## Scope
 **In**: share command, overlap detection, recall integration, concurrency
@@ -86,5 +90,5 @@ auto-resolution; agent presence/heartbeat; cross-workspace sharing.
   multi-agent premise).
 - Risk: race conditions under concurrency — mitigation: WAL + locking, tests
   exercising concurrent writers.
-- Risk: identity spoofing in shared mode — mitigation: FR-006 ruling may add
-  registration validation; sharing is opt-in per workspace.
+- Risk: identity spoofing in shared mode — mitigation: FR-006 id validation
+  plus opt-in sharing per workspace.

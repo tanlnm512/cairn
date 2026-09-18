@@ -106,7 +106,7 @@ def _parse_annotations_hints(kw_text: str) -> dict[str, bool] | None:
 # ---------------------------------------------------------------------------
 
 def test_every_decorator_has_annotations_kwarg():
-    """    Every ``@mcp.tool()`` registration across the four ``tools_*.py`` files must
+    """    Every ``@mcp.tool()`` registration across the ``tools_*.py`` files must
     carry an ``annotations=ToolAnnotations(...)`` keyword.
 
     Catches a tool added (or a decorator reformatted) with the ``annotations=``
@@ -120,8 +120,8 @@ def test_every_decorator_has_annotations_kwarg():
             all_tools[m.group("name")] = f.name
 
     assert all_tools, "no @mcp.tool(...) decorators found in tools_*.py"
-    assert len(all_tools) == 24, (
-        f"expected 24 @mcp.tool(...) registrations, found {len(all_tools)}: "
+    assert len(all_tools) == 25, (
+        f"expected 25 @mcp.tool(...) registrations, found {len(all_tools)}: "
         f"{sorted(all_tools)}"
     )
 

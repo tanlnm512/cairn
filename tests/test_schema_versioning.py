@@ -236,5 +236,289 @@ def test_observability_tables_apply_idempotent(fresh_db):
     assert index_count == 2, "both events indexes must survive re-application"
 
 
+def test_memory_validity_upgrade_old_db(tmp_path):
+    """An old-shape DB (created before memory_validity) gains the table, its
+    declared columns, and both date indexes on the next _apply_schema.
+
+    Additive-only: plain CREATE TABLE IF NOT EXISTS inside SCHEMA_SQL (no
+    MIGRATIONS entry), so _apply_schema -- which every get_db() runs on
+    connect -- must create it on a pre-existing DB that lacks it, same as
+    build_runs/events before it.
+    """
+    conn = sqlite3.connect(tmp_path / "old.db")
+    try:
+        # A pre-validity DB: a core table exists, memory_validity does not.
+        conn.executescript(
+            """
+            CREATE TABLE repos (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                language TEXT,
+                git_remote TEXT,
+                indexed_at TIMESTAMP
+            );
+            """
+        )
+        tables_before = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "memory_validity" not in tables_before
+
+        _apply_schema(conn)
+
+        tables_after = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "memory_validity" in tables_after
+
+        rows = conn.execute("PRAGMA table_info(memory_validity)").fetchall()
+        columns = {row[1]: row[2] for row in rows}
+        assert set(columns) == {
+            "concept_id", "valid_from", "valid_until", "successor_symbol"
+        }
+        pk_columns = [row[1] for row in rows if row[5]]
+        assert pk_columns == ["concept_id"], (
+            "concept_id must be the primary key"
+        )
+
+        indexes_after = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        assert "idx_memory_validity_from" in indexes_after
+        assert "idx_memory_validity_until" in indexes_after
+    finally:
+        conn.close()
+
+
+def _prior_version_store(tmp_path):
+    """A prior-version store: a pre-validity DB file plus a bundle whose
+    memory concepts carry a creation timestamp but no validity extensions.
+    """
+    from cairn.memory.store import create_memory
+    from cairn.okf.bundle import OKFBundle
+
+    store = tmp_path / "store"
+    knowledge = store / ".knowledge"
+    knowledge.mkdir(parents=True)
+    db_path = store / ".kg"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE repos (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            language TEXT,
+            git_remote TEXT,
+            indexed_at TIMESTAMP
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    bundle = OKFBundle(str(knowledge))
+    fixtures = [
+        ("Retry policy", "Use exponential backoff", "2026-03-01T10:00:00Z"),
+        ("Doctor gate", "Run doctor before shipping", "2026-05-15T08:30:00Z"),
+    ]
+    for i, (title, body, ts) in enumerate(fixtures):
+        concept = create_memory("decision", title, body)
+        concept.timestamp = ts
+        concept.concept_id = f"memory/tribal/{title.lower().replace(' ', '-')}-a1b2c{i}"
+        bundle.write_concept(concept)
+    # A non-memory concept: outside the backfill's scope.
+    from cairn.okf.concept import OKFConcept
+
+    other = OKFConcept(
+        type="Business-rule",
+        title="Refund policy",
+        description="Refund policy",
+        tags=["policy"],
+        timestamp="2026-02-02T00:00:00Z",
+        body="Full refund within 30 days.",
+    )
+    other.concept_id = "knowledge/business-rule/refund-policy"
+    bundle.write_concept(other)
+    return db_path, bundle
+
+
+def test_memory_validity_backfill_old_store_rows_intact(tmp_path):
+    """The one-time backfill stamps every pre-validity memory concept with
+    valid_from = its recorded creation timestamp, an open end, and an
+    unchanged body, mirrors the memory_validity row, and records its
+    schema_meta sentinel so it runs at most once.
+    """
+    from cairn.graph.schema import _apply_schema, _maybe_backfill_memory_validity
+
+    db_path, bundle = _prior_version_store(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        _apply_schema(conn)
+        before = {
+            cid: bundle.read_concept(cid)
+            for cid in bundle.list_concepts(prefix="memory/")
+        }
+
+        _maybe_backfill_memory_validity(conn, knowledge_root=bundle.root)
+
+        rows = {
+            row["concept_id"]: row
+            for row in conn.execute(
+                "SELECT concept_id, valid_from, valid_until, successor_symbol "
+                "FROM memory_validity"
+            ).fetchall()
+        }
+        assert set(rows) == set(before), "only memory concepts gain rows"
+        for cid, concept in before.items():
+            row = rows[cid]
+            assert row["valid_from"] == concept.timestamp
+            assert row["valid_until"] is None
+            assert row["successor_symbol"] is None
+            on_disk = bundle.read_concept(cid)
+            assert on_disk.extensions["valid_from"] == concept.timestamp
+            assert on_disk.extensions.get("valid_until") is None
+            # Content and non-validity extensions are untouched.
+            assert on_disk.title == concept.title
+            assert on_disk.body == concept.body
+            assert on_disk.extensions["memory_tier"] == concept.extensions["memory_tier"]
+
+        sentinel = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'memory_validity.backfill'"
+        ).fetchone()
+        assert sentinel is not None and sentinel["value"] == "applied"
+
+        # Non-memory concepts stay untouched.
+        other = bundle.read_concept("knowledge/business-rule/refund-policy")
+        assert "valid_from" not in other.extensions
+        assert "valid_until" not in other.extensions
+
+        # Re-run is a no-op: sentinel-guarded, no duplicate rows.
+        _maybe_backfill_memory_validity(conn, knowledge_root=bundle.root)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM memory_validity"
+        ).fetchone()[0]
+        assert count == len(before)
+    finally:
+        conn.close()
+
+
+def test_memory_validity_backfill_preserves_stamped_interval(tmp_path):
+    """A concept already carrying a validity interval keeps it through the
+    backfill; the projection row mirrors the stamped values.
+    """
+    from cairn.graph.schema import _apply_schema, _maybe_backfill_memory_validity
+
+    db_path, bundle = _prior_version_store(tmp_path)
+    stamped_id = bundle.list_concepts(prefix="memory/")[0]
+    stamped = bundle.read_concept(stamped_id)
+    stamped.extensions["valid_from"] = "2026-04-01T00:00:00Z"
+    stamped.extensions["valid_until"] = "2026-09-01T00:00:00Z"
+    stamped.extensions["successor_symbol"] = "renamed_symbol"
+    bundle.write_concept(stamped)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        _apply_schema(conn)
+        _maybe_backfill_memory_validity(conn, knowledge_root=bundle.root)
+
+        row = conn.execute(
+            "SELECT valid_from, valid_until, successor_symbol "
+            "FROM memory_validity WHERE concept_id = ?",
+            (stamped_id,),
+        ).fetchone()
+        assert row["valid_from"] == "2026-04-01T00:00:00Z"
+        assert row["valid_until"] == "2026-09-01T00:00:00Z"
+        assert row["successor_symbol"] == "renamed_symbol"
+    finally:
+        conn.close()
+
+
+def test_get_db_backfills_memory_validity_on_connect(tmp_path):
+    """Opening a prior-version store through get_db upgrades it: the schema
+    gains memory_validity and every pre-existing memory is backfilled from
+    the store-layout sibling bundle.
+    """
+    from cairn.graph.schema import get_db
+
+    db_path, bundle = _prior_version_store(tmp_path)
+
+    conn = get_db(str(db_path))
+    try:
+        rows = conn.execute(
+            "SELECT concept_id, valid_from, valid_until FROM memory_validity"
+        ).fetchall()
+        assert len(rows) == 2
+        for row in rows:
+            assert row["valid_from"] == bundle.read_concept(row["concept_id"]).timestamp
+            assert row["valid_until"] is None
+    finally:
+        conn.close()
+
+
+def test_memory_validity_backfill_records_sentinel_without_sibling(tmp_path):
+    """A DB with no paired bundle records the sentinel and creates no
+    knowledge directory: a ``--db`` override must never reach a foreign
+    bundle or a process-default path.
+    """
+    from cairn.graph.schema import _apply_schema, _maybe_backfill_memory_validity
+
+    db_path = tmp_path / "lonely.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        _apply_schema(conn)
+        _maybe_backfill_memory_validity(conn, db_path=db_path)
+
+        sentinel = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'memory_validity.backfill'"
+        ).fetchone()
+        assert sentinel is not None and sentinel["value"] == "applied"
+        assert not (tmp_path / ".knowledge").exists()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM memory_validity"
+        ).fetchone()[0]
+        assert count == 0
+    finally:
+        conn.close()
+
+
+def test_memory_validity_apply_idempotent(fresh_db):
+    """Re-applying the schema leaves exactly one memory_validity table and
+    both date indexes, and existing rows survive the re-run.
+    """
+    fresh_db.execute(
+        "INSERT INTO memory_validity "
+        "(concept_id, valid_from, valid_until, successor_symbol) "
+        "VALUES ('memory/tribal/probe-a1b2c3', '2026-01-01', NULL, NULL)"
+    )
+
+    # fresh_db already applied the schema once; this call is the re-run.
+    _apply_schema(fresh_db)
+
+    table_count = fresh_db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_validity'"
+    ).fetchone()[0]
+    assert table_count == 1, "re-apply must not duplicate or drop memory_validity"
+    index_count = fresh_db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' "
+        "AND name IN ('idx_memory_validity_from', 'idx_memory_validity_until')"
+    ).fetchone()[0]
+    assert index_count == 2, "both date indexes must survive re-application"
+    row_count = fresh_db.execute(
+        "SELECT COUNT(*) FROM memory_validity"
+    ).fetchone()[0]
+    assert row_count == 1, "re-apply must not touch existing rows"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

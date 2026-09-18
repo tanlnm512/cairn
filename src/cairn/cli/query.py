@@ -4,6 +4,7 @@ from __future__ import annotations
 import click
 import json
 import sys
+from dataclasses import asdict
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
 from ._helpers import _mods, _shorten
@@ -121,6 +122,60 @@ def search(pattern, kind, db, as_json, refresh):
     for r in rows:
         click.echo(f"{r['kind']:10} {r['name']:35} "
                    f"{r['file_path']}:{r['line_start']}  ({r['repo']})")
+
+
+# --------------------------------------------------------------------------
+# cairn federated-search
+# --------------------------------------------------------------------------
+@main.command(name="federated-search")
+@click.argument("query")
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=20,
+    show_default=True,
+    help="Max merged hits.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+@click.option(
+    "--shared-embed",
+    is_flag=True,
+    default=False,
+    help="Opt into one shared embedding backend when every store's model "
+    "stamp matches; never changes which hits are returned.",
+)
+def federated_search(query, limit, as_json, shared_embed):
+    """Search every registered workspace store as one merged ranking.
+
+    Each hit names the workspace store it came from; stores that are
+    missing, locked, or unindexed are named in the report, never silently
+    skipped.
+    """
+    from ..graph.federation import federated_search as run_federated
+
+    try:
+        result = run_federated(query, limit=limit, shared_embed=shared_embed)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    if as_json:
+        click.echo(json.dumps(asdict(result), indent=2, default=str))
+        if not result.states:
+            sys.exit(1)
+        return
+    if not result.states:
+        click.echo("No stores are registered.", err=True)
+        sys.exit(1)
+    for hit in result.hits:
+        click.echo(f"{hit['kind']:10} {hit['name']:35} "
+                   f"{hit['file_path']}  ({hit['repo']})  "
+                   f"[{hit['workspace']}]  {hit['score']:g}  {hit['provenance']}")
+    if result.dropped:
+        click.echo(f"\nDropped stores ({len(result.dropped)}):")
+        for ws_path in result.dropped:
+            click.echo(f"  {result.states[ws_path]:10} {ws_path}")
+    if not result.hits:
+        click.echo(f"No hits for '{query}'.", err=True)
+        sys.exit(1)
 
 
 # --------------------------------------------------------------------------

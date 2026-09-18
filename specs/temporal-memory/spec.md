@@ -1,6 +1,7 @@
 # Spec: temporal-memory
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user's standing instruction ("implement all specs except remote-mcp-oauth until done") recorded as the execution go-ahead; spec-set digest: 11 tasks / 4 phases, check.py 0 fail, 2 EARS line-wrap warnings (cosmetic).
 **Created**: 2026-09-16
 **Branch**: `feat/temporal-memory`
 
@@ -36,8 +37,8 @@ exactly the memories valid at that date; default recall unchanged.
 As an archaeologist of past decisions, I want memories as of a date.
 
 **Acceptance criteria** (each trace to an FR below):
-- AC1: Given memories with overlapping validity, When
-  `recall_memory --as-of <date>` runs, Then only memories valid at that date
+- AC1: Given memories with overlapping validity, When `recall_memory` runs
+  with an `--as-of` date, Then only memories valid at that date
   return (FR-002).
 
 ### US2 — Auto-invalidation (P1)
@@ -54,8 +55,9 @@ not delete them.
   time) and `valid_until` (nullable) on every memory record, added
   additively with a migration for existing rows.
 - **FR-002**: Recall surfaces (MCP `recall_memory`, CLI `cairn memory
-  search`) shall support `--as-of <date>` returning only memories valid at
-  that date; default recall shall return only currently-valid memories.
+  search`) shall support an `--as-of` date filter returning only memories
+  valid at that date; default recall shall return only currently-valid
+  memories.
 - **FR-003**: WHEN a build detects a memory's referenced symbol renamed or
   removed, the system shall set `valid_until` to the build time rather than
   deleting, and record a successor-symbol link where the graph identifies

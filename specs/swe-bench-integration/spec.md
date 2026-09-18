@@ -1,6 +1,7 @@
 # Spec: swe-bench-integration
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user standing instruction ("implement all specs except remote-mcp-oauth until done"); 11 tasks/3 phases, check.py 0 fail; LLM arm deferred per FR-005 ruling (D-003 metric scope).
 **Created**: 2026-09-16
 **Branch**: `feat/swe-bench-integration`
 
@@ -59,13 +60,15 @@ As an evaluator, I want a published methodology and results I can verify.
 - **FR-004**: A CI job shall run a smoke subset of the suite to prevent rot
   (same pattern as the self-demo test).
 - **FR-005**: The LLM-in-the-loop arm (end-to-end resolve-rate measurement
-  using a standard agent framework) shall be [NEEDS CLARIFICATION: in scope now (adds credibility, ~2-3 weeks and eval compute) or deferred until the deterministic arm ships?]
+  using a standard agent framework) is deferred until the deterministic arm
+  ships (ruled 2026-09-17: deterministic arm is the P1 story; LLM arm costs
+  ~2-3 weeks plus eval compute and follows as a separate spec).
 
 ## Scope
 **In**: deterministic arm, task-subset loader, with/without tool arms,
 reporting, reproducibility docs, CI smoke job.
-**Out (deferred)**: LLM arm pending FR-005 ruling; full SWE-bench leaderboard
-submission; non-SWE benchmarks (HumanEval, etc.).
+**Out (deferred)**: LLM arm (deferred by FR-005 ruling); full SWE-bench
+leaderboard submission; non-SWE benchmarks (HumanEval, etc.).
 
 ## Assumptions & risks
 - Assumption: SWE-bench task data licensing permits redistribution of a

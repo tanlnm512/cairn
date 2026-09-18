@@ -1,6 +1,7 @@
 # Spec: ide-extensions
 
-**Status**: draft
+**Status**: done
+**Approved**: 2026-09-17 — user standing instruction ("implement all specs except remote-mcp-oauth until done"); 12 tasks/5 phases, check.py 0 fail.
 **Created**: 2026-09-16
 **Branch**: `feat/ide-extensions`
 
@@ -59,7 +60,9 @@ a file.
 - **FR-004**: WHERE the workspace is unindexed or the server is stopped, the
   extension shall degrade gracefully to a status indicator, never blocking
   the editor.
-- **FR-005**: The first-priority IDE shall be [NEEDS CLARIFICATION: VS Code first (largest install base) or JetBrains first (enterprise Java/Kotlin strength)? The proposal leaves ordering open; the second follows.]
+- **FR-005**: The first-priority IDE shall be VS Code (largest install base,
+  vsix packaging without a publisher account); JetBrains follows per FR-006
+  (ruled 2026-09-17).
 - **FR-006**: The second-priority extension (per FR-005's ruling) shall reach
   feature parity for FR-001–FR-004 on its platform.
 

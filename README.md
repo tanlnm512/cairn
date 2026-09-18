@@ -19,7 +19,7 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
 graph** (15 languages), fuses it with **code-grounded tribal memory**, compass,
-and wiki, and serves all of it through one MCP server (24 tools) + a `cairn`
+and wiki, and serves all of it through one MCP server (25 tools) + a `cairn`
 CLI. The product is a **verification contract**: every `exact` edge is actually
 resolved, every symbol in a synthesized doc is graph-verified by a
 deterministic critic, and the LLM never sits in the query path.
@@ -250,6 +250,23 @@ Depth-3 blast radius is the extreme: **2 tool calls and 712 tokens vs 303
 calls and 429,600 tokens** — grep must read every name-collision hit; precise
 edges don't.
 
+**SWE-bench efficiency** (`cairn bench --suite swe-bench`; deterministic
+no-LLM arms over the pinned 50-task SWE-bench Lite subset,
+`benchmarks/datasource/swe-bench-subset.json` @ revision `6ec7bb89…`.
+Efficiency medians are their own metric class — not comparable to resolve-rate
+results like RepoGraph's +32.8%):
+
+| metric (median / task) | grep baseline | with cairn | reduction |
+|--------|-------------------:|-----------:|----------:|
+| tool calls | 19.5 | 3.0 | **84.6%** |
+| est. tokens | 151,007.5 | 1,555.5 | **99.0%** |
+
+Reproduce: `cairn bench --suite swe-bench --smoke` (first 2 pinned tasks,
+fast) or `cairn bench --suite swe-bench --json` (full pinned subset; the
+first run fetches the split, reruns run offline). Methodology, determinism
+and offline contracts, and the stamped result:
+[docs/benchmarks.md](docs/benchmarks.md).
+
 **Query latency** (`cairn bench --suite perf`, p95): `find_definition`
 0.03 ms · `get_callers` 0.06 ms · `impact_analysis` 0.11 ms ·
 `search_symbols` 6.25 ms · `semantic_search` 201.67 ms (with embeddings) ·
@@ -298,11 +315,11 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## MCP Tools
 
-24 tools across four layers — same store as the CLI:
+25 tools across four layers — same store as the CLI:
 
 | Layer | Tools |
 |-------|-------|
-| **graph** (11) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `visualize_graph` |
+| **graph** (12) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `federated_search` (cross-store), `visualize_graph` |
 | **compass + knowledge base** (5) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
 | **memory** (2) | tribal memory: `recall_memory`, `record_memory` (lifecycle verbs are CLI-only: `cairn memory digest|evolve|promote|demote|forget|decay`) |
 | **knowledge** (6) | OKF business docs / workflows: add / search / status / delete / `trace_workflow` / `wiki_generate` |
@@ -351,6 +368,7 @@ Full index: [docs/README.md](docs/README.md). The short map:
 | [docs/knowledge-and-memory.md](docs/knowledge-and-memory.md) | doc ingestion, memory tiers, task queue, critic |
 | [docs/mcp-tools.md](docs/mcp-tools.md) · [docs/cli-reference.md](docs/cli-reference.md) | the two tool surfaces |
 | [docs/configuration.md](docs/configuration.md) | `cairn.json`, env vars, install extras |
+| [docs/benchmarks.md](docs/benchmarks.md) | benchmark suites, methodology, reproducing published numbers |
 
 Visual overviews (standalone HTML) live in
 [docs/diagrams/](docs/diagrams): system architecture, the C4 model, indexing,

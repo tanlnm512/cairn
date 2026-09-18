@@ -432,11 +432,12 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
 def explore(query: str) -> str:
     """Answer 'how does X work' in one call. Returns matching symbols' verbatim
     source grouped by file, the call paths between them (including ambiguous
-    dispatch hops), a blast-radius summary, and any matching tribal memory
-    (past decisions/mistakes from this workspace's memory store). Recommended
-    first move for any structural question; reach for
-    get_callers/impact_analysis/search_knowledge to drill down when this is
-    thin.
+    dispatch hops), a blast-radius summary, any matching tribal memory
+    (past decisions/mistakes from this workspace's memory store), and a taint
+    warning when a matched symbol is the entry or sink endpoint of a known
+    source-to-sink flow. Recommended first move for any structural question;
+    reach for get_callers/impact_analysis/search_knowledge to drill down when
+    this is thin.
 
     Example:
         explore("how does ApiFactory create clients")
@@ -462,19 +463,32 @@ def explore(query: str) -> str:
                 How to apply: keep numpy loaded until the interpreter exits
     """
     from cairn.graph import queries
+    from cairn.graph.config import load_config
+    from cairn.graph.taint import (
+        build_registry,
+        format_taint_warning,
+        intersect_seeds,
+    )
+    from cairn.paths import resolve_workspace
 
     conn = _conn()
     tribal: list = []
+    taint_paths: list = []
     try:
         freshness = _fresh_graph(conn)
         result = queries.explore(conn, query)
         if result["seeds"]:
+            seed_names = [s["name"] for s in result["seeds"] if s.get("name")]
+
+            config = load_config(resolve_workspace())
+            registry = build_registry(config.taint_sources, config.taint_sinks)
+            taint_paths = intersect_seeds(conn, registry, set(seed_names))
+
             from cairn.graph import note_contention
             from cairn.memory.promotion import record_references_batch, search_memory
 
-            seed_names = [s["name"] for s in result["seeds"] if s.get("name")][:5]
             mems = search_memory(
-                conn, _bundle(), " ".join(seed_names),
+                conn, _bundle(), " ".join(seed_names[:5]),
                 tier="tribal", session_id=None,
             )
             tribal = mems[:3]
@@ -597,6 +611,11 @@ def explore(query: str) -> str:
                 out.append(f"    How to apply: {apply_line}")
     else:
         out.append("  (none)")
+    # --- Taint paths section ---
+    if taint_paths:
+        out.append("=== Taint paths ===")
+        out.append(format_taint_warning(taint_paths))
+        out.append("")
     return _with_freshness(
         _append_embed_degradation_footnote("\n".join(out)), freshness
     )

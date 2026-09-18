@@ -1,0 +1,137 @@
+name: Extension release
+
+# Package the VS Code extension vsix on tag push (v*), verify it installs and
+# activates on a clean runner, then attach it to the GitHub Release for the
+# tag. Independent of release.yml (PyPI distribution): one v* tag ships both.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # softprops/action-gh-release uploads the vsix asset
+
+# Serialize per-ref: a re-run must not race itself on the same Release.
+concurrency:
+  group: extension-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build vsix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Package vsix
+        run: npm run package
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vsix
+          path: extensions/vscode/cairn-ext.vsix
+
+  # Clean-machine install check: the runner has no VS Code and no cairn
+  # install. The vsix must install into it, list under its own id, and the
+  # extension host must report it active.
+  verify:
+    name: Clean-machine install check
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: vsix
+
+      - name: Install VS Code (stable, .deb channel) + xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gpg xvfb
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+          sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y code
+
+      - name: Install the vsix and assert it is listed
+        run: |
+          code --install-extension cairn-ext.vsix --force
+          code --list-extensions --show-versions
+          code --list-extensions --show-versions | grep -Eq '^cairn\.cairn@[0-9]+\.[0-9]+\.[0-9]+'
+
+      # Activation proof from the host's own record: the exthost log must show
+      # the extension host activating cairn.cairn and must not record an
+      # activation failure. The Linux `code` wrapper detaches window sessions,
+      # so the electron binary is launched directly; the poll bounds a wedged
+      # session.
+      - name: Headless extension-host activation smoke
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-ws"
+          xvfb-run -a /usr/share/code/code \
+            --user-data-dir "$RUNNER_TEMP/vscode-smoke-profile" \
+            --disable-gpu --disable-workspace-trust --skip-welcome \
+            "$RUNNER_TEMP/smoke-ws" &
+          launcher=$!
+          logs_dir="$RUNNER_TEMP/vscode-smoke-profile/logs"
+          activated=""
+          for _ in $(seq 1 60); do
+            activated=$(grep -h "_doActivateExtension cairn.cairn" "$logs_dir"/*/window*/exthost/exthost.log 2>/dev/null || true)
+            [ -n "$activated" ] && break
+            sleep 2
+          done
+          kill "$launcher" 2>/dev/null || true
+          [ -n "$activated" ] || { echo "cairn.cairn was never activated"; exit 1; }
+          echo "$activated"
+          if grep -q "Activating extension 'cairn.cairn' failed" "$logs_dir"/*/window*/exthost/exthost.log; then
+            echo "cairn.cairn activation failed"; exit 1
+          fi
+
+      - name: Smoke diagnostics
+        if: always()
+        run: |
+          find "$RUNNER_TEMP/vscode-smoke-profile" "$HOME/.config/Code/logs" -name '*.log' 2>/dev/null | head -25 | while read -r f; do
+            echo "--- $f"; tail -15 "$f" || true
+          done
+
+      - name: Upload smoke logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-logs
+          path: /home/runner/work/_temp/vscode-smoke-profile/logs/
+          if-no-files-found: ignore
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, verify]
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: vsix
+          path: dist/
+
+      # No name/body: release.yml owns the Release title and notes on the same
+      # tag; this job only attaches the vsix asset.
+      - name: Attach vsix to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/cairn-ext.vsix
