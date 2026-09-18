@@ -1,11 +1,4 @@
-"""Claude Desktop (GUI app) integration: config + install + uninstall, together.
-
-Claude Desktop is MCP-only (stdio) with a single GLOBAL config file
-(``claude_desktop_config.json``), unlike Claude Code (the CLI) which is
-workspace-scoped. No skills, slash commands, hooks, or subagents. The
-workspace is pinned via ``CAIRN_WORKSPACE`` because the app has no
-cwd/workspace notion.
-"""
+"""Claude Desktop (GUI app) integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 from pathlib import Path

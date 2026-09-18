@@ -1,15 +1,4 @@
-"""Unified cosine-scan core: the single shared vector-similarity implementation.
-
-``cosine_scan`` is called by all three retrieval paths (``graph/semantic.py``
-symbols, ``knowledge/search.py`` docs, ``memory/promotion.py`` concepts).
-Callers pass already-fetched ``(vec_blob, dim, payload)`` rows plus a query
-vector; it returns ``[(score, payload), ...]`` ranked descending.
-
-NumPy is preferred when available (fast): all eligible rows are stacked into
-one ``(|rows|, dim)`` float32 matrix and scored with a single matrix-vector
-product instead of a per-row Python loop. Falls back to pure Python using
-``vector_math.l2norm``/``dot`` when numpy is missing.
-"""
+"""Unified cosine-scan core: the single shared vector-similarity implementation."""
 from __future__ import annotations
 
 import math

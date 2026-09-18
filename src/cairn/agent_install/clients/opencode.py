@@ -1,13 +1,4 @@
-"""opencode integration: config + install + uninstall, together.
-
-opencode schema (https://opencode.ai/docs/mcp-servers):
-- Reads ``opencode.json`` at the project root (and ``~/.config/opencode/``
-  globally). It does NOT read a standalone ``.opencode/mcp.json``.
-- MCP servers live under a top-level ``"mcp"`` key (NOT ``"mcpServers"``),
-  keyed by name: ``{"mcp": {"<name>": {"type": "local", "command": [...]}}}``.
-- ``type`` is ``"local"`` (stdio) or ``"remote"`` (sse/http); for local, the full
-  invocation is a single ``command`` array.
-"""
+"""opencode integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 from pathlib import Path

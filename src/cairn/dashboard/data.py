@@ -1,11 +1,4 @@
-"""Read-only data access for the dashboard.
-
-Every dashboard read goes through :func:`get_read_only_db`, which opens the
-graph DB via SQLite's ``file:...?mode=ro`` URI: such a connection can never
-hold the writer lock, so the dashboard cannot contend with — let alone
-mutate — writer processes. View-data assembly functions are pure
-functions over the returned connection.
-"""
+"""Read-only data access for the dashboard."""
 from __future__ import annotations
 
 import json
@@ -1525,13 +1518,7 @@ def _estimate_divisor(
 
 
 class TokenEstimates(list):
-    """``get_tool_tokens``' per-tool entries plus the estimation context
-    that produced them: ``token_mode`` (the active mode's display name),
-    ``calibrated`` (exact mode derived its divisor from this window) and
-    ``chars_per_token`` (the divisor in force). Stays a list so
-    iteration, equality and the CSV/JSON exports see exactly the per-tool
-    rows; the attributes ride the tokens view's ``tools`` context.
-    """
+    """List of per-tool token estimates annotated with calibration metadata."""
 
     token_mode: str
     calibrated: bool

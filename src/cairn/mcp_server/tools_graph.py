@@ -1,12 +1,4 @@
-"""L1 graph MCP tools: find_definition, get_callers, get_callees,
-impact_analysis, explore, semantic_search, search_symbols, repo_map, file_api,
-cross_repo_deps, plus visualize_graph (a graph renderer, filed under L4 but
-structurally belongs with the graph-query tools).
-
-Each tool is decorated with @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
-on the shared FastMCP instance from _server_core, and wrapped with the
-metric-instrumenting decorator from metric_buffering.
-"""
+"""L1 graph MCP tools: find_definition, get_callers, get_callees, impact_analysis, explore, semantic_search, search_symbols, repo_map, file_api, cross_repo_deps, plus visualize_graph (a graph renderer, filed under L4 but structurally belongs with the graph-query tools)."""
 from __future__ import annotations
 
 import logging

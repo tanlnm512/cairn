@@ -1,33 +1,4 @@
-"""User configuration for cairn indexing.
-
-Reads a ``cairn.json`` at the workspace (or repo) root. Supports
-gitignore-style ``exclude`` / ``include`` globs, matched against repo-root-
-relative paths. ``include`` overrides ``exclude`` and the default skip set, so a
-checked-in vendored directory can be pulled back into the graph.
-
-This module is intentionally minimal: it parses the config file and returns a
-dataclass. The actual matching (gitignore semantics, negations, ``**``) is done
-with :mod:`pathspec` in :mod:`src.graph.scanner`, which builds the combined
-``PathSpec`` from the default skip set + gitignore + this config.
-
-The ``taint`` section holds source/sink override tables mapping a taint
-category to exact call names; the taint registry layers them over its
-built-in defaults.
-
-Example ``cairn.json``::
-
-    {
-      "exclude": ["static/", "**/vendor/**"],
-      "include": ["vendor/lib/"],
-      "taint": {
-        "sources": {"queue-msg": ["receive_job"]},
-        "sinks": {"render": ["render_template"]}
-      }
-    }
-
-If no file is present, :func:`load_config` returns a default (empty) config and
-the scanner applies only its built-in skip rules + ``.gitignore``.
-"""
+"""User configuration for cairn indexing."""
 from __future__ import annotations
 
 import json
@@ -38,28 +9,7 @@ from typing import Dict, List, Optional, Set, Union
 
 @dataclass
 class CairnConfig:
-    """Resolved exclude/include globs and cross-repo namespaces for a workspace.
-
-    Both lists hold gitignore-style patterns (e.g. ``"static/"``,
-    ``"**/vendor/**"``). They are combined with pathspec so negations and
-    ``**`` work exactly as in ``.gitignore``.
-
-    ``repo_namespaces`` maps import-path prefixes to owning repo ids (e.g.
-    ``{"com.example.sdk": "sdk"}``) and feeds ``cross_repo_deps``. When empty,
-    cross-repo analysis falls back to the built-in default map.
-
-    ``ingest`` holds the raw ``ingest`` JSON object for the knowledge
-    ingestion pipeline (classification/skip overrides). It is kept raw
-    here; the ingest package types and layers it over built-in defaults.
-
-    ``taint_sources`` / ``taint_sinks`` map taint category -> exact call
-    names (e.g. ``{"queue-msg": {"receive_job"}}``) and feed the taint
-    registry as override tables: a same-named category replaces its
-    default, a new category extends the set.
-
-    ``include_nested_repos`` opts a repository into indexing initialized
-    submodules and nested child repositories.
-    """
+    """Resolved workspace configuration for filtering, namespaces, ingestion, and analysis."""
 
     exclude: List[str] = field(default_factory=list)
     include: List[str] = field(default_factory=list)

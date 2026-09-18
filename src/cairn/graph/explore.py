@@ -1,9 +1,4 @@
-"""explore(): one-call "how does X work" aggregator.
-
-A thin orchestrator that combines FTS5 + semantic seed search, 1-hop
-caller/callee neighborhood, verbatim source spans, shallow blast radius, and
-ambiguous-dispatch hops into a single answer.
-"""
+"""explore(): one-call "how does X work" aggregator."""
 from __future__ import annotations
 
 import logging

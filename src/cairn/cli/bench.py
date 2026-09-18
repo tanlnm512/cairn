@@ -1,28 +1,4 @@
-"""cairn bench: performance, scalability, and agent-effort benchmarks.
-
-Three suites, mirroring how ``cairn eval`` and ``cairn metrics`` already work:
-
-  cairn bench                              # perf suite on a generated corpus
-  cairn bench --suite perf                 # explicit (default)
-  cairn bench --suite scaling --sizes 100,500,1000,5000
-  cairn bench --suite agent                # tool calls + context cost vs grep
-  cairn bench --suite swe-bench            # pinned SWE-bench subset, both arms
-  cairn bench --suite swe-bench --smoke    # first 2 pinned tasks
-  cairn bench --suite swe-bench --slice 0:10 --manifest PATH
-  cairn bench --workspace PATH             # perf/agent against an existing repo
-  cairn bench --json                       # JSON for CI
-  cairn bench --save baseline.json         # save a baseline
-  cairn bench --compare baseline.json      # flag regressions > --threshold (15%)
-  cairn bench --baseline DS-v1             # same, vs benchmarks/baselines/<DS-version>/
-
-Exit-code contract: 0 = clean; 1 = usage / baseline-resolution error (unknown
-``--baseline`` version, ``--baseline`` + ``--compare`` together, missing
-``--compare`` file, swe-bench manifest/checkout/empty-selection error);
-2 = regressions found by the comparison (the CI signal).
-A machine-profile mismatch between the current run and a ``--baseline``
-artifact only WARNS and never changes the exit code (warn, never
-normalize) -- timing comparisons across machines stay advisory.
-"""
+"""cairn bench: performance, scalability, and agent-effort benchmarks."""
 from __future__ import annotations
 
 import hashlib

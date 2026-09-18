@@ -1,14 +1,4 @@
-"""One-shot, token-budgeted context pack over the local graph.
-
-``build_pack(conn, bundle, task, budget)`` composes existing read-only
-surfaces into one deterministic pipeline: seed candidate symbols (semantic
-search unioned with lexical term-mode anchors, falling back to lexical
-search when embeddings are absent, rerank pinned off), expand through
-precise call edges, rank by structural centrality, enrich the pool with
-trimmed source, blast-radius lines, compass excerpts, and memory picks,
-fit the rendered content into the budget, and emit a single markdown
-block. No LLM and no network access in any stage.
-"""
+"""One-shot, token-budgeted context pack over the local graph."""
 from __future__ import annotations
 
 import sqlite3

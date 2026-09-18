@@ -1,40 +1,4 @@
-"""Native ANN index for semantic_search, via the sqlite-vec extension.
-
-`sqlite-vec` (https://github.com/asg017/sqlite-vec) provides a `vec0` virtual
-table in the *same* `.db` file as `embeddings`, loaded as a SQLite extension.
-Keeping vectors in the same file avoids the crash-consistency hazard of a
-sidecar index whose writes can fall out of the SQLite transaction.
-
-Two maintenance paths keep the vec0 table aligned with `embeddings`: a
-wholesale rebuild (:func:`rebuild_index` -- the end of every ``cairn embed``
-bulk pass) and a per-upsert sync (:func:`sync_index_row` /
-:func:`delete_index_rows` -- embeddings' single-symbol paths). vec0 has no
-"replace" semantics: a plain INSERT on an existing rowid raises ``UNIQUE
-constraint failed`` even under ``INSERT OR REPLACE`` (see sync_index_row's
-spike notes), so updates are always DELETE by rowid + re-INSERT inside the
-caller's transaction. Bulk paths stay on the wholesale rebuild -- per-row
-sync costs ~9x more per row than the rebuild's INSERT ... SELECT.
-
-On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. Set it to
-`off` to force the brute-force cosine scan. Any load failure degrades to the
-brute-force scan.
-
-Scope: this index covers ONLY the code-corpus ``embeddings`` table (the path
-that ``graph.semantic.semantic_search`` and ``explore`` consume). The
-``knowledge_embeddings`` and ``memory_embeddings`` tables intentionally have
-no vec0 index: those corpora are small and curated (dozens to low hundreds of
-rows), so a brute-force ``cosine_scan`` is sub-millisecond and not worth the
-per-write vec0 sync cost. If either corpus ever grows large, the pattern here
-(rebuild from the source table) is the template for adding one.
-
-The multi-vector table ``embeddings_mv`` gets its own ``vecmv_<safe-
-model>`` vec0 index through the additive ``source`` parameter on
-:func:`rebuild_index` / :func:`ann_query`: a separate table, because
-the base ``vec_<model>`` rowid contract must never be shared with a table
-whose row population differs (``embeddings_mv`` holds up to one row per
-vector kind per symbol). Every existing caller passes no ``source`` and gets
-the ``embeddings``/``vec_`` pair exactly as before.
-"""
+"""Native ANN index for semantic_search, via the sqlite-vec extension."""
 from __future__ import annotations
 
 import logging

@@ -1,9 +1,4 @@
-"""Enrichment renders for the context pack.
-
-Plain-string contract: callers wrap each render with its own kind label and
-token cost. Reads graph, OKF-bundle, and memory surfaces only — imports no
-pack module and never ``cairn.mcp_server``.
-"""
+"""Enrichment renders for the context pack."""
 from __future__ import annotations
 
 import sqlite3

@@ -1,11 +1,4 @@
-"""Map a review comment's file+line to enclosing symbols via stored spans.
-
-The comment location is resolved against ``symbols.line_start``/``line_end``
-(``src/cairn/graph/schema.py``). When no span encloses the line — or the
-comment carries no line, or its file is not indexed — the match degrades to
-file-level keying: ``file_level`` is true and ``symbols`` is empty, so
-callers key on ``file_path`` instead.
-"""
+"""Map a review comment's file+line to enclosing symbols via stored spans."""
 
 from __future__ import annotations
 

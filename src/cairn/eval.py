@@ -1,18 +1,4 @@
-"""Ground-truth evaluation harness for cairn.
-
-Evaluates recall@10 and MRR (Mean Reciprocal Rank) for code (L1),
-knowledge (L5), and tribal-memory (L4) retrieval pipelines against
-ground-truth query datasets.
-
-Two query sources: the legacy yaml fixture via ``load_eval_queries``
-(bundled test data, kept as-is) and the maintained graded pair via
-``load_ground_truth`` (``queries.jsonl`` + ``expectations.tsv``)
-with identity-first matching and grade-aware scoring.
-``run_evaluation`` renders the per-level report behind ``cairn eval``.
-
-Campaign methodology and verdict records live under
-``benchmarks/quality/`` (see the CHANGELOG's Removed entries).
-"""
+"""Ground-truth evaluation harness for cairn."""
 from __future__ import annotations
 
 import json

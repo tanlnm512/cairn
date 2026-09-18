@@ -1,20 +1,4 @@
-"""Telemetry event emission helpers (spec §6.1, §6.3, §6.4).
-
-:func:`emit` is the public entry point: it serializes low-cardinality
-attributes, gates on ``CAIRN_TELEMETRY`` / ``CAIRN_READ_ONLY``, and hands a
-pre-shaped row to the shared sink (:mod:`cairn.telemetry.sink`) for buffered
-flush. :func:`warn_once` generalizes the process-global one-time-warning
-pattern (``graph.embeddings.warn_hash_fallback_once``,
-``graph.ann_index.warn_ann_fallback_once``) so each degradation class surfaces
-at most once per process. (``note_contention`` is owned by
-``graph.schema`` -- see the pointer at the bottom of this module.)
-
-Cardinality discipline (spec §6.4): attrs are enums, short fixed tags, or
-bucketed values (``"0-10ms"``, ``"ann"``/``"brute"``/``"hash"``, ...). No
-paths, no free text from user input. :func:`emit` enforces JSON-serializability
-and truncates oversized string values defensively, and NEVER raises into a
-caller -- telemetry is best-effort (spec §5.6).
-"""
+"""Telemetry event emission helpers."""
 
 from __future__ import annotations
 

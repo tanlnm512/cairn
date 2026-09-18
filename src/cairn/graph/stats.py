@@ -1,11 +1,4 @@
-"""Aggregate stats and directory/package tree rollups.
-
-Read-only analytics over the graph (counts, by-kind, by-repo, per-directory
-symbol buckets).
-
-Note: ``group_by_top_level`` is also imported by ``viz/query.py``, so it
-stays public (no underscore).
-"""
+"""Aggregate stats and directory/package tree rollups."""
 from __future__ import annotations
 
 import sqlite3

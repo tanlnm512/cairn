@@ -1,37 +1,4 @@
-"""Tree-sitter C# parser.
-
-Extracts classes, interfaces, structs, enums, methods, constructors,
-properties, fields, call edges, inheritance edges, and imports (using
-directives) into the shared ParsedFile model.
-
-Node-type reference (tree-sitter-c-sharp):
-
-- ``namespace_declaration`` -> scope (its ``declaration_list`` body is walked;
-  the namespace is not itself a Symbol).
-- ``class_declaration`` / ``interface_declaration`` / ``struct_declaration`` /
-- ``record_declaration`` -> Symbol(class | interface | class | class). A
-  class's ``base_list`` -> Edge(extends for the first name, implements for the
-  rest).
-- ``enum_declaration`` -> Symbol(enum); ``enum_member_declaration`` children
-  -> Symbol(enum_case).
-- ``method_declaration`` / ``constructor_declaration`` -> Symbol(method).
-- ``property_declaration`` -> Symbol(property); ``field_declaration`` ->
-  Symbol(property).
-- ``invocation_expression`` -> Edge(calls). The callee is an ``identifier``
-  (bare call) or ``member_access_expression`` (``obj.Method()``); a nameable
-  receiver resolves to a type via the scope-ordered tracker (locals, fields,
-  parameters, foreach variables) or the capitalized heuristic, else None.
-- ``object_creation_expression`` (``new T()``) -> Edge(calls), target is the
-  type name. Call arity is the ``argument_list`` argument count; definition
-  arity is the ``parameter_list`` count, None when any parameter carries a
-  default value, ``params``, or an extension ``this``.
-- ``using_directive`` -> Import. ``using Foo = Bar.Baz;`` stores the target
-  path with ``local_alias="Foo"``; plain and ``using static`` directives carry
-  no alias.
-
-C# name nodes are plain ``identifier`` children. ``qualified_name`` (for
-namespace-qualified using directives) is captured verbatim.
-"""
+"""Tree-sitter C# parser."""
 from __future__ import annotations
 
 import hashlib

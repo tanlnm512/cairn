@@ -1,11 +1,4 @@
-"""Re-exports of the graph query engine's public API.
-
-Read-side graph operations are implemented in split modules under ``src/graph/``:
-``traversal``, ``lexical``, ``cross_repo``, ``stats``, ``explore``,
-``semantic``, and ``vector_math``. This file re-exports the public names so
-``from cairn.graph.queries import ...`` keeps working; new code may also import
-directly from ``cairn.graph``.
-"""
+"""Re-exports of the graph query engine's public API."""
 from __future__ import annotations
 
 # Public API surface -- re-exported for backward compatibility.

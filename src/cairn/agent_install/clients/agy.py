@@ -1,9 +1,4 @@
-"""agy (Antigravity CLI) integration: config + install + uninstall, together.
-
-agy is MCP-only: it reads a single global ``mcp_config.json`` and has no
-skill/command/subagent directories. Uses the shared ``mcpServers``
-shape. The location of that file is OS-specific (see :func:`agy_config_path`).
-"""
+"""agy (Antigravity CLI) integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 import os

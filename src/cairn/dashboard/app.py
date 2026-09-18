@@ -1,20 +1,4 @@
-"""Starlette app factory for the read-only dashboard.
-
-Routes: landing, workspaces overview, projects, graph (plus its
-/graph/candidates symbol-search and /graph/neighbors node-expansion JSON),
-history, tokens (plus their .csv/.json exports), chains, health, memory,
-tasks, wiki (list plus per-page detail), editor (the /editor/* JSON the
-IDE extensions consume), settings, embeddings — the
-settings section carries the
-app's only POST routes (/settings/save, /settings/parity-check); the
-embeddings status view and everything else stay GET-only so the read-only
-views keep their assumptions.
-
-starlette / jinja2 arrive only as transitive deps of mcp, so they are
-imported inside :func:`create_app`: importing this module (or the package)
-must never load the server stack. The factory takes the DB path as a
-parameter — the CLI command constructs the app, never the other way round.
-"""
+"""Starlette app factory for the read-only dashboard."""
 from __future__ import annotations
 
 import threading
@@ -228,10 +212,7 @@ def create_app(
     templates.env.filters["mean"] = _fmt_mean
 
     class _RevalidatingStaticFiles(StaticFiles):
-        """Browsers heuristic-cache uncontrolled responses for a lazy
-        freshness lifetime, so an upgraded dashboard keeps serving the
-        OLD app.js/app.css (stale UI, new HTML) until the cache evicts.
-        The assets are local and tiny — always revalidate instead."""
+        """Static file handler serving assets with Cache-Control: no-cache."""
 
         def file_response(self, *args, **kwargs):
             response = super().file_response(*args, **kwargs)

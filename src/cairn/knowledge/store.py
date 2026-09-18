@@ -1,8 +1,4 @@
-"""Document knowledge storage and lifecycle.
-
-Business documents (policies, specs, design docs) stored as OKF concepts in
-the .knowledge/knowledge/ subtree. Scoped via concept_id prefix "knowledge/".
-"""
+"""Document knowledge storage and lifecycle."""
 from __future__ import annotations
 
 import logging

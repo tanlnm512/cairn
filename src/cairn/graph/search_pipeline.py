@@ -1,9 +1,4 @@
-"""Explicit stage composition for semantic symbol search.
-
-The stages share one mutable :class:`SearchContext`. Retrieval-specific
-database access and result provenance are injected by the composition entry
-point so this module delegates to the existing graph stage implementations.
-"""
+"""Explicit stage composition for semantic symbol search."""
 from __future__ import annotations
 
 import logging

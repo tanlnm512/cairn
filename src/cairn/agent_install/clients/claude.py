@@ -1,17 +1,4 @@
-"""Claude Code (CLI) integration: config + install + uninstall, together.
-
-Claude Code reads workspace-scoped files: ``.mcp.json`` (MCP), ``.claude/``
-(skills, commands, agents), ``.claude/settings.json`` (hooks), and
-``CLAUDE.md`` (instructions). This module owns all of those for Claude Code
-so the shape that install writes matches the shape uninstall strips.
-
-Scope note: ``scope="global"`` installs the ``.claude/`` tree to ``~/.claude/``
-(which Claude Code does read for global skills/commands/agents), but the MCP
-server cannot be registered globally by writing ``~/.mcp.json`` — Claude Code
-only reads a workspace ``.mcp.json``. The global MCP equivalent is
-``claude mcp add --scope user``, so global installs register MCP via that
-subprocess when the ``claude`` CLI is present.
-"""
+"""Claude Code (CLI) integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 import shutil

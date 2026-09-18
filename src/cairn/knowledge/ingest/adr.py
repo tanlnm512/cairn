@@ -1,21 +1,4 @@
-"""ADR supersede-chain detection at ingest (D1.2).
-
-Decision records chain by convention: a ``decisions``/``adr``-family
-directory, ``NNNN-`` numbered filenames, and supersede markers in the
-body or status line ("Supersedes ADR-0001", "Superseded by ADR-0002").
-Detection turns those markers into the same relationship entries
-author-declared frontmatter produces -- ``{concept_id, relation, kind}``
-with kind ``extracted`` -- without any explicit frontmatter.
-
-Every detected edge is durable in both directions (the memory
-``_mark_superseded`` shape): the newer document carries a ``supersedes``
-entry, the older document a ``superseded-by`` entry; a marker on either
-side produces both halves. Resolution stays inside one staging run: a
-marker's number must map to an accepted, numbered document in the same
-repository and directory (or at a fed directory root, whose numbered
-stems are the ADR layout itself); markers that do not resolve are
-dropped, never staged as dangling pointers.
-"""
+"""ADR supersede-chain detection at ingest."""
 from __future__ import annotations
 
 import re

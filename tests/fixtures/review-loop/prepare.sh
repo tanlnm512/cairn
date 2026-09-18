@@ -20,6 +20,10 @@ SCENARIO="${1:-}"
 TARGET="${2:-${TMPDIR:-/tmp}/cairn-review-loop-fixture/${SCENARIO:-default}}"
 CAIRN="${CAIRN_BIN:-cairn}"
 
+if ! git --version >/dev/null 2>&1 && [ -x /usr/bin/git ]; then
+    export PATH="/usr/bin:$PATH"
+fi
+
 usage() {
     echo "usage: prepare.sh <scenario> [target-dir]; scenarios: pack, banner, guard, gate, quiet, types, capture" >&2
     exit 2

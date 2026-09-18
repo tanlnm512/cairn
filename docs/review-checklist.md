@@ -71,6 +71,8 @@ they actually ran — not just that they were claimed:
       `result.stdout`, never `result.output` (interleaves stderr)
 - [ ] Tests added or updated to cover the change (`pytest -m core` for the fast
       loop, then the full suite).
+- [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks,
+      no decision logs in code, non-verbose logging (AGENTS.md §"Comment, doc, and log style").
 
 ## 5. Change-type checks
 

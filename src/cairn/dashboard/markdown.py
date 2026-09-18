@@ -1,29 +1,4 @@
-"""Escape-first markdown renderer for the dashboard wiki view.
-
-Pure stdlib (``html`` + ``re``): importing this module must never load the
-server stack — the same guard the dashboard package is held to. Every line
-is HTML-escaped before any construct is rendered, so inline HTML never
-passes through; the whitelisted block constructs are headings, paragraphs,
-unordered lists, fenced code, and GFM pipe tables. Mermaid fences emit
-``<pre class="mermaid">`` so the wiki detail view's client-side mermaid.js
-can render them live; with JavaScript or the CDN unavailable the fence
-degrades to a visible code block.
-
-Inline constructs (one left-to-right pass over already-escaped text, code
-spans consumed atomically so link syntax inside backticks stays literal):
-
-- backtick spans wrap in ``<code>``; a span whose exact text appears in the
-  caller's ``link_map`` (wiki refs the page itself vouches for) wraps in an
-  anchor to the mapped href instead;
-- ``[label](target)`` renders as an anchor only for allowlisted targets
-  (``http(s)://``, ``/``, ``#``) — the href is emitted exclusively from the
-  allowlist match, so ``javascript:``/``data:``/relative mischief stays
-  literal text, never an attribute.
-
-Headings carry deterministic slug ids (repeats suffixed ``-1``, ``-2``, ...);
-:func:`render_markdown_with_toc` returns the h2/h3 outline with anchors
-that provably match the rendered ids (same slugger over the same text).
-"""
+"""Escape-first markdown renderer for the dashboard wiki view."""
 from __future__ import annotations
 
 import html

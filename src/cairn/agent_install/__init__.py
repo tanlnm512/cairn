@@ -1,28 +1,4 @@
-"""Agent integration installer: wires cairn into AI coding clients.
-
-Detects installed clients (Claude Code, Cursor, Droid/Factory, ZCode, agy,
-opencode, kilo, omp, Claude Desktop) and writes their per-client configs — MCP server,
-skills, slash commands, subagents/droids, rules, and hooks — with paths
-resolved at install time. Configs are *generated* (not copied), pointing at
-the installed `cairn` binary, so there are no hardcoded paths and no dependence
-on cwd at runtime.
-
-The knowledge model (per-workspace graph + .knowledge in ~/.cairn) is
-unaffected; this package only writes client-facing config files.
-
-Package layout (per the agent_install split):
-- ``_common``   — constants (CLIENTS, _SLASH_COMMANDS), shared helpers,
-                  InstallResult, the shared mcp_config_json generator.
-- ``detect``    — Detection, detect_clients, claude_desktop_config_path.
-- ``merge``     — _deep_merge / _already_installed / _entry_present /
-                  _merge_json_file / _write_file / _write_tree + strip helpers.
-- ``clients/``  — one module per client, each owning its config schema +
-                  install + uninstall (no client imports a sibling client).
-- this module   — the public ``install()`` / ``uninstall()`` dispatch +
-                  cross-tool fallback, re-exporting the public surface so
-                  ``from cairn.agent_install import install, uninstall,
-                  detect_clients, CLIENTS, Detection`` keeps working.
-"""
+"""Agent integration installer: wires cairn into AI coding clients."""
 from __future__ import annotations
 
 import json
@@ -144,42 +120,12 @@ __all__ = [
 ]
 
 
-# --- Per-client install reach (what `cairn install-agents` wires natively) ---
-# Verified against each client's documented discovery paths. The cross-tool
-# `.agents/` fallback (install_cross_tool, always written) fills gaps for the
-# clients whose docs confirm `.agents/` discovery.
-#
-#   MCP   = MCP server config written to a path the client actually reads
-#   Skill = full skill package (SKILL.md + references/ + scripts/ + evals/)
-#   Cmds  = slash commands    Subs = subagents    Hooks = lifecycle hooks
-#
-#   claude          : MCP YES | Skill YES (.claude/skills/) | Cmds YES | Subs YES | Hooks YES   [FULL]
-#   droid           : MCP YES | Skill YES (.factory/skills/) | Cmds YES | Subs YES | Hooks YES  [FULL]
-#   zcode           : MCP YES | Skill YES (.zcode/skills/) | Cmds YES | Subs YES | Hooks via git [FULL-ish]
-#   cursor          : MCP YES | Skill FALLBACK (.agents/skills/ + .cursor/skills/ discovered;
-#                     native .mdc rules written too) | Subs YES (.cursor/subagents/) | Hooks YES  [rules-rich]
-#   opencode        : MCP YES (opencode.json, `mcp` key) | Skill FALLBACK (.agents/skills/
-#                     discovered) | Cmds/Subs NOT discovered (reads .opencode/commands/ +
-#                     opencode.json agents)  [MCP + skill-via-fallback]
-#   kilo            : MCP YES (kilo.json, opencode format) | Skill/Cmds/Subs/Hooks NOT
-#                     documented for the CLI (config format is opencode-derived; skill
-#                     may reach it via the .agents/ fallback)  [MCP-only]
-#   omp             : MCP YES (.omp/mcp.json, native mcpServers schema) | Subs YES
-#                     (.omp/agents/*.md, native task-agent format) | Skill FALLBACK
-#                     (.agents/skills/ discovered via omp's `.agent[s]/skills`) |
-#                     Cmds/Hooks NOT wired (no documented cairn-relevant hook surface)
-#                     [MCP + Subs, skill-via-fallback]
-#   agy             : MCP YES (~/.gemini/config/mcp_config.json) -- Skill/Cmds/Subs/Hooks NOT
-#                     discovered (agy has no skill/command dirs)  [MCP-only]
-#   claude-desktop  : MCP YES (stdio only) -- no Skill/Cmds/Subs/Hooks (app is MCP-only)  [MCP-only]
-#
-# Net: the golden rules + tool-behaviors table reach claude/droid/zcode
-# natively, cursor/opencode/omp via the .agents/ skill fallback, and
-# claude-desktop/agy NOT AT ALL (MCP tools work, but the agent gets no skill).
+# --- Client installation report -------------------------------------------
 
 
 @dataclass
 class InstallReport:
+    """Report summarizing client integrations installed, detections, and transport used."""
     detections: list[Detection]
     results: list[InstallResult]
     cross_tool: Optional[InstallResult]

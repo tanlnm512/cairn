@@ -1,11 +1,4 @@
-"""Tiered agent memory: decisions, patterns, mistakes, workarounds.
-
-Memories flow raw -> drafts -> tribal -> archived, scored by a 6-signal
-weighted engine (graph verification, cross-session refs, confidence,
-critic, freshness, authority). New code should import from here:
-
-    from cairn.memory import create_memory, search_memory, score_memory
-"""
+"""Tiered agent memory: decisions, patterns, mistakes, workarounds."""
 from cairn.memory.promotion import search_memory
 from cairn.memory.scoring import apply_score, score_memory
 from cairn.memory.store import create_memory, store_memory

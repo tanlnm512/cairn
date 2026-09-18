@@ -1,40 +1,4 @@
-"""OKF outbox staging and the dry-run manifest.
-
-Each staged entry is one source document carrying the four upstream
-contracts, constructible in a single expression:
-
-    StagedEntry(repo, relpath, origin, (p := parse_source_doc(text)),
-                classify_doc(p, relpath, include_drafts),
-                build_identity(repo, relpath, p))
-
-``stage_outbox`` writes one OKF markdown file per accepted document at
-``knowledge/{doc_type}/{slug}.md`` (OKFConcept + to_markdown own the
-frontmatter key order; the YAML is never hand-rolled) plus
-``manifest.json``:
-
-* top level: version, generated_at, workspace (the outbox directory),
-  counts {accepted, skipped, by_type, by_repo} -- by_* count accepted
-  documents only
-* rows sorted by (repo, relpath); accepted rows carry every
-  add_document argument plus origin/repo/source_path, the body with its
-  ``Source:`` provenance line, and the staged-file path; rows also carry
-  ``relationships`` -- normalized relates_to/supersedes/superseded-by
-  frontmatter (D1.1) plus detected ADR supersede markers (D1.2) --
-  whenever the source declares or its markers resolve to any; skipped
-  rows carry source_path + skip reason and stage no file
-* each staged file's frontmatter title/type is cross-checked against
-  its row at staging time -- a mismatch raises
-
-The doc_type is slugified exactly as
-``knowledge.store.add_document`` does (``slugify(doc_type) or "general"``),
-so a workspace-config doc_type (``cairn.json`` ``ingest.classification``
-only checks non-emptiness) can never traverse out of the outbox; and
-title/body/description are routed through ``strip_private_data`` BEFORE
-the OKFConcept and manifest rows are built, so the dry-run outbox holds
-precisely what an approved run would keep (the store re-redacts
-idempotently). Provenance fields -- resource/source_path, the ``Source:``
-line, tags, affects_* -- stay verbatim.
-"""
+"""OKF outbox staging and the dry-run manifest."""
 from __future__ import annotations
 
 import json

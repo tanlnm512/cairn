@@ -1,16 +1,4 @@
-"""Pydantic models for the structuredContent outputs.
-
-When a tool is called with ``structured=True``, it returns one of these models
-instead of a formatted string. Declaring the return type as a Pydantic model
-plus ``structured_output=True`` on the ``@mcp.tool`` decorator lets FastMCP
-auto-derive ``outputSchema`` and populate the native ``structuredContent`` field
-of the MCP response -- so a client reads typed fields directly instead of
-regex-parsing prose.
-
-Each model mirrors the dict shape the corresponding ``*_data`` helper produces;
-the helper builds the model via ``model_validate`` so the structured and prose
-paths share one implementation.
-"""
+"""Pydantic models for the structuredContent outputs."""
 from __future__ import annotations
 
 from typing import List, Optional

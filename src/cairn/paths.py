@@ -1,22 +1,4 @@
-"""Path discovery for cairn: central store keyed by workspace.
-
-Resolution model (behaves like git/pre-commit — a global tool that finds its
-data relative to where you run it):
-
-  CAIRN_HOME (default ~/.cairn) holds one store per workspace, keyed
-  by a short hash of the workspace root. Each store is a directory containing
-  a `.kg` SQLite graph DB and a `.knowledge/` OKF bundle.
-
-Workspace resolution order, tried at process start:
-  1. CAIRN_WORKSPACE env var (absolute path) — highest priority
-  2. Walk up from cwd looking for a registered ancestor (a path that maps to
-     an existing store in the registry). This is how `cairn build` run from a
-     subdirectory still finds the right graph.
-  3. cwd itself — lowest priority. `cairn init` registers cwd.
-
-All three also honor CAIRN_DB / CAIRN_KNOWLEDGE as hard overrides of
-the resolved store path (used by the MCP server and tests).
-"""
+"""Path discovery for cairn: central store keyed by workspace."""
 from __future__ import annotations
 
 import hashlib

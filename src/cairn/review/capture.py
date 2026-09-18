@@ -1,13 +1,4 @@
-"""Resolved-review-comment event adapter: event payload to captured memory.
-
-The event payload carries one thread per event file:
-``{"resolved": bool, "file": str, "line": int|null, "body": str,
-"thread_url": str}``. A resolved comment is recorded through
-``capture_memory`` as a draft-tier memory keyed to the enclosing symbols
-(backtick refs, the convention ``cairn/refs.py`` extracts and verifies) or,
-when no span encloses the comment line, to the file. An open comment
-records nothing.
-"""
+"""Resolved-review-comment event adapter: event payload to captured memory."""
 
 from __future__ import annotations
 

@@ -1,9 +1,4 @@
-"""Semantic + lexical search over knowledge documents.
-
-  1. Lexical (multi-token + cross-doc expansion) -- works without semantic extra
-  2. Semantic fallback (cosine scan) -- when lexical empty
-  3. Graph bridge -- cross_repo_deps for affects_repos matches
-"""
+"""Semantic + lexical search over knowledge documents."""
 from __future__ import annotations
 
 import logging

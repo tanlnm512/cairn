@@ -1,12 +1,4 @@
-"""Procedural workflow knowledge -- ordered, queryable step sequences.
-
-A workflow is just another OKF concept (`doc_type="workflow"`) under the
-knowledge/ layer, inheriting the existing lifecycle, filtering, and CLI
-commands. This module adds only what's workflow-specific: turning an ordered
-step list into both a readable body and a structured `steps` extension
-(`add_workflow`), and resolving + returning those steps in order by title,
-slug, or concept_id (`trace_workflow`).
-"""
+"""Procedural workflow knowledge -- ordered, queryable step sequences."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional

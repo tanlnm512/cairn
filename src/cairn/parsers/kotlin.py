@@ -1,9 +1,4 @@
-"""Tree-sitter Kotlin parser.
-
-Extracts class/interface/enum/object declarations, function/method declarations,
-property declarations, call expressions, imports, and inheritance into the
-shared ParsedFile model.
-"""
+"""Tree-sitter Kotlin parser."""
 from __future__ import annotations
 
 from typing import List, Optional

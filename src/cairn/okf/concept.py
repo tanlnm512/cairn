@@ -1,15 +1,4 @@
-"""OKF (Open Knowledge Format) v0.2 concept model.
-
-An OKF concept is a markdown file with YAML frontmatter. The only required
-frontmatter field is `type`. This module provides read/write/validate for
-concepts used across Layers 2-4 (compass, wiki, memory).
-
-v0.2 wire format (spec §13.1): a concept's last content change is recorded as
-`generated: { by, at }`. Internally the "when" is still carried on the
-`timestamp` field; the translation happens only at this serialization
-boundary. Files with a bare v0.1 `timestamp:` are still read (spec §13.1
-"MAY fall back").
-"""
+"""OKF (Open Knowledge Format) v0.2 concept model."""
 from __future__ import annotations
 
 import os

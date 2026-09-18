@@ -1,11 +1,4 @@
-"""Federated semantic search across every registered workspace store.
-
-Fan-out query path: every registry entry is queried live through its own
-read-only connection, per-store rankings are fused with the existing RRF
-helper, and every hit is attributed to the workspace it came from. Nothing
-is merged or cached across stores. Surfaces (MCP tool, CLI command,
-``ask --all-repos``) are thin adapters over this module.
-"""
+"""Federated semantic search across every registered workspace store."""
 from __future__ import annotations
 
 import contextlib
@@ -29,15 +22,7 @@ _shared_embed_lock = threading.Lock()
 
 @dataclass
 class FederatedResult:
-    """One federated query's outcome.
-
-    ``hits`` is one merged ranking; each hit is a ``semantic_search``-shaped
-    dict carrying ``workspace`` (the registered workspace path it came from)
-    and a fused RRF ``score``. ``states`` maps every registered workspace to
-    ``ok`` / ``missing`` / ``locked`` / ``unindexed``; an empty ``states``
-    means no stores are registered. ``dropped`` names every store whose
-    state is not ``ok``.
-    """
+    """Aggregated outcome of a federated search across registered stores."""
 
     query: str
     hits: List[dict] = field(default_factory=list)

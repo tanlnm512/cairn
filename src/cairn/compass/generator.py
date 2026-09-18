@@ -1,22 +1,4 @@
-"""Compass file generator: a graph-assisted 5-question framework.
-
-For each module (package/directory), generates a 25-35 line compass file with:
-  1. What Does This Module Do?
-  2. Common Modification Patterns
-  3. Build-Failure Patterns (derived from graph facts)
-  4. Cross-Module Dependencies
-  5. Tribal Knowledge
-
-Uses the L1 graph for all facts (symbols, key files, cross-module deps). When an
-LLM is available it synthesizes richer prose; otherwise a deterministic
-graph-driven template is produced. Either way, the critic fact-checks against L1.
-
-Two modes:
-  - Deterministic (default): graph template, no LLM.
-  - LLM-assisted (use_llm=True): generator->critic->revise loop, agent-decoupled.
-    Facts always come from the graph; the agent only synthesizes prose. The
-    deterministic critic runs after every revision and is the sole gatekeeper.
-"""
+"""Compass file generator: a graph-assisted 5-question framework."""
 from __future__ import annotations
 
 import sqlite3
@@ -566,9 +548,7 @@ def generate_flow_compass(
         entry: the entry-point symbol name (human-readable label).
         entry_id: optional symbol database ID for collision-safe resolution.
         resource: optional override for the concept's ``resource`` field.
-            Defaults to ``entry``. For colliding names, pass a disambiguated
-            key (e.g. ``handleCommand#ChatRoomViewModel.kt``) so coverage
-            tracking in :func:`detect_flow_gaps` tracks each independently.
+            Defaults to ``entry``. For colliding names, pass a disambiguated key.
         title: optional override for the concept's ``title`` field. Defaults
             to ``Flow: {entry}``. For collisions, pass a qualified title.
     """

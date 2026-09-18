@@ -1,17 +1,4 @@
-"""Resolve a skill selector to candidate symbols via read-only graph queries.
-
-Selector forms (whitespace-separated tokens in one selector string):
-- module name or directory prefix (``pkg_a``, ``pkg_a/``): every symbol
-  whose file lives under that path, segment-anchored, matching the
-  compass module semantics
-- explicit symbol list: exact symbol-name or qualified-name match
-
-A token is resolved as an exact symbol first; a bare token that names no
-symbol is then treated as a module path. Exact-symbol matching excludes
-module-kind rows: a module symbol is a packaging artifact, not API
-surface, so a token naming a module resolves to the module's contents
-via module-path resolution instead of the lone module symbol.
-"""
+"""Resolve a skill selector to candidate symbols via read-only graph queries."""
 from __future__ import annotations
 
 import sqlite3

@@ -1,18 +1,4 @@
-"""Import-aware edge resolver.
-
-Resolves an edge to exactly one candidate across priority tiers, leaving
-otherwise-unresolved edges as ``resolution='ambiguous'`` (precise by default).
-
-Tiers: TYPE-AWARE (receiver dispatch) -> SAME-FILE -> IMPORT-AWARE ->
-SAME-REPO -> GLOBAL -> AMBIGUOUS.
-Resolution is decided per tier: one candidate -> answer; many -> mark
-ambiguous and stop; zero -> try the next broader tier. A type-aware
-multi-match is the exception: it narrows by the same-file scope first and
-otherwise falls through, because the members index is global and
-same-named types collide there.
-Two levers bracket the walk: a pre-walk rewrite of names bound by an aliased
-import, and an arity tiebreak at the branches that would otherwise abstain.
-"""
+"""Import-aware edge resolver."""
 from __future__ import annotations
 
 import sqlite3

@@ -1,15 +1,4 @@
-"""Precomputed dataflow index for public/exported symbols.
-
-Materialises within-repo impact chains and cross-repo consumer repos for each
-public symbol into the `dataflow` table. Built by build_dataflow_index();
-queried via get_dataflow(). Fully deterministic from the code graph.
-
-Also owns the `transitive_edges` closure table: build_transitive_closure()
-materialises multi-hop caller→callee reachability to a fixed depth, and
-impact_from_closure() answers ancestor ("who reaches this symbol") queries
-from it in one indexed statement -- the fast path impact_analysis() routes to
-when its preconditions hold.
-"""
+"""Precomputed dataflow index for public/exported symbols."""
 from __future__ import annotations
 
 import json

@@ -1,9 +1,4 @@
-"""Base parser interface and shared data model.
-
-All language parsers implement BaseParser.parse(path) -> ParsedFile.
-The ParsedFile contains symbols, edges, and imports in a language-agnostic
-shape that the graph builder writes into SQLite.
-"""
+"""Base parser interface and shared data model."""
 from __future__ import annotations
 
 import abc
@@ -227,16 +222,7 @@ class TreeSitterParserBase:
 
 
 class ScopeTypeTracker:
-    """Scope-ordered var->type tracker for receiver-type inference.
-
-    A stack of {name: type} scopes mirroring lexical block nesting:
-    push() on block entry, pop() on exit, record() on typed declarations
-    and assignments, resolve() innermost-first. resolve() returns None
-    whenever the binding is not unambiguous -- an unrecorded name, a
-    reassignment to a different type, or an intervening shadowing
-    declaration -- so callers degrade to "unknown receiver" instead of
-    guessing.
-    """
+    """Scope-ordered variable to type tracker for receiver-type inference."""
 
     def __init__(self) -> None:
         # Innermost scope last. {name: None} marks a name whose recorded

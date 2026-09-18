@@ -1,16 +1,4 @@
-"""Repo scanner: discover repos and enumerate source files by language.
-
-A file is indexed only if it passes ALL four filter layers:
-  A. not under a DEFAULT_SKIP_DIRS directory
-  B. not matched by a .gitignore (root + nested, gitwildmatch semantics)
-  C. not matched by cairn.json `exclude` (repo-root-relative globs)
-  D. not larger than MAX_FILE_SIZE (default 1 MB)
-
-`include` (cairn.json) overrides A/B/C: a matched path is indexed even if a
-skip dir or gitignore would have excluded it. Skips are recorded in the
-`skipped_files` table (reason-tagged). `scan_repo` is a pure read of the
-filesystem and does not touch the DB.
-"""
+"""Repo scanner: discover repos and enumerate source files by language."""
 from __future__ import annotations
 
 import hashlib

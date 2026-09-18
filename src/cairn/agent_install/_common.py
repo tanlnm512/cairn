@@ -38,16 +38,7 @@ _MARKER = "cairn"  # used to identify our entries when merging/uninstalling
 
 @dataclass
 class InstallResult:
-    """Outcome of one installer run.
-
-    ``verification_status``/``verification_detail`` carry the
-    post-install spawn-probe verdict: ``verification_status`` is one of
-    "pass" / "fail" / "skipped" (default "skipped" -- verdicts are set only
-    by install()'s verify loop for file-written stdio registrations;
-    dry_run, SSE, and CLI-registered clients stay skipped). On
-    "fail", ``verification_detail`` names both stores (resolved and
-    intended). Defaulted because InstallResult has ~24 construction sites.
-    """
+    """Outcome of an agent installer run, including written paths and verification verdict."""
 
     client: str
     written: list[str] = field(default_factory=list)

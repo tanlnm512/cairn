@@ -1,9 +1,4 @@
-"""L1 federation MCP tool: federated_search.
-
-Thin adapter over ``cairn.graph.federation``: every registered workspace
-store is queried live through its own read-only connection and the merged
-ranking carries per-repo attribution.
-"""
+"""L1 federation MCP tool: federated_search."""
 from __future__ import annotations
 
 from mcp.types import ToolAnnotations

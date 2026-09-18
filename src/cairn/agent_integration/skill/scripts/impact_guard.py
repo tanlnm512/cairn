@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Run `cairn impact` and guard against name-collision blowups (Golden Rule 6).
-
-`impact_analysis`/`cairn impact` traverses callers recursively by name. Common
-or lifecycle names (`get`, `create`, `onCreate`, `render`, ...) can match
-hundreds or thousands of unrelated symbols across repos, producing a total
-that looks like real blast radius but is actually noise. The traversal
-result already carries a `cycles` field naming the colliding symbols -- this
-script checks it so you don't have to eyeball a huge dump every time.
-
-Usage:
-    impact_guard.py <symbol> [--depth N] [--threshold N] [--fuzzy]
-
-Exit code is always 0 on a successful query (collision or not) so it's safe
-to call from an agent without extra error handling; a non-zero `cairn impact`
-failure (bad symbol, no graph, etc.) is passed through.
-"""
+"""Run `cairn impact` and guard against name-collision blowups."""
 from __future__ import annotations
 
 import argparse

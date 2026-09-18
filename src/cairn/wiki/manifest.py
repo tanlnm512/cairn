@@ -1,28 +1,4 @@
-"""Wiki manifest: incremental-regeneration state for the page plan.
-
-This file is the PLAN kind of the two-kind wiki contract. It records
-pipeline intent only: which pages should exist (the plan entry: identity,
-title/description, module, seeds, input hash) and where their queue work
-stands (``task_id`` and the cumulative ``queue_attempts`` counter). It never
-describes content — no bodies, no provenance, no lifecycle verdicts. What
-exists is decided solely by promoted content concepts
-(``wiki/pages/{repo}/{page_id}``, see :mod:`cairn.wiki.lifecycle`), and
-lifecycle state is derived at read time, never stored.
-
-A JSON document at ``<knowledge>/_wiki/manifest.json`` with a schema
-marker, keyed by ``{repo}/{page_id}``. Older documents upgrade in memory on
-load: a schema-1 document (keyed by page id alone) is re-keyed by
-recovering the repo from the row task's facts, else the promoted concept
-path, else the row is dropped with a warning (a later generate re-plans
-it); schema-2 rows carried ``state``/``commit_sha``/``attempts``, which the
-plan kind no longer owns — normalization strips the retired fields and
-renames ``attempts`` to ``queue_attempts``. Loads never write back; the
-next save persists the current schema. The ``_wiki/`` directory holds no
-``.md`` files, so ``OKFBundle.list_concepts`` never lists the manifest as
-a concept. Writes are atomic: mkstemp inside the target directory, flush
-+ fsync before ``os.replace``, unlink the temp file on any failure,
-``False`` on ``OSError``.
-"""
+"""Wiki manifest: incremental-regeneration state for the page plan."""
 from __future__ import annotations
 
 import json

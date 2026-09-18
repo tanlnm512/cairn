@@ -1,44 +1,4 @@
-"""Derived knowledge index (D1): rebuild knowledge_edges / knowledge_doc_refs.
-
-OKF frontmatter is the durable record; these two SQLite tables are a
-rebuildable cache over it. Every :func:`rebuild_knowledge_index` call
-recomputes both tables from the current bundle contents:
-
-- declared edges: the ``relates_to`` extension, relation/kind as declared
-- derived edges: tag / affects_modules overlap, materialized as ``kind:
-  derived`` rows in both directions (the edges ``search_knowledge``
-  expansion boosts, alongside declared extracted edges; inferred edges
-  never boost)
-- doc refs: entries carrying a ``ref`` in the ``sources``/``verified``
-  families
-
-Only declared edges whose target resolves to an existing knowledge concept
-are indexed; dangling frontmatter pointers stay in the frontmatter (the
-durable record) but never reach the index -- and are reported back by the
-rebuild (``dangling`` in the return dict) and by the ingest dry-run
-(:func:`dangling_manifest_pointers`) so a declared link that fails to
-index is visible instead of silent. A pointer that is not a concept
-id may still name its target by source path: ingest records that path as
-the promoted doc's ``resource``, so such pointers resolve through the
-bundle's resource map -- as the bare path, or in its resource-prefixed
-form (fed documents promote ``workspace/<relpath>`` resources, so a bare
-repo-relative pointer names the same file). The prefixed form must match
-a UNIQUE basename: several resources sharing the pointer's basename
-cannot be told apart, so nothing is picked and the pointer is reported
-through the same dangling channel with reason ``ambiguous pointer`` and
-the candidate paths. A pair that already has a declared edge in either
-direction gets no derived rows -- the explicit record wins.
-
-All ids are normalized to the bare bundle-relative concept_id shape via
-:func:`cairn.knowledge.store.normalize_doc_id` before storage, matching the
-``knowledge_embeddings.doc_id`` convention, so path-shaped bundle reads and
-bare frontmatter pointers correlate.
-
-Rebuild is idempotent: identical bundle contents produce identical table
-contents, including ``created_at`` stamps (preserved for pre-existing edge
-keys). The function writes on the caller's connection and never commits --
-callers own the transaction boundary.
-"""
+"""Derived knowledge index: rebuild knowledge_edges / knowledge_doc_refs."""
 from __future__ import annotations
 
 import logging

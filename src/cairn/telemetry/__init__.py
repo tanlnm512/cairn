@@ -1,26 +1,4 @@
-"""Public API for cairn telemetry (spec §6.1).
-
-Telemetry is analytics, not correctness. Every call here is best-effort: a
-sink failure never raises into a caller, never holds a user lock, and never
-blocks a tool call (spec §5.4/§5.6). The shared sink (:mod:`.sink`) owns one
-daemon flush thread per process; :mod:`.events` owns the emission API and the
-event-name catalog (spec §6.4).
-
-Typical use::
-
-    from cairn.telemetry import emit, ANN_FALLBACK
-    emit(ANN_FALLBACK, reason="load_failed")
-
-Gates:
-  * ``CAIRN_TELEMETRY=off`` -> :func:`emit` / :func:`warn_once` become no-ops
-    (near-zero overhead; spec §6.1).
-  * ``CAIRN_READ_ONLY`` truthy -> :func:`emit` skips the write (a mode=ro
-    daemon would fail every flush; mirrors ``metric_buffering._log_metric``).
-
-:func:`configure_conn` injects the writable-connection factory. At server boot
-``metric_buffering.configure_conn`` mirrors into here, so the single existing
-boot call wires both ``tool_metrics`` and ``events``.
-"""
+"""Public API for cairn telemetry."""
 
 from __future__ import annotations
 

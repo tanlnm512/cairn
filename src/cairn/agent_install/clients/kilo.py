@@ -1,13 +1,4 @@
-"""kilo (Kilo Code CLI) integration: config + install + uninstall, together.
-
-kilo CLI schema (https://kilo.ai/docs/automate/mcp/using-in-cli) — the
-opencode config format: ``kilo.json`` at the project root (or
-``~/.config/kilo/kilo.json`` globally), MCP servers under a top-level
-``"mcp"`` key keyed by name: ``{"mcp": {"<name>": {"type": "local",
-"command": [...]} or {"type": "remote", "url": ...}}}``. The CLI also
-accepts ``kilo.jsonc``/``config.json`` globally and ``.kilo/kilo.json``
-per-project; we write the recommended names only.
-"""
+"""kilo (Kilo Code CLI) integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 from pathlib import Path

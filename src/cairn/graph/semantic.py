@@ -1,17 +1,4 @@
-"""Semantic (embedding-based) symbol search.
-
-Two-stage retrieval:
-  1. Cosine scan (or sqlite-vec ANN) over the embeddings table (UNIONed
-     with the ``embeddings_mv`` multi-vector kinds under
-     ``params.multivector``), optionally blended with BM25 via Reciprocal
-     Rank Fusion.
-  2. Optional cross-encoder rerank stage, skipped when the fused (RRF) ranking
-     is already decisive (``_fused_confident`` -- see the gating note on
-     ``semantic_search``).
-
-Imports vector math from ``vector_math``, BM25 search from ``lexical``, and
-1-hop traversal from ``traversal`` for the ``include_callers=True`` enrichment.
-"""
+"""Semantic (embedding-based) symbol search."""
 from __future__ import annotations
 
 import logging
@@ -289,12 +276,7 @@ def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Explicit retrieval tunables
-#
-# The sweep/eval path is in-process, so per-combo environment mutation would
-# leak state across lever combinations and make results order-dependent.
-# This frozen object is the explicit injection channel instead: every knob
-# the quality sweep needs to turn rides through here, never through env.
+# Retrieval tunables
 # ---------------------------------------------------------------------------
 
 
@@ -302,103 +284,8 @@ def _merge_ann_candidates(base: List[dict], extra: List[dict]) -> List[dict]:
 class RetrievalParams:
     """Immutable per-call retrieval tunables for ``semantic_search``.
 
-    ``None``-means-default is the whole contract
-    (defaults-preserving rule): a ``None`` field resolves to exactly the value
-    today's code uses — the function-arg default, the hard-coded constant, or
-    the env-gated setting — so ``RetrievalParams()`` and ``params=None`` are
-    behaviorally identical, and the sweep's all-levers-off row is today's
-    retrieval, not an approximation of it.
-
-    Precedence: a non-``None`` field overrides the corresponding scalar arg
-    (``dense_threshold`` over ``threshold``, ``rerank`` over ``rerank``).
-    Legitimate callers pass either the scalar or the object, never both;
-    when both are set the field wins.
-
-    Fields (each ``None`` resolves to today's value):
-
-    * ``dense_threshold`` — cosine cutoff for vector candidates
-      (``threshold`` arg default ``0.3``).
-    * ``rrf_k`` — RRF constant (hard-coded ``60`` today).
-    * ``rrf_weights`` — ``(dense, sparse)`` relative RRF weights. ``None``
-      keeps ``rrf_fuse``'s equal weights. The FIELD order is
-      ``(dense, sparse)`` while the call site fuses ``[bm25, vec]`` — the
-      reorder happens at the call site, never in the caller.
-    * ``sparse_limit`` — BM25 fetch size (hard-coded ``30`` today).
-    * ``sparse_top_n`` — BM25-leg rank-position cutoff applied before
-      fusion: keep only the first N ids of the fetched
-      BM25 list in ``search_symbols``' best-first order. ``None`` keeps
-      today's behavior (the list as fetched, already capped by
-      ``sparse_limit``); ``0`` empties the sparse leg (the sweep's
-      sparse-off point); negative values clamp to ``0`` (see the wiring
-      comment). A position cutoff, NOT a score threshold
-      (``sparse_min_score``), by deliberate choice: SQLite FTS5's
-      ``bm25()`` rank is NEGATIVE with better = more negative (inverted
-      "min score" semantics), and ``search_symbols``' LIKE-fallback /
-      substring-union rows (lexical.py) carry no ``rank`` column at all —
-      a score filter would behave path-dependently. A position cutoff is
-      scale-free and composes with RRF, which consumes ranks, not scores.
-    * ``dense_pool`` — brute-force cosine scan fetch cap (hard-coded
-      ``50000`` today; ignored on the native ANN path, which sizes itself
-      by the rerank pool).
-    * ``rerank_pool`` — candidate pool carried into the rerank stage
-      (computed ``max(limit * 5, 50)`` when the stage is armed, else
-      ``limit``). A non-``None`` value replaces the computed size in both
-      branches.
-    * ``rerank`` — the rerank-stage override, same semantics as the
-      per-call ``rerank`` arg: ``None`` = auto (env-gated plus the
-      confidence gate), ``True`` = force past the gate (``CAIRN_RERANK=0``
-      still wins), ``False`` = never.
-    * ``enrich`` — query enrichment: ``True`` computes
-      ``query_enrich.enrich(query)`` ONCE at the ``semantic_search``
-      boundary and feeds BOTH legs from that single object — the one
-      ``embed_query`` call embeds ``dense_query`` (the original text with
-      each extracted identifier appended once), and the BM25 fetch
-      consumes ``sparse_query`` as an OR-of-prefix term query
-      (``lexical.search_symbols_terms``) instead of the raw query,
-      fixing the empty-BM25 defect for sentence queries. The confidence
-      gate's ``_exact_name_hit`` corroboration still sees the RAW query —
-      gate inputs shift only through the fused ranking. ``None``/``False``
-      keeps today's exact behavior (the flag is carried, not defaulted on).
-    * ``enrich_idf`` — IDF-aware enrichment: ``True`` makes
-      the ONE ``enrich`` call corpus-aware by injecting a ``term_df``
-      lookup built HERE (one indexed PRIMARY-KEY SELECT per distinct
-      case-folded query token, memoized -- O(#query tokens)
-      bound), so terms prevalent in > 0.90 of the corpus's symbols are
-      dropped from the enriched legs. Inert unless ``enrich`` is also on.
-      ``None``/``False`` keeps the enrichment DF-blind: no lookup is
-      built, no ``term_df`` SELECT runs, and the ``enrich`` call is
-      byte-identical to today's single-argument form.
-    * ``gate_min_margin`` — rerank confidence-gate margin override
-      (``None`` = env ``CAIRN_RERANK_MIN_MARGIN`` or the calibrated
-      ``0.45``; a non-``None`` value is clamped to ``[0, 1]`` exactly like
-      the env path).
-    * ``multivector`` — multi-vector dense leg: ``True`` UNIONs
-      the brute scan's rows with the parallel ``embeddings_mv`` table's
-      same-model ``name``/``docstring`` vectors, and the ANN leg queries
-      the ``vecmv_`` index beside the base ``vec_`` index; each leg
-      consolidates every symbol to ONE entry at its MAX score across
-      vectors. ``None``/``False`` never reads ``embeddings_mv`` -- the
-      brute SQL, the single-index ANN query, and every result byte are
-      today's single-vector behavior (the sweep's all-levers-off
-      integrity row).
-    * ``prf`` — pseudo-relevance feedback second pass:
-      ``True`` re-runs the full pass (both legs + fusion) ONCE at the
-      post-fusion seam with an RM3-expanded query: the top ``prf_docs``
-      fused candidates' text (chunk, ``name`` + ``qualified_name``
-      fallback) feeds ``prf.expand`` with the ``term_df`` DF lookup, the
-      expanded ``dense_query`` gets the call's SECOND ``embed_query`` --
-      the explicit exception to the one-embed-call doctrine -- and
-      the expansion terms join the sparse leg's term list. PRF REPLACES
-      the rerank stage (replaces-not-stacks): a PRF combo forces
-      the stage off regardless of ``rerank``/``CAIRN_RERANK``, so the
-      wider rerank pool is never fetched and the cross-encoder never
-      runs. An empty expansion (or empty first pass) skips the second
-      pass -- zero extra embeds, first-pass results unchanged.
-    * ``prf_docs`` / ``prf_terms`` / ``prf_lambda`` — the RM3 knobs
-      (``None`` = the Anserini anchors: 10 feedback docs, 10
-      terms, λ 0.5). ``prf_docs <= 0`` yields empty feedback (second
-      pass skipped); ``prf_lambda`` outside [0, 1] propagates
-      ``prf.expand``'s ``ValueError``.
+    Fields default to None, which preserves standard retrieval behavior.
+    Non-None fields override corresponding scalar arguments and environment settings.
     """
 
     dense_threshold: Optional[float] = None

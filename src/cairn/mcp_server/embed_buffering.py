@@ -1,19 +1,4 @@
-"""Background buffered embedding for captured/evolved memory concepts.
-
-Embedding a memory needs a genuinely writable SQL connection (an INSERT into
-memory_embeddings), which would contend with a concurrent `cairn build`/
-`update` if done synchronously inside the MCP tool call under the read-only
-SSE daemon. Buffering + a background flush thread (same pattern as
-metric_buffering.py) removes that write from the tool call's hot path:
-capture/evolve enqueue a concept_id, a flusher thread drains the queue on its
-own writable connection periodically, retrying on failure instead of raising.
-
-Unlike metric_buffering, this does NOT skip under CAIRN_READ_ONLY -- a
-captured memory should still get embedded on the read-only SSE daemon (that
-is the deployment mode this exists for); the injected conn_factory is
-responsible for returning a writable connection regardless of the server's
-read-only mode (see server.py's wiring via `_rw_conn`).
-"""
+"""Background buffered embedding for captured/evolved memory concepts."""
 from __future__ import annotations
 
 import atexit

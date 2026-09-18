@@ -1,11 +1,4 @@
-"""Stable identity derivation for ingested source documents.
-
-Path-derived stable ID, the
-``"{stable ID} — {title}"`` display title, deterministic slugs with a
-``({repo})`` suffix on collisions (numbered when the suffix itself
-collides), the source-tag union, and real description extraction (never
-the title).
-"""
+"""Stable identity derivation for ingested source documents."""
 from __future__ import annotations
 
 import hashlib

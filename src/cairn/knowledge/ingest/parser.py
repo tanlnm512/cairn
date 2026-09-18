@@ -1,10 +1,4 @@
-"""Source-document parsing for knowledge ingestion.
-
-Reads metadata from YAML frontmatter (falling back to a minimal line-based
-parse when the YAML is malformed) and from inline status markers; the body
-is returned with the frontmatter block stripped. Parsing only — doc-type
-classification lives in the classifier module.
-"""
+"""Source-document parsing for knowledge ingestion."""
 from __future__ import annotations
 
 import re
