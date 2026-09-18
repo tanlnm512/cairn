@@ -86,19 +86,21 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 |---|---|
 | `agent_install/` | wires cairn into AI clients (MCP config, skills, commands, subagents, hooks) |
 | `agent_integration/` | template assets shipped as package data (SKILL.md, references, commands) |
-| `bench/` | performance/scalability benchmark suites (stdlib-only) |
+| `bench/` | performance/scalability benchmark suites (stdlib-only) + the pinned SWE-bench arm (`swe_bench.py` loader, `swe_bench_suite.py` two-arm runner; `datasets` rides the `bench` extra) |
 | `cli/` | all `cairn` commands (Click) |
 | `compass/` | module navigation guides (deterministic or LLM-assisted via task queue) |
-| `dashboard/` | read-only local web dashboard |
-| `graph/` | layer-1 code graph: build, query, resolve, embeddings, ANN |
+| `dashboard/` | read-only local web dashboard; `routes/editor.py` serves the frozen editor JSON contract consumed by the VS Code extension |
+| `graph/` | layer-1 code graph: build, query, resolve, embeddings, ANN; `taint.py` (source/sink registry + propagation) and `federation.py` (cross-store fan-out/RRF fusion) |
 | `hooks/` | git hooks and lifecycle hooks |
 | `knowledge/` | document knowledge: staged ingestion (`knowledge/ingest/`) + semantic retrieval |
 | `llm/` | agent-decoupled LLM task queue |
 | `mcp_server/` | the 25-tool MCP surface |
-| `memory/` | tiered agent memory (raw → drafts → tribal → archived) |
+| `memory/` | tiered agent memory (raw → drafts → tribal → archived) with bi-temporal validity and per-agent sharing (`agent_symbols`) |
 | `okf/` | Open Knowledge Format concept model and bundle |
+| `pack.py` / `pack_enrich.py` | the `cairn pack` pipeline (seed/expand/rank/fit) and its enrichment renderers |
 | `parsers/` | tree-sitter parsers (15 languages) |
 | `retrieval/` | retrieval protocols + the batched vector scan (the Retriever / Fusion / Reranker stages live in `graph/`) |
+| `review/` | the review loop engine: diff packs, pre-submit guard, comment-to-symbol capture |
 | `telemetry/` | best-effort local telemetry sink + optional OTLP export |
 | `utils/` | shared helpers (git inspection, logging) |
 | `viz/` | Mermaid / DOT / JSON / self-contained HTML graph renderers |
