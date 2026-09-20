@@ -1,8 +1,7 @@
 # Spec: scip-indexing-v2
 
-**Status**: draft          <!-- draft while writing → approved at the approve gate
-                                (explicit user sign-off — a human gate, never
-                                auto-satisfied) → active once the first task spawns
+**Status**: approved      <!-- approved at the approve gate 2026-09-20 (explicit
+                                user sign-off) → active once the first task spawns
                                 → done when all tasks are ticked and `check.py`
                                 re-runs green -->
 **Created**: 2026-09-20
