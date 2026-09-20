@@ -54,3 +54,4 @@ Thumbs.db
 
 # ---- ZCode session artifacts ----
 .zcode/
+.video_agent/plugin_root
