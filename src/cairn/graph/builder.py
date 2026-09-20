@@ -304,7 +304,10 @@ def _apply_scip_overlay(
     try:
         from .config import load_config
 
-        indexes = (load_config(workspace).scip or {}).get("indexes") or {}
+        raw = (load_config(workspace).scip or {}).get("indexes")
+        indexes: Dict[str, str] = (
+            {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        )
     except Exception:
         return None
     if not indexes:

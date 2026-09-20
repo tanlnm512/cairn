@@ -19,7 +19,7 @@ from cairn.graph.dataflow import build_transitive_closure
 from cairn.graph.stats import get_stats
 from cairn.parsers.scip_importer import scip_available
 
-from tests.scip_eval_harness import REPORT_SCHEMA, run_ab_eval
+from tests.scip_eval_harness import REPORT_SCHEMA, _materialize, run_ab_eval
 
 FIXTURES = Path(__file__).parent / "fixtures" / "scip-indexing"
 HEAVY = FIXTURES / "heavy"
@@ -96,7 +96,8 @@ def test_closure_builds_within_fixture_budget(tmp_path):
     """Full builds of both twins, closure included, stay seconds-scale with a
     non-empty closure and the index-on edge uplift present (TC-018)."""
     walls = {}
-    for name, ws in (("on", HEAVY), ("off", HEAVY_OFF)):
+    for name, src in (("on", HEAVY), ("off", HEAVY_OFF)):
+        ws = _materialize(src, tmp_path, f"budget-{name}-ws")
         db = str(tmp_path / f"budget-{name}.db")
         start = time.perf_counter()
         summary = build_graph(workspace=str(ws), db_path=db)

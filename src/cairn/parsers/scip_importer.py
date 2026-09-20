@@ -162,7 +162,7 @@ def _match_document_path(
 def _parse_index(conn: sqlite3.Connection, scip_path: str):
     """Parsed Index protobuf; a corrupt file records scip_parse_error and aborts before any write."""
     try:
-        index = _scip.Index()
+        index = _scip.Index()  # type: ignore[attr-defined]  # dynamic gencode module
         index.ParseFromString(Path(scip_path).read_bytes())
         return index
     except _ProtoDecodeError as e:
@@ -216,7 +216,10 @@ def _plan_document(
             continue
         total += 1
         span = _occurrence_span(occ)
-        source_id = _innermost(spans, span) if span is not None else None
+        if span is None:
+            record["unjoined_occurrences"] += 1
+            continue
+        source_id = _innermost(spans, span)
         if source_id is None:
             record["unjoined_occurrences"] += 1
             continue
@@ -342,8 +345,8 @@ def import_scip_file(conn: sqlite3.Connection, scip_path: str, workspace: str) -
     cur = conn.cursor()
     kept_rows: List[Tuple[Any, ...]] = []
     for rel, anomalous, rows in planned:
-        file_id = covered_file_ids.get(rel)
-        if file_id is None:
+        matched_id: Optional[str] = covered_file_ids.get(rel)
+        if matched_id is None:
             continue
         if anomalous:
             cur.execute(
@@ -352,10 +355,10 @@ def import_scip_file(conn: sqlite3.Connection, scip_path: str, workspace: str) -
             )
             record["join_anomalies"] += 1
             continue
-        disagreements, upgrades = _count_disagreements(conn, file_id, rows)
+        disagreements, upgrades = _count_disagreements(conn, matched_id, rows)
         record["disagreements"] += disagreements
         record["upgrades"] += upgrades
-        cur.execute(_DELETE_FILE_CALLREF_EDGES, (file_id,))
+        cur.execute(_DELETE_FILE_CALLREF_EDGES, (matched_id,))
         kept_rows.extend(rows)
     if kept_rows:
         cur.executemany(_INSERT_EDGE, kept_rows)
