@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 Status reflects code state per [survey.md](survey.md), not intent.
-**Before-audit**: pending — the orchestrator writes `passed @ <sha>` here
+**Before-audit**: passed @ d0f401f (2026-09-20: six gates — dependency chains name real consumed interfaces, check.py 0 fail; full suite 3897 passed / 2 skipped this session on the same tree; clean tree except untracked .video_agent/ plugin marker, unrelated, noted for scope-diff adjudication; 0/21 already-done (8 PARTIAL tasks carry quoted gaps); branch feat/scip-indexing-v2 anchored at docs commit d0f401f; constitution C-01..C-04 complied — C-03 decisions in tech-spec D-###s)
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
