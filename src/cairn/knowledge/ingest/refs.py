@@ -1,12 +1,4 @@
-"""Doc-to-code reference verification at ingest (D1.3).
-
-Backticked file paths and symbols in a document body resolve against the
-L1 graph through :mod:`cairn.refs` -- the wiki verified-sources pattern
-(``wiki/sources.py``). Only refs that resolve come back, as
-``{ref, kind: file|symbol, verified: true}`` entries for the OKF
-concept's ``verified`` family, so the durable record and the derived
-``knowledge_doc_refs`` table never hold a ref the graph cannot back.
-"""
+"""Doc-to-code reference verification at ingest."""
 from __future__ import annotations
 
 import sqlite3

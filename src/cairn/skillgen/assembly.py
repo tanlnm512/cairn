@@ -1,12 +1,4 @@
-"""Assemble a skill draft from compass, ranked symbols, and memory (FR-001).
-
-Symbol selection is centrality-ranked top-K (FR-002): ``rank_candidates``
-orders the resolved candidates score desc then qualified name asc and drops
-any whose definition does not resolve in the graph; ``top_k`` caps the
-list. ``ranking_tier`` is the tier that scored the symbols
-(``"closure"``/``"degree"``); ``"unranked"`` only when the resolution has
-no candidates to rank.
-"""
+"""Assemble a skill draft from compass, ranked symbols, and memory (FR-001)."""
 from __future__ import annotations
 
 import sqlite3
@@ -27,13 +19,7 @@ __all__ = ["DEFAULT_TOP_K", "DEFAULT_TOP_N", "SkillDraft", "assemble_draft"]
 
 @dataclass
 class SkillDraft:
-    """Assembled skill draft consumed by the emit step.
-
-    ``symbols`` are qualified names in ranked order (centrality score desc,
-    qualified name asc); ``ranking_tier`` names the tier that produced that
-    order; ``memories`` entries are each a memory title followed by its
-    body; ``compass_body`` carries the compass concept's own headings.
-    """
+    """Assembled skill draft containing module, compass, ranked symbols, and memories."""
 
     module: str
     compass_body: str

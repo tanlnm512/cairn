@@ -1,18 +1,4 @@
-"""Rank skill-candidate symbols by structural centrality in two tiers.
-
-Contract: ``rank_candidates(conn, candidates) -> RankedSymbols`` returns the
-candidates whose definitions resolve in the graph, ordered by score desc
-then qualified name asc (a total order), plus the tier that scored them:
-
-- ``closure``: transitive impact — the count of distinct symbols that reach
-  the candidate in the ``transitive_edges`` store built by
-  :func:`cairn.graph.dataflow.build_transitive_closure` — used when
-  :func:`cairn.graph.dataflow.closure_available` holds.
-- ``degree``: direct in/out degree per symbol from the ``build_repo_map``
-  projection rows — the degrade tier for closure-absent workspaces.
-
-Read-only: issues SELECTs only; never mutates closure or graph tables.
-"""
+"""Rank skill-candidate symbols by structural centrality in two tiers."""
 from __future__ import annotations
 
 import sqlite3

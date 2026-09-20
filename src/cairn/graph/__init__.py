@@ -1,20 +1,4 @@
-"""Layer 1 code graph: build, query, and resolve over a SQLite symbol/edge store.
-
-Public API for read-side graph operations. New code should import from here:
-
-    from cairn.graph import find_definition, get_callers, semantic_search
-
-Internal split modules (traversal, lexical, cross_repo, stats, explore,
-semantic, vector_math) hold the actual implementations; the ``queries``
-shim re-exports the same names for backward compatibility.
-
-A small set of shared text/vector primitives (``simple_tokenize``,
-``BASE_STOP_WORDS``, ``l2norm``, ``dot``, ``rrf_fuse``) and the ``embeddings``
-module are also exposed here as the public surface for higher layers
-(knowledge L5, memory L4) to consume without reaching into submodule
-internals. They load lazily via ``__getattr__`` so a structural-only import
-stays embeddings-free.
-"""
+"""Layer 1 code graph: build, query, and resolve over a SQLite symbol/edge store."""
 from .cross_repo import cross_repo_deps
 from .explore import explore
 from .lexical import search_symbols

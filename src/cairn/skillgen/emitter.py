@@ -1,11 +1,4 @@
-"""SKILL.md emitter: skillgen's single format-aware layer.
-
-Renders the skill layout clients already load -- ``---``-fenced YAML
-frontmatter (``name``, ``description``) over a markdown body, mirroring the
-static package ``cairn/agent_integration/skill/SKILL.md`` -- plus the
-default landing path and an optional ``references/`` split for long
-sections.
-"""
+"""SKILL.md emitter: skillgen's single format-aware layer."""
 from __future__ import annotations
 
 import re

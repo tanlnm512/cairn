@@ -1,10 +1,4 @@
-"""Shared query-tokenization helpers.
-
-Provides a base stop-word list plus a split-on-non-alphanumeric /
-filter-stop-words / dedup loop. Callers that need extra behavior (CamelCase
-symbol extraction, stemming, extra domain stop words) layer that on top of
-`simple_tokenize` rather than re-copying it.
-"""
+"""Shared query-tokenization helpers."""
 from __future__ import annotations
 
 import re

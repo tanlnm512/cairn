@@ -266,6 +266,22 @@ def _seed_name_collision(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _seed_same_basename_collision(conn: sqlite3.Connection) -> None:
+    """Two handle methods in different directories with identical file basenames."""
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo')")
+    _row(conn, "files", id="f1", repo_id="r1", path="/repo/chat/view.py", language="python")
+    _row(conn, "files", id="f2", repo_id="r1", path="/repo/home/view.py", language="python")
+    for i in range(5):
+        _row(conn, "files", id=f"ft{i}", repo_id="r1", path=f"/repo/leaf{i}.py", language="python")
+        _row(conn, "symbols", id=f"st{i}", file_id=f"ft{i}", name=f"leaf{i}", qualified_name=f"l.leaf{i}", kind="function", line_start=1, line_end=5)
+    _row(conn, "symbols", id="s1", file_id="f1", name="handle", qualified_name="chat.handle", kind="function", line_start=1, line_end=20)
+    _row(conn, "symbols", id="s2", file_id="f2", name="handle", qualified_name="home.handle", kind="function", line_start=1, line_end=20)
+    for i in range(5):
+        _row(conn, "edges", id=f"e1{i}", source_id="s1", target_id=f"st{i}", target_name=f"leaf{i}", kind="call", line=5+i, column=0, resolution="exact")
+        _row(conn, "edges", id=f"e2{i}", source_id="s2", target_id=f"st{i}", target_name=f"leaf{i}", kind="call", line=5+i, column=0, resolution="exact")
+    conn.commit()
+
+
 class TestDetectFlowGaps:
     def test_finds_rich_flows(self, fresh_db):
         from cairn.compass.flow_gaps import detect_flow_gaps
@@ -367,6 +383,19 @@ class TestDetectFlowGaps:
         # Only the documented one is covered; the other is still uncovered.
         assert len(covered_hc) == 1
         assert len(handle_cmds) == 1
+
+    def test_same_basename_collision_disambiguates_with_parent_dir(self, fresh_db):
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
+        import tempfile
+        know = tempfile.mkdtemp()
+        bundle = OKFBundle(know)
+        _seed_same_basename_collision(fresh_db)
+        result = detect_flow_gaps(fresh_db, bundle, min_edges=5)
+        handles = [e for e in result["uncovered"] if e["name"] == "handle"]
+        assert len(handles) == 2
+        resources = {e["resource"] for e in handles}
+        assert resources == {"handle#chat/view.py", "handle#home/view.py"}
 
     def test_empty_graph(self, fresh_db):
         from cairn.compass.flow_gaps import detect_flow_gaps

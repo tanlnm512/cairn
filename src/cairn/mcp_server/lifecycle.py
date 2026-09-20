@@ -1,15 +1,4 @@
-"""Lifecycle management for the cairn SSE daemon (macOS launchd).
-
-Plumbing for `cairn serve start|stop|status|restart` so a single SSE server
-runs as a persistent per-user LaunchAgent shared by all MCP clients.
-
-Design:
-- A LaunchAgent plist runs `cairn serve --port <N>` with KeepAlive and RunAtLoad.
-- `start` is idempotent; `stop` does `launchctl unload` and sweeps stray
-  `cairn serve` processes (the orphan-accumulation cause of "database is locked").
-
-macOS-only; on other platforms functions raise RuntimeError.
-"""
+"""Lifecycle management for the cairn SSE daemon (macOS launchd)."""
 from __future__ import annotations
 
 import os

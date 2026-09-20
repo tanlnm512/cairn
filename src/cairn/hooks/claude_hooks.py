@@ -1,13 +1,4 @@
-"""Claude Code hook handlers.
-
-Called by Claude Code's hooks system. Reads tool/session details from stdin
-and dispatches to the appropriate cairn command.
-
-Path-free: resolves the `cairn` binary via PATH (shutil.which), falling back to
-`python -m cairn.cli.main` using the running interpreter. Works regardless of install
-method (pipx, wheel, editable) and regardless of cwd — cairn resolves the central
-store from the workspace context itself.
-"""
+"""Claude Code hook handlers."""
 from __future__ import annotations
 
 import json

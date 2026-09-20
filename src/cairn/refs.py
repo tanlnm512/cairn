@@ -1,14 +1,4 @@
-"""Neutral reference-extraction + graph-verification helpers.
-
-Shared by the compass critic (L2) and memory scoring (L4) so the two layers
-agree on what counts as a "verified" file/symbol reference without either
-importing the other.
-
-Scope: deterministic backtick-ref extraction, graph existence checks, and
-successor-identity resolution. Critic-specific heuristics (prose-heavy
-warnings, thresholds) stay in ``compass/critic.py`` -- they are not shared
-with memory scoring.
-"""
+"""Neutral reference-extraction + graph-verification helpers."""
 from __future__ import annotations
 
 import re

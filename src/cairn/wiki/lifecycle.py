@@ -1,23 +1,4 @@
-"""Wiki lifecycle: the single owner of page identity and derived truth.
-
-The wiki stores two kinds with disjoint jobs, and this module is the only
-code allowed to answer questions that cross them:
-
-- **Plan** (``_wiki/manifest.json``, see :mod:`cairn.wiki.manifest`) is
-  pipeline *intent*: which pages should exist (identity, title/description,
-  module, seeds, input hash) and where their queue work stands (task
-  linkage, queue attempts). It never describes content.
-- **Content** (promoted ``Wiki-Article`` concepts at
-  ``wiki/pages/{repo}/{page_id}``) is the only record of what *exists*:
-  body, verified sources, provenance (``commit_sha``, ``task_id``).
-
-Every reader (CLI, dashboard, pipeline skip logic) derives lifecycle state,
-promotion, and staleness through this module at read time; a stored
-lifecycle verdict does not exist and must never be introduced. The wiki is
-the agent-facing knowledge surface for the whole workspace — code or
-documents — searchable via ``search_knowledge``/``ask_compass`` and
-explorable in the dashboard.
-"""
+"""Wiki lifecycle: the single owner of page identity and derived truth."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

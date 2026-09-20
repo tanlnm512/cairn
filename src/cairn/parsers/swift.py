@@ -1,17 +1,4 @@
-"""Tree-sitter Swift parser.
-
-Extracts class/struct/protocol/enum declarations, functions, properties, call
-expressions, imports, and inheritance into the shared ParsedFile model.
-
-Note: Swift `enum`/`struct` may appear under class_declaration-style nodes with
-a leading keyword; classification inspects the keyword (same approach as Kotlin).
-
-Signals: call edges carry the receiver type read from the
-navigation_expression's `target` field one level down (swift 0.7.3 exposes no
-field labels on call_expression itself) and an argument count; function
-symbols carry a parameter-count arity (variadic → None). Swift has no import
-aliasing, so local_alias stays None for every import form.
-"""
+"""Tree-sitter Swift parser."""
 from __future__ import annotations
 
 from typing import List, Optional

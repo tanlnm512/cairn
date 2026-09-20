@@ -1,24 +1,4 @@
-"""Cross-encoder reranking for semantic_search.
-
-Second stage of a two-stage retrieval pipeline: the cosine/ANN scan in
-`queries.semantic_search` is a *bi-encoder* (embeds query and candidate
-independently -- cheap but blind to interactions); a *cross-encoder* scores
-`(query, candidate)` jointly, more accurate but too slow to run against every
-symbol, so it only ever sees a shortlist the cosine scan already narrowed down.
-
-The pair is (query, importance-ordered structured
-candidate) — identity fields (kind, qualified name, path, signature,
-docstring) first, stored chunk last — with the encoder window pinned at
-`RERANK_MAX_LENGTH` and query-priority truncation (the query is never cut;
-the candidate loses from its tail, which carries the least-important
-content). Raw bge-reranker scores are unbounded logits: ordering uses them
-directly, any thresholding must use the sigmoid-mapped
-``rerank_score_norm``.
-
-Off by default (`CAIRN_RERANK` unset), reuses the `sentence-transformers`
-dependency from the `[semantic]` extra, and degrades to a no-op on any failure
-rather than raising past this module.
-"""
+"""Cross-encoder reranking for semantic_search."""
 from __future__ import annotations
 
 import logging

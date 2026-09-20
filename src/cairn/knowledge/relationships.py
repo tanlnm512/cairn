@@ -1,17 +1,4 @@
-"""Author-declared doc relationship normalization (D1.1).
-
-Source frontmatter may declare relationships through three keys:
-
-* ``relates_to`` — entries (or ids) with an explicit relation
-* ``supersedes`` — concept_ids this document replaces
-* ``superseded-by`` — concept_ids that replace this document
-
-All three normalize into one ``relates_to`` extension on the promoted OKF
-concept: a list of ``{concept_id, relation, kind}`` dicts. Relation comes
-from the closed D1 vocabulary; author-declared entries default to
-``kind: extracted``. Concept ids are provenance identifiers and pass
-through verbatim (never redacted, like ``affects_*``).
-"""
+"""Author-declared doc relationship normalization."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

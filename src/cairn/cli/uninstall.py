@@ -1,16 +1,4 @@
-"""Uninstall CLI: ``cairn uninstall`` — full teardown, native (no shell script).
-
-Removes, in order:
-  1. agent wiring     — MCP configs / skills / commands (cairn uninstall-agents)
-  2. git hooks        — post-commit hooks (cairn hooks uninstall)
-  3. graph + store    — the current workspace's store dir, or all of
-                        ``~/.cairn`` with --full
-  4. cairn binary     — via uv / pipx / pip, plus stale in-tree build artifacts
-
-Runs natively so it works from a wheel/pipx/uv install. Store resolution
-reuses paths.py (the single source of truth). CLAUDE.md / AGENTS.md are never
-removed (created create-if-absent only).
-"""
+"""Uninstall CLI: ``cairn uninstall`` — full teardown, native (no shell script)."""
 from __future__ import annotations
 
 import os

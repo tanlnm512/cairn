@@ -1,18 +1,4 @@
-"""Service-topology edge detection (code -> external service / HTTP call).
-
-Runs as a post-parse pass over an already-parsed ``ParsedFile``. It emits
-*edges* (not symbols) of two kinds:
-
-  - ``kind='http_call'``   — a call to a known HTTP client method
-    (``fetch(...)``, ``axios.get(...)``, ``http.Get/Post`` in Go,
-    ``OkHttp``/``Retrofit`` in Kotlin/Java).
-  - ``kind='service_call'`` — a call from a route handler to another service.
-
-These merge into the ``ParsedFile``'s ``edges`` list; no schema change is
-needed (``edges.kind`` is free-text, indexed). ``impact_analysis`` and
-``trace_flow`` exclude these by default; callers opt in via
-``include_service_edges=True``.
-"""
+"""Service-topology edge detection (code -> external service / HTTP call)."""
 from __future__ import annotations
 
 import re

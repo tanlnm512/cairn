@@ -1,14 +1,4 @@
-"""Perf benchmark: latency of build, embed, and the query battery.
-
-Answers "did my change make build/embed/query faster or slower?". Each stage
-runs with discarded warmup + repeated timing so the percentile distribution
-is stable (a single shot is contaminated by import/JIT/disk-cold costs).
-
-Build timing splits the phases (scan/parse/insert/resolve) via ``build_graph``'s
-``progress`` event callback — the total is reported alongside the phase
-breakdown so a regression can be localized ("resolve got slower" rather than
-"build got slower").
-"""
+"""Perf benchmark: latency of build, embed, and the query battery."""
 from __future__ import annotations
 
 import os

@@ -1,15 +1,4 @@
-"""LLM task queue: agent-decoupled synthesis via OKF Task concepts.
-
-Tasks live in .knowledge/_tasks/<id>.md as OKF concepts (type: Task). Any agent
-that can read markdown and run `cairn task` can process them. The deterministic
-critic gates promotion by fact-checking backtick-quoted file/symbol references
-against the graph; un-backticked prose is NOT verified (see src/compass/critic.py).
-
-Task lifecycle:
-  pending -> in-progress (claimed) -> done (critic run) -> [promoted | revised | dropped]
-  A revised task spawns a new '<kind>-revise' task with the fact errors attached,
-  up to MAX_REVISE_CYCLES times.
-"""
+"""LLM task queue: agent-decoupled synthesis via OKF Task concepts."""
 from __future__ import annotations
 
 import os

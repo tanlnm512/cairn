@@ -1,9 +1,4 @@
-"""L2/L3 compass + router MCP tools: get_compass, search_knowledge,
-ask_compass.
-
-The bundle/OKF-read path that powers module navigation guides, knowledge-base
-search, and the natural-language cross-layer router.
-"""
+"""L2/L3 compass + router MCP tools: get_compass, search_knowledge, ask_compass."""
 from __future__ import annotations
 
 from mcp.types import ToolAnnotations

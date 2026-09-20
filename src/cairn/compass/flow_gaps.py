@@ -1,23 +1,5 @@
-"""Flow coverage gap detection: find undocumented business flows.
+"""Flow coverage gap detection: find undocumented business flows."""
 
-The flow equivalent of :mod:`compass.gaps` (which finds uncovered *modules*).
-This finds functions/methods with rich outgoing call chains that lack a flow
-compass file -- candidate business flows worth documenting.
-
-A "flow" here is any function or method whose resolved outgoing edge count
-meets a threshold (default 5). The intuition: a method with <5 resolved
-callees is usually a trivial getter/setter/wrapper, while one with many
-resolved callees orchestrates real business logic (the `handleCommand` in a
-ViewModel, a repository's `login`, a UseCase's `execute`, ...).
-
-Name collisions are expected: Android codebases have 4+ `handleCommand`
-methods across different ViewModels. We group by ``symbols.id`` (not name)
-so each is a distinct candidate, and include the file path in the result so
-the caller can disambiguate. Coverage tracking uses a collision-safe
-``resource`` key (``name`` for unique names, ``name#file_basename`` when the
-name appears in multiple files) so two ``handleCommand`` flows are tracked
-independently.
-"""
 from __future__ import annotations
 
 import sqlite3
@@ -26,15 +8,10 @@ from typing import Dict, List
 from ..okf.bundle import OKFBundle
 
 
-def _flow_resource(name: str, file: str) -> str:
-    """Build a collision-safe resource key for a flow compass.
-
-    For unique names this is just the name. For colliding names (same name in
-    multiple files) it appends ``#file_basename`` so each is distinguishable.
-    The caller pre-computes the collision set and passes ``disambiguate=True``.
-    """
-    fname = file.split("/")[-1] if file else "?"
-    return f"{name}#{fname}"
+def _flow_resource(name: str, file: str, disambiguator: str | None = None) -> str:
+    """Build a collision-safe resource key for a flow compass."""
+    suffix = disambiguator if disambiguator else (file.split("/")[-1] if file else "?")
+    return f"{name}#{suffix}"
 
 
 def detect_flow_gaps(
@@ -42,15 +19,10 @@ def detect_flow_gaps(
     bundle: OKFBundle,
     min_edges: int = 5,
 ) -> Dict[str, List[dict]]:
-    """Find functions/methods with rich call chains but no flow compass.
+    """Find functions and methods meeting outgoing edge threshold lacking a flow compass.
 
-    ``conn`` is the graph DB connection, ``bundle`` the OKF bundle (read for
-    existing flow compass coverage), ``min_edges`` the minimum resolved outgoing
-    edges to qualify (default 5).
-
-    Returns ``{"uncovered": [...], "covered": [...]}`` where each entry is
-    ``{"name", "kind", "file", "repo", "out_edges", "id", "covered": bool}``,
-    both lists sorted by ``out_edges`` descending.
+    Returns a dict with 'uncovered' and 'covered' candidate lists sorted by
+    out_edges descending.
     """
     candidates = _get_flow_candidates(conn, min_edges)
 
@@ -60,6 +32,15 @@ def detect_flow_gaps(
     for c in candidates:
         name_files.setdefault(c["name"], set()).add(c["file"])
     colliding = {name for name, files in name_files.items() if len(files) > 1}
+
+    # If basenames also collide for a given name, use parent directory disambiguation.
+    name_basename_counts: dict[str, dict[str, int]] = {}
+    for name in colliding:
+        bcounts: dict[str, int] = {}
+        for f in name_files[name]:
+            base = f.split("/")[-1] if f else "?"
+            bcounts[base] = bcounts.get(base, 0) + 1
+        name_basename_counts[name] = bcounts
 
     # Build the set of already-documented flow resources.
     covered_resources: set[str] = set()
@@ -75,9 +56,15 @@ def detect_flow_gaps(
     covered: List[dict] = []
     for c in candidates:
         entry = dict(c)
-        # Collision-safe resource: name#file_basename if colliding, else name.
+        # Collision-safe resource: name#suffix if colliding, else name.
         if c["name"] in colliding:
-            resource = _flow_resource(c["name"], c["file"])
+            base = c["file"].split("/")[-1] if c["file"] else "?"
+            if name_basename_counts[c["name"]].get(base, 0) > 1:
+                parts = [p for p in c["file"].split("/") if p]
+                disambiguator = "/".join(parts[-2:]) if len(parts) >= 2 else base
+                resource = _flow_resource(c["name"], c["file"], disambiguator=disambiguator)
+            else:
+                resource = _flow_resource(c["name"], c["file"])
         else:
             resource = c["name"]
         entry["resource"] = resource
@@ -92,10 +79,9 @@ def detect_flow_gaps(
 
 
 def _get_flow_candidates(conn: sqlite3.Connection, min_edges: int) -> List[dict]:
-    """Find all functions/methods with >= min_edges resolved outgoing edges.
+    """Find functions and methods with resolved outgoing edge count >= min_edges.
 
-    Groups by ``symbols.id`` so overloaded/colliding names (e.g. multiple
-    ``handleCommand`` methods in different ViewModels) are distinct entries.
+    Groups by symbol ID to keep duplicate symbol names distinct.
     """
     cur = conn.cursor()
     rows = cur.execute(

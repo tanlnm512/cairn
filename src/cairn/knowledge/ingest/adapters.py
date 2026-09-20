@@ -1,10 +1,4 @@
-"""Source adapters for staged document ingestion.
-
-Every adapter implements SourceAdapter and yields one tuple per document:
-``(repo, relpath, text, origin)``. Adapters are read-only iterators over
-their source; parsing, classification, staging, and store writes happen
-downstream.
-"""
+"""Source adapters for staged document ingestion."""
 from __future__ import annotations
 
 import logging
@@ -42,33 +36,13 @@ def _size_skip_reason(path: Path) -> str | None:
 
 
 class SourceAdapter(Protocol):
-    """A documentation source, iterated one document at a time.
-
-    iter_docs() yields SourcedDoc tuples:
-
-    repo -- originating repository; FED_REPO for fed documents
-    relpath -- path relative to the feed root; a fed file uses its path
-        as given
-    text -- decoded document content
-    origin -- provenance label, e.g. FED_ORIGIN
-    """
+    """Protocol for document sources yielding SourcedDoc tuples."""
 
     def iter_docs(self) -> Iterator[SourcedDoc]: ...
 
 
 class FedMarkdownAdapter:
-    """Feeds explicitly-given markdown files and/or directories.
-
-    Directories are walked recursively for markdown files in sorted order
-    (the suffix compares case-insensitively, so ``README.MD`` is fed just
-    like ``readme.md``); a fed file yields only when its suffix is
-    ``.md``/``.MD``. Every yield carries repo=FED_REPO and origin=FED_ORIGIN.
-
-    Files that cannot enter the pipeline -- non-markdown feeds, oversize or
-    unreadable files -- are recorded in :attr:`skipped` as ``(relpath,
-    reason)`` pairs so the manifest accounts for every fed document
-    instead of silently dropping it.
-    """
+    """Yields markdown documents from explicitly provided file and directory paths."""
 
     def __init__(self, paths: Iterable[Union[str, Path]]) -> None:
         self._paths: List[Path] = [Path(p) for p in paths]
@@ -121,13 +95,7 @@ DEFAULT_DOC_DIRS: Tuple[str, ...] = ("docs", "decisions", "adr", "adrs")
 
 @dataclass(frozen=True)
 class SkipRule:
-    """One skip-list matcher: a glob pattern plus its reason.
-
-    kind "dir" matches any directory part of the repo-relative path;
-    kind "file" matches the file name. Patterns compare lowercased.
-    ``category`` names the built-in group a workspace config can
-    disable; workspace-added rules use the "workspace" group.
-    """
+    """Matching rule for skipping documents during ingestion."""
 
     kind: str
     pattern: str
@@ -201,13 +169,7 @@ def _dir_rule_matches(parts: Tuple[str, ...], pattern: str) -> bool:
 
 
 class RepoScanAdapter:
-    """Walks a repository's allowlisted doc directories.
-
-    Each configured doc dir is walked recursively for ``*.md`` in sorted
-    order. Skip-listed documents are not yielded; they are recorded in
-    :attr:`skipped` as ``(relpath, reason)`` pairs and logged with their
-    reason.
-    """
+    """Walks allowlisted repository documentation directories for markdown documents."""
 
     def __init__(
         self,
@@ -254,12 +216,7 @@ CONVERTED_ORIGIN = "converted"
 
 
 class FedBinaryAdapter:
-    """Feeds pdf/docx files through the ``cairn[ingest]`` converter.
-
-    Converted markdown enters the pipeline with origin "converted";
-    a missing extra or a garbage extraction skips with a reason instead
-    of crashing the run.
-    """
+    """Converts binary documents (PDF and DOCX) to markdown for ingestion."""
 
     def __init__(self, paths: Iterable[Union[str, Path]]) -> None:
         self._paths: List[Path] = [Path(p) for p in paths]

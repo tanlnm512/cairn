@@ -1,12 +1,4 @@
-"""--polish stage: skill-body polish through the LLM task queue.
-
-The stage never runs a model in-process. ``run_polish_stage`` queues one
-``skill-polish`` task carrying the deterministic draft, reports the live
-task, or consumes a completed task's result: the polished document
-replaces the deterministic SKILL.md bytes only after the frontmatter
-``name`` is preserved and ``verify_draft`` accepts the exact bytes
-destined for disk. A result the queue critic failed is never applied.
-"""
+"""--polish stage: skill-body polish through the LLM task queue."""
 from __future__ import annotations
 
 import sqlite3
@@ -34,13 +26,7 @@ POLISH_INSTRUCTIONS = (
 
 @dataclass(frozen=True)
 class PolishOutcome:
-    """One --polish stage step.
-
-    ``state``: ``queued`` (task enqueued), ``pending`` (a live task
-    exists), ``applied`` (``rendered`` holds the gate-accepted bytes to
-    write), ``rejected`` (result refused; ``failing_refs``/``reason``
-    say why), ``unavailable`` (the last chain failed the queue critic).
-    """
+    """Outcome of a skill polishing step, including state, task ID, and rendered content."""
 
     state: str
     task_id: str = ""

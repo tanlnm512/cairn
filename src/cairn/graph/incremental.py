@@ -1,9 +1,4 @@
-"""Incremental graph updates: git diff, reindex_paths, and file watcher sync.
-
-`reindex_paths` is the common entry point for both `cairn update` (git-diff) and
-the file watcher's debounced sync. The watcher lives in `watcher.py` and calls
-`reindex_paths` from its flush loop; the MCP server uses it for catch-up at boot.
-"""
+"""Incremental graph updates: git diff, reindex_paths, and file watcher sync."""
 from __future__ import annotations
 
 import logging

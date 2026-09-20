@@ -1,15 +1,4 @@
-"""Semantic embeddings for the symbol corpus: build, store, and query dense
-vector representations of symbols so agents can find code by meaning.
-
-Backend selection is env-var driven via ``CAIRN_EMBED_BACKEND`` (each knob
-also reads the persistent ``$CAIRN_HOME/config.json``, env winning -- see
-``_config_or_env``): ``local`` (default, sentence-transformers), ``hash``
-(dep-free fallback), ``openai`` (opt-in API), or the ``server`` family —
-``server``/``omlx``/``ollama``, OpenAI-compatible /v1 endpoints where
-omlx/ollama differ only in their preset base URL. ``embeddings_available()``
-reports whether a real backend is wired so callers degrade with an install
-hint.
-"""
+"""Semantic embeddings for the symbol corpus: build, store, and query dense vector representations of symbols so agents can find code by meaning."""
 from __future__ import annotations
 
 import hashlib

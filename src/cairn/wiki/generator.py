@@ -1,21 +1,4 @@
-"""Architecture reports (the deterministic, non-LLM path).
-
-Produces a graph-derived architectural summary per repo -- OKF concepts of
-type Architecture-Report at ``reports/architecture/{repo}``, built from
-graph statistics (symbol-kind distribution, most-referenced classes,
-cross-repo deps). Deterministic, no LLM call, no external process.
-
-These are diagnostics, NOT wiki pages: they never pass through the
-critic-gated promotion that ``Wiki-Article`` pages require and are
-therefore excluded from the wiki layer's search surface (router and
-ask_compass match the gated types only). They stay reachable via
-unfiltered ``search_knowledge``.
-
-Wiki bodies are critic-checked: the deterministic critic verifies
-backtick-quoted file/symbol references against the graph. A body with broken
-references carries ``errors``; by default the write still proceeds, but the
-critic verdict is returned for transparency.
-"""
+"""Architecture reports (the deterministic, non-LLM path)."""
 from __future__ import annotations
 
 import sqlite3

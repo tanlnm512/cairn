@@ -1,25 +1,4 @@
-"""Public wiki-generation pipeline: plan -> (optionally refine) -> queue.
-
-``run_wiki_generate`` is the one entry point the CLI and MCP surfaces
-delegate to. In the default path it plans pages from the graph, skips pages
-whose recorded input hash is unchanged and whose promoted content exists
-(unless ``force``), queues one ``wiki-page`` task per remaining page, and
-persists the manifest atomically after the queue decisions. With
-``refine_catalog`` the plan is not queued directly: the first run queues a
-single ``wiki-catalog`` refinement task carrying the deterministic outline
-and returns; a later run that finds the completed catalog's Task-Result
-sibling validates the refined outline (invalid entries fall back to their
-module's deterministic record) and queues page tasks from it; a refinement
-whose result never landed queues the deterministic plan.
-
-The manifest rows written here are PLAN intent only — the plan entry plus
-``task_id`` and ``queue_attempts``. No lifecycle state and no content
-provenance: promotion happens when a claiming agent completes the task
-through the critic, which writes the promoted concept; readers derive
-everything else via :mod:`cairn.wiki.lifecycle`. Tasks are keyed by the
-qualified ``{repo}/{page_id}`` resource, and a live task whose work order
-already matches a page's plan is adopted rather than duplicated.
-"""
+"""Public wiki-generation pipeline: plan -> (optionally refine) -> queue."""
 from __future__ import annotations
 
 import json

@@ -1,19 +1,4 @@
-"""Deterministic wiki catalog planner.
-
-Turns the code graph into an ordered page plan: an overview page first,
-then one page per module. A module is a path-prefix bucket of
-``files.path`` (same bucketing as ``graph.stats.group_by_top_level``);
-modules whose indexed files are strictly majority test files
-(``test``/``tests``/``spec``/``specs`` path segments) are excluded from the
-plan entirely. The rest are ranked by cross-module incoming edge degree
-(degree DESC, module name ASC) so a large self-referential module cannot
-win. Each page
-record carries ``page_id``, ``title``, ``description``, ``module``,
-``seeds`` (graph-grounded ``files``/``symbols``), and ``input_hash``
-(sha256 over the canonical JSON of the record without the hash) so
-regeneration can skip unchanged pages. Pure reads over the graph DB --
-stdlib only, no LLM call, no writes.
-"""
+"""Deterministic wiki catalog planner."""
 from __future__ import annotations
 
 import hashlib

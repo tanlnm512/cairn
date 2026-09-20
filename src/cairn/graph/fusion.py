@@ -1,10 +1,4 @@
-"""Reciprocal Rank Fusion (RRF) for hybrid retrieval.
-
-Combines multiple ranked lists (e.g. BM25 lexical + vector semantic search)
-into a single consensus ranking without depending on score scales.
-
-Formula: score(d) = sum_i w_i / (k + rank_i(d)) where rank is 1-based.
-"""
+"""Reciprocal Rank Fusion (RRF) for hybrid retrieval."""
 from __future__ import annotations
 
 from typing import List, Tuple, Optional, Dict

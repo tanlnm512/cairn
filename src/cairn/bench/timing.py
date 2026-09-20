@@ -1,9 +1,4 @@
-"""Timing primitives for the benchmark suites.
-
-Stdlib-only (``time.perf_counter`` + ``tracemalloc``). The one shared core
-every suite calls: warmup-and-repeat timing with percentile distribution, plus
-a lightweight peak-memory wrapper. No external benchmarking dependency.
-"""
+"""Timing primitives for the benchmark suites."""
 from __future__ import annotations
 
 import statistics

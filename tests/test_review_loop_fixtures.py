@@ -39,10 +39,23 @@ def _cairn_bin() -> str:
     raise RuntimeError("cairn console script not found beside sys.executable or on PATH")
 
 
+def _git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if shutil.which("git"):
+        try:
+            if subprocess.run(["git", "--version"], capture_output=True).returncode != 0:
+                if Path("/usr/bin/git").is_file():
+                    env["PATH"] = f"/usr/bin:{env.get('PATH', '')}"
+        except OSError:
+            if Path("/usr/bin/git").is_file():
+                env["PATH"] = f"/usr/bin:{env.get('PATH', '')}"
+    return env
+
+
 def _build_scenario(tmp_path: Path, scenario: str) -> Path:
     """Build one fixture scenario; return the scenario root dir."""
     target = tmp_path / scenario
-    env = dict(os.environ)
+    env = _git_env()
     env["CAIRN_BIN"] = _cairn_bin()
     env["CAIRN_HOME"] = str(target / "home")
     proc = subprocess.run(
@@ -66,7 +79,7 @@ def _run_review(root: Path, *args: str) -> subprocess.CompletedProcess:
 def _run_cairn(root: Path, *args: str) -> subprocess.CompletedProcess:
     """Run a cairn command inside the workspace with the sandbox store env."""
     ws = root / "ws"
-    env = dict(os.environ)
+    env = _git_env()
     env.update(
         {
             "CAIRN_BIN": _cairn_bin(),

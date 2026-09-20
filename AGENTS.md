@@ -112,22 +112,29 @@ checklist; `docs/review-checklist.md` is the procedure behind each box.
 Layers 0-1 (pre-commit + CI: tests, pip-audit, bandit, mypy, PR-title, dependency-review) are automated;
 this is the human/agent layer that catches what they can't.
 
-## Comment and doc style (mandatory, all files)
-Applies to code comments, docstrings, markdown, and CHANGELOG entries.
-- State behavior and contract only — what the code/doc is or does.
-- No decision logs: no rationale narratives, review findings, or
-  "why this changed" prose. Decisions go to cairn memory
-  (`record_memory`), never into comments.
-- No history: no dates, PR numbers, version references, "previously",
-  "reported bug", incident stories.
-- Short and precise; prefer numbered/bulleted lists over prose.
-- Keep comments short: the fewest words that still carry the full needed
-  information (behavior, contract, constraint). One to three lines is the
-  norm; expand only when the contract itself is that large. Short but
-  incomplete is wrong too — state the whole contract, nothing else.
-- Anti-stale: no enumerations or examples that rot (line numbers,
-  version-specific names, workspace-specific paths) — reference the
-  code or a query instead.
+## Comment, doc, and log style (mandatory, all files)
+Applies to code comments, docstrings, logging, markdown, and CHANGELOG entries.
+- **Minimal docstrings (1-line default)**:
+  - Module and class docstrings MUST be 1 line: `"""<One-sentence purpose/contract>."""`.
+  - Function and method docstrings: 1 line stating behavior, arguments, and return contract.
+    Expand to 2–3 lines only when signature complexity strictly requires it.
+  - Never generate multi-paragraph docstrings, route catalogs, dependency wiring mechanics,
+    or internal execution recipes.
+- **Minimal comments**:
+  - Do NOT write commentary paragraphs, design essays, or pre-class/pre-function rationale blocks.
+  - Use only short section dividers (e.g. `# --- Section ---`) or single-line constraint notes where strictly necessary.
+- **No decision logs in code**:
+  - Zero rationale narratives, review findings, design justifications, or "why this changed / why we chose X" prose.
+  - Architectural decisions go to cairn memory (`record_memory`), NEVER into code, comments, or docstrings.
+- **Minimal, non-verbose logging**:
+  - Do not generate noisy, chatty, or redundant log statements.
+  - Log only essential operational transitions and faults at appropriate levels (`DEBUG` for trace, `INFO` for lifecycle milestones, `WARNING`/`ERROR` for faults).
+- **No history**:
+  - No dates, PR numbers, task IDs (`task T19`), spec sections (`spec §3`), version references, "previously", "used to", or incident stories.
+- **Anti-stale**:
+  - No enumerations or examples that rot (line numbers, version-specific names, workspace-specific paths) — reference the code or a query instead.
+- **Contract only**:
+  - State what the code/doc is or does, never its backstory.
 
 ## Reuse before writing new code (mandatory)
 - Before adding a function, search for an existing one with the same behavior

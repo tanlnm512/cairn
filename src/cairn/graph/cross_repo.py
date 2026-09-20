@@ -1,12 +1,4 @@
-"""Cross-repo dependency analysis via import namespace mapping.
-
-The namespace map maps import-path prefixes to owning repo ids. It is resolved
-per process by :func:`_load_namespaces` in priority order: the
-``CAIRN_REPO_NAMESPACES`` env var (JSON), then the ``repo_namespaces`` key
-of the workspace's ``cairn.json``, then the built-in :data:`_DEFAULT_NAMESPACES`
-fallback. ``cross_repo_deps`` uses the resolved map plus the ``imports`` table
-to compute which repos a given repo depends on, and which depend on it.
-"""
+"""Cross-repo dependency analysis via import namespace mapping."""
 from __future__ import annotations
 
 import json

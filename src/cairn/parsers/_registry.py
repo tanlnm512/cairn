@@ -1,28 +1,4 @@
-"""Parser registry: builds tree-sitter Parsers from per-language wheels.
-
-Centralizes tree-sitter runtime setup so each language parser only deals with
-AST traversal. Uses tree-sitter 0.26 + per-language wheels (tree-sitter-java,
-tree-sitter-python, tree-sitter-swift, tree-sitter-typescript,
-tree-sitter-javascript, tree-sitter-dart, tree-sitter-objc, tree-sitter-php,
-tree-sitter-ruby, tree-sitter-rust, tree-sitter-c-sharp, tree-sitter-c,
-tree-sitter-cpp); the
-Kotlin grammar is vendored in-tree as the cairn._tree_sitter_kotlin
-extension.
-
-Most language modules expose a bare language() function returning a PyCapsule.
-tree-sitter-typescript is the exception: one wheel ships two grammars via
-language_typescript() (.ts/.mts/.cts) and language_tsx() (.tsx) -- there is no
-plain language(). Both are registered here under the keys "typescript" and
-"tsx" respectively; src/parsers/typescript.py picks between them per file
-suffix. "javascript" uses the dedicated tree-sitter-javascript wheel (its
-grammar already covers JSX in .jsx files), not the TypeScript grammar.
-
-External packages can register additional languages via the
-``cairn.parsers.v1`` entry-point group. An entry point in that group must
-resolve to a zero-arg callable returning a tree-sitter language capsule
-(PyCapsule). The ``v1`` suffix encodes the API version so a future breaking
-change can ship under ``cairn.parsers.v2`` without breaking v1 plugins.
-"""
+"""Parser registry: builds tree-sitter Parsers from per-language wheels."""
 from __future__ import annotations
 
 import functools

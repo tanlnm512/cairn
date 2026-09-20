@@ -1,53 +1,4 @@
-"""Optional OTLP export of cairn telemetry (task T19, spec §3 + §7).
-
-Off by default, forever optional. ``CAIRN_OTEL_ENDPOINT`` unset (the default)
-means zero behavior change: no export, no OpenTelemetry import, no overhead
-beyond the single env read ``events.emit`` already spends on its gates. When
-set, the buffered telemetry events are forwarded to that OTLP/http endpoint as
-OpenTelemetry LogRecords -- conservative mapping, documented once here:
-
-  * one LogRecord per ``events`` row
-  * ``body``   = the event name (e.g. ``ann_fallback``)
-  * ``attributes`` = the event's low-cardinality attrs (re-parsed from the
-    stored JSON) plus ``session_id`` for correlation
-  * ``Resource`` = ``service.name="cairn"`` only -- no paths, no PII
-    (spec §5.2/§7 cardinality + privacy invariants apply unchanged)
-
-Design (why a side buffer, not a tap on ``sink._BUFFER``):
-  * ``events.emit`` appends every row to ``sink._BUFFER`` (SQLite stays the
-    source of truth) AND, only when the endpoint is set, to this module's own
-    ``_PENDING`` deque. The two buffers are independent, so the OTLP flush can
-    never steal rows from -- or add retry pressure to -- the SQLite flush.
-  * ``_flush_otlp`` is registered with ``sink.register_flusher`` and therefore
-    runs on the shared daemon tick + atexit drain, already exception-isolated
-    by ``sink._flush_all`` (a bug here cannot kill the flush thread).
-  * Draining mirrors ``sink._flush_events``: snapshot without clearing, export,
-    then pop exactly the exported rows on success. A failed export retains the
-    rows for the next tick (best-effort, at-least-once across process
-    restarts).
-  * Export is SYNCHRONOUS and failure-observing: the exporter is wrapped in
-    :class:`_TrackingExporter` behind ``SimpleLogRecordProcessor``, so each
-    ``logger.emit`` performs the HTTP export on the calling thread and the
-    wrapper sees the exporter's own ``LogExportResult.FAILURE`` return (the
-    SDK's http exporter catches network exceptions itself and NEVER raises).
-    ``BatchLogRecordProcessor`` cannot be used here: its worker thread pops the
-    batch before exporting, swallows exporter failures, and reports
-    ``force_flush()`` success -- which would make every row pop as "exported"
-    during a collector outage, silently losing exactly the data this feature
-    exists to deliver.
-  * The whole flush cycle runs under ``_FLUSH_LOCK`` (mirroring
-    ``sink._flush_events``): the daemon tick, the server watchdog drain, and
-    atexit can overlap, and two concurrent drains would double-export and
-    double-pop.
-
-Lazy-import discipline (spec §3 non-goals + §7): this module imports NOTHING
-from OpenTelemetry and no network library at module scope. The ``opentelemetry``
-imports live inside :func:`_get_logger`, reachable only when the endpoint is
-set, telemetry is on, and there are rows to export. A missing SDK (or any
-construction failure) calls ``events.warn_once`` once and permanently disables
-the exporter -- never raises, never crashes the flush thread, and the local
-SQLite telemetry keeps working unchanged.
-"""
+"""Optional OTLP export of cairn telemetry."""
 
 from __future__ import annotations
 
@@ -179,16 +130,7 @@ def _warn_once_and_disable(msg: str) -> None:
 
 
 class _TrackingExporter:
-    """Delegate wrapper that remembers whether an export failed.
-
-    The SDK's http exporter catches its own network exceptions and returns
-    ``LogExportResult.FAILURE`` -- it never raises -- so a dead collector is
-    observable only on the return value. Duck-typed on purpose:
-    ``LogExportResult`` lives in the optional SDK, while
-    ``getattr(result, "name", "SUCCESS")`` matches it without an import, and
-    an unrecognized result object fails OPEN (treated as success) so an SDK
-    quirk can't wedge the buffer into a permanent retry loop.
-    """
+    """Exporter wrapper that tracks whether any export invocation failed."""
 
     def __init__(self, inner: Any) -> None:
         self.inner = inner

@@ -1,12 +1,4 @@
-"""Memory scoring engine: 8 computed signals, 5 weighted terms.
-
-score = 0.357*graph_verification + 0.286*cross_session_refs
-      + 0.214*agent_confidence + 0.0715*freshness + 0.0715*reinforcement
-
-`critic_score` and `authority` are computed and persisted as unweighted
-diagnostics; they do not affect `score`. Freshness uses exponential decay
-(exp(-λ·age)); reinforcement rewards memories that are accessed frequently.
-"""
+"""Memory scoring engine: 8 computed signals, 5 weighted terms."""
 from __future__ import annotations
 
 import math

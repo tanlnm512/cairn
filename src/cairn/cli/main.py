@@ -1,10 +1,4 @@
-"""cairn CLI main group and shared imports.
-
-The `cairn` command group lives here. Individual command modules under cli/
-decorate their commands onto this `main` via @main.command() /
-@<subgroup>.command(); the package __init__.py imports each module for the
-side effect of registration.
-"""
+"""cairn CLI main group and shared imports."""
 from __future__ import annotations
 
 import sys
@@ -75,15 +69,7 @@ def _record_invocation(
 
 
 class _RecordingGroup(click.Group):
-    """Group whose dispatch records every top-level invocation.
-
-    The single interception point: one row per top-level command —
-    commands registered today or in the future are covered automatically, and
-    subcommand hops are intentionally not rows. Timing/status capture happens
-    in `invoke`; the `parse_args` hook exists only because click 8.x raises
-    NoArgsIsHelpError from parse_args for a bare `cairn` and never reaches
-    `invoke`.
-    """
+    """Click command group that records invocation timing, status, and arguments."""
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         # Bare `cairn` (no subcommand) exits from parse_args with the help

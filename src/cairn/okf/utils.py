@@ -1,8 +1,4 @@
-"""Shared helpers for the Open Knowledge Format (OKF) layer.
-
-Small, dependency-free utilities used across OKF concept producers (memory,
-knowledge, etc.) so each producer doesn't reinvent the same logic.
-"""
+"""Shared helpers for the Open Knowledge Format (OKF) layer."""
 from __future__ import annotations
 
 import re

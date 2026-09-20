@@ -1,8 +1,4 @@
-"""L5 knowledge MCP tools: knowledge_add, knowledge_search, knowledge_delete,
-knowledge_status, trace_workflow.
-
-Each builds an OKFBundle via the shared ``_bundle()`` helper.
-"""
+"""L5 knowledge MCP tools: knowledge_add, knowledge_search, knowledge_delete, knowledge_status, trace_workflow."""
 from __future__ import annotations
 
 import logging

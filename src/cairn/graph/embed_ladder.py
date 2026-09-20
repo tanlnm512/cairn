@@ -1,12 +1,4 @@
-"""Embedding parity sampler over stored chunks.
-
-``check_parity`` samples stored embedding rows under a model stamp, re-embeds
-the sampled chunk texts through an embed client (default: the server client
-``embeddings._embed_server``), and compares each returned vector with the
-stored float32-LE blob by cosine. Shared by the embed writers' alias
-preflight, ``cairn doctor``, and the dashboard parity action; the availability
-ladder and its degradation notification fan-out live in this module too.
-"""
+"""Embedding parity sampler over stored chunks."""
 from __future__ import annotations
 
 import logging
@@ -30,12 +22,7 @@ SAMPLE_LIMIT = 16
 
 @dataclass
 class ParityResult:
-    """Outcome of one parity check.
-
-    ``mean_cosine`` is None when no cosine was measurable (vacuous pass, dim
-    mismatch, embed-count mismatch); every failure carries its measured value
-    either in ``mean_cosine`` or verbatim in ``reason``.
-    """
+    """Outcome of an embedding parity check between stored and served vectors."""
 
     sampled: int
     mean_cosine: Optional[float]
@@ -129,25 +116,13 @@ def _cosine(a: List[float], b: List[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Availability ladder. Rung 1 adopts a parity-passing
-# same-server candidate session-scoped through the alias mechanics; rung 2
-# falls back to a cached local model on the same parity gate; rung 3 is the
-# terminal BM25/FTS5-hybrid-only state. Hash is never a rung.
-# Evaluated at most once per process per backend-state.
+# Availability ladder
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class LadderState:
-    """Verdict of one ladder evaluation.
-
-    ``rung`` is 1, 2, or 3. ``reason`` is the adoption kind for rungs 1-2
-    (``fallback_session_alias`` / ``fallback_local``) and the trigger for
-    rung 3 (``server_down`` | ``model_missing`` | ``parity_fail``) — always
-    one of ``telemetry.events.EMBED_SERVER_REASONS``. ``adopted_model`` is
-    the adopted model id (rungs 1-2), else None. ``active`` turns False
-    when a later healthy evaluation supersedes the state.
-    """
+    """Evaluation verdict and selected model state of the embedding availability ladder."""
 
     rung: int
     reason: str

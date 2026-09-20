@@ -1,9 +1,4 @@
-"""Binary-document conversion behind the cairn[ingest] extra.
-
-PDF via pymupdf4llm; docx via mammoth (HTML) -> markdownify. All heavy
-imports are strictly lazy: the base install imports this module cleanly
-and a missing extra degrades to a skip with a reason, never a crash.
-"""
+"""Binary-document conversion behind the cairn[ingest] extra."""
 from __future__ import annotations
 
 from pathlib import Path

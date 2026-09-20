@@ -1,20 +1,4 @@
-"""MCP tool metric buffering.
-
-``tool_metrics`` is analytics, not correctness. Writing it on every tool call
-takes a SQLite write lock that contends with ``cairn memory search`` /
-``recall_memory`` (which also write) and with other ``cairn serve`` processes
-holding the WAL. Buffering here + flushing on a background thread removes the
-write from every tool call's hot path: one writer every 30s instead of one
-per call.
-
-This module owns the ``tool_metrics`` buffer and its flush logic, but no
-longer spawns its own daemon thread: it registers ``_flush_metrics`` with the
-shared telemetry sink (:mod:`cairn.telemetry.sink`, spec §6.1) so events and
-tool_metrics share one writer cadence + one atexit drain. Self-contained
-except for a
-connection factory (``_conn``) injected via :func:`configure_conn` (which also
-mirrors into the sink so a single boot call wires both tables).
-"""
+"""MCP tool metric buffering."""
 
 from __future__ import annotations
 

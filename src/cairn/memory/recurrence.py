@@ -1,10 +1,4 @@
-"""Failure-signature recurrence tracking for the post_tool_failure hook.
-
-The hook stays a pure "compute + spawn" path: it hashes the already
-privacy-filtered error text into a stable signature and passes it to
-``cairn memory record --recurrence-key``. All DB work happens in the child
-CLI process via :func:`note_failure_signature`.
-"""
+"""Failure-signature recurrence tracking for the post_tool_failure hook."""
 from __future__ import annotations
 
 import hashlib

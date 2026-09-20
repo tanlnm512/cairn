@@ -1,32 +1,4 @@
-"""Shared buffered sink for cairn telemetry (spec §6.1).
-
-Generalizes the proven ``mcp_server/metric_buffering`` buffered-sink pattern
-into a single per-process writer so all telemetry -- events (this module),
-future counters, and ``tool_metrics`` (via ``metric_buffering``'s registered
-flusher) -- share ONE daemon flush thread + ONE atexit handler instead of each
-subsystem spawning its own.
-
-Doctrine (mirrors ``mcp_server/metric_buffering.py``):
-  * Telemetry is analytics, not correctness. A sink failure must NEVER raise
-    into a caller, never hold a user lock, and never block a tool call
-    (spec §5.4/§5.6).
-  * Buffer then flush on a 30s daemon thread; ``atexit`` drains at process end.
-  * The buffer is snapshotted WITHOUT clearing on flush -- a transient failure
-    ("database is locked") leaves the rows queued for the next tick instead of
-    dropping them silently. The deque ``maxlen`` caps unbounded growth during a
-    long outage.
-  * Retention pruning keeps the shared DB file bounded (spec §6.2): newest
-    ~5000 ``events`` / ~500 ``build_runs`` rows, plus ``tool_metrics`` under
-    an env-configurable row cap with an optional age bound
-    (:func:`retention_policy`), inside the flush transaction.
-
-Thread model: one daemon thread per process, started idempotently by
-:func:`start_flusher`. Each tick it drains this module's own event buffer via
-:func:`_flush_events` and then every flusher registered with
-:func:`register_flusher` (e.g. ``metric_buffering._flush_metrics``). Subsystems
-own their own buffer + table; the sink owns only the thread, the event buffer,
-the connection factory, and the gates.
-"""
+"""Shared buffered sink for cairn telemetry."""
 
 from __future__ import annotations
 

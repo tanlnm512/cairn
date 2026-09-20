@@ -1,20 +1,4 @@
-"""Test-symbol detection for impact analysis.
-
-There is no ``test`` symbol kind in the graph: the ``symbols.kind`` domain is
-only ``method | property | class | function | interface | enum | variable``.
-Test functions are indexed as ordinary ``method``/``function`` symbols, so
-test detection is heuristic, combining two signals:
-
-  1. PATH — the symbol's file lives under a conventional test source root
-     (``src/test/``, ``*Test.kt``, ``*_test.go``, ``test_*.py``, ``__tests__/``,
-     ``*.spec.ts``, ``*Tests.java`` ...). This is the primary signal.
-  2. NAME — the symbol's own name or qualified_name ends in ``Test``/``Spec``
-     (e.g. ``LoginRepositoryTest``, ``PaymentServiceSpec``). A secondary signal
-     for repos that colocate tests outside conventional roots.
-
-A symbol is a test if EITHER signal fires. The ``detection_method`` field
-records which, so a missed test is diagnosable rather than silent.
-"""
+"""Test-symbol detection for impact analysis."""
 from __future__ import annotations
 
 import re

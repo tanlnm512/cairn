@@ -1,12 +1,4 @@
-"""ZCode integration: config + install + uninstall, together.
-
-ZCode reads ``.zcode/config.json`` with a nested
-``{"mcp": {"servers": {"cairn": {...}}}}`` shape (an explicit ``"type"``
-field) — NOT the top-level ``mcpServers`` format used by Claude/Cursor —
-for workspace scope; the user (global) scope MCP file is
-``~/.zcode/cli/config.json`` (same nested shape). This module owns those
-shapes so install and uninstall agree.
-"""
+"""ZCode integration: config + install + uninstall, together."""
 from __future__ import annotations
 
 from pathlib import Path

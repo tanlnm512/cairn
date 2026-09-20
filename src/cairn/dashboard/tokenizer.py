@@ -1,12 +1,4 @@
-"""Token estimation for the dashboard.
-
-Two modes: exact counting through the optional ``[semantic]`` extra's
-transformers tokenizer when it is importable and the embed model's tokenizer
-is cached locally (never fetched from the network), or the zero-dependency
-chars/4 heuristic — the same ``CHARS_PER_TOKEN`` constant the bench suite
-uses, so bench and dashboard numbers stay comparable. The active mode is
-resolved once per process; ``reset_tokenizer_mode()`` forces a re-probe.
-"""
+"""Token estimation for the dashboard."""
 from __future__ import annotations
 
 import threading

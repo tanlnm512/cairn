@@ -1,23 +1,4 @@
-"""Graph builder: scan -> parse -> store -> resolve edges.
-
-Orchestrates the indexing pipeline. For each repo:
-  1. Scan source files (scanner)
-  2. Parse each file (parser for its language)
-  3. Insert symbols + imports + edges (edges initially unresolved)
-  4. Resolve edge targets via the import-aware resolver (src/graph/resolver.py)
-
-An edge is resolved only when exactly one candidate exists in a tier
-(same-file -> import-aware -> same-repo -> global); otherwise it is marked
-``ambiguous`` and left unresolved. Precise-by-default queries trust only
-``resolution='exact'`` rows; ``--fuzzy`` re-enables matching by the preserved
-``target_name``.
-
-Crash-recovery contract (single-repo on-disk rebuilds): the on-disk path
-commits mid-rebuild (every 500 files, to bound WAL lock hold time), so a crash
-or killed build can leave the repo cleared-but-partial with no error on the
-next open. ``repo_build_in_progress`` reports that state; the recovery is to
-re-run ``cairn build --repo <repo>``.
-"""
+"""Graph builder: scan -> parse -> store -> resolve edges."""
 from __future__ import annotations
 
 import json
