@@ -53,6 +53,41 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     pool = stats["resolution"]["exact"] + stats["resolution"]["ambiguous"]
     stats["exact_share"] = stats["resolution"]["exact"] / pool if pool else 0.0
     stats["ambiguous_share"] = stats["resolution"]["ambiguous"] / pool if pool else 0.0
+    # Edge provenance mix and per-language exact share over the same pool;
+    # best-effort -- pre-migration DBs lack the source/resolution columns.
+    try:
+        source_counts = {
+            r["src"]: r["c"]
+            for r in cur.execute(
+                "SELECT COALESCE(source, 'tree_sitter') AS src, COUNT(*) AS c "
+                "FROM edges GROUP BY 1 ORDER BY 1"
+            ).fetchall()
+        }
+    except sqlite3.OperationalError as e:
+        note_contention("stats.edge_sources", error=e)
+        source_counts = {}
+    stats["edge_sources"] = {"tree_sitter": 0, "scip": 0}
+    stats["edge_sources"].update(source_counts)
+    try:
+        lang_rows = cur.execute(
+            """SELECT f.language AS language,
+                      SUM(e.resolution = 'exact') AS exact_n,
+                      SUM(e.resolution = 'ambiguous') AS ambiguous_n
+               FROM edges e
+               JOIN symbols s ON e.source_id = s.id
+               JOIN files f ON s.file_id = f.id
+               WHERE e.kind IN ('calls','references')
+                 AND e.resolution IN ('exact','ambiguous')
+               GROUP BY f.language ORDER BY f.language"""
+        ).fetchall()
+    except sqlite3.OperationalError as e:
+        note_contention("stats.exact_share_by_language", error=e)
+        lang_rows = []
+    stats["exact_share_by_language"] = {}
+    for r in lang_rows:
+        lang_pool = (r["exact_n"] or 0) + (r["ambiguous_n"] or 0)
+        if lang_pool:
+            stats["exact_share_by_language"][r["language"]] = r["exact_n"] / lang_pool
     # skipped-file counts by reason (best-effort -- the table may not exist).
     try:
         stats["skipped_total"] = cur.execute(

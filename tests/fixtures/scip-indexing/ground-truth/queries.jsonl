@@ -1,0 +1,4 @@
+{"query_id": "cov-provider", "level": "L1", "kind": "definition", "text": "provider", "rationale": "covered file's callee; its identity must survive the overlay"}
+{"query_id": "cov-consumer", "level": "L1", "kind": "call-binding", "text": "consumer", "rationale": "covered caller; consumer->provider is the call binding the index overlays"}
+{"query_id": "cov-standalone", "level": "L1", "kind": "definition", "text": "standalone", "rationale": "uncovered file; tree-sitter identity untouched by the overlay"}
+{"query_id": "cov-caller", "level": "L1", "kind": "call-binding", "text": "caller", "rationale": "uncovered caller; caller->standalone stays tree-sitter"}

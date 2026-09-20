@@ -1,0 +1,3 @@
+# The upstream scip.proto commit sha recorded in the vendored stub's
+# provenance header -- 40-hex git oid, not a credential.
+src/cairn/parsers/_scip_pb2.py:sourcegraph-access-token:14

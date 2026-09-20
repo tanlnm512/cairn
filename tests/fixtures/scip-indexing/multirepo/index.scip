@@ -1,0 +1,15 @@
+
+	multirepo°
+core.py1
+(python core.py core.py/alpha_provider().1
+(python core.py core.py/alpha_consumer()./
+(python core.py core.py/alpha_provider().*
+	#python util.py util.py/beta_util().,
+(python core.py core.py/alpha_provider().(,
+(python core.py core.py/alpha_consumer().("Pythonó
+util.py,
+#python util.py util.py/beta_util().0
+'python util.py util.py/beta_consumer().*
+#python util.py util.py/beta_util().'
+#python util.py util.py/beta_util().(+
+'python util.py util.py/beta_consumer().("Python

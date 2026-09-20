@@ -50,7 +50,9 @@ import time
 import pytest
 
 from cairn.graph.builder import build_graph
+from cairn.graph import dataflow as dataflow_mod
 from cairn.graph.dataflow import (
+    CLOSURE_MAX_DEPTH,
     build_dataflow_index,
     build_transitive_closure,
     maintain_dataflow_index,
@@ -799,6 +801,53 @@ def test_maintain_transitive_closure_drops_rows_of_deleted_sources(fresh_db):
         "SELECT COUNT(*) FROM transitive_edges WHERE source_id = 's3' OR target_id = 's3'"
     ).fetchone()[0]
     assert stale == 0
+
+
+def test_maintain_transitive_closure_derives_via_shared_core(fresh_db, monkeypatch):
+    """maintain_transitive_closure must re-derive the affected rows through the
+    builder's _closure_rows core with restrict_sources bound to those ids."""
+    _seed_mini_graph(fresh_db)
+    build_transitive_closure(fresh_db)
+
+    seen: dict = {}
+    real = dataflow_mod._closure_rows
+
+    def spy(conn, max_depth, restrict_sources=None):
+        seen["max_depth"] = max_depth
+        seen["restrict_sources"] = restrict_sources
+        return real(conn, max_depth, restrict_sources=restrict_sources)
+
+    monkeypatch.setattr(dataflow_mod, "_closure_rows", spy)
+    maintain_transitive_closure(fresh_db, {"s1", "s2", "s5"})
+
+    assert sorted(seen["restrict_sources"]) == ["s1", "s2", "s5"]
+    assert seen["max_depth"] == CLOSURE_MAX_DEPTH
+
+
+def test_maintain_after_targeted_delete_matches_full_rebuild(fresh_db):
+    """After a targeted DELETE of a mid-chain symbol, maintaining only the
+    deleted source plus its ancestors must leave exactly the rows a fresh full
+    rebuild produces -- whole-table, so unaffected sources survive untouched."""
+    _seed_mini_graph(fresh_db)
+    build_transitive_closure(fresh_db)
+
+    fresh_db.execute("DELETE FROM edges WHERE source_id = 's3' OR target_id = 's3'")
+    fresh_db.execute("DELETE FROM symbols WHERE id = 's3'")
+    fresh_db.commit()
+    maintain_transitive_closure(fresh_db, {"s1", "s2", "s3", "s5"})
+
+    ref = sqlite3.connect(":memory:")
+    ref.row_factory = sqlite3.Row
+    _apply_schema(ref)
+    _seed_mini_graph(ref)
+    ref.execute("DELETE FROM edges WHERE source_id = 's3' OR target_id = 's3'")
+    ref.execute("DELETE FROM symbols WHERE id = 's3'")
+    ref.commit()
+    build_transitive_closure(ref)
+    expected = _closure_rows(ref)
+    ref.close()
+
+    assert _closure_rows(fresh_db) == expected
 
 
 def test_maintain_dataflow_index_upserts_and_deletes(fresh_db):

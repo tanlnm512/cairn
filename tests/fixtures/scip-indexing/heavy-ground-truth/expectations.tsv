@@ -1,0 +1,9 @@
+query_id	symbol_id	grade
+hv-definition	mod_07.py#fn_07_3	2
+hv-chain-target	mod_08.py#fn_08_3	2
+hv-chain-target	mod_07.py#fn_07_3	1
+hv-mid-chain	mod_20.py#fn_20_0	2
+hv-wrapped	mod_33.py#fn_33_2	2
+hv-wrapped	mod_34.py#fn_34_2	1
+hv-wrap-target	mod_00.py#fn_00_4	2
+hv-builtin-adjacent	mod_11.py#fn_11_1	2

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Failing stub scip-python: same CLI contract as bin/scip-python but always
+# exits 1 without producing an index (nonzero-exit degrade path).
+set -eu
+echo "stub scip-python: simulated indexer failure" >&2
+exit 1

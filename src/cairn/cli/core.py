@@ -1,4 +1,4 @@
-"""Core CLI: init, config, build, stats, checkpoint."""
+"""Core CLI: init, config, build, import-scip, stats, checkpoint."""
 from __future__ import annotations
 
 import click
@@ -167,11 +167,14 @@ def config(list_all, mcp_config, db_only, as_json):
         # only reads env/registry and never creates dirs or registry entries,
         # so verifiers can spawn this from an arbitrary cwd.
         store = resolve_store()
+        from ..graph.config import load_config
+
         click.echo(json.dumps({
             "cairn_home": str(store.home.parent),
             "workspace": str(store.workspace),
             "db": str(store.db),
             "knowledge": str(store.knowledge),
+            "scip": load_config(store.workspace).scip,
         }))
         return
 
@@ -237,6 +240,14 @@ def config(list_all, mcp_config, db_only, as_json):
             click.echo(f"  {ns} -> {owner}")
     else:
         click.echo("  (empty — cross_repo_deps will find no cross-repo links)")
+
+    scip_indexes = cfg.scip.get("indexes", {})
+    click.echo("scip indexes:")
+    if scip_indexes:
+        for lang, index_path in sorted(scip_indexes.items()):
+            click.echo(f"  {lang} -> {index_path}")
+    else:
+        click.echo("  (none configured — SCIP edges stay off)")
 
     click.echo("")
     click.echo("MCP config for an agent (path-free):")
@@ -418,6 +429,13 @@ def build(repo, workspace, db, verbose, staging, lsp):
         kv_pairs.append(("dataflow", f"{df_count:,} symbols"))
     if tc_count is not None:
         kv_pairs.append(("transitive", f"{tc_count:,} edges"))
+    scip_report = summary.get("scip") or {}
+    if scip_report.get("edges"):
+        kv_pairs.append((
+            "scip",
+            f"{scip_report['edges']:,} edges "
+            f"({scip_report.get('disagreements') or 0:,} disagreements)",
+        ))
 
     resolution = summary.get("resolution") or {}
     lsp_report = summary.get("lsp") or {}
@@ -449,6 +467,45 @@ def build(repo, workspace, db, verbose, staging, lsp):
 
 
 # --------------------------------------------------------------------------
+# cairn import-scip
+# --------------------------------------------------------------------------
+@main.command(name="import-scip")
+@click.argument("scip_file", type=click.Path(exists=True))
+@click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE, help="Workspace root.")
+@click.option("--db", default=None,
+              help="SQLite DB path (default: central store for this workspace).")
+def import_scip(scip_file, workspace, db):
+    """Import a SCIP index into an already-built graph as an edges-only overlay."""
+    from ..paths import resolve_store
+
+    db_path = db or str(resolve_store().db)
+    # The gate must fire before get_db, which would create a missing store.
+    if not Path(db_path).exists():
+        raise click.ClickException(
+            f"no graph DB at {db_path} — run `cairn build` first"
+        )
+    conn = get_db(db_path)
+    try:
+        if not conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]:
+            raise click.ClickException(
+                f"graph DB at {db_path} holds no symbols — run `cairn build` first"
+            )
+        from ..parsers.scip_importer import import_scip_file
+
+        # ImportError carries the importer's [scip] install hint.
+        record = import_scip_file(conn, scip_file, workspace)
+    except ImportError as e:
+        raise click.ClickException(str(e)) from e
+    finally:
+        conn.close()
+    edges = record.get("edges", record.get("edges_added", 0))
+    click.echo(
+        f"scip: {edges} edges ({record.get('disagreements', 0)} disagreements) "
+        f"from {scip_file}"
+    )
+
+
+# --------------------------------------------------------------------------
 # cairn stats
 # --------------------------------------------------------------------------
 @main.command(name="stats")
@@ -473,6 +530,20 @@ def stats(db):
         f"{res['exact']:,} exact / {res['ambiguous']:,} ambiguous / {res['unresolved']:,} unresolved"
         f" ({s['exact_share']:.0%} / {s['ambiguous_share']:.0%} of pool)",
     )
+    edge_sources = s.get("edge_sources") or {}
+    if edge_sources.get("scip"):
+        display.kv(
+            "edge sources",
+            f"{edge_sources.get('tree_sitter') or 0:,} tree-sitter / {edge_sources['scip']:,} scip",
+        )
+        lang_shares = s.get("exact_share_by_language") or {}
+        if lang_shares:
+            display.kv(
+                "exact share",
+                "  ".join(
+                    f"{lang} {share:.0%}" for lang, share in sorted(lang_shares.items())
+                ),
+            )
     display.kv("imports", f"{s['imports']:,}")
     if s.get("skipped_total"):
         display.kv("skipped", f"{s['skipped_total']:,} (not indexed)")

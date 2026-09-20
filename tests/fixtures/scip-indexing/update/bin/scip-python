@@ -1,0 +1,19 @@
+#!/bin/sh
+# Stub scip-python: copy the workspace's committed index to the requested
+# output path and append one invocation line to bin/calls.log (next to this
+# script). Same CLI contract as the real npm scip-python:
+#   scip-python index <repo> --output=<path>
+set -eu
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+out=""
+for arg in "$@"; do
+    case "$arg" in
+        --output=*) out=${arg#--output=} ;;
+    esac
+done
+if [ -z "$out" ]; then
+    echo "stub scip-python: no --output= argument given" >&2
+    exit 2
+fi
+cp "$dir/../committed-index.scip" "$out"
+printf '%s\n' "$*" >> "$dir/calls.log"

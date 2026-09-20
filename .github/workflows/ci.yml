@@ -192,9 +192,10 @@ jobs:
       - name: Run infra tier (non-PR events only)
         # The bench/dataset/soak infrastructure tier: excluded from PR legs
         # above, but every merge-group entry and main push runs it so the
-        # tier can never rot.
+        # tier can never rot. The scaling-gate file is ignored here because
+        # the dedicated closure-gate job below runs it on every event.
         if: github.event_name != 'pull_request' && matrix.python-version == '3.12'
-        run: uv run --no-sync pytest -q -m infra
+        run: uv run --no-sync pytest -q -m infra --ignore=tests/test_scaling_gate.py
 
       - name: Publish test summary
         if: always()
@@ -240,6 +241,32 @@ jobs:
           except Exception:
               print("_(coverage report unavailable)_")
           EOF
+
+  # --- Closure budget gate: enforcing, unlike the advisory bench job --------
+  # Runs the scaling-suite closure gate: build the 1000-file medium corpus,
+  # multiply structural edges 5x deterministically, and assert the
+  # transitive-closure build stays within the recorded wall/memory budget.
+  # A breach reddens CI here (the bench job's timing comparison stays
+  # continue-on-error). Heavy by design (a full corpus build), so it runs as
+  # its own job once instead of on every test-matrix leg; the test job's
+  # infra-tier step ignores the gate's file for the same reason.
+  closure-gate:
+    name: Closure budget gate (1000-file scaling point)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+
+      - name: Run closure budget gate
+        run: uv run --no-sync pytest tests/test_scaling_gate.py -q
 
   # --- DS-v2 ground-truth seal: the eval dataset's own regenerate-and-assert -
   # Closes the audit defect where the seal lived only in the tree (pinned

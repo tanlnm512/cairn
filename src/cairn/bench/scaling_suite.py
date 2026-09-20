@@ -3,12 +3,63 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import Sequence
 
 from .corpus import generate_corpus
 from .report import ScalingPoint, ScalingReport
 from .timing import peak_memory
+
+# Closure-op budget at the 1000-file gate point: wall seconds and peak traced
+# memory (MB) the transitive-closure build must stay within at the multiplied
+# structural-edge volume.
+CLOSURE_BUDGET_WALL_SECONDS = 60.0
+CLOSURE_BUDGET_PEAK_MB = 512.0
+CLOSURE_EDGE_FACTOR = 5
+
+
+def synthesize_structural_edges(
+    conn: sqlite3.Connection, *, factor: int = CLOSURE_EDGE_FACTOR
+) -> int:
+    """Insert ``factor - 1`` replicas per structural edge, each with a fresh id
+    and its target cyclically shifted by the replica index over the sorted
+    symbol ids (name-only targets shift over the sorted symbol names), then
+    return the number of rows inserted."""
+    if factor < 2:
+        return 0
+    from ..graph.traversal import STRUCTURAL_EDGE_KINDS
+
+    cur = conn.cursor()
+    id_to_name = dict(cur.execute("SELECT id, name FROM symbols").fetchall())
+    if not id_to_name:
+        return 0
+    ids = sorted(id_to_name)
+    id_pos = {sid: i for i, sid in enumerate(ids)}
+    name_domain = sorted(set(id_to_name.values()))
+    name_pos = {n: i for i, n in enumerate(name_domain)}
+    kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
+    rows = []
+    for eid, src, tgt, tname, kind, line, col in cur.execute(
+        f"SELECT id, source_id, target_id, target_name, kind, line, column"
+        f" FROM edges WHERE kind IN ({kind_ph})",
+        STRUCTURAL_EDGE_KINDS,
+    ):
+        for k in range(1, factor):
+            new_tgt, new_name = tgt, tname
+            if tgt in id_pos:
+                shifted = ids[(id_pos[tgt] + k) % len(ids)]
+                new_tgt, new_name = shifted, id_to_name[shifted]
+            elif tname:
+                new_name = name_domain[(name_pos[tname] + k) % len(name_domain)]
+            rows.append((f"{eid}~synth{k}", src, new_tgt, new_name, kind, line, col))
+    cur.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, column)"
+        " VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
 
 
 def _resolve_rate(build_stats: dict) -> float:
@@ -32,9 +83,11 @@ def run_scaling_suite(
     """Run the scaling benchmark over the given corpus sizes.
 
     For each size in ``sizes``: generate a fresh corpus under ``root/<size>/``,
-    build the graph into a throwaway DB, embed it, and record one
-    :class:`ScalingPoint`. Each size gets its own DB and corpus so there's no
-    carryover between samples.
+    build the graph into a throwaway DB, embed it, multiply the structural
+    edges to ``CLOSURE_EDGE_FACTOR`` volume, and record one
+    :class:`ScalingPoint` carrying the timed + memory-traced closure build.
+    Each size gets its own DB and corpus so there's no carryover between
+    samples.
 
     ``root`` should be a temp directory; this function creates and removes
     subdirectories under it.
@@ -56,7 +109,9 @@ def run_scaling_suite(
 
         from cairn.graph import embeddings as emb
         from cairn.graph.builder import build_graph
+        from cairn.graph.dataflow import build_transitive_closure
         from cairn.graph.schema import get_db
+        from cairn.graph.traversal import STRUCTURAL_EDGE_KINDS
 
         emb.reset_backend_cache()
 
@@ -87,6 +142,26 @@ def run_scaling_suite(
 
         mem, _ = peak_memory(_build_and_embed)
 
+        # Closure op: multiply structural-edge volume deterministically, then
+        # time + memory-trace one transitive-closure build over it.
+        conn = get_db(db_path)
+        try:
+            synthesize_structural_edges(conn)
+            kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
+            structural_edges = conn.execute(
+                f"SELECT COUNT(*) FROM edges WHERE kind IN ({kind_ph})",
+                STRUCTURAL_EDGE_KINDS,
+            ).fetchone()[0]
+
+            def _closure_op() -> float:
+                _t0 = _t.perf_counter()
+                build_transitive_closure(conn)
+                return _t.perf_counter() - _t0
+
+            closure_mem, closure_s = peak_memory(_closure_op)
+        finally:
+            conn.close()
+
         symbols = build_stats.get("symbols", 0)
         db_mb = Path(db_path).stat().st_size / (1024 * 1024) if os.path.exists(db_path) else 0.0
 
@@ -98,11 +173,15 @@ def run_scaling_suite(
             db_size_mb=db_mb,
             resolve_rate=_resolve_rate(build_stats),
             peak_memory_mb=mem.peak_mb,
+            closure_seconds=closure_s,
+            closure_peak_memory_mb=closure_mem.peak_mb,
+            closure_edges=structural_edges,
         )
         report.points.append(point)
         if progress:
             progress("size_done", n=n, symbols=symbols,
-                     build_s=round(build_s, 3), embed_s=round(embed_s, 3))
+                     build_s=round(build_s, 3), embed_s=round(embed_s, 3),
+                     closure_s=round(closure_s, 3))
 
         # Clean up this size's DB to keep disk usage bounded across the sweep.
         try:

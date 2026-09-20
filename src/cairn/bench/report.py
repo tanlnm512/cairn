@@ -91,6 +91,9 @@ class ScalingPoint:
     db_size_mb: float
     resolve_rate: float
     peak_memory_mb: float = 0.0
+    closure_seconds: float = 0.0
+    closure_peak_memory_mb: float = 0.0
+    closure_edges: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -101,6 +104,9 @@ class ScalingPoint:
             "db_mb": round(self.db_size_mb, 2),
             "resolve_rate": round(self.resolve_rate, 3),
             "peak_mem_mb": round(self.peak_memory_mb, 2),
+            "closure_s": round(self.closure_seconds, 3),
+            "closure_peak_mb": round(self.closure_peak_memory_mb, 2),
+            "closure_edges": self.closure_edges,
         }
 
 
@@ -125,6 +131,8 @@ class ScalingReport:
                 f"{p.symbols:,}",
                 _fmt_ms(p.build_seconds),
                 _fmt_ms(p.embed_seconds),
+                _fmt_ms(p.closure_seconds) if p.closure_seconds else "-",
+                f"{p.closure_peak_memory_mb:.0f}" if p.closure_peak_memory_mb else "-",
                 f"{p.db_size_mb:.1f}",
                 f"{p.resolve_rate:.0%}",
                 f"{p.peak_memory_mb:.0f}" if p.peak_memory_mb else "-",
@@ -133,7 +141,10 @@ class ScalingReport:
         ]
         print_table(
             "cairn scaling benchmark",
-            columns=["files", "symbols", "build", "embed", "DB MB", "resolve", "peak MB"],
+            columns=[
+                "files", "symbols", "build", "embed", "closure", "closure MB",
+                "DB MB", "resolve", "peak MB",
+            ],
             rows=rows,
         )
         return self.to_json()
