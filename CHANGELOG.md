@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Added
+- SCIP compiler-index support, redesigned as an opt-in edges-only overlay:
+  a configured (or once auto-generated) `.scip` index contributes exact
+  call/reference edges over the unchanged tree-sitter symbol graph —
+  per-file authoritative, position-joined, per-document repo attribution,
+  with a join-anomaly guard that retains tree-sitter edges observably.
+  Seven-language run-once auto-generation registry (swift, java, kotlin via
+  scip-java, typescript, python, go, rust) with `scip_gen_*` degradation
+  records; `cairn import-scip` CLI and the `scip` config key; `[scip]`
+  extra restoring the vendored protobuf stub; `stats` gains `edge_sources`
+  and `exact_share_by_language`, build summary renders `scip: n edges (d
+  disagreements)`; `cairn update` flips covered files' edge provenance to
+  tree-sitter until the next full build; `docs/scip.md` toolchain guide.
+### Changed
+- Transitive closure rebuilt as an in-memory level loop with a single write
+  pass (byte-identical row sets, ~2× faster on cairn's own repo) and now
+  enforced by a CI budget gate — ≤60 s wall / ≤512 MB peak at the 1000-file
+  scaling point with 5× structural edges (measured 6.0 s / 228 MB).
+- `edges` table gains an additive `source` provenance column (NULL reads as
+  tree-sitter); local commit gate's staged-files ruff honors
+  `extend-exclude` via `--force-exclude`.
+
+
 ## [0.21.0] - 2026-09-17
 
 ### Added

@@ -1,6 +1,6 @@
 # Spec: scip-indexing-v2
 
-**Status**: approved      <!-- approved at the approve gate 2026-09-20 (explicit
+**Status**: done      <!-- approved at the approve gate 2026-09-20 (explicit
                                 user sign-off) → active once the first task spawns
                                 → done when all tasks are ticked and `check.py`
                                 re-runs green -->
