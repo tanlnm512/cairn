@@ -19,3 +19,4 @@ Fixture note: the taint-tracking fixtures moved to
 `tests/fixtures/taint-tracking/` (committed test data, consumed by
 tests/test_taint_{fixtures,surfaces}.py); the spec's as-built docs live in
 the archive entry above.
+- [scip-indexing-v2](scip-indexing-v2/spec.md) — draft (created 2026-09-20)
