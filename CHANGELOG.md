@@ -11,6 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+
+### Added
+- SCIP compiler-index support, redesigned as an opt-in edges-only overlay:
+  a configured (or once auto-generated) `.scip` index contributes exact
+  call/reference edges over the unchanged tree-sitter symbol graph —
+  per-file authoritative, position-joined, per-document repo attribution,
+  with a join-anomaly guard that retains tree-sitter edges observably.
+  Seven-language run-once auto-generation registry (swift, java, kotlin via
+  scip-java, typescript, python, go, rust) with `scip_gen_*` degradation
+  records; `cairn import-scip` CLI and the `scip` config key; `[scip]`
+  extra restoring the vendored protobuf stub; `stats` gains `edge_sources`
+  and `exact_share_by_language`, build summary renders `scip: n edges (d
+  disagreements)`; `cairn update` re-applies the configured overlay after
+  reindexing (import-only, never a generation); `docs/scip.md` toolchain
+  guide.
+### Changed
+- Transitive closure rebuilt as an in-memory level loop with a single write
+  pass (byte-identical row sets, ~2× faster on cairn's own repo) and now
+  enforced by a CI budget gate — ≤60 s wall / ≤512 MB peak at the 1000-file
+  scaling point with 5× structural edges (measured 6.0 s / 228 MB), plus a
+  ≤2 s budget for one incremental `maintain_transitive_closure` call at
+  the same point, whose reads are scoped to the affected subgraph.
+- `edges` table gains an additive `source` provenance column (NULL reads as
+  tree-sitter); local commit gate's staged-files ruff honors
+  `extend-exclude` via `--force-exclude`.
+### Fixed
+- The SCIP import's write phase is atomic: every fallible read completes
+  before the first delete, and the deletes/inserts run inside a savepoint
+  that rolls back on failure — a mid-import error can no longer commit
+  orphaned per-file deletes that permanently stripped tree-sitter
+  calls/references edges from already-processed files.
+- SCIP `local` symbols resolve only against same-document definition sites
+  (they are document-scoped by spec), instead of joining a same-named
+  definition from an unrelated file.
+- `_apply_scip_overlay` logs a failed config read like every other
+  degradation instead of returning silently.
+- `cairn import-scip` exits non-zero when no index document matches the
+  graph (the workspace/db mismatch case that printed a normal-looking
+  "0 edges" line), and the success line reports matched/skipped document
+  counts.
+- `scripts/regen_scip_pb2.sh` splices the generated stub at the detected
+  header end instead of a hardcoded line number that could disagree with
+  the accepted header range.
+
+
 ## [0.21.0] - 2026-09-17
 
 ### Added

@@ -21,11 +21,15 @@ class BlastBaseError(RuntimeError):
 
 
 def _git(repo: Path, args: list[str]) -> str:
+    # errors="replace": git sniffs only the first 8KB for binary detection, so
+    # a diff can carry non-UTF-8 payload bytes past that mark; the parser
+    # regexes hunks and paths only, so replaced characters are inert.
     result = subprocess.run(
         ["git", *args],
         cwd=str(repo),
         capture_output=True,
         text=True,
+        errors="replace",
         timeout=10,
     )
     if result.returncode != 0:

@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional
 
 from ..parsers.base import ParsedFile
 from ..parsers.factory import get_parser
@@ -266,6 +266,140 @@ def _resolve_all(
     return resolution_stats
 
 
+_SCIP_SKIP_RUNTIME_MISSING = "scip_runtime_missing"
+_SCIP_SKIP_IMPORT_FAILED = "scip_import_failed"
+_SCIP_SKIP_INDEX_MISSING = "scip_index_missing"
+
+
+def _record_scip_skip(cur, repo_id: str, path: str, reason: str) -> None:
+    """One skipped_files row per (repo, path, reason) for an index the overlay
+    could not apply (best-effort; a repeat replaces the earlier row)."""
+    try:
+        cur.execute(
+            "DELETE FROM skipped_files WHERE repo_id = ? AND path = ? AND reason = ?",
+            (repo_id, path, reason),
+        )
+        cur.execute(
+            """INSERT INTO skipped_files
+                 (id, repo_id, path, reason, size_bytes, recorded_at)
+               VALUES (?, ?, ?, ?, NULL, ?)""",
+            (_new_id(), repo_id, path, reason, _now()),
+        )
+    except Exception:
+        pass
+
+
+def _apply_scip_overlay(
+    conn,
+    workspace: str,
+    repos_seen: Mapping[str, object],
+    verbose: bool,
+    generate_missing: bool = True,
+) -> Optional[Dict[str, int]]:
+    """Apply configured SCIP indexes as an edges-only overlay over the resolved graph.
+
+    A configured-but-absent index for a registered language is generated once
+    (bounded, never an existing file) and then imported; generation failures
+    record a scip_gen_* skipped_files row and never block another language.
+    With ``generate_missing=False`` an absent index only records
+    scip_index_missing (the incremental path never invokes indexers).
+
+    Returns the aggregated {'edges', 'disagreements', 'upgrades',
+    'join_anomalies'} report, or None when no index is configured. Never
+    raises: a missing runtime or a corrupt index degrades to tree-sitter with
+    a skipped_files record (never a rollback on the live build connection);
+    every degradation prints via _log regardless of verbose.
+    """
+    try:
+        from .config import load_config
+
+        raw = (load_config(workspace).scip or {}).get("indexes")
+        indexes: Dict[str, str] = (
+            {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        )
+    except Exception as e:
+        _log(f"  [scip] config load failed ({e}); overlay skipped")
+        return None
+    if not indexes:
+        return None
+
+    log = _log if verbose else lambda *a: None
+    report: Dict[str, int] = {
+        "edges": 0, "disagreements": 0, "upgrades": 0, "join_anomalies": 0,
+    }
+    # Skip attribution is workspace-scoped, not per-document, so a single
+    # repo_id is only safe to guess in a single-repo workspace; a multi-repo
+    # workspace leaves it blank rather than mis-attributing to an arbitrary repo.
+    repo_id = next(iter(repos_seen), "") if len(repos_seen) == 1 else ""
+    try:
+        from ..parsers.scip_importer import (
+            _INSTALL_HINT,
+            import_scip_file,
+            scip_available,
+        )
+
+        if not scip_available():
+            _log(f"  [scip] runtime unavailable; using tree-sitter edges. "
+                 f"{_INSTALL_HINT}")
+            cur = conn.cursor()
+            for rel_path in sorted(set(indexes.values())):
+                _record_scip_skip(cur, repo_id, rel_path, _SCIP_SKIP_RUNTIME_MISSING)
+            conn.commit()
+            return report
+
+        ws_root = Path(workspace).resolve()
+        for lang, rel_path in sorted(indexes.items()):
+            idx_path = ws_root / rel_path
+            if not idx_path.exists():
+                if not generate_missing:
+                    _log(f"  [scip] {lang}: index {rel_path} missing; "
+                         f"keeping tree-sitter edges")
+                    _record_scip_skip(
+                        conn.cursor(), repo_id, rel_path, _SCIP_SKIP_INDEX_MISSING
+                    )
+                    conn.commit()
+                    continue
+                from ..parsers.scip_indexers import generate_index_result
+
+                result = generate_index_result(lang, idx_path, str(ws_root), log=log)
+                if not result.ok:
+                    if result.reason:
+                        _record_scip_skip(
+                            conn.cursor(), repo_id, rel_path, result.reason
+                        )
+                        conn.commit()
+                        _log(f"  [scip] {lang}: index generation failed "
+                             f"({result.reason}); keeping tree-sitter edges. "
+                             f"{result.detail}")
+                    else:
+                        log(f"  [scip] {lang}: {result.detail}")
+                    continue
+            try:
+                record = import_scip_file(conn, str(idx_path), workspace)
+            except Exception as e:
+                _log(f"  [scip] index import failed ({rel_path}): {e}; "
+                     f"keeping tree-sitter edges")
+                _record_scip_skip(
+                    conn.cursor(), repo_id, rel_path, _SCIP_SKIP_IMPORT_FAILED
+                )
+                conn.commit()
+                continue
+            report["edges"] += record.get("edges", 0)
+            report["disagreements"] += record.get("disagreements", 0)
+            report["upgrades"] += record.get("upgrades", 0)
+            anomalies = record.get("join_anomalies", 0)
+            if anomalies:
+                report["join_anomalies"] += anomalies
+                _log(f"  [scip] {lang}: {anomalies} file(s) kept tree-sitter "
+                     f"edges (join anomaly)")
+            log(f"  [scip] {lang}: {report['edges']} edges "
+                f"({report['disagreements']} disagreements, "
+                f"{report['upgrades']} upgrades)")
+    except Exception as e:
+        _log(f"  [scip] overlay skipped: {e}")
+    return report
+
+
 def _build_graph_impl(
     conn,
     workspace: str = scanner_mod.DEFAULT_WORKSPACE,
@@ -415,6 +549,11 @@ def _build_graph_impl(
     except Exception as e:
         log(f"  imports-edge materialization failed: {e}")
 
+    # Fifth pass: configured SCIP indexes as an edges-only calls/references
+    # overlay over the resolved graph. Best-effort by contract: a missing
+    # runtime or corrupt index degrades to tree-sitter, never fails the build.
+    scip_report = _apply_scip_overlay(conn, workspace, repos_seen, verbose)
+
     if repo_filter:
         # Single-repo rebuild complete and committed (insert final commit +
         # per-repo resolve commits + imports materialization above): out of
@@ -445,6 +584,8 @@ def _build_graph_impl(
     }
     if lsp_report is not None:
         summary["lsp"] = lsp_report
+    if scip_report is not None:
+        summary["scip"] = scip_report
     log(f"Done: {summary}")
     return summary
 

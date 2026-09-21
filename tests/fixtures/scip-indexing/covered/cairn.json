@@ -1,0 +1,7 @@
+{
+  "scip": {
+    "indexes": {
+      "python": "index.scip"
+    }
+  }
+}

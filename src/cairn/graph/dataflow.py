@@ -113,6 +113,11 @@ def _chunked(items, size: int = _SQLITE_IN_CHUNK):
         yield items[i : i + size]
 
 
+def _has_edge_target(target_id, target_name) -> bool:
+    """True when a closure row can carry this edge (an id or a non-empty name)."""
+    return target_id is not None or (target_name is not None and target_name != "")
+
+
 def _compute_dataflow_row(
     conn: sqlite3.Connection,
     name: str,
@@ -215,6 +220,243 @@ def build_dataflow_index(
     return count
 
 
+def _run_levels(
+    eligible,
+    adjacency_for,
+    case2_for,
+    max_depth: int,
+    before_level=None,
+) -> List[tuple[str, str, Optional[str], int]]:
+    """Seed + per-depth level loop shared by the full and scoped closure paths.
+
+    ``(source_id, target_id, name)`` in global (kind, rowid) order;
+    ``adjacency_for(target_id)`` yields that target's ``(target_id, name)``
+    edges in rowid order; ``case2_for(unresolved_names)`` yields
+    ``(mid_name, target_id, name)`` hops for those names in the full path's
+    global edge-scan (rowid) order; ``before_level(target_ids)`` runs before
+    each level's extension (the scoped path's adjacency prefetch).
+    """
+    rows: List[tuple[str, str, Optional[str], int]] = []
+    level: Dict[tuple[str, str], Optional[str]] = {}
+    for source_id, target_id, name in eligible:
+        key = (source_id, name)
+        if key not in level:
+            level[key] = target_id
+    rows.extend(
+        (source_id, name, target_id, 1)
+        for (source_id, name), target_id in level.items()
+    )
+
+    for distance in range(1, max_depth):
+        if not level:
+            break
+        if before_level is not None:
+            before_level({t for t in level.values() if t is not None})
+        nxt: Dict[tuple[str, str], Optional[str]] = {}
+
+        # Case 1: resolved rows extend through the adjacency of their target.
+        for (source_id, name), target_id in level.items():
+            if target_id is None:
+                continue
+            for e_target_id, e_name in adjacency_for(target_id):
+                if e_name is None:  # NULL target_name is unstorable
+                    continue
+                key = (source_id, e_name)
+                if key not in nxt:
+                    nxt[key] = e_target_id
+
+        # Case 2: unresolved rows hop through the unique symbol named
+        # target_name; ambiguous names stay unextended rather than guessed.
+        unresolved: Dict[str, list] = {}
+        for (source_id, name), target_id in level.items():
+            if target_id is None:
+                unresolved.setdefault(name, []).append(source_id)
+        for mid_name, target_id, name in case2_for(set(unresolved)):
+            sources = unresolved.get(mid_name)
+            if not sources:
+                continue
+            for source_id in sources:
+                key = (source_id, name)
+                if key not in nxt:
+                    nxt[key] = target_id
+
+        if not nxt:
+            break
+        rows.extend(
+            (source_id, name, target_id, distance + 1)
+            for (source_id, name), target_id in nxt.items()
+        )
+        level = nxt
+    return rows
+
+
+class _ScopedClosureGraph:
+    """Edge/name reads scoped to the restrict set and the frontier it reaches."""
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        sources: set,
+        structural_kinds: set,
+    ):
+        self._conn = conn
+        self._kinds = tuple(sorted(structural_kinds))
+        self._sources = set(sources)
+        self._names: Dict[str, str] = {}
+        self._adjacency: Dict[str, list] = {}
+        self._fetched: set = set()
+
+    def _kind_placeholders(self) -> str:
+        return ",".join("?" for _ in self._kinds)
+
+    def _names_for(self, ids) -> None:
+        missing = [i for i in ids if i and i not in self._names]
+        for chunk in _chunked(missing):
+            ph = ",".join("?" for _ in chunk)
+            for row in self._conn.execute(
+                f"SELECT id, name FROM symbols WHERE id IN ({ph})", chunk
+            ):
+                self._names[row[0]] = row[1]
+
+    def _scoped_edges(self, source_ids) -> list:
+        """Structural edges sourced by source_ids as
+        (source_id, target_id, target_name, kind, rowid), global (kind, rowid)
+        order -- a subset of the full path's table scan, sorted by the same key."""
+        rows: list = []
+        for chunk in _chunked(source_ids):
+            ph = ",".join("?" for _ in chunk)
+            rows.extend(
+                self._conn.execute(
+                    f"SELECT source_id, target_id, target_name, kind, rowid FROM edges "
+                    f"WHERE source_id IN ({ph}) AND kind IN ({self._kind_placeholders()})",
+                    (*chunk, *self._kinds),
+                ).fetchall()
+            )
+        rows.sort(key=lambda r: (r[3], r[4]))
+        return rows
+
+    def seed_edges(self):
+        """Level-1 (source_id, target_id, name) entries for the restrict set."""
+        raw = self._scoped_edges(self._sources)
+        self._names_for({r[1] for r in raw if r[1]})
+        return [
+            (source_id, target_id, self._names.get(target_id, target_name))
+            for source_id, target_id, target_name, _kind, _rowid in raw
+            if _has_edge_target(target_id, target_name)
+        ]
+
+    def prefetch_adjacency(self, target_ids) -> None:
+        """Load the outgoing edges of target_ids (once per id), per-source
+        rowid order -- the order the full path's table scan produces."""
+        missing = [i for i in target_ids if i not in self._fetched]
+        if not missing:
+            return
+        raw = self._scoped_edges(missing)
+        self._names_for({r[0] for r in raw} | {r[1] for r in raw if r[1]})
+        pending: Dict[str, list] = {}
+        for source_id, target_id, target_name, _kind, rowid in raw:
+            name = self._names.get(target_id, target_name)
+            pending.setdefault(source_id, []).append((rowid, target_id, name))
+        for source_id, entries in pending.items():
+            entries.sort(key=lambda e: e[0])
+            self._adjacency[source_id] = [(tid, name) for _rowid, tid, name in entries]
+        self._fetched.update(missing)
+
+    def adjacency_for(self, target_id):
+        return self._adjacency.get(target_id, ())
+
+    def case2_for(self, unresolved_names):
+        """(mid_name, target_id, name) hops for globally-unique unresolved
+        names, merged in the full path's global edge-scan (rowid) order."""
+        streams: list = []
+        for mid_name in unresolved_names:
+            sym_rows = self._conn.execute(
+                "SELECT id FROM symbols WHERE name = ?", (mid_name,)
+            ).fetchall()
+            if len(sym_rows) != 1:
+                continue
+            raw = self._scoped_edges([sym_rows[0][0]])
+            self._names_for({r[1] for r in raw if r[1]})
+            for source_id, target_id, target_name, _kind, rowid in raw:
+                if not _has_edge_target(target_id, target_name):
+                    continue
+                name = self._names.get(target_id, target_name)
+                streams.append((rowid, (mid_name, target_id, name)))
+        streams.sort(key=lambda s: s[0])
+        return [payload for _rowid, payload in streams]
+
+
+def _closure_rows(
+    conn: sqlite3.Connection,
+    max_depth: int,
+    restrict_sources=None,
+) -> List[tuple[str, str, Optional[str], int]]:
+    """Compute transitive-closure rows in memory and return them as
+    ``(source_id, target_name, target_id, distance)`` tuples.
+
+    With ``restrict_sources=None`` the graph is read in full, then the seed +
+    per-depth level loop runs over dict adjacency. First-wins per PK
+    ``(source_id, target_name, distance)``, including tie-breaks: the seed
+    walks edges kind-major then rowid order, the unique-name hop (Case 2)
+    walks the global edge-scan (rowid) order, and the resolved hop (Case 1)
+    walks the level frontier in creation order; Case 1 always precedes
+    Case 2 at a level. A subset of an ordered sequence, sorted by the same
+    key, is the global sequence restricted to that subset, so the
+    ``restrict_sources`` branch reproduces the full result restricted to
+    those sources row-for-row while reading only frontier-scoped edges.
+    """
+    structural_kinds = set(STRUCTURAL_EDGE_KINDS)
+    restrict = None if restrict_sources is None else {s for s in restrict_sources if s}
+
+    if restrict is not None:
+        g = _ScopedClosureGraph(conn, restrict, structural_kinds)
+        return _run_levels(
+            g.seed_edges(),
+            g.adjacency_for,
+            g.case2_for,
+            max_depth,
+            before_level=g.prefetch_adjacency,
+        )
+
+    # One read pass: symbol names, then every edge in table (rowid) order.
+    name_by_id: Dict[str, str] = {
+        row[0]: row[1] for row in conn.execute("SELECT id, name FROM symbols")
+    }
+    name_counts: Dict[str, int] = {}
+    for name in name_by_id.values():
+        name_counts[name] = name_counts.get(name, 0) + 1
+    unique_names = {n for n, c in name_counts.items() if c == 1}
+
+    # adjacency preserves rowid order per source (Case 1 probes it that way);
+    # eligible/case2 walk edges kind-major then rowid order. The read has
+    # no WHERE so it is a table scan -- rowid order is guaranteed.
+    adjacency: Dict[str, list] = {}
+    per_kind: Dict[str, list] = {kind: [] for kind in structural_kinds}
+    case2: list = []
+    for source_id, target_id, target_name, kind in conn.execute(
+        "SELECT source_id, target_id, target_name, kind FROM edges"
+    ):
+        if kind not in structural_kinds:
+            continue
+        # COALESCE(symbol.name, edges.target_name); never None for a live id.
+        name = name_by_id.get(target_id, target_name)
+        adjacency.setdefault(source_id, []).append((target_id, name))
+        if not _has_edge_target(target_id, target_name):
+            continue
+        per_kind[kind].append((source_id, target_id, name))
+        mid_name = name_by_id.get(source_id)
+        if mid_name is not None and mid_name in unique_names:
+            case2.append((mid_name, target_id, name))
+    eligible = [e for kind in sorted(per_kind) for e in per_kind[kind]]
+
+    return _run_levels(
+        eligible,
+        lambda tid: adjacency.get(tid, ()),
+        lambda names: [c for c in case2 if c[0] in names],
+        max_depth,
+    )
+
+
 def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = CLOSURE_MAX_DEPTH) -> int:
     """Precompute multi-hop call graph edges into transitive_edges matrix table.
 
@@ -227,88 +469,29 @@ def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = CLOSURE_
     read path (:func:`impact_from_closure`) serves exactly those queries.
     Service/topology edges never enter the closure; queries that opt into them
     (``include_service_edges=True``) take the DFS path instead.
+
+    The row set comes from :func:`_closure_rows` and is written in one pass:
+    a single DELETE, then one sorted executemany.
     """
     cur = conn.cursor()
-    # The per-depth extension filters on transitive_edges.distance; create the
-    # index idempotently here so this function self-optimizes.
+    # Reader-side ancestor queries filter on distance; keep the index that
+    # serves them materialized idempotently.
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_transitive_distance ON transitive_edges(distance)"
     )
-    kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
-    kind_params = tuple(STRUCTURAL_EDGE_KINDS)
+    rows = _closure_rows(conn, max_depth)
+    # PK order; target_id may be NULL, so it must not take part in the sort.
+    rows.sort(key=lambda r: (r[0], r[1], r[3]))
     cur.execute("DELETE FROM transitive_edges")
-
-    # Seed with direct structural edges (distance=1)
-    cur.execute(f"""
+    cur.executemany(
+        """
         INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-        SELECT
-            e.source_id,
-            COALESCE(s.name, e.target_name) AS target_name,
-            e.target_id,
-            1
-        FROM edges e
-        LEFT JOIN symbols s ON s.id = e.target_id
-        WHERE (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
-          AND e.kind IN ({kind_ph})
-    """, kind_params)
-    total_inserted = cur.rowcount
-
-    for d in range(1, max_depth):
-        # Extend by one hop. For resolved edges (target_id IS NOT NULL), follow
-        # only edges.source_id = target_id (exact ID match) to avoid name collisions.
-        # For unresolved edges, fall back to name-based matching.
-        batch_inserted = 0
-
-        # Case 1: follow resolved edges (target_id IS NOT NULL)
-        cur.execute(f"""
-            INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-            SELECT
-                t.source_id,
-                COALESCE(s_target.name, e.target_name) AS target_name,
-                e.target_id,
-                t.distance + 1
-            FROM transitive_edges t
-            JOIN edges e ON e.source_id = t.target_id
-            LEFT JOIN symbols s_target ON s_target.id = e.target_id
-            WHERE t.distance = ? AND t.target_id IS NOT NULL
-              AND e.kind IN ({kind_ph})
-        """, (d, *kind_params))
-        batch_inserted += cur.rowcount
-
-        # Case 2: fallback for unresolved edges (target_id IS NULL). Only
-        # follow when the target_name maps to EXACTLY ONE symbol -- a name with
-        # multiple definitions is a collision, and following any one of them
-        # would re-introduce the name-collision inflation the precise-by-default
-        # design exists to prevent. Ambiguous names are skipped (left
-        # unextended) rather than guessed.
-        cur.execute(f"""
-            INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-            SELECT
-                t.source_id,
-                COALESCE(s_target.name, e.target_name) AS target_name,
-                e.target_id,
-                t.distance + 1
-            FROM transitive_edges t
-            JOIN (
-                SELECT name FROM symbols
-                GROUP BY name HAVING COUNT(*) = 1
-            ) uniq ON uniq.name = t.target_name
-            JOIN symbols s_mid ON s_mid.name = uniq.name
-            JOIN edges e ON e.source_id = s_mid.id
-            LEFT JOIN symbols s_target ON s_target.id = e.target_id
-            WHERE t.distance = ?
-                AND t.target_id IS NULL
-                AND (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
-                AND e.kind IN ({kind_ph})
-        """, (d, *kind_params))
-        batch_inserted += cur.rowcount
-
-        if batch_inserted == 0:
-            break
-        total_inserted += batch_inserted
-
+        VALUES (?, ?, ?, ?)
+        """,
+        rows,
+    )
     conn.commit()
-    return total_inserted
+    return len(rows)
 
 
 def maintain_transitive_closure(
@@ -316,200 +499,54 @@ def maintain_transitive_closure(
     affected_source_ids,
     max_depth: int = CLOSURE_MAX_DEPTH,
 ) -> int:
-    """Incrementally recompute closure rows for a bounded set of sources (PERF-3).
+    """Incrementally recompute closure rows for a bounded set of sources.
 
-    A full :func:`build_transitive_closure` wipes the whole table and re-derives
-    every source -- minutes on a 1000-file repo for a one-file edit. This
-    function re-derives only ``affected_source_ids``: DELETE their rows, then
-    run the *same* seed + per-depth extension SQL as the builder, restricted to
-    those sources.
-
-    WHY per-source restriction is exact (the parity argument): every rule in
-    ``build_transitive_closure`` writes rows carrying the ``source_id`` it was
-    seeded from -- the seed reads ``edges.source_id``, and each extension hop
-    propagates ``t.source_id`` unchanged. No rule ever mixes two sources, so
-    the builder's output is the union of independent per-source computations.
-    Re-deriving one source's rows in isolation with identical SQL (same
-    STRUCTURAL_EDGE_KINDS filter, same INSERT OR IGNORE-by-increasing-distance
-    ordering, so MIN-distance rows survive exactly as the builder leaves them)
-    reproduces bit-for-bit what a full rebuild would produce for that source.
-    The one cross-source input is Case 2's global name-uniqueness subquery,
-    which is read live and therefore identical for both paths.
-
-    Correctness for deleted and newly-created symbols (why deleting/re-deriving
-    only affected sources suffices):
-
-    - **Deleted symbols** (old ids of an edited file): as a *source*, their rows
-      vanish with the DELETE -- their ids are in the affected set by
-      construction. As a *target*, a stale row ``(S, v, d)`` referencing a
-      deleted ``v`` implies ``S`` reached ``v`` pre-edit, so ``S`` is an
-      ancestor of a changed symbol and was captured into the affected set
-      before the edit; its rows (including the stale one) are re-derived.
-      Hence no row referencing a deleted target survives under an unaffected
-      source.
-    - **New symbols**: fresh rows only appear under (a) the new symbols
-      themselves (in the set -- they are the re-indexed file's symbols) and
-      (b) sources reaching them, i.e. direct callers whose edges now point at
-      them (captured post-resolve) and, transitively, the closure ancestors of
-      those callers (captured pre-edit). Anything outside that set could not
-      have gained a path to the new symbol.
-
-    The caller is responsible for the affected-set capture (see
-    ``incremental._maintain_derived_indexes``); passing too small a set leaves
-    stale rows, too large a set only costs re-derivation. When the closure
-    table is empty/never built, callers must fall back to the full build --
-    there is no (assumed-correct) pre-state to compute ancestors from.
-
-    Returns the number of rows inserted.
+    Deletes every row whose ``source_id`` is in ``affected_source_ids``, then
+    re-derives exactly those sources through the same :func:`_closure_rows`
+    core the full builder uses, making the result identical to a full
+    :func:`build_transitive_closure` restricted to those ids. The caller owns
+    the affected-set capture; when the closure table is empty/never built,
+    callers must fall back to the full build. Returns the number of rows
+    inserted.
     """
     affected = sorted({i for i in affected_source_ids if i})
     if not affected:
         return 0
     cur = conn.cursor()
-    # Same idempotent index the full builder creates; the per-depth extension
-    # filters on transitive_edges.distance.
+    # Same idempotent index the full builder creates; reader queries filter on
+    # transitive_edges.distance.
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_transitive_distance ON transitive_edges(distance)"
     )
-    kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
-    kind_params = tuple(STRUCTURAL_EDGE_KINDS)
-    total_inserted = 0
+    # Drop every stale row for these sources first -- including rows of
+    # sources that no longer exist (deleted symbols).
+    for chunk in _chunked(affected):
+        ph = ",".join("?" for _ in chunk)
+        cur.execute(f"DELETE FROM transitive_edges WHERE source_id IN ({ph})", chunk)
 
-    # Stage the affected ids in a temp table instead of IN () lists. WHY not
-    # IN-lists: each extension statement then runs ONCE over the whole set
-    # (chunked lists re-ran the expensive statements per chunk), and the
-    # planner can probe transitive_edges' PK per affected id. The table is
-    # per-connection and dropped before returning, so concurrent connections
-    # (watcher, serve) never see it.
-    cur.execute(
-        "CREATE TEMP TABLE IF NOT EXISTS _cairn_maint_affected (id TEXT PRIMARY KEY)"
+    rows = _closure_rows(conn, max_depth, restrict_sources=affected)
+    # PK order; target_id may be NULL, so it must not take part in the sort.
+    rows.sort(key=lambda r: (r[0], r[1], r[3]))
+    cur.executemany(
+        """
+        INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
+        VALUES (?, ?, ?, ?)
+        """,
+        rows,
     )
-    try:
-        cur.execute("DELETE FROM _cairn_maint_affected")
-        cur.executemany(
-            "INSERT OR IGNORE INTO _cairn_maint_affected (id) VALUES (?)",
-            ((i,) for i in affected),
-        )
-        # Drop every stale row for these sources first -- including rows of
-        # sources that no longer exist (deleted symbols).
-        cur.execute(
-            "DELETE FROM transitive_edges WHERE source_id IN "
-            "(SELECT id FROM _cairn_maint_affected)"
-        )
-
-        # Seed with direct structural edges (distance=1) -- same SQL as the
-        # builder, plus the source restriction.
-        cur.execute(f"""
-            INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-            SELECT
-                e.source_id,
-                COALESCE(s.name, e.target_name) AS target_name,
-                e.target_id,
-                1
-            FROM edges e
-            LEFT JOIN symbols s ON s.id = e.target_id
-            WHERE e.source_id IN (SELECT id FROM _cairn_maint_affected)
-              AND (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
-              AND e.kind IN ({kind_ph})
-        """, kind_params)
-        total_inserted += cur.rowcount
-
-        for d in range(1, max_depth):
-            batch_inserted = 0
-
-            # Case 1: follow resolved edges (target_id IS NOT NULL). The
-            # builder's join order (t driven, then edges by source) is pinned
-            # with CROSS JOIN: without it SQLite may drive from a full scan of
-            # structural edges, which is what made maintenance pathologically
-            # slow on call-dense repos (the statement is semantically
-            # identical either way -- per-source independence means the join
-            # order cannot change the rows produced).
-            cur.execute("DROP TABLE IF EXISTS _cairn_maint_c1")
-            cur.execute("""
-                CREATE TEMP TABLE _cairn_maint_c1 AS
-                SELECT source_id, target_id FROM transitive_edges
-                WHERE distance = ? AND target_id IS NOT NULL
-                  AND source_id IN (SELECT id FROM _cairn_maint_affected)
-            """, (d,))
-            cur.execute(f"""
-                INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-                SELECT
-                    f.source_id,
-                    COALESCE(s_target.name, e.target_name) AS target_name,
-                    e.target_id,
-                    ?
-                FROM _cairn_maint_c1 f
-                CROSS JOIN edges e ON e.source_id = f.target_id
-                LEFT JOIN symbols s_target ON s_target.id = e.target_id
-                WHERE e.kind IN ({kind_ph})
-            """, (d + 1, *kind_params))
-            batch_inserted += cur.rowcount
-
-            # Case 2: unique-name-mediated hop for unresolved rows (target_id
-            # IS NULL). Same planner pinning: the frontier (affected sources'
-            # unresolved rows at distance d) drives, then the unique-name
-            # check and the mid symbol's edges are index probes. Semantically
-            # identical to the builder's single statement.
-            cur.execute("DROP TABLE IF EXISTS _cairn_maint_c2")
-            cur.execute("""
-                CREATE TEMP TABLE _cairn_maint_c2 AS
-                SELECT DISTINCT source_id, target_name FROM transitive_edges
-                WHERE distance = ? AND target_id IS NULL
-                  AND source_id IN (SELECT id FROM _cairn_maint_affected)
-            """, (d,))
-            cur.execute(f"""
-                INSERT OR IGNORE INTO transitive_edges (source_id, target_name, target_id, distance)
-                SELECT
-                    f.source_id,
-                    COALESCE(s_target.name, e.target_name) AS target_name,
-                    e.target_id,
-                    ?
-                FROM _cairn_maint_c2 f
-                CROSS JOIN symbols s_mid ON s_mid.name = f.target_name
-                CROSS JOIN edges e ON e.source_id = s_mid.id
-                LEFT JOIN symbols s_target ON s_target.id = e.target_id
-                WHERE (SELECT COUNT(*) FROM symbols c WHERE c.name = f.target_name) = 1
-                  AND (e.target_id IS NOT NULL OR (e.target_name IS NOT NULL AND e.target_name != ''))
-                  AND e.kind IN ({kind_ph})
-            """, (d + 1, *kind_params))
-            batch_inserted += cur.rowcount
-
-            if batch_inserted == 0:
-                break
-            total_inserted += batch_inserted
-    finally:
-        for tmp in ("_cairn_maint_c1", "_cairn_maint_c2", "_cairn_maint_affected"):
-            try:
-                cur.execute(f"DROP TABLE IF EXISTS {tmp}")
-            except sqlite3.Error:
-                pass
-
     conn.commit()
-    return total_inserted
+    return len(rows)
 
 
 def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
-    """Incrementally refresh dataflow rows for a set of symbol names (PERF-3).
+    """Incrementally refresh dataflow rows for a set of symbol names.
 
-    dataflow is keyed by symbol NAME, and a row's payload is the symbol's
-    caller set (within_repo, via impact_analysis) plus its repo's consumers
-    (cross_repo). An edit changes a row for name X iff X's caller chain
-    changed -- i.e. X was renamed in/out, or some changed edge points at X or
-    at one of X's ancestors... viewed from X's side: at X or something X
-    reaches. The caller (``incremental._maintain_derived_indexes``) computes
-    that name set (changed names + names reachable from changed-edge targets
-    within impact_analysis's max_depth); this function then:
-
-    - recomputes+upserts rows for affected names that still have at least one
-      public symbol (same :func:`_row_is_public` predicate as the builder, so
-      a name that stopped being public loses its row exactly like a full
-      rebuild would omit it), and
-    - deletes rows for affected names with no remaining public symbol.
-
-    Rows for unaffected names are untouched: their inputs (their callers'
-    edges) did not change, so the builder's output for them is unchanged.
-
-    Returns the number of rows written or deleted.
+    dataflow is keyed by symbol NAME, so an edit changes a row for X exactly
+    when X's caller chain changed; the caller (``incremental.
+    _maintain_derived_indexes``) computes that name set. Affected names with a
+    remaining public symbol are recomputed+upserted (same
+    :func:`_row_is_public` predicate as the builder); names with none lose
+    their row. Returns the number of rows written or deleted.
     """
     names = sorted({n for n in affected_names if n})
     if not names:

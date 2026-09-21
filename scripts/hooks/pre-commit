@@ -31,7 +31,10 @@ else
 fi
 
 # Run ruff on just the staged files (fast — skips the rest of the tree).
-if ! $RUFF check --output-format=concise $staged; then
+# --force-exclude: explicit paths bypass pyproject's extend-exclude unless
+# re-armed, and staged fixture/test-data trees under tests/fixtures must
+# stay excluded exactly as CI's bare `ruff check src scripts tests` has them.
+if ! $RUFF check --force-exclude --output-format=concise $staged; then
   echo ""
   echo "❌ ruff found issues in staged files."
   echo "   Fix with: $RUFF check --fix $staged"

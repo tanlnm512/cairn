@@ -1,0 +1,7 @@
+query_id	symbol_id	grade
+cov-provider	in_index.py#provider	2
+cov-consumer	in_index.py#consumer	2
+cov-consumer	in_index.py#provider	1
+cov-standalone	outside_index.py#standalone	2
+cov-caller	outside_index.py#caller	2
+cov-caller	outside_index.py#standalone	1

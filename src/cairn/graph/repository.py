@@ -48,7 +48,7 @@ class GraphRepository:
         cur.executemany(
             """INSERT INTO edges
                (id, source_id, target_id, target_name, kind, line, column,
-                resolution)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                resolution, source)
+               VALUES (?,?,?,?,?,?,?,?,'tree_sitter')""",
             rows,
         )

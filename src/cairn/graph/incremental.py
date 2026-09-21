@@ -348,10 +348,11 @@ def incremental_update(
     """Re-index only changed files since the last build.
 
     Uses `git diff` to find changed source files, deletes their old symbols/edges,
-    and re-parses + inserts them. After reindexing it also refreshes the derived
-    indexes (dataflow + transitive closure) so cached impact lookups and multi-hop
-    traversals reflect the change; without this refresh `cairn update` would
-    serve stale derived data.
+    and re-parses + inserts them. After reindexing it re-applies the configured
+    SCIP overlay (existing index files only, never a generation) so covered files
+    keep index-sourced edges. It then refreshes the derived indexes (dataflow +
+    transitive closure) so cached impact lookups and multi-hop traversals reflect
+    the change; without this refresh `cairn update` would serve stale derived data.
 
     Returns a summary dict including any per-file errors (re-parse failures,
     resolver failures). Uses a longer busy_timeout than interactive MCP tool
@@ -393,15 +394,27 @@ def incremental_update(
 
             result = reindex_paths(conn, workspace, all_paths)
 
-            # Refresh derived indexes when something actually changed. An incremental
-            # edit can change which symbols are public, who calls whom, and which edges
-            # are exact -- so the precomputed dataflow rows and transitive closure must
-            # be brought back in sync, or cached lookups silently serve stale answers.
-            # PERF-3: this is now an *incremental* maintenance restricted to the
-            # affected symbol set, not the full wipe+rebuild it used to be (which
-            # cost minutes per single-file edit on a 1000-file repo). Only a
-            # never-built derived index still takes the full path. Best-effort:
-            # a failure here is reported as an error but does not undo the reindex.
+            # Re-apply the configured SCIP overlay (existing indexes only --
+            # never a generation) before derived-index maintenance, so closure
+            # and dataflow see the post-overlay edge population.
+            scip_errors: list[str] = []
+            if result["reindexed"] or result["deleted"]:
+                try:
+                    builder._apply_scip_overlay(
+                        conn,
+                        workspace,
+                        {r: None for r in repos},
+                        verbose=False,
+                        generate_missing=False,
+                    )
+                except Exception as e:
+                    logger.debug("scip overlay re-application failed", exc_info=True)
+                    scip_errors.append(f"scip_overlay: {e}")
+
+            # Derived indexes: incremental maintenance restricted to the
+            # affected symbol set; the full rebuild only runs for a never-built
+            # table. Best-effort: a failure is reported as an error but does
+            # not undo the reindex.
             derived_errors: list[str] = []
             if result["reindexed"] or result["deleted"]:
                 if pre["closure_built"] and pre["dataflow_built"]:
@@ -429,22 +442,17 @@ def incremental_update(
         "repos_scanned": len(repos),
         "files_reindexed": result["reindexed"],
         "files_deleted": result["deleted"],
-        "errors": result["errors"] + derived_errors,
+        "errors": result["errors"] + scip_errors + derived_errors,
         "deferred_embeds": result["deferred_embeds"],
     }
 
 
 def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
-    """Full rebuild of dataflow + transitive closure. Returns error strings.
+    """Full rebuild of dataflow + transitive closure; returns error strings.
 
-    Best-effort: mirrors the post-build steps in cli/core.py so an incremental
-    update keeps the derived indexes consistent with the freshly reindexed
-    graph. Each phase is independent; a failure in one doesn't skip the other.
-
-    PERF-3: this is now the FALLBACK path, used only when a derived table was
-    never built (empty) -- there is no assumed-correct pre-state to compute an
-    affected set from. The normal update flow runs the incremental maintenance
-    in :func:`_maintain_derived_indexes` instead.
+    Fallback for a never-built derived table (no trusted pre-state to compute
+    an affected set from). Each phase is independent; a failure in one doesn't
+    skip the other.
     """
     errors: list[str] = []
     try:
@@ -462,15 +470,7 @@ def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
     return errors
 
 
-# ---------------------------------------------------------------------------
-# PERF-3: incremental derived-index maintenance.
-#
-# The closure table maps source -> everything it reaches; dataflow maps a name
-# to everyone who reaches it. An edit perturbs both only through (1) the
-# changed files' symbols and (2) edges of *unchanged* symbols that the
-# null+repair dance retargeted. Everything below exists to enumerate exactly
-# those sources/names before and after reindex_paths runs.
-# ---------------------------------------------------------------------------
+# --- Incremental derived-index maintenance (affected-set capture + maintain) ---
 
 
 def _repo_relative_path(workspace: str, abs_path: str) -> tuple[str, str] | None:
@@ -519,35 +519,14 @@ def _find_tracked_file_row(cur, workspace: str, abs_path: str):
 def _capture_derived_prestate(
     conn: sqlite3.Connection, workspace: str, paths: list[str]
 ) -> dict:
-    """Snapshot everything the affected-set computation needs from the OLD graph.
+    """Snapshot the old-graph inputs the affected-set computation needs; must
+    run BEFORE reindex_paths deletes the changed files' rows.
 
-    Must run BEFORE reindex_paths: after it, the changed files' old symbol ids
-    are gone, their incoming edges have been nulled (losing the target_id the
-    ancestor query needs), and the closure is due for maintenance.
-
-    Captures:
-    - ``old_ids``/``old_names``: symbol ids and bare names of the changed
-      files' tracked rows;
-    - ``repair_sources``: sources (ANY file) of edges that the null+repair
-      dance can retarget -- edges resolving into ``old_ids``, plus unresolved
-      edges whose ``target_name`` matches ``old_names`` (those are exactly the
-      rows ``resolver.repair_incoming_edges`` selects, and they can end up
-      pointing at a different symbol -- or none -- than before);
-    - ``ancestor_ids``: closure ancestors of (old ids + repair sources). A
-      source's forward reachability changes when a changed edge sits on one of
-      its paths, i.e. when it reaches the changed edge's source; the closure
-      answers "who reaches X" in one indexed query;
-    - ``repair_edge_ids``: the ids of the repairable rows themselves, so their
-      POST-repair targets can be read precisely (after repair, resolved edges
-      have ``target_name`` cleared and nulled edges have no ``target_id`` --
-      only the row id survives to identify them);
-    - ``old_targets``: resolved targets of the changed files' OWN edges (the
-      deleted edges' callees -- their dataflow rows lose the deleted callers).
-      Deliberately NOT the targets of every repair-source edge: an untouched
-      edge of a repair-source did not change, and seeding from all of them
-      explodes the dataflow-affected set on name-heavy corpora;
-    - ``closure_built``/``dataflow_built``: never-built detection for the
-      full-rebuild fallback.
+    Keys: old_ids/old_names (the changed files' symbols), repair_sources and
+    repair_edge_ids (edges the null+repair pass can retarget, selected by
+    resolved old ids or old target names), ancestor_ids (closure ancestors of
+    the affected sources), old_targets (the deleted edges' resolved callees),
+    closure_built/dataflow_built (never-built fallback flags).
     """
     from .dataflow import _chunked
 
@@ -634,15 +613,8 @@ def _capture_derived_prestate(
 def _reachable_symbol_names(
     conn: sqlite3.Connection, seed_ids: set[str], max_hops: int = 5
 ) -> set[str]:
-    """Names of symbols reachable from ``seed_ids`` within ``max_hops``.
-
-    Follows resolved structural edges only -- the same edge population
-    ``impact_analysis``'s precise structural walk uses -- because dataflow's
-    within_repo payload is computed by ``impact_analysis(name, max_depth=5)``:
-    a changed edge (U->V) perturbs dataflow(X) exactly when X is V or lies up
-    to 5 resolved-structural hops downstream of V. Batched IN-list BFS keeps
-    it to one query per (hop x chunk).
-    """
+    """Names reachable from ``seed_ids`` over resolved structural edges within
+    ``max_hops`` (impact_analysis's depth), via batched IN-list BFS."""
     from .dataflow import _chunked
     from .traversal import STRUCTURAL_EDGE_KINDS
 
@@ -688,31 +660,12 @@ def _maintain_derived_indexes(
     paths: list[str],
     pre: dict,
 ) -> list[str]:
-    """Incrementally maintain both derived indexes for a completed reindex.
+    """Incrementally maintain closure + dataflow for a completed reindex.
 
-    Runs AFTER reindex_paths (resolver + incoming-edge repair included). Two
-    affected sets are computed, then handed to the dataflow module's
-    maintainers:
-
-    **Closure sources** = old ids | new ids | repair sources | name-repair
-    sources | closure ancestors of all of those. The "name-repair sources"
-    post-capture is the sneaky one: edges of *unchanged* files whose
-    ``target_name`` matches a name the edit INTRODUCED. Those edges were never
-    nulled, but the resolver's repair pass re-resolves them (a new same-named
-    symbol changes their candidate set), and independently the closure's
-    Case-2 unique-name extension changes behavior when a name's global
-    definition count crosses 1 -- both flip the source's forward reachability.
-    Their ancestors are read from the still-unmaintained closure, which at
-    this point still reflects the pre-edit graph.
-
-    **Dataflow names** = old names | new names | names of the changed edges'
-    resolved targets (old side pre-captured; new side = the re-indexed files'
-    edge targets plus the post-repair targets of the captured repairable edge
-    ids) | names reachable from those targets within impact_analysis's
-    max_depth (see _reachable_symbol_names).
-
-    Each phase is best-effort and independent, mirroring
-    _rebuild_derived_indexes' error contract.
+    Closure sources = old/new ids, repair and name-repair sources, and their
+    closure ancestors; dataflow names = old/new names plus names reachable
+    from the changed edges' resolved targets. Each phase is best-effort and
+    independent; returns error strings.
     """
     from .dataflow import (
         _chunked,
@@ -723,9 +676,8 @@ def _maintain_derived_indexes(
     cur = conn.cursor()
     new_ids: set[str] = set()
     new_names: set[str] = set()
-    # Re-resolve every changed path against the POST-update files table: a
-    # brand-new file had no pre-update row to track, so keying off the
-    # pre-captured paths alone would silently skip its symbols.
+    # Key off the POST-update files table: a brand-new file has no pre-update
+    # row, so the pre-captured paths alone would skip its symbols.
     for abs_path in paths:
         row = _find_tracked_file_row(cur, workspace, str(abs_path))
         if row is None:

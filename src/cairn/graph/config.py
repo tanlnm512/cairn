@@ -17,6 +17,7 @@ class CairnConfig:
     ingest: Dict[str, object] = field(default_factory=dict)
     taint_sources: Dict[str, Set[str]] = field(default_factory=dict)
     taint_sinks: Dict[str, Set[str]] = field(default_factory=dict)
+    scip: Dict[str, object] = field(default_factory=dict)
     include_nested_repos: bool = False
     source: Optional[Path] = None  # the file these came from, for diagnostics
 
@@ -28,6 +29,7 @@ class CairnConfig:
             and not self.ingest
             and not self.taint_sources
             and not self.taint_sinks
+            and not self.scip
             and not self.include_nested_repos
         )
 
@@ -38,8 +40,10 @@ _INCLUDE_KEY = "include"
 _REPO_NAMESPACES_KEY = "repo_namespaces"
 _INGEST_KEY = "ingest"
 _TAINT_KEY = "taint"
+_SCIP_KEY = "scip"
 _TAINT_SOURCES_KEY = "sources"
 _TAINT_SINKS_KEY = "sinks"
+_SCIP_INDEXES_KEY = "indexes"
 _INCLUDE_NESTED_REPOS_KEY = "include_nested_repos"
 
 
@@ -83,6 +87,11 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
     taint_sinks = _as_name_table(
         taint.get(_TAINT_SINKS_KEY), path, f"{_TAINT_KEY}.{_TAINT_SINKS_KEY}"
     )
+    scip = _as_dict(raw.get(_SCIP_KEY), path, _SCIP_KEY)
+    scip_indexes = _as_string_dict(
+        scip.get(_SCIP_INDEXES_KEY), path, f"{_SCIP_KEY}.{_SCIP_INDEXES_KEY}",
+        desc="language -> index path",
+    )
     include_nested_repos = _as_bool(
         raw.get(_INCLUDE_NESTED_REPOS_KEY), path, _INCLUDE_NESTED_REPOS_KEY
     )
@@ -93,6 +102,7 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
         ingest=ingest,
         taint_sources=taint_sources,
         taint_sinks=taint_sinks,
+        scip={_SCIP_INDEXES_KEY: scip_indexes} if scip_indexes else {},
         include_nested_repos=include_nested_repos,
         source=path,
     )
@@ -134,12 +144,14 @@ def _as_string_list(value, path: Path, key: str) -> List[str]:
     return []
 
 
-def _as_string_dict(value, path: Path, key: str) -> Dict[str, str]:
+def _as_string_dict(
+    value, path: Path, key: str, desc: str = "prefix -> repo id"
+) -> Dict[str, str]:
     """Coerce a JSON value into a dict[str, str] of non-empty mappings.
 
-    Accepts ``{"prefix": "repo"}`` (the documented shape) and drops malformed
-    entries (non-string keys/values, empty strings) with a warning. A bad value
-    never crashes the build: returns ``{}`` on type mismatch.
+    Drops malformed entries (non-string keys/values, empty strings) with a
+    warning. A bad value never crashes the build: returns ``{}`` on type
+    mismatch.
     """
     if value is None:
         return {}
@@ -147,7 +159,7 @@ def _as_string_dict(value, path: Path, key: str) -> Dict[str, str]:
 
     if not isinstance(value, dict):
         print(f"warning: {path}: '{key}' must be a JSON object mapping "
-              f"prefix -> repo id; ignoring", file=sys.stderr)
+              f"{desc}; ignoring", file=sys.stderr)
         return {}
 
     out: Dict[str, str] = {}

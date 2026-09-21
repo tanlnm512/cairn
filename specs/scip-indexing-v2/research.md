@@ -1,0 +1,85 @@
+# Research: scip-indexing-v2
+
+**Spec**: [spec.md](spec.md) | **Created**: 2026-09-20
+<!-- External grounding for tech decisions: every claim below carries a source
+     URL/DOI — no unsourced "it is known that". The tech agent consumes this
+     file when choosing options in tech-spec.md. -->
+
+Questions RQ1–RQ4 as confirmed by the orchestrator. Method: WebSearch/WebFetch
++ `gh` CLI (GitHub repo/issue facts verified live this session); Semantic
+Scholar API rate-limited (429) — academic items are search-verified unless
+marked fetched.
+
+Anchor evidence (orchestrator-supplied, in-repo A/B 2026-08-31, scip-python
+0.6.6 on this repo): baseline build 24s; with SCIP 5× edges (148,804 edges /
+183k occurrences / 451 files) the level-by-level depth-4 closure ran >30 min
+at 66% CPU with a 4.6 GB uncommitted WAL and was killed; blowup concentrated
+on re-export hub symbols. Every RQ1 candidate is screened against this shape
+(dense hub fan-out, ~750k closure-ish edges).
+
+## Questions
+
+### RQ1 — SQLite transitive-closure algorithms at scale (FR-011/FR-012)
+
+- **source**: https://duckdb.org/2025/05/23/using-key.html (fetched) · **claim**: vanilla recursive-CTE evaluation is exactly the level-batched-BFS failure mode — the working/union table accumulates every intermediate *path* and grows unboundedly; on LDBC-derived graphs as small as 424 nodes / 1,446 edges it processed 605,859,791 rows and hit OOM, while the keyed overwrite variant processed 19,213, and on 6 of 7 test graphs vanilla crashes where keyed scales (up to ~607,926 rows) · **relevance**: RQ1 — quantifies the hub-dense blowup and the bounded-memory fix (overwrite semantics, not append) · **confidence**: high
+- **source**: https://sqlite.org/lang_with.html · **claim**: SQLite's recursive CTE union table appends only — there is no `USING KEY` — so a SQLite-side BFS must hand-roll the same dedup/overwrite discipline (seen-set + delta tables) to survive the hub shape · **relevance**: RQ1 · **confidence**: high
+- **source**: https://duckdb.org/2026/08/25/how-duckdb-runs-recursive-ctes-faster.html · **claim**: reusing epoch-invariant execution state further speeds recursive CTEs; MotherDuck reports a 20k-commit git-history walk in 0.10s on DuckDB 2.0 · **relevance**: RQ1 — also marks the "leave SQLite for this step" boundary · **confidence**: med (search snippets only)
+- **source**: https://stackoverflow.com/questions/47923381/compute-sparse-transitive-closure-of-scipy-sparse-matrix · **claim**: established Python practice computes TC of sparse graphs via scipy sparse boolean powering / per-node reachability · **relevance**: RQ1 — the sparse-BMM candidate family in Python · **confidence**: med (search-verified; direct fetch 403)
+- **source**: https://ui.adsabs.harvard.edu/abs/1971swat.conf...18F/abstract · **claim**: Fischer & Meyer 1971 — TC via repeated boolean matrix multiplication; with Strassen-style BMM (Munro) this yields the classic O(n^2.81)-class closure bounds · **relevance**: RQ1 — theoretical floor for dense bitset representations · **confidence**: high
+- **source**: https://louridas.github.io/rwa/assignments/four-russians · **claim**: the Four Russians method gives O(n³/log n) TC via BMM and is practical over bitsets · **relevance**: RQ1 · **confidence**: med-high
+- **source**: https://homepages.inf.ed.ac.uk — paper "Maintaining the transitive closure of graphs in SQL" (Dong & Su, ~56 citations) · **claim**: stored TC can be maintained incrementally under insertions/deletions within SQL · **relevance**: RQ1 — the incremental/delta candidate in a SQL setting · **confidence**: med (domain-level link; title/citations search-verified)
+- **source**: https://arxiv.org — paper "From Incremental Transitive Cover to Strongly Polynomial" (Oct 2025) · **claim**: incremental TC under edge insertions remains an actively-published open problem — treat closure as build-time batch computation, not off-the-shelf incremental · **relevance**: RQ1 · **confidence**: med
+- Lead, unverified — verify before relying: E. Nuutila, "Efficient Transitive Closure Computation in Large Graphs" (1994), SCC/condensation-based TC; surfaced only as background, no link captured → `unknown — verify`.
+- Shape-screen synthesis (from the DuckDB numbers): the A/B failure is a *path-multiplication* blowup, not a *size* blowup — a re-export hub multiplies traversal paths exponentially. Candidates bounding work by **distinct reachable pairs** (semi-naive/dedup delta iteration; keyed-overwrite BFS; BMM/bitset; SCC condensation) survive the shape; candidates bounded by **paths** (naive or level-batched BFS as implemented) do not. · **confidence**: high
+
+### RQ2 — SCIP emission reality across the indexers (FR-001/FR-003)
+
+Schema facts (fetched from https://raw.githubusercontent.com/sourcegraph/scip/main/scip.proto, scip v0.10.0, confidence high):
+
+- **Document**: `relative_path` must be canonical, `/`-separated, repo-relative, no leading `/`; `language` is a free-form string (enum only for common languages) — importers cannot rely on it being set; `position_encoding` varies: UTF-16 (JVM/.NET/JS), UTF-32 (Python), UTF-8 bytes (Go/Rust/C++).
+- **Occurrence.range**: deprecated packed int32 `[startLine, startCharacter, endCharacter]` (same-line) or 4-element multi-line; `typed_range` (SingleLine/MultiLine oneof) takes precedence when set; half-open `[start, end)`, zero-based; consumers must accept multi-line encoding of single-line spans. `typed_enclosing_range` "must enclose" the occurrence range (schema comment) — a schema-guaranteed two-tier containment test for FR-003 joins.
+- **symbol_roles bitmask**: Definition=0x1, Import=0x2, WriteAccess=0x4, ReadAccess=0x8, Generated=0x10, Test=0x20, ForwardDefinition=0x40 (bitwise-AND semantics).
+- **Relationship** (current main): `symbol`, `is_reference`, `is_implementation`, `is_type_definition`, `is_definition` — the fetched schema has **no** `overrides`/`specialized_symbol` fields (a `gh search code` cross-check over sourcegraph/scip returned nothing); overriding groups via is_definition/is_reference/is_implementation. Call-vs-reference classification must come from occurrence roles + symbol kinds (Kind enum: Class=7, Function=17, Method=26, Struct=49, Variable=61, …), not a dedicated "call" relationship. · **confidence**: med-high
+- **Symbol strings**: `<scheme> ' ' <package> ' ' (<descriptor>)+` or `local <id>`; local symbols "must never be referenced outside their Document" — any name/USR-string join is structurally unsafe (locals; opaque USRs); the position join is consistent with the schema contract. · **confidence**: high
+
+Indexer-by-indexer (all `gh`-verified this session):
+
+- **scip-python**: npm `@sourcegraph/scip-python` latest **0.6.6** (matches the in-repo A/B); repo not archived, **no GitHub release tags** — releases ship via npm (confirms FR-016's npm-not-pip case). Quirks: v0.5.0+ broke trivial-project indexing (https://github.com/sourcegraph/scip-python/issues/158); inconsistent module paths inside symbol strings for `from a.b import C` (https://github.com/sourcegraph/scip-python/issues/133) — symbol strings unstable across versions, another name-join hazard. Empty `Document.language` reported in the in-repo A/B; direct sibling-indexer analog verified (scip-typescript #263 below) — importers must treat `language` as optional. · **confidence**: high
+- **scip-typescript**: v0.4.0, not archived; issue #263 "TypeScript indexer doesn't emit the language field" (https://github.com/sourcegraph/scip-typescript/issues/263, Jun 2023). · **confidence**: high
+- **scip-java**: v0.13.1, not archived; Java (+ Scala) via SemanticDB. **Kotlin**: FR-009's "kotlin (via scip-java)" is optimistic — the Kotlin path is the separate `sourcegraph/scip-kotlin` SemanticDB compiler plugin, and that repo is **archived** at v0.6.0 (gh-verified) — registry-design risk for FR-007/FR-009. · **confidence**: high
+- **scip-go**: v0.2.7, not archived (gh-verified); emission quirks not surveyed — time-box reached. · **confidence**: high (status only)
+- **rust-analyzer**: scip subcommand in-tree at https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/cli/scip.rs (path gh-verified); output via `RA_SCIPOUT` (`RA_SCIPOUT=index.scip rust-analyzer scip .`); source notes same-line range compaction into SCIP's packed Range format. Maintainer caveat (issue #21125, Nov 2025): "Our SCIP support is pretty limited"; dependencies only via a `cargo vendor` workaround — FR-007/FR-009 should expect degraded coverage. · **confidence**: high
+- **scip-swift**: **no repo at sourcegraph/scip-swift** (gh API: repository not found). GitHub search surfaces only third-party artifacts (homebrew taps `phuongddx/homebrew-scip-swift`, `jarvis-intelligence/scip-swift`). The macOS-only indexer the removed subsystem used has no canonical public home today — FR-007's "known indexer binary on PATH" for swift carries a discoverability/supply-chain risk. · **confidence**: high
+- Adjacent: **scip-clang** (v0.4.0, outside the seven-language registry) documents macro gaps — https://github.com/sourcegraph/scip-clang/issues/69 "Missing references related to macros" (feeds RQ3).
+
+**Who consumes .scip into a graph database**:
+
+- **source**: https://glean.software ("Python – Glean" docs) + https://sourcegraph.com/blog/the-scip-code-intelligence-protocol (Jun 2022) · **claim**: Meta Glean ingests SCIP for Python ("To index Python, Glean uses Sourcegraph's SCIP indexer for Python"; Don Stewart integrated SCIP with Glean), and an early SCIP→Kythe converter existed — Kythe's storage model is a deliberately flat graph format (https://kythe.io) · **relevance**: RQ2 · **confidence**: med-high (titles/domains search-verified)
+- **source**: negative result after targeted searches · **claim**: no mainstream direct SCIP→Neo4j / graph-DB importer found; the observed consumption pattern is one-shot batch conversion (parse protobuf once → load/derive), not live index subscription · **relevance**: RQ2/FR-001 — supports batch import design · **confidence**: med (negative result)
+
+### RQ3 — Position-join prior art (FR-003/FR-005)
+
+- **source**: https://microsoft.github.io/language-server-protocol/specifications/lsif/0.5.0/specification/ (fetched) · **claim**: LSIF attaches ranges via `contains` and resolves a position by sorting ranges "by containment with innermost first", taking the first range carrying an edge — the canonical **innermost-wins** containment policy; constraints: "No two ranges can be equal", overlaps only when one range is entirely nested inside the other; a separate `resultRange` vertex is an escape hatch for navigation targets that may overlap/equal others · **relevance**: FR-003 join policy + FR-005 disagreement handling · **confidence**: high
+- **source**: scip.proto (fetched; URL in RQ2) · **claim**: `typed_enclosing_range` must enclose the occurrence range — a schema-guaranteed two-tier join (occurrence range, then enclosing range); the `Generated` role bit (0x10) tags macro/generated emissions — a per-occurrence tolerance signal for macro/build-conditioned code · **relevance**: FR-003/FR-005 · **confidence**: high
+- **source**: https://github.blog/2021-12-09-introducing-stack-graphs/ and "Stack Graphs: Name Resolution at Scale" (Creager et al. 2022, https://drops.dagstuhl.de, also arXiv) · **claim**: GitHub's precise code navigation derives name binding *directly from tree-sitter grammars* (stack-graph rules over the same tree) — prior art that avoids the two-parser join by construction; a consumer joining SCIP occurrences onto independently parsed tree-sitter symbols deliberately lacks that luxury, so boundary disagreement is expected, not exceptional · **relevance**: FR-003 — framing + the single-parser baseline · **confidence**: high (existence verified via search; content summarized from search results)
+- **source**: https://github.com/sourcegraph/scip-clang/issues/69 · **claim**: even a compiler-grade C/C++ indexer loses references around macros — macro-generated code is a producer-side blind spot, not only a join-side one · **relevance**: FR-003/FR-005 tolerance design · **confidence**: med-high
+- **source**: https://github.com/sourcegraph/scip-python/issues/133 · **claim**: scip-python emits inconsistent module paths inside symbol strings for `from a.b import C` — mis-bindings live in symbol strings, which a position join sidesteps entirely · **relevance**: FR-003 — empirical support for position-only joining · **confidence**: med-high
+- Tolerance-playbook data (each with a cited precedent above): (a) innermost-range-wins (LSIF-canonical); (b) occurrence→enclosing-range two-tier (SCIP schema); (c) strict exact-containment with counted drops (aligns with FR-005 anomaly counting); (d) skip occurrences carrying the `Generated` role; (e) outermost/depth-limited boundary fuzzing — **no credible source found; decide from first principles**.
+
+### RQ4 — Python protobuf vendoring practice (FR-006/FR-017)
+
+- **source**: https://protobuf.dev/support/cross-version-runtime-guarantee/ (fetched) · **claim**: the runtime must never be older than the gencode ("Never Allowed" — enforced by "poison pill" failures since protobuf 26.0); within major version V, gencode V.x.y is supported by runtimes V and V+1 (V+2 triggers a poison pill); **Python-specific exception**: since gencode 3.20.0 the generated file is essentially an embedded FileDescriptorProto, and as of 6.32.0 all Python gencode since 3.20.0 is supported through at least runtime 8.x.y — a much wider window than other languages; security fixes can break any otherwise-compatible pair · **relevance**: FR-006/FR-017 — the policy to encode in the `[scip]` extra · **confidence**: high
+- **source**: GitHub issue surface, verified via search: `protobuf.runtime_version.VersionError: Detected mismatched Protobuf Gencode/Runtime major versions … gencode 6.30.0 runtime 5.29.0` (raised from `google/protobuf/runtime_version.py` at `_pb2` import) · **claim**: the standard failure mode is an import-time VersionError; real-world hits include Anki sync server (gencode 6.31.1 vs runtime 5.x, forums.ankiweb.net) and Sailfish OS ports (forum.sailfishos.org); community mitigations are floor-pinning `protobuf>=<gencode version>` or regenerating with matching protoc · **relevance**: FR-006 — the exact exception family the fallback must catch; FR-017 — the pin convention · **confidence**: high
+- **source**: https://protobuf.dev/reference/python/python-generated/ (fetched) · **claim**: official Python docs carry **no** pinning/vendoring policy — only regeneration mechanics (`--python_out`, `_pb2.py`, `--pyi_out` stubs) and warnings against relying on generated private members or subclassing; vendoring discipline is entirely the consumer's responsibility · **relevance**: FR-017 — no upstream template; the regen script must record which protoc produced the vendored stub · **confidence**: high
+- Implication data (no recommendation): FR-006's degradation contract is (a) catch the import-time failure (`VersionError` and plain ImportError for absent runtime), (b) surface the `[scip]` install hint + fallback record, (c) express the pin as a floor at the vendored gencode's version — the documented Python window makes a hard ceiling optional; floor-only / floor+ceiling / exact-pin are all consistent with the upstream guarantee.
+
+## Options summary
+<!-- ≤15 lines. Candidates + one-line trade-offs. NO recommendation. -->
+
+- Closure algorithm (FR-011/FR-012): (a) semi-naive/dedup delta iteration in SQLite — survives hub shape, in-process, delta discipline hand-rolled; (b) numpy/scipy sparse-boolean closure — fast C loops, results re-imported for byte-identical rows; (c) SCC condensation + topological bitset propagation — collapses hub blowup, deterministic, most new code; (d) keyed-overwrite BFS à la DuckDB USING KEY — bounded memory by construction, but SQLite lacks USING KEY (hand-rolled); (e) embedded second engine (DuckDB) — proven numbers, new dependency.
+- Hub-shape guard: bound work by distinct reachable pairs (a–d) — bounded-by-paths level BFS is the option that already died in the A/B.
+- Position-join policy (FR-003): innermost-range-wins (LSIF-canonical) vs occurrence→enclosing-range two-tier (SCIP schema-guaranteed) vs exact-containment-only with counted drops (strictest; aligns with FR-005).
+- Low-join-rate response (FR-005): per-file tree-sitter fallback (as FR states) vs per-document fallback — no external precedent found for either granularity.
+- Kotlin entry (FR-009): scip-java JVM indexing as-is vs document the archived scip-kotlin plugin (v0.6.0, archived) — coverage expectations differ.
+- Swift entry (FR-007/FR-009): best-effort PATH lookup (no canonical upstream repo exists today) vs document homebrew-tap install vs drop the registry entry.
+- protobuf pin (FR-006/FR-017): floor-pin `protobuf>=<gencode>` (Python window documented wide) vs floor+ceiling inside the documented window vs exact pin — all pair with import-time VersionError catch → observable tree-sitter fallback.

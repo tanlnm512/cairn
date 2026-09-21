@@ -1,0 +1,13 @@
+{
+  "scip": {
+    "indexes": {
+      "swift": "indexes/swift.scip",
+      "java": "indexes/java.scip",
+      "kotlin": "indexes/kotlin.scip",
+      "typescript": "indexes/typescript.scip",
+      "python": "indexes/python.scip",
+      "go": "indexes/go.scip",
+      "rust": "indexes/rust.scip"
+    }
+  }
+}

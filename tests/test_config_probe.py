@@ -1,7 +1,8 @@
 """Failing tests for the machine-readable resolution probe.
 
 `cairn config --json` must exit 0 emitting a single JSON object with the keys
-``cairn_home``, ``workspace``, ``db`` and ``knowledge`` matching the
+``cairn_home``, ``workspace``, ``db``, ``knowledge`` and ``scip`` (the
+resolved SCIP index config, ``{}`` when unconfigured) matching the
 environment in effect — the probe spawns with a registration's exact
 binary+env (tech-spec) and that install-time verification and the
 doctor environment audit compare resolved stores against.
@@ -26,7 +27,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-EXPECTED_KEYS = {"cairn_home", "workspace", "db", "knowledge"}
+EXPECTED_KEYS = {"cairn_home", "workspace", "db", "knowledge", "scip"}
 
 
 # --------------------------------------------------------------------------
@@ -48,8 +49,8 @@ def _repoint_bindings(monkeypatch, home: Path) -> None:
     monkeypatch.setattr(paths, "REGISTRY_FILE", home / "workspaces.json")
 
 
-def _expected_store(home: Path, ws: Path) -> dict[str, str]:
-    """The four values requires, derived from the environment in effect."""
+def _expected_store(home: Path, ws: Path) -> dict[str, object]:
+    """The values the probe must emit, derived from the environment in effect."""
     from cairn.paths import store_key
 
     key = store_key(ws)
@@ -58,6 +59,7 @@ def _expected_store(home: Path, ws: Path) -> dict[str, str]:
         "workspace": str(ws),
         "db": str(home / key / ".kg"),
         "knowledge": str(home / key / ".knowledge"),
+        "scip": {},
     }
 
 

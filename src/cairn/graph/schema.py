@@ -458,6 +458,11 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 #   'unresolved' — no candidate found (e.g. stdlib/external call)
 EDGE_RESOLUTION_MIGRATION = "ALTER TABLE edges ADD COLUMN resolution TEXT"
 
+# Provenance column on edges: 'tree_sitter' or 'scip'; NULL on legacy rows
+# reads as 'tree_sitter'. Additive ALTER, invisible to the FTS5 triggers
+# (they reference only symbols columns).
+EDGE_SOURCE_MIGRATION = "ALTER TABLE edges ADD COLUMN source TEXT"
+
 # File size and mtime columns for fast catch-up reconciliation; only re-hashes
 # on mismatch.
 FILES_SIZE_MIGRATION = "ALTER TABLE files ADD COLUMN size INTEGER"
@@ -544,6 +549,7 @@ MIGRATIONS = [
     TOOL_METRICS_TRUNCATED_TO_CHARS_MIGRATION,
     IMPORTS_LOCAL_ALIAS_MIGRATION,
     SYMBOLS_ARITY_MIGRATION,
+    EDGE_SOURCE_MIGRATION,
 ]
 
 # Default DB location: resolved from the central store for the current workspace.

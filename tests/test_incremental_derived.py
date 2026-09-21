@@ -1,41 +1,13 @@
-"""PERF-3: incremental derived-index maintenance must equal a full rebuild.
+"""Incremental derived-index maintenance must equal a full rebuild.
 
-The property under test: after ANY sequence of edits processed through
-``incremental_update`` (which maintains dataflow + transitive_edges for just
-the affected symbol set), both derived tables must match what a fresh
-``build_graph`` + full derived build produces on the final tree -- exactly
-for the closure (row-for-row), and for dataflow modulo the DFS enumeration
-frontier documented below. If the affected-set capture in
-``incremental._maintain_derived_indexes`` has a hole, some source keeps
-pre-edit closure rows (or a stale dataflow row) and this diff fails -- so
-the test is the arbiter, not the implementation.
-
-Why dataflow is compared modulo a frontier zone: ``within_repo`` comes from
-DFS ``impact_analysis(max_depth=5)``, whose first-visit depths (and hence
-which callers at the depth cut are included) depend on edge insertion order
--- the traversal goldens pin only order-invariant facts for exactly this
-reason. A maintained DB's edge rowids legitimately differ from a fresh
-rebuild's (incremental re-parses append edges at the end), so on a diamond
-caller graph a depth-frontier ancestor may appear in one build and not the
-other with BOTH being valid builder outputs. The arbiter therefore computes,
-from the graph itself, which callers EVERY enumeration order must include
-(longest simple path to the seed short enough) and which NO order can include
-(shortest path too long), and only demands equality outside that zone --
-order flips are tolerated exactly there and nowhere else.
-
-Parity boundary (why the corpus is handcrafted and receiver-free, like
-tests/test_traversal_parity.py's PARITY_SOURCES): incremental parity of the
-*edges table itself* is only guaranteed for receiver-free calls. The
-incoming-edge repair pass re-resolves by bare name without receiver-type
-info, and exact edges whose names merely de-uniquify (a new file adds a
-duplicate of an existing resolved name) are a resolver-level fidelity gap
-outside PERF-3's scope. The corpus therefore uses bare unique names +
-explicit imports, and scripted edits never introduce a duplicate of a name
-that resolved edges point at. The derived-table maintenance itself is
-exercised hard: chains deeper than both CLOSURE_MAX_DEPTH (4) and the
-dataflow impact depth (5), fan-in, a 2-cycle, an ambiguous duplicate-name
-pair whose deletion flips resolution (the sneaky incoming-repair case), and
-a permanently-unresolved call.
+After any edit sequence through ``incremental_update``, both derived tables
+must match a fresh ``build_graph`` + full derived build on the final tree --
+exactly for the closure, and for dataflow modulo the DFS depth-frontier zone
+(where either enumeration order is a valid builder output, since first-visit
+depth depends on edge insertion order and a maintained DB's rowids legitimately
+differ from a fresh rebuild's). The corpus is handcrafted and receiver-free:
+incoming-edge repair resolves by bare name without receiver info, so
+incremental parity of the edges table itself holds only for that shape.
 """
 from __future__ import annotations
 
@@ -50,7 +22,9 @@ import time
 import pytest
 
 from cairn.graph.builder import build_graph
+from cairn.graph import dataflow as dataflow_mod
 from cairn.graph.dataflow import (
+    CLOSURE_MAX_DEPTH,
     build_dataflow_index,
     build_transitive_closure,
     maintain_dataflow_index,
@@ -246,16 +220,13 @@ def _dataflow_rows(conn: sqlite3.Connection) -> list[tuple]:
 
 
 # impact_analysis (the dataflow payload source) runs at max_depth=5: a caller
-# is listed when its DFS first-visit depth is <= 5, i.e. when its caller->seed
-# path has <= DFS_MAX_HOPS edges. First-visit depth is enumeration-order
-# dependent (the traversal goldens pin only order-invariant facts for exactly
-# this reason): on a diamond graph a node may be first-visited via the long
-# arm or the short arm depending on edge insertion order -- and a maintained
-# DB's edge rowids legitimately differ from a fresh rebuild's. So the dataflow
-# arbiter below compares against what ANY enumeration order could produce:
-# names whose LONGEST simple path to the seed is short enough must be present
-# in both; names whose SHORTEST path is too long must be absent from both;
-# only the zone in between may differ.
+# is listed iff its DFS first-visit depth is <= 5, and first-visit depth is
+# enumeration-order dependent on diamond graphs. A maintained DB's edge rowids
+# legitimately differ from a fresh rebuild's, so the dataflow arbiter compares
+# only what ANY enumeration order must agree on: names whose longest simple
+# path to the seed is short enough must be present in both, names whose
+# shortest path is too long must be absent from both, and only the zone in
+# between may differ.
 _DFS_MAX_HOPS = 6  # max_depth=5 means paths of up to 6 caller->seed edges
 
 
@@ -632,8 +603,7 @@ def test_property_parity_random_sequences(tmp_path, seed):
 
 def test_update_uses_incremental_maintenance_not_full_rebuild(tmp_path, monkeypatch):
     """A normal update must go through the maintain_* functions; the full
-    build functions must NOT run (they would wipe and rebuild everything --
-    the exact cost PERF-3 removes)."""
+    build functions must NOT run (they would wipe and rebuild everything)."""
     from cairn.graph import dataflow as dataflow_mod
 
     repo, _tick = _make_corpus(tmp_path)
@@ -799,6 +769,159 @@ def test_maintain_transitive_closure_drops_rows_of_deleted_sources(fresh_db):
         "SELECT COUNT(*) FROM transitive_edges WHERE source_id = 's3' OR target_id = 's3'"
     ).fetchone()[0]
     assert stale == 0
+
+
+def test_maintain_transitive_closure_derives_via_shared_core(fresh_db, monkeypatch):
+    """maintain_transitive_closure must re-derive the affected rows through the
+    builder's _closure_rows core with restrict_sources bound to those ids."""
+    _seed_mini_graph(fresh_db)
+    build_transitive_closure(fresh_db)
+
+    seen: dict = {}
+    real = dataflow_mod._closure_rows
+
+    def spy(conn, max_depth, restrict_sources=None):
+        seen["max_depth"] = max_depth
+        seen["restrict_sources"] = restrict_sources
+        return real(conn, max_depth, restrict_sources=restrict_sources)
+
+    monkeypatch.setattr(dataflow_mod, "_closure_rows", spy)
+    maintain_transitive_closure(fresh_db, {"s1", "s2", "s5"})
+
+    assert sorted(seen["restrict_sources"]) == ["s1", "s2", "s5"]
+    assert seen["max_depth"] == CLOSURE_MAX_DEPTH
+
+
+def _seed_random_closure_graph(conn, rng):
+    """A randomized web exercising the closure's tie-break inputs: names with
+    global counts 1/2/3, every structural kind plus a noise kind, resolved /
+    dangling / name-only / name+id / NULL target shapes, cycles included."""
+    from cairn.graph.traversal import STRUCTURAL_EDGE_KINDS
+
+    pool = (
+        [f"uniq_{i}" for i in range(12)]
+        + [f"twin_{i}" for i in range(6)] * 2
+        + [f"tri_{i}" for i in range(4)] * 3
+    )
+    conn.execute(
+        "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '/tmp/r1', 'python')"
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('fa', 'r1', 'a.py', 'python')"
+    )
+    n_symbols = 36
+    ids = [f"sym_{i}" for i in range(n_symbols)]
+    names = [pool[i % len(pool)] for i in range(n_symbols)]
+    rng.shuffle(names)
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, 'fa', ?, ?, 'function')",
+        [(sid, name, name) for sid, name in zip(ids, names)],
+    )
+    kinds = sorted(STRUCTURAL_EDGE_KINDS) + ["http_call"]
+    rows = []
+    for i in range(90):
+        shape = rng.random()
+        if shape < 0.5:  # resolved id (real resolved edges carry no target_name)
+            tid, tname = rng.choice(ids), None
+        elif shape < 0.65:  # dangling id with a name fallback (never NULL+NULL)
+            tid, tname = f"ghost_{rng.randrange(5)}", rng.choice(pool)
+        elif shape < 0.85:  # name-only
+            tid, tname = None, rng.choice(pool)
+        elif shape < 0.95:  # resolvable id with a competing target_name
+            tid, tname = rng.choice(ids), rng.choice(pool)
+        else:  # NULL/NULL
+            tid, tname = None, None
+        rows.append((f"edge_{i}", rng.choice(ids), tid, tname, rng.choice(kinds)))
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind) "
+        "VALUES (?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+
+
+def _clear_graph_tables(conn):
+    for table in ("edges", "symbols", "files", "repos"):
+        conn.execute(f"DELETE FROM {table}")
+    conn.commit()
+
+
+def test_scoped_closure_rows_match_full_rows_exactly(fresh_db):
+    """_closure_rows with restrict_sources must equal the full row list
+    filtered to those sources -- exact list parity (order included) over
+    randomized graphs, the contract the scoped read path must never break."""
+    for seed in range(20):
+        rng = random.Random(seed)
+        _clear_graph_tables(fresh_db)
+        _seed_random_closure_graph(fresh_db, rng)
+        full = dataflow_mod._closure_rows(fresh_db, CLOSURE_MAX_DEPTH)
+        sources = sorted({r[0] for r in full})
+        assert sources, f"seed {seed}: no closure rows"
+        halves = [
+            sources[:1],
+            sources,
+            rng.sample(sources, max(1, len(sources) // 2)),
+            sources[: max(1, len(sources) // 3)],
+            ["ghost_id"],
+        ]
+        for restrict in halves:
+            scoped = dataflow_mod._closure_rows(
+                fresh_db, CLOSURE_MAX_DEPTH, restrict_sources=restrict
+            )
+            expected = [r for r in full if r[0] in set(restrict)]
+            assert scoped == expected, (
+                f"seed {seed}: restrict sample starting {restrict[:3]} diverged"
+            )
+
+
+def test_maintain_transitive_closure_issues_no_unscoped_reads(fresh_db):
+    """The incremental path reads only scoped statements: every symbols read
+    carries an id/name predicate and every edges read carries source_id IN --
+    the O(graph) full scans must never come back."""
+    _seed_random_closure_graph(fresh_db, random.Random(7))
+    build_transitive_closure(fresh_db)
+
+    statements: list[str] = []
+    fresh_db.set_trace_callback(statements.append)
+    try:
+        maintain_transitive_closure(fresh_db, {"sym_0", "sym_1", "sym_2"})
+    finally:
+        fresh_db.set_trace_callback(None)
+
+    assert statements, "no SQL captured"
+    for stmt in statements:
+        norm = " ".join(stmt.split())
+        if "FROM symbols" in norm:
+            assert "WHERE id IN" in norm or "WHERE name =" in norm, norm
+        if "FROM edges" in norm:
+            assert "WHERE source_id IN" in norm, norm
+
+
+def test_maintain_after_targeted_delete_matches_full_rebuild(fresh_db):
+    """After a targeted DELETE of a mid-chain symbol, maintaining only the
+    deleted source plus its ancestors must leave exactly the rows a fresh full
+    rebuild produces -- whole-table, so unaffected sources survive untouched."""
+    _seed_mini_graph(fresh_db)
+    build_transitive_closure(fresh_db)
+
+    fresh_db.execute("DELETE FROM edges WHERE source_id = 's3' OR target_id = 's3'")
+    fresh_db.execute("DELETE FROM symbols WHERE id = 's3'")
+    fresh_db.commit()
+    maintain_transitive_closure(fresh_db, {"s1", "s2", "s3", "s5"})
+
+    ref = sqlite3.connect(":memory:")
+    ref.row_factory = sqlite3.Row
+    _apply_schema(ref)
+    _seed_mini_graph(ref)
+    ref.execute("DELETE FROM edges WHERE source_id = 's3' OR target_id = 's3'")
+    ref.execute("DELETE FROM symbols WHERE id = 's3'")
+    ref.commit()
+    build_transitive_closure(ref)
+    expected = _closure_rows(ref)
+    ref.close()
+
+    assert _closure_rows(fresh_db) == expected
 
 
 def test_maintain_dataflow_index_upserts_and_deletes(fresh_db):

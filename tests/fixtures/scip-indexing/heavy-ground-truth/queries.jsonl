@@ -1,0 +1,6 @@
+{"query_id": "hv-definition", "level": "L1", "kind": "definition", "text": "fn_07_3", "rationale": "covered definition; identity must survive the overlay"}
+{"query_id": "hv-chain-target", "level": "L1", "kind": "call-binding", "text": "fn_08_3", "rationale": "the cross-module chain callee of fn_07_3"}
+{"query_id": "hv-mid-chain", "level": "L1", "kind": "definition", "text": "fn_20_0", "rationale": "mid-chain definition deep in the corpus"}
+{"query_id": "hv-wrapped", "level": "L1", "kind": "call-binding", "text": "fn_33_2", "rationale": "caller whose chain wraps past the last module"}
+{"query_id": "hv-wrap-target", "level": "L1", "kind": "definition", "text": "fn_00_4", "rationale": "wrap-around chain target in the first module"}
+{"query_id": "hv-builtin-adjacent", "level": "L1", "kind": "definition", "text": "fn_11_1", "rationale": "definition in a body with an unresolved builtin call"}

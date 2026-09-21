@@ -441,3 +441,119 @@ class TestStatsResolutionShares:
         assert stats["resolution"] == {"exact": 0, "ambiguous": 0, "unresolved": 0}
         assert stats["exact_share"] == 0
         assert stats["ambiguous_share"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Stats provenance siblings
+# ---------------------------------------------------------------------------
+
+
+def _bare_schema_db(path, edge_columns, seed=None):
+    """Hand-built minimal-schema DB whose edges table carries ``edge_columns``."""
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        "CREATE TABLE repos (id TEXT, name TEXT, path TEXT, language TEXT, "
+        "git_remote TEXT, indexed_at TEXT);"
+        "CREATE TABLE files (id TEXT, repo_id TEXT, path TEXT, language TEXT, "
+        "mtime REAL, size INTEGER);"
+        "CREATE TABLE symbols (id TEXT, file_id TEXT, name TEXT, "
+        "qualified_name TEXT, kind TEXT, line_start INTEGER, line_end INTEGER);"
+        f"CREATE TABLE edges (id TEXT, source_id TEXT, target_id TEXT, "
+        f"target_name TEXT, kind TEXT, line INTEGER, column INTEGER{edge_columns});"
+        "CREATE TABLE imports (id TEXT, file_id TEXT, path TEXT, kind TEXT);"
+        "CREATE TABLE skipped_files (id TEXT, repo_id TEXT, path TEXT, reason TEXT);"
+        "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '.', '');"
+        "INSERT INTO files (id, repo_id, path, language) VALUES "
+        "('f1', 'r1', 'a.py', 'python'), ('f2', 'r1', 'A.kt', 'kotlin');"
+        "INSERT INTO symbols (id, file_id, name, kind) VALUES "
+        "('s1', 'f1', 'main', 'function'), ('s2', 'f1', 'helper', 'function'), "
+        "('s3', 'f2', 'Main', 'class'), ('s4', 'f2', 'helper', 'function');"
+    )
+    if seed:
+        seed(conn)
+    conn.commit()
+    conn.close()
+
+
+class TestStatsProvenanceShares:
+    """``get_stats`` provenance siblings to the resolution block.
+
+    Contract: ``edge_sources`` counts all edges by provenance (NULL source
+    reads as tree_sitter) and ``exact_share_by_language`` reports the exact
+    share of the exact+ambiguous calls/references pool grouped by the source
+    symbol's file language. Both degrade independently to zero/empty defaults
+    on minimal schemas and never add keys inside ``stats["resolution"]``.
+    """
+
+    def test_edge_sources_and_per_language_share(self, tmp_path):
+        """Seeded two-language edges: provenance over all kinds, shares over
+        the calls/references pool joined through symbols->files."""
+        from cairn.graph.queries import get_stats
+
+        db = tmp_path / "graph.db"
+
+        def seed(conn):
+            conn.executemany(
+                "INSERT INTO edges (id, source_id, target_id, target_name, "
+                "kind, resolution, source) VALUES (?,?,?,?,?,?,?)",
+                [
+                    # python pool: 1 exact + 1 ambiguous -> 1/2.
+                    ("e1", "s1", "s2", None, "calls", "exact", None),
+                    ("e2", "s1", None, "Helper", "calls", "ambiguous", "scip"),
+                    ("e3", "s1", None, "external_fn", "calls", "unresolved", "scip"),
+                    # Out-of-pool kind: provenance-counted, never share-counted.
+                    ("e4", "s1", "s2", None, "extends", "exact", "tree_sitter"),
+                    # kotlin pool: 3 exact + 1 ambiguous -> 3/4.
+                    ("e5", "s3", "s4", None, "calls", "exact", "scip"),
+                    ("e6", "s3", "s4", None, "references", "exact", None),
+                    ("e7", "s3", "s4", None, "references", "exact", "scip"),
+                    ("e8", "s3", None, "Widget", "calls", "ambiguous", "scip"),
+                ],
+            )
+
+        _bare_schema_db(db, ", resolution TEXT, source TEXT", seed=seed)
+        stats = get_stats(_open(db))
+
+        assert stats["edge_sources"] == {"tree_sitter": 3, "scip": 5}
+        assert stats["exact_share_by_language"] == {
+            "kotlin": pytest.approx(3 / 4),
+            "python": pytest.approx(1 / 2),
+        }
+        assert stats["resolution"] == {"exact": 4, "ambiguous": 2, "unresolved": 1}
+
+    def test_missing_source_column_degrades_independently(self, tmp_path):
+        """Resolution present, source absent: edge_sources zeroes while the
+        per-language share still computes -- one guard per key, not a shared
+        try block."""
+        from cairn.graph.queries import get_stats
+
+        db = tmp_path / "no_source.db"
+
+        def seed(conn):
+            conn.executemany(
+                "INSERT INTO edges (id, source_id, target_id, target_name, "
+                "kind, resolution) VALUES (?,?,?,?,?,?)",
+                [
+                    ("e1", "s1", "s2", None, "calls", "exact"),
+                    ("e2", "s1", None, "Helper", "calls", "ambiguous"),
+                ],
+            )
+
+        _bare_schema_db(db, ", resolution TEXT", seed=seed)
+        stats = get_stats(_open(db))
+
+        assert stats["edge_sources"] == {"tree_sitter": 0, "scip": 0}
+        assert stats["exact_share_by_language"] == {"python": pytest.approx(1 / 2)}
+
+    def test_minimal_schema_defaults_provenance_to_zero(self, tmp_path):
+        """Neither column exists: zero/empty defaults, never an exception --
+        the same degradation contract the resolution block holds."""
+        from cairn.graph.queries import get_stats
+
+        db = tmp_path / "bare.db"
+        _bare_schema_db(db, "")
+        stats = get_stats(_open(db))
+
+        assert stats["edge_sources"] == {"tree_sitter": 0, "scip": 0}
+        assert stats["exact_share_by_language"] == {}
