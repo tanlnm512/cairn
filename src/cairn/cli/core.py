@@ -494,6 +494,12 @@ def import_scip(scip_file, workspace, db):
 
         # ImportError carries the importer's [scip] install hint.
         record = import_scip_file(conn, scip_file, workspace)
+        if record.get("documents", 0) > 0 and record.get("matched_documents", 0) == 0:
+            raise click.ClickException(
+                f"none of {record['documents']} documents in {scip_file} matched "
+                f"the graph — check that --workspace/--db point at the workspace "
+                f"this index covers"
+            )
         # The import replaces calls/references edges; transitive_edges must be
         # rebuilt or multi-hop queries (impact_analysis, callers) stay stale.
         from ..graph.dataflow import build_transitive_closure
@@ -504,9 +510,12 @@ def import_scip(scip_file, workspace, db):
     finally:
         conn.close()
     edges = record.get("edges", 0)
+    skipped = record.get("skipped_documents", 0)
+    skipped_note = f", {skipped} skipped" if skipped else ""
     click.echo(
         f"scip: {edges} edges ({record.get('disagreements', 0)} disagreements) "
-        f"from {scip_file}"
+        f"matched {record.get('matched_documents', 0)}/{record.get('documents', 0)} "
+        f"documents{skipped_note} from {scip_file}"
     )
 
 

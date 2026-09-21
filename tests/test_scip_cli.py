@@ -152,6 +152,64 @@ def test_import_scip_invokes_overlay_entry(
     assert "3" in result.output and "1" in result.output
 
 
+def test_import_scip_zero_matched_documents_hard_errors(
+    caller_callee_ws, caller_callee_db, tmp_path, monkeypatch
+):
+    """An index whose documents all miss the graph exits non-zero naming the
+    workspace/db mismatch, and never rebuilds the transitive closure."""
+    db_path = str(tmp_path / "graph.db")
+    caller_callee_db(db_path).close()
+    idx = tmp_path / "index.scip"
+    idx.write_bytes(b"")
+
+    stub = types.ModuleType("cairn.parsers.scip_importer")
+    stub.import_scip_file = lambda conn, scip_path, workspace: {
+        "edges": 0, "disagreements": 0,
+        "documents": 4, "matched_documents": 0, "skipped_documents": 4,
+    }
+    monkeypatch.setitem(sys.modules, "cairn.parsers.scip_importer", stub)
+
+    closure_calls = []
+    monkeypatch.setattr(
+        "cairn.graph.dataflow.build_transitive_closure",
+        lambda conn: closure_calls.append(1),
+    )
+
+    result = _invoke(
+        ["import-scip", str(idx), "--db", db_path, "--workspace", str(caller_callee_ws)]
+    )
+
+    assert result.exit_code != 0
+    assert "matched" in result.output
+    assert closure_calls == []
+
+
+def test_import_scip_success_line_reports_document_counts(
+    caller_callee_ws, caller_callee_db, tmp_path, monkeypatch
+):
+    """The success line carries the matched/skipped document counts so a
+    partial mismatch is visible, not just the edge total."""
+    db_path = str(tmp_path / "graph.db")
+    caller_callee_db(db_path).close()
+    idx = tmp_path / "index.scip"
+    idx.write_bytes(b"")
+
+    stub = types.ModuleType("cairn.parsers.scip_importer")
+    stub.import_scip_file = lambda conn, scip_path, workspace: {
+        "edges": 3, "disagreements": 1,
+        "documents": 2, "matched_documents": 1, "skipped_documents": 1,
+    }
+    monkeypatch.setitem(sys.modules, "cairn.parsers.scip_importer", stub)
+
+    result = _invoke(
+        ["import-scip", str(idx), "--db", db_path, "--workspace", str(caller_callee_ws)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "matched 1/2 documents" in result.output
+    assert ", 1 skipped" in result.output
+
+
 # --------------------------------------------------------------------------
 # Provenance rendering (FR-013): `cairn stats` resolution-share block and the
 # build summary panel's scip line. Zero-value degradation: no scip edges ->
