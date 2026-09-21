@@ -18,6 +18,12 @@ CLOSURE_BUDGET_WALL_SECONDS = 60.0
 CLOSURE_BUDGET_PEAK_MB = 512.0
 CLOSURE_EDGE_FACTOR = 5
 
+# Incremental-maintenance budget at the gate point: wall seconds one
+# maintain_transitive_closure call over a bounded affected set must stay
+# within at the multiplied structural-edge volume.
+CLOSURE_MAINTAIN_BUDGET_WALL_SECONDS = 0.5
+CLOSURE_MAINTAIN_AFFECTED = 50
+
 
 def synthesize_structural_edges(
     conn: sqlite3.Connection, *, factor: int = CLOSURE_EDGE_FACTOR
@@ -159,6 +165,27 @@ def run_scaling_suite(
                 return _t.perf_counter() - _t0
 
             closure_mem, closure_s = peak_memory(_closure_op)
+
+            # Incremental maintenance op: one bounded affected-set maintenance
+            # over the same volume -- the path the closure build budget does
+            # not exercise.
+            from ..graph.dataflow import maintain_transitive_closure
+
+            affected = [
+                r[0]
+                for r in conn.execute(
+                    f"SELECT DISTINCT source_id FROM edges WHERE kind IN ({kind_ph}) "
+                    f"ORDER BY source_id LIMIT {CLOSURE_MAINTAIN_AFFECTED}",
+                    STRUCTURAL_EDGE_KINDS,
+                ).fetchall()
+            ]
+
+            def _maintain_op() -> float:
+                _t0 = _t.perf_counter()
+                maintain_transitive_closure(conn, affected)
+                return _t.perf_counter() - _t0
+
+            maintain_s = _maintain_op()
         finally:
             conn.close()
 
@@ -176,6 +203,7 @@ def run_scaling_suite(
             closure_seconds=closure_s,
             closure_peak_memory_mb=closure_mem.peak_mb,
             closure_edges=structural_edges,
+            closure_maintain_seconds=maintain_s,
         )
         report.points.append(point)
         if progress:

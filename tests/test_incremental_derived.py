@@ -824,6 +824,112 @@ def test_maintain_transitive_closure_derives_via_shared_core(fresh_db, monkeypat
     assert seen["max_depth"] == CLOSURE_MAX_DEPTH
 
 
+def _seed_random_closure_graph(conn, rng):
+    """A randomized web exercising the closure's tie-break inputs: names with
+    global counts 1/2/3, every structural kind plus a noise kind, resolved /
+    dangling / name-only / name+id / NULL target shapes, cycles included."""
+    from cairn.graph.traversal import STRUCTURAL_EDGE_KINDS
+
+    pool = (
+        [f"uniq_{i}" for i in range(12)]
+        + [f"twin_{i}" for i in range(6)] * 2
+        + [f"tri_{i}" for i in range(4)] * 3
+    )
+    conn.execute(
+        "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '/tmp/r1', 'python')"
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('fa', 'r1', 'a.py', 'python')"
+    )
+    n_symbols = 36
+    ids = [f"sym_{i}" for i in range(n_symbols)]
+    names = [pool[i % len(pool)] for i in range(n_symbols)]
+    rng.shuffle(names)
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, 'fa', ?, ?, 'function')",
+        [(sid, name, name) for sid, name in zip(ids, names)],
+    )
+    kinds = sorted(STRUCTURAL_EDGE_KINDS) + ["http_call"]
+    rows = []
+    for i in range(90):
+        shape = rng.random()
+        if shape < 0.5:  # resolved id (real resolved edges carry no target_name)
+            tid, tname = rng.choice(ids), None
+        elif shape < 0.65:  # dangling id with a name fallback (never NULL+NULL)
+            tid, tname = f"ghost_{rng.randrange(5)}", rng.choice(pool)
+        elif shape < 0.85:  # name-only
+            tid, tname = None, rng.choice(pool)
+        elif shape < 0.95:  # resolvable id with a competing target_name
+            tid, tname = rng.choice(ids), rng.choice(pool)
+        else:  # NULL/NULL
+            tid, tname = None, None
+        rows.append((f"edge_{i}", rng.choice(ids), tid, tname, rng.choice(kinds)))
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind) "
+        "VALUES (?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+
+
+def _clear_graph_tables(conn):
+    for table in ("edges", "symbols", "files", "repos"):
+        conn.execute(f"DELETE FROM {table}")
+    conn.commit()
+
+
+def test_scoped_closure_rows_match_full_rows_exactly(fresh_db):
+    """_closure_rows with restrict_sources must equal the full row list
+    filtered to those sources -- exact list parity (order included) over
+    randomized graphs, the contract the scoped read path must never break."""
+    for seed in range(20):
+        rng = random.Random(seed)
+        _clear_graph_tables(fresh_db)
+        _seed_random_closure_graph(fresh_db, rng)
+        full = dataflow_mod._closure_rows(fresh_db, CLOSURE_MAX_DEPTH)
+        sources = sorted({r[0] for r in full})
+        assert sources, f"seed {seed}: no closure rows"
+        halves = [
+            sources[:1],
+            sources,
+            rng.sample(sources, max(1, len(sources) // 2)),
+            sources[: max(1, len(sources) // 3)],
+            ["ghost_id"],
+        ]
+        for restrict in halves:
+            scoped = dataflow_mod._closure_rows(
+                fresh_db, CLOSURE_MAX_DEPTH, restrict_sources=restrict
+            )
+            expected = [r for r in full if r[0] in set(restrict)]
+            assert scoped == expected, (
+                f"seed {seed}: restrict sample starting {restrict[:3]} diverged"
+            )
+
+
+def test_maintain_transitive_closure_issues_no_unscoped_reads(fresh_db):
+    """The incremental path reads only scoped statements: every symbols read
+    carries an id/name predicate and every edges read carries source_id IN --
+    the O(graph) full scans must never come back."""
+    _seed_random_closure_graph(fresh_db, random.Random(7))
+    build_transitive_closure(fresh_db)
+
+    statements: list[str] = []
+    fresh_db.set_trace_callback(statements.append)
+    try:
+        maintain_transitive_closure(fresh_db, {"sym_0", "sym_1", "sym_2"})
+    finally:
+        fresh_db.set_trace_callback(None)
+
+    assert statements, "no SQL captured"
+    for stmt in statements:
+        norm = " ".join(stmt.split())
+        if "FROM symbols" in norm:
+            assert "WHERE id IN" in norm or "WHERE name =" in norm, norm
+        if "FROM edges" in norm:
+            assert "WHERE source_id IN" in norm, norm
+
+
 def test_maintain_after_targeted_delete_matches_full_rebuild(fresh_db):
     """After a targeted DELETE of a mid-chain symbol, maintaining only the
     deleted source plus its ancestors must leave exactly the rows a fresh full

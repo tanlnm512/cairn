@@ -78,6 +78,11 @@ def _assert_closure_budget(point) -> None:
         f"closure peak memory {point.closure_peak_memory_mb:.1f} MB at "
         f"{point.n_files} files exceeds budget {peak_budget:.0f} MB"
     )
+    maintain_budget = scaling_suite_mod.CLOSURE_MAINTAIN_BUDGET_WALL_SECONDS
+    assert point.closure_maintain_seconds <= maintain_budget, (
+        f"closure maintenance wall {point.closure_maintain_seconds:.3f}s at "
+        f"{point.n_files} files exceeds budget {maintain_budget:.1f}s"
+    )
 
 
 @pytest.mark.infra

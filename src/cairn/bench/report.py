@@ -94,6 +94,7 @@ class ScalingPoint:
     closure_seconds: float = 0.0
     closure_peak_memory_mb: float = 0.0
     closure_edges: int = 0
+    closure_maintain_seconds: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +108,7 @@ class ScalingPoint:
             "closure_s": round(self.closure_seconds, 3),
             "closure_peak_mb": round(self.closure_peak_memory_mb, 2),
             "closure_edges": self.closure_edges,
+            "closure_maintain_s": round(self.closure_maintain_seconds, 3),
         }
 
 
