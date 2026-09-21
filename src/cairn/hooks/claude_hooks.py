@@ -1,4 +1,11 @@
-"""Claude Code hook handlers."""
+"""Claude Code hook handlers.
+
+Hook-protocol contract: stdout is reserved for machine-readable hook output
+(empty, or valid JSON per the Claude Code / Codex hook schema). Aggregators
+parse Stop/PostToolUse stdout as JSON and surface "hook returned invalid ...
+ JSON output" when a hook prints prose there, so all human-readable
+diagnostics go to stderr.
+"""
 from __future__ import annotations
 
 import json
@@ -44,6 +51,15 @@ def _run_cg(args: list, timeout: int = 30, stdin: str | None = None) -> str:
         return f"error: {e}"
 
 
+def _log_human(message: str) -> None:
+    """Human-readable hook diagnostics go to stderr, never stdout.
+
+    Stop/PostToolUse hook stdout is parsed as JSON by the calling agent;
+    prose there fails the hook with "invalid ... hook JSON output".
+    """
+    sys.stderr.write(message.rstrip("\n") + "\n")
+
+
 def post_edit():
     """Called after Claude Code edits a file. Triggers incremental graph update
     and marks concepts referencing the edited file as stale.
@@ -70,7 +86,10 @@ def post_edit():
     # Mark stale concepts referencing the edited file.
     if file_path:
         _run_cg(["validate-paths", "--mark"], timeout=30)
-    sys.stdout.write(out)
+    # Keep stdout clean: cairn's CLI output is human prose, which the hook
+    # protocol would reject as invalid JSON output.
+    if out:
+        _log_human(out)
 
 
 def session_end():
@@ -123,8 +142,9 @@ def session_end():
             messages = []
         messages = messages[-80:]
     if not messages:
-        # Even without a transcript, queue a capture so an agent can process it.
-        sys.stdout.write("(no transcript; nothing to capture)")
+        # Nothing to feed the capture pipeline. Note it on stderr only --
+        # stdout must stay empty or valid JSON for the hook protocol.
+        _log_human("(no transcript; nothing to capture)")
         return
     # Pass the transcript via stdin rather than as an argv element: a long
     # session can be hundreds of KB / MB of JSON, which exceeds ARG_MAX
@@ -138,7 +158,9 @@ def session_end():
         timeout=60,
         stdin=transcript,
     )
-    sys.stdout.write(out or "(no memories captured)")
+    # memory capture's output is human prose; send it to stderr so stdout
+    # remains protocol-clean.
+    _log_human(out or "(no memories captured)")
 
 
 def session_start():
@@ -152,6 +174,11 @@ def session_start():
     out = _run_cg(["memory", "digest", "--limit", "5"], timeout=15)
     text = (out or "").strip()
     if not text or text == "No tribal memories yet.":
+        return
+    if text.startswith("error: "):
+        # Digest subprocess failed (spawn error/timeout): keep the failure
+        # prose out of the agent's context; stderr only.
+        _log_human(out)
         return
     sys.stdout.write(out)
 

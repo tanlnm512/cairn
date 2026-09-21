@@ -194,9 +194,10 @@ def _write_jsonl(path: Path, records: list) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _run_session_end(monkeypatch, capsys, payload: dict, calls: list) -> str:
+def _run_session_end(monkeypatch, capsys, payload: dict, calls: list):
     """Feed ``payload`` to session_end with the capture subprocess faked at
-    the claude_hooks call site. Returns the hook's stdout."""
+    the claude_hooks call site. Returns the hook's captured stdout/stderr
+    (stdout must stay protocol-clean; human diagnostics go to stderr)."""
     import cairn.hooks.claude_hooks as hooks
 
     class _FakeCompleted:
@@ -209,7 +210,7 @@ def _run_session_end(monkeypatch, capsys, payload: dict, calls: list) -> str:
     monkeypatch.setattr(hooks.subprocess, "run", fake_run)
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     hooks.session_end()
-    return capsys.readouterr().out
+    return capsys.readouterr()
 
 
 def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, capsys):
@@ -231,7 +232,7 @@ def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, 
     ])
 
     calls: list = []
-    out = _run_session_end(
+    captured = _run_session_end(
         monkeypatch, capsys,
         {"session_id": "sess-abc-123", "transcript_path": str(transcript)},
         calls,
@@ -246,7 +247,8 @@ def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, 
         {"role": "user", "content": "fix the flaky test"},
         {"role": "assistant", "content": "root cause was init ordering"},
     ]
-    assert out == "queued memory-extract\n"
+    assert captured.out == "", "stdout must stay empty (hook JSON protocol)"
+    assert "queued memory-extract" in captured.err
 
 
 def test_session_end_keeps_last_80_messages(tmp_path, monkeypatch, capsys):
@@ -283,18 +285,20 @@ def test_session_end_without_transcript_queues_nothing(tmp_path, monkeypatch, ca
     ]
     for payload in cases:
         calls: list = []
-        out = _run_session_end(monkeypatch, capsys, payload, calls)
+        captured = _run_session_end(monkeypatch, capsys, payload, calls)
         assert calls == [], f"no capture for payload {payload!r}"
-        assert "(no transcript; nothing to capture)" == out
+        assert captured.out == "", "stdout must stay empty (hook JSON protocol)"
+        assert "(no transcript; nothing to capture)" in captured.err
 
 
 # --------------------------------------------------------------------------
 # session_start digest emission
 # --------------------------------------------------------------------------
 
-def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list) -> str:
+def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list):
     """Feed session_start a faked `memory digest` subprocess at the
-    claude_hooks call site. Returns the hook's stdout."""
+    claude_hooks call site. Returns the hook's captured stdout/stderr (stdout
+    is the context channel; failure prose must land on stderr instead)."""
     import cairn.hooks.claude_hooks as hooks
 
     class _FakeCompleted:
@@ -306,24 +310,33 @@ def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list) -> 
 
     monkeypatch.setattr(hooks.subprocess, "run", fake_run)
     hooks.session_start()
-    return capsys.readouterr().out
+    return capsys.readouterr()
 
 
 def test_session_start_emits_digest_command_output(monkeypatch, capsys):
     digest = "  [0.92, refs-verified=1.0] Always run pre-commit\n"
     calls: list = []
-    out = _run_session_start(monkeypatch, capsys, digest, calls)
+    captured = _run_session_start(monkeypatch, capsys, digest, calls)
     assert len(calls) == 1
     assert calls[0]["argv"][-4:] == ["memory", "digest", "--limit", "5"]
     assert calls[0]["kwargs"]["timeout"] == 15
-    assert out == digest
+    assert captured.out == digest
 
 
 def test_session_start_silent_on_empty_store_or_sentinel(monkeypatch, capsys):
     for digest_stdout in ("", "\n", "No tribal memories yet.\n"):
         calls: list = []
-        out = _run_session_start(monkeypatch, capsys, digest_stdout, calls)
-        assert out == "", f"nothing must be emitted for {digest_stdout!r}"
+        captured = _run_session_start(monkeypatch, capsys, digest_stdout, calls)
+        assert captured.out == "", f"nothing must be emitted for {digest_stdout!r}"
+
+
+def test_session_start_routes_cli_failure_to_stderr(monkeypatch, capsys):
+    """A `_run_cg` failure string must never reach stdout (agent context)."""
+    failure = "error: Command '['cairn', 'memory', 'digest'] timed out after 15 seconds\n"
+    calls: list = []
+    captured = _run_session_start(monkeypatch, capsys, failure, calls)
+    assert captured.out == "", "failure prose must stay out of the agent context"
+    assert "error:" in captured.err
 
 
 def test_memory_digest_empty_store_sentinel_is_pinned(tmp_path):
