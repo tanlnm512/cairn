@@ -295,9 +295,10 @@ def test_session_end_without_transcript_queues_nothing(tmp_path, monkeypatch, ca
 # session_start digest emission
 # --------------------------------------------------------------------------
 
-def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list) -> str:
+def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list):
     """Feed session_start a faked `memory digest` subprocess at the
-    claude_hooks call site. Returns the hook's stdout."""
+    claude_hooks call site. Returns the hook's captured stdout/stderr (stdout
+    is the context channel; failure prose must land on stderr instead)."""
     import cairn.hooks.claude_hooks as hooks
 
     class _FakeCompleted:
@@ -309,24 +310,33 @@ def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list) -> 
 
     monkeypatch.setattr(hooks.subprocess, "run", fake_run)
     hooks.session_start()
-    return capsys.readouterr().out
+    return capsys.readouterr()
 
 
 def test_session_start_emits_digest_command_output(monkeypatch, capsys):
     digest = "  [0.92, refs-verified=1.0] Always run pre-commit\n"
     calls: list = []
-    out = _run_session_start(monkeypatch, capsys, digest, calls)
+    captured = _run_session_start(monkeypatch, capsys, digest, calls)
     assert len(calls) == 1
     assert calls[0]["argv"][-4:] == ["memory", "digest", "--limit", "5"]
     assert calls[0]["kwargs"]["timeout"] == 15
-    assert out == digest
+    assert captured.out == digest
 
 
 def test_session_start_silent_on_empty_store_or_sentinel(monkeypatch, capsys):
     for digest_stdout in ("", "\n", "No tribal memories yet.\n"):
         calls: list = []
-        out = _run_session_start(monkeypatch, capsys, digest_stdout, calls)
-        assert out == "", f"nothing must be emitted for {digest_stdout!r}"
+        captured = _run_session_start(monkeypatch, capsys, digest_stdout, calls)
+        assert captured.out == "", f"nothing must be emitted for {digest_stdout!r}"
+
+
+def test_session_start_routes_cli_failure_to_stderr(monkeypatch, capsys):
+    """A `_run_cg` failure string must never reach stdout (agent context)."""
+    failure = "error: Command '['cairn', 'memory', 'digest'] timed out after 15 seconds\n"
+    calls: list = []
+    captured = _run_session_start(monkeypatch, capsys, failure, calls)
+    assert captured.out == "", "failure prose must stay out of the agent context"
+    assert "error:" in captured.err
 
 
 def test_memory_digest_empty_store_sentinel_is_pinned(tmp_path):

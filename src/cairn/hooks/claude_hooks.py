@@ -175,6 +175,11 @@ def session_start():
     text = (out or "").strip()
     if not text or text == "No tribal memories yet.":
         return
+    if text.startswith("error: "):
+        # Digest subprocess failed (spawn error/timeout): keep the failure
+        # prose out of the agent's context; stderr only.
+        _log_human(out)
+        return
     sys.stdout.write(out)
 
 
