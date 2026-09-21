@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass (byte-identical row sets, ~2× faster on cairn's own repo) and now
   enforced by a CI budget gate — ≤60 s wall / ≤512 MB peak at the 1000-file
   scaling point with 5× structural edges (measured 6.0 s / 228 MB), plus a
-  ≤0.5 s budget for one incremental `maintain_transitive_closure` call at
+  ≤2 s budget for one incremental `maintain_transitive_closure` call at
   the same point, whose reads are scoped to the affected subgraph.
 - `edges` table gains an additive `source` provenance column (NULL reads as
   tree-sitter); local commit gate's staged-files ruff honors
