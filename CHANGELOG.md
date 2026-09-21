@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.21.1] - 2026-09-21
 
 ### Added
 - SCIP compiler-index support, redesigned as an opt-in edges-only overlay:
