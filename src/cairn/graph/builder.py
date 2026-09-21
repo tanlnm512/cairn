@@ -272,8 +272,13 @@ _SCIP_SKIP_INDEX_MISSING = "scip_index_missing"
 
 
 def _record_scip_skip(cur, repo_id: str, path: str, reason: str) -> None:
-    """One skipped_files row for an index the overlay could not apply (best-effort)."""
+    """One skipped_files row per (repo, path, reason) for an index the overlay
+    could not apply (best-effort; a repeat replaces the earlier row)."""
     try:
+        cur.execute(
+            "DELETE FROM skipped_files WHERE repo_id = ? AND path = ? AND reason = ?",
+            (repo_id, path, reason),
+        )
         cur.execute(
             """INSERT INTO skipped_files
                  (id, repo_id, path, reason, size_bytes, recorded_at)

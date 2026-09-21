@@ -136,6 +136,16 @@ def test_update_without_index_skips_overlay_and_records_scip_index_missing(
     )
     assert rows and rows[0][0] and rows[0][1] == "index.scip"
 
+    # A repeated update under the same missing index replaces the skip row
+    # instead of accumulating one per update.
+    _edit_tracked(ws)
+    incremental_update(workspace=str(ws), db_path=db)
+    rows = _fetch(
+        db,
+        "select repo_id, path from skipped_files where reason = 'scip_index_missing'",
+    )
+    assert len(rows) == 1
+
 
 def test_update_without_scip_config_records_nothing(tmp_path, monkeypatch):
     """No scip config means the update's overlay hook is a no-op: no skip
