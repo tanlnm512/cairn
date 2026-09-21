@@ -113,6 +113,11 @@ def _chunked(items, size: int = _SQLITE_IN_CHUNK):
         yield items[i : i + size]
 
 
+def _has_edge_target(target_id, target_name) -> bool:
+    """True when a closure row can carry this edge (an id or a non-empty name)."""
+    return target_id is not None or (target_name is not None and target_name != "")
+
+
 def _compute_dataflow_row(
     conn: sqlite3.Connection,
     name: str,
@@ -330,10 +335,6 @@ class _ScopedClosureGraph:
         rows.sort(key=lambda r: (r[3], r[4]))
         return rows
 
-    @staticmethod
-    def _has_target(target_id, target_name) -> bool:
-        return target_id is not None or (target_name is not None and target_name != "")
-
     def seed_edges(self):
         """Level-1 (source_id, target_id, name) entries for the restrict set."""
         raw = self._scoped_edges(self._sources)
@@ -341,7 +342,7 @@ class _ScopedClosureGraph:
         return [
             (source_id, target_id, self._names.get(target_id, target_name))
             for source_id, target_id, target_name, _kind, _rowid in raw
-            if self._has_target(target_id, target_name)
+            if _has_edge_target(target_id, target_name)
         ]
 
     def prefetch_adjacency(self, target_ids) -> None:
@@ -377,7 +378,7 @@ class _ScopedClosureGraph:
             raw = self._scoped_edges([sym_rows[0][0]])
             self._names_for({r[1] for r in raw if r[1]})
             for source_id, target_id, target_name, _kind, rowid in raw:
-                if not self._has_target(target_id, target_name):
+                if not _has_edge_target(target_id, target_name):
                     continue
                 name = self._names.get(target_id, target_name)
                 streams.append((rowid, (mid_name, target_id, name)))
@@ -395,14 +396,14 @@ def _closure_rows(
 
     With ``restrict_sources=None`` the graph is read in full, then the seed +
     per-depth level loop runs over dict adjacency. First-wins per PK
-    ``(source_id, target_name, distance)`` reproduces the historical INSERT OR
-    IGNORE result exactly, including tie-breaks: the seed and the unique-name
-    hop (Case 2) walk edges in kind-major then insertion order, while the
-    resolved hop (Case 1) walks the level frontier in creation order; Case 1
-    always precedes Case 2 at a level. A subset of an ordered sequence, sorted
-    by the same key, is the global sequence restricted to that subset, so the
-    ``restrict_sources`` branch reproduces the full result restricted to those
-    sources row-for-row while reading only frontier-scoped edges.
+    ``(source_id, target_name, distance)``, including tie-breaks: the seed
+    walks edges kind-major then rowid order, the unique-name hop (Case 2)
+    walks the global edge-scan (rowid) order, and the resolved hop (Case 1)
+    walks the level frontier in creation order; Case 1 always precedes
+    Case 2 at a level. A subset of an ordered sequence, sorted by the same
+    key, is the global sequence restricted to that subset, so the
+    ``restrict_sources`` branch reproduces the full result restricted to
+    those sources row-for-row while reading only frontier-scoped edges.
     """
     structural_kinds = set(STRUCTURAL_EDGE_KINDS)
     restrict = None if restrict_sources is None else {s for s in restrict_sources if s}
@@ -440,10 +441,7 @@ def _closure_rows(
         # COALESCE(symbol.name, edges.target_name); never None for a live id.
         name = name_by_id.get(target_id, target_name)
         adjacency.setdefault(source_id, []).append((target_id, name))
-        has_target = target_id is not None or (
-            target_name is not None and target_name != ""
-        )
-        if not has_target:
+        if not _has_edge_target(target_id, target_name):
             continue
         per_kind[kind].append((source_id, target_id, name))
         mid_name = name_by_id.get(source_id)
