@@ -317,7 +317,10 @@ def _apply_scip_overlay(
     report: Dict[str, int] = {
         "edges": 0, "disagreements": 0, "upgrades": 0, "join_anomalies": 0,
     }
-    repo_id = next(iter(repos_seen), "")
+    # Skip attribution is workspace-scoped, not per-document, so a single
+    # repo_id is only safe to guess in a single-repo workspace; a multi-repo
+    # workspace leaves it blank rather than mis-attributing to an arbitrary repo.
+    repo_id = next(iter(repos_seen), "") if len(repos_seen) == 1 else ""
     try:
         from ..parsers.scip_importer import (
             _INSTALL_HINT,

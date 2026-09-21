@@ -494,11 +494,16 @@ def import_scip(scip_file, workspace, db):
 
         # ImportError carries the importer's [scip] install hint.
         record = import_scip_file(conn, scip_file, workspace)
+        # The import replaces calls/references edges; transitive_edges must be
+        # rebuilt or multi-hop queries (impact_analysis, callers) stay stale.
+        from ..graph.dataflow import build_transitive_closure
+
+        build_transitive_closure(conn)
     except ImportError as e:
         raise click.ClickException(str(e)) from e
     finally:
         conn.close()
-    edges = record.get("edges", record.get("edges_added", 0))
+    edges = record.get("edges", 0)
     click.echo(
         f"scip: {edges} edges ({record.get('disagreements', 0)} disagreements) "
         f"from {scip_file}"

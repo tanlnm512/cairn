@@ -355,6 +355,10 @@ def import_scip_file(conn: sqlite3.Connection, scip_path: str, workspace: str) -
             )
             record["join_anomalies"] += 1
             continue
+        if not rows:
+            # No occurrences to replace tree-sitter edges with -- keep them
+            # rather than deleting the file's calls/references into nothing.
+            continue
         disagreements, upgrades = _count_disagreements(conn, matched_id, rows)
         record["disagreements"] += disagreements
         record["upgrades"] += upgrades
