@@ -19,7 +19,6 @@ verbatim from the source.
 
 - [review-checklist.md](review-checklist.md) — the PR review/audit gate for every change.
 - [release-checklist.md](release-checklist.md) — pre-release verification and the release procedure.
-- [known-issues.md](known-issues.md) — open defects with evidence and failure scenarios, not yet fixed.
 
 ## Diagrams
 
