@@ -460,32 +460,37 @@ def test_definition_occurrences_emit_no_edges(fresh_db, tmp_path):
     assert fresh_db.execute("select count(*) from edges where source='scip'").fetchone()[0] == 0
 
 
-@needs_scip
-def test_cross_document_target_resolves_exact(fresh_db, tmp_path):
-    """A reference in one document resolves through the index's own symbol
-    table to the defining occurrence's position join in another document."""
-    conn = fresh_db
+def _seed_two_file_graph(conn, tmp_path, symbols):
+    """Repo r1 with files a.py (f1) / b.py (f2); symbols are
+    (id, file_id, name, line_start, line_end) function rows."""
     repo = tmp_path / "r1"
     (repo / ".git").mkdir(parents=True, exist_ok=True)
     conn.execute(
         "INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', ?)", (str(repo),)
     )
-    conn.execute(
-        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
+    conn.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, 'python')",
+        [("f1", "r1", "a.py"), ("f2", "r1", "b.py")],
     )
-    conn.execute(
-        "INSERT INTO files (id, repo_id, path, language) VALUES ('f2', 'r1', 'b.py', 'python')"
-    )
-    for sid, fid, name, ls, le in (
-        ("s_def", "f1", "provider", 2, 3),
-        ("s_use", "f2", "consumer", 1, 2),
-    ):
+    for sid, fid, name, ls, le in symbols:
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, "
             "column_start, column_end) VALUES (?, ?, ?, 'function', ?, ?, 0, 0)",
             (sid, fid, name, ls, le),
         )
     conn.commit()
+
+
+@needs_scip
+def test_cross_document_target_resolves_exact(fresh_db, tmp_path):
+    """A reference in one document resolves through the index's own symbol
+    table to the defining occurrence's position join in another document."""
+    conn = fresh_db
+    _seed_two_file_graph(
+        conn,
+        tmp_path,
+        [("s_def", "f1", "provider", 2, 3), ("s_use", "f2", "consumer", 1, 2)],
+    )
 
     from cairn.parsers import _scip_pb2 as pb
 
@@ -524,27 +529,11 @@ def test_local_symbol_resolves_only_within_own_document(fresh_db, tmp_path):
     reference joins exact, while the same local name in another document stays
     unresolved with a NULL target -- never a cross-file binding."""
     conn = fresh_db
-    repo = tmp_path / "r1"
-    (repo / ".git").mkdir(parents=True, exist_ok=True)
-    conn.execute(
-        "INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', ?)", (str(repo),)
+    _seed_two_file_graph(
+        conn,
+        tmp_path,
+        [("s_a", "f1", "user_a", 1, 2), ("s_b", "f2", "definer", 1, 3)],
     )
-    conn.execute(
-        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
-    )
-    conn.execute(
-        "INSERT INTO files (id, repo_id, path, language) VALUES ('f2', 'r1', 'b.py', 'python')"
-    )
-    for sid, fid, name, ls, le in (
-        ("s_a", "f1", "user_a", 1, 2),
-        ("s_b", "f2", "definer", 1, 3),
-    ):
-        conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, "
-            "column_start, column_end) VALUES (?, ?, ?, 'function', ?, ?, 0, 0)",
-            (sid, fid, name, ls, le),
-        )
-    conn.commit()
 
     local = "local 1"
     from cairn.parsers import _scip_pb2 as pb
@@ -683,27 +672,15 @@ def test_corrupt_index_aborts_before_any_write(fresh_db, tmp_path):
 
 @needs_scip
 def test_mid_loop_read_failure_loses_no_tree_sitter_edges(fresh_db, tmp_path, monkeypatch):
-    """A per-document failure between the authority DELETE and the batched
-    INSERT must not persist orphaned DELETEs: the caller's post-catch commit
-    leaves every file's tree-sitter edges and skip state untouched."""
+    """A per-document failure during the read phase aborts the import before
+    any write: the caller's post-catch commit leaves every file's tree-sitter
+    edges and skip state untouched."""
     conn = fresh_db
-    repo = tmp_path / "r1"
-    (repo / ".git").mkdir(parents=True, exist_ok=True)
-    conn.execute(
-        "INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', ?)", (str(repo),)
+    _seed_two_file_graph(
+        conn,
+        tmp_path,
+        [("s_a", "f1", "s_a", 1, 2), ("s_b", "f2", "s_b", 1, 2)],
     )
-    conn.execute(
-        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
-    )
-    conn.execute(
-        "INSERT INTO files (id, repo_id, path, language) VALUES ('f2', 'r1', 'b.py', 'python')"
-    )
-    for sid, fid, ls, le in (("s_a", "f1", 1, 2), ("s_b", "f2", 1, 2)):
-        conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, "
-            "column_start, column_end) VALUES (?, ?, ?, 'function', ?, ?, 0, 0)",
-            (sid, fid, sid, ls, le),
-        )
     for eid, src in (("e_ts_a", "s_a"), ("e_ts_b", "s_b")):
         conn.execute(
             "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, "
