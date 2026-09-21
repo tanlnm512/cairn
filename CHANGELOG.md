@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tree-sitter); local commit gate's staged-files ruff honors
   `extend-exclude` via `--force-exclude`.
 ### Fixed
+- Agent hook stdout stays protocol-clean: `post_edit` and `session_end`
+  emit cairn/prose diagnostics to stderr instead of stdout (the calling
+  agent parses Stop/PostToolUse hook stdout as JSON), and `session_start`
+  routes digest subprocess failures to stderr so no error prose reaches
+  the agent's context.
 - The SCIP import's write phase is atomic: every fallible read completes
   before the first delete, and the deletes/inserts run inside a savepoint
   that rolls back on failure — a mid-import error can no longer commit
