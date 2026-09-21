@@ -113,6 +113,26 @@ def test_build_applies_overlay_and_reports_scip_summary(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Config-read degradation prints like every other (no silent swallows)
+# ---------------------------------------------------------------------------
+def test_config_load_failure_logs_and_skips_overlay(tmp_path, monkeypatch, capsys):
+    """A failing config read degrades loudly: the overlay returns None and the
+    failure prints even when verbose is off (the docstring's _log contract)."""
+    from cairn.graph import config as config_mod
+    from cairn.graph.builder import _apply_scip_overlay
+
+    def boom(_workspace):
+        raise RuntimeError("scip section unreadable")
+
+    monkeypatch.setattr(config_mod, "load_config", boom)
+
+    result = _apply_scip_overlay(sqlite3.connect(":memory:"), str(tmp_path), {}, verbose=False)
+
+    assert result is None
+    assert "[scip] config load failed" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # Runtime-missing degradation (FR-006)
 # ---------------------------------------------------------------------------
 def test_build_without_scip_runtime_succeeds_tree_sitter_only(

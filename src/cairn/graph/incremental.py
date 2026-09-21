@@ -348,10 +348,11 @@ def incremental_update(
     """Re-index only changed files since the last build.
 
     Uses `git diff` to find changed source files, deletes their old symbols/edges,
-    and re-parses + inserts them. After reindexing it also refreshes the derived
-    indexes (dataflow + transitive closure) so cached impact lookups and multi-hop
-    traversals reflect the change; without this refresh `cairn update` would
-    serve stale derived data.
+    and re-parses + inserts them. After reindexing it re-applies the configured
+    SCIP overlay (existing index files only, never a generation) so covered files
+    keep index-sourced edges. It then refreshes the derived indexes (dataflow +
+    transitive closure) so cached impact lookups and multi-hop traversals reflect
+    the change; without this refresh `cairn update` would serve stale derived data.
 
     Returns a summary dict including any per-file errors (re-parse failures,
     resolver failures). Uses a longer busy_timeout than interactive MCP tool
@@ -393,6 +394,23 @@ def incremental_update(
 
             result = reindex_paths(conn, workspace, all_paths)
 
+            # Re-apply the configured SCIP overlay (existing indexes only --
+            # never a generation) before derived-index maintenance, so closure
+            # and dataflow see the post-overlay edge population.
+            scip_errors: list[str] = []
+            if result["reindexed"] or result["deleted"]:
+                try:
+                    builder._apply_scip_overlay(
+                        conn,
+                        workspace,
+                        {r: None for r in repos},
+                        verbose=False,
+                        generate_missing=False,
+                    )
+                except Exception as e:
+                    logger.debug("scip overlay re-application failed", exc_info=True)
+                    scip_errors.append(f"scip_overlay: {e}")
+
             # Refresh derived indexes when something actually changed. An incremental
             # edit can change which symbols are public, who calls whom, and which edges
             # are exact -- so the precomputed dataflow rows and transitive closure must
@@ -429,7 +447,7 @@ def incremental_update(
         "repos_scanned": len(repos),
         "files_reindexed": result["reindexed"],
         "files_deleted": result["deleted"],
-        "errors": result["errors"] + derived_errors,
+        "errors": result["errors"] + scip_errors + derived_errors,
         "deferred_embeds": result["deferred_embeds"],
     }
 

@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional
 
 from ..parsers.base import ParsedFile
 from ..parsers.factory import get_parser
@@ -268,6 +268,7 @@ def _resolve_all(
 
 _SCIP_SKIP_RUNTIME_MISSING = "scip_runtime_missing"
 _SCIP_SKIP_IMPORT_FAILED = "scip_import_failed"
+_SCIP_SKIP_INDEX_MISSING = "scip_index_missing"
 
 
 def _record_scip_skip(cur, repo_id: str, path: str, reason: str) -> None:
@@ -286,14 +287,17 @@ def _record_scip_skip(cur, repo_id: str, path: str, reason: str) -> None:
 def _apply_scip_overlay(
     conn,
     workspace: str,
-    repos_seen: Dict[str, scanner_mod.FileInfo],
+    repos_seen: Mapping[str, object],
     verbose: bool,
+    generate_missing: bool = True,
 ) -> Optional[Dict[str, int]]:
     """Apply configured SCIP indexes as an edges-only overlay over the resolved graph.
 
     A configured-but-absent index for a registered language is generated once
     (bounded, never an existing file) and then imported; generation failures
     record a scip_gen_* skipped_files row and never block another language.
+    With ``generate_missing=False`` an absent index only records
+    scip_index_missing (the incremental path never invokes indexers).
 
     Returns the aggregated {'edges', 'disagreements', 'upgrades',
     'join_anomalies'} report, or None when no index is configured. Never
@@ -308,7 +312,8 @@ def _apply_scip_overlay(
         indexes: Dict[str, str] = (
             {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
         )
-    except Exception:
+    except Exception as e:
+        _log(f"  [scip] config load failed ({e}); overlay skipped")
         return None
     if not indexes:
         return None
@@ -337,12 +342,20 @@ def _apply_scip_overlay(
             conn.commit()
             return report
 
-        from ..parsers.scip_indexers import generate_index_result
-
         ws_root = Path(workspace).resolve()
         for lang, rel_path in sorted(indexes.items()):
             idx_path = ws_root / rel_path
             if not idx_path.exists():
+                if not generate_missing:
+                    _log(f"  [scip] {lang}: index {rel_path} missing; "
+                         f"keeping tree-sitter edges")
+                    _record_scip_skip(
+                        conn.cursor(), repo_id, rel_path, _SCIP_SKIP_INDEX_MISSING
+                    )
+                    conn.commit()
+                    continue
+                from ..parsers.scip_indexers import generate_index_result
+
                 result = generate_index_result(lang, idx_path, str(ws_root), log=log)
                 if not result.ok:
                     if result.reason:
