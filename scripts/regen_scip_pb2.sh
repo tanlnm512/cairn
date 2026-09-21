@@ -70,10 +70,9 @@ cat > "$REPO_ROOT/src/cairn/parsers/_scip_pb2.py" <<HEADER
 # whenever grpcio-tools is upgraded.
 HEADER
 # Append the body of protoc's output (everything after its header comment).
-# protoc emits 6 leading comment/metadata lines; strip through the docstring.
 # The splice starts at the detected first non-comment, non-blank line (the
-# module docstring), so any header length splices correctly; the range guard
-# below only fails loudly on unexpected protoc header drift.
+# module docstring), so any header length within the expected range splices
+# correctly; the range guard below fails loudly on unexpected protoc drift.
 # `|| true` keeps this set -euo pipefail safe: grep returns 1 on no match
 # (an all-comment file), which would otherwise abort before the empty-check.
 FIRST_BODY="$(grep -vn '^#\|^$' "$WORK/scip_pb2.py" | head -1 | cut -d: -f1 || true)"
