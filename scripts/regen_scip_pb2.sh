@@ -71,12 +71,9 @@ cat > "$REPO_ROOT/src/cairn/parsers/_scip_pb2.py" <<HEADER
 HEADER
 # Append the body of protoc's output (everything after its header comment).
 # protoc emits 6 leading comment/metadata lines; strip through the docstring.
-# Verify protoc emitted the expected header shape before stripping. A future
-# protoc version that changes the header line count would silently corrupt the
-# stub (the sed line number below would strip real body lines or leave header
-# behind); this guard fails loudly instead. The first non-comment, non-blank
-# line should be the module docstring, which under the current 6-line header
-# lands at line 7.
+# The splice starts at the detected first non-comment, non-blank line (the
+# module docstring), so any header length splices correctly; the range guard
+# below only fails loudly on unexpected protoc header drift.
 # `|| true` keeps this set -euo pipefail safe: grep returns 1 on no match
 # (an all-comment file), which would otherwise abort before the empty-check.
 FIRST_BODY="$(grep -vn '^#\|^$' "$WORK/scip_pb2.py" | head -1 | cut -d: -f1 || true)"
@@ -88,7 +85,7 @@ if [ "$FIRST_BODY" -lt 6 ] || [ "$FIRST_BODY" -gt 8 ]; then
     echo "ERROR: protoc header shape changed (first body line at $FIRST_BODY, expected 6-8). Inspect $WORK/scip_pb2.py and update the sed line number." >&2
     exit 1
 fi
-sed -n '7,$p' "$WORK/scip_pb2.py" >> "$REPO_ROOT/src/cairn/parsers/_scip_pb2.py"
+sed -n "${FIRST_BODY},\$p" "$WORK/scip_pb2.py" >> "$REPO_ROOT/src/cairn/parsers/_scip_pb2.py"
 
 echo
 echo "✓ done. Now:"
