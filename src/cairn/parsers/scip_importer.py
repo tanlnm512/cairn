@@ -175,13 +175,18 @@ def _resolve_target(
     spans_by_rel: Dict[str, Optional[List[Any]]],
     def_sites: Dict[str, List[Tuple[str, Optional[Tuple[int, int, int, int]]]]],
     symbol: str,
+    doc_rel: str,
 ) -> Tuple[Optional[str], Optional[str], bool]:
     """(target_id, resolution, drop): exact via the definition occurrence's own
     position join; unresolved when the symbol has no in-workspace definition
     site; drop when it has one that fails the join (a counted miss, never a
-    name-keyed guess)."""
+    name-keyed guess). `local `-prefixed symbols are unique per document, so
+    only same-document definition sites are candidates for them."""
+    candidates = def_sites.get(symbol, ())
+    if symbol.startswith("local "):
+        candidates = [c for c in candidates if _norm_rel(c[0]) == doc_rel]
     saw_unjoinable = False
-    for rel, span in def_sites.get(symbol, ()):
+    for rel, span in candidates:
         spans = spans_by_rel.get(_norm_rel(rel))
         if spans is None or span is None:
             continue
@@ -205,7 +210,8 @@ def _plan_document(
     occurrences are counted, not written, and a position-join rate below
     _JOIN_ANOMALY_THRESHOLD flags the document anomalous (definition
     occurrences excluded)."""
-    spans = spans_by_rel.get(_norm_rel(doc.relative_path))
+    rel = _norm_rel(doc.relative_path)
+    spans = spans_by_rel.get(rel)
     if spans is None:
         return [], False
     total = 0
@@ -226,7 +232,7 @@ def _plan_document(
         joined += 1
         record["joined_occurrences"] += 1
 
-        target_id, resolution, dropped = _resolve_target(spans_by_rel, def_sites, occ.symbol)
+        target_id, resolution, dropped = _resolve_target(spans_by_rel, def_sites, occ.symbol, rel)
         if dropped:
             record["unjoined_occurrences"] += 1
             continue
@@ -282,6 +288,34 @@ def _count_disagreements(
         ):
             disagreements += 1
     return disagreements, upgrades
+
+
+def _write_overlay(
+    conn: sqlite3.Connection,
+    anomaly_rows: List[Tuple[Any, ...]],
+    delete_file_ids: List[str],
+    kept_rows: List[Tuple[Any, ...]],
+) -> None:
+    """Apply anomaly skip rows, per-file authority DELETEs, and edge INSERTs
+    atomically; undoes them and re-raises on any failure."""
+    conn.execute("SAVEPOINT scip_import")
+    try:
+        cur = conn.cursor()
+        for params in anomaly_rows:
+            cur.execute(_INSERT_ANOMALY_SKIP, params)
+        for file_id in delete_file_ids:
+            cur.execute(_DELETE_FILE_CALLREF_EDGES, (file_id,))
+        if kept_rows:
+            cur.executemany(_INSERT_EDGE, kept_rows)
+        conn.execute("RELEASE scip_import")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK TO scip_import")
+            conn.execute("RELEASE scip_import")
+        except sqlite3.Error:
+            pass
+        raise
+    conn.commit()
 
 
 def import_scip_file(conn: sqlite3.Connection, scip_path: str, workspace: str) -> Dict[str, Any]:
@@ -342,16 +376,18 @@ def import_scip_file(conn: sqlite3.Connection, scip_path: str, workspace: str) -
         rows, anomalous = _plan_document(doc, spans_by_rel, def_sites, symbol_kinds, record)
         planned.append((_norm_rel(doc.relative_path), anomalous, rows))
 
-    cur = conn.cursor()
+    # Read phase: every fallible step (per-document disagreement scan, counter
+    # updates) runs before the first write, so the write phase below is pure SQL.
+    anomaly_rows: List[Tuple[Any, ...]] = []
     kept_rows: List[Tuple[Any, ...]] = []
+    delete_file_ids: List[str] = []
     for rel, anomalous, rows in planned:
         matched_id: Optional[str] = covered_file_ids.get(rel)
         if matched_id is None:
             continue
         if anomalous:
-            cur.execute(
-                _INSERT_ANOMALY_SKIP,
-                (_new_id(), covered_repo_ids[rel], rel, _SKIP_JOIN_ANOMALY, _now()),
+            anomaly_rows.append(
+                (_new_id(), covered_repo_ids[rel], rel, _SKIP_JOIN_ANOMALY, _now())
             )
             record["join_anomalies"] += 1
             continue
@@ -362,10 +398,8 @@ def import_scip_file(conn: sqlite3.Connection, scip_path: str, workspace: str) -
         disagreements, upgrades = _count_disagreements(conn, matched_id, rows)
         record["disagreements"] += disagreements
         record["upgrades"] += upgrades
-        cur.execute(_DELETE_FILE_CALLREF_EDGES, (matched_id,))
+        delete_file_ids.append(matched_id)
         kept_rows.extend(rows)
-    if kept_rows:
-        cur.executemany(_INSERT_EDGE, kept_rows)
-    conn.commit()
+    _write_overlay(conn, anomaly_rows, delete_file_ids, kept_rows)
     record["edges"] = len(kept_rows)
     return record

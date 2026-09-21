@@ -519,6 +519,88 @@ def test_cross_document_target_resolves_exact(fresh_db, tmp_path):
 
 
 @needs_scip
+def test_local_symbol_resolves_only_within_own_document(fresh_db, tmp_path):
+    """SCIP `local N` symbols are per-document unique: a same-document
+    reference joins exact, while the same local name in another document stays
+    unresolved with a NULL target -- never a cross-file binding."""
+    conn = fresh_db
+    repo = tmp_path / "r1"
+    (repo / ".git").mkdir(parents=True, exist_ok=True)
+    conn.execute(
+        "INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', ?)", (str(repo),)
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f2', 'r1', 'b.py', 'python')"
+    )
+    for sid, fid, name, ls, le in (
+        ("s_a", "f1", "user_a", 1, 2),
+        ("s_b", "f2", "definer", 1, 3),
+    ):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, "
+            "column_start, column_end) VALUES (?, ?, ?, 'function', ?, ?, 0, 0)",
+            (sid, fid, name, ls, le),
+        )
+    conn.commit()
+
+    local = "local 1"
+    from cairn.parsers import _scip_pb2 as pb
+
+    idx = tmp_path / "locals.scip"
+    idx.write_bytes(
+        pb.Index(
+            metadata=pb.Metadata(project_root="ws"),
+            documents=[
+                _doc(relative_path="a.py", occurrences=[_occ([0, 0, 5], local)]),
+                _doc(
+                    relative_path="b.py",
+                    occurrences=[_occ([0, 4, 9], local, 1), _occ([2, 0, 5], local)],
+                ),
+            ],
+        ).SerializeToString()
+    )
+    record = import_scip_file(conn, str(idx), str(tmp_path))
+
+    rows = [
+        tuple(r)
+        for r in conn.execute(
+            "select source_id, target_id, resolution from edges "
+            "where source='scip' order by source_id"
+        ).fetchall()
+    ]
+    assert rows == [("s_a", None, "unresolved"), ("s_b", "s_b", "exact")]
+    assert record["unresolved"] == 1
+    assert record["exact"] == 1
+
+
+@needs_scip
+def test_local_same_doc_failed_join_drops(fresh_db, tmp_path):
+    """A same-document local definition site that joins nothing still drops the
+    occurrence as a counted miss (the drop path, not the unresolved path)."""
+    _seed_graph(fresh_db, tmp_path)
+    local = "local 1"
+    idx = tmp_path / "i.scip"
+    idx.write_bytes(
+        _index_bytes(
+            _doc(
+                occurrences=[
+                    _occ([50, 0, 5], local, 1),  # def on a line no symbol covers
+                    _occ([1, 0, 5], local),      # ref inside the method
+                ]
+            )
+        )
+    )
+    record = import_scip_file(fresh_db, str(idx), str(tmp_path))
+    assert record["edges"] == 0
+    assert record["unjoined_occurrences"] == 1
+    assert record["unresolved"] == 0
+    assert fresh_db.execute("select count(*) from edges where source='scip'").fetchone()[0] == 0
+
+
+@needs_scip
 def test_out_of_workspace_target_is_unresolved_with_null_id(fresh_db, tmp_path):
     """A target with no in-workspace definition site stays unresolved with a
     NULL target id and a readable target name (never a false binding)."""
@@ -597,6 +679,138 @@ def test_corrupt_index_aborts_before_any_write(fresh_db, tmp_path):
         ).fetchall()
     ]
     assert reasons == [("scip_parse_error",)]
+
+
+@needs_scip
+def test_mid_loop_read_failure_loses_no_tree_sitter_edges(fresh_db, tmp_path, monkeypatch):
+    """A per-document failure between the authority DELETE and the batched
+    INSERT must not persist orphaned DELETEs: the caller's post-catch commit
+    leaves every file's tree-sitter edges and skip state untouched."""
+    conn = fresh_db
+    repo = tmp_path / "r1"
+    (repo / ".git").mkdir(parents=True, exist_ok=True)
+    conn.execute(
+        "INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', ?)", (str(repo),)
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f2', 'r1', 'b.py', 'python')"
+    )
+    for sid, fid, ls, le in (("s_a", "f1", 1, 2), ("s_b", "f2", 1, 2)):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, "
+            "column_start, column_end) VALUES (?, ?, ?, 'function', ?, ?, 0, 0)",
+            (sid, fid, sid, ls, le),
+        )
+    for eid, src in (("e_ts_a", "s_a"), ("e_ts_b", "s_b")):
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, "
+            "column, resolution, source) VALUES (?, ?, NULL, 'ext', 'calls', 2, 0, "
+            "'unresolved', 'tree_sitter')",
+            (eid, src),
+        )
+    conn.commit()
+
+    from cairn.parsers import _scip_pb2 as pb
+    from cairn.parsers import scip_importer
+
+    g = "python a.py a.py/g()."
+    idx = tmp_path / "boom.scip"
+    idx.write_bytes(
+        pb.Index(
+            metadata=pb.Metadata(project_root="ws"),
+            documents=[
+                _doc(
+                    relative_path="a.py",
+                    symbols=[_sym(g, K_FUNCTION)],
+                    occurrences=[_occ([0, 0, 1], g, 1), _occ([1, 0, 1], g)],
+                ),
+                _doc(relative_path="b.py", occurrences=[_occ([0, 0, 1], g)]),
+            ],
+        ).SerializeToString()
+    )
+
+    real_count = scip_importer._count_disagreements
+    state = {"n": 0}
+
+    def boom(conn_, file_id, rows):
+        state["n"] += 1
+        if state["n"] >= 2:
+            raise RuntimeError("disagreement scan exploded")
+        return real_count(conn_, file_id, rows)
+
+    monkeypatch.setattr(scip_importer, "_count_disagreements", boom)
+
+    with pytest.raises(RuntimeError, match="disagreement scan"):
+        import_scip_file(conn, str(idx), str(tmp_path))
+    conn.commit()  # the caller's post-catch commit (the old data-loss amplifier)
+
+    rows = conn.execute(
+        "select e.id, coalesce(e.source,'') from edges e "
+        "join symbols s on e.source_id = s.id join files f on s.file_id = f.id "
+        "where f.path in ('a.py', 'b.py') and e.kind = 'calls' order by e.id"
+    ).fetchall()
+    assert [tuple(r) for r in rows] == [
+        ("e_ts_a", "tree_sitter"),
+        ("e_ts_b", "tree_sitter"),
+    ]
+    assert conn.execute("select count(*) from edges where source='scip'").fetchone()[0] == 0
+    assert conn.execute(
+        "select count(*) from skipped_files where reason like 'scip%'"
+    ).fetchone()[0] == 0
+
+
+@needs_scip
+def test_write_phase_failure_rolls_back_deletes(fresh_db, tmp_path, monkeypatch):
+    """A SQL failure inside the write section rolls the whole import back: the
+    file keeps its tree-sitter edges and no scip row lands, even after the
+    caller commits."""
+    _seed_graph(fresh_db, tmp_path)
+    _seed_ts_edge(fresh_db, "e_ts", "s_cls", "exact")
+    h = "python a.py a.py/m()."
+    idx = tmp_path / "i.scip"
+    idx.write_bytes(
+        _index_bytes(
+            _doc(
+                symbols=[_sym(h, K_FUNCTION)],
+                occurrences=[
+                    _occ([1, 0, 1], h, 1),
+                    _occ([2, 2, 3], h),  # joins s_m
+                    _occ([6, 2, 3], h),  # joins s_f
+                ],
+            )
+        )
+    )
+    monkeypatch.setattr("cairn.parsers.scip_importer._new_id", lambda: "dup")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        import_scip_file(fresh_db, str(idx), str(tmp_path))
+    fresh_db.commit()
+
+    assert fresh_db.execute(
+        "select count(*) from edges where source='scip'"
+    ).fetchone()[0] == 0
+    assert fresh_db.execute(
+        "select count(*) from edges where id='e_ts' and kind='calls'"
+    ).fetchone()[0] == 1
+
+
+@needs_scip
+def test_import_durability_on_caller_owned_connection(tmp_path):
+    """On a fresh on-disk connection the import's own commit makes it durable:
+    closing without an explicit caller commit keeps the scip edges (the CLI
+    path never commits)."""
+    ws, db = _build_tree_sitter_only("covered", tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        record = import_scip_file(conn, str(ws / "index.scip"), str(ws))
+    finally:
+        conn.close()
+
+    assert record["edges"] > 0
+    assert _scip_edge_count(db, "e.resolution='exact'") > 0
 
 
 # ---------------------------------------------------------------------------
