@@ -194,9 +194,10 @@ def _write_jsonl(path: Path, records: list) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _run_session_end(monkeypatch, capsys, payload: dict, calls: list) -> str:
+def _run_session_end(monkeypatch, capsys, payload: dict, calls: list):
     """Feed ``payload`` to session_end with the capture subprocess faked at
-    the claude_hooks call site. Returns the hook's stdout."""
+    the claude_hooks call site. Returns the hook's captured stdout/stderr
+    (stdout must stay protocol-clean; human diagnostics go to stderr)."""
     import cairn.hooks.claude_hooks as hooks
 
     class _FakeCompleted:
@@ -209,7 +210,7 @@ def _run_session_end(monkeypatch, capsys, payload: dict, calls: list) -> str:
     monkeypatch.setattr(hooks.subprocess, "run", fake_run)
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     hooks.session_end()
-    return capsys.readouterr().out
+    return capsys.readouterr()
 
 
 def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, capsys):
@@ -231,7 +232,7 @@ def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, 
     ])
 
     calls: list = []
-    out = _run_session_end(
+    captured = _run_session_end(
         monkeypatch, capsys,
         {"session_id": "sess-abc-123", "transcript_path": str(transcript)},
         calls,
@@ -246,7 +247,8 @@ def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, 
         {"role": "user", "content": "fix the flaky test"},
         {"role": "assistant", "content": "root cause was init ordering"},
     ]
-    assert out == "queued memory-extract\n"
+    assert captured.out == "", "stdout must stay empty (hook JSON protocol)"
+    assert "queued memory-extract" in captured.err
 
 
 def test_session_end_keeps_last_80_messages(tmp_path, monkeypatch, capsys):
@@ -283,9 +285,10 @@ def test_session_end_without_transcript_queues_nothing(tmp_path, monkeypatch, ca
     ]
     for payload in cases:
         calls: list = []
-        out = _run_session_end(monkeypatch, capsys, payload, calls)
+        captured = _run_session_end(monkeypatch, capsys, payload, calls)
         assert calls == [], f"no capture for payload {payload!r}"
-        assert "(no transcript; nothing to capture)" == out
+        assert captured.out == "", "stdout must stay empty (hook JSON protocol)"
+        assert "(no transcript; nothing to capture)" in captured.err
 
 
 # --------------------------------------------------------------------------
