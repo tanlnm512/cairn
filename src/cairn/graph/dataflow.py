@@ -499,31 +499,15 @@ def maintain_transitive_closure(
     affected_source_ids,
     max_depth: int = CLOSURE_MAX_DEPTH,
 ) -> int:
-    """Incrementally recompute closure rows for a bounded set of sources (PERF-3).
+    """Incrementally recompute closure rows for a bounded set of sources.
 
     Deletes every row whose ``source_id`` is in ``affected_source_ids``, then
-    re-derives exactly those sources through the same :func:`_closure_rows` core
-    the full builder uses, with ``restrict_sources`` bound to the affected ids.
-    Per-source independence makes this identical to a full
-    :func:`build_transitive_closure` restricted to those sources: every rule
-    writes rows carrying the ``source_id`` it was seeded from and never mixes
-    two sources, and the one cross-source input (Case 2's global
-    name-uniqueness) is read live, so it is identical for both paths.
-
-    Correctness for deleted and newly-created symbols (why deleting/re-deriving
-    only affected sources suffices): a deleted symbol's rows vanish with the
-    DELETE -- its id is in the affected set by construction; a stale row
-    referencing a deleted *target* only exists under a source that reached it
-    pre-edit, and that ancestor is in the set. New symbols gain rows only under
-    themselves and under sources reaching them -- both captured into the set by
-    ``incremental._maintain_derived_indexes``.
-
-    The caller is responsible for the affected-set capture; passing too small a
-    set leaves stale rows, too large a set only costs re-derivation. When the
-    closure table is empty/never built, callers must fall back to the full
-    build -- there is no (assumed-correct) pre-state to compute ancestors from.
-
-    Returns the number of rows inserted.
+    re-derives exactly those sources through the same :func:`_closure_rows`
+    core the full builder uses, making the result identical to a full
+    :func:`build_transitive_closure` restricted to those ids. The caller owns
+    the affected-set capture; when the closure table is empty/never built,
+    callers must fall back to the full build. Returns the number of rows
+    inserted.
     """
     affected = sorted({i for i in affected_source_ids if i})
     if not affected:
@@ -555,27 +539,14 @@ def maintain_transitive_closure(
 
 
 def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
-    """Incrementally refresh dataflow rows for a set of symbol names (PERF-3).
+    """Incrementally refresh dataflow rows for a set of symbol names.
 
-    dataflow is keyed by symbol NAME, and a row's payload is the symbol's
-    caller set (within_repo, via impact_analysis) plus its repo's consumers
-    (cross_repo). An edit changes a row for name X iff X's caller chain
-    changed -- i.e. X was renamed in/out, or some changed edge points at X or
-    at one of X's ancestors... viewed from X's side: at X or something X
-    reaches. The caller (``incremental._maintain_derived_indexes``) computes
-    that name set (changed names + names reachable from changed-edge targets
-    within impact_analysis's max_depth); this function then:
-
-    - recomputes+upserts rows for affected names that still have at least one
-      public symbol (same :func:`_row_is_public` predicate as the builder, so
-      a name that stopped being public loses its row exactly like a full
-      rebuild would omit it), and
-    - deletes rows for affected names with no remaining public symbol.
-
-    Rows for unaffected names are untouched: their inputs (their callers'
-    edges) did not change, so the builder's output for them is unchanged.
-
-    Returns the number of rows written or deleted.
+    dataflow is keyed by symbol NAME, so an edit changes a row for X exactly
+    when X's caller chain changed; the caller (``incremental.
+    _maintain_derived_indexes``) computes that name set. Affected names with a
+    remaining public symbol are recomputed+upserted (same
+    :func:`_row_is_public` predicate as the builder); names with none lose
+    their row. Returns the number of rows written or deleted.
     """
     names = sorted({n for n in affected_names if n})
     if not names:
