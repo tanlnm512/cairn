@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import glob
 import os
-import re
 from pathlib import Path
+
+from .packaging import package_data_globs
 
 # Every packaged data subtree of the dashboard package.
 _DATA_DIRS = ("templates", "static")
@@ -28,20 +29,8 @@ def _package_dir() -> Path:
 
 
 def _dashboard_package_data_globs() -> list:
-    """The cairn.dashboard entries of [tool.setuptools.package-data],
-    read straight out of pyproject.toml. (Parsed with a regex, not
-    tomllib — that is 3.11+ stdlib and the CI matrix runs 3.10.)"""
-    pyproject = (_package_dir().parents[2] / "pyproject.toml").read_text(
-        encoding="utf-8"
-    )
-    section = pyproject.split("[tool.setuptools.package-data]", 1)[1].split(
-        "\n[", 1
-    )[0]
-    match = re.search(r"\"cairn\.dashboard\"\s*=\s*\[([^\]]*)\]", section)
-    assert match, "the cairn.dashboard package-data table is missing"
-    globs = re.findall(r"\"([^\"]+)\"", match.group(1))
-    assert globs, "the cairn.dashboard package-data table is empty"
-    return globs
+    """Return the dashboard package-data globs from pyproject.toml."""
+    return package_data_globs("cairn.dashboard")
 
 
 def test_package_data_globs_cover_every_dashboard_data_file():

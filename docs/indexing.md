@@ -1,5 +1,7 @@
 # Indexing: how code gets into the graph
 
+← [Docs index](README.md)
+
 Read this when you're touching the build path, the resolver, or wondering
 what `cairn build` / `cairn update` actually do.
 
@@ -33,9 +35,9 @@ Entry: `src/cairn/graph/builder.py:build_graph`. Ordered stages:
    cleared only on completion.
 
 4. **Parse** — `src/cairn/parsers/` via `ProcessPoolExecutor`
-   (`CAIRN_WORKERS`, default cpu_count, capped 256). 14 languages: python,
+   (`CAIRN_WORKERS`, default cpu_count, capped 256). 15 languages: python,
    typescript, javascript, java, kotlin, swift, go, dart, csharp, c, cpp,
-   objc, php, ruby. Each parser returns a `ParsedFile` (symbols, edges,
+   objc, php, ruby, rust. Each parser returns a `ParsedFile` (symbols, edges,
    imports) — dataclasses in `src/cairn/parsers/base.py`.
 
 5. **Enrich** — best-effort per file: `detect_routes` (route symbols +

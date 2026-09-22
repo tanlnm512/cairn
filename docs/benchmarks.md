@@ -20,6 +20,43 @@ machine-readable payload; `--save FILE` persists it; `--compare FILE` /
 `--baseline VERSION` compare against a saved report (swe-bench comparisons
 use the agent-report shape).
 
+## Agent deterministic arm
+
+`cairn bench --suite agent` runs the same seven task-shaped questions through
+two scripted arms: cairn graph calls and a grep/read-only control. The suite
+uses a deterministic 300-file corpus (seed `49374`), three runs per task, the
+dep-free hash embedder, and reports per-task medians. Tool calls and estimated
+tokens are deterministic; wall time is advisory and machine-dependent.
+
+Context cost uses the deployed agent contract: cairn results are
+JSON-serialized and capped at the MCP result limit; control-arm file reads
+count full text. `est_tokens = chars / 4`.
+
+| metric (median / task) | grep baseline | with cairn | reduction |
+|---|---:|---:|---:|
+| tool calls | 301 | 1 | 99.7% |
+| est. tokens | 429,600 | 1,513 | 99.6% |
+
+Task shapes: definition lookup, caller enumeration, depth-3 blast radius,
+entry-to-leaf flow, concept search, common-name impact, and a 4,000-token
+context-pack fit check. The pack fit arm finds all four seeded targets
+(`fit_rate = 1.0`) and consumes 2,077 estimated tokens.
+
+## Scaling snapshot
+
+`cairn bench --suite scaling` builds isolated corpora at 100, 500, 1000, and
+5000 files, multiplies structural edges five-fold, and exercises full plus
+incremental transitive-closure maintenance. Wall timings and database sizes
+are machine-specific; the reference-local snapshot below is advisory.
+
+| point | symbols | structural edges | build | closure | closure peak | maintain | DB |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 files | 31,001 | 700,000 | 14.8 s | 6.5 s | 228 MB | 0.56 s | 311 MB |
+| 5,000 files | 155,001 | 3,500,000 | 541.3 s | 36.8 s | 1,139 MB | 2.29 s | 1,558 MB |
+
+The 1000-file point is the CI budget gate: closure stays within 60 s and
+512 MB, while bounded incremental maintenance stays under 2 s.
+
 ## SWE-bench deterministic arm
 
 `cairn bench --suite swe-bench` measures context-acquisition efficiency on

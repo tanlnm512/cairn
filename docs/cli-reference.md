@@ -1,5 +1,7 @@
 # CLI Reference
 
+← [Docs index](README.md)
+
 Read this when MCP tools aren't available or you're scripting cairn. Every
 command runs through the `cairn` entry point (`cairn.cli:main`, Click).
 Pass `--db` / `--workspace` explicitly in scripts — `CAIRN_HOME` and friends
@@ -33,6 +35,7 @@ are read at process start, not per call.
 | Command | Purpose |
 |---|---|
 | `cairn def <symbol>` | find a definition |
+| `cairn import-scip <file>` | import an external SCIP index as an edges-only overlay (see [scip.md](scip.md)) |
 | `cairn callers <symbol>` | who calls this |
 | `cairn callees <symbol>` | what this calls |
 | `cairn search <query>` | symbol search (FTS5) |
@@ -131,6 +134,7 @@ Group: `cairn memory …`
 | Command | Purpose |
 |---|---|
 | `cairn compass generate|list|validate|gaps|flow|flow-gaps` | module navigation guides |
+| `cairn skill generate <selectors>` | generate a packaged `SKILL.md` from modules, directory prefixes, or symbols (`--polish` queues a critic-gated task) |
 | `cairn wiki generate --llm [--pages N] [--refine-catalog] [--diagrams] [--force] [--repo R]` | agent-decoupled wiki generation: plans a deterministic page outline (overview + top modules by incoming reference degree, capped by `--pages`, default 10) and queues one pending `wiki-page` task per page (keyed by the qualified `{repo}/{page_id}` resource) for any agent to claim and complete — a passing completion is critic-gated and promoted as a wiki article with a verified `## Sources` footer; a failing one runs the bounded revise cycle. Incremental via the `_wiki/manifest.json` manifest: unchanged, already-promoted pages are skipped unless `--force` re-queues every page; an empty/unindexed graph exits 1. `--refine-catalog` queues one `wiki-catalog` refinement task first — re-run the command after it completes to queue the page tasks from the validated refined outline. `--diagrams` instructs writers to include Mermaid fences. Without `--llm`, the deterministic single-summary generation is unchanged (its output is an `Architecture-Report` diagnostic at `reports/architecture/{repo}` — outside the critic-gated wiki page surface) |
 | `cairn wiki status` | per-page generation state, derived at read time (planned / queued / in-progress / promoted / failed / dropped), with aggregate counts, joined from the manifest and live task state; each page also carries a staleness verdict — `fresh` when its recorded commit sha equals the repo's current HEAD, `stale` when both are present and differ, `unknown` when either is unavailable — with `fresh=… stale=… unknown=…` in the totals line |
 | `cairn wiki retry` | re-queue exactly the failed pages — derived from the live task chain and promoted content, never a stored verdict (a done task with no passing critic verdict counts, so stuck chains are reachable) — as fresh task chains (cumulative queue-attempt count preserved); promoted pages untouched, and dropped tasks stay dropped — drop is terminal |

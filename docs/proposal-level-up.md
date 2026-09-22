@@ -1,8 +1,10 @@
 # Proposal: Leveling Up Cairn for the Agentic Development Era
 
+← [Docs index](README.md)
+
 **Author:** Cairn analysis (agent-assisted)
 **Date:** 2026-09-16
-**Status:** Draft — for review
+**Status:** Historical roadmap snapshot — current reference docs are authoritative
 
 ---
 
@@ -71,8 +73,8 @@ over time.*
 Cairn parses a workspace with tree-sitter into a SQLite symbol/call graph
 (15 languages), layers hybrid retrieval (BM25 + embeddings + RRF fusion with
 optional cross-encoder rerank) on top, and maintains durable knowledge in an
-Open Knowledge Format (OKF) bundle. It serves AI agents through a 24-tool MCP
-server and a 40-command CLI; humans get a local web dashboard.
+Open Knowledge Format (OKF) bundle. It serves AI agents through a 25-tool MCP
+server and a 52-command CLI; humans get a local web dashboard.
 
 The system is organized in four layers:
 
@@ -104,7 +106,7 @@ Depth-3 blast radius: **2 tool calls and 712 tokens** vs. **303 calls and
 - Compass/wiki generation needs LLM access; it won't run purely locally
   without a model.
 - Rust support is generic-tier with unresolved call edges.
-- Only stdio transport for MCP; no remote/OAuth deployment model.
+- Only local stdio/SSE transports for MCP; no remote/OAuth deployment model.
 
 ### 2.4 Verification contract (the moat)
 
@@ -580,7 +582,7 @@ decision. Anticipated additions:
 
 | Tool | Graph | Semantic | Memory | Verification | Local-first | MCP |
 |------|-------|----------|--------|--------------|-------------|-----|
-| **Cairn** | ✅ resolution-labeled | ✅ opt-in hybrid | ✅ code-grounded, symbol-keyed | ✅ critic-gated | ✅ | ✅ 24 tools |
+| **Cairn** | ✅ resolution-labeled | ✅ opt-in hybrid | ✅ code-grounded, symbol-keyed | ✅ critic-gated | ✅ | ✅ 25 tools |
 | Sourcegraph (Cody/Amp) | ✅ | ✅ | ❌ | ❌ | ❌ (SaaS) | ✅ |
 | Cursor | ❌ (embeddings only) | ✅ | ❌ | ❌ | ❌ (SaaS) | ❌ |
 | Greptile | ✅ (proprietary) | ✅ | Partial (Learning) | ❌ | ❌ (SaaS) | ❌ |

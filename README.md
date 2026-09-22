@@ -263,16 +263,16 @@ Deep dives with diagrams: [architecture](docs/architecture.md) ·
 ## Measured Results
 
 **Agent effort vs a grep-and-read baseline** (`cairn bench --suite agent`;
-deterministic arms, no LLM, reproducible in CI — 300-file corpus, 6 task
+deterministic arms, no LLM, reproducible in CI — 300-file corpus, 7 task
 shapes, medians):
 
 | metric | grep-only baseline | with cairn | reduction |
 |--------|-------------------:|-----------:|----------:|
-| tokens / query | 217,187 | 1,146 | **99.5%** |
-| tool calls / query | 153.2 | 1.5 | **99.0%** |
-| wall-clock / query | 24.9 ms | 7.6 ms | 3.3× |
+| tokens / query | 429,600 | 1,513 | **99.6%** |
+| tool calls / query | 301 | 1 | **99.7%** |
+| wall-clock / query | 14.9 ms | 3.7 ms | 4.0× |
 
-Depth-3 blast radius is the extreme: **2 tool calls and 712 tokens vs 303
+Depth-3 blast radius is the extreme: **2 tool calls and 758 tokens vs 303
 calls and 429,600 tokens** — grep must read every name-collision hit; precise
 edges don't.
 
@@ -294,13 +294,14 @@ and offline contracts, and the stamped result:
 [docs/benchmarks.md](docs/benchmarks.md).
 
 **Query latency** (`cairn bench --suite perf`, p95): `find_definition`
-0.03 ms · `get_callers` 0.06 ms · `impact_analysis` 0.11 ms ·
-`search_symbols` 6.25 ms · `semantic_search` 201.67 ms (with embeddings) ·
-`explore` 513.73 ms. First-`semantic_search` latency after boot warm-up:
+0.04 ms · `get_callers` 0.08 ms · `impact_analysis` 0.13 ms ·
+`search_symbols` 9.37 ms · `semantic_search` 258.59 ms (with embeddings) ·
+`explore` 641.94 ms. First-`semantic_search` latency after boot warm-up:
 **15.5 s cold → 232.6 ms warm**.
 
-**Self-demo** — cairn indexes its own source in ~4s (~1,900 symbols /
-~11,500 edges), and CI re-runs the build + resolution invariant on every push
+**Self-demo** — cairn indexes its own source in ~12s (~9,000 symbols /
+~58,000 edges, ~272 MB peak RSS), and CI re-runs the build + resolution
+invariant on every push
 (`tests/test_self_demo.py`), so the dogfood cannot silently rot. Reproduce:
 
 ```bash
@@ -370,9 +371,11 @@ The default install is dependency-light and network-free. Opt in with extras:
 |-------|------|-------------|
 | `[semantic]` | `sentence-transformers` — real embeddings and rerank (torch-based, large) | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
 | `[ann]` | `sqlite-vec` — explicit ANN install (core since 0.14) | `CAIRN_ANN_BACKEND=sqlite-vec` |
+| `[scip]` | `protobuf` — SCIP index import/generation runtime | `cairn.json` `scip` key |
 | `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion for `cairn knowledge ingest` | `cairn.json` `ingest` key (classification rules) |
 | `[watch]` | `watchdog` — live rebuilds while `cairn serve` runs | `CAIRN_WATCH=0` disables |
 | `[otlp]` | OpenTelemetry export of local telemetry events | `CAIRN_OTEL_ENDPOINT` (unset = off) |
+| `[bench]` | `datasets` — pinned SWE-bench task loading | `cairn bench --suite swe-bench` |
 
 Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
 (master kill switch). Full reference:
@@ -446,7 +449,7 @@ time; the `BAAI/bge-m3` embedding model (MIT) downloads on demand to
 
 ## Status
 
-**Beta — pre-1.0 (v0.18.0).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0 (v0.21.1).** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 
