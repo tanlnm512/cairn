@@ -1,5 +1,7 @@
 # Architecture
 
+← [Docs index](README.md)
+
 Read this when you need the system shape: what the pieces are, where state
 lives, and which module owns which job.
 
@@ -102,6 +104,7 @@ auto-register. CLI flags `--db` / `--workspace` win over env in-process.
 | `retrieval/` | retrieval protocols + the batched vector scan (the Retriever / Fusion / Reranker stages live in `graph/`) |
 | `review/` | the review loop engine: diff packs, pre-submit guard, comment-to-symbol capture |
 | `telemetry/` | best-effort local telemetry sink + optional OTLP export |
+| `skillgen/` | graph-grounded `SKILL.md` generation, critic gate, and task-queue polish |
 | `utils/` | shared helpers (git inspection, logging) |
 | `viz/` | Mermaid / DOT / JSON / self-contained HTML graph renderers |
 | `wiki/` | the wiki's page-plan pipeline (plan → refine → queue) and the lifecycle module that derives promotion/state/staleness from the two stored kinds (plan manifest + promoted articles) |

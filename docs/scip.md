@@ -1,5 +1,7 @@
 # SCIP indexing: compiler-grade edges as an opt-in overlay
 
+← [Docs index](README.md)
+
 Read this when you want exact call/reference edges in languages where
 tree-sitter resolution goes `ambiguous`, when configuring the `scip` key in
 `cairn.json`, or when diagnosing why a build fell back to tree-sitter.

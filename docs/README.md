@@ -12,6 +12,7 @@ verbatim from the source.
 | How do documents and memories get stored and retrieved? | [knowledge-and-memory.md](knowledge-and-memory.md) |
 | What MCP tools exist and what do they return? | [mcp-tools.md](mcp-tools.md) |
 | What CLI commands exist? | [cli-reference.md](cli-reference.md) |
+| How are external SCIP indexes imported and generated? | [scip.md](scip.md) |
 | How do I configure cairn (cairn.json, env vars, extras)? | [configuration.md](configuration.md) |
 | How do I run the benchmarks and reproduce published numbers? | [benchmarks.md](benchmarks.md) |
 

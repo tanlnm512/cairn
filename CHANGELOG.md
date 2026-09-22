@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+### Changed
+- Documentation audit refresh: current CLI/MCP surfaces, 15-language parser
+  set, optional extras, architecture diagrams, and benchmark methodology now
+  match the code; the historical roadmap proposal is labeled as a snapshot.
+
+### Fixed
+- Agent-integration package data now ships only template/script file types,
+ keeping generated `__pycache__` bytecode out of sdists and wheels.
+
 ## [0.21.1] - 2026-09-21
 
 ### Added

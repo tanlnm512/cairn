@@ -1,5 +1,7 @@
 # MCP Tools
 
+← [Docs index](README.md)
+
 Read this when you need the tool surface: what the 25 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
 "Tool Quirks" table in [AGENTS.md](../AGENTS.md) — it is kept there so every
@@ -22,7 +24,7 @@ agent session loads it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-components-dark.png">
-  <img src="diagrams/c4-components.png" alt="MCP server components: boot and lifecycle verifies the 24-tool FastMCP surface; four tool groups dispatch to the graph engine, hybrid retrieval, and knowledge and memory">
+  <img src="diagrams/c4-components.png" alt="MCP server components: boot and lifecycle verifies the 25-tool FastMCP surface; four tool groups dispatch to the graph engine, hybrid retrieval, and knowledge and memory">
 </picture>
 
 Open [diagrams/c4-components.html](diagrams/c4-components.html) for the

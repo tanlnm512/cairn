@@ -1,5 +1,7 @@
 # Retrieval: how a query becomes ranked results
 
+← [Docs index](README.md)
+
 Read this when you're tuning search quality, touching `semantic.py` /
 `fusion.py` / `reranker.py`, or deciding whether a result's provenance is
 trustworthy.

@@ -1,5 +1,7 @@
 # Knowledge & Memory
 
+← [Docs index](README.md)
+
 Read this when you're ingesting documents, working with the OKF bundle,
 recording/recalling memories, or driving the LLM task queue.
 
@@ -11,6 +13,8 @@ with YAML frontmatter (`type`, `title`, `description`, `tags`, `status`,
 `fcntl.flock` cross-process locking. Concept files live under the workspace
 store's `.knowledge/` directory; the same model backs knowledge docs, memory
 tiers, compass guides, wiki entries, and task-queue items.
+A repository may commit a seed bundle at `.cairn-knowledge/`; CI can point
+`CAIRN_KNOWLEDGE` there without indexing the seed as workspace source.
 
 ## Doc ingestion (`cairn knowledge ingest`)
 

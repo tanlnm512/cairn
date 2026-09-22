@@ -81,7 +81,9 @@
 <div class="wrap">
 
 <h1>cairn — System Architecture</h1>
-<p class="lead">A local, structural, agent-first codebase intelligence system: source → typed call graph in SQLite → layered knowledge (compass, wiki, memory) → 27-tool MCP server for AI agents.</p>
+<p class="lead">A local, structural, agent-first codebase intelligence system: source → typed call graph in SQLite → layered knowledge (compass, wiki, memory) → 25-tool MCP server for AI agents.</p>
+
+<div class="callout callout-warn"><strong>Legacy snapshot.</strong> Current architecture reference: <a href="docs/architecture.md">docs/architecture.md</a>.</div>
 
 <div class="callout">
   <strong>The defining property: every output is verifiable.</strong> Edges carry resolution labels (<code>exact</code>/<code>ambiguous</code>/<code>unresolved</code>); LLM-synthesized docs are fact-checked by a deterministic critic against the graph. An agent may hallucinate, but a hallucinated symbol can never land in a compass doc.
@@ -110,24 +112,24 @@
 flowchart TB
     subgraph Clients["Clients"]
         H["👤 Human<br/>cairn CLI"]
-        A["🤖 AI Agent<br/>MCP server — 27 tools"]
+        A["🤖 AI Agent<br/>MCP server — 25 tools"]
     end
     subgraph Router["Front doors"]
         EX["explore()<br/>L1 graph aggregator"]
         AC["ask_compass()<br/>cross-layer router"]
     end
     subgraph Layers["5 Layers"]
-        L1["L1 Graph<br/>9 tools"]
+        L1["L1 Graph + Federation<br/>12 tools"]
         L2["L2 Compass + KB<br/>5 tools"]
-        L4["L4 Memory<br/>8 tools"]
-        L5["L5 Knowledge<br/>5 tools"]
+        L4["L4 Memory<br/>2 tools"]
+        L5["L5 Knowledge + Wiki<br/>6 tools"]
     end
     subgraph Store["Local store"]
         DB[(".kg<br/>SQLite + FTS5 + vectors")]
         KB[(".knowledge/<br/>OKF markdown")]
     end
     subgraph Build["Build pipeline"]
-        P["tree-sitter parsers<br/>14 languages"]
+        P["tree-sitter parsers<br/>15 languages"]
         R["resolver — 5 tiers"]
         D["dataflow + closure<br/>precompute"]
     end
@@ -151,10 +153,10 @@ flowchart TB
 <h2 id="layers">2. The five layers</h2>
 
 <div class="grid">
-  <div class="card"><span class="tag pill-l1">L1 · 9 tools</span><h4>Graph</h4><p>The structural core: definitions, callers/callees, blast radius, semantic search, the <code>explore</code> aggregator, cross-repo deps, graph viz. Backed by <code>.kg</code> SQLite.</p></div>
+  <div class="card"><span class="tag pill-l1">L1 · 12 tools</span><h4>Graph + Federation</h4><p>The structural core: definitions, callers/callees, blast radius, semantic search, repository maps, file APIs, cross-repo dependencies, federation, graph viz. Backed by <code>.kg</code> SQLite.</p></div>
   <div class="card"><span class="tag pill-l2">L2 · 5 tools</span><h4>Compass + KB + Router</h4><p>Module navigation (<code>get_compass</code>), KB search, the cross-layer router (<code>ask_compass</code>), flow tracing/generation. Backed by <code>.knowledge/</code> + graph.</p></div>
-  <div class="card"><span class="tag pill-l4">L4 · 8 tools</span><h4>Memory</h4><p>Tribal memory across tiers: record / recall / digest / promote / demote / evolve / decay / delete. Live refs-verified fraction on every recall.</p></div>
-  <div class="card"><span class="tag pill-l5">L5 · 5 tools</span><h4>Knowledge</h4><p>Business docs + procedural workflows: add / search / delete / status / trace_workflow. Bridges to cross-repo deps.</p></div>
+  <div class="card"><span class="tag pill-l4">L4 · 2 tools</span><h4>Memory</h4><p>Tribal memory MCP tools: record / recall. Digest, promotion, demotion, evolution, decay, and deletion are CLI lifecycle verbs. Live refs-verified scoring on recall.</p></div>
+  <div class="card"><span class="tag pill-l5">L5 · 6 tools</span><h4>Knowledge + Wiki</h4><p>Business docs, procedural workflows, and wiki generation: add / search / delete / status / trace_workflow / wiki_generate. Bridges to cross-repo deps.</p></div>
 </div>
 
 <p><strong>Two front doors.</strong> <code>explore</code> (pure L1) answers structural questions in one round trip; <code>ask_compass</code> classifies intent and routes across all layers.</p>
@@ -493,7 +495,7 @@ erDiagram
 <p>Every concept is a markdown file with YAML frontmatter (OKF v0.2). <code>memory_signals</code> caches the score; <code>memory_tier</code> tracks the lifecycle stage; <code>generated.by</code> records the last producer.</p>
 
 <hr>
-<p class="meta">See also: <a href="docs/architecture-overview.md">architecture-overview.md</a> (this content as markdown) · <a href="docs/architecture.md">architecture.md</a> (per-layer deep dive) · <a href="docs/mcp-tools.md">mcp-tools.md</a> (27 MCP tools) · <a href="docs/examples/resolution-walkthrough.md">resolution walkthrough</a></p>
+<p class="meta">See also: <a href="docs/architecture.md">architecture.md</a> (current reference) · <a href="docs/indexing.md">indexing.md</a> (resolution walkthrough) · <a href="docs/mcp-tools.md">mcp-tools.md</a> (25 MCP tools)</p>
 
 </div>
 

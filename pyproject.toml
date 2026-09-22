@@ -53,7 +53,8 @@ dependencies = [
     # ~0.7 us/row vs ~28 us/row for the pure-Python fallback -- and that scan
     # is the path every semantic_search takes when no vec0 index is built.
     # Promoted to core 2026-08-16: the default install already carries
-    # compiled wheels (14 tree-sitter grammars + sqlite-vec), numpy is
+    # compiled wheels (14 wheel-provided grammars + vendored Kotlin
+    # + sqlite-vec), numpy is
     # wheel-everywhere with no torch, and the [semantic] extra's pinned
     # versions simply became default. The fallback stays for exotic
     # numpy-less environments.
@@ -183,7 +184,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
 # so `cairn install-agents` works from a wheel install, not just a source checkout.
-"cairn.agent_integration" = ["**/*"]
+"cairn.agent_integration" = ["**/*.md", "**/*.json", "**/*.mdc", "**/*.py"]
 # Same for the dashboard's Jinja2 templates and static assets; the
 # static glob must be recursive — nested asset subtrees (the vendored
 # mermaid chunk tree) ship only via "**/*", a flat "static/*" would

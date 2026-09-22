@@ -1,5 +1,7 @@
 # Configuration
 
+← [Docs index](README.md)
+
 Read this when you need to change what gets indexed, where state lives, or
 how retrieval behaves.
 
@@ -203,12 +205,14 @@ one it stays a single informational line.
 
 | Extra | Adds | When you need it |
 |---|---|---|
-| *(core)* | 14 tree-sitter grammars, sqlite-vec, numpy, click, mcp | graph + FTS5 search + dashboard out of the box |
+| *(core)* | 15 tree-sitter grammars, sqlite-vec, numpy, click, mcp | graph + FTS5 search + dashboard out of the box |
 | `semantic` | sentence-transformers | real embeddings + rerank (torch-based, large) |
 | `ann` | sqlite-vec | explicit ANN install (already core since 0.14) |
+| `scip` | protobuf | SCIP index import/generation |
 | `ingest` | pymupdf4llm, mammoth, markdownify | PDF/DOCX ingestion |
 | `watch` | watchdog | live file watcher / MCP watch mode |
 | `otlp` | opentelemetry sdk + OTLP exporter | `CAIRN_OTEL_ENDPOINT` export |
+| `bench` | datasets | pinned SWE-bench task loading |
 | `dev` | pytest, ruff, mypy, bandit, pip-audit, pre-commit, commitizen | contributing — CI installs only this extra, so optional deps in tests must use `importorskip` |
 
 The default install is zero-network and torch-free; without `[semantic]`,
