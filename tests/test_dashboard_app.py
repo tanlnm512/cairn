@@ -735,9 +735,9 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
 
     db_path = _health_db_file(tmp_path, seed=True)
     # Wall-clock under a loaded suite is scheduler-noisy, so the budget is
-    # judged on the best of several fresh-app trials; a regression pays the
-    # slow path (probe imports / warm-window wait) on every first render and
-    # fails regardless.
+    # judged on the best of 5 fresh-app trials: a cache-bypass regression
+    # recomputes probes inside every request and fails every trial, while
+    # one-time import costs are process-wide and out of reach after trial 1.
     samples = []
     for _ in range(5):
         reset_probe_cache()
