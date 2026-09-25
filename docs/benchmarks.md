@@ -25,8 +25,9 @@ use the agent-report shape).
 `cairn bench --suite agent` runs the same seven task-shaped questions through
 two scripted arms: cairn graph calls and a grep/read-only control. The suite
 uses a deterministic 300-file corpus (seed `49374`), three runs per task, the
-dep-free hash embedder, and reports per-task medians. Tool calls and estimated
-tokens are deterministic; wall time is advisory and machine-dependent.
+dep-free hash embedder, and reports per-task medians. Tool calls are
+deterministic; estimated tokens vary by at most about 2% run-to-run (medians
+can land on an adjacent value); wall time is advisory and machine-dependent.
 
 Context cost uses the deployed agent contract: cairn results are
 JSON-serialized and capped at the MCP result limit; control-arm file reads
@@ -35,7 +36,7 @@ count full text. `est_tokens = chars / 4`.
 | metric (median / task) | grep baseline | with cairn | reduction |
 |---|---:|---:|---:|
 | tool calls | 301 | 1 | 99.7% |
-| est. tokens | 429,600 | 1,513 | 99.6% |
+| est. tokens | 429,600 | 1,479 | 99.7% |
 
 Task shapes: definition lookup, caller enumeration, depth-3 blast radius,
 entry-to-leaf flow, concept search, common-name impact, and a 4,000-token

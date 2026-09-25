@@ -268,7 +268,7 @@ shapes, medians):
 
 | metric | grep-only baseline | with cairn | reduction |
 |--------|-------------------:|-----------:|----------:|
-| tokens / query | 429,600 | 1,513 | **99.6%** |
+| tokens / query | 429,600 | 1,479 | **99.7%** |
 | tool calls / query | 301 | 1 | **99.7%** |
 | wall-clock / query | 14.9 ms | 3.7 ms | 4.0× |
 

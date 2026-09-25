@@ -145,7 +145,7 @@ class _Task:
     measures_fit: bool = False
 
 
-# --- the seven task recipes -------------------------------------------------
+# --- the task recipes -------------------------------------------------------
 # Each pair answers the SAME question; ``t`` carries the seeded target names.
 
 
@@ -297,8 +297,9 @@ def _control_pack_fit(agent, t):
 
 
 def _build_tasks(targets: Dict[str, str]) -> List[_Task]:
-    """The seven task pairs with question text bound to the seeded targets,
-    plus the pack-fit-rate pair when the pack pipeline is installed."""
+    """The six base task pairs with question text bound to the seeded
+    targets, plus the pack-fit-rate pair when the pack pipeline is
+    installed."""
     tasks = [
         _Task(
             label="definition-lookup",
