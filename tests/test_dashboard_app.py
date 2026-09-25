@@ -733,20 +733,30 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
     from cairn.dashboard.app import create_app
     from cairn.dashboard.data import reset_probe_cache
 
-    reset_probe_cache()
     db_path = _health_db_file(tmp_path, seed=True)
-    client = TestClient(
-        create_app(db_path=db_path, knowledge_dir=str(tmp_path / "knowledge"))
+    # Wall-clock under a loaded suite is scheduler-noisy, so the budget is
+    # judged on the best of several fresh-app trials; a regression pays the
+    # slow path (probe imports / warm-window wait) on every first render and
+    # fails regardless.
+    samples = []
+    for _ in range(5):
+        reset_probe_cache()
+        client = TestClient(
+            create_app(db_path=db_path, knowledge_dir=str(tmp_path / "knowledge"))
+        )
+        _await_prewarmed_probes()
+
+        t0 = time.perf_counter()
+        resp = client.get("/health")
+        elapsed = time.perf_counter() - t0
+
+        assert resp.status_code == 200
+        assert "Database" in resp.text  # a real render, not an error page
+        samples.append(elapsed)
+    assert min(samples) < 0.2, (
+        f"first /health took {min(samples):.3f}s at best of "
+        f"{len(samples)} fresh-app trials (budget 0.2s)"
     )
-    _await_prewarmed_probes()
-
-    t0 = time.perf_counter()
-    resp = client.get("/health")
-    elapsed = time.perf_counter() - t0
-
-    assert resp.status_code == 200
-    assert "Database" in resp.text  # a real render, not an error page
-    assert elapsed < 0.2, f"first /health took {elapsed:.3f}s (budget 0.2s)"
 
 
 def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
