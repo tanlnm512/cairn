@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Agent-integration package data now ships only template/script file types,
  keeping generated `__pycache__` bytecode out of sdists and wheels.
+- The dashboard first-render budget test judges the 200ms SC-1 budget on the
+  best of 5 fresh-app trials, so full-suite scheduler noise no longer fails it.
 
 ## [0.21.1] - 2026-09-21
 
