@@ -293,11 +293,12 @@ first run fetches the split, reruns run offline). Methodology, determinism
 and offline contracts, and the stamped result:
 [docs/benchmarks.md](docs/benchmarks.md).
 
-**Query latency** (`cairn bench --suite perf`, p95): `find_definition`
-0.04 ms · `get_callers` 0.08 ms · `impact_analysis` 0.13 ms ·
-`search_symbols` 9.37 ms · `semantic_search` 258.59 ms (with embeddings) ·
-`explore` 641.94 ms. First-`semantic_search` latency after boot warm-up:
-**15.5 s cold → 232.6 ms warm**.
+**Query latency** (`cairn bench --suite perf --repeats 10`, p95):
+`find_definition` 0.04 ms · `get_callers` 0.08 ms · `impact_analysis`
+0.13 ms · `search_symbols` 8.15 ms · `semantic_search` 122.03 ms (hash
+embeddings, brute-force fallback) · `explore` 194.14 ms.
+First-`semantic_search` latency after boot warm-up: **15.5 s cold →
+232.6 ms warm**.
 
 **Self-demo** — cairn indexes its own source in ~12s (~9,000 symbols /
 ~58,000 edges, ~272 MB peak RSS), and CI re-runs the build + resolution

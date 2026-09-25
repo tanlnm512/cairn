@@ -634,9 +634,10 @@ def test_fit_items_reserves_compass_and_memory_before_symbols():
     assert dropped == {"symbols": 1, "compass": 0, "memories": 0}
 
 
-def test_fit_items_skips_oversized_reserved_block_keeps_rest():
+def test_fit_items_skips_oversized_reserved_block_keeps_rest(monkeypatch):
     from cairn.pack import KIND_COMPASS, KIND_MEMORY, PackItem, fit_items
 
+    _pin_heuristic_tokenizer(monkeypatch)
     oversized = PackItem.create(KIND_COMPASS, 0, "c" * 400)
     memory = PackItem.create(KIND_MEMORY, 0, "m" * 40)
     kept, dropped = fit_items(
