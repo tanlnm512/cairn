@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  keeping generated `__pycache__` bytecode out of sdists and wheels.
 - The dashboard first-render budget test judges the 200ms SC-1 budget on the
   best of 5 fresh-app trials, so full-suite scheduler noise no longer fails it.
-
+- Agent-suite benchmark docs report the modal est_tokens median (1,479 /
+  99.7%) and scope the determinism claim to tool calls; estimated tokens vary
+  by at most about 2% run-to-run.
+- The AGENTS.md template `cairn install-agents` writes carries the current
+  tool-layer names, matching the repository copy (parity test added).
 ## [0.21.1] - 2026-09-21
 
 ### Added
