@@ -61,6 +61,13 @@ fails naming the resolved path, the env chain, and the remediation).
 | `CAIRN_WORKERS` | parse parallelism (default cpu_count, clamped 1–256) |
 | `CAIRN_WATCH` | file watcher gate (`[watch]` extra) |
 | `CAIRN_REPO_NAMESPACES` | env-level cross-repo namespace map (JSON) |
+| `CAIRN_NO_REFRESH` | disable query-time drift repair (`--no-refresh` is the per-command form) |
+
+**Synthesis**
+
+| Var | Effect |
+|---|---|
+| `CAIRN_LLM_BACKEND` | `file-queue` (default), or `droid` / `opencode` / `claude` for subprocess-backed synthesis |
 
 **Retrieval & embeddings** — see [retrieval.md](retrieval.md) for behavior:
 `CAIRN_FUSION`, `CAIRN_RERANK`, `CAIRN_RERANK_MODEL`,

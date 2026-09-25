@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation audit refresh: current CLI/MCP surfaces, 15-language parser
   set, optional extras, architecture diagrams, and benchmark methodology now
   match the code; the historical roadmap proposal is labeled as a snapshot.
+- Configuration docs cover `CAIRN_NO_REFRESH` and `CAIRN_LLM_BACKEND`.
+- Benchmark docs carry the current reference-local perf and 1,000-file
+  scaling measurements.
 
 ### Fixed
 - Agent-integration package data now ships only template/script file types,
@@ -27,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by at most about 2% run-to-run.
 - The AGENTS.md template `cairn install-agents` writes carries the current
   tool-layer names, matching the repository copy (parity test added).
+- The oversized reserved-block pack test pins heuristic token costs, keeping
+ it independent of the process-wide exact-tokenizer mode.
 ## [0.21.1] - 2026-09-21
 
 ### Added
