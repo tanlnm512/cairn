@@ -671,7 +671,7 @@ def test_neighbors_route_absent_name_and_bogus_depth_never_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Health / memory / task-queue panels ()
+# Health / memory / task-queue panels
 # ---------------------------------------------------------------------------
 
 
@@ -703,7 +703,7 @@ def _panel_client(tmp_path, db_file: str, knowledge_dir: str):
 
 
 def _await_prewarmed_probes(timeout_s: float = 30.0) -> dict:
-    """    Block until the probe cache's first population lands, then return it.
+    """Block until the probe cache's first population lands, then return it.
 
     A /health request overlapping the probes' one-time imports is
     delivery-delayed far past the budget by GIL contention alone, so timing and
@@ -760,7 +760,7 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
 
 
 def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
-    """    One-glance panel carrying the DB size (human-readable), index freshness,
+    """One-glance panel carrying the DB size (human-readable), index freshness,
     backend mode, and reranker status from the seeded DB.
 
     Probe verdicts are asserted against the cache the request served, never
@@ -1075,7 +1075,7 @@ _TC024_SUMMARY = _TC024_PAYLOAD[:200]
 
 
 def _history_db_file(tmp_path, seed: bool) -> str:
-    """    A graph-schema DB file; seeded with four tool_metrics rows when seed=True,
+    """A graph-schema DB file; seeded with four tool_metrics rows when seed=True,
     written newest-last so rendering order is not insert order:
 
     ask_compass / sess-alpha @ 00:25 - error, 1750 ms, ~100/~200 tokens
@@ -1204,7 +1204,7 @@ _TC_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
 
 
 def _tokens_chains_db_file(tmp_path, seed: bool) -> str:
-    """    A graph-schema DB file; seeded when seed=True with:
+    """A graph-schema DB file; seeded when seed=True with:
 
     tokens: tool_heavy - 2 calls, 1600+2400 req / 3200+4800 resp chars -> ~3000
     total, ~1500 mean - clearly above tool_light - 1 call, 400+800 chars -> ~300
@@ -1922,15 +1922,14 @@ on return. Run against a live dashboard:
 
 
 # ---------------------------------------------------------------------------
-# Cross-view links (cross-links
-# US1-US4): tokens rows anchor to tool-filtered history, history rows
+# Cross-view links: tokens rows anchor to tool-filtered history, history rows
 # anchor to session-focused chains (the literal 'unknown' legacy session
 # included), the shipped projects->graph anchor stays pinned, a graph
 # node's inspect action anchors into its symbol neighborhood, and /graph
-# is reachable from both navs. The session-filter ROUTE half of 
+# is reachable from both navs. The session-filter ROUTE half
 # lives above in test_chains_route_session_param_filters_to_one_session;
-# the AUTO halves (the placeholder span the selectNode JS builds on
-# + the inspect target URL) are in the tests below, with the live
+# the AUTO halves (the placeholder span the selectNode JS builds on,
+# plus the inspect target URL) are in the tests below, with the live
 # JS half as TC004_MANUAL_PROCEDURE; the BUILDER half (the
 # view_link macro's window/urlencode edge cases) lives below in
 # test_view_link_macro_carries_window_and_encodes_value.
@@ -2069,7 +2068,7 @@ store (e.g. this repo's own graph via the dev server):
 
 @requires_vis_network
 def test_graph_page_renders_the_inspect_placeholder_span(tmp_path):
-    """ (auto half): /graph renders the inspect hook the
+    """The auto half: /graph renders the inspect hook the
     selectNode JS builds on -- the placeholder span verbatim (id, class,
     placeholder text) before any node is selected."""
     client = _client(tmp_path, seed=True)
@@ -2176,7 +2175,7 @@ def test_nav_and_landing_page_each_link_to_graph(tmp_path):
 
 
 def test_view_link_macro_carries_window_and_encodes_value():
-    """ (builder half): the view_link macro appends the
+    """The builder half: the view_link macro appends the
     window param only when a real window is active -- the empty default and
     an explicit 'all' omit it, '24h' rides the href -- and a value needing
     quoting is urlencoded in the href while the anchor label stays the
@@ -3169,7 +3168,7 @@ _MIXED_BASE = 1755648000.0  # 2025-08-20 00:00:00 UTC, like the history fixture
 
 
 def _mixed_source_db_file(tmp_path, bulk: bool) -> str:
-    """    A graph-schema DB file seeded with BOTH sources' row shapes:
+    """A graph-schema DB file seeded with BOTH sources' row shapes:
 
     cli (NULL resp chars - a CLI invocation has no response payload):
     'cli:cairn build' / term:shell-B @ 00:02:00 - ok, 800 req chars;

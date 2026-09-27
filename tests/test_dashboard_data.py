@@ -1090,7 +1090,7 @@ def test_list_history_args_summary_truncated_never_expanded(fresh_db):
 
     assert row["args_summary"] == payload[:MAX_ARGS_SUMMARY_CHARS]
     assert len(row["args_summary"]) <= 200
-    assert "DISTINCTIVE_TAIL_" not in row["args_summary"]  # 
+    assert "DISTINCTIVE_TAIL_" not in row["args_summary"]
     # The full-payload size still drives the token estimate.
     assert row["est_req_tokens"] == len(payload) // 4
 
@@ -1438,7 +1438,7 @@ def test_get_session_chains_empty_db_returns_empty_list(fresh_db):
 
 def test_list_history_since_excludes_outside_rows_keeps_cursors_in_window(fresh_db):
     """The history half: only in-window rows render, and the paging
-    cursors stay in-window too (+ )."""
+    cursors stay in-window too."""
     from cairn.dashboard.data import list_history
 
     cutoff = time.time() - 86400  # a 24h-style window edge
@@ -1503,6 +1503,67 @@ def test_list_history_since_excludes_null_invoked_at_rows():
     assert [h["id"] for h in list_history(conn, since=cutoff)["rows"]] == [2]
     # All time: the NULL row is still there, not silently dropped.
     assert {h["id"] for h in list_history(conn)["rows"]} == {1, 2}
+
+
+def test_list_history_null_invoked_at_oldest_row_stops_next_cursor():
+    """On a legacy-shape table, a page whose oldest row has NULL invoked_at
+    cannot be walked past with a keyset cursor (NULL never satisfies the
+    comparison); ``next`` stays None instead of promising a page the
+    parser rejects."""
+    from cairn.dashboard.data import list_history
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE tool_metrics ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, tool_name TEXT NOT NULL, "
+        "session_id TEXT NOT NULL DEFAULT 'unknown', invoked_at TIMESTAMP, "
+        "duration_ms REAL, status TEXT NOT NULL DEFAULT 'ok', "
+        "error_message TEXT, req_chars INTEGER, resp_chars INTEGER, "
+        "args_summary TEXT, source TEXT NOT NULL DEFAULT 'mcp')"
+    )
+    base = time.time() - 86400
+    _seed_metrics(
+        conn,
+        rows=[
+            (1, "explore", "sess-a", base + 120, 5.0, "ok", 40, 40),
+            (2, "explore", "sess-a", base + 60, 5.0, "ok", 40, 40),
+            (3, "explore", "sess-a", None, 5.0, "ok", 40, 40),
+            (4, "explore", "sess-a", None, 5.0, "ok", 40, 40),
+            (5, "explore", "sess-a", None, 5.0, "ok", 40, 40),
+        ],
+    )
+
+    page = list_history(conn, limit=3)
+    # The over-fetch proves older rows exist, but the NULL edge row cannot
+    # seed a cursor; `next` stays None rather than re-serving this page.
+    assert len(page["rows"]) == 3
+    assert page["next"] is None
+    # The NULL row renders on the page itself, never silently dropped.
+    assert {1, 2} <= {h["id"] for h in page["rows"]}
+    assert any(h["invoked_at"] is None for h in page["rows"])
+
+
+def test_run_probes_and_serve_probes_degrade_when_a_backend_raises(monkeypatch):
+    """A probe whose backend is unconfigured (e.g. a server-family embed
+    backend with no resolvable base URL) degrades that probe to None —
+    never a RuntimeError out of _run_probes/_serve_probes, and so never a
+    500 out of get_health."""
+    from cairn.dashboard import data as dd
+
+    def _unconfigured():
+        raise RuntimeError("CAIRN_EMBED_BACKEND=server requires CAIRN_EMBED_BASE_URL")
+
+    monkeypatch.setattr(dd, "current_model", _unconfigured)
+    probes = dd._run_probes()
+    assert probes["ann_model"] is None
+
+    # A cold probe cache computes live instead of raising.
+    monkeypatch.setattr(dd, "_probe_cache", None)
+    monkeypatch.setattr(dd, "_probe_cached_at", 0.0)
+    monkeypatch.setattr(dd, "_probe_refreshing", False)
+    served = dd._serve_probes()
+    assert served["ann_model"] is None
 
 
 def test_get_session_chains_since_drops_old_sessions_and_old_calls(fresh_db):
@@ -1822,7 +1883,7 @@ def test_get_session_chains_below_caps_results_unchanged_with_new_keys(fresh_db)
 
 
 def test_get_session_chains_since_windows_before_the_caps(fresh_db):
-    """ +: the window filters rows before grouping and before
+    """Window-first: the window filters rows before grouping and before
     either cap — an old giant session that would flood the capped list
     vanishes under a recent window, and the windowed totals count only
     in-window chains."""

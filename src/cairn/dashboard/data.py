@@ -419,12 +419,20 @@ _probe_refreshing = False
 
 
 def _run_probes() -> Dict[str, object]:
-    """The import-paying health probes, keyed as get_health reports them."""
+    """The import-paying health probes, keyed as get_health reports them;
+    a probe whose backend is unconfigured degrades to None, never raises."""
+
+    def _safe(call):
+        try:
+            return call()
+        except Exception:
+            return None
+
     return {
-        "hash_fallback": is_hash_fallback(),
-        "ann_backend_enabled": ann_backend_enabled(),
-        "ann_model": current_model(),
-        "reranker_available": reranker_available(),
+        "hash_fallback": _safe(is_hash_fallback),
+        "ann_backend_enabled": _safe(ann_backend_enabled),
+        "ann_model": _safe(current_model),
+        "reranker_available": _safe(reranker_available),
     }
 
 
@@ -1472,7 +1480,10 @@ def list_history(
         # a backward fetch only proves newer rows, so it probes instead.
         more_older = len(fetched) > limit if not backward else has_neighbor(oldest, "<")
         if more_older:
-            next_cursor = f"{oldest['invoked_at']},{oldest['id']}"
+            # A NULL invoked_at never satisfies the keyset comparison, so a
+            # cursor built from it re-serves this page forever; stop instead.
+            if oldest["invoked_at"] is not None:
+                next_cursor = f"{oldest['invoked_at']},{oldest['id']}"
         if has_neighbor(newest, ">"):
             prev_cursor = f"{newest['invoked_at']},{newest['id']}"
 

@@ -181,7 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_skipped_reason ON skipped_files(reason);
 CREATE INDEX IF NOT EXISTS idx_skipped_path ON skipped_files(path);
 
 -- import-aware resolution support. Cover the imports lookup that the resolver
--- (src/graph/resolver.py) performs per source file. Existing indexes cover
+-- (src/cairn/graph/resolver.py) performs per source file. Existing indexes cover
 -- edges.target_id (idx_edges_target) and symbols.qualified_name.
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_path ON imports(imported_path);
