@@ -328,7 +328,7 @@ def mv_text_for_kind(
 
 
 # ---------------------------------------------------------------------------
-# Backend abstraction — local (sentence-transformers) / hash / openai.
+# Backend abstraction — local (sentence-transformers) / hash / openai / server family.
 # Each backend exposes _embed(texts) -> List[bytes] (float32 BLOBs).
 # ---------------------------------------------------------------------------
 

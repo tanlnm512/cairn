@@ -1,9 +1,9 @@
-"""T12: `cairn doctor` -- health checks, PASS/WARN/FAIL, exit 0/1, --json.
+"""`cairn doctor` -- health checks, PASS/WARN/FAIL, exit 0/1, --json.
 
 Doctor surfaces silent degradations (spec observability-telemetry §6.5): schema
 integrity, embedding/ANN backend fallbacks, embed-server health (probe
 model-listing / parity sample / latency when a server backend is configured,
-otherwise one informational line -- ), graph freshness, parse errors,
+otherwise one informational line), graph freshness, parse errors,
 lock contention, per-tool error/latency health, tribal-memory reference
 staleness, and a config echo, plus the
 environment-wiring audit (store resolution, client
@@ -685,7 +685,7 @@ def test_config_echo_always_pass(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Config echo -- file layer (): each A2.1 embedding
+# Config echo -- file layer: each embedding
 # knob echoes effective value + source layer (env / file / default); the API
 # key reports presence only. conftest's hermetic env re-points paths.CONFIG_FILE
 # into the sandbox, so a dev machine's real config.json cannot leak in.
@@ -803,8 +803,8 @@ def test_any_fail_exits_one(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Embed server () -- informational PASS unless a
-# server-family backend (server/omlx/ollama) is configured . HTTP only
+# Embed server -- informational PASS unless a
+# server-family backend (server/omlx/ollama) is configured. HTTP only
 # against a loopback stub on an ephemeral port (or a dead loopback port),
 # never the network.
 # ---------------------------------------------------------------------------
@@ -1108,12 +1108,12 @@ def test_embed_server_exit_mapping_unchanged(tmp_path, monkeypatch, embed_cache_
 
 
 # ---------------------------------------------------------------------------
-# Environment wiring (): one `environment` check appended
+# Environment wiring: one `environment` check appended
 # to BOTH doctor return paths, auditing (a) resolved-store existence, (b)
 # client-registration consistency, (c) platform/transport supportability, and
-# (d) binary coherence. Every test in this section is RED until lands
-# the check (today: 9 checks, no `environment` row) -- the same C-02 red
-# convention as tests/test_config_probe.py. Fixtures shape the machine with
+# (d) binary coherence. Each test here pins the `environment` row in
+# doctor's check list -- the same convention as tests/test_config_probe.py.
+# Fixtures shape the machine with
 # tmp homes + monkeypatched bindings/env (never global subprocess patching);
 # the platform arm is driven through lifecycle.is_macos -- the function the
 # doctor reads -- never sys.platform.

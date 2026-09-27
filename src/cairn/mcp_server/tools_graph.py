@@ -527,7 +527,6 @@ def explore(query: str) -> str:
     out.append(f"=== Source ({len(files)} file(s), {total_lines} line(s)) ===")
     if files:
         for file_path, entries in files.items():
-            short = file_path.rsplit("/", 1)[-1]
             out.append(f"{file_path}")
             for e in entries:
                 out.append(
@@ -825,9 +824,9 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
 
     SHOWN = 50
     returned = rows[:SHOWN]
-    # Distinguish the FULL DB match count (total_count, could be thousands)
-    # from how many symbols are actually shipped (count == len(symbols)).
-    # total_count drives the "and N more" message.
+    # total_count is the match count returned by the search primitive, capped
+    # at the primitive's own limit — not the unbounded DB match count; it
+    # drives the "and N more" message.
     return {
         "pattern": pattern,
         "count": len(returned),
@@ -849,7 +848,7 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
 
 def _render_search_symbols(data: dict) -> str:
     """Render the structured ``search_symbols_data`` result as the prose return."""
-    # total_count is the full DB match count; count is how many were shipped.
+    # total_count is the primitive's capped match count; count is how many were shipped.
     total_count = data.get("total_count", data["count"])
     if total_count == 0:
         return _prepend_banner(
