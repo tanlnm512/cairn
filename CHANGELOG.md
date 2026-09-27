@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scaling measurements.
 
 ### Fixed
+- Generated Claude/Cursor hook commands shell-quote the interpreter path
+  (pipx's `Application Support` location no longer exits 127), and
+  reinstalling agent hooks replaces stale Cairn commands instead of treating
+  any matching entrypoint as current.
 - Dashboard `/health` no longer returns 500 when the embed backend is a
   server family with no resolvable `CAIRN_EMBED_BASE_URL`: the failing probe
   degrades to `None` and the page renders it as unknown.

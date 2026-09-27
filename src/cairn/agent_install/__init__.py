@@ -28,7 +28,6 @@ from .detect import (
 from .merge import (
     _already_installed,
     _deep_merge,
-    _entry_present,
     _merge_json_file,
     _write_file,
     _write_tree,
@@ -110,7 +109,6 @@ __all__ = [
     "_SLASH_COMMANDS",
     "_already_installed",
     "_deep_merge",
-    "_entry_present",
     "_merge_json_file",
     "_write_file",
     "_write_tree",
