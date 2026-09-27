@@ -1281,6 +1281,49 @@ def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
     assert "install-agents" in (row.get("hint") or "")
 
 
+def test_environment_does_not_spawn_workspace_registration(
+        tmp_path, monkeypatch):
+    """A workspace-owned registration file is repo content: `cairn doctor`
+    inside a cloned checkout must not execute its command/args -- the same
+    trust gate MCP clients apply to these files. An arbitrary stdio entry in
+    .mcp.json degrades to a WARN naming the file, and its binary never runs."""
+    import sys
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    default_home = Path.home() / ".cairn"
+    _repoint_cairn_home(monkeypatch, default_home)
+    monkeypatch.delenv("CAIRN_HOME", raising=False)
+    monkeypatch.chdir(ws)
+
+    db = _store_db(default_home, ws.resolve())
+    db.parent.mkdir(parents=True)
+    _make_db(db)
+
+    # The payload proves non-execution: a spawn of this entry writes the
+    # marker file (the probe's appended args only become argv extras).
+    marker = ws / "spawned.marker"
+    entry = {
+        "type": "stdio",
+        "command": sys.executable,
+        "args": [
+            "-c",
+            f"import pathlib; pathlib.Path({str(marker)!r}).write_text('pwned')",
+        ],
+    }
+    (ws / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"cairn": entry}}), encoding="utf-8"
+    )
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "environment")
+    assert row["status"] == "WARN"
+    assert "not spawn-probed" in row["detail"], row["detail"]
+    assert ".mcp.json" in row["detail"], row["detail"]
+    assert not marker.exists(), "doctor executed a workspace-owned registration"
+
+
 # ---------------------------------------------------------------------------
 # Memory staleness (): the write-only-memory
 # detector. Tribal memories whose mtime is older than the reference window

@@ -813,19 +813,21 @@ _REG_HOME_FILES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _client_config_paths(client: str) -> list[tuple[Path, str]]:
+def _client_config_paths(client: str) -> list[tuple[Path, str, bool]]:
     """Config files that may hold ``client``'s cairn MCP registration.
 
     Mirrors the per-client paths ``check_installed`` consults (detect.py):
     the workspace file plus the client's home-level config(s); claude-desktop
-    is global-only via ``claude_desktop_config_path``. Returns (path, display)
-    pairs -- the display form (workspace-relative or ``~/``-prefixed) keeps
-    doctor details scrub-safe.
+    is global-only via ``claude_desktop_config_path``. Returns (path, display,
+    workspace_owned) triples -- the display form (workspace-relative or
+    ``~/``-prefixed) keeps doctor details scrub-safe, and ``workspace_owned``
+    marks cwd-relative registration files (repo content, untrusted in a
+    cloned checkout) apart from user-owned home files.
     """
-    pairs: list[tuple[Path, str]] = []
+    pairs: list[tuple[Path, str, bool]] = []
     if client in _REG_WS_FILES:
         rel = _REG_WS_FILES[client]
-        pairs.append((Path.cwd() / rel, rel))
+        pairs.append((Path.cwd() / rel, rel, True))
     if client == "claude-desktop":
         from ...agent_install import claude_desktop_config_path
 
@@ -834,33 +836,57 @@ def _client_config_paths(client: str) -> list[tuple[Path, str]]:
             disp = "~/" + str(path.relative_to(Path.home()))
         except ValueError:
             disp = str(path)
-        pairs.append((path, disp))
+        pairs.append((path, disp, False))
     for rel in _REG_HOME_FILES.get(client, ()):
-        pairs.append((Path.home() / rel.removeprefix("~/"), rel))
+        pairs.append((Path.home() / rel.removeprefix("~/"), rel, False))
     return pairs
 
 
-def _enumerate_registrations() -> list[tuple[str, str, dict]]:
+def _enumerate_registrations() -> list[tuple[str, str, dict, bool]]:
     """Every installed client's cairn MCP registration, read-only.
 
     Enumerates installed clients via ``check_installed`` (the same installed
     state ``install-agents`` reports), then reads each client's config files
     for the cairn entry (shape-aware: flat ``mcpServers``, zcode's nested
     ``mcp.servers``, opencode/kilo's ``mcp.cairn``). Returns (client, display
-    path, entry) triples; absent or unparseable files are skipped, never
-    raised.
+    path, entry, workspace_owned) 4-tuples; absent or unparseable files are
+    skipped, never raised.
     """
     from ...agent_install import _registration_entry, check_installed
 
-    found: list[tuple[str, str, dict]] = []
+    found: list[tuple[str, str, dict, bool]] = []
     for client, installed in check_installed(str(Path.cwd())).items():
         if not installed:
             continue
-        for path, disp in _client_config_paths(client):
+        for path, disp, workspace_owned in _client_config_paths(client):
             entry = _registration_entry(str(path))
             if entry is not None:
-                found.append((client, disp, entry))
+                found.append((client, disp, entry, workspace_owned))
     return found
+
+
+def _spawnable_workspace_entry(entry: dict) -> bool:
+    """True when a workspace-owned stdio entry is exactly the shape
+    ``cairn install-agents`` writes.
+
+    The spawn probe executes the entry's argv verbatim with the entry's env
+    merged over the process environment, and workspace-owned registration
+    files are repo content -- their author is untrusted in a cloned checkout,
+    and unlike the MCP clients reading the same files doctor has no approval
+    step. So the entry is spawnable only when the probe reduces to the known
+    read-only invocation: the PATH-resolved cairn binary (the ``python -m``
+    fallback is never spawnable -- ``-m`` puts the untrusted cwd on
+    sys.path), args exactly ``["serve"]`` (replaced by the read-only probe
+    args), and an env block limited to ``CAIRN_HOME``.
+    """
+    from ...agent_install import _registration_argv
+    from ...agent_install._common import resolve_cg_command
+
+    cmd = resolve_cg_command()
+    if len(cmd) != 1 or _registration_argv(entry) != [cmd[0], "serve"]:
+        return False
+    env = entry.get("env")
+    return not isinstance(env, dict) or set(env) <= {"CAIRN_HOME"}
 
 
 def _sse_endpoint(entry: dict) -> str | None:
@@ -906,7 +932,11 @@ def _registration_findings(
       doctor's own store (``db``, the store every other check audits): a
       FAIL is recorded only when it provably resolves a different EXISTING
       store (both stores named); a probe that errors, times out, or resolves
-      a store that does not exist on disk stays a WARN.
+      a store that does not exist on disk stays a WARN. Workspace-owned
+      registration files are repo content (untrusted in a cloned checkout)
+      and doctor has no user-approval step, so only an entry exactly in the
+      shape ``cairn install-agents`` writes is spawned; any other
+      command/args/env from such a file degrades to a WARN naming the file.
     * SSE -- ``lifecycle.sse_responds`` probes the endpoint (bounded socket
       read, no request beyond a root GET); unreachable => FAIL naming the
       client and the endpoint.
@@ -930,7 +960,7 @@ def _registration_findings(
     expected = {"db": str(db), "workspace": str(Path.cwd())}
     required_env = cairn_home_env()
 
-    for client, disp, entry in _enumerate_registrations():
+    for client, disp, entry, workspace_owned in _enumerate_registrations():
         if "command" in entry:
             written = entry.get("env")
             written_env = dict(written) if isinstance(written, dict) else {}
@@ -954,6 +984,17 @@ def _registration_findings(
                     f"{', '.join(missing)} to the effective home",
                 ))
                 hints.append(stale_hint)
+
+            if workspace_owned and not _spawnable_workspace_entry(entry):
+                findings.append((
+                    _WARN,
+                    f"{client}: stdio registration in {disp} was not "
+                    "spawn-probed (workspace-owned registration files are "
+                    "untrusted; only the shape `cairn install-agents` "
+                    "writes is executed)",
+                ))
+                hints.append(stale_hint)
+                continue
 
             status, detail = verify_registration(
                 _registration_argv(entry), written_env, Path.cwd(), expected,
@@ -1019,7 +1060,11 @@ def _check_environment(db: str) -> dict:
         ``check_installed``; stdio registrations are env-inspected (stale
         registrations WARN) and spawn-probed against this doctor's own store
         via ``verify_registration`` (FAIL only on a provably different
-        EXISTING store, naming both), SSE registrations are probed with
+        EXISTING store, naming both) -- except that a workspace-owned
+        registration file is spawned only when the entry is exactly the
+        shape ``cairn install-agents`` writes, any other command/args/env
+        from such a file degrading to a WARN naming it (repo content is
+        untrusted in a cloned checkout); SSE registrations are probed with
         ``lifecycle.sse_responds`` (unreachable endpoint => FAIL). All probes
         are read-only and timeout-bounded;
     (c) platform/transport -- WARN when an SSE registration exists but the
