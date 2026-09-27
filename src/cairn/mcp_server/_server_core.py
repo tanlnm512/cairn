@@ -359,16 +359,15 @@ def _health_block(conn) -> dict:
     # loss; stale extra rows can pair a REUSED rowid with an unrelated vector
     # (wrong results, not just missing ones).
     try:
-        configured = (
-            os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
-            or "sqlite-vec"
+        from cairn.graph.ann_index import (
+            ann_backend_enabled,
+            configured_backend,
+            index_exists,
+            index_row_count,
         )
+
+        configured = configured_backend()
         if configured == "sqlite-vec":
-            from cairn.graph.ann_index import (
-                ann_backend_enabled,
-                index_exists,
-                index_row_count,
-            )
             from cairn.graph.embeddings import current_model, embed_count
 
             if not ann_backend_enabled():

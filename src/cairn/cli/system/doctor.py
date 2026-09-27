@@ -207,15 +207,14 @@ def _check_ann(conn) -> dict:
     """
     from ...graph.ann_index import (
         ann_backend_enabled,
+        configured_backend,
         index_exists,
         index_row_count,
         try_load,
     )
     from ...graph.embeddings import current_model, embed_count
 
-    configured = (
-        os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower() or "sqlite-vec"
-    )
+    configured = configured_backend()
     if configured != "sqlite-vec":
         return _result(
             "ann",
