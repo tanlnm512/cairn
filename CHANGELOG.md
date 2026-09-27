@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scaling measurements.
 
 ### Fixed
+- Dashboard `/health` no longer returns 500 when the embed backend is a
+  server family with no resolvable `CAIRN_EMBED_BASE_URL`: the failing probe
+  degrades to `None` and the page renders it as unknown.
+- Dashboard history pagination no longer loops on the same page when the
+  oldest row of an all-time page has a NULL `invoked_at` (legacy-shape
+  `tool_metrics` tables): the `next` cursor is omitted instead of being
+  unparseable.
+- `cairn doctor` markup-escapes the dynamic freshness hint, so a
+  workspace-derived repo id containing `[` cannot corrupt rich's markup.
+- C4 architecture diagrams now agree with the boot guard everywhere (25 MCP
+  tools, groups 12/5/2/6; previously 22/24/9 across labels).
 - Agent-integration package data now ships only template/script file types,
  keeping generated `__pycache__` bytecode out of sdists and wheels.
 - The dashboard first-render budget test judges the 200ms SC-1 budget on the
