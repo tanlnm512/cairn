@@ -135,7 +135,7 @@ def _latest_event_reason(conn, name: str) -> str | None:
         return None
 
 
-# --- the 9 checks ----------------------------------------------------------
+# --- the 11 checks ---------------------------------------------------------
 # Each takes the live connection (None only inside _db_unavailable_results,
 # which short-circuits before these run for the DB-dependent checks) and
 # returns a result dict. Every DB read is bounded + defensive: a missing table

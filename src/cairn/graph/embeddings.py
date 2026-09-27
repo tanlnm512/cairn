@@ -1550,7 +1550,8 @@ def embed_all(
     DF table, so enrichment's IDF signal stays current with the
     embedded corpus. ``progress`` is an optional
     callable(n_done, n_total). Returns a dict summary
-    {model, embedded, skipped, total, reaped}.
+    {model, embedded, attempted, failed_batches, skipped, total, reaped},
+    plus ``mv_embedded`` when ``multivector`` is on.
     """
     _alias_preflight(conn)
     model = current_model()
