@@ -1164,8 +1164,8 @@ _STATUS_GLYPH = {_PASS: "✓", _WARN: "!", _FAIL: "✗"}
 def _render_doctor(results: list[dict], display) -> None:
     """Render one block per check, status-prefixed and color-coded.
 
-    Dynamic detail/name text is markup-escaped so a file path containing ``[``
-    can't corrupt rich's markup (same rationale as ``display._value``).
+    Dynamic detail/name/hint text is markup-escaped so a file path containing
+    ``[`` can't corrupt rich's markup (same rationale as ``display._value``).
     """
     from rich.markup import escape
 
@@ -1176,7 +1176,7 @@ def _render_doctor(results: list[dict], display) -> None:
             f"[bold]{escape(r['name'])}[/bold]: {escape(r['detail'])}"
         )
         if r.get("hint"):
-            display.dim(f"      hint: {r['hint']}")
+            display.dim(f"      hint: {escape(r['hint'])}")
 
 
 @main.command()
