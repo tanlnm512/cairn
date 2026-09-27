@@ -47,6 +47,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool-layer names, matching the repository copy (parity test added).
 - The oversized reserved-block pack test pins heuristic token costs, keeping
  it independent of the process-wide exact-tokenizer mode.
+- `cairn build --repo` no longer crashes with an integrity error on any repo
+  embedded with the default multivector pass: `_clear_repo` deletes the
+  repo's `embeddings_mv` rows before deleting its symbols.
+- `cairn doctor` no longer spawn-executes `command`/`args`/`env` read
+  verbatim from workspace-owned registration config files: only an entry
+  exactly in the shape `cairn install-agents` writes is probed, and any
+  other shape degrades to a WARN naming the file.
+- The doctor memory-staleness check degrades to a WARN when its
+  `memory_refs` read fails, restoring the diagnostic's never-raises
+  contract.
+- CAIRN_ANN_BACKEND resolution lives in one shared helper, so the ANN
+  index, doctor, dashboard, and MCP server agree on the empty-string
+  opt-out.
+- C4 containers-level diagram says tree-sitter ×15, matching the parser
+  registry and the context level (was ×14).
 ## [0.21.1] - 2026-09-21
 
 ### Added
