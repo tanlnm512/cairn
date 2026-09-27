@@ -265,6 +265,7 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
     if "hooks" in merger:
         hooks = existing.get("hooks")
         found: set[str] = set()
+        commands: set[str] = set()
         if isinstance(hooks, dict):
             for entries in hooks.values():
                 if not isinstance(entries, list):
@@ -272,8 +273,32 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
                 for entry in entries:
                     if isinstance(entry, dict):
                         found |= _entry_entrypoints(entry)
+                        commands |= _entry_commands(entry)
+        expected = {
+            command
+            for entries in merger["hooks"].values()
+            if isinstance(entries, list)
+            for entry in entries
+            if isinstance(entry, dict)
+            for command in _entry_commands(entry)
+        }
+        if not expected <= commands:
+            return False
         return _HOOK_ENTRYPOINTS <= found
     return False
+
+
+def _entry_commands(entry: dict) -> set[str]:
+    """Return the command strings carried by a Claude or Cursor hook entry."""
+    commands: set[str] = set()
+    inner = entry.get("hooks", [])
+    if isinstance(inner, list):
+        for hook in inner:
+            if isinstance(hook, dict) and isinstance(hook.get("command"), str):
+                commands.add(hook["command"])
+    if isinstance(entry.get("command"), str):
+        commands.add(entry["command"])
+    return commands
 
 
 def _entry_entrypoints(entry: dict) -> set[str]:
@@ -345,10 +370,8 @@ def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers
                 cur = out_hooks.get(event, [])
                 if not isinstance(cur, list):
                     cur = []
-                # Append entries whose entrypoints aren't already present.
-                for entry in entries:
-                    if not _entry_present(cur, entry):
-                        cur.append(entry)
+                cur = [e for e in cur if not _entry_entrypoints(e)]
+                cur.extend(entries)
                 out_hooks[event] = cur
             out["hooks"] = out_hooks
         elif isinstance(val, dict) and isinstance(out.get(key), dict):
@@ -356,22 +379,6 @@ def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers
         else:
             out[key] = val
     return out
-
-
-def _entry_present(entries: list, candidate: dict) -> bool:
-    """Is `candidate` (a hook entry) already in `entries`?
-
-    Matches on the cairn hook entrypoint (post_edit / session_end) rather than
-    the full command string, so re-installs after a path change don't create
-    duplicates. Both on-disk shapes are recognized -- a flat Cursor entry
-    carrying an entrypoint suppresses the re-append just like a nested Claude
-    one, so Cursor's hooks.json stays at one entry per event across re-installs.
-    """
-    cand_eps = _entry_entrypoints(candidate)
-    if not cand_eps:
-        return False
-    return any(isinstance(e, dict) and cand_eps & _entry_entrypoints(e)
-               for e in entries)
 
 
 # --------------------------------------------------------------------------

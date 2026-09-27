@@ -147,15 +147,19 @@ def _claude_hook_command(entrypoint: str) -> str:
     The `CAIRN_HOME` assignment is prefixed only when the effective home is
     non-default: clients run this string through a shell, so
     the assignment travels to the hook process and -- env inheritance -- to
-    the cairn subprocess (claude_hooks runs it with no env kwarg). The path
-    is shlex.quote()d so a shell-metacharacter home cannot inject commands.
+    the cairn subprocess (claude_hooks runs it with no env kwarg). The home
+    and interpreter paths are shlex.quote()d so whitespace or shell
+    metacharacters cannot split or inject commands.
     Uninstall/idempotency matching keys on the
     `cairn.hooks.claude_hooks <entrypoint>` substring, which the prefix keeps
     intact.
     """
     env = paths.cairn_home_env()
     prefix = f"CAIRN_HOME={shlex.quote(env['CAIRN_HOME'])} " if env else ""
-    return f"{prefix}{_python_for_hooks()} -m cairn.hooks.claude_hooks {entrypoint}"
+    return (
+        f"{prefix}{shlex.quote(_python_for_hooks())} "
+        f"-m cairn.hooks.claude_hooks {entrypoint}"
+    )
 
 
 def _hook_markers() -> list[str]:

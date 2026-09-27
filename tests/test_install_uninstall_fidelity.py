@@ -145,6 +145,43 @@ class TestHookIdempotency:
         assert len(healed["hooks"]["Stop"]) == 1
         assert len(healed["hooks"]["PostToolUse"]) == 2
 
+    def test_claude_reinstall_replaces_stale_hook_command(self, tmp_path, monkeypatch):
+        import shlex
+        import sys
+
+        from cairn.agent_install._common import _claude_hook_command
+
+        _no_cli(monkeypatch, "claude")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude"], transport="stdio")
+        p = ws / ".claude" / "settings.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        stale = "/tmp/Cairn Application Support/bin/python"
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry.get("hooks", []):
+                    command = hook["command"]
+                    hook["command"] = command.replace(
+                        shlex.quote(sys.executable), stale)
+        p.write_text(json.dumps(data))
+
+        install(str(ws), clients=["claude"], transport="stdio")
+        healed = json.loads(p.read_text(encoding="utf-8"))
+        commands = [
+            hook["command"]
+            for entries in healed["hooks"].values()
+            for entry in entries
+            for hook in entry["hooks"]
+        ]
+        assert stale not in " ".join(commands)
+        assert set(commands) == {
+            _claude_hook_command("post_edit"),
+            _claude_hook_command("post_tool_failure"),
+            _claude_hook_command("session_end"),
+            _claude_hook_command("session_start"),
+        }
+
 
 # --------------------------------------------------------------------------
 # Hook command strings embed the CAIRN_HOME assignment iff non-default
@@ -252,15 +289,16 @@ class TestHookCairnHomePrefix:
     def test_default_home_hook_commands_stay_env_less(self, monkeypatch):
         monkeypatch.delenv("CAIRN_HOME", raising=False)
         import sys
+        import shlex
 
         from cairn.agent_install._common import _claude_hook_command
         from cairn.agent_install.clients.claude import claude_hooks_block
         from cairn.agent_install.clients.cursor import cursor_hooks_json
 
         assert _claude_hook_command("post_edit") == (
-            f"{sys.executable} -m cairn.hooks.claude_hooks post_edit")
+            f"{shlex.quote(sys.executable)} -m cairn.hooks.claude_hooks post_edit")
         assert _claude_hook_command("session_end") == (
-            f"{sys.executable} -m cairn.hooks.claude_hooks session_end")
+            f"{shlex.quote(sys.executable)} -m cairn.hooks.claude_hooks session_end")
 
         claude = claude_hooks_block()
         for event in ("PostToolUse", "Stop", "SessionStart"):
@@ -270,6 +308,18 @@ class TestHookCairnHomePrefix:
         cursor = cursor_hooks_json()["hooks"]
         for event in ("afterFileEdit", "afterSessionEnd"):
             assert "CAIRN_HOME" not in cursor[event][0]["command"]
+
+    def test_hook_interpreter_path_with_spaces_stays_one_shell_token(
+            self, monkeypatch):
+        import shlex
+        import sys
+
+        from cairn.agent_install._common import _claude_hook_command
+        python = "/tmp/Cairn Application Support/bin/python"
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        monkeypatch.setattr(sys, "executable", python)
+        command = _claude_hook_command("post_edit")
+        assert shlex.split(command, posix=True)[0] == python
 
     def test_default_home_git_hook_stays_env_less(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CAIRN_HOME", raising=False)
