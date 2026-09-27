@@ -714,11 +714,14 @@ def _check_memory_staleness(conn, db: str) -> dict:
         ]
     except OSError as e:
         return _result("memory_staleness", _WARN, f"cannot read memory bundle: {e}")
-    row = conn.execute(
-        "SELECT COUNT(*) FROM memory_refs WHERE referenced_at >= ?",
-        (cutoff.isoformat(),),
-    ).fetchone()
-    refs = row[0] if row is not None else 0
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM memory_refs WHERE referenced_at >= ?",
+            (cutoff.isoformat(),),
+        ).fetchone()
+        refs = row[0] if row is not None else 0
+    except Exception as e:
+        return _result("memory_staleness", _WARN, f"cannot read memory_refs: {e}")
     if not old:
         return _result(
             "memory_staleness",
