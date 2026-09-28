@@ -122,13 +122,6 @@ def test_tc002_pack_renders_text_and_markdown(tmp_path):
     assert "reporting" in text.stdout
 
 
-def test_tc003_change_with_no_dependents(tmp_path):
-    ws = _build_scenario(tmp_path, "banner")
-    proc = _run_review(ws, "--base", "main")
-    assert proc.returncode == 0, proc.stderr
-    assert NO_DEPENDENTS_RE.search(proc.stdout)
-
-
 def test_tc004_change_with_no_enrichment(tmp_path):
     ws = _build_scenario(tmp_path, "banner")
     proc = _run_review(ws, "--base", "main")

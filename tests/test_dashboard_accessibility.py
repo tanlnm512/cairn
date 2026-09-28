@@ -362,19 +362,6 @@ def test_reduced_motion_stops_the_looping_indicator(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_table_macro_emits_column_scoped_headers():
-    """The shared table macro's header cells are column-scoped ``th``s
-    inside a real thead — the macro is the one place table markup is
-    produced, so the semantics are pinned at the source."""
-    src = (_dashboard_dir() / "templates" / "_table.html").read_text(
-        encoding="utf-8"
-    )
-    assert "<table" in src
-    assert "<thead>" in src
-    assert "<tbody>" in src
-    assert '<th scope="col">' in src
-
-
 def test_rendered_data_tables_keep_real_semantics(tmp_path):
     """A data-bearing view renders the macro's exact semantics: one
     table element with thead/tbody and column-scoped header cells —

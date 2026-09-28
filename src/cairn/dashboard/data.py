@@ -21,7 +21,12 @@ from cairn.dashboard.tokenizer import (
     active_tokenizer_mode,
     estimate_tokens,
 )
-from cairn.graph.ann_index import ann_backend_enabled, index_exists, index_row_count
+from cairn.graph.ann_index import (
+    ann_backend_enabled,
+    configured_backend,
+    index_exists,
+    index_row_count,
+)
 from cairn.graph.embeddings import (
     _backend_name,
     current_model,
@@ -512,17 +517,6 @@ def prewarm_probes() -> None:
     ).start()
 
 
-def reset_probe_cache() -> None:
-    """Drop cached probe values (e.g. after a probe-relevant env change);
-    the next get_health recomputes them."""
-    global _probe_cache, _probe_cached_at, _probe_refreshing
-    with _probe_cond:
-        _probe_cache = None
-        _probe_cached_at = 0.0
-        _probe_refreshing = False
-        _probe_cond.notify_all()
-
-
 def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     """Health panel data: DB size, index freshness, vector backend
     mode, reranker status, plus the retention policy in force and the current
@@ -596,10 +590,7 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         # embeddings module at load, so this adds no import cost here.
         "embed_backend": _backend_name(),
         "hash_fallback": probes.get("hash_fallback"),
-        "ann_configured": (
-            os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
-            or "sqlite-vec"
-        ),
+        "ann_configured": configured_backend(),
         "ann_backend_enabled": probes.get("ann_backend_enabled"),
         "ann_model": model,
         "ann_embedding_rows": embedding_rows,

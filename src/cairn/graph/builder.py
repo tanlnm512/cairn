@@ -1345,9 +1345,10 @@ def _clear_repo(conn, repo_name: str):
         (repo_name,),
     )
     # 3b. Delete embeddings for this repo's symbols BEFORE the symbols go, so
-    # the FK (embeddings.symbol_id -> symbols.id) doesn't leave orphans. The
-    # incremental path deletes embeddings explicitly; a full repo rebuild must
-    # too or it leaves dangling embedding rows pointing at deleted symbols.
+    # the FKs (embeddings/embeddings_mv.symbol_id -> symbols.id) don't leave
+    # orphans. The incremental path deletes embeddings explicitly; a full repo
+    # rebuild must too or it leaves dangling embedding rows pointing at
+    # deleted symbols.
     try:
         # Sync the vec0 index for the doomed rowids (same rationale as the
         # incremental path): a stale vec entry can pair a REUSED rowid with an
@@ -1373,6 +1374,14 @@ def _clear_repo(conn, repo_name: str):
                     model,
                     [r["rowid"] for r in doomed if r["model"] == model],
                 )
+        # embeddings_mv also FK-references symbols(id) (no cascade); no
+        # vecmv rowid cleanup exists (vecmv_ tables rebuild wholesale).
+        cur.execute(
+            "DELETE FROM embeddings_mv WHERE symbol_id IN "
+            "(SELECT id FROM symbols WHERE file_id IN "
+            "(SELECT id FROM files WHERE repo_id = ?))",
+            (repo_name,),
+        )
     except sqlite3.OperationalError as e:
         note_contention("builder.delete_repo_embeddings", error=e)
         pass  # embeddings table missing on a DB that never had the semantic extra

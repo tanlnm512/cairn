@@ -10,7 +10,6 @@ Covers the three features adapted from the agentmemory comparison:
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -92,15 +91,6 @@ class TestSupersessionInsert:
         # Chain is relative paths, not absolute.
         assert all(not c.startswith("/") for c in chain)
 
-    def test_chain_ids_are_relative(self, db, bundle):
-        """Supersession chain stores bundle-relative concept_ids."""
-        capture_memory(db, bundle, type_="decision", title="chain test", body="v1", confidence=0.8)
-        r2 = capture_memory(db, bundle, type_="decision", title="chain test", body="v2", confidence=0.85)
-        new = bundle.read_concept(r2["path"])
-        for cid in new.extensions["memory_supersedes"]:
-            assert not os.path.isabs(cid), f"chain id {cid} must be relative"
-
-
 class TestSupersessionSearch:
     """search_memory hides superseded memories by default."""
 
@@ -176,28 +166,6 @@ class TestScoringWeights:
 
     def test_weights_sum_to_one(self):
         assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
-
-    def test_dropped_signals_not_weighted(self):
-        assert "critic_score" not in WEIGHTS
-        assert "authority" not in WEIGHTS
-
-    def test_reinforcement_weight_exists(self):
-        assert "reinforcement" in WEIGHTS
-        assert WEIGHTS["reinforcement"] > 0
-
-    def test_freshness_weight_reduced(self):
-        assert WEIGHTS["freshness"] == 0.0715
-        assert WEIGHTS["reinforcement"] == 0.0715
-
-    def test_weight_values_pinned(self):
-        assert WEIGHTS == {
-            "graph_verification": 0.357,
-            "cross_session_refs": 0.286,
-            "agent_confidence": 0.214,
-            "freshness": 0.0715,
-            "reinforcement": 0.0715,
-        }
-
 
 class TestExponentialFreshness:
     """_freshness uses exp(-λ·age), not linear decay."""

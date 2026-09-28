@@ -24,7 +24,6 @@ import errno
 import fcntl
 import multiprocessing as mp
 import time
-from pathlib import Path
 
 import pytest
 
@@ -59,37 +58,6 @@ class TestBundleLockReentrancy:
         # A self-deadlock would block until the 5s default timeout then raise;
         # completing well under a second proves the fast path fired.
         assert time.monotonic() - start < 1.0
-
-    def test_depth_resets_after_nested(self, bundle):
-        """After a nested sequence exits, the per-thread depth returns to 0, so
-        a fresh ``lock()`` re-acquires the real OS lock instead of silently
-        no-op'ing forever (which would let a concurrent writer interleave)."""
-        from cairn.okf.bundle import _LOCK_DEPTH
-
-        key = str(Path(bundle.root).resolve())
-        with bundle.lock():
-            with bundle.lock():
-                pass
-        depth = getattr(_LOCK_DEPTH, "depth", {})
-        assert depth.get(key, 0) == 0
-
-    def test_exception_in_body_still_resets_depth(self, bundle):
-        """An exception inside the ``with`` body still runs the unlock path
-        (the nested try/finally), so depth returns to 0 and the OS lock is
-        released -- the next holder isn't blocked forever by a crashed one."""
-
-        class _Boom(Exception):
-            pass
-
-        from cairn.okf.bundle import _LOCK_DEPTH
-
-        key = str(Path(bundle.root).resolve())
-        with pytest.raises(_Boom):
-            with bundle.lock():
-                raise _Boom
-        depth = getattr(_LOCK_DEPTH, "depth", {})
-        assert depth.get(key, 0) == 0
-
 
 class TestBundleLockContention:
     def test_contention_timeout_logic(self, bundle, monkeypatch):

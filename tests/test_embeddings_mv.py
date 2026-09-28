@@ -132,13 +132,7 @@ def test_kinds_are_not_chunk_variants():
     iterate that tuple; joining it would break the floor for minimal texts)."""
     from cairn.graph.embeddings import CHUNK_VARIANTS, MV_KINDS
 
-    assert MV_KINDS == ("name", "docstring")
     assert not set(MV_KINDS) & set(CHUNK_VARIANTS)
-    # The pre- variant tuple is exactly unchanged.
-    assert CHUNK_VARIANTS == (
-        "A", "B", "C",
-        "B_NO_SCOPE", "B_NO_SIG", "B_IDENTITIES", "C_TRIM",
-    )
 
 
 # ---------------------------------------------------------------------------

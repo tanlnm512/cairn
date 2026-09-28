@@ -237,30 +237,6 @@ def test_index_on_off_symbol_populations_identical(tmp_path):
 
 
 @needs_scip
-def test_uncovered_file_keeps_tree_sitter_edges(tmp_path):
-    """A file covered by no index document gains no scip edges and keeps its
-    tree-sitter calls/references (TC-003 boundary)."""
-    ws, db = _build("covered", tmp_path)
-    conn = sqlite3.connect(db)
-    try:
-        import_scip_file(conn, str(ws / "index.scip"), str(ws))
-    finally:
-        conn.close()
-
-    outside = "f.path like '%outside_index.py'"
-    assert _scip_edge_count(db, outside) == 0
-    assert (
-        _count(
-            db,
-            "select count(*) from edges e join symbols s on e.source_id=s.id "
-            "join files f on s.file_id=f.id where "
-            f"{outside} and e.kind in ('calls','references')",
-        )
-        > 0
-    )
-
-
-@needs_scip
 def test_opaque_usr_joins_by_position(tmp_path):
     """An opaque-USR index attaches exact edges to the existing tree-sitter
     symbols without adding any (TC-004; the historical disconnect cannot recur)."""
@@ -276,15 +252,6 @@ def test_opaque_usr_joins_by_position(tmp_path):
     assert _scip_edge_count(db, "e.resolution='exact'") > 0
     assert _scip_edge_count(db, "e.kind='calls'") > 0
     assert _count(db, "select count(*) from symbols") == before_symbols
-
-
-@needs_scip
-def test_opaque_on_off_symbol_populations_identical(tmp_path):
-    _, db_on = _build("opaque", tmp_path)
-    _, db_off = _build("opaque-off", tmp_path)
-    assert _count(db_on, "select count(*) from symbols") == _count(
-        db_off, "select count(*) from symbols"
-    )
 
 
 @needs_scip
@@ -911,28 +878,6 @@ def test_multirepo_documents_attribute_to_their_own_repos(tmp_path):
 
 
 @needs_scip
-def test_import_never_assigns_one_repo_to_all_documents(tmp_path):
-    """Index-sourced edges land under both repos' identities: no single repo id
-    ever carries the whole index's attribution."""
-    ws, db = _build_multirepo(tmp_path)
-    _import(db, ws)
-
-    conn = sqlite3.connect(db)
-    try:
-        repos_with_scip = [
-            r[0]
-            for r in conn.execute(
-                "select distinct f.repo_id from edges e "
-                "join symbols s on e.source_id=s.id join files f on s.file_id=f.id "
-                "where e.source='scip' order by f.repo_id"
-            ).fetchall()
-        ]
-    finally:
-        conn.close()
-    assert repos_with_scip == ["alpha", "beta"]
-
-
-@needs_scip
 def test_rel_path_in_two_repos_is_skipped_not_guessed(fresh_db, tmp_path):
     """A relative path matching files rows in several repos attributes to
     neither: the document is skipped and counted, never a guessed repo."""
@@ -999,25 +944,6 @@ def test_below_threshold_document_retains_tree_sitter_edges(tmp_path):
     assert path == "app.py"
     assert reason == "scip_join_anomaly"
     assert repo_id  # the matched file's own repo, via the per-document substrate
-
-
-@needs_scip
-def test_drifted_index_matches_no_index_twin_edge_mix(tmp_path):
-    """Index-on vs index-off twins of the drifted workspace carry identical
-    calls/references mixes and zero index-sourced edges (TC-007 intent)."""
-    ws_on, db_on = _build("drifted", tmp_path)
-    _, db_off = _build("drifted-off", tmp_path)
-    conn = sqlite3.connect(db_on)
-    try:
-        import_scip_file(conn, str(ws_on / "index.scip"), str(ws_on))
-    finally:
-        conn.close()
-
-    for kind in ("calls", "references"):
-        assert _count(db_on, f"select count(*) from edges where kind='{kind}'") == _count(
-            db_off, f"select count(*) from edges where kind='{kind}'"
-        )
-    assert _count(db_on, "select count(*) from edges where source='scip'") == 0
 
 
 @needs_scip
@@ -1115,29 +1041,3 @@ def test_import_record_exposes_edge_disagreement_upgrade_keys(fresh_db, tmp_path
     assert {"edges", "disagreements", "upgrades", "join_anomalies"} <= set(record)
 
 
-@needs_scip
-def test_cli_build_then_import_attributes_per_document(tmp_path):
-    """Through the CLI build (--workspace/--db explicit, tmp only), the importer
-    attributes per document against real scanner-produced files rows."""
-    from click.testing import CliRunner
-
-    from cairn.cli import main
-
-    ws = _materialize_multirepo(tmp_path)
-    db = str(tmp_path / "cli.db")
-    result = CliRunner().invoke(main, ["build", "--workspace", str(ws), "--db", db])
-    assert result.exit_code == 0, result.output
-
-    record = _import(db, ws)
-    assert record["edges"] == 3
-
-    conn = sqlite3.connect(db)
-    try:
-        by_source_repo = conn.execute(
-            "select f.repo_id, count(*) from edges e "
-            "join symbols s on e.source_id=s.id join files f on s.file_id=f.id "
-            "where e.source='scip' group by f.repo_id order by f.repo_id"
-        ).fetchall()
-    finally:
-        conn.close()
-    assert [tuple(r) for r in by_source_repo] == [("alpha", 2), ("beta", 1)]

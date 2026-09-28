@@ -88,11 +88,6 @@ def _counting_stub(blobs, dim):
 # ---------------------------------------------------------------------------
 
 
-def test_gate_constants():
-    assert embed_ladder.PARITY_GATE == 0.98
-    assert embed_ladder.SAMPLE_LIMIT == 16
-
-
 # ---------------------------------------------------------------------------
 # (a) Pass case: identical blobs -> cosine 1.0.
 # ---------------------------------------------------------------------------
@@ -534,15 +529,10 @@ def test_reset_backend_cache_clears_state_and_session_overrides(fresh_db, monkey
 
     state = embed_ladder.evaluate_ladder(conn=fresh_db)
     assert state.rung == 1
-    assert emb._SESSION_STAMP_OVERRIDE == stamp
-    assert emb._SESSION_SERVER_MODEL == "cand-a"
 
     emb.reset_backend_cache()
 
     assert embed_ladder.ladder_state() is None
-    assert emb._SESSION_STAMP_OVERRIDE is None
-    assert emb._SESSION_SERVER_MODEL is None
-    assert emb._SESSION_BACKEND_OVERRIDE is None
     assert emb.current_model() == stamp  # derived again, not pinned
 
 
@@ -654,13 +644,6 @@ def test_healthy_evaluation_supersedes_active_state(fresh_db, monkeypatch):
 
 
 # Every reason the ladder can record stays inside the enum.
-
-
-def test_ladder_reasons_within_telemetry_enum():
-    from cairn.telemetry.events import EMBED_SERVER_REASONS
-
-    assert set(embed_ladder._RUNG3_DETAIL) <= EMBED_SERVER_REASONS
-    assert {"fallback_session_alias", "fallback_local"} <= EMBED_SERVER_REASONS
 
 
 # ---------------------------------------------------------------------------

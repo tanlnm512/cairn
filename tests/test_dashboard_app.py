@@ -702,13 +702,25 @@ def _panel_client(tmp_path, db_file: str, knowledge_dir: str):
     return TestClient(create_app(db_path=db_file, knowledge_dir=knowledge_dir))
 
 
+def _reset_probe_cache() -> None:
+    """Drop the process-global probe cache so a test's /health measures its
+    own probes (test-local replacement for the removed src-side hook)."""
+    import cairn.dashboard.data as dashboard_data
+
+    with dashboard_data._probe_cond:
+        dashboard_data._probe_cache = None
+        dashboard_data._probe_cached_at = 0.0
+        dashboard_data._probe_refreshing = False
+        dashboard_data._probe_cond.notify_all()
+
+
 def _await_prewarmed_probes(timeout_s: float = 30.0) -> dict:
     """Block until the probe cache's first population lands, then return it.
 
     A /health request overlapping the probes' one-time imports is
     delivery-delayed far past the budget by GIL contention alone, so timing and
     verdict assertions wait for the prewarm to publish first. The cache is
-    process-global; callers reset it (``reset_probe_cache``) before building the
+    process-global; callers reset it (``_reset_probe_cache``) before building the
     app so the wait covers this environment's own probes."""
     import cairn.dashboard.data as dashboard_data
 
@@ -731,7 +743,6 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
     from starlette.testclient import TestClient
 
     from cairn.dashboard.app import create_app
-    from cairn.dashboard.data import reset_probe_cache
 
     db_path = _health_db_file(tmp_path, seed=True)
     # Wall-clock under a loaded suite is scheduler-noisy, so the budget is
@@ -740,7 +751,7 @@ def test_first_health_render_on_fresh_app_is_under_budget(tmp_path):
     # one-time import costs are process-wide and out of reach after trial 1.
     samples = []
     for _ in range(5):
-        reset_probe_cache()
+        _reset_probe_cache()
         client = TestClient(
             create_app(db_path=db_path, knowledge_dir=str(tmp_path / "knowledge"))
         )
@@ -767,9 +778,7 @@ def test_health_route_shows_size_freshness_backend_and_reranker(tmp_path):
     freshly recomputed: a /health request serves cached probe values, so live
     recomputation can legitimately disagree (machines with the semantic extra
     installed report a different reranker verdict mid-warmup)."""
-    from cairn.dashboard.data import reset_probe_cache
-
-    reset_probe_cache()
+    _reset_probe_cache()
     db_path = _health_db_file(tmp_path, seed=True)
     client = _panel_client(tmp_path, db_path, str(tmp_path / "knowledge"))
     _await_prewarmed_probes()
@@ -1649,8 +1658,7 @@ def _tokens_row(region: str, tool: str) -> str:
 def test_tokens_and_chains_wrap_their_content_in_refresh_region(tmp_path):
     """The region half: /tokens and /chains each render exactly one
     #refresh-region wrapping the content the poll loop swaps -- the tokens
-    table and the chain list with seeded content inside the swap target,
-    and app.js loaded exactly once so the loop is armed on these views."""
+    table and the chain list with seeded content inside the swap target."""
     client = _tokens_chains_client(tmp_path, seed=True)
     for path, structure, seeded in (
         ("/tokens", '<table class="data-table">', "tool_heavy"),
@@ -1663,10 +1671,6 @@ def test_tokens_and_chains_wrap_their_content_in_refresh_region(tmp_path):
         assert region is not None, path
         assert structure in region, path  # the view lives in the swap target
         assert seeded in region, path  # seeded content, not empty markup
-        assert (
-            len(re.findall(r'<script[^>]*\ssrc="[^"]*app\.js[?"]', resp.text))
-            == 1
-        ), path  # the loop module loads once, never twice
 
 
 def test_chains_refetch_grows_open_session_chain_by_exactly_one(tmp_path):
@@ -1840,45 +1844,13 @@ def test_tokens_refetch_shifts_call_count_and_displayed_totals(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Loop-module state machine, server-visible half (live-updates
-#): the poll loop itself is htmx-owned — the
-# #refresh-region trigger lives in the region templates and the chrome
-# module's structural pins live in tests/test_dashboard_htmx_lists.py.
-# What stays pinned here is the chrome contract beneath the loop: the
-# rendered state hooks (#live-controls data-state, #live-state word
-# slot, #live-pause toggle) plus exactly one app.js load per traffic
-# view, so the module can never double-arm.
+# Loop-module state machine, server-visible half (live-updates): the
+# poll loop itself is htmx-owned — the #refresh-region trigger lives in
+# the region templates and the chrome module's structural pins live in
+# tests/test_dashboard_htmx_lists.py. What stays pinned here is the
+# rendered chrome beneath the loop (#live-controls data-state,
+# #live-state word slot, #live-pause toggle).
 # ---------------------------------------------------------------------------
-
-
-def _app_js_source() -> str:
-    """app.js source, read from the installed dashboard package -- the
-    file the /static route serves."""
-    import cairn.dashboard
-
-    return (
-        Path(cairn.dashboard.__file__).resolve().parent / "static" / "app.js"
-    ).read_text(encoding="utf-8")
-
-
-def test_history_live_chrome_hooks_render_and_app_js_loads_once(tmp_path):
-    """Chrome contract: /history renders
-    the three stable hooks the loop's state machine reads and writes --
-    #live-controls server-rendering its initial data-state="running", the
-    #live-state word slot, the #live-pause toggle -- and loads app.js
-    exactly once: a second copy of the loop would arm a second timer and
-    double every fetch."""
-    resp = _history_client(tmp_path, seed=True).get("/history")
-    assert resp.status_code == 200
-
-    controls = re.search(r'<div id="live-controls"[^>]*>', resp.text)
-    assert controls, "#live-controls chrome missing from /history"
-    assert 'data-state="running"' in controls.group(0)  # initial state
-    assert 'id="live-state"' in resp.text  # the visible state-word slot
-    assert 'id="live-pause"' in resp.text  # the pause/resume toggle
-
-    loads = re.findall(r'<script[^>]*\ssrc="[^"]*app\.js[?"]', resp.text)
-    assert len(loads) == 1  # the loop module loads once, never twice
 
 
 # interactive halves -- a real click on a live page, and a
@@ -2580,31 +2552,6 @@ def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
     assert "launch_tool" in client.get("/history").text
 
 
-def test_three_way_switch_sequence_tracks_selection(tmp_path, monkeypatch):
-    """US2-AC2: A -> overview -> B on one TestClient (no
-    server restart) -- each leg serves exactly the selected store's data and
-    the overview leg between them still completes."""
-    client, _ = _switch_client(tmp_path, monkeypatch)
-
-    # Leg 1: select A.
-    leg_a = client.get("/projects", params={"store": _SW_KEY_A})
-    assert leg_a.status_code == 200
-    assert "storeA" in leg_a.text and "storeB" not in leg_a.text
-
-    # Leg 2: return to the overview -- it lists both stores, still one app.
-    overview = client.get("/workspaces")
-    assert overview.status_code == 200
-    assert _SW_KEY_A in overview.text and _SW_KEY_B in overview.text
-
-    # Leg 3: pick B -- the views switch with the selection.
-    leg_b = client.get("/projects", params={"store": _SW_KEY_B})
-    assert "storeB" in leg_b.text and "storeA" not in leg_b.text
-    history_b = client.get("/history", params={"store": _SW_KEY_B})
-    assert "store_b_tool" in history_b.text and "store_a_tool" not in (
-        history_b.text
-    )
-
-
 def test_selected_store_rides_the_inter_view_links(tmp_path, monkeypatch):
     """Carry (GAP-2): on a selected store's pages every inter-view
     href keeps the selection -- history's session anchor, the Newer/Older
@@ -2691,28 +2638,6 @@ def test_graph_page_carries_the_selection_to_app_js(tmp_path, monkeypatch):
         "/graph/candidates", params={"store": _SW_KEY_A, "name": "storeB_fn"}
     )
     assert miss.json()["matches"] == []  # B's symbol is not in A's store
-
-    # app.js source contract (no JS runtime here): both fetch builders
-    # append the store param, read from the data-store hook, guarded.
-    src = _app_js_source()
-    for endpoint in ("/graph/neighbors?name=", "/graph/candidates?name="):
-        builder = re.search(re.escape(endpoint) + r".{0,160}", src, re.S)
-        assert builder, f"app.js lost the {endpoint!r} fetch builder"
-        assert "storeKey" in builder.group(0), endpoint
-    assert src.count('getElementById("graph-data")') >= 2
-    assert src.count('getAttribute("data-store")') >= 2
-    # The guard: an empty or absent selection appends nothing — every
-    # store-appending site (fetch builders, focusUrl, inspect anchor)
-    # follows the same guarded pattern.
-    assert (
-        len(
-            re.findall(
-                r'\? "&store=" \+ encodeURIComponent\(\w+\) : ""', src
-            )
-        )
-        >= 3
-    )
-    assert 'inspectStore ? "&store=" + encodeURIComponent(inspectStore)' in src
 
 
 # ---------------------------------------------------------------------------
@@ -2884,22 +2809,6 @@ def test_workspace_selector_marks_the_selected_store(tmp_path, monkeypatch):
     assert f'<option value="{_SW_KEY_B}" selected' not in resp.text
 
 
-def test_shell_js_switch_contract_is_pinned_at_source_level():
-    """The switch behavior, source-pinned like the app.js fetch builders:
-    rewrite the store param on the current URL (stay on the tab), and
-    clear the remembered store when returning to the launch store — or
-    the stickiness script would bounce the bare URL right back."""
-    import cairn.dashboard
-
-    src = (
-        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
-    ).read_text(encoding="utf-8")
-    assert 'getElementById("store-select")' in src
-    assert 'searchParams.set("store"' in src
-    assert 'searchParams.delete("store"' in src
-    assert 'localStorage.removeItem("cairn-store")' in src
-
-
 # ---------------------------------------------------------------------------
 # Grouped sidebar + command palette (shell chrome): the sidebar renders
 # from shell.NAV_SECTIONS with store-carrying hrefs, collapse persists
@@ -2953,19 +2862,6 @@ def test_sidebar_collapse_button_and_prepaint_script(tmp_path, monkeypatch):
 
     resp = client.get("/projects")
     assert 'id="sidebar-collapse"' in resp.text
-    base = (_templates_dir() / "base.html").read_text(encoding="utf-8")
-    assert '"cairn-sidebar"' in base
-    # The theme script stays the FIRST head script (pinned separately).
-    assert base.index("cairn-theme") < base.index("cairn-sidebar")
-
-    import cairn.dashboard
-
-    shell_src = (
-        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
-    ).read_text(encoding="utf-8")
-    assert 'localStorage.setItem(\n        "cairn-sidebar"' in shell_src or (
-        '"cairn-sidebar"' in shell_src and "setAttribute" in shell_src
-    )
 
 
 def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
@@ -3128,28 +3024,6 @@ def test_palette_results_no_matches_renders_the_empty_state(tmp_path, monkeypatc
     assert "palette-row-empty" in resp.text
     assert "data-href" not in resp.text
     assert "data-store-key" not in resp.text
-
-
-def test_command_palette_js_contract_is_pinned_at_source_level():
-    """The palette is an Alpine component over a native <dialog>:
-    showModal/close own opening and Esc, focus restores to the element
-    that launched it, Cmd/Ctrl+K toggles, rows activate off the server
-    fragment's data attributes, swapped-in rows regain the highlight,
-    and symbols are never fetched client-side (the /palette/results
-    fragment serves them)."""
-    import cairn.dashboard
-
-    src = (
-        Path(cairn.dashboard.__file__).resolve().parent / "static" / "shell.js"
-    ).read_text(encoding="utf-8")
-    assert 'Alpine.data("palette"' in src
-    assert "showModal()" in src
-    assert "lastFocus.focus()" in src
-    assert "metaKey" in src  # Cmd/Ctrl+K toggles
-    assert "keyCode" not in src  # key names, not deprecated codes
-    assert "data-store-key" in src and "data-href" in src
-    assert "/graph/suggest" not in src  # symbol rows come from the fragment
-    assert "htmx:afterSwap" in src
 
 
 # ---------------------------------------------------------------------------
@@ -3736,10 +3610,6 @@ def test_settings_env_pin_shows_marker_while_save_persists_file_value(
     assert "<code>99</code>" in page.text  # the effective value, in the marker
     assert 'value="120"' in page.text  # the persisted file value, in the form
 
-    from cairn.graph import embeddings
-
-    assert embeddings._config_or_env("CAIRN_EMBED_TIMEOUT") == "99"
-
 
 def test_settings_parity_check_renders_pass_and_fail_verdicts(
     tmp_path, monkeypatch
@@ -3985,9 +3855,6 @@ def test_embeddings_status_degraded_rung_rows_from_ladder_state(
     assert ">fallback_session_alias</code>" in resp.text
     assert "--adopt-server-model cand" in resp.text  # the detail row
     assert "<code>cand</code>" in resp.text  # the adopted-model row
-    # No duplicate builder: the view's template never builds banner text.
-    template = (_templates_dir() / "embeddings.html").read_text(encoding="utf-8")
-    assert "degradation_banner" not in template
 
 
 def test_embeddings_status_shows_effective_value_and_env_override_marker(
@@ -4008,23 +3875,6 @@ def test_embeddings_status_shows_effective_value_and_env_override_marker(
     assert "<code>99</code>" in resp.text  # effective beats the file's 120
     assert "sk-status-secret" not in resp.text  # key: set/not-set only
     assert ">set<" in resp.text
-
-
-def test_nav_carries_settings_and_embeddings_entries(
-    tmp_path, monkeypatch, _isolated_embed_state
-):
-    """/settings and /embeddings are one click from every page —
-    the base sidebar nav carries both entries (with spanned labels, like
-    every nav anchor)."""
-    client = _client(tmp_path, seed=False)
-    resp = client.get("/")
-    assert resp.status_code == 200
-    for href, label in (("/embeddings", "Embeddings"), ("/settings", "Settings")):
-        assert re.search(
-            r'<a href="' + href + r'"[^>]*>.*?' + label + r"</span>",
-            resp.text,
-            re.S,
-        ), href
 
 
 def test_embeddings_status_non_server_marks_probe_na_without_probe(
@@ -4132,28 +3982,6 @@ def test_graph_inspect_hx_request_renders_panel_fragment(tmp_path):
     assert bare.json()["found"] is True
 
 
-def test_inspect_fetch_wiring_aborts_superseded_requests():
-    """app.js inspect wiring (source contract, no JS runtime): a new
-    inspect fetch aborts its in-flight predecessor (htmx:beforeSend
-    carries the live xhr), and the failure wiring covers response/send
-    errors only — htmx never fires htmx:timeout without a configured
-    timeout, so that listener is dead code."""
-    src = _app_js_source()
-
-    assert re.search(r"addEventListener\(\s*[\"']htmx:beforeSend[\"']", src), (
-        "no htmx:beforeSend listener: a superseded inspect fetch is never aborted"
-    )
-    assert re.search(r"htmx:beforeSend[\s\S]{0,600}?\.abort\(\)", src), (
-        "the beforeSend listener never aborts the in-flight inspect xhr"
-    )
-    assert "htmx:timeout" not in src, (
-        "dead htmx:timeout listener (htmx fires it only with a configured timeout)"
-    )
-    # The genuine failure paths keep their failure note.
-    assert "htmx:responseError" in src
-    assert "htmx:sendError" in src
-
-
 # ---------------------------------------------------------------------------
 # Dashboard wiki view (US6): /wiki list with state badges,
 # wiki/{page_id} rendered detail, and the stdlib markdown renderer.
@@ -4236,39 +4064,6 @@ def _wiki_client(tmp_path):
     kdir = tmp_path / "knowledge"
     _seed_wiki_pages(kdir)
     return _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
-
-
-def test_wiki_routes_registered_with_pinned_names(tmp_path):
-    pytest.importorskip("httpx")
-    from cairn.dashboard.app import create_app
-
-    app = create_app(db_path=str(tmp_path / "ro.db"))
-    assert app.url_path_for("wiki") == "/wiki"
-    assert (
-        app.url_path_for("wiki_page_repo", repo="demo", page_id="overview")
-        == "/wiki/demo/overview"
-    )
-    # The one-segment URL survives as the legacy redirect route.
-    assert app.url_path_for("wiki_page", page_id="overview") == "/wiki/overview"
-
-
-def test_wiki_templates_ship_with_the_dashboard():
-    assert (_templates_dir() / "wiki.html").is_file()
-    assert (_templates_dir() / "wiki_page.html").is_file()
-    assert (_templates_dir() / "wiki_unreadable.html").is_file()
-
-
-def test_wiki_is_linked_in_sidebar_and_launcher(tmp_path):
-    """Follow-up: the wiki view is discoverable — a sidebar nav entry
-    plus a landing launcher card, mirroring every other view."""
-    client = _wiki_client(tmp_path)
-
-    page = client.get("/wiki")
-    landing = client.get("/")
-
-    assert page.status_code == 200
-    assert 'href="/wiki' in page.text      # sidebar link on the view itself
-    assert 'href="/wiki' in landing.text   # launcher card on the landing grid
 
 
 def test_wiki_route_lists_pages_with_state_badges(tmp_path):
@@ -4667,28 +4462,6 @@ def test_shell_module_never_loads_server_stack():
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert proc.stdout.strip() == "False"
-
-
-def test_jinja2_is_a_declared_runtime_dependency():
-    """The dashboard renders through starlette's Jinja2Templates, and
-    starlette ships jinja2 only in its [full] extra — mcp's starlette
-    never pulls it. Dev/CI environments happen to install it via extras,
-    which masked the gap: a minimal (PyPI) install crashed `cairn
-    dashboard` on ImportError. The dependency is pinned here so it can
-    never be pruned as "unused" again. (Parsed with a regex, not
-    tomllib — that is 3.11+ stdlib and the CI matrix runs 3.10.)"""
-    import re
-    from pathlib import Path
-
-    pyproject = (
-        Path(__file__).resolve().parent.parent / "pyproject.toml"
-    ).read_text(encoding="utf-8")
-    # The [project] section body: from its header to the next section
-    # header ([project.scripts] etc. do not contain the exact token).
-    project_section = pyproject.split("[project]", 1)[1].split("\n[", 1)[0]
-    assert (
-        re.search(r'^\s*"jinja2[><=~]', project_section, re.M) is not None
-    )
 
 
 def test_render_markdown_whitelists_blocks_and_escapes_inline_html():

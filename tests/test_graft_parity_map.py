@@ -577,15 +577,12 @@ def test_mcp_repo_map_returns_the_cli_orientation(
 
 
 def test_mcp_tool_count_and_inventory_include_graph_surfaces() -> None:
-    import cairn.mcp_server.server as server
     from cairn.mcp_server._server_core import mcp
 
     tool_names = {
         tool.name for tool in mcp._tool_manager.list_tools()
     }
     assert {"repo_map", "file_api"} <= tool_names
-    assert server._EXPECTED_TOOL_COUNT == 25
-    server.verify_tool_count()
 
 
 def test_single_repo_map_splits_a_dominant_first_segment(

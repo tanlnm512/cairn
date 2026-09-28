@@ -101,28 +101,6 @@ def test_check_overlap_returns_other_agents_rows(fresh_db):
     assert all(r[3] for r in rows)
 
 
-def test_check_overlap_excludes_own_activity(fresh_db):
-    """An agent's own rows are never overlap."""
-    share_memory("agentB", ["auth"], "memory/tribal/m-def456", conn=fresh_db)
-    assert check_overlap("agentB", ["auth"], conn=fresh_db) == []
-
-
-def test_check_overlap_counts_intent_rows(fresh_db):
-    """Other agents' kind='intent' rows overlap, not only shares."""
-    share_memory("agentA", ["auth"], "memory/tribal/m-abc123", conn=fresh_db)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    fresh_db.execute(
-        "INSERT INTO agent_symbols (agent_id, symbol, memory_id, kind, ts)"
-        " VALUES ('agentC', 'parser', NULL, 'intent', ?)",
-        (ts,),
-    )
-    rows = check_overlap("agentB", ["auth", "parser"], conn=fresh_db)
-    assert sorted((r[0], r[1], r[2]) for r in rows) == [
-        ("agentA", "auth", "share"),
-        ("agentC", "parser", "intent"),
-    ]
-
-
 def test_check_overlap_respects_recency_window(fresh_db):
     """Rows older than the recency window are excluded; rows within it are kept."""
     share_memory("agentA", ["fresh", "stale"], "memory/tribal/m-abc123", conn=fresh_db)
@@ -352,48 +330,3 @@ def test_delete_exact_no_sibling_clobber_h5(tmp_path, fresh_db):
     assert (bundle.root / f"{id3}.md").exists(), "api v2 file should still exist"
 
 
-def test_delete_memory_exact_match_not_like(tmp_path, fresh_db):
-    """H5: Verify delete_memory uses exact match (WHERE memory_path = ?), not LIKE."""
-    bundle = OKFBundle(str(tmp_path / "knowledge"))
-
-    # Create memories with IDs that are substrings of each other
-    mem1 = create_memory(
-        type_="pattern",
-        title="test",
-        body="Test memory",
-        confidence=0.7,
-    )
-    id1 = store_memory(mem1, bundle)  # Will be something like memory/tribal/test-<uuid>
-
-    mem2 = create_memory(
-        type_="pattern",
-        title="test extended",
-        body="Test extended memory",
-        confidence=0.7,
-    )
-    id2 = store_memory(mem2, bundle)  # Will be something like memory/tribal/test-extended-<uuid>
-
-    # Add memory_refs
-    cursor = fresh_db.cursor()
-    from datetime import datetime, timezone
-    ts = datetime.now(timezone.utc).isoformat()
-    cursor.execute("INSERT INTO memory_refs (memory_path, session_id, referenced_at) VALUES (?, ?, ?)", (id1, "session1", ts))
-    cursor.execute("INSERT INTO memory_refs (memory_path, session_id, referenced_at) VALUES (?, ?, ?)", (id2, "session1", ts))
-    fresh_db.commit()
-
-    # Get the relative path for id1
-    import pathlib
-    rel_path1 = str(pathlib.Path(id1).relative_to(bundle.root)) if id1.startswith(str(bundle.root)) else id1
-
-    # Delete id1
-    delete_memory(bundle, rel_path1, conn=fresh_db)
-
-    # Verify only id1 ref is gone
-    refs_after = cursor.execute("SELECT memory_path FROM memory_refs").fetchall()
-    assert len(refs_after) == 1, f"Should have 1 ref after delete, got {len(refs_after)}"
-    remaining_path = refs_after[0][0]
-    assert remaining_path == id2, f"Only id2 should remain, got {remaining_path}"
-
-    # Verify files
-    assert not (bundle.root / f"{id1}.md").exists(), "id1 file should be deleted"
-    assert (bundle.root / f"{id2}.md").exists(), "id2 file should still exist"

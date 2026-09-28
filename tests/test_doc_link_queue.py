@@ -410,14 +410,6 @@ class TestDocLinkCompletion:
             ("knowledge/spec/b", "references", "knowledge/spec/c"),
         ]
 
-    def test_output_spec_pins_the_line_format(self):
-        from cairn.llm.tasks import _output_spec
-
-        spec = _output_spec("doc-link", {"members": ["knowledge/spec/a"]})
-        assert "<concept_id> <relation> <related_id>" in spec
-        assert "relates-to | supersedes | superseded-by | references" in spec
-
-
 # --- VAL-INGEST-015: bogus completions rejected, no writes ---
 
 

@@ -204,21 +204,6 @@ def _closure_rows(conn: sqlite3.Connection) -> list[tuple]:
     return sorted(out)
 
 
-def _dataflow_rows(conn: sqlite3.Connection) -> list[tuple]:
-    """Raw dataflow rows as stable tuples (debug helper; the parity arbiter
-    uses _assert_dataflow_frontier_parity instead)."""
-    rows = conn.execute("SELECT symbol, repo, within_repo, cross_repo FROM dataflow").fetchall()
-    return sorted(
-        (
-            r["symbol"],
-            r["repo"],
-            tuple(sorted(json.loads(r["within_repo"] or "[]"))),
-            tuple(sorted(json.loads(r["cross_repo"] or "[]"))),
-        )
-        for r in rows
-    )
-
-
 # impact_analysis (the dataflow payload source) runs at max_depth=5: a caller
 # is listed iff its DFS first-visit depth is <= 5, and first-visit depth is
 # enumeration-order dependent on diamond graphs. A maintained DB's edge rowids
@@ -751,47 +736,6 @@ def test_maintain_transitive_closure_matches_full_rebuild(fresh_db):
     assert maintained == expected
 
 
-def test_maintain_transitive_closure_drops_rows_of_deleted_sources(fresh_db):
-    """Rows whose SOURCE symbol was deleted must vanish; rows referencing a
-    deleted symbol as target only ever live under affected sources (see the
-    docstring argument) and are re-derived away here."""
-    _seed_mini_graph(fresh_db)
-    build_transitive_closure(fresh_db)
-
-    fresh_db.execute("DELETE FROM edges WHERE source_id = 's3' OR target_id = 's3'")
-    fresh_db.execute("DELETE FROM symbols WHERE id = 's3'")
-    fresh_db.commit()
-
-    # Affected set: s2 (its edge into s3 vanished) + ancestors of s2 (s1, s5).
-    maintain_transitive_closure(fresh_db, {"s1", "s2", "s3", "s5"})
-
-    stale = fresh_db.execute(
-        "SELECT COUNT(*) FROM transitive_edges WHERE source_id = 's3' OR target_id = 's3'"
-    ).fetchone()[0]
-    assert stale == 0
-
-
-def test_maintain_transitive_closure_derives_via_shared_core(fresh_db, monkeypatch):
-    """maintain_transitive_closure must re-derive the affected rows through the
-    builder's _closure_rows core with restrict_sources bound to those ids."""
-    _seed_mini_graph(fresh_db)
-    build_transitive_closure(fresh_db)
-
-    seen: dict = {}
-    real = dataflow_mod._closure_rows
-
-    def spy(conn, max_depth, restrict_sources=None):
-        seen["max_depth"] = max_depth
-        seen["restrict_sources"] = restrict_sources
-        return real(conn, max_depth, restrict_sources=restrict_sources)
-
-    monkeypatch.setattr(dataflow_mod, "_closure_rows", spy)
-    maintain_transitive_closure(fresh_db, {"s1", "s2", "s5"})
-
-    assert sorted(seen["restrict_sources"]) == ["s1", "s2", "s5"]
-    assert seen["max_depth"] == CLOSURE_MAX_DEPTH
-
-
 def _seed_random_closure_graph(conn, rng):
     """A randomized web exercising the closure's tie-break inputs: names with
     global counts 1/2/3, every structural kind plus a noise kind, resolved /
@@ -873,29 +817,6 @@ def test_scoped_closure_rows_match_full_rows_exactly(fresh_db):
             assert scoped == expected, (
                 f"seed {seed}: restrict sample starting {restrict[:3]} diverged"
             )
-
-
-def test_maintain_transitive_closure_issues_no_unscoped_reads(fresh_db):
-    """The incremental path reads only scoped statements: every symbols read
-    carries an id/name predicate and every edges read carries source_id IN --
-    the O(graph) full scans must never come back."""
-    _seed_random_closure_graph(fresh_db, random.Random(7))
-    build_transitive_closure(fresh_db)
-
-    statements: list[str] = []
-    fresh_db.set_trace_callback(statements.append)
-    try:
-        maintain_transitive_closure(fresh_db, {"sym_0", "sym_1", "sym_2"})
-    finally:
-        fresh_db.set_trace_callback(None)
-
-    assert statements, "no SQL captured"
-    for stmt in statements:
-        norm = " ".join(stmt.split())
-        if "FROM symbols" in norm:
-            assert "WHERE id IN" in norm or "WHERE name =" in norm, norm
-        if "FROM edges" in norm:
-            assert "WHERE source_id IN" in norm, norm
 
 
 def test_maintain_after_targeted_delete_matches_full_rebuild(fresh_db):

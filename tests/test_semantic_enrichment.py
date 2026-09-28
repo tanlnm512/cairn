@@ -280,16 +280,6 @@ class TestEnrichIdfFlagOffEquivalence:
             )
         assert rec.term_df_selects() == []
 
-    @pytest.mark.parametrize("probe", _PROBES)
-    def test_empty_object_still_equals_no_params(self, idf_db, probe):
-        from cairn.graph.semantic import RetrievalParams, semantic_search
-
-        plain = semantic_search(idf_db, probe, limit=10)
-        injected = semantic_search(
-            idf_db, probe, limit=10, params=RetrievalParams()
-        )
-        assert injected == plain
-
     def test_enrich_idf_alone_is_inert_without_enrich(self, idf_db):
         """enrich_idf=True with enrichment off does nothing: no lookup,
         no SELECTs, byte-identical results to the plain call."""

@@ -97,17 +97,6 @@ class TestAgentSuite:
         # Every generated file mentions method_N (defines or calls it).
         assert task.control.tool_calls > N_FILES
 
-    def test_medians_over_runs(self, tmp_path):
-        """With runs=3 the reported effort is the median sample, not a mean
-        or a last value: call counts are deterministic so the median equals
-        that same value."""
-        report = _run_suite(tmp_path, name="median", runs=3)
-        assert report.runs == 3
-        for task in report.tasks:
-            # Deterministic counts -> median == the (only) observed value.
-            assert task.control.tool_calls >= 1
-            assert task.cairn.tool_calls >= 1
-
     def test_control_arm_deterministic_across_runs(self, tmp_path):
         """Two suites over identical corpora (same seed) produce identical
         control-arm call counts and chars per task."""

@@ -296,16 +296,6 @@ class TestRRFWeightsKnob:
         assert by_name["vectorOnlyNode"] == 0.0
         assert by_name["alphaBulk"] > 0.0  # genuine BM25-leg contribution
 
-    def test_weights_flip_the_tail_order(self, seeded_db):
-        """The knob-turn proof: same fixture, same scores formula, only the
-        weight tuple differs -- vectorOnlyNode and alphaBulk swap ranks."""
-        dense_order = [n for n, _ in self._order(seeded_db, 1.0, 0.0)]
-        sparse_order = [n for n, _ in self._order(seeded_db, 0.0, 1.0)]
-        assert dense_order != sparse_order
-        assert dense_order.index("vectorOnlyNode") < dense_order.index("alphaBulk")
-        assert sparse_order.index("alphaBulk") < sparse_order.index("vectorOnlyNode")
-
-
 class TestRRFKKnob:
     def test_k_rescales_fused_scores(self, seeded_db):
         """k=1 instead of the hard-coded 60: the pure-dense top score

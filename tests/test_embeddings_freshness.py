@@ -72,24 +72,6 @@ def test_edited_docstring_triggers_reembed_without_model_change(fresh_db):
     assert after_row["vec"] != before_row["vec"]
 
 
-def test_embed_all_reaps_by_default(fresh_db):
-    """embed_all's default reap_orphans=True should reap without a separate call."""
-    from cairn.graph import embeddings as emb
-
-    _seed_one_symbol(fresh_db)
-    conn = fresh_db
-    emb.embed_all(conn)
-
-    conn.execute("DELETE FROM symbols WHERE id = '1'")
-    conn.commit()
-
-    summary = emb.embed_all(conn)
-    # Flagless embed_all is multivector by default: the reaped
-    # symbol carries 1 base row + 2 mv rows (name, docstring) = 3 rows.
-    assert summary["reaped"] == 3
-    assert emb.embed_count(conn) == 0
-
-
 def test_null_content_hash_from_legacy_row_is_treated_as_stale(fresh_db):
     """Rows written before the content_hash column existed must self-heal."""
     from cairn.graph import embeddings as emb

@@ -1059,9 +1059,10 @@ class TestClaudeGlobalMcpRegistration:
 
         assert check_installed(str(ws))["claude"] is True
 
-        claude_hits = [(c, d, e) for c, d, e in _enumerate_registrations()
+        claude_hits = [(c, d, e, ws_owned)
+                       for c, d, e, ws_owned in _enumerate_registrations()
                        if c == "claude"]
-        assert ("claude", "~/.claude.json", entry) in claude_hits
+        assert ("claude", "~/.claude.json", entry, False) in claude_hits
 
     def test_doctor_reads_droid_user_scope_registration(
             self, fake_home, tmp_path):
@@ -1081,9 +1082,10 @@ class TestClaudeGlobalMcpRegistration:
 
         assert check_installed(str(ws))["droid"] is True
 
-        droid_hits = [(c, d, e) for c, d, e in _enumerate_registrations()
+        droid_hits = [(c, d, e, ws_owned)
+                      for c, d, e, ws_owned in _enumerate_registrations()
                       if c == "droid"]
-        assert ("droid", "~/.factory/mcp.json", entry) in droid_hits
+        assert ("droid", "~/.factory/mcp.json", entry, False) in droid_hits
 
     @pytest.mark.skipif(
         not os.environ.get("CAIRN_TEST_CLAUDE_CLI") or not shutil.which("claude"),

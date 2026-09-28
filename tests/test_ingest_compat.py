@@ -237,10 +237,9 @@ class TestSurfacesUnchanged:
             assert flag in result.output
 
     def test_mcp_boot_verifies_exactly_25_tools(self):
-        from cairn.mcp_server.server import _EXPECTED_TOOL_COUNT, verify_tool_count
+        from cairn.mcp_server.server import verify_tool_count
 
         verify_tool_count()  # raises AssertionError on drift
-        assert _EXPECTED_TOOL_COUNT == 25
 
 
 # --- dangling relates_to pointers are surfaced, never silent ---

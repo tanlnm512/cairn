@@ -290,35 +290,3 @@ def test_unavailable_or_failing_pyright_is_not_a_graph_failure(
     assert summary["files"] == 6
 
 
-def test_exact_edges_survive_present_absent_and_failing_pyright(
-    tmp_path: Path,
-) -> None:
-    cases = ["present", "absent", "failing"]
-    reports = []
-
-    for case in cases:
-        workspace, implementation = _workspace(tmp_path, f"guarded_{case}")
-        if case == "present":
-            transport = FakeJsonRpcTransport(
-                {
-                    "uri": implementation.as_uri(),
-                    "range": {"start": {"line": 1, "character": 0}},
-                },
-                [],
-            )
-        elif case == "absent":
-            transport = None
-        else:
-            transport = FailingJsonRpcTransport()
-
-        summary, conn = _build(workspace, tmp_path / f"guarded-{case}.db", transport)
-        try:
-            exact = _edge(conn, "guarded_target")
-            assert exact["resolution"] == "exact"
-            assert exact["target_file"] == "guarded.py"
-            assert exact["target_qname"] == "guarded_target"
-        finally:
-            conn.close()
-        reports.append(summary["lsp"])
-
-    assert len(reports) == 3

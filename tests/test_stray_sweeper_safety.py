@@ -293,6 +293,20 @@ class TestTerminatePidReuseGuard:
         lc.terminate_pid(4101, timeout=0.01, cmd_check=lc._is_cairn_serve_cmdline)
         assert sent == [signal.SIGTERM]
 
+    def test_vanished_pid_is_tolerated(self, monkeypatch):
+        """The pid dies between find and kill (ProcessLookupError on the
+        SIGTERM itself): terminate_pid returns without raising."""
+        monkeypatch.setattr(
+            lc, "_pid_cmdline", lambda pid: "/usr/local/bin/cairn serve"
+        )
+
+        def fake_kill(pid, sig):
+            raise ProcessLookupError()
+
+        monkeypatch.setattr("os.kill", fake_kill)
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        lc.terminate_pid(4101, timeout=0.01, cmd_check=lc._is_cairn_serve_cmdline)
+
     def test_still_matching_pid_is_sigkilled(self, monkeypatch):
         sent = self._armed(
             monkeypatch, ["/usr/local/bin/cairn serve", "/usr/local/bin/cairn serve"]

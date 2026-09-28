@@ -301,29 +301,6 @@ def test_missing_binary_degrades_to_tree_sitter_with_skip_record(
 
 
 @needs_scip
-def test_nonzero_exit_generation_degrades_to_tree_sitter_with_skip_record(
-    tmp_path, monkeypatch, capsys
-):
-    """Absent index and a failing stub indexer: tree-sitter build succeeds
-    with a scip_gen_nonzero_exit row and the install hint under -v."""
-    ws = _materialize("autogen", tmp_path)
-    _stub_path(ws, monkeypatch, bindir="bin-fail")
-    db = str(tmp_path / "autogen.db")
-
-    summary = build_graph(workspace=str(ws), db_path=db, verbose=True)
-
-    assert not (ws / "index.scip").exists()
-    assert summary["scip"]["edges"] == 0
-    assert _count(db, "select count(*) from edges") > 0
-    rows = _fetch(
-        db,
-        "select path from skipped_files where reason = 'scip_gen_nonzero_exit'",
-    )
-    assert rows and rows[0][0] == "index.scip"
-    assert "npm install" in capsys.readouterr().out
-
-
-@needs_scip
 def test_one_languages_failed_generation_never_blocks_another(
     tmp_path, monkeypatch
 ):

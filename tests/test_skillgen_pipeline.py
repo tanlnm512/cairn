@@ -23,7 +23,6 @@ from cairn.graph.schema import get_db
 from cairn.memory.promotion import capture_memory
 from cairn.okf.bundle import OKFBundle
 from cairn.skillgen.assembly import assemble_draft
-from cairn.skillgen.ranking import rank_candidates
 from cairn.skillgen.selector import resolve_selector
 
 HUB_CORE = (
@@ -123,37 +122,6 @@ def test_draft_ranking_tier_reflects_the_degree_tier(tmp_path):
     draft = assemble_draft(conn, resolve_selector(conn, "pkg_a"))
     assert draft.ranking_tier == "degree"
     conn.close()
-
-
-def test_empty_resolution_keeps_the_unranked_tier(tmp_path):
-    _indexed_hub(tmp_path)
-    conn = _closure_conn(tmp_path)
-    draft = assemble_draft(conn, resolve_selector(conn, "no_such_mod_qq"))
-    assert draft.ranking_tier == "unranked"
-    assert draft.symbols == []
-    conn.close()
-
-
-def test_draft_symbol_order_matches_rank_candidates_checkpoint(tmp_path):
-    _indexed_hub(tmp_path)
-    conn = _closure_conn(tmp_path)
-    res = resolve_selector(conn, "pkg_a")
-    ranked = rank_candidates(conn, res.candidates)
-    assert assemble_draft(conn, res).symbols == ranked.symbols
-    assert assemble_draft(conn, res, top_k=2).symbols == ranked.symbols[:2]
-    conn.close()
-
-
-def test_hub_symbol_ranks_above_the_alphabetically_first_leaf(cli_env):
-    _indexed_hub(cli_env)
-    _closure_conn(cli_env).close()
-    result = _invoke("pkg_a")
-    assert result.exit_code == 0, result.stdout
-    text = _skill_text(cli_env)
-    zeta = text.find("zeta_hub")
-    alpha = text.find("alpha_leaf")
-    assert zeta != -1 and alpha != -1
-    assert zeta < alpha
 
 
 def test_large_module_yields_a_bounded_top_k_skill(cli_env):

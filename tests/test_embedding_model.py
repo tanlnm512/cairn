@@ -1,4 +1,3 @@
-import os
 import tempfile
 from pathlib import Path
 
@@ -72,6 +71,3 @@ def test_purge_stale_models_removes_only_other_models():
         assert remaining[0][0] == "BAAI/bge-m3"
 
 
-def test_fp16_flag_env(monkeypatch):
-    monkeypatch.setenv("CAIRN_EMBED_FP16", "1")
-    assert os.environ.get("CAIRN_EMBED_FP16") == "1"

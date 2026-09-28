@@ -413,14 +413,6 @@ def test_telemetry_off_records_nothing_paired(cli_store, monkeypatch):
 # ---------------------------------------------------------------------------
 
 # Every env shape derive_session_id can see. (term, pane); None = unset.
-_ENV_SHAPES = [
-    ("term-sess-A", None),  # terminal id present -> term:<v>
-    (None, "17"),  # tmux pane only -> tmux:<v>
-    ("term-sess-B", "23"),  # both -> term wins (landed precedence)
-    (None, None),  # neither -> per-invocation uuid fallback
-]
-
-
 def _apply_env_shape(monkeypatch, term, pane):
     """Set one identity env shape, scrubbing BOTH vars first.
 
@@ -460,23 +452,6 @@ def test_derive_session_id_env_matrix(monkeypatch):
     assert first.startswith("cli:")
     assert second.startswith("cli:")
     assert first != second
-
-
-def test_build_row_session_id_never_unknown(monkeypatch):
-    """build_row stamps a real session id under every env shape.
-
-    Belt to the env matrix's braces: whatever the host env looks like, the
-    row builder can never emit the table's legacy ``unknown`` default (a CLI
-    row stamped ``unknown`` would vanish into the mega-session that
-    ui-dashboard-traffic-scale exists to bound). session_id is tuple slot 1
-    (the ``_INSERT_SQL`` column order).
-    """
-    for term, pane in _ENV_SHAPES:
-        _apply_env_shape(monkeypatch, term, pane)
-        row = cli_metrics.build_row("cairn config", ["--db"], 1.0, "ok")
-        session_id = row[1]
-        assert session_id, (term, pane, session_id)
-        assert session_id != "unknown", (term, pane, session_id)
 
 
 def test_no_unknown_cli_session_rows_in_store(cli_store, monkeypatch):

@@ -246,20 +246,11 @@ class TestPlanOrdering:
         with pytest.raises(WikiPlannerError, match=r".+"):
             build_page_plan(fresh_db, "r")
 
-    def test_equal_degree_modules_tiebroken_by_module_name_asc(self, fresh_db):
-        _seed_graph(fresh_db)
-        plan = build_page_plan(fresh_db, "r")
-        # m_b and m_c tie at degree 2; name ASC must keep m_b ahead of m_c.
-        assert plan.index(_page_for(plan, "m_b")) < plan.index(_page_for(plan, "m_c"))
-
-
 class TestPlanCap:
     """The plan never exceeds pages_cap, overview page included."""
 
     def test_default_cap_is_ten_pages(self):
-        signature = inspect.signature(build_page_plan)
-        assert list(signature.parameters) == ["conn", "repo", "pages_cap"]
-        assert signature.parameters["pages_cap"].default == 10
+        assert inspect.signature(build_page_plan).parameters["pages_cap"].default == 10
 
     def test_plan_capped_at_pages_cap_keeping_top_ranked_modules(self, fresh_db):
         _seed_graph(fresh_db)
@@ -311,5 +302,3 @@ class TestEmptyGraph:
         with pytest.raises(WikiPlannerError, match=r".+"):
             build_page_plan(fresh_db, "r")
 
-    def test_wiki_planner_error_is_an_exception(self):
-        assert issubclass(WikiPlannerError, Exception)

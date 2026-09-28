@@ -240,9 +240,3 @@ def test_task_list_kind_prefix_flag_splits_wiki_chains_from_catalog(cli_env):
     assert hop2.id not in cats.stdout
 
 
-def test_task_list_status_help_enumerates_dropped(cli_env):
-    """The --status help on `task list` enumerates `dropped`."""
-    result = CliRunner().invoke(task, ["list", "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "dropped" in result.stdout

@@ -241,15 +241,23 @@ def test_clear_repo_deletes_embeddings(caller_callee_db, caller_callee_ws, tmp_p
     conn = caller_callee_db(db)
     try:
         # Manually insert embedding rows for a symbol (the semantic extra isn't
-        # installed in the test env, so we simulate the rows).
+        # installed in the test env, so we simulate the rows). embeddings_mv
+        # also FK-references symbols(id) (no cascade), so a stale mv row makes
+        # the symbol DELETE raise IntegrityError unless it is cleared first.
         sym = conn.execute("SELECT id FROM symbols LIMIT 1").fetchone()
         conn.execute(
             "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk, embedded_at) "
             "VALUES (?, 'test', 4, X'00000000', 'chunk', 0)",
             (sym["id"],),
         )
+        conn.execute(
+            "INSERT INTO embeddings_mv (symbol_id, model, vector_kind, dim, vec, "
+            "chunk, embedded_at) VALUES (?, 'test', 'name', 4, X'00000000', 'nm', 0)",
+            (sym["id"],),
+        )
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM embeddings_mv").fetchone()[0] == 1
 
         _clear_repo(conn, "demo")
         conn.commit()
@@ -257,6 +265,10 @@ def test_clear_repo_deletes_embeddings(caller_callee_db, caller_callee_ws, tmp_p
         orphans = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
         assert orphans == 0, (
             f"_clear_repo should delete embeddings; {orphans} orphaned rows remain"
+        )
+        mv_orphans = conn.execute("SELECT COUNT(*) FROM embeddings_mv").fetchone()[0]
+        assert mv_orphans == 0, (
+            f"_clear_repo should delete embeddings_mv rows; {mv_orphans} remain"
         )
     finally:
         conn.close()

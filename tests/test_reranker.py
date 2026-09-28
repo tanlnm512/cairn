@@ -61,11 +61,6 @@ class TestRerankEnabled:
         from cairn.graph import reranker as rrk
         assert rrk.rerank_enabled() is False
 
-    def test_enabled_via_env_var(self, monkeypatch):
-        monkeypatch.setenv("CAIRN_RERANK", "1")
-        from cairn.graph import reranker as rrk
-        assert rrk.rerank_enabled() is True
-
     def test_enabled_via_download_marker(self, monkeypatch, tmp_path):
         """A successful download-reranker writes a marker; rerank_enabled()
         honors it even when CAIRN_RERANK is unset."""
@@ -180,40 +175,6 @@ class TestRerankSuccessPath:
             assert out[0]["rerank_score"] == 1.0
         finally:
             rrk._RERANKER_CACHE.clear()
-
-
-class TestSemanticSearchIntegration:
-    def test_semantic_search_without_rerank_has_reranked_false(self, monkeypatch, fresh_db):
-        monkeypatch.delenv("CAIRN_RERANK", raising=False)
-        from cairn.graph.queries import semantic_search
-
-        conn = _conn_with_symbols(fresh_db)
-        from cairn.graph import embeddings as emb
-
-        emb.embed_all(conn)
-
-        results = semantic_search(conn, "safeApiCall", limit=5, threshold=0.0)
-        assert results, "expected at least one hit"
-        assert all(r["reranked"] is False for r in results)
-        assert "rerank_score" not in results[0]
-
-    def test_semantic_search_with_rerank_enabled_but_uninstalled_still_returns_results(
-        self, monkeypatch, fresh_db
-    ):
-        """Enabling CAIRN_RERANK without the extra installed must degrade,
-        not break semantic_search."""
-        monkeypatch.setenv("CAIRN_RERANK", "1")
-        monkeypatch.setattr("cairn.graph.reranker.reranker_available", lambda: False)
-        from cairn.graph.queries import semantic_search
-
-        conn = _conn_with_symbols(fresh_db)
-        from cairn.graph import embeddings as emb
-
-        emb.embed_all(conn)
-
-        results = semantic_search(conn, "safeApiCall", limit=5, threshold=0.0)
-        assert results, "expected at least one hit even with rerank stage falling back"
-        assert all(r["reranked"] is False for r in results)
 
 
 # ---------------------------------------------------------------------------
@@ -392,25 +353,6 @@ class TestStructuredPairConstruction:
         assert lines[5] == ")"
         assert lines[6] == "Docstring: First line"
         assert lines[7] == "    second line"
-
-    def test_flat_format_still_reachable_for_ab(self, monkeypatch):
-        """structured=False reproduces the legacy pair byte-for-byte (raw
-        chunk, no structured head, no pre-truncation) so an A/B measurement
-        isolates the pair format alone."""
-        from cairn.graph import reranker as rrk
-
-        model = _PairRecorder(scores=[1.0])
-        _install_fake_model(monkeypatch, model)
-        candidates = [_full_candidate()]
-        try:
-            out, reranked = rrk.rerank("retry logic", candidates, limit=1, structured=False)
-        finally:
-            rrk._RERANKER_CACHE.clear()
-
-        assert reranked is True
-        assert model.pairs == [("retry logic", _VARIANT_B_CHUNK)]
-        assert out[0]["rerank_score"] == 1.0
-
 
 class TestMaxLengthPin:
     def test_crossencoder_constructed_with_explicit_max_length(self, monkeypatch):

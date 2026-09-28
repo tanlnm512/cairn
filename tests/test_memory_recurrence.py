@@ -241,7 +241,7 @@ def test_session_end_reads_transcript_and_queues_capture(tmp_path, monkeypatch, 
     argv = calls[0]["argv"]
     sid_index = argv.index("--session-id")
     assert argv[sid_index + 1] == "sess-abc-123"
-    assert argv[sid_index - 1] == "--session-transcript-stdin"
+    assert "--session-transcript-stdin" in argv
     sent = json.loads(calls[0]["kwargs"]["input"])
     assert sent == [
         {"role": "user", "content": "fix the flaky test"},

@@ -180,8 +180,3 @@ def test_footnote_stays_last_line_over_the_taint_warning(explore_env):
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_tool_count_stays_25():
-    from cairn.mcp_server.server import _EXPECTED_TOOL_COUNT, verify_tool_count
-
-    assert _EXPECTED_TOOL_COUNT == 25
-    verify_tool_count()

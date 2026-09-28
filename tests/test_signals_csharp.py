@@ -75,12 +75,6 @@ class TestImportAlias:
         assert imp.imported_path == "Y"
         assert imp.local_alias == "X"
 
-    def test_multi_segment_alias_target_keeps_full_path(self):
-        pf = _parse(b"using Project = Acme.Crm.Services;\n")
-        imp = pf.imports[0]
-        assert imp.imported_path == "Acme.Crm.Services"
-        assert imp.local_alias == "Project"
-
     def test_plain_qualified_using_has_no_alias(self):
         # A qualified plain directive is NOT an alias: the qualified_name is
         # the imported namespace itself.

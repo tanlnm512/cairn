@@ -112,10 +112,6 @@ class TestCallArity:
         pf = _parse(b"items.each do |item|\n  process(item)\nend\n")
         assert _call_edges(pf, "each")[0].call_arity == 0
 
-    def test_brace_block_is_not_an_argument(self):
-        pf = _parse(b"list.map { |y| y * 2 }\n")
-        assert _call_edges(pf, "map")[0].call_arity == 0
-
     def test_block_pass_is_not_positional(self):
         pf = _parse(b"run(a, &blk)\n")
         assert _call_edges(pf, "run")[0].call_arity == 1

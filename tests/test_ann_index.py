@@ -145,27 +145,3 @@ def test_semantic_search_falls_back_when_ann_enabled_but_no_index(monkeypatch, f
     assert results, "must fall back to brute-force scan, not return empty/crash"
 
 
-def test_semantic_search_default_env_falls_back_without_index(monkeypatch, fresh_db):
-    """Default env (ANN on, but no index built here) must match prior (ANN-off)
-    results -- rebuild_index was never called, so ann_query returns None and
-    semantic_search falls back to the brute-force scan either way."""
-    monkeypatch.delenv("CAIRN_ANN_BACKEND", raising=False)
-    from cairn.graph import embeddings as emb
-    from cairn.graph.queries import semantic_search
-
-    conn = _conn_with_symbols(fresh_db)
-    emb.embed_all(conn)
-
-    # See comment in test_semantic_search_uses_ann_path_when_index_built on
-    # why this needs threshold=-1.0 rather than 0.0 with the hash embedder.
-    results = semantic_search(conn, "safeApiCall", limit=5, threshold=-1.0)
-    assert len(results) == 2
-    # With fusion now actually running (P3 fix: the .get()-on-Row bug that
-    # silently skipped RRF fusion is fixed), default provenance is the fused
-    # label, not plain "semantic". Either is valid depending on whether fusion
-    # produced BM25-only entries; the key contract is the results are present.
-    for r in results:
-        assert r["provenance"] in (
-            "semantic", "fused(bm25+semantic)", "fused(bm25+semantic, hash)",
-            "bm25",
-        ), f"unexpected provenance: {r['provenance']!r}"

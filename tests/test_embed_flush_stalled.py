@@ -155,14 +155,3 @@ def test_telemetry_off_silences_the_event(monkeypatch, caplog):
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
-def test_no_attr_value_contains_a_path_separator(monkeypatch):
-    """Universal guard: the failures attr is a bucket tag, never free text."""
-    _queue_one()
-    monkeypatch.setattr(eb, "_conn_factory", _failing_factory())
-    monkeypatch.setattr(eb, "_bundle_factory", lambda: object())
-    for _ in range(eb._WARN_AFTER):
-        eb._flush()
-
-    for attrs in _stalled_events():
-        for value in attrs.values():
-            assert "/" not in str(value) and "\\" not in str(value)

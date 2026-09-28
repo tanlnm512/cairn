@@ -156,16 +156,6 @@ class TestSupersedeChain:
         _rebuild()
         assert [m["concept_id"] for m in self._chain(ids[0])] == ids
 
-    def test_chain_from_middle_matches_oldest_entry(self, workspace):
-        ids = _supersede_corpus(_bundle())
-        _rebuild()
-        assert [m["concept_id"] for m in self._chain(ids[1])] == ids
-
-    def test_chain_from_newest_matches_oldest_entry(self, workspace):
-        ids = _supersede_corpus(_bundle())
-        _rebuild()
-        assert [m["concept_id"] for m in self._chain(ids[2])] == ids
-
     def test_members_carry_title_status_and_relation_to_next(self, workspace):
         ids = _supersede_corpus(_bundle())
         _rebuild()

@@ -11,10 +11,16 @@ from .schema import note_contention, _is_lock_contention
 _logger = logging.getLogger(__name__)
 
 
-def ann_backend_enabled() -> bool:
+def configured_backend() -> str:
+    """The resolved ``CAIRN_ANN_BACKEND`` value; an empty env value stays
+    empty (an explicit opt-out, not the default)."""
     import os
 
-    val = os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
+    return os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
+
+
+def ann_backend_enabled() -> bool:
+    val = configured_backend()
     if val != "sqlite-vec":
         # Explicit opt-out (e.g. "off"): stay disabled regardless of whether
         # sqlite_vec happens to be importable (e.g. pulled in transitively).
@@ -50,9 +56,8 @@ def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
     global _ANN_FALLBACK_WARNED
     if _ANN_FALLBACK_WARNED:
         return
-    import os
 
-    val = os.environ.get("CAIRN_ANN_BACKEND", "sqlite-vec").strip().lower()
+    val = configured_backend()
     if val != "sqlite-vec":
         # Explicit opt-out (e.g. "off"): an intentional choice, not a
         # degradation -- stay silent (mirrors the rationale in

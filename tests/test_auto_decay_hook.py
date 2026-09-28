@@ -8,7 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 
 
-
 def test_decay_called_in_update_command(tmp_path, monkeypatch):
     """VAL-MK-003: decay() is called during `cairn update` command.
 
@@ -48,46 +47,3 @@ def test_decay_called_in_update_command(tmp_path, monkeypatch):
     assert decay_called["called"], "decay() should be called during cairn update"
 
 
-def test_decay_called_in_server_boot(tmp_path, monkeypatch):
-    """VAL-MK-003: decay() is called during server.py:run() boot catch-up.
-
-    This test simulates the server boot path and verifies decay is called.
-    """
-    # Set up test environment
-    knowledge_path = str(tmp_path / "knowledge")
-    db_path = str(tmp_path / "test.db")
-    workspace = str(tmp_path / "workspace")
-    
-    Path(workspace).mkdir(parents=True, exist_ok=True)
-    Path(knowledge_path).mkdir(parents=True, exist_ok=True)
-    
-    # Monkeypatch decay to track if it's called
-    from cairn.memory import promotion
-    decay_called = {"called": False}
-    
-    def mock_decay(bundle, *args, **kwargs):
-        decay_called["called"] = True
-        return {"expired_raw": 0, "archived_tribal": 0}
-    
-    monkeypatch.setattr(promotion, "decay", mock_decay)
-    
-    # Set up environment for server boot
-    monkeypatch.setenv("CAIRN_DB", db_path)
-    
-    # Create a minimal DB schema
-    import sqlite3
-    from cairn.graph.schema import _apply_schema
-    conn = sqlite3.connect(db_path)
-    _apply_schema(conn)
-    conn.close()
-    
-    # Simulate the server boot path that includes decay
-    # We directly call the decay logic that's now wired in server.py
-    from cairn.okf.bundle import OKFBundle
-    
-    # This is what server.py does at boot (after catch-up)
-    bundle = OKFBundle(knowledge_path)
-    mock_decay(bundle)
-
-    # Assert that our monkeypatch was called
-    assert decay_called["called"], "decay() should be called during server boot"

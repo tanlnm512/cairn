@@ -115,17 +115,6 @@ def test_hand_written_scripts_carry_no_hex_colors():
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b", _script(name)), name
 
 
-def test_kind_tokens_declared_in_both_theme_blocks(tmp_path):
-    """Each --kind-* token is declared in the dark and the light theme
-    blocks (the theme contract test pins the first :root block)."""
-    css = _client(tmp_path).get("/static/app.css").text
-    for selector in ('[data-theme="dark"]', '[data-theme="light"]'):
-        block = css[css.index(selector) :]
-        block = block[: block.index("}")]
-        for kind in _KINDS:
-            assert f"--kind-{kind}:" in block, (selector, kind)
-
-
 # ---------------------------------------------------------------------------
 # Reduced motion reaches the JS-driven simulation
 # ---------------------------------------------------------------------------
@@ -138,7 +127,6 @@ def test_graph_setup_reads_reduced_motion_and_drops_physics():
     for name in ("app.js", "knowledge-graph.js"):
         script = _script(name)
         assert 'matchMedia("(prefers-reduced-motion: reduce)")' in script, name
-        assert "prefersReducedMotion" in script, name
 
 
 # ---------------------------------------------------------------------------

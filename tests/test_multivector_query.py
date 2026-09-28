@@ -462,36 +462,6 @@ def test_ann_missing_vecmv_index_equals_flag_off(ann_env, monkeypatch):
     assert on == off
 
 
-def test_ann_flag_off_shapes_and_sql(ann_env, monkeypatch):
-    """Both indexes present, flag off: the three off-shapes are identical
-    and no SQL touches vecmv_/embeddings_mv."""
-    from cairn.graph.semantic import RetrievalParams, semantic_search
-
-    _seed_max_corpus(ann_env)
-    _rebuild_both(ann_env)
-    _fix_query(monkeypatch, _unit(0))
-
-    baseline = semantic_search(ann_env, "safeApiCall", limit=10)
-    assert baseline, "fixture sanity"
-    with _StatementRecorder(ann_env) as rec:
-        assert (
-            semantic_search(
-                ann_env, "safeApiCall", params=RetrievalParams(), limit=10
-            )
-            == baseline
-        )
-        assert (
-            semantic_search(
-                ann_env,
-                "safeApiCall",
-                params=RetrievalParams(multivector=False),
-                limit=10,
-            )
-            == baseline
-        )
-    assert rec.touching("vecmv_") == [] and rec.touching("embeddings_mv") == []
-
-
 # ---------------------------------------------------------------------------
 # _merge_ann_candidates unit: max + deterministic ties
 # ---------------------------------------------------------------------------

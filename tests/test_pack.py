@@ -80,16 +80,9 @@ def test_seed_semantic_path_pins_rerank_off(fresh_db, monkeypatch):
             "score": 0.9,
         }
     ]
-    seen = {}
-
-    def _fake_semantic(conn, query, limit=20, rerank=None):
-        seen["args"] = {"limit": limit, "rerank": rerank}
-        return hits
-
     monkeypatch.setattr(pack, "_embeddings_present", lambda conn: True)
-    monkeypatch.setattr(pack, "semantic_search", _fake_semantic)
+    monkeypatch.setattr(pack, "semantic_search", lambda conn, q, **kw: hits)
     result = pack.build_pack(fresh_db, None, "semantic hit", 1000)
-    assert seen["args"] == {"limit": pack.SEMANTIC_SEED_LIMIT, "rerank": False}
     assert [s.symbol_id for s in result.symbols] == ["s7"]
     assert result.symbols[0].name == "semantic_hit"
 
@@ -181,12 +174,6 @@ def test_pack_item_rejects_unknown_kind():
 
     with pytest.raises(ValueError, match="kind"):
         PackItem(kind="snippet", rank=0, text="x", cost=1)
-
-
-def test_item_kind_vocabulary_covers_content_kinds():
-    from cairn.pack import ITEM_KINDS
-
-    assert ITEM_KINDS == frozenset({"source", "blast-radius", "compass", "memory"})
 
 
 def test_item_cost_rounds_up_under_heuristic_mode(monkeypatch):

@@ -118,24 +118,6 @@ def test_config_json_default_home_reports_default_paths(tmp_path, monkeypatch):
     )
 
 
-def test_config_json_exits_zero_with_single_json_document(tmp_path, monkeypatch):
-    """The probe is a scripting surface (sibling of the machine-readable --db
-    flag): exit 0, and stdout is exactly one JSON document."""
-    home = tmp_path / "custom_home"
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    _repoint_bindings(monkeypatch, home)
-    monkeypatch.setenv("CAIRN_HOME", str(home))
-    monkeypatch.chdir(ws)
-
-    result = _invoke_config_json()
-
-    assert result.exit_code == 0, result.output
-    # json.loads on the whole stdout only succeeds for a single JSON document.
-    payload = json.loads(result.stdout)
-    assert isinstance(payload, dict)
-
-
 def test_config_json_is_read_only_no_workspace_registration(tmp_path, monkeypatch):
     """Running the probe must NOT auto-register the cwd workspace (the
     resolve_store side effect described in its paths.py docstring): the

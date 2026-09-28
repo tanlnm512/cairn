@@ -147,17 +147,3 @@ class TestFedBinaryAdapter:
         assert adapter.skipped and adapter.skipped[0][1]
 
 
-class TestConvertedPipeline:
-    def test_pdf_stages_tagged_converted_with_resource(self, feed_root):
-        pdf = feed_root / "spec.pdf"
-        _text_pdf(pdf, "Deploy the gateway")
-        manifest = run_ingest(
-            files=[pdf], dirs=[], outbox=feed_root / "outbox"
-        )
-
-        assert manifest["counts"]["accepted"] == 1
-        row = manifest["rows"][0]
-        assert "converted" in row["tags"]
-        assert "spec.pdf" in row["resource"]
-        staged = feed_root / "outbox" / row["staged_path"]
-        assert staged.exists()

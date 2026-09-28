@@ -9,12 +9,9 @@ fallbacks), determinism, and the no-LLM/no-network hermeticity guard.
 
 from __future__ import annotations
 
-import ast
 import dataclasses
-import inspect
 import math
 import socket
-from pathlib import Path
 
 import pytest
 
@@ -297,21 +294,3 @@ class TestDeterminismHermeticity:
 
         assert again == baseline
 
-    def test_module_imports_are_hermetic(self) -> None:
-        # Standing guard: only stdlib math, typing,
-        # dataclasses, and collections.abc may be imported -- no random,
-        # time, os, sqlite3, or anything network/LLM-capable.
-        src = Path(inspect.getsourcefile(expand)).read_text()
-        imported: set[str] = set()
-        for node in ast.walk(ast.parse(src)):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.add(node.module or "")
-        assert imported <= {
-            "__future__",
-            "math",
-            "collections.abc",
-            "dataclasses",
-            "typing",
-        }

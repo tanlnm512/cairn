@@ -809,11 +809,12 @@ def test_start_flusher_is_idempotent():
     metric_buffering) calls start_flusher on its first emit, and they must all
     land on the same single thread, not one each.
     """
+    before = len([t for t in threading.enumerate() if t.name == "cairn-telemetry-flusher"])
     sink.start_flusher()
-    assert sink._FLUSHER_STARTED is True
     sink.start_flusher()  # idempotent: no second thread, no error
     sink.start_flusher()
-    assert sink._FLUSHER_STARTED is True
+    started = [t for t in threading.enumerate() if t.name == "cairn-telemetry-flusher"]
+    assert len(started) == max(before, 1)
 
 
 def test_register_flusher_is_idempotent_by_identity():
