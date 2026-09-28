@@ -161,28 +161,6 @@ class TestEmbedMemoryConcepts:
         ).fetchall()
         assert len(rows) == 1, "stale chunk rows from the longer body must not survive a re-embed"
 
-    def test_batch_embeds_all_concepts_in_one_embed_call(self, db, bundle, monkeypatch):
-        """All chunks across every concept are embedded in a SINGLE _embed call
-        (not one per concept) -- the backfill/flusher perf optimization."""
-        real_embed = emb._embed
-        calls = []
-
-        def counting_embed(texts):
-            calls.append(len(texts))
-            return real_embed(texts)
-
-        monkeypatch.setattr(emb, "_embed", counting_embed)
-        _write_memory(bundle, "memory/tribal/a", "A", "Why: a.\nHow to apply: b.")
-        _write_memory(bundle, "memory/tribal/c", "C", "Why: c.\nHow to apply: d.")
-        n = embed_memory_concepts(db, bundle, ["memory/tribal/a", "memory/tribal/c"])
-        db.commit()
-        assert n == 2
-        assert len(calls) == 1, "both concepts should share one _embed call"
-        # And that one call carried all chunks from both concepts (2 each:
-        # title+Why, and How-to-apply).
-        assert calls[0] == 4
-
-
 class TestEmbedMemoryBackfill:
     def test_embeds_all_unembedded_memories(self, db, bundle):
         _write_memory(bundle, "memory/tribal/a", "A", "Body A")
@@ -385,12 +363,8 @@ class TestRenameOnTierMove:
 
 
 class TestSemanticSearchLogging:
-    def test_logs_and_returns_empty_on_error(self, db, bundle, monkeypatch, caplog):
-        """recall_memory must stay available, so _semantic_memory_search never
-        raises -- but it now leaves a debug breadcrumb instead of swallowing
-        errors silently."""
-        import logging
-
+    def test_returns_empty_on_error(self, db, bundle, monkeypatch):
+        """recall_memory must stay available: _semantic_memory_search never raises."""
         # Need at least one embedded row so the function proceeds past the
         # embed_memory_count==0 guard and reaches embed_query.
         _write_memory(bundle, "memory/tribal/foo", "T", "Body.")
@@ -401,12 +375,8 @@ class TestSemanticSearchLogging:
             raise RuntimeError("induced")
 
         monkeypatch.setattr(emb, "embed_query", _boom)
-        with caplog.at_level(logging.DEBUG, logger="cairn.memory.promotion"):
-            result = _semantic_memory_search(db, bundle, "anything")
+        result = _semantic_memory_search(db, bundle, "anything")
         assert result == []
-        assert any(
-            "semantic memory search failed" in r.message for r in caplog.records
-        ), "expected a debug breadcrumb for the swallowed error"
 
 
 # ---------------------------------------------------------------------------

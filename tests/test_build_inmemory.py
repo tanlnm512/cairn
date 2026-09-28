@@ -106,15 +106,6 @@ def test_inmemory_build_persists_fts_index(tmp_path):
     assert rows, "FTS index should be queryable immediately after in-memory persist"
 
 
-def test_get_build_db_uses_bulk_load_pragmas():
-    conn = get_build_db()
-    try:
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "memory"
-        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 0  # OFF
-    finally:
-        conn.close()
-
-
 def test_backup_to_persists_schema_and_data(tmp_path):
     conn = get_build_db()
     conn.execute(

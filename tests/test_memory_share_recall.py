@@ -16,7 +16,6 @@ import pytest
 from click.testing import CliRunner
 
 from cairn.graph.schema import get_db
-from cairn.memory.promotion import capture_memory
 from cairn.okf.bundle import OKFBundle
 
 AGENT_A = "agentA"
@@ -217,31 +216,3 @@ def test_mcp_recall_without_agent_hides_shared_entry(runner, tmp_path,
     assert "shared by" not in out
 
 
-def test_capture_and_share_roundtrip_surfaces_via_both_surfaces(
-    runner, tmp_path, monkeypatch,
-):
-    """End-to-end: capture through the store API, share through the CLI, then
-    the same fixture surfaces through search --agent and recall_memory."""
-    db_path, knowledge = _store(tmp_path)
-    conn = get_db(db_path)
-    bundle = OKFBundle(knowledge)
-    result = capture_memory(
-        conn, bundle, type_="workaround",
-        title="Hot partition workaround",
-        body="Shard before the queue fills. Why: head-of-line stall.",
-        confidence=0.7,
-    )
-    conn.commit()
-    conn.close()
-
-    share = _share(runner, db_path, result["path"], "queue,partitions")
-    assert share.exit_code == 0, share.output
-
-    cli_out = _search(runner, db_path, knowledge, "queue", "--agent", AGENT_B)
-    assert cli_out.exit_code == 0, cli_out.output
-    assert len(_rows_with(cli_out.output, "Hot partition workaround")) == 1
-
-    mcp_out = _recall(db_path, knowledge, "partitions", monkeypatch,
-                      agent=AGENT_B)
-    assert len(_rows_with(mcp_out, "Hot partition workaround")) == 1
-    assert "shared by agentA on 'partitions'" in mcp_out

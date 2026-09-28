@@ -54,16 +54,10 @@ class TestAtomicWrite:
         temps = list(tmp_path.glob("*.tmp"))
         assert temps == [], f"temp file leaked after failure: {temps}"
 
-    def test_atomic_replace_preserves_existing_on_crash(self, tmp_path):
-        """Simulate crash mid-write: the original file is NOT truncated.
-
-        _atomic_write_text writes to a temp file then os.replace's it. If
-        the process is killed before os.replace, the original is intact.
-        """
+    def test_overwrite_replaces_existing_content(self, tmp_path):
         path = tmp_path / "config.json"
         path.write_text('{"original": true}')
 
-        # Write new content — the original should only be replaced on success.
         _atomic_write_text(path, '{"new": true}\n')
         data = json.loads(path.read_text())
         assert data == {"new": True}, "content should be fully replaced"

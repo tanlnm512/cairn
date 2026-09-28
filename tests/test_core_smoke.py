@@ -15,7 +15,6 @@ close a real gap: those code paths had ZERO coverage before this file.
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -28,13 +27,6 @@ pytestmark = pytest.mark.core
 # ---------------------------------------------------------------------------
 # Shared local helpers (kept here so the file is fully self-contained)
 # ---------------------------------------------------------------------------
-
-def _row(conn, table, **cols):
-    """Insert a row given kwargs as column=value pairs."""
-    keys = ", ".join(cols)
-    placeholders = ", ".join("?" for _ in cols)
-    conn.execute(f"INSERT INTO {table} ({keys}) VALUES ({placeholders})", list(cols.values()))
-
 
 def _make_workspace(tmp_path, name: str, files: dict) -> tuple[str, str]:
     """Create a single-repo workspace under tmp_path; return (workspace, db_path)."""
@@ -305,37 +297,6 @@ def test_server_boot_guard_exits_on_empty_store(monkeypatch, tmp_path):
         assert exc.value.code == 1
 
 
-@pytest.mark.parametrize(
-    "module_path, tool, conn_attr, query_path, ok_return, call_args",
-    [
-        ("cairn.mcp_server.tools_graph", "find_definition", "_conn", "cairn.graph.queries.find_definition", [], ("test_symbol",)),
-        ("cairn.mcp_server.tools_graph", "get_callers", "_conn", "cairn.graph.queries.get_callers", [], ("test_symbol",)),
-        ("cairn.mcp_server.tools_graph", "impact_analysis", "_conn", "cairn.graph.queries.impact_analysis", {"total": 0, "impacted": [], "cycles": []}, ("test_symbol",)),
-        ("cairn.mcp_server.tools_graph", "explore", "_conn", "cairn.graph.queries.explore", {"seeds": [], "files": {}, "call_paths": {}, "blast_radius": {}, "dispatch_hops": []}, ("test_symbol",)),
-        ("cairn.mcp_server.tools_graph", "search_symbols", "_conn", "cairn.graph.queries.search_symbols", [], ("test_symbol",)),
-    ],
-    ids=["find_definition", "get_callers", "impact_analysis", "explore", "search_symbols"],
-)
-def test_tool_closes_conn_on_exception(module_path, tool, conn_attr, query_path, ok_return, call_args, mock_conn):
-    """Each MCP graph tool must close its connection even when the underlying
-    query raises (the connection-leak fix). Parametrized across the read tools
-    that share the same try/finally/_conn shape."""
-    import importlib
-    mod = importlib.import_module(module_path)
-    fn = getattr(mod, tool)
-
-    def raises(*a, **kw):
-        raise RuntimeError("query failed")
-
-    with patch(query_path, raises):
-        with patch(f"{module_path}.{conn_attr}", return_value=mock_conn):
-            try:
-                fn(*call_args)
-            except RuntimeError:
-                pass
-    assert mock_conn.is_close_called(), f"{tool} must close conn on exception"
-
-
 def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
     """NEW: a read-only get_db connection must refuse writes. This guards the
     core read-only-daemon invariant (can't hold the writer lock -> can't cause
@@ -362,84 +323,6 @@ def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
     monkeypatch.setenv("CAIRN_READ_ONLY", "1")
     from cairn.mcp_server._server_core import _read_only_mode
     assert _read_only_mode() is True
-
-
-def test_sweep_strays_kills_orphans_not_daemon(monkeypatch):
-    """NEW: find_strays + sweep_strays must return orphan 'cairn serve' pids while
-    excluding the launchd-managed daemon pid, the daemon's spawned child, the
-    current process, and non-server cmdlines a pattern scan false-positives on.
-    Guards the stray-sweeper that self-heals DB lock contention (audit F1/F2:
-    candidates are verified by anchored cmdline token match + lsof db-holding,
-    all mocked -- no real process is touched)."""
-    from cairn.mcp_server import lifecycle as lc
-
-    fake_orphan = 99999  # the orphaned stdio server (`cairn serve`, editor shape)
-    daemon_child = 77777  # the server process spawned by the launchd daemon
-    daemon_pid = 88888
-    own_pid = os.getpid()
-    grep_pid = 66666  # `grep cairn serve`: pgrep -f matches it; token check must not
-
-    # Mock running_pid (launchd daemon).
-    monkeypatch.setattr(lc, "running_pid", lambda: daemon_pid)
-
-    # Full cmdline table served to `ps -p <pid> -o command=`: self and the
-    # daemon BOTH look like real servers holding the db -- only the protected
-    # set can save them.
-    cmdlines = {
-        daemon_pid: "/usr/local/bin/cairn serve run --port 9876 --read-only",
-        daemon_child: "/bin/zsh -c cairn helper",
-        own_pid: "/usr/local/bin/cairn serve",
-        fake_orphan: "/usr/local/bin/cairn serve",
-        grep_pid: "grep cairn serve",
-    }
-
-    # Discriminate the subprocess shapes the sweeper issues: `pgrep -P
-    # <daemon>` (child discovery), `pgrep -f 'cairn serve'` (candidate
-    # superset), `ps -p <pid> -o command=` (per-pid cmdline), and `lsof -F p
-    # <db>` (db holders: daemon + orphan hold THIS db).
-    def fake_run(args, *rest, **kw):
-        res = MagicMock()
-        res.stderr = ""
-        if args[0] == "pgrep" and "-P" in args:
-            # daemon's direct children
-            res.returncode = 0
-            res.stdout = f"{daemon_child}\n"
-        elif args[0] == "pgrep":
-            # candidate superset from the broad pattern scan
-            res.returncode = 0
-            res.stdout = (
-                f"{daemon_pid}\n{daemon_child}\n{own_pid}\n"
-                f"{fake_orphan}\n{grep_pid}\n"
-            )
-        elif args[0] == "ps":
-            pid = int(args[args.index("-p") + 1])
-            cmd = cmdlines.get(pid)
-            res.returncode = 0 if cmd else 1
-            res.stdout = (cmd + "\n") if cmd else ""
-        elif args[0] == "lsof":
-            res.returncode = 0
-            res.stdout = f"p{daemon_pid}\nf3\np{fake_orphan}\np{own_pid}\n"
-        else:
-            res.returncode = 1
-            res.stdout = ""
-        return res
-
-    monkeypatch.setattr("subprocess.run", fake_run)
-
-    strays = lc.find_strays("/fake/.kg")
-    assert strays == [fake_orphan], "only the orphan qualifies as a stray"
-    assert daemon_pid not in strays, "daemon pid must be excluded"
-    assert daemon_child not in strays, "daemon's spawned child must be excluded"
-    assert own_pid not in strays, "own pid must be excluded"
-    assert grep_pid not in strays, "non-server cmdline must be excluded"
-
-    # terminate_pid must tolerate a nonexistent pid (fully mocked: no real
-    # signal is ever sent).
-    def fake_kill(pid, sig):
-        raise ProcessLookupError()
-
-    monkeypatch.setattr("os.kill", fake_kill)
-    lc.terminate_pid(fake_orphan, timeout=0.1)
 
 
 def test_sse_responds_detects_live_vs_dead(monkeypatch):

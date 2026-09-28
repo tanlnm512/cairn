@@ -107,11 +107,6 @@ class TestWarmModels:
         assert len(embed_calls) == 1
         assert rerank_calls == []
 
-    def test_hash_backend_skips_embed_model(self, monkeypatch, embed_calls, rerank_calls):
-        monkeypatch.setattr(embeddings, "_effective_backend", lambda: "hash")
-        model_warmup.warm_models()
-        assert embed_calls == []
-
     def test_hash_backend_env_skips_embed_model(self, hash_backend, embed_calls, rerank_calls):
         """The real resolution path (CAIRN_EMBED_BACKEND=hash via env), not a
         stub of _effective_backend -- proves the gate reads the resolver."""

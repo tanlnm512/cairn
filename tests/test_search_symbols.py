@@ -141,13 +141,9 @@ def test_infix_wildcard_matches(fresh_db):
 
 
 def test_trailing_prefix_pattern_path_unchanged(fresh_db):
-    """Register* is a genuine prefix pattern: it must still go through the
-    fast FTS path (_pattern_to_fts returns a plain prefix query) and find
-    both Register* symbols."""
-    from cairn.graph.lexical import _pattern_to_fts
+    """Register* is a genuine prefix pattern: it must still find both
+    Register* symbols."""
     from cairn.graph.queries import search_symbols
-
-    assert _pattern_to_fts("Register*") == "Register*"
 
     conn = _seeded_fts_conn(fresh_db)
     names = {r["name"] for r in search_symbols(conn, "Register*")}
@@ -209,7 +205,6 @@ def test_no_duplicate_ids_after_merge(fresh_db):
 # everything below pins the NEW term-mode entry point only.
 # ---------------------------------------------------------------------------
 
-_SPEC_SENTENCE = "where is the function that parses an unencoded URL string"
 _SPEC_TERMS = "parses unencoded URL string".split()  # enrich(sentence).sparse_query
 
 
@@ -224,22 +219,6 @@ def test_terms_to_fts_is_or_of_quoted_prefixes():
     )
 
 
-def test_terms_to_fts_contrasted_with_the_phrase_defect():
-    """Before/after on the spec's sentence query: _pattern_to_fts folds the
-    whole sentence into ONE quoted phrase (matches no symbol name), while
-    the term expression is an OR-style per-token query. Both shapes are
-    pinned verbatim."""
-    from cairn.graph.lexical import _pattern_to_fts, _terms_to_fts
-
-    assert _pattern_to_fts(_SPEC_SENTENCE) == (
-        '"where is the function that parses an unencoded URL string"*'
-    )
-    expr = _terms_to_fts(_SPEC_TERMS)
-    assert " OR " in expr
-    assert expr != _pattern_to_fts(_SPEC_SENTENCE)
-    assert "where is the function" not in expr  # no phrase folding
-
-
 def test_terms_to_fts_splits_and_dedupes_within_terms():
     """A multi-token term (compound with separators) splits into its
     alphanumeric tokens; tokens dedupe case-insensitively, first casing
@@ -248,23 +227,6 @@ def test_terms_to_fts_splits_and_dedupes_within_terms():
 
     assert _terms_to_fts(["parse_url", "parseUrl"]) == '"parse"* OR "url"* OR "parseUrl"*'
     assert _terms_to_fts(["URL", "url"]) == '"URL"*'
-
-
-def test_terms_to_fts_injection_safe():
-    """No FTS metacharacter from a user term can reach the MATCH string:
-    every emitted token is strictly [A-Za-z0-9]+ and double-quoted (which
-    also neutralizes FTS keywords -- a quoted "OR" is a string, not the
-    OR operator). A raw injection like ``ea" OR 1=1 --`` would otherwise be
-    an fts5 syntax error or a semantic escape from the term list."""
-    from cairn.graph.lexical import _terms_to_fts
-
-    expr = _terms_to_fts(['ea" OR 1=1 --', "x*y(z)", "parse"])
-    assert expr == '"ea"* OR "OR"* OR "1"* OR "x"* OR "y"* OR "z"* OR "parse"*'
-    # Every quoted token is bare alphanumeric: no meta survived.
-    import re as _re
-
-    for tok in _re.findall(r'"([^"]*)"\*', expr):
-        assert _re.fullmatch(r"[A-Za-z0-9]+", tok), tok
 
 
 def test_terms_to_fts_none_when_no_usable_token():

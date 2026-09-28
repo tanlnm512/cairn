@@ -243,16 +243,6 @@ def test_vendored_stack_referenced_once_with_cache_busting(tmp_path):
         assert len(loads) == 1, (name, loads)
 
 
-def test_alpine_loads_deferred(tmp_path):
-    """Alpine's install contract: the core bundle loads with defer, so it
-    initializes after the document is parsed (no Alpine-unready flashes)."""
-    html = _client(tmp_path).get("/").text
-    assert re.search(
-        r'<script defer src="[^"]*/static/alpine\.min\.js\?v=\d+"></script>',
-        html,
-    )
-
-
 def test_htmx_extension_loads_after_htmx_core(tmp_path):
     """Deferred scripts execute in document order, so the alpine-morph
     extension's defineExtension call sees the htmx global only if its tag

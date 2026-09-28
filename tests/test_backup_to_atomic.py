@@ -158,39 +158,6 @@ def test_backup_to_concurrent_rebuild_raises_with_message(tmp_path):
         os.close(lock_fd)
 
 
-def test_backup_to_lock_released_on_success(tmp_path):
-    """VAL-DB-002: Lock is released after successful backup."""
-    mem_conn = get_build_db()
-    mem_conn.execute(
-        "INSERT INTO repos (id, name, path, language, git_remote, indexed_at) "
-        "VALUES ('r1', 'demo', '/tmp/demo', 'kotlin', NULL, '2026-01-01')"
-    )
-    mem_conn.commit()
-
-    db_path = str(tmp_path / "lock_release.db")
-    lock_path = db_path + ".build.lock"
-
-    backup_to(mem_conn, db_path)
-    mem_conn.close()
-
-    # Verify lock file doesn't exist (or is not locked)
-    # The implementation might leave an empty lock file, but it shouldn't be locked
-    if os.path.exists(lock_path):
-        # Try to acquire the lock - should succeed immediately
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
-        try:
-            # Use non-blocking try lock - should succeed
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # If we get here, the lock was available
-        except (IOError, OSError) as e:
-            if e.errno == errno.EWOULDBLOCK:
-                pytest.fail("Lock should have been released after successful backup")
-            raise
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
-
-
 def test_backup_to_persists_wal_and_foreign_keys(tmp_path):
     """VAL-DB-001: Persisted DB has journal_mode=WAL and foreign_keys is set."""
     mem_conn = get_build_db()

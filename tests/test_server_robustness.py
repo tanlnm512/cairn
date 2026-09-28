@@ -27,23 +27,6 @@ from cairn.mcp_server import server
 class TestStoreExistenceCheck:
     """Test M9: Server boot guard for missing store."""
 
-    def test_missing_store_exits_cleanly(self, monkeypatch, tmp_path):
-        """Empty DB at boot raises SystemExit with helpful message."""
-        # Create an empty database (no schema)
-        empty_db = tmp_path / "empty.db"
-        empty_db.touch()
-        
-        monkeypatch.setenv("CAIRN_DB", str(empty_db))
-        
-        # Mock the actual mcp.run() so we don't try to start the server
-        with patch("cairn.mcp_server.server.mcp"), \
-             patch("cairn.mcp_server.server.verify_tool_count"):
-            with pytest.raises(SystemExit) as exc_info:
-                server.run(transport="stdio")
-            
-            # Should exit with error code 1
-            assert exc_info.value.code == 1
-
     def test_valid_store_proceeds(self, monkeypatch, tmp_path, fresh_db):
         """Valid DB with symbols table boots successfully."""
         # Create a temporary database with schema using fresh_db

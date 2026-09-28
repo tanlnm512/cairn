@@ -377,28 +377,6 @@ def test_live_loop_is_htmx_event_driven_and_never_fetches():
     assert "XMLHttpRequest" not in loop
 
 
-def test_live_loop_paused_and_hidden_guards_cancel_the_poll():
-    """Inside the beforeRequest listener the paused guard
-    leads — ahead of the transport call — so a paused loop issues no
-    fetch regardless of tab state, and a hidden tab fetches nothing; both
-    refuse the request while htmx's own timer keeps its schedule, so the
-    next unpaused/visible tick catches up."""
-    loop = _live_loop_js()
-    listener = re.search(
-        r'addEventListener\(\s*["\']htmx:beforeRequest["\']', loop
-    )
-    assert listener, "the module never refuses poll requests"
-    body = loop[listener.end():]
-
-    target_guard = re.search(r"fromRegion\(", body)
-    guard = re.search(r"if\s*\(\s*paused\s*\|\|\s*document\.hidden\s*\)", body)
-    cancel = re.search(r"preventDefault\(\s*\)", body)
-    assert target_guard, "the listener must scope to the polled region"
-    assert guard, "the paused||hidden guard is missing"
-    assert cancel, "the guard must refuse the request, not just note it"
-    assert target_guard.start() < guard.start() < cancel.start()
-
-
 def test_live_loop_pause_toggles_words_resume_restores_live():
     """The pause toggle is the state machine's pause half — it
     lands the 'paused' word and flips the button to Resume; the resume
@@ -457,27 +435,6 @@ def test_live_loop_failure_sets_disconnected_success_restores_running():
         r'setState\(\s*["\']disconnected["\']\s*\)', error_window
     ), "a failed poll never sets 'disconnected'"
     assert "connection lost — retrying" in error_window
-
-
-def test_live_loop_restores_window_scroll_around_the_region_swap():
-    """#refresh-region semantics: the module anchors the page across each
-    region swap — scroll captured in the before-swap listener, restored
-    in the after-swap one — so a shrinking fragment cannot pull the page
-    out from under the reader (typing is safe by construction: the form
-    lives outside the region)."""
-    loop = _live_loop_js()
-
-    before = re.search(r'addEventListener\(\s*["\']htmx:beforeSwap["\']', loop)
-    after = re.search(r'addEventListener\(\s*["\']htmx:afterSwap["\']', loop)
-    assert before and after, "the swap scroll anchors are missing"
-
-    harvest = re.search(r"scrollY\s*=\s*window\.scrollY", loop)
-    restore = re.search(r"window\.scrollTo\(", loop)
-    assert harvest, "the before-swap listener never captures scroll"
-    assert restore, "the after-swap listener never restores scroll"
-    assert (
-        before.start() < harvest.start() < after.start() < restore.start()
-    ), "scroll must be captured before the swap and restored after it"
 
 
 def test_traffic_views_load_app_js_once_and_others_do_not(tmp_path):

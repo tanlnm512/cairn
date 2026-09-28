@@ -13,60 +13,6 @@ import subprocess
 from pathlib import Path
 
 
-
-class TestPortConstantDRY:
-    """VAL-MC-005: Port constant DRY (L4)
-
-    Literal 9876 should be replaced with lifecycle.DEFAULT_PORT imports.
-    """
-
-    def test_serve_py_no_literal_9876(self):
-        """serve.py should not contain the literal 9876.
-
-        The port should be imported from lifecycle.DEFAULT_PORT instead.
-        """
-        serve_py = Path(__file__).parent.parent / "src" / "cairn" / "cli" / "serve.py"
-        content = serve_py.read_text(encoding="utf-8")
-        # Check that no bare "9876" appears (not part of longer numbers)
-        # We need to be careful to match the literal 9876, not things like "9876" inside
-        # other numbers or IDs
-        lines_with_9876 = [line for line in content.splitlines() if "9876" in line]
-        
-        # Filter out lines that are only in comments/docstrings about 9876 being the default
-        # The audit finding specifically says we should import DEFAULT_PORT instead
-        # So even in docstrings, we should reference the constant
-        assert len(lines_with_9876) == 0, (
-            f"Found literal 9876 in serve.py. These lines should import lifecycle.DEFAULT_PORT:\n"
-            f"{chr(10).join(lines_with_9876)}"
-        )
-
-    def test_agent_install_py_no_literal_9876(self):
-        """No file in the agent_install package should contain the literal 9876.
-
-        After the Phase 1.3 split, agent_install is a package
-        (src/cairn/agent_install/). The port must be imported from
-        lifecycle.DEFAULT_PORT in every module, so scan them all.
-        """
-        pkg_dir = Path(__file__).parent.parent / "src" / "cairn" / "agent_install"
-        lines_with_9876 = []
-        for src in sorted(pkg_dir.rglob("*.py")):
-            for line in src.read_text(encoding="utf-8").splitlines():
-                if "9876" in line:
-                    lines_with_9876.append(f"{src.name}: {line}")
-
-        assert len(lines_with_9876) == 0, (
-            f"Found literal 9876 in agent_install/. These lines should import lifecycle.DEFAULT_PORT:\n"
-            f"{chr(10).join(lines_with_9876)}"
-        )
-
-    def test_lifecycle_has_default_port_constant(self):
-        """lifecycle.py should define DEFAULT_PORT constant."""
-        lifecycle_py = Path(__file__).parent.parent / "src" / "cairn" / "mcp_server" / "lifecycle.py"
-        content = lifecycle_py.read_text(encoding="utf-8")
-        assert "DEFAULT_PORT" in content
-        assert "9876" in content  # The constant should have the value
-
-
 class TestUnloadReturnsRealStatus:
     """VAL-MC-006: unload() returns real status (L5)
 

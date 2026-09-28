@@ -38,12 +38,6 @@ def _last_json_line(proc: subprocess.CompletedProcess) -> dict:
     return json.loads(lines[-1])
 
 
-def test_help_runs():
-    proc = _run("--help")
-    assert proc.returncode == 0, proc.stderr
-    assert "--mode" in proc.stdout
-
-
 def test_hash_backend_build_and_cold_arm(tmp_path):
     """The dep-free smoke path: build the tiny fixture, measure one cold arm.
 

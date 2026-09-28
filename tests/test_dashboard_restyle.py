@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -47,25 +46,6 @@ _NAV_VIEWS = tuple(p for p in _MAIN_VIEWS if p != "/")
 # Pre-M2 alias names the constants block used to define; every one is
 # deleted — neither a declaration (--name:) nor a usage (var(--name))
 # may remain anywhere in the shipped assets.
-_ALIAS_TOKENS = (
-    "bg",
-    "surface",
-    "surface-2",
-    "sidebar",
-    "canvas",
-    "text",
-    "muted",
-    "border",
-    "accent-2",
-)
-
-
-def _dashboard_dir() -> Path:
-    import cairn.dashboard
-
-    return Path(cairn.dashboard.__file__).resolve().parent
-
-
 def _client(tmp_path):
     """A client over a schema-complete, empty store: every main view
     renders the real shell (no missing-DB fallback page)."""
@@ -129,75 +109,14 @@ def _seeded_client(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_stylesheet_defines_no_alias_tokens(tmp_path):
-    """The constants block's alias layer is deleted: neither declarations
-    nor var() usages of the pre-M2 names remain in the stylesheet."""
-    css = _client(tmp_path).get("/static/app.css").text
-    for alias in _ALIAS_TOKENS:
-        assert f"--{alias}:" not in css, alias
-        assert f"var(--{alias})" not in css, alias
-
-
-def test_templates_and_scripts_use_no_alias_tokens(tmp_path):
-    """Templates and the hand-written scripts resolve colors through the
-    ladder names directly — a quoted alias (e.g. cssVar("--muted"))
-    resolves to nothing once the alias block is gone, so its presence
-    fails here rather than silently breaking the canvas in the browser."""
-    aliases = tuple(f'--{a}"' for a in _ALIAS_TOKENS)
-    paths = sorted((_dashboard_dir() / "templates").glob("*.html")) + [
-        _dashboard_dir() / "static" / name
-        for name in ("app.js", "db-graph.js", "shell.js")
-    ]
-    for path in paths:
-        text = path.read_text(encoding="utf-8")
-        for alias in aliases:
-            assert alias not in text, (path.name, alias)
-
-
 # ---------------------------------------------------------------------------
 # Final control density
 # ---------------------------------------------------------------------------
 
 
-def test_control_height_is_the_dense_target(tmp_path):
-    """--control-h is pinned at the dense target so the coordinated
-    paddings/line-heights stay matched to it — drifting the constant
-    alone would re-clip 13px control text or bloat the density."""
-    css = _client(tmp_path).get("/static/app.css").text
-    assert "--control-h: 30px" in css
-
-
-def test_filter_bar_controls_carry_matched_line_height(tmp_path):
-    """Inputs, selects, and the submit button in the shared filter bar
-    set line-height 1.2 inside the fixed control height — at 13px that
-    leaves headroom in a 30px control instead of clipping."""
-    css = _client(tmp_path).get("/static/app.css").text
-    bar = css.index(".filter-bar")
-    section = css[bar : css.index("/* ----", bar + 10)]
-    for needed in (
-        "height: var(--control-h)",
-        "line-height: 1.2",
-        'button[type="submit"]',
-    ):
-        assert needed in section, needed
-
-
 # ---------------------------------------------------------------------------
 # Shared macro rendering
 # ---------------------------------------------------------------------------
-
-
-def test_filter_forms_render_the_shared_filter_bar(tmp_path):
-    """The hand-rolled filter forms are gone: history, tasks, wiki, and
-    the knowledge catalog render their controls from the shared filter
-    bar class, and the legacy graph-controls class no longer appears on
-    any main view."""
-    client = _seeded_client(tmp_path)
-    for path in ("/history", "/tasks", "/wiki", "/knowledge"):
-        resp = client.get(path)
-        assert resp.status_code == 200, path
-        assert 'class="filter-bar"' in resp.text, path
-        assert "graph-controls" not in resp.text, path
 
 
 def test_tasks_filter_select_renders_options(tmp_path):
@@ -245,18 +164,6 @@ def test_stat_rows_render_through_the_cards_macro(tmp_path):
     assert seeded.status_code == 200
     assert 'class="stat-row"' in seeded.text
     assert 'class="stat-tile"' in seeded.text
-
-
-def test_main_views_carry_no_inline_style_blocks(tmp_path):
-    """View-scoped CSS lives in app.css under the token system — a
-    per-view <style> block cannot see the alias purge or theme blocks,
-    so the shared chain styles (the last inline block) moved into the
-    stylesheet."""
-    client = _client(tmp_path)
-    for path in _MAIN_VIEWS:
-        resp = client.get(path)
-        assert resp.status_code == 200, path
-        assert "<style>" not in resp.text, path
 
 
 # ---------------------------------------------------------------------------

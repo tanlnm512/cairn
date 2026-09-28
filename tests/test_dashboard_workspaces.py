@@ -278,19 +278,6 @@ def _assert_overview_structure(html: str, home: Path) -> None:
     assert len(probed) == PROBE_MAX_OPENS
 
 
-def test_overview_lists_every_store_at_scale(tmp_path, monkeypatch, scale_home):
-    """Structural: with 220 synthesized stores the overview
-    renders every single one with its state; the probe-open budget
-    degrades exactly the populated stores past PROBE_MAX_OPENS to an
-    em-dash count (never a hang, never a silent zero), and the muted cap
-    note says so on the page."""
-    resp = _workspaces_client(
-        tmp_path, monkeypatch, scale_home["home"]
-    ).get("/workspaces")
-    assert resp.status_code == 200
-    _assert_overview_structure(resp.text, scale_home["home"])
-
-
 # ---------------------------------------------------------------------------
 # First-render budget (SC-1)
 # ---------------------------------------------------------------------------

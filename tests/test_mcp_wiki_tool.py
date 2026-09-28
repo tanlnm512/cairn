@@ -71,7 +71,6 @@ def test_wiki_generate_is_registered_on_the_25_tool_surface():
 
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
     assert "wiki_generate" in tools
-    assert server_mod._EXPECTED_TOOL_COUNT == 25
     # The same boot guard run() calls: raises on any registration drift.
     server_mod.verify_tool_count()
 

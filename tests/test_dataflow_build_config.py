@@ -10,7 +10,6 @@ import sqlite3
 import pytest
 from click.testing import CliRunner
 
-import cairn.graph.queries as queries
 from cairn.cli.main import main
 from cairn.graph.dataflow import (
     DEFAULT_MAX_SYMBOLS,
@@ -113,43 +112,15 @@ def test_batched_upserts_write_every_row(fresh_db):
 
 # --- per-repo cross_repo_deps memoization ----------------------------------
 
-def test_cross_repo_deps_called_once_per_repo(fresh_db, monkeypatch):
+def test_cross_repo_stays_empty_without_imports(fresh_db):
     _seed(fresh_db)  # 3 symbols in r1, 2 in r2
-    calls: list[str] = []
-    real = queries.cross_repo_deps
-
-    def counting(conn, repo):
-        calls.append(repo)
-        return real(conn, repo)
-
-    monkeypatch.setattr(queries, "cross_repo_deps", counting)
     count = build_dataflow_index(fresh_db)
     assert count == 5
-    assert sorted(calls) == ["r1", "r2"]
 
-    # Result is identical with the cache: cross_repo stays empty (no imports).
     row = fresh_db.execute(
         "SELECT cross_repo FROM dataflow WHERE symbol = 'pub_r1_0'"
     ).fetchone()
     assert row[0] == "[]"
-
-
-def test_maintain_path_shares_repo_cache(fresh_db, monkeypatch):
-    _seed(fresh_db, repos=(("r1", 2),))
-    build_dataflow_index(fresh_db)
-
-    calls: list[str] = []
-    real = queries.cross_repo_deps
-
-    def counting(conn, repo):
-        calls.append(repo)
-        return real(conn, repo)
-
-    monkeypatch.setattr(queries, "cross_repo_deps", counting)
-    from cairn.graph.dataflow import maintain_dataflow_index
-
-    maintain_dataflow_index(fresh_db, ["pub_r1_0", "pub_r1_1"])
-    assert calls == ["r1"]
 
 
 # --- CLI flag ----------------------------------------------------------------

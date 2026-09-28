@@ -61,11 +61,3 @@ def estimate_tokens(text: str) -> int:
     if _tokenizer is None:
         return len(text) // CHARS_PER_TOKEN
     return len(_tokenizer.encode(text, add_special_tokens=False))
-
-
-def reset_tokenizer_mode() -> None:
-    """Clear the cached mode and tokenizer so the next call re-probes."""
-    global _mode, _tokenizer
-    with _lock:
-        _mode = None
-        _tokenizer = None

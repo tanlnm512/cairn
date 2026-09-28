@@ -245,30 +245,3 @@ def test_embedded_first_campaign_keeps_its_own_invariants():
     assert near["validate"]["bootstrap"]["significant"] is False
 
 
-def test_rendering_carries_closed_verdict_and_family_isolation():
-    """The human rendering carries the CLOSED verdict + isolation rules."""
-    md = RENDERING.read_text()
-    assert "STATUS: CLOSED (T024" in md
-    assert "no ship" in md
-    assert "cairn-quality-ablation/2" in md
-    assert "ablation.json" in md  # source-of-record pointer
-    # the same bar as the first campaign, no goalpost moves.
-    assert "| SC-1 target (unchanged) | ≥ 0.50 | ≥ 0.33 |" in md
-    assert "0.50 / 0.33" in md
-    # new family, never diffed against v1; never aggregate alone.
-    assert "never diffed against v1 rows" in md
-    assert "never an aggregate alone" in md
-    for family in FAMILIES:
-        assert family in md, family
-    assert "attrs-26.1.0" in md  # second-corpus label (manifest convention)
-    # Row shape documented: every additive column is named in the rendering.
-    for column in sorted(ROW_KEYS):
-        assert column in md, column
-    # The appendix keeps the first campaign's labeled figures and verdict.
-    for label in ("Figure 1 — tune split", "Figure 2 — validate split",
-                  "Figure 3 — full set"):
-        assert label in md, label
-    assert "shortfall documented" in md
-    for finding in ("FTS5 quoted-phrase defect", "Cross-encoder flattening",
-                    "Structured-pair MRR cost"):
-        assert finding in md, finding

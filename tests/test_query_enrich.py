@@ -13,10 +13,7 @@ hermetic-import guard, and the documented re-enrichment behavior.
 """
 from __future__ import annotations
 
-import ast
 import dataclasses
-import inspect
-from pathlib import Path
 
 import pytest
 
@@ -186,30 +183,10 @@ class TestDeterminismPurityHermeticity:
         for q in (SPEC_EXAMPLE, "how does `parse_url` differ from split_url", ""):
             assert enrich(q) == enrich(q)
 
-    def test_input_string_not_mutated(self) -> None:
-        q = SPEC_EXAMPLE
-        before = str(q)
-        enrich(q)
-        assert q == before
-
     def test_result_is_frozen(self) -> None:
         r = enrich(SPEC_EXAMPLE)
         with pytest.raises(dataclasses.FrozenInstanceError):
             r.dense_query = "tampered"  # type: ignore[misc]
-
-    def test_module_imports_are_hermetic(self) -> None:
-        # The enrichment path may not touch
-        # randomness, time, the environment, or anything network-capable.
-        # Assert via AST that only stdlib re/dataclasses are imported.
-        src = Path(inspect.getsourcefile(enrich)).read_text()
-        imported: set[str] = set()
-        for node in ast.walk(ast.parse(src)):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.add(node.module or "")
-        assert imported <= {"re", "dataclasses", "__future__"}
-
 
 class TestReEnrichment:
     def test_re_enriching_dense_query_is_stable_except_growth(self) -> None:
@@ -227,18 +204,6 @@ class TestReEnrichment:
         third = enrich(second.dense_query)
         assert third.identifiers == first.identifiers
         assert third.sparse_query == first.sparse_query
-
-    def test_dense_query_always_contains_original(self) -> None:
-        # The never-lose-information invariant, across the shape battery.
-        for q in (
-            SPEC_EXAMPLE,
-            "where do we handle retries",
-            "how does parseUnencodedURL handle quirks",
-            "",
-            "  ",
-        ):
-            assert enrich(q).dense_query.startswith(q)
-
 
 class TestDfLookupL1D03:
     """The 'URL' repro, fixed deterministically."""
@@ -404,8 +369,3 @@ class TestDfLookupPurityEquivalence:
         assert sorted(set(calls)) == sorted(calls)  # no key probed twice
         assert set(calls) == {"url", "parse_url", "parse"}
 
-    def test_lookup_not_invoked_when_omitted(self) -> None:
-        # The default path stays a pure function of the string: the None
-        # default never dereferences a lookup (structurally impossible --
-        # no lookup object is conjured from env or globals).
-        assert enrich(SPEC_EXAMPLE, df_lookup=None) == enrich(SPEC_EXAMPLE)

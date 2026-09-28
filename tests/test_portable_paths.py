@@ -70,22 +70,6 @@ def test_files_path_is_repo_relative_single_repo(tmp_path):
         assert p == "Simple.kt", f"expected repo-relative 'Simple.kt', got {p}"
 
 
-def test_files_path_is_repo_relative_multi_repo(tmp_path):
-    """Regression: same portability invariant as the single-repo case, under a
-    multi-repo workspace."""
-    workspace = _make_multi_repo_workspace(tmp_path, "multi")
-    db_path = str(tmp_path / "multi.db")
-    build_graph(workspace=str(workspace), db_path=db_path)
-
-    conn = get_db(db_path, read_only=True)
-    rows = conn.execute("SELECT path FROM files").fetchall()
-    conn.close()
-    assert rows
-    for r in rows:
-        p = r["path"]
-        assert not Path(p).is_absolute(), f"files.path should be relative, got {p}"
-
-
 def test_repos_path_is_workspace_relative(tmp_path):
     """Regression: repos.path must be workspace-relative too, not absolute."""
     workspace = _make_multi_repo_workspace(tmp_path, "multi")

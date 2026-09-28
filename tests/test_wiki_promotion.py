@@ -97,11 +97,6 @@ class TestWikiOutputSpecRegistration:
         # Base spec: no diagrams requested, so no Mermaid instructions.
         assert "Mermaid" not in spec
 
-    def test_wiki_page_revise_spec_requires_sources_footer_and_in_graph_refs(self):
-        spec = _output_spec("wiki-page-revise")
-        assert "## Sources" in spec
-        assert "outside the graph" in spec
-
     def test_wiki_page_prefix_kinds_serve_the_full_wiki_spec(self):
         fallback = _output_spec("__not_a_registered_kind__")
         for kind in ("wiki-page-enrich", "wiki-page-enrich-revise"):
@@ -294,7 +289,7 @@ class TestCriticDedupePerCompletion:
 # tests above down with it.
 # --------------------------------------------------------------------------
 
-from cairn.compass.critic import CriticResult, critic_concept
+from cairn.compass.critic import critic_concept
 from cairn.okf.concept import OKFConcept
 
 # A passing wiki result: graph-verified refs, no compass section headings,
@@ -420,17 +415,6 @@ class TestCriticSectionVocab:
         assert result.passed is False
         assert result.quality_score == 0.0
         assert result.errors == []
-
-    def test_critic_result_shape_unchanged(self):
-        import dataclasses
-
-        assert [f.name for f in dataclasses.fields(CriticResult)] == [
-            "errors",
-            "warnings",
-            "quality_score",
-            "passed",
-        ]
-
 
 class TestWikiPagePromotionBranch:
     """a critic-passing wiki-page completion promotes a Wiki-Article."""

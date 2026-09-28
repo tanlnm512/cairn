@@ -30,17 +30,6 @@ class TestDiscoverReposSingleRepo:
             assert len(repos) == 1
             assert repos[0] == root
 
-    def test_single_repo_with_source_files(self):
-        """Single repo with source files is still discovered correctly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / ".git").mkdir()
-            (root / "src").mkdir()
-            (root / "src" / "main.py").write_text("def hello(): pass")
-            repos = discover_repos(str(root))
-            assert len(repos) == 1
-            assert repos[0] == root
-
     def test_multi_repo_workspace_unaffected(self):
         """Workspace with child repos still returns only children (not root)."""
         with tempfile.TemporaryDirectory() as tmpdir:

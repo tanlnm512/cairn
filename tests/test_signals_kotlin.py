@@ -196,7 +196,10 @@ class TestReceiverPins:
             b"  fun local() { fetch(42) }\n"
             b"}\n"
         )
-        assert _call_edges(pf, "FetchUseCase")[0].target_name == "FetchUseCase"
+        # fetch(42) is rewritten to the declared type: two calls edges target
+        # FetchUseCase (constructor + invoke rewrite), none target "fetch".
+        assert len(_call_edges(pf, "FetchUseCase")) == 2
+        assert _call_edges(pf, "fetch") == []
 
 
 if __name__ == "__main__":

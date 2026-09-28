@@ -186,18 +186,6 @@ class TestCompareReports:
 
 # --- CLI registration ----------------------------------------------------
 
-def test_cg_bench_help_registered():
-    """cairn bench --help lists the suite options (command is registered)."""
-    from click.testing import CliRunner
-    from cairn.cli import main
-    runner = CliRunner()
-    result = runner.invoke(main, ["bench", "--help"])
-    assert result.exit_code == 0
-    assert "--suite" in result.output
-    assert "--save" in result.output
-    assert "--compare" in result.output
-
-
 # --- CLI JSON output (CI path: timestamp + timings) ----------------------
 
 def _run_bench_cli(extra_args):

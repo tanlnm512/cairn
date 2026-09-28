@@ -126,24 +126,6 @@ class FederationStoreCase(unittest.TestCase):
             emb.embed_query = original
 
     @contextlib.contextmanager
-    def _counted_registry_iters(self):
-        """Count ``federation.iter_stores`` calls inside the block."""
-        from cairn.graph import federation
-
-        calls: list = []
-        original = federation.iter_stores
-
-        def counting(*args, **kwargs):
-            calls.append(args)
-            return original(*args, **kwargs)
-
-        federation.iter_stores = counting
-        try:
-            yield calls
-        finally:
-            federation.iter_stores = original
-
-    @contextlib.contextmanager
     def _silence_logging(self):
         """Silence all logging so CLI stdout stays parseable."""
         import logging
@@ -782,65 +764,62 @@ class SingleStoreBaselineTests(FederationStoreCase):
                 self.assertNotIn(token, text)
 
         cli = CliRunner()
-        with self._counted_registry_iters() as iters:
-            # The CLI bakes --db/--knowledge defaults in at import time;
-            # resolve_store() is the store a fresh process in this workspace
-            # resolves, so passing it explicitly reproduces the default path.
-            search_out = cli.invoke(
-                main,
-                ["search", "Authenticator", "--db", str(resolved.db), "--json"],
-                catch_exceptions=False,
-            )
-            self.assertEqual(search_out.exit_code, 0, search_out.output)
-            rows = json.loads(search_out.stdout)
-            self.assertTrue(rows, "resolved store returned no search rows")
-            self.assertIn("Authenticator", json.dumps(rows))
-            self.assertIn("auth.py", json.dumps(rows))
-            assert_no_leakage(json.dumps(rows))
+        # The CLI bakes --db/--knowledge defaults in at import time;
+        # resolve_store() is the store a fresh process in this workspace
+        # resolves, so passing it explicitly reproduces the default path.
+        search_out = cli.invoke(
+            main,
+            ["search", "Authenticator", "--db", str(resolved.db), "--json"],
+            catch_exceptions=False,
+        )
+        self.assertEqual(search_out.exit_code, 0, search_out.output)
+        rows = json.loads(search_out.stdout)
+        self.assertTrue(rows, "resolved store returned no search rows")
+        self.assertIn("Authenticator", json.dumps(rows))
+        self.assertIn("auth.py", json.dumps(rows))
+        assert_no_leakage(json.dumps(rows))
 
-            ask_out = cli.invoke(
-                main,
-                [
-                    "ask", "authenticate",
-                    "--db", str(resolved.db),
-                    "--knowledge", str(resolved.knowledge),
-                    "--json",
-                ],
-                catch_exceptions=False,
-            )
-            self.assertEqual(ask_out.exit_code, 0, ask_out.output)
-            payload = json.loads(ask_out.stdout)
-            # Single-store route shape, not the --all-repos envelope.
-            self.assertIn("intent", payload)
-            self.assertIn("results", payload)
-            self.assertIn("auth.py", json.dumps(payload))
-            assert_no_leakage(json.dumps(payload))
+        ask_out = cli.invoke(
+            main,
+            [
+                "ask", "authenticate",
+                "--db", str(resolved.db),
+                "--knowledge", str(resolved.knowledge),
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+        self.assertEqual(ask_out.exit_code, 0, ask_out.output)
+        payload = json.loads(ask_out.stdout)
+        # Single-store route shape, not the --all-repos envelope.
+        self.assertIn("intent", payload)
+        self.assertIn("results", payload)
+        self.assertIn("auth.py", json.dumps(payload))
+        assert_no_leakage(json.dumps(payload))
 
-            memory_out = cli.invoke(
-                main,
-                [
-                    "memory", "search", "Authenticator",
-                    "--db", str(resolved.db),
-                    "--knowledge", str(resolved.knowledge),
-                ],
-                catch_exceptions=False,
-            )
-            self.assertEqual(memory_out.exit_code, 0, memory_out.output)
-            self.assertIn(
-                "Authenticator delegates verification to login",
-                memory_out.output,
-            )
-            assert_no_leakage(memory_out.output)
+        memory_out = cli.invoke(
+            main,
+            [
+                "memory", "search", "Authenticator",
+                "--db", str(resolved.db),
+                "--knowledge", str(resolved.knowledge),
+            ],
+            catch_exceptions=False,
+        )
+        self.assertEqual(memory_out.exit_code, 0, memory_out.output)
+        self.assertIn(
+            "Authenticator delegates verification to login",
+            memory_out.output,
+        )
+        assert_no_leakage(memory_out.output)
 
-            # The tool resolves its store at call time: the true default
-            # path, with no db passed at all.
-            recall_out = recall_memory("Authenticator")
-            self.assertIn(
-                "Authenticator delegates verification to login", recall_out
-            )
-            assert_no_leakage(recall_out)
-
-        self.assertEqual(iters, [])
+        # The tool resolves its store at call time: the true default
+        # path, with no db passed at all.
+        recall_out = recall_memory("Authenticator")
+        self.assertIn(
+            "Authenticator delegates verification to login", recall_out
+        )
+        assert_no_leakage(recall_out)
 
 
 if __name__ == "__main__":

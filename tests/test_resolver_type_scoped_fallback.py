@@ -26,15 +26,6 @@ def test_package_qualified_resolves_via_contiguous_subsequence():
     assert result[0][0] == "sid1"
 
 
-def test_nested_package_qualified_resolves():
-    """M4: deeply nested package-qualified imports resolve."""
-    my_imports = ["com.example.lib.ApiFactory"]
-    cands = [("sid1", "repoA", "file1", "com.example.lib.ApiFactory.create")]
-    result = _import_aware_candidates("create", my_imports, cands)
-    assert len(result) == 1
-    assert result[0][0] == "sid1"
-
-
 def test_type_scoped_qname_with_package_qualified_import():
     """    Type-scoped qname with package-qualified import resolves via last-segment
     fallback.
@@ -97,27 +88,6 @@ def test_single_segment_import_still_works():
     my_imports = ["RepoA"]
     cands = [
         ("sid1", "repoA", "file1", "RepoA.create"),
-    ]
-    target_name = "create"
-
-    result = _import_aware_candidates(target_name, my_imports, cands)
-
-    assert len(result) == 1
-    assert result[0][0] == "sid1"
-
-
-def test_deeply_nested_package_qualified_import_with_type_scoped_qname():
-    """Deeply nested package-qualified import with type-scoped qname.
-
-    Given:
-    - import com.example.lib.utils.ApiFactory (deeply nested)
-    - Candidate: ApiFactory.create (type-scoped)
-
-    Expected: should match via last-segment fallback ('ApiFactory' matches qsegs[0]).
-    """
-    my_imports = ["com.example.lib.utils.ApiFactory"]
-    cands = [
-        ("sid1", "repoA", "file1", "ApiFactory.create"),
     ]
     target_name = "create"
 

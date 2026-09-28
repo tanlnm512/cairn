@@ -57,14 +57,3 @@ def test_each_path_renders_on_its_own_line():
     )
 
 
-def test_warning_text_says_taint_and_never_the_degradation_substring():
-    text = format_taint_warning(
-        [
-            _path(
-                ("src/app.py", "handle_request", "exact"),
-                ("src/db.py", "run_query", "exact"),
-            )
-        ]
-    )
-    assert "taint" in text.lower()
-    assert "degraded: rung" not in text

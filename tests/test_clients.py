@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cairn.agent_install import check_installed, install, uninstall, CLIENTS
+from cairn.agent_install import check_installed, install, uninstall
 
 
 @pytest.fixture
@@ -21,10 +21,6 @@ def _custom_home_env(monkeypatch) -> dict[str, str]:
     block generated configs must carry -- the expanded absolute path."""
     monkeypatch.setenv("CAIRN_HOME", "~/custom-cairn-home")
     return {"CAIRN_HOME": str(Path.home() / "custom-cairn-home")}
-
-
-def test_clients_list_includes_opencode():
-    assert "opencode" in CLIENTS
 
 
 def test_install_uninstall_opencode():
@@ -207,19 +203,3 @@ def test_default_home_command_array_install_writes_no_env(_cairn_bin_pinned, tmp
     assert "env" not in kilo["mcp"]["cairn"]
 
 
-def test_home_set_to_default_command_array_files_byte_identical_to_unset(
-        _cairn_bin_pinned, tmp_path, monkeypatch):
-    monkeypatch.delenv("CAIRN_HOME")
-    ws_unset = tmp_path / "ws_unset"
-    ws_unset.mkdir()
-    install(str(ws_unset), clients=["opencode", "kilo"], force=True, transport="stdio")
-    unset = ((ws_unset / "opencode.json").read_bytes(),
-             (ws_unset / "kilo.json").read_bytes())
-
-    monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
-    ws_default = tmp_path / "ws_default"
-    ws_default.mkdir()
-    install(str(ws_default), clients=["opencode", "kilo"], force=True, transport="stdio")
-
-    assert ((ws_default / "opencode.json").read_bytes(),
-            (ws_default / "kilo.json").read_bytes()) == unset

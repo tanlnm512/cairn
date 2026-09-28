@@ -29,22 +29,6 @@ def run_query(query, db):
     return cursor.execute(query)
 '''
 
-_AMBIGUOUS_APP = '''\
-def handle_upload(urlopen, db):
-    payload = urlopen("/uploads/current")
-    return transform(payload, db)
-
-
-def run_migration(statement, db):
-    cursor = db.cursor()
-    return cursor.execute(statement)
-'''
-
-_AMBIGUOUS_TRANSFORMS = '''\
-def transform(payload, db):
-    return run_migration(payload, db)
-'''
-
 _CLEAN_APP = '''\
 def handle_request(urlopen):
     raw = urlopen("/requests/current")
@@ -115,16 +99,6 @@ def _invoke_taint(ws: Path, db: Path, *args):
     )
 
 
-def test_exact_path_prints_every_hop_with_resolution_label(tmp_path):
-    ws = _make_ws(tmp_path, {"app.py": _SQL_FLOW_APP})
-    db = _build_db(ws, tmp_path)
-    result = _invoke_taint(ws, db, "--from", "http", "--to", "sql")
-    assert result.exit_code == 0
-    for symbol in ("handle_request", "validate_input", "run_query"):
-        assert symbol in result.output
-    assert result.output.count("[exact]") == 3
-
-
 def test_fuzzy_leaves_exact_output_unchanged(tmp_path):
     ws = _make_ws(tmp_path, {"app.py": _SQL_FLOW_APP})
     db = _build_db(ws, tmp_path)
@@ -132,25 +106,6 @@ def test_fuzzy_leaves_exact_output_unchanged(tmp_path):
     assert result.exit_code == 0
     assert result.output.count("[exact]") == 3
     assert "[ambiguous]" not in result.output
-
-
-def test_default_stops_at_ambiguous_hop_and_fuzzy_crosses_it(tmp_path):
-    ws = _make_ws(
-        tmp_path,
-        {"app.py": _AMBIGUOUS_APP, "transforms_a.py": _AMBIGUOUS_TRANSFORMS,
-         "transforms_b.py": _AMBIGUOUS_TRANSFORMS},
-    )
-    db = _build_db(ws, tmp_path)
-
-    exact = _invoke_taint(ws, db, "--from", "http", "--to", "sql")
-    assert exact.exit_code != 0
-    assert "run_migration" not in exact.output
-
-    fuzzy = _invoke_taint(ws, db, "--from", "http", "--to", "sql", "--fuzzy")
-    assert fuzzy.exit_code == 0
-    assert "handle_upload" in fuzzy.output
-    assert "run_migration" in fuzzy.output
-    assert "[ambiguous]" in fuzzy.output
 
 
 def test_clean_workspace_yields_no_path_default_and_fuzzy(tmp_path):

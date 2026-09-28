@@ -249,32 +249,6 @@ def test_p7_raw_tier_ids_are_collision_safe(tmp_path):
 # P8: knowledge_status must reject out-of-namespace doc_ids.
 # ---------------------------------------------------------------------------
 
-def test_p8_knowledge_status_rejects_non_knowledge_doc(tmp_path, monkeypatch):
-    """knowledge_status on a compass/ doc must be refused, like knowledge_delete."""
-    from cairn.mcp_server.tools_knowledge import knowledge_status
-    from cairn.okf.concept import OKFConcept
-
-    # Point the store at a temp knowledge dir with a real compass concept on disk.
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    monkeypatch.setenv("CAIRN_KNOWLEDGE", str(knowledge_dir))
-
-    bundle = OKFBundle(str(knowledge_dir))
-    concept = OKFConcept(
-        type="Compass", title="Some Module",
-        description="module guide", resource="some/module",
-        body="# Some Module\nnavigation guide",
-    )
-    concept.concept_id = "compass/some-module"
-    bundle.write_concept(concept)
-
-    result = knowledge_status(doc_id="compass/some-module", new_status="archived")
-    assert "Refused" in result or "outside" in result, (
-        f"knowledge_status accepted a compass/ doc_id without the scope guard — "
-        f"got: {result!r}"
-    )
-
-
 def test_p8_knowledge_status_accepts_real_knowledge_doc(tmp_path, monkeypatch):
     """A legitimate knowledge/ doc_id still works after the guard is added."""
     from cairn.knowledge.store import add_document

@@ -16,9 +16,6 @@ import struct
 from pathlib import Path
 
 from cairn.retrieval import (
-    Candidate,
-    Reranker,
-    Fusion,
     cosine_scan,
 )
 
@@ -28,40 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _f32(*vals: float) -> bytes:
     """Pack floats as little-endian f32 bytes."""
     return struct.pack(f"<{len(vals)}f", *vals)
-
-
-class TestProtocols:
-    def test_protocols_are_runtime_checkable(self):
-        """The protocol trio is runtime-checkable and structurally enforced.
-
-        The concrete providers were removed (fusion/rerank live directly in
-        ``graph.semantic``), so verify the protocols themselves still work
-        against minimal conforming and non-conforming objects.
-        """
-
-        class _GoodFusion:
-            def fuse(self, rankings, *, k=60, weights=None):
-                return []
-
-        class _GoodReranker:
-            def rerank(self, query, candidates, limit):
-                return [], False
-
-        class _NoMethods:
-            pass
-
-        assert isinstance(_GoodFusion(), Fusion)
-        assert isinstance(_GoodReranker(), Reranker)
-        # A class lacking the required methods does not satisfy the protocol.
-        assert not isinstance(_NoMethods(), Fusion)
-        assert not isinstance(_NoMethods(), Reranker)
-
-    def test_candidate_defaults(self):
-        c = Candidate(id="x")
-        assert c.score == 0.0
-        assert c.payload == {}
-        assert c.provenance == "semantic"
-        assert c.reranked is False
 
 
 class TestCosineScan:
@@ -126,26 +89,6 @@ class TestNoScanDuplication:
         return (REPO_ROOT / "src" / "cairn" / layer / fname).read_text(
             encoding="utf-8"
         )
-
-    def test_memory_promotion_uses_shared_scan(self):
-        src = self._source("memory", "promotion.py")
-        assert "cosine_scan" in src, "memory/promotion.py must use the shared cosine_scan"
-        assert "def _vec_norm" not in src, (
-            "memory/promotion.py should no longer define its own _vec_norm"
-        )
-
-    def test_knowledge_search_uses_shared_scan(self):
-        src = self._source("knowledge", "search.py")
-        assert "cosine_scan" in src, "knowledge/search.py must use the shared cosine_scan"
-        # The old pure-python fallback imported l2norm/dot directly for its own loop.
-        assert "import numpy as np" not in src, (
-            "knowledge/search.py should no longer roll its own numpy scan path"
-        )
-
-    def test_graph_semantic_uses_shared_scan(self):
-        src = self._source("graph", "semantic.py")
-        assert "cosine_scan" in src, "graph/semantic.py must use the shared cosine_scan"
-
 
 # --- Pure-Python fallback batched rewrite (perf follow-up) -------------------
 #

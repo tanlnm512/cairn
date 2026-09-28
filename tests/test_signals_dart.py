@@ -60,10 +60,6 @@ class TestImportAlias:
         pf = _parse(b"import 'package:a/a.dart' show foo, bar;\n")
         assert pf.imports[0].local_alias is None
 
-    def test_hide_combinator_is_not_an_alias(self):
-        pf = _parse(b"import 'package:a/a.dart' hide bar;\n")
-        assert pf.imports[0].local_alias is None
-
     def test_plain_import_has_no_alias(self):
         pf = _parse(b"import 'dart:math';\n")
         assert pf.imports[0].local_alias is None

@@ -132,21 +132,6 @@ def test_build_graph_golden_progress_event_sequence():
         assert result["repos"] == 1, "Should have indexed one repo"
 
 
-def test_build_graph_thin_coordinator_structure():
-    """Verify build_graph delegates to _parse_all, _insert_results, _resolve_all.
-
-    This test verifies that after decomposition, build_graph is a thin
-    coordinator that calls the three helper functions. It doesn't
-    verify implementation details, just that the expected helper
-    functions exist and are called.
-    """
-    from cairn.graph import builder
-
-    # Verify the helper functions exist
-    assert hasattr(builder, "_parse_all"), "Must have _parse_all helper"
-    assert hasattr(builder, "_insert_results"), "Must have _insert_results helper"
-    assert hasattr(builder, "_resolve_all"), "Must have _resolve_all helper"
-
     # The actual delegation is verified by the fact that the golden
     # test above passes - if the helpers weren't called, the progress
     # events wouldn't match the expected sequence.

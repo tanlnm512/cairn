@@ -178,16 +178,6 @@ def test_step_mid_substep_settles_it():
     assert "◆ Indexed 10 files" in out
 
 
-def test_double_close_writes_one_close_glyph():
-    buf = _capture()
-    r = display.Rail(display._unicode_ok(), animate=False)
-    r._open("T")
-    r._close("Done")
-    r._close("Done")  # idempotent
-    out = buf.getvalue()
-    assert out.count("└ Done") == 1
-
-
 # ---------------------------------------------------------------------------
 # 5. Number highlighting
 # ---------------------------------------------------------------------------

@@ -339,13 +339,3 @@ def test_queue_accepted_bogus_result_still_needs_gate(cli_env):
     assert "no_such_symbol_anywhere" in _streams(rerun)
 
 
-def test_polish_help_names_queue_and_critic():
-    """TC-010 control: where the polish option is offered, its wording names
-    the task queue or the critic — never an inline model call."""
-    from cairn.cli.skill import skill
-
-    result = CliRunner().invoke(skill, ["generate", "--help"])
-    assert result.exit_code == 0
-    assert "--polish" in result.output
-    lowered = result.output.lower()
-    assert "task queue" in lowered or "critic" in lowered

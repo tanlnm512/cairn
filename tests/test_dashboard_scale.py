@@ -256,29 +256,6 @@ def test_scale_store_shape(tmp_path):
         conn.close()
 
 
-def test_history_first_page_bounded_at_scale(tmp_path):
-    """Structural: /history's first page is exactly one bounded
-    page (HISTORY_PAGE_SIZE rows + Older link), never the whole store."""
-    _assert_history_first_page_bounded(_client_over(_scale_db_file(tmp_path), tmp_path))
-
-
-def test_chains_render_bounded_at_scale(tmp_path):
-    """Structural: /chains stays bounded despite 51 chains in the
-    store -- at most CHAINS_MAX_CHAINS rendered, at most
-    CHAINS_CALLS_PER_CHAIN calls each; the giant legacy 'unknown' session
-    cannot flood the page."""
-    db_path = _scale_db_file(tmp_path)
-    _assert_chains_bounded(_client_over(db_path, tmp_path), db_path)
-
-
-def test_tokens_covers_seeded_tools_at_scale(tmp_path):
-    """Structural: /tokens aggregates the whole 10.5k-row store
-    and returns a row for every seeded tool."""
-    _assert_tokens_cover_seeded_tools(
-        _client_over(_scale_db_file(tmp_path), tmp_path)
-    )
-
-
 # ---------------------------------------------------------------------------
 # First-render budget (SC-1)
 # ---------------------------------------------------------------------------

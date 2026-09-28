@@ -149,24 +149,6 @@ class TestSchemaConstants:
     def test_schema_marker_is_cairn_wiki_manifest_3(self):
         assert MANIFEST_SCHEMA == "cairn-wiki-manifest-3"
 
-    def test_lifecycle_vocabulary_is_derived_not_stored(self):
-        """The lifecycle lives in cairn.wiki.lifecycle as DERIVED_STATES —
-        the manifest has no lifecycle vocabulary of its own."""
-        from cairn.wiki.lifecycle import DERIVED_STATES as DERIVED
-
-        assert DERIVED == (
-            "planned",
-            "queued",
-            "in-progress",
-            "promoted",
-            "failed",
-            "dropped",
-        )
-        import cairn.wiki.manifest as manifest_module
-
-        assert not hasattr(manifest_module, "PAGE_STATES")
-
-
 class TestManifestLocation:
     """The manifest lives at <knowledge>/_wiki/manifest.json."""
 
@@ -363,18 +345,6 @@ class TestSchema1Migration:
 
         assert loaded["pages"] == {f"{REPO}/{entry['page_id']}": old}
 
-    def test_bare_path_load_recovers_repo_from_concept_paths(
-        self, bundle, plan
-    ):
-        entry = plan[0]
-        _promote(bundle, REPO, entry["page_id"])
-        old = _row(entry, task_id="gone-task")
-        self._write_v1(bundle, {entry["page_id"]: old})
-
-        loaded = load_manifest(str(bundle.root))
-
-        assert loaded["pages"] == {f"{REPO}/{entry['page_id']}": old}
-
     def test_unmigratable_row_dropped_with_warning(self, bundle, plan):
         entry = plan[0]
         old = _row(entry, task_id="gone-task")
@@ -442,12 +412,6 @@ class TestShouldSkip:
     def test_changed_hash_without_concept_does_not_skip(self, bundle, plan):
         entry = plan[0]
         assert should_skip(_row(entry), _changed_entry(entry), bundle, REPO) is False
-
-    def test_missing_concept_file_does_not_raise(self, bundle, plan):
-        # read_concept raises FileNotFoundError on a missing concept; the
-        # helper must treat unreadable as not promoted.
-        entry = plan[0]
-        assert should_skip(_row(entry), entry, bundle, REPO) is False
 
     def test_a_changed_module_input_requeues_exactly_that_page(self, bundle, plan):
         first, second = plan[0], plan[1]

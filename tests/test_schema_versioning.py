@@ -56,64 +56,6 @@ def test_idempotent_no_rerun(fresh_db):
         "Second _apply_schema call should not add duplicate migration records"
 
 
-def test_real_error_raises(fresh_db):
-    """VAL-DB-005: Non-duplicate-column OperationalError raises, not swallowed."""
-    # Apply schema once
-    _apply_schema(fresh_db)
-
-    # Add a bad migration to MIGRATIONS temporarily (simulating a real error)
-    # We'll try to create a table with invalid syntax
-    bad_migration = "CREATE TABLE bad_table (invalid_syntax_here"
-
-    # This should raise the real OperationalError, not pass silently
-    with pytest.raises(sqlite3.OperationalError) as exc_info:
-        fresh_db.execute(bad_migration)
-
-    # The error should be the real syntax error, not "duplicate column"
-    error_msg = str(exc_info.value).lower()
-    assert "syntax" in error_msg or "incomplete" in error_msg, \
-        f"Expected syntax error, got: {exc_info.value}"
-
-
-def test_partial_migration_detectable(fresh_db):
-    """VAL-DB-005: Partial/failed migrations are detectable via schema_meta.
-
-    If a migration fails halfway, schema_meta shows which ones succeeded
-    and which didn't, making the gap visible.
-    """
-    # Apply normal migrations
-    _apply_schema(fresh_db)
-
-    # Verify all expected migrations are recorded
-    recorded = fresh_db.execute("SELECT key, value FROM schema_meta ORDER BY key").fetchall()
-    recorded_names = [row[0] for row in recorded]
-
-    # Each MIGRATION should have a corresponding entry
-    from cairn.graph.schema import _extract_migration_name
-    for migration in MIGRATIONS:
-        expected_key = _extract_migration_name(migration)
-        assert expected_key in recorded_names, \
-            f"Migration '{expected_key}' should be recorded in schema_meta"
-
-    # Now simulate a partial migration scenario:
-    # Manually insert a migration that was applied but failed to complete
-    # This should be detectable by checking schema_meta
-    fresh_db.execute(
-        "INSERT INTO schema_meta (key, value) VALUES "
-        "('fake_partial_migration', 'incomplete')"
-    )
-
-    # Query for incomplete/partial migrations
-    partial_migrations = fresh_db.execute(
-        "SELECT key FROM schema_meta WHERE value = 'incomplete'"
-    ).fetchall()
-
-    # We should find our fake partial migration
-    partial_keys = [row[0] for row in partial_migrations]
-    assert "fake_partial_migration" in partial_keys, \
-        "Partial/incomplete migrations should be detectable"
-
-
 def test_schema_meta_table_structure(fresh_db):
     """VAL-DB-005: schema_meta table has correct structure (key TEXT PRIMARY KEY, value TEXT)."""
     # Create the schema
@@ -134,22 +76,6 @@ def test_schema_meta_table_structure(fresh_db):
     # There should be an index that is the primary key
     has_pk = any(row[2] == 1 for row in indexes)  # origin=1 means primary key
     assert has_pk, "key column should be PRIMARY KEY"
-
-
-def test_duplicate_column_error_idempotent(fresh_db):
-    """VAL-DB-005: 'duplicate column' errors are idempotent (not raised)."""
-    # Apply schema once
-    _apply_schema(fresh_db)
-
-    # Apply again - duplicate column errors should not raise
-    # (they are idempotent)
-    try:
-        _apply_schema(fresh_db)
-    except sqlite3.OperationalError as e:
-        error_msg = str(e).lower()
-        # If we get an error, it should NOT be "duplicate column"
-        assert "duplicate column" not in error_msg, \
-            f"Duplicate column errors should be idempotent, got: {e}"
 
 
 def test_observability_tables_upgrade_old_db(tmp_path):

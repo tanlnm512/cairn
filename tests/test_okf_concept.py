@@ -110,38 +110,6 @@ This is original content that must be preserved."""
     assert len(temp_files) == 0, f"No temp files should remain after crash, found: {temp_files}"
 
 
-def test_to_file_no_temp_residue(tmp_path):
-    """Verify that no temp residue is left after a successful write."""
-    # Create a concept
-    # Pinned timestamp: to_markdown() stamps now() when unset, so an unset
-    # timestamp makes this assertion a coin flip on the second boundary.
-    concept = OKFConcept(
-        type="test",
-        title="Test Concept",
-        description="A test concept",
-        tags=["test"],
-        timestamp="2026-01-01T00:00:00Z",
-        body="# Test Body\n\nThis is test content.",
-    )
-
-    target_file = tmp_path / "test_concept.md"
-
-    # Perform multiple writes
-    for i in range(5):
-        concept.title = f"Test Concept {i}"
-        concept.to_file(str(target_file))
-
-    # Verify no temp files remain after all writes
-    temp_files = list(tmp_path.glob("*.tmp"))
-    assert len(temp_files) == 0, f"No temp files should remain after multiple writes, found: {temp_files}"
-
-    # Verify the final content is correct
-    concept.title = "Test Concept 4"  # Last write used title 4
-    expected_content = concept.to_markdown()
-    actual_content = target_file.read_text(encoding="utf-8")
-    assert actual_content == expected_content, "Final content should match last to_markdown()"
-
-
 def test_to_file_creates_parent_directories(tmp_path):
     """Verify that to_file creates parent directories as needed."""
     # Create a concept

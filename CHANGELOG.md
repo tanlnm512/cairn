@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- Test-suite audit: ~200 tests removed or trimmed under the "one owner test
+  per contract / no implementation mirrors" policy — source-text mirror tests
+  (CSS/JS greps, import allowlists, DRY lints), near-duplicates of owner
+  tests, private-constant pins, and trivially-true smoke asserts. Distinct
+  edge coverage was folded into the owning tests; test-only seams
+  (`MemoryStore`/`OKFMemoryStore`/`InMemoryMemoryStore`, `try_generate_index`,
+  `reset_probe_cache`, `reset_tokenizer_mode`) moved into the test suite or
+  were deleted.
 - Documentation audit refresh: current CLI/MCP surfaces, 15-language parser
   set, optional extras, architecture diagrams, and benchmark methodology now
   match the code; the historical roadmap proposal is labeled as a snapshot.

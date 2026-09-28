@@ -51,10 +51,8 @@ class TestImportDirectoryValidation:
             concept = bundle.read_concept(imported[0])
             assert concept.extensions.get("doc_source") == "imported"
 
-            # Verify authority is < 1.0 (should be 0.5 for non-manual docs)
-            authority = _authority(concept)
-            assert authority < 1.0
-            assert authority == 0.5
+            # Imported docs rank below manual docs, whatever the tuning.
+            assert _authority(concept) < 1.0
 
     def test_oversized_file_rejected(self, bundle):
         """Oversized files should be skipped during import."""

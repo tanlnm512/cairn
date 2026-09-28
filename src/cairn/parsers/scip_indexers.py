@@ -238,13 +238,3 @@ def _run_tool(
                         f"without producing an index", log)
 
     return GenerationResult(ok=True)
-
-
-def try_generate_index(
-    language: str,
-    output_path: Path,
-    repo_path: str,
-    log: Callable[..., None] = lambda *a, **k: None,
-) -> bool:
-    """Generate a missing index at ``output_path``; return True iff it exists afterwards. Never raises."""
-    return generate_index_result(language, output_path, repo_path, log).ok

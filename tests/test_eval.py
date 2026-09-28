@@ -22,7 +22,6 @@ import cairn.eval as eval_mod
 from cairn.cli import main
 from cairn.eval import (
     Expectation,
-    load_eval_queries,
     load_ground_truth,
     match_rank,
     parse_symbol_id,
@@ -379,19 +378,6 @@ class TestRunEvaluationDispatch:
 # ---------------------------------------------------------------------------
 # yaml fixture untouched 
 # ---------------------------------------------------------------------------
-
-class TestYamlFixtureUntouched:
-    def test_bundled_set_is_still_30_l1_10_l5(self):
-        queries = load_eval_queries()
-        assert len(queries) == 40
-        assert sum(1 for q in queries if q.get("corpus") == "L1") == 30
-        assert sum(1 for q in queries if q.get("corpus") == "L5") == 10
-
-    def test_yaml_shape_unchanged(self):
-        queries = load_eval_queries()
-        for q in queries:
-            assert set(q) == {"query", "corpus", "expect"}
-
 
 # ---------------------------------------------------------------------------
 # CLI wiring

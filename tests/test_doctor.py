@@ -135,19 +135,6 @@ def test_eight_checks_always_emitted(tmp_path):
         assert row["status"] in _HEALTH_STATUSES
 
 
-def test_json_contract_on_fresh_structured_store(tmp_path):
-    """A schema-initialized store emits parseable, complete doctor JSON."""
-    db = tmp_path / "graph.db"
-    _make_db(db)
-
-    result = _run(db, "--json")
-    assert result.exit_code == 0, result.output
-
-    data = json.loads(result.stdout)
-    assert [row["name"] for row in data] == _JSON_CHECK_NAMES
-    assert all(row["status"] in _HEALTH_STATUSES for row in data)
-
-
 # ---------------------------------------------------------------------------
 # Schema -- FAIL conditions
 # ---------------------------------------------------------------------------
@@ -196,6 +183,7 @@ def test_schema_fail_corrupt_db(tmp_path):
 
     result = _run(db, "--json")
     assert result.exit_code == 1, result.output
+    assert "FAIL" in result.output  # human render marks the failing check
     data = json.loads(result.stdout)
     assert _by_name(data, "schema")["status"] == "FAIL"
     # The DB-dependent checks degrade to WARN, not a crash/empty output.
@@ -792,16 +780,6 @@ def test_config_echo_survives_corrupt_config_file(tmp_path, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_any_fail_exits_one(tmp_path):
-    """A FAIL anywhere (here: corrupt store) makes the aggregate exit code 1."""
-    db = tmp_path / "garbage.db"
-    db.write_bytes(b"\x00not a database\x00" * 20)
-
-    result = _run(db)
-    assert result.exit_code == 1
-    assert "FAIL" in result.output
-
-
 # ---------------------------------------------------------------------------
 # Embed server -- informational PASS unless a
 # server-family backend (server/omlx/ollama) is configured. HTTP only
@@ -1090,21 +1068,6 @@ def test_embed_server_active_degradation_warn_entry(
         assert "server_down" in row["detail"]
     finally:
         server.close()
-
-
-def test_embed_server_exit_mapping_unchanged(tmp_path, monkeypatch, embed_cache_reset):
-    """(h) Exit semantics untouched: the informational line keeps exit 0, and
-    the new check's FAIL alone flips the same store to exit 1."""
-    db = tmp_path / "graph.db"
-    _make_db(db)
-
-    monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
-    assert _run(db).exit_code == 0
-
-    _server_env(monkeypatch, _dead_base_url())
-    result = _run(db)
-    assert result.exit_code == 1
-    assert "FAIL embed_server" in result.output
 
 
 # ---------------------------------------------------------------------------

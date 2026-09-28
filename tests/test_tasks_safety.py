@@ -15,7 +15,6 @@ from pathlib import Path
 
 from cairn.llm.tasks import (
     MAX_REVISE_CYCLES,
-    Task,
     claim_task,
     complete_task,
     create_task,
@@ -202,43 +201,6 @@ class TestCompleteTaskCriticIntegration:
         revise_tasks = [t for t in tasks if "revise" in t.task_kind]
         assert len(revise_tasks) == 0
 
-    def test_return_dict_shape_exact_match(self, fresh_db, tmp_path):
-        """Return dict must be exactly {task_id, promoted, revised, dropped, errors, quality}."""
-        conn = _conn_with_fixture(fresh_db)
-        bundle = _create_bundle(tmp_path)
-
-        task = create_task(
-            bundle,
-            task_kind="compass-synthesize",
-            resource="test",
-            facts={"key_files": ["src/graph/queries.py"]},
-        )
-        claim_task(bundle, task.id, "test-agent")
-
-        result = (
-            "# What Does This Module Do?\nSee `src/graph/queries.py`.\n"
-            "# Common Modification Patterns\n...\n"
-            "# Build-Failure Patterns\n...\n"
-            "# Cross-Module Dependencies\n...\n"
-            "# Tribal Knowledge\n...\n"
-        )
-
-        outcome = complete_task(bundle, task.id, result, conn=conn)
-
-        # Exact key match - no extra keys, no missing keys
-        expected_keys = {"task_id", "promoted", "revised", "dropped", "errors", "quality"}
-        actual_keys = set(outcome.keys())
-        assert actual_keys == expected_keys
-
-        # Verify value types
-        assert isinstance(outcome["task_id"], str)
-        assert isinstance(outcome["promoted"], bool)
-        assert isinstance(outcome["revised"], bool)
-        assert isinstance(outcome["dropped"], bool)
-        assert isinstance(outcome["errors"], list)
-        assert isinstance(outcome["quality"], (int, float))
-
-
 # --- C2: Atomic Claim and claimed_at Tests ---
 
 class TestCompleteTaskCriticFailureLeavesTaskReCompletable:
@@ -423,14 +385,3 @@ class TestClaimTaskAtomicity:
 class TestTaskDataclassWithClaimedAt:
     """Verify Task dataclass has claimed_at field and it round-trips correctly."""
 
-    def test_task_dataclass_has_claimed_at_field(self):
-        """Task dataclass must have claimed_at field."""
-        task = Task(
-            id="test123",
-            task_kind="compass-synthesize",
-            resource="test",
-        )
-        # Should have claimed_at field (even if empty initially)
-        assert hasattr(task, "claimed_at")
-        # Initially empty when created directly
-        assert task.claimed_at == ""

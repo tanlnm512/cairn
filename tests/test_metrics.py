@@ -465,15 +465,6 @@ def test_session_env_stamps_session_id(monkeypatch):
     assert session_id == "trace-42"
 
 
-def test_session_defaults_to_unknown(monkeypatch):
-    """Without CAIRN_SESSION, session_id defaults to 'unknown'."""
-    monkeypatch.delenv("CAIRN_SESSION", raising=False)
-    mb._log_metric("tool", 10.0, "ok")
-    assert len(mb._METRIC_BUFFER) == 1
-    _tool, session_id, _ts, _dur, _status, _err, _req, _resp, _args = mb._METRIC_BUFFER[0]
-    assert session_id == "unknown"
-
-
 # ---------------------------------------------------------------------------
 # 5. Extended payload columns (req_chars / resp_chars / args_summary)
 # ---------------------------------------------------------------------------

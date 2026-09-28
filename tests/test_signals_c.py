@@ -51,10 +51,6 @@ class TestCallArity:
         assert _edge(pf, "printf").call_arity == 1
         assert _edge(pf, "pair").call_arity == 2
 
-    def test_member_call_arity(self):
-        pf = _parse(b"void run(struct CB *p) {\n  p->cb(1);\n}\n")
-        assert _edge(pf, "cb").call_arity == 1
-
     def test_function_pointer_call_arity(self):
         pf = _parse(b"void g(int (*cb)(int)) {\n  cb(1);\n}\n")
         assert _edge(pf, "cb").call_arity == 1

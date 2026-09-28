@@ -151,17 +151,6 @@ class TestBatchedMatchesReference:
         assert cosine_scan(q, 2, rows) == []
         assert _reference_cosine_scan(q, 2, rows) == []
 
-    def test_all_dim_mismatched(self):
-        q = _pack([1.0, 0.0])
-        rows = [(_pack([1.0, 0.0, 0.0]), 3, ("m", i)) for i in range(5)]
-        assert cosine_scan(q, 2, rows) == []
-        assert _reference_cosine_scan(q, 2, rows) == []
-
-    def test_zero_norm_query_returns_empty(self):
-        rows = [(_pack([1.0, 0.0]), 2, ("a", 0))]
-        assert cosine_scan(_pack([0.0, 0.0]), 2, rows) == []
-        assert _reference_cosine_scan(_pack([0.0, 0.0]), 2, rows) == []
-
     def test_payload_objects_returned_unchanged(self):
         """The ORIGINAL payload objects (identity, not copies) come back."""
         q = _pack([1.0, 0.0])

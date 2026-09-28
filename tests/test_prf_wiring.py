@@ -542,15 +542,6 @@ class TestPrfDeterminismAndDegenerate:
 class TestPrfParamsAdditive:
     """The additive-field doctrine on the four new fields."""
 
-    def test_new_fields_default_to_none(self):
-        from cairn.graph.semantic import RetrievalParams
-
-        p = RetrievalParams()
-        assert p.prf is None
-        assert p.prf_docs is None
-        assert p.prf_terms is None
-        assert p.prf_lambda is None
-
     def test_out_of_range_lambda_propagates_expand_contract(self, prf_db):
         """prf_lambda outside [0, 1] is prf.expand's ValueError (its
         published contract), surfaced unchanged by the boundary."""

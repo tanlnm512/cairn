@@ -12,14 +12,13 @@ and memory sections while symbols still package.
 """
 from __future__ import annotations
 
-from dataclasses import fields as dataclass_fields
 
 from cairn.compass.generator import generate_compass
 from cairn.graph.builder import build_graph
 from cairn.graph.schema import get_db
 from cairn.memory.promotion import capture_memory
 from cairn.okf.bundle import OKFBundle
-from cairn.skillgen.assembly import DEFAULT_TOP_K, SkillDraft, assemble_draft
+from cairn.skillgen.assembly import DEFAULT_TOP_K, assemble_draft
 from cairn.skillgen.selector import resolve_selector
 
 MARKER = "qxzephyrline"
@@ -76,19 +75,6 @@ def _record_marker_memory(conn, tmp_path, body=None):
 def _compass_for_pkg_a(conn, tmp_path):
     concept = generate_compass("pkg_a", conn, _knowledge(tmp_path))
     _knowledge(tmp_path).write_concept(concept)
-
-
-def test_draft_exposes_the_pinned_fields(tmp_path):
-    conn = _two_pkg_conn(tmp_path)
-    draft = assemble_draft(conn, resolve_selector(conn, "pkg_a"))
-    assert isinstance(draft, SkillDraft)
-    assert {f.name for f in dataclass_fields(SkillDraft)} == {
-        "module",
-        "compass_body",
-        "symbols",
-        "memories",
-        "ranking_tier",
-    }
 
 
 def test_symbols_are_ranked_top_k_from_candidates(tmp_path):

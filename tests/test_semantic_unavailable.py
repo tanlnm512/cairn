@@ -266,11 +266,3 @@ def test_note_semantic_unavailable_never_raises():
     ]
 
 
-def test_no_attr_value_contains_a_path_separator():
-    """Universal guard: emitted attr values never contain '/' or '\\'."""
-    from cairn.telemetry import note_semantic_unavailable
-
-    note_semantic_unavailable("explore", "unavailable")
-    for attrs in _buffered("semantic_unavailable"):
-        for value in attrs.values():
-            assert "/" not in str(value) and "\\" not in str(value)

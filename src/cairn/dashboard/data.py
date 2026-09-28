@@ -517,17 +517,6 @@ def prewarm_probes() -> None:
     ).start()
 
 
-def reset_probe_cache() -> None:
-    """Drop cached probe values (e.g. after a probe-relevant env change);
-    the next get_health recomputes them."""
-    global _probe_cache, _probe_cached_at, _probe_refreshing
-    with _probe_cond:
-        _probe_cache = None
-        _probe_cached_at = 0.0
-        _probe_refreshing = False
-        _probe_cond.notify_all()
-
-
 def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     """Health panel data: DB size, index freshness, vector backend
     mode, reranker status, plus the retention policy in force and the current

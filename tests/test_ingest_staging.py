@@ -465,14 +465,6 @@ PLAIN_TEXT = "Just some operational notes with no metadata at all.\n"
 
 
 class TestKnowledgeIngestCli:
-    def test_help_lists_ingest(self):
-        from click.testing import CliRunner
-        from cairn.cli.knowledge import knowledge
-
-        result = CliRunner().invoke(knowledge, ["--help"])
-        assert result.exit_code == 0
-        assert "ingest" in result.output
-
     def test_run_stages_and_leaves_store_untouched(self, feed_root, monkeypatch):
         from click.testing import CliRunner
         from cairn.cli.knowledge import knowledge

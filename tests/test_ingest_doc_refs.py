@@ -194,32 +194,6 @@ class TestVerifiedRefsStored:
         )
         assert report["index_doc_refs"] >= len(EXPECTED_VERIFIED)
 
-    def test_verified_set_equals_resolvable_set(self, workspace):
-        _seed_graph(workspace)
-        docs = _write_doc(workspace, "refs-doc.md", REFS_DOC)
-        manifest, _ = _ingest_dir(workspace, docs)
-        cid = manifest["rows"][0]["concept_id"]
-
-        from cairn.refs import file_exists, symbol_exists
-
-        conn = _conn()
-        try:
-            verified = {
-                (e["ref"], e["kind"])
-                for e in _bundle().read_concept(cid).verified or []
-            }
-            resolvable = set()
-            for ref in (EXISTING_FILE, BOGUS_FILE):
-                if file_exists(conn, ref):
-                    resolvable.add((ref, "file"))
-            for ref in (f"{EXISTING_SYMBOL}()", QUALIFIED_SYMBOL, "missing_symbol_fn"):
-                if symbol_exists(conn, ref):
-                    resolvable.add((ref, "symbol"))
-        finally:
-            conn.close()
-        assert verified == resolvable
-        assert verified == {(e["ref"], e["kind"]) for e in EXPECTED_VERIFIED}
-
     def test_report_counts_verified_refs(self, workspace):
         _seed_graph(workspace)
         docs = _write_doc(workspace, "refs-doc.md", REFS_DOC)

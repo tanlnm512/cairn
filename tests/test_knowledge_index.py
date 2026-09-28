@@ -93,17 +93,6 @@ def _edges(conn):
     )
 
 
-def _edge_rows(conn):
-    """Sorted full knowledge_edges rows, created_at included."""
-    return sorted(
-        (r[0], r[1], r[2], r[3], r[4], r[5])
-        for r in conn.execute(
-            "SELECT doc_id, related_id, relation, kind, provenance, created_at "
-            "FROM knowledge_edges"
-        ).fetchall()
-    )
-
-
 def _dump(conn):
     """Full contents of both index tables, deterministically ordered."""
     edges = [tuple(r) for r in conn.execute(
@@ -697,17 +686,3 @@ class TestNormalizeDocId:
 # --- executor integration: --ingest rebuilds the index automatically ---
 
 
-class TestExecuteManifestIntegration:
-    def test_report_carries_index_counts(self, workspace):
-        docs = workspace / "report-docs"
-        (docs / "a").mkdir(parents=True)
-        (docs / "b").mkdir(parents=True)
-        (docs / "a" / "one.md").write_text(
-            TAGGED_DOC.format(title="Report one", body="One."), encoding="utf-8"
-        )
-        (docs / "b" / "two.md").write_text(
-            TAGGED_DOC.format(title="Report two", body="Two."), encoding="utf-8"
-        )
-        _, report = _ingest_dir(workspace, docs)
-        assert report["index_edges"] == 2
-        assert report["index_doc_refs"] == 0

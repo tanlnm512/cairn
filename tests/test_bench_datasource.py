@@ -12,7 +12,6 @@ Three layers:
 from __future__ import annotations
 
 import hashlib
-import shutil
 
 import pytest
 
@@ -163,15 +162,6 @@ class TestGeneratedCorpus:
         a = generate_corpus(tmp_path / "a", 6, complexity="low")
         b = generate_corpus(tmp_path / "b", 6, complexity="low")
         assert tree_hash(a) == tree_hash(b)
-
-    def test_removing_git_marker_leaves_digest_unchanged(self, tmp_path):
-        """The constant marker rule against real generator output: the empty
-        .git dir carries no bytes, so deleting it changes nothing."""
-        repo = generate_corpus(tmp_path, 6, complexity="low")
-        before = tree_hash(repo)
-        shutil.rmtree(repo / ".git")
-        assert tree_hash(repo) == before
-
 
 # --- manifest load/save ----------------------------------------------------
 

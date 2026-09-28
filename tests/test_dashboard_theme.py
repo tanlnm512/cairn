@@ -159,20 +159,6 @@ def test_theme_script_carries_apply_and_persist_contract(tmp_path):
     assert "documentElement.dataset.theme" in script
 
 
-def test_first_root_block_holds_only_the_dark_theme_tokens(tmp_path):
-    """The first variable block holds every theme token with its dark
-    value and NOTHING else -- no constants, no component declarations.
-    Dark is the default the pre-paint script falls back to, so the block
-    must carry the dark ladder (bg-0 near-black) and the dark color
-    scheme."""
-    css = _stylesheet(tmp_path)
-    root = _declarations(_rule_block(css, ":root"))
-
-    assert set(root) == set(_THEME_TOKENS) | {"color-scheme"}
-    assert root["--bg-0"] == _DARK_BG_0
-    assert root["color-scheme"] == "dark"
-
-
 def test_both_theme_blocks_redefine_every_token(tmp_path):
     """Both theme blocks redefine every theme token and set the color
     scheme: the dark block restates the first block's dark values

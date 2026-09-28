@@ -40,8 +40,6 @@ pytestmark = pytest.mark.infra
 _BASE_TS = 1755648000.0
 
 _SEED_ROWS = 300  # moderate store: page bounds exceeded from the start
-_SOAK_CYCLES = 30
-
 # Per-cycle landed-row counts (1-5, the full range exercised across the
 # first ten cycles). The total (44) is deliberately <= HISTORY_PAGE_SIZE
 # (50): every row landed mid-soak stays among the store's newest, so the
@@ -161,20 +159,6 @@ def _land_rows(db_path: str, rows: list[tuple]) -> None:
         conn.commit()
     finally:
         conn.close()
-
-
-def test_soak_insert_schedule_shape():
-    """The soak's landed-batch schedule stays inside its design envelope:
-    one entry per cycle, each landing 1-5 rows with the full 1-5 range
-    exercised, and a total that never exceeds HISTORY_PAGE_SIZE -- so every
-    landed row is on the final fetch's first page and the missed-batch
-    check targets every landed row, not just the recent ones."""
-    from cairn.dashboard.data import HISTORY_PAGE_SIZE
-
-    assert len(_INSERT_SCHEDULE) == _SOAK_CYCLES
-    assert all(1 <= n <= 5 for n in _INSERT_SCHEDULE)
-    assert set(_INSERT_SCHEDULE) == {1, 2, 3, 4, 5}
-    assert sum(_INSERT_SCHEDULE) <= HISTORY_PAGE_SIZE
 
 
 def test_history_live_soak_matches_stored_slice_every_cycle(tmp_path):

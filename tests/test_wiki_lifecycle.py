@@ -17,7 +17,6 @@ from cairn.llm.tasks import claim_task, create_task, drop_task
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 from cairn.wiki.lifecycle import (
-    DERIVED_STATES,
     derived_state,
     is_promoted,
     live_generation_tasks,
@@ -63,17 +62,6 @@ def _queue(bundle, repo, page_id, *, kind="wiki-page", claim=False, drop=False):
     if drop:
         drop_task(bundle, task.id)
     return task
-
-
-def test_derived_states_vocabulary_is_the_read_model_contract():
-    assert DERIVED_STATES == (
-        "planned",
-        "queued",
-        "in-progress",
-        "promoted",
-        "failed",
-        "dropped",
-    )
 
 
 def test_page_concept_id_algebra(bundle):

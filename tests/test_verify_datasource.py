@@ -383,14 +383,6 @@ class TestDs2Budget:
     per-corpus rule, not exempt by omission -- the rule is declared whether
     or not the dir exists yet."""
 
-    def test_ds2_rule_declared_with_same_per_corpus_ceiling_as_t2(self):
-        by_path = {rel: limit for rel, limit in vd.BUDGETS}
-        assert by_path["benchmarks/datasource/ds2"] == vd.DS2_BUDGET_KB == 3072
-        assert by_path["benchmarks/datasource/t2"] == 3072  # same class
-        # Subtree-before-total ordering keeps the report inside-out.
-        paths = list(by_path)
-        assert paths.index("benchmarks/datasource/ds2") < paths.index("benchmarks/datasource")
-
     def test_ds2_absent_measures_zero_and_is_not_an_error(self, tmp_path):
         """The dataset is authored in stages: with no ds2/ dir the rule holds
         trivially (0 bytes measured) instead of erroring or being skipped."""

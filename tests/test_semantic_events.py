@@ -368,13 +368,6 @@ def test_bare_connection_returns_semantic_results(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_embed_server_degraded_constant_exact_value():
-    """The event name exists in the catalog with its exact wire spelling."""
-    from cairn.telemetry import events
-
-    assert events.EMBED_SERVER_DEGRADED == "embed_server_degraded"
-
-
 def test_embed_server_degraded_reexported_and_in_all():
     """Re-export contract: importable from cairn.telemetry AND listed in
     ``__all__`` -- the public-surface convention for catalog constants."""
@@ -400,16 +393,6 @@ def test_embed_server_reasons_exact_membership():
             "hybrid_only",
         }
     )
-
-
-def test_embed_server_reasons_snake_case_tags():
-    """Cardinality discipline: reasons are lowercase snake_case tags."""
-    import re
-
-    from cairn.telemetry import events
-
-    for reason in sorted(events.EMBED_SERVER_REASONS):
-        assert re.match(r"^[a-z_]+$", reason), reason
 
 
 # ---------------------------------------------------------------------------

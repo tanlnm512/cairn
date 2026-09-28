@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 
 def _seed_file_db(db_path) -> None:
     """File-backed graph DB with a small symbol set; the command opens it read-only."""
@@ -58,24 +60,9 @@ def _invoke_pack(tmp_path, *args):
     )
 
 
-def test_pack_command_is_registered():
-    from click.testing import CliRunner
-    from cairn.cli import main
-
-    result = CliRunner().invoke(main, ["--help"])
-    assert result.exit_code == 0, result.output
-    assert "pack" in result.output.split()
-
-
-def test_pack_rejects_non_positive_budget(tmp_path):
-    result = _invoke_pack(tmp_path, "--task", "retry backoff policy", "--budget", "0")
-    assert result.exit_code != 0, result.output
-    assert "--budget" in result.output
-    assert "Traceback" not in result.output
-
-
-def test_pack_rejects_negative_budget(tmp_path):
-    result = _invoke_pack(tmp_path, "--task", "retry backoff policy", "--budget", "-5")
+@pytest.mark.parametrize("budget", ["0", "-5"])
+def test_pack_rejects_non_positive_budget(tmp_path, budget):
+    result = _invoke_pack(tmp_path, "--task", "retry backoff policy", "--budget", budget)
     assert result.exit_code != 0, result.output
     assert "--budget" in result.output
     assert "Traceback" not in result.output

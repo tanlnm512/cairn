@@ -174,35 +174,9 @@ class TestMemoryRecallProvenance:
 # ---------------------------------------------------------------------------
 
 
-class TestSemanticSearchProvenance:
-    """semantic_search annotates provenance under the hash fallback."""
-
-    def test_provenance_strings_under_hash(self, monkeypatch):
-        # Drive the _sem_prov / _fused_prov construction directly via the
-        # module-level helpers, since semantic_search needs a populated DB.
-        # This pins the string contract the renderer displays.
-        monkeypatch.setattr("cairn.graph.embeddings.is_hash_fallback", lambda: True)
-        # Re-read the constants the function builds: they're derived inside the
-        # function body, so verify the derivation logic directly.
-        _hash = emb.is_hash_fallback()
-        _sem_prov = "semantic (hash backend)" if _hash else "semantic"
-        _fused_prov = "fused(bm25+semantic, hash)" if _hash else "fused(bm25+semantic)"
-        assert _sem_prov == "semantic (hash backend)"
-        assert _fused_prov == "fused(bm25+semantic, hash)"
-
-
 # ---------------------------------------------------------------------------
 # 5. knowledge search provenance enrichment
 # ---------------------------------------------------------------------------
-
-
-class TestKnowledgeSearchProvenance:
-    def test_provenance_string_contract(self):
-        # The search function builds this string locally; pin the contract.
-        prov_hash = "semantic_knowledge (hash backend)" if True else "semantic_knowledge"
-        prov_real = "semantic_knowledge (hash backend)" if False else "semantic_knowledge"
-        assert prov_hash == "semantic_knowledge (hash backend)"
-        assert prov_real == "semantic_knowledge"
 
 
 # ---------------------------------------------------------------------------
@@ -581,10 +555,6 @@ class TestServerAvailabilityProbe:
         emb.reset_backend_cache()
         assert emb.embeddings_available() is True
         assert len(_model_probe_hits(stub_server)) == 2, "reset forces re-probe"
-
-    def test_probe_timeout_defaults_to_two_seconds(self):
-        assert emb._PROBE_TIMEOUT_S == 2.0
-
 
 # ---------------------------------------------------------------------------
 # 6b. current_model() — server-family stamp derivation 

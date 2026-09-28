@@ -18,7 +18,7 @@ from cairn.knowledge.ingest.classifier import classify_doc
 from cairn.knowledge.ingest.executor import execute_manifest
 from cairn.knowledge.ingest.identity import build_identity
 from cairn.knowledge.ingest.parser import parse_source_doc
-from cairn.knowledge.ingest.staging import StagedEntry, stage_outbox
+from cairn.knowledge.ingest.staging import StagedEntry
 from cairn.knowledge.store import list_documents
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
@@ -462,21 +462,6 @@ class TestStagingCarriesDetectedRelationships:
         new_row = _row_by_source(manifest, "0002-use-cockroachdb.md")
         assert new_row["relationships"][0]["concept_id"] == old_row["concept_id"]
         assert old_row["relationships"][0]["concept_id"] == new_row["concept_id"]
-
-    def test_stage_outbox_detects_without_run_ingest(self, tmp_path):
-        manifest = stage_outbox(
-            [
-                _entry("acme", "decisions/0001-use-postgres.md", ADR_0001),
-                _entry(
-                    "acme", "decisions/0002-use-cockroachdb.md", ADR_0002_SUPERSEDES
-                ),
-            ],
-            tmp_path / "outbox",
-        )
-        old_row = _row_by_source(manifest, "0001-use-postgres.md")
-        new_row = _row_by_source(manifest, "0002-use-cockroachdb.md")
-        assert new_row["relationships"][0]["concept_id"] == old_row["concept_id"]
-
 
 # --- execute path: promoted frontmatter carries both directions ---
 

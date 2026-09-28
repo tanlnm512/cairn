@@ -1,32 +1,17 @@
-"""Annotation-coverage tests for the cairn MCP tool surface (Phase 3.1).
+"""Annotation-coverage tests for the cairn MCP tool surface.
 
-Every ``@mcp.tool()`` registration now advertises MCP ``ToolAnnotations`` so a
+Every ``@mcp.tool()`` registration advertises MCP ``ToolAnnotations`` so a
 client (Cursor, Claude Desktop, ...) can render read/write/destructive badges
 and decide whether to ask for confirmation before invoking. These tests guard
 against regressions where a tool is added or re-touched and silently drops the
 ``annotations=`` kwarg, or where a read-only graph tool is mislabeled as
-mutating.
-
-Source-scraped (``ast`` + regex, no server boot, no model/embedding deps) to
-mirror the style of ``tests/test_agent_surface.py``: the tool decorators live in
-plain ``tools_*.py`` modules, so we parse the ``@mcp.tool(...)`` call directly
-rather than importing the live server. This keeps the tests fast and runnable
-in minimal CI.
-"""
+mutating. Assertions run against the live FastMCP registrations."""
 from __future__ import annotations
 
-import ast
-import re
-from pathlib import Path
+from cairn.mcp_server.server import verify_tool_count
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-MCP_DIR = REPO_ROOT / "src" / "cairn" / "mcp_server"
-TOOL_FILES = sorted(MCP_DIR.glob("tools_*.py"))
-
-# The 10 graph-query tools that must be advertised read-only. visualize_graph is
-# filed under L4 historically but is structurally a graph renderer and lives in
-# tools_graph.py, so it is covered by the per-file read-only check below rather
-# than enumerated here.
+# The graph-query tools that must be advertised read-only: they only ever
+# read the SQLite index.
 _GRAPH_READ_ONLY_TOOLS = {
     "find_definition",
     "get_callers",
@@ -40,131 +25,43 @@ _GRAPH_READ_ONLY_TOOLS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _tools_by_name():
+    from cairn.mcp_server._server_core import mcp
 
-# Matches the ``@mcp.tool(...)`` decorator line (possibly spanning the call's
-# keyword arguments) and captures the tool name from the immediately following
-# ``def``. Tolerates intervening decorator lines (``@instrument``) and blank
-# lines, matching the scraper conventions used in test_agent_surface.py.
-_TOOL_DECORATOR_RE = re.compile(
-    r'@mcp\.tool\((?P<kw>[^\n]*)\)\s*\n'
-    r'(?:[ \t]*@\w[^\n]*\n|[ \t]*\n)*?'
-    r'(?:async\s+)?def (?P<name>\w+)\(',
-    re.MULTILINE,
-)
+    return {t.name: t for t in mcp._tool_manager.list_tools()}
 
 
-def _scrape_tool_decorators() -> dict[str, dict[str, bool]]:
-    """    Return ``{tool_name: {readOnlyHint, destructiveHint, idempotentHint}}``
-    scraped from the ``@mcp.tool(annotations=ToolAnnotations(...))`` decorators.
-
-    Hint values are parsed from the ``ToolAnnotations(...)`` keyword arguments
-    with ``ast``. Source-scraped so the test needs no live server / mcp import.
-    Tools whose decorator carries no ``annotations=`` are omitted;
-    test_every_decorator_has_annotations_kwarg uses that absence to fail loudly."""
-    out: dict[str, dict[str, bool]] = {}
-    for f in TOOL_FILES:
-        for m in _TOOL_DECORATOR_RE.finditer(f.read_text(encoding="utf-8")):
-            name = m.group("name")
-            kw = m.group("kw")
-            hints = _parse_annotations_hints(kw)
-            if hints is not None:
-                out[name] = hints
-    return out
-
-
-def _parse_annotations_hints(kw_text: str) -> dict[str, bool] | None:
-    """    Parse the readOnlyHint/destructiveHint/idempotentHint booleans from a
-    ``@mcp.tool(...)`` call's keyword-argument text.
-
-    ``kw_text`` is the raw text inside the parentheses; the
-    ``annotations=ToolAnnotations(...)`` sub-expression is located, ``ast.parse``d
-    as an expression, and its keywords walked. Returns ``None`` when no
-    ``annotations=`` keyword is present (so a missing annotation is detectable)."""
-    m = re.search(r"annotations\s*=\s*ToolAnnotations\s*\((.*?)\)", kw_text, re.DOTALL)
-    if not m:
-        return None
-    inner = m.group(1)
-    try:
-        call = ast.parse(f"ToolAnnotations({inner})", mode="eval").body
-    except SyntaxError:
-        return None
-    if not isinstance(call, ast.Call):
-        return None
-    hints: dict[str, bool] = {}
-    for kw in call.keywords:
-        if kw.arg in {"readOnlyHint", "destructiveHint", "idempotentHint"}:
-            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
-                hints[kw.arg] = kw.value.value
-    return hints
-
-
-# ---------------------------------------------------------------------------
-# Test 1: every @mcp.tool() has an annotations= kwarg
-# ---------------------------------------------------------------------------
-
-def test_every_decorator_has_annotations_kwarg():
-    """    Every ``@mcp.tool()`` registration across the ``tools_*.py`` files must
-    carry an ``annotations=ToolAnnotations(...)`` keyword.
-
-    Catches a tool added (or a decorator reformatted) with the ``annotations=``
-    kwarg dropped -- silently re-advertising the tool as an un-annotated default,
-    defeating client-side hint rendering. Scrapes every decorator and fails
-    loudly naming the offending tools."""
-    # First, collect every tool name (decorator may or may not have annotations).
-    all_tools: dict[str, str] = {}  # name -> file
-    for f in TOOL_FILES:
-        for m in _TOOL_DECORATOR_RE.finditer(f.read_text(encoding="utf-8")):
-            all_tools[m.group("name")] = f.name
-
-    assert all_tools, "no @mcp.tool(...) decorators found in tools_*.py"
-    assert len(all_tools) == 25, (
-        f"expected 25 @mcp.tool(...) registrations, found {len(all_tools)}: "
-        f"{sorted(all_tools)}"
+def test_every_tool_advertises_annotations():
+    """Every registered tool carries ToolAnnotations; verify_tool_count also
+    pins the full surface against drift."""
+    verify_tool_count()
+    missing = sorted(
+        name for name, tool in _tools_by_name().items()
+        if tool.annotations is None
     )
+    assert not missing, f"tools missing annotations=: {missing}"
 
-    # Now find which ones lack the annotations= keyword.
-    annotated = _scrape_tool_decorators()
-    missing = sorted(set(all_tools) - set(annotated))
-    assert not missing, (
-        "these @mcp.tool(...) decorators are missing the annotations= kwarg: "
-        + ", ".join(f"{t} ({all_tools[t]})" for t in missing)
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 2: read-only graph tools advertise readOnlyHint=True
-# ---------------------------------------------------------------------------
 
 def test_read_only_graph_tools_advertise_read_only():
-    """    The nine read-only graph-query tools (plus visualize_graph) must set
-    ``readOnlyHint=True`` (and ``destructiveHint=False``) in their annotations.
-
-    Graph tools only ever read the SQLite index; mislabeling one as mutating
-    would make a client prompt for confirmation before a harmless query, or let
-    an agent skip a verification step. Scrapes the live hint values from
-    decorator source rather than importing the server, so this runs in minimal
-    CI without the model/embedding stack."""
-    annotated = _scrape_tool_decorators()
-    assert annotated, "no annotations= hints scraped (parser regression?)"
-
+    """The read-only graph-query tools must set ``readOnlyHint=True`` (and
+    ``destructiveHint=False``): mislabeling one as mutating would make a
+    client prompt for confirmation before a harmless query."""
+    tools = _tools_by_name()
     problems: list[str] = []
-    for tool in sorted(_GRAPH_READ_ONLY_TOOLS):
-        hints = annotated.get(tool)
-        if hints is None:
-            problems.append(f"{tool}: no annotations= kwarg found")
+    for name in sorted(_GRAPH_READ_ONLY_TOOLS):
+        annotations = tools[name].annotations
+        if annotations is None:
+            problems.append(f"{name}: no annotations")
             continue
-        if not hints.get("readOnlyHint"):
+        if not annotations.readOnlyHint:
             problems.append(
-                f"{tool}: readOnlyHint is {hints.get('readOnlyHint')}, expected True"
+                f"{name}: readOnlyHint is {annotations.readOnlyHint}, expected True"
             )
-        if hints.get("destructiveHint"):
+        if annotations.destructiveHint:
             problems.append(
-                f"{tool}: destructiveHint is {hints.get('destructiveHint')}, expected False"
+                f"{name}: destructiveHint is {annotations.destructiveHint}, "
+                f"expected False"
             )
-
     assert not problems, (
         "read-only graph tools mislabeled in their ToolAnnotations:\n  "
         + "\n  ".join(problems)

@@ -17,39 +17,34 @@ class TestGitignoreCacheInvalidation:
     """VAL-CO-006: invalidate_gitignore_cache called on .gitignore changes."""
 
     def test_gitignore_change_invalidates_cache(self, fresh_db, tmp_path):
-        """When a .gitignore file is in the changed set, cache is invalidated."""
-        # Set up a fake repo with a .gitignore
+        """When a .gitignore file is in the changed set, the next scan sees
+        the file's current rules, not the stale cached compilation."""
         repo_dir = tmp_path / "test_repo"
         repo_dir.mkdir()
         (repo_dir / ".git").mkdir()
         gitignore_path = repo_dir / ".gitignore"
-        gitignore_path.write_text("node_modules/\nbuild/\n")
+        gitignore_path.write_text("node_modules/\n")
 
-        # Pre-populate the cache with some gitignore rules
         from cairn.graph import scanner as scanner_mod
         import pathspec
-        # Simulate what _load_gitignores would create
-        spec = pathspec.PathSpec.from_lines("gitignore", ["node_modules/\nbuild/\n"])
-        scanner_mod._gitignore_cache[str(repo_dir)] = [(str(repo_dir), spec)]
+        # Stale compilation: pretend the previous .gitignore ignored keepme/.
+        stale = pathspec.PathSpec.from_lines("gitignore", ["keepme/"])
+        scanner_mod._gitignore_cache[str(repo_dir)] = [(str(repo_dir), stale)]
 
-        # Verify cache is populated
-        assert str(repo_dir) in scanner_mod._gitignore_cache
-        assert len(scanner_mod._gitignore_cache[str(repo_dir)]) == 1
-
-        # Mock reindex_paths to avoid actual scanning
         with patch("cairn.graph.incremental.reindex_paths") as mock_reindex:
             mock_reindex.return_value = {"reindexed": 0, "deleted": 0}
-
-            # Call ensure_fresh_force with the .gitignore in changed set
-            # First, make _detect_changed return our .gitignore file
             with patch.object(watcher, "_detect_changed") as mock_detect:
                 mock_detect.return_value = [str(gitignore_path)]
                 watcher.ensure_fresh_force(fresh_db, str(tmp_path))
 
-        # The fix should call invalidate_gitignore_cache when .gitignore changes
-        # which pops the cache key, so it should no longer exist or be empty
-        assert str(repo_dir) not in scanner_mod._gitignore_cache, (
-            "gitignore cache should be invalidated when .gitignore file changes"
+        # The reloaded rules come from the .gitignore on disk: node_modules/
+        # is ignored, the stale keepme/ rule is gone.
+        specs = scanner_mod._load_gitignores(repo_dir)
+        assert scanner_mod._is_gitignored(
+            repo_dir / "node_modules" / "x.js", repo_dir, specs
+        )
+        assert not scanner_mod._is_gitignored(
+            repo_dir / "keepme" / "y.py", repo_dir, specs
         )
 
 

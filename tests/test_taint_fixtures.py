@@ -73,15 +73,6 @@ def test_sql_flow_traces_end_to_end_on_defaults(tmp_path):
     assert result.output.count("[exact]") == 3
 
 
-def test_config_declared_categories_trace_outside_defaults(tmp_path):
-    ws = _fixture_workspace(tmp_path, "custom-config")
-    db = _build_db(ws, tmp_path)
-    result = _invoke_taint(ws, db, "--from", "queue-msg", "--to", "render")
-    assert result.exit_code == 0
-    assert "consume_job" in result.output
-    assert "render_invoice" in result.output
-
-
 def test_default_propagation_stops_at_ambiguous_hop(tmp_path):
     ws = _fixture_workspace(tmp_path, "ambiguous-hop")
     db = _build_db(ws, tmp_path)
@@ -97,27 +88,6 @@ def test_fuzzy_opt_in_crosses_ambiguous_hop_with_label(tmp_path):
     assert result.exit_code == 0
     assert "run_migration" in result.output
     assert "[ambiguous]" in result.output
-
-
-def test_clean_workspace_yields_no_path_default_and_fuzzy(tmp_path):
-    ws = _fixture_workspace(tmp_path, "clean-workspace")
-    db = _build_db(ws, tmp_path)
-    for args in (
-        ("--from", "http", "--to", "sql"),
-        ("--from", "http", "--to", "sql", "--fuzzy"),
-    ):
-        result = _invoke_taint(ws, db, *args)
-        assert result.exit_code != 0
-        assert "format_report" not in result.output
-
-
-def test_unmatched_source_pattern_degrades_gracefully(tmp_path):
-    ws = _fixture_workspace(tmp_path, "sql-flow")
-    db = _build_db(ws, tmp_path)
-    result = _invoke_taint(ws, db, "--from", "no-such-source", "--to", "sql")
-    assert result.exit_code != 0
-    assert "run_query" not in result.output
-    assert "Traceback" not in result.output
 
 
 def test_framework_only_flow_stays_unflagged_default_and_fuzzy(tmp_path):

@@ -310,8 +310,3 @@ class TestOfflineRerun:
         tasks = load_tasks(_valid_manifest(), fetch=fetch)
         assert [task["instance_id"] for task in tasks] == _valid_manifest()["subset"]
 
-    def test_offline_env_rerun_yields_identical_task_lists(self, monkeypatch):
-        fetch, _ = _stub_fetch(_dataset_rows())
-        online = load_tasks(_valid_manifest(), fetch=fetch)
-        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-        assert load_tasks(_valid_manifest(), fetch=fetch) == online

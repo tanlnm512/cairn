@@ -15,7 +15,6 @@ from cairn.graph.schema import get_build_db
 from cairn.okf.bundle import OKFBundle
 from cairn.review.capture import (
     PATTERN_MARKER,
-    classify_event,
     capture_review_event,
     parse_event,
 )
@@ -119,14 +118,6 @@ def test_non_string_text_fields_raise_value_error(field):
 def test_non_object_payload_raises_value_error():
     with pytest.raises(ValueError):
         parse_event(["resolved"])
-
-
-def test_pattern_marker_records_pattern_type():
-    assert classify_event(parse_event(_payload(body=f"note {PATTERN_MARKER}"))) == "pattern"
-
-
-def test_body_without_marker_records_mistake():
-    assert classify_event(parse_event(_payload())) == "mistake"
 
 
 def test_resolved_symbol_comment_records_draft_mistake(conn, bundle):

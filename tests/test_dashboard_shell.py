@@ -138,18 +138,22 @@ def test_shell_context_launch_label_rides_launch_db():
     assert ctx["selector"]["launch_label"] == LAUNCH_LABEL
 
 
-def test_every_nav_view_has_an_icon_branch():
-    """The icon macro is the presentation half of NAV_SECTIONS (one glyph
-    per view id): a view without an icon branch renders a blank spot in
-    the sidebar, so the coverage is pinned at source level."""
+def test_every_nav_view_renders_an_icon():
+    """The icon macro renders a non-empty glyph for every nav view id —
+    a view without an icon branch would leave a blank spot in the sidebar."""
     from pathlib import Path
 
     import cairn.dashboard
+    from jinja2 import Environment, FileSystemLoader
 
-    src = (
-        Path(cairn.dashboard.__file__).resolve().parent
-        / "templates"
-        / "_icons.html"
-    ).read_text()
-    missing = [v for v in NAV_LABELS if f'name == "{v}"' not in src]
-    assert missing == []
+    env = Environment(
+        loader=FileSystemLoader(
+            Path(cairn.dashboard.__file__).resolve().parent / "templates"
+        ),
+        autoescape=True,
+    )
+    tmpl = env.from_string(
+        '{% from "_icons.html" import svg %}'
+        "{% for v in views %}{{ svg(v) }}{% endfor %}"
+    )
+    assert tmpl.render(views=NAV_LABELS).count("<svg") == len(NAV_LABELS)

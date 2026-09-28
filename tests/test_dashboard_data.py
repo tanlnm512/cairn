@@ -1252,12 +1252,6 @@ def test_list_history_filters_compose_with_paging_cursors(fresh_db):
 # ---------------------------------------------------------------------------
 
 
-def test_session_gap_s_constant():
-    from cairn.dashboard import data
-
-    assert data.SESSION_GAP_S == 1800
-
-
 def test_get_tool_tokens_aggregates_ranked_by_total_desc(fresh_db):
     from cairn.dashboard.data import get_tool_tokens
 
@@ -2165,20 +2159,27 @@ class _StubAutoTokenizer:
         return [0] * (len(text) // _STUB_CHARS_PER_TOKEN)
 
 
+def _reset_tokenizer_mode() -> None:
+    """Clear the tokenizer module's cached mode (test-local reset)."""
+    from cairn.dashboard import tokenizer
+
+    with tokenizer._lock:
+        tokenizer._mode = None
+        tokenizer._tokenizer = None
+
+
 @pytest.fixture
 def exact_tokenizer_present(monkeypatch):
     """The precondition: the exact tokenizer importable and its model
     cached. sys.modules carries the deterministic stub, so the probe
     resolves exact mode without the semantic extra ever being installed."""
-    from cairn.dashboard.tokenizer import reset_tokenizer_mode
-
     stub = types.ModuleType("transformers")
     stub.AutoTokenizer = _StubAutoTokenizer
     monkeypatch.setitem(sys.modules, "transformers", stub)
     monkeypatch.setenv("CAIRN_EMBED_LOCAL_MODEL", _STUB_MODEL)
-    reset_tokenizer_mode()
+    _reset_tokenizer_mode()
     yield
-    reset_tokenizer_mode()
+    _reset_tokenizer_mode()
 
 
 @pytest.fixture
@@ -2186,12 +2187,10 @@ def tokenizer_import_absent(monkeypatch):
     """The precondition: the import absent. A None in sys.modules makes
     ``from transformers import AutoTokenizer`` raise ImportError -- the
     probe's absent-import path, not a failing tokenizer."""
-    from cairn.dashboard.tokenizer import reset_tokenizer_mode
-
     monkeypatch.setitem(sys.modules, "transformers", None)
-    reset_tokenizer_mode()
+    _reset_tokenizer_mode()
     yield
-    reset_tokenizer_mode()
+    _reset_tokenizer_mode()
 
 
 def _seed_calibratable_rows(conn, rows=6, summary_chars=200):

@@ -264,43 +264,11 @@ class TestStagingCarriesRelationships:
             }
         ]
 
-    def test_plain_doc_row_has_no_relationships_key(self, tmp_path):
-        manifest = _stage_one(tmp_path, PLAIN_DOC, "docs/plain.md")
-        row = manifest["rows"][0]
-        assert "relationships" not in row
-        assert set(row) == {
-            "concept_id",
-            "title",
-            "doc_type",
-            "tags",
-            "description",
-            "resource",
-            "affects_repos",
-            "affects_modules",
-            "origin",
-            "repo",
-            "source_path",
-            "body",
-            "staged_path",
-        }
-
     def test_staged_file_frontmatter_carries_relates_to(self, tmp_path):
         manifest = _stage_one(tmp_path, LINKED_ADR, "docs/adr/0007-use-events.md")
         row = manifest["rows"][0]
         staged = OKFConcept.from_file(str(tmp_path / "outbox" / row["staged_path"]))
         assert staged.extensions["relates_to"] == row["relationships"]
-
-    def test_dry_run_never_touches_a_store(self, tmp_path):
-        docs = tmp_path / "docs"
-        docs.mkdir()
-        (docs / "adr.md").write_text(LINKED_ADR, encoding="utf-8")
-        manifest = run_ingest(
-            files=[], dirs=[docs], outbox=tmp_path / "outbox"
-        )
-        assert manifest["rows"][0]["relationships"]
-        assert list(tmp_path.rglob("*.sqlite*")) == []
-        assert [p.name for p in tmp_path.rglob(".knowledge")] == []
-
 
 # --- execute path: promoted frontmatter carries the links ---
 
@@ -335,21 +303,6 @@ class TestPromotedFrontmatter:
         _ingest(workspace, KINDLESS_LINK)
         doc = list_documents(_bundle())[0]
         assert doc.extensions["relates_to"][0]["kind"] == "extracted"
-
-    def test_plain_doc_promotes_unchanged(self, workspace):
-        _ingest(workspace, PLAIN_DOC)
-        doc = list_documents(_bundle())[0]
-        assert "relates_to" not in doc.extensions
-        assert set(doc.extensions) == {
-            "tier",
-            "doc_status",
-            "doc_owner",
-            "doc_source",
-            "epic_link",
-            "affects_modules",
-            "affects_repos",
-        }
-
 
 # --- store: add_document relationships parameter ---
 
@@ -412,18 +365,3 @@ class TestIngestCliTransparency:
         # Dry run: no store write happened.
         assert not resolve_store().knowledge.exists()
 
-    def test_ingest_flags_unchanged(self):
-        from click.testing import CliRunner
-        from cairn.cli.knowledge import knowledge
-
-        result = CliRunner().invoke(knowledge, ["ingest", "--help"])
-        assert result.exit_code == 0
-        for flag in (
-            "--file",
-            "--dir",
-            "--repo",
-            "--ingest",
-            "--include-drafts",
-            "--outbox",
-        ):
-            assert flag in result.output
