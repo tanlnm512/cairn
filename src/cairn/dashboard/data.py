@@ -700,6 +700,8 @@ def get_recent_memories(
     concept file is skipped, never fatal. ``memory_type`` narrows to one
     category (decision / pattern / mistake / workaround) before the limit
     applies, so a filtered page still shows the newest of that type.
+    Rows carry ``tier``/``slug`` — the ``/memory/{tier}/{slug}`` detail
+    href's parts.
     """
     bundle = OKFBundle(knowledge_dir)
     entries: List[dict] = []
@@ -711,17 +713,78 @@ def get_recent_memories(
         entry_type = concept.extensions.get("memory_type") or concept.type
         if memory_type is not None and entry_type != memory_type:
             continue
+        tier, slug = _split_doc_id(cid)
         entries.append(
             {
                 "id": cid,
                 "type": entry_type,
                 "title": concept.title or cid,
-                "tier": concept.extensions.get("memory_tier", ""),
+                "tier": tier,
+                "slug": slug,
                 "timestamp": concept.timestamp or "",
             }
         )
     entries.sort(key=lambda e: _parse_ts(e["timestamp"]) or _EPOCH, reverse=True)
     return entries[:limit]
+
+
+def _memory_neighbor(bundle: "OKFBundle", memory_id: str) -> dict:
+    """A supersedes-chain neighbor as ``{id, tier, slug, title}`` — the
+    detail href's parts plus a link label. An unreadable neighbor keeps
+    its bare id as the title, so the chain row still renders."""
+    tier, slug = _split_doc_id(memory_id)
+    try:
+        title = bundle.read_concept(memory_id).title or memory_id
+    except Exception:
+        title = memory_id
+    return {"id": memory_id, "tier": tier, "slug": slug, "title": title}
+
+
+def get_memory_detail(knowledge_dir: str, memory_id: str) -> Optional[dict]:
+    """Everything the ``/memory/{tier}/{slug}`` detail page renders: the
+    memory concept's identity (type, tier, status, score, signals, tags,
+    session origin, validity window), its promotion history, the resolved
+    supersedes/superseded-by neighbors, and the body through the
+    escape-first markdown renderer. Unknown ids and non-memory ids are
+    None (the caller's not-found); partial frontmatter renders as-is."""
+    if not memory_id.startswith("memory/"):
+        return None
+    bundle = OKFBundle(knowledge_dir)
+    try:
+        concept = bundle.read_concept(memory_id)
+    except Exception:
+        return None
+    html, toc = render_markdown_with_toc(concept.body or "")
+    tier, slug = _split_doc_id(memory_id)
+    extensions = concept.extensions
+    supersedes_raw = extensions.get("memory_supersedes") or []
+    superseded_by_raw = extensions.get("memory_superseded_by")
+    return {
+        "id": memory_id,
+        "tier": tier,
+        "slug": slug,
+        "type": extensions.get("memory_type") or concept.type,
+        "title": concept.title or memory_id,
+        "description": concept.description or "",
+        "status": extensions.get("memory_status") or tier,
+        "score": extensions.get("memory_score"),
+        "signals": extensions.get("memory_signals") or {},
+        "tags": list(concept.tags),
+        "session_origin": extensions.get("session_origin") or "",
+        "recorded": concept.timestamp or "",
+        "valid_from": extensions.get("valid_from") or "",
+        "valid_until": extensions.get("valid_until") or "",
+        "is_latest": bool(extensions.get("memory_is_latest", True)),
+        "promotion_history": extensions.get("promotion_history") or [],
+        "supersedes": [_memory_neighbor(bundle, m) for m in supersedes_raw],
+        "superseded_by": (
+            _memory_neighbor(bundle, str(superseded_by_raw))
+            if superseded_by_raw
+            else None
+        ),
+        "html": html,
+        "toc": toc,
+    }
 
 
 def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dict]:
@@ -776,8 +839,9 @@ def _knowledge_link_counts(conn: Optional[sqlite3.Connection]) -> Dict[str, int]
 
 
 def _split_doc_id(doc_id: str) -> Tuple[str, str]:
-    """``knowledge/<family>/<slug>`` -> ``("<family>", "<slug>")``; a
-    two-segment id (malformed for this namespace) keeps its tail as the
+    """``<namespace>/<family>/<slug>`` -> ``("<family>", "<slug>")`` (the
+    detail-href parts for knowledge docs and memory items alike); a
+    two-segment id (malformed for these namespaces) keeps its tail as the
     family and an empty slug, so the row still renders."""
     parts = doc_id.split("/")
     if len(parts) < 3:
@@ -1045,20 +1109,24 @@ def get_knowledge_doc_detail(
 def get_knowledge_graph(
     conn: Optional[sqlite3.Connection], knowledge_dir: str
 ) -> Dict:
-    """The /knowledge/graph canvas data: every stored knowledge doc as a
-    node, every indexed relationship as a directed edge — one edge per
-    ``knowledge_edges`` row, drawn exactly as stored (the index keeps a
-    supersede pair in both directions, so the pair reads as the two-way
-    link the related CLI and the detail panels report), each carrying
-    ``relation`` + ``kind`` so the canvas styles inferred dashed vs
-    extracted/derived solid and the legend can chip both facets. Rows
-    naming docs the bundle no longer resolves draw nothing (never a
-    phantom endpoint between rebuilds). Nodes carry ``id`` (the bare
-    concept id the edges join on), ``title``, ``family`` and ``status``;
-    a pre-index store renders the doc constellation with zero edges, and
-    a doc-less workspace returns empty lists."""
+    """The /knowledge/graph canvas data: the whole knowledge layer as
+    nodes — every stored knowledge doc (``kind: "doc"``) and every memory
+    item (``kind: "memory"``) — over every indexed relationship as a
+    directed edge: one edge per ``knowledge_edges`` row, drawn exactly as
+    stored (the index keeps a supersede pair in both directions, so the
+    pair reads as the two-way link the related CLI and the detail panels
+    report), plus each memory's frontmatter supersede pair drawn the same
+    two-way way. Edges carry ``relation`` + ``kind`` so the canvas styles
+    inferred dashed vs extracted/derived solid and the legend can chip
+    both facets. Rows naming concepts the bundle no longer resolves draw
+    nothing (never a phantom endpoint between rebuilds). Nodes carry
+    ``id`` (the bare concept id the edges join on), ``title``, ``family``
+    (doc family / memory tier), ``status`` and ``kind``; a pre-index
+    store renders the constellation with only frontmatter memory edges,
+    and an empty bundle returns empty lists."""
     bundle = OKFBundle(knowledge_dir)
     nodes: List[dict] = []
+    memories: Dict[str, "OKFConcept"] = {}
     for cid in bundle.list_concepts(prefix="knowledge/"):
         try:
             concept = bundle.read_concept(cid)
@@ -1072,33 +1140,65 @@ def get_knowledge_graph(
                 "title": concept.title or doc_id,
                 "family": family,
                 "status": concept.extensions.get("doc_status") or "active",
+                "kind": "doc",
+            }
+        )
+    for cid in bundle.list_concepts(prefix="memory/"):
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue
+        memories[cid] = concept
+        tier, _slug = _split_doc_id(cid)
+        nodes.append(
+            {
+                "id": cid,
+                "title": concept.title or cid,
+                "family": tier,
+                "status": concept.extensions.get("memory_status") or tier,
+                "kind": "memory",
             }
         )
     nodes.sort(key=lambda n: n["id"])
     node_ids = {n["id"] for n in nodes}
     edges: List[dict] = []
+    seen = set()
+
+    def add_edge(source: str, target: str, relation: str, kind: str) -> None:
+        key = (source, target, relation, kind)
+        if key in seen or source not in node_ids or target not in node_ids:
+            return
+        seen.add(key)
+        edges.append(
+            {
+                "source": source,
+                "target": target,
+                "relation": relation,
+                "kind": kind,
+            }
+        )
+
     if conn is not None and _knowledge_table_present(conn, "knowledge_edges"):
-        seen = set()
         for doc_id, related_id, relation, kind in conn.execute(
             "SELECT doc_id, related_id, relation, kind FROM knowledge_edges "
             "ORDER BY doc_id, related_id, relation, kind"
         ).fetchall():
-            key = (doc_id, related_id, relation, kind)
-            if (
-                key in seen
-                or doc_id not in node_ids
-                or related_id not in node_ids
-            ):
-                continue
-            seen.add(key)
-            edges.append(
-                {
-                    "source": doc_id,
-                    "target": related_id,
-                    "relation": relation,
-                    "kind": kind,
-                }
-            )
+            add_edge(doc_id, related_id, relation, kind)
+    # Memory supersedes pairs drawn two-way, matching the index's mirrored
+    # supersede rows: the newer's declaration plus the older's back-pointer
+    # cover chains whose either half lost its file.
+    for cid, concept in memories.items():
+        extensions = concept.extensions
+        pairs = [
+            (cid, older)
+            for older in (extensions.get("memory_supersedes") or [])
+        ]
+        superseded_by = extensions.get("memory_superseded_by")
+        if superseded_by:
+            pairs.append((str(superseded_by), cid))
+        for newer, older in pairs:
+            add_edge(newer, older, "supersedes", "extracted")
+            add_edge(older, newer, "superseded-by", "extracted")
     return {
         "nodes": nodes,
         "edges": edges,
@@ -1106,17 +1206,73 @@ def get_knowledge_graph(
     }
 
 
+def _memory_inspect(
+    bundle: "OKFBundle", memory_id: str
+) -> Optional[dict]:
+    """The inspect-panel payload for one memory node: identity plus the
+    frontmatter supersedes/superseded-by neighbors as the same row shape
+    ``related_docs`` produces (relation, kind, direction, resolved
+    titles). The panel and detail hrefs treat ``family`` as the tier.
+    Unreadable neighbors drop out — never a phantom neighbor."""
+    try:
+        concept = bundle.read_concept(memory_id)
+    except Exception:
+        return None
+    tier, slug = _split_doc_id(memory_id)
+    extensions = concept.extensions
+    related: List[dict] = []
+
+    def add_neighbor(neighbor_id: str, relation: str, direction: str) -> None:
+        try:
+            neighbor = bundle.read_concept(neighbor_id)
+        except Exception:
+            return  # deleted between captures: never a phantom neighbor
+        neighbor_tier, neighbor_slug = _split_doc_id(neighbor_id)
+        related.append(
+            {
+                "doc_id": neighbor_id,
+                "title": neighbor.title or neighbor_id,
+                "relation": relation,
+                "kind": "extracted",
+                "direction": direction,
+                "family": neighbor_tier,
+                "slug": neighbor_slug,
+            }
+        )
+
+    for older in extensions.get("memory_supersedes") or []:
+        add_neighbor(str(older), "supersedes", "outgoing")
+    superseded_by = extensions.get("memory_superseded_by")
+    if superseded_by:
+        add_neighbor(str(superseded_by), "superseded-by", "incoming")
+    return {
+        "found": True,
+        "kind": "memory",
+        "id": memory_id,
+        "family": tier,
+        "slug": slug,
+        "title": concept.title or memory_id,
+        "status": extensions.get("memory_status") or tier,
+        "tags": list(concept.tags),
+        "related": related,
+        "related_groups": _group_related(related),
+    }
+
+
 def get_knowledge_graph_inspect(
     conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str
 ) -> Optional[dict]:
-    """The knowledge graph inspect panel's payload for one doc: identity
+    """The knowledge graph inspect panel's payload for one node: identity
     (bare id, family/slug detail-href parts, title, status, tags) plus
-    the doc's relationships — the same ``related_docs`` rows the detail
-    panels render, grouped by relation with kind labels. Unknown ids are
-    None (the route renders the panel's not-found note, matching
-    /graph/inspect's found=False contract); a pre-index store renders
-    the identity with zero relationships."""
+    the node's relationships — for a knowledge doc the same
+    ``related_docs`` rows the detail panels render, for a memory item the
+    frontmatter supersedes rows. Unknown ids are None (the route renders
+    the panel's not-found note, matching /graph/inspect's found=False
+    contract); a pre-index store renders knowledge identity with zero
+    relationships."""
     bundle = OKFBundle(knowledge_dir)
+    if doc_id.startswith("memory/"):
+        return _memory_inspect(bundle, doc_id)
     try:
         concept = resolve_knowledge_doc(bundle, doc_id)
     except ValueError:
@@ -1134,6 +1290,7 @@ def get_knowledge_graph_inspect(
             )
     return {
         "found": True,
+        "kind": "doc",
         "id": bare_id,
         "family": family,
         "slug": slug,

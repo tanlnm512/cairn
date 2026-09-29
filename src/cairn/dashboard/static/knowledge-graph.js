@@ -1,8 +1,9 @@
 /* Knowledge relationship canvas: build vis-network DataSets from the
    server-serialized {nodes, edges, metadata} JSON block
-   (#knowledge-graph-data) and render the doc relationship network — one
-   node per stored knowledge doc, one directed edge per indexed
-   knowledge_edges row, drawn exactly as stored (the index keeps a
+   (#knowledge-graph-data) and render the knowledge-layer network — one
+   node per stored knowledge doc or memory item (diamonds for memories),
+   one directed edge per indexed knowledge_edges row plus each memory's
+   frontmatter supersede pair, drawn exactly as stored (the index keeps a
    supersede pair in both directions — "supersedes" on the newer doc,
    "superseded-by" on the older — so the pair reads as the two-way link
    the related CLI and the detail panels report).
@@ -118,8 +119,11 @@
      JS-driven motion the CSS media query cannot collapse. */
   var staticLayout = edgeless || prefersReducedMotion();
 
-  function docColor() {
-    var c = cssVar("--accent");
+  /* Memory items wear the warn token and a diamond so the two node kinds
+     read apart at a glance; the tooltip names tier/status either way. */
+  function nodeColor(n) {
+    var kind = n.kind === "memory" ? "memory" : "doc";
+    var c = cssVar(kind === "memory" ? "--warn" : "--accent");
     return {
       background: c,
       border: c,
@@ -134,7 +138,8 @@
       label: n.title || n.id,
       title: [n.family, n.status, n.id].filter(Boolean).join("\n"),
       value: (degree[n.id] || 0) + 1,
-      color: docColor()
+      color: nodeColor(n),
+      shape: n.kind === "memory" ? "diamond" : "dot"
     };
     if (staticLayout) {
       var p = spiralPosition();
@@ -289,7 +294,7 @@
     }).length;
     el.textContent =
       data.nodes.length +
-      " docs — " +
+      " items — " +
       shown +
       " of " +
       data.edges.length +
@@ -512,7 +517,14 @@
     network.setOptions(themeOptions());
     var nodeUpdates = [];
     nodes.get().forEach(function (n) {
-      nodeUpdates.push({ id: n.id, color: docColor() });
+      var source = null;
+      for (var i = 0; i < data.nodes.length; i += 1) {
+        if (data.nodes[i].id === n.id) {
+          source = data.nodes[i];
+          break;
+        }
+      }
+      nodeUpdates.push({ id: n.id, color: nodeColor(source || {}) });
     });
     if (nodeUpdates.length) {
       nodes.update(nodeUpdates);

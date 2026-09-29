@@ -10,11 +10,13 @@
   </nav>
   <h1>Knowledge graph</h1>
   <p class="muted">
-    Ingested documents as nodes, their stored relationships as directed
-    edges — one edge per indexed row, so a supersede pair reads as the
-    two-way link ("supersedes" on the newer doc, "superseded-by" on the
-    older) the related CLI and the detail panels report. Inferred links
-    render dashed; extracted and derived links solid.
+    The knowledge layer as a canvas — ingested documents and memory items
+    as nodes, their stored relationships as directed edges. One edge per
+    indexed row, so a supersede pair reads as the two-way link
+    ("supersedes" on the newer item, "superseded-by" on the older) the
+    related CLI and the detail panels report. Inferred links render
+    dashed; extracted and derived links solid. Diamonds are memory items;
+    dots are documents.
   </p>
   {% if graph.nodes %}
   {#- Legend as filter (the /graph pattern): kind + relation chips toggle
@@ -23,7 +25,7 @@
       the chips from the same data the canvas drew, so they cannot drift. -#}
   <div class="graph-legend" id="knowledge-graph-legend" hidden></div>
   <p class="muted" id="knowledge-graph-counts">
-    {{ graph.metadata.node_count }} docs — {{ graph.metadata.edge_count }} of
+    {{ graph.metadata.node_count }} items — {{ graph.metadata.edge_count }} of
     {{ graph.metadata.edge_count }} edges shown
   </p>
   <div class="graph-layout">

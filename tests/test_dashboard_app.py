@@ -869,7 +869,8 @@ def _seed_memories(knowledge_dir):
 
 
 def test_memory_route_lists_memories_newest_first_with_type(tmp_path):
-    """Recent memories newest-first, each with type badge + title."""
+    """Recent memories newest-first, each with type badge + title, the
+    title linking the memory's /memory/{tier}/{slug} detail page."""
     kdir = tmp_path / "knowledge"
     _seed_memories(kdir)
     client = _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
@@ -885,6 +886,13 @@ def test_memory_route_lists_memories_newest_first_with_type(tmp_path):
     assert positions == sorted(positions)
     for mtype in ("pattern", "mistake", "decision"):
         assert f">{mtype}<" in resp.text
+
+    # Every row's title links its detail page (tier + slug from the id).
+    from cairn.okf.bundle import OKFBundle
+
+    for cid in OKFBundle(str(kdir)).list_concepts(prefix="memory/tribal/"):
+        tier, slug = cid.split("/")[1], cid.split("/")[2]
+        assert f'href="/memory/{tier}/{slug}"' in resp.text, cid
 
 
 def test_memory_route_type_filter(tmp_path):
@@ -905,6 +913,62 @@ def test_memory_route_type_filter(tmp_path):
     assert resp.status_code == 200
     assert "Use RRF fusion by default" in resp.text  # fallback: all types
     assert "<strong>all</strong>" in resp.text
+
+
+def _seed_memory_chain(kdir):
+    """A two-memory supersedes chain: v2 declares v1 in frontmatter, v1
+    carries the back-pointer and the flipped latest flag — the writer
+    contract evolve_memory implements."""
+    from cairn.memory.store import create_memory, store_memory
+    from cairn.okf.bundle import OKFBundle
+
+    bundle = OKFBundle(str(kdir))
+    v1 = create_memory(
+        type_="decision", title="Cache tier v1",
+        body="v1 body: raw cache decisions", confidence=0.6,
+    )
+    store_memory(v1, bundle, tier="tribal")
+    v2 = create_memory(
+        type_="decision", title="Cache tier v2",
+        body="v2 body: pinned the cache TTL",
+        confidence=0.7, supersedes=[v1.concept_id],
+    )
+    store_memory(v2, bundle, tier="tribal")
+    v1.extensions["memory_is_latest"] = False
+    v1.extensions["memory_superseded_by"] = v2.concept_id
+    bundle.write_concept(v1)
+    return v1.concept_id, v2.concept_id
+
+
+def test_memory_detail_renders_identity_body_and_neighbor_links(tmp_path):
+    """/memory/{tier}/{slug} renders the memory's body through the
+    escape-first renderer with its lifecycle meta, and the supersedes
+    neighbors link their own detail pages; an unknown id stays a 404."""
+    kdir = tmp_path / "knowledge"
+    v1_id, v2_id = _seed_memory_chain(kdir)
+    client = _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(kdir))
+
+    tier1, slug1 = v1_id.split("/")[1], v1_id.split("/")[2]
+    resp = client.get(f"/memory/{tier1}/{slug1}")
+    assert resp.status_code == 200
+    assert "Cache tier v1" in resp.text
+    assert "v1 body: raw cache decisions" in resp.text
+    assert "badge-warn" in resp.text  # superseded badge
+    assert "Promotion history" in resp.text
+    assert "Signals" in resp.text
+
+    tier2, slug2 = v2_id.split("/")[1], v2_id.split("/")[2]
+    assert f'href="/memory/{tier2}/{slug2}"' in resp.text  # superseded-by link
+
+    newer = client.get(f"/memory/{tier2}/{slug2}")
+    assert newer.status_code == 200
+    assert "v2 body: pinned the cache TTL" in newer.text
+    assert "badge-ok" in newer.text  # latest badge
+    assert f'href="/memory/{tier1}/{slug1}"' in newer.text  # supersedes link
+
+    missing = client.get("/memory/tribal/no-such-memory")
+    assert missing.status_code == 404
+    assert "No memory exists" in missing.text
 
 
 def test_database_route_renders_schema_relationships(tmp_path):

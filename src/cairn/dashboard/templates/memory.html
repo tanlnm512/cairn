@@ -20,7 +20,11 @@
       {% for m in memories %}
       <tr>
         <td><span class="badge badge-{{ m.type }}">{{ m.type }}</span></td>
-        <td>{{ m.title }}</td>
+        <td>
+          {%- if m.tier and m.slug %}
+          <a href="{{ links.url('/memory/' ~ m.tier ~ '/' ~ m.slug) }}">{{ m.title }}</a>
+          {%- else %}{{ m.title }}{% endif %}
+        </td>
         <td>{{ m.tier or "—" }}</td>
         <td class="ts">{{ m.timestamp or "—" }}</td>
         <td class="cell-id"><code title="{{ m.id }}">{{ m.id }}</code></td>

@@ -11,7 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.21.2] - 2026-09-29
+### Added
+- Dashboard Memory detail pages: `/memory/{tier}/{slug}` renders a memory's
+  body, identity, promotion history, signals and supersedes/superseded-by
+  links, and the Memory list's titles link them.
+- Dashboard knowledge graph covers the whole knowledge layer: memory items
+  join the docs as nodes (diamonds, tier as family) and their frontmatter
+  supersede pairs draw as directed edges; the node-click inspect panel
+  resolves memory ids and links the memory detail pages.
+
 ### Changed
 - Test-suite audit: ~200 tests removed or trimmed under the "one owner test
   per contract / no implementation mirrors" policy — source-text mirror tests
