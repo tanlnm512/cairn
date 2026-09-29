@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
-## [Unreleased]
+## [0.21.2] - 2026-09-29
 ### Added
 - Dashboard Memory detail pages: `/memory/{tier}/{slug}` renders a memory's
   body, identity, promotion history, signals and supersedes/superseded-by
