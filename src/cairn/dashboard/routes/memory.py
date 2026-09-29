@@ -49,6 +49,35 @@ def register(routes: list[Any], context: DashboardContext) -> None:
             },
         )
 
+    def memory_detail(request: Request) -> Response:
+        """One memory's detail page at /memory/{tier}/{slug} — the bare
+        concept id's two variable segments. get_memory_detail assembles
+        identity, rendered body, promotion history and the supersedes
+        neighbors; None = the plain not-found page."""
+        from starlette.responses import HTMLResponse
+
+        from ..data import get_memory_detail
+
+        memory_id = "memory/{tier}/{slug}".format(**request.path_params)
+        _, selected_knowledge, store_key = resolve_selection(
+            request, db_path, knowledge_dir
+        )
+        memory = get_memory_detail(selected_knowledge, memory_id)
+        if memory is None:
+            return HTMLResponse(
+                "<html><head><title>cairn dashboard</title></head><body>"
+                "<h1>Memory not found</h1>"
+                "<p>No memory exists at this id.</p>"
+                '<p><a href="/memory">Back to memory</a></p>'
+                "</body></html>",
+                status_code=404,
+            )
+        return render(
+            request,
+            "memory_detail.html",
+            {"memory": memory, "store_key": store_key},
+        )
+
     def tasks(request: Request) -> Response:
         status = request.query_params.get("status", "all").strip() or "all"
         if status not in TASK_STATUSES:
@@ -75,6 +104,12 @@ def register(routes: list[Any], context: DashboardContext) -> None:
     routes.extend(
         [
             Route("/memory", memory, name="memory"),
+            # The memory detail; /memory/{tier}/{slug} is the bare concept
+            # id's two variable segments — a single path param never
+            # matches "/", so /tasks can never be shadowed by it.
+            Route(
+                "/memory/{tier}/{slug}", memory_detail, name="memory_detail"
+            ),
             Route("/tasks", tasks, name="tasks"),
         ]
     )

@@ -517,3 +517,104 @@ def test_knowledge_graph_inspect_unknown_doc_renders_note(tmp_path):
     assert "no knowledge document" in blank.text
 
 
+
+
+# ---------------------------------------------------------------------------
+# Memory items in the knowledge layer: nodes + frontmatter supersede edges
+# ---------------------------------------------------------------------------
+
+
+def _memory_graph_client(tmp_path):
+    """A client over a memory-only corpus: a two-memory supersedes chain
+    (frontmatter declaration + back-pointer, the writer contract) plus a
+    dangling supersedes id. No knowledge docs; the SQL index stays empty,
+    so frontmatter is the only edge source."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+    from cairn.memory.store import create_memory, store_memory
+    from cairn.okf.bundle import OKFBundle
+    from tests.test_dashboard_app import _graph_db_file
+
+    db = _graph_db_file(tmp_path, seed=False)
+    kdir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(kdir))
+    older = create_memory(
+        type_="pattern", title="Tribal cache pattern",
+        body="older pattern body", confidence=0.6,
+    )
+    store_memory(older, bundle, tier="tribal")
+    newer = create_memory(
+        type_="pattern", title="Tribal cache pattern v2",
+        body="newer pattern body", confidence=0.7,
+        supersedes=[older.concept_id, "memory/tribal/gone-abc123"],
+    )
+    store_memory(newer, bundle, tier="tribal")
+    older.extensions["memory_is_latest"] = False
+    older.extensions["memory_superseded_by"] = newer.concept_id
+    bundle.write_concept(older)
+    return (
+        TestClient(create_app(db_path=db, knowledge_dir=str(kdir))),
+        older.concept_id,
+        newer.concept_id,
+    )
+
+
+def test_knowledge_graph_draws_memory_nodes_and_supersede_edges(tmp_path):
+    """Memory items are nodes (kind=memory, family=tier) beside the docs,
+    and their frontmatter supersede pairs draw two-way like the index's
+    mirrored rows — a dangling supersedes id draws nothing, and an empty
+    SQL index costs nothing (frontmatter is the edge source)."""
+    client, older_id, newer_id = _memory_graph_client(tmp_path)
+
+    payload = _graph_json(client.get("/knowledge/graph").text)
+    by_id = {n["id"]: n for n in payload["nodes"]}
+    assert by_id[older_id]["kind"] == "memory"
+    assert by_id[older_id]["family"] == "tribal"
+    assert not any(n["kind"] == "doc" for n in payload["nodes"])
+    assert by_id[older_id]["status"] == "tribal"
+
+    edge_dirs = {
+        (e["source"], e["target"], e["relation"])
+        for e in payload["edges"]
+    }
+    assert (newer_id, older_id, "supersedes") in edge_dirs
+    assert (older_id, newer_id, "superseded-by") in edge_dirs
+    assert all(e["kind"] == "extracted" for e in payload["edges"])
+    assert not any(
+        "gone-abc123" in (e["source"], e["target"])
+        for e in payload["edges"]
+    )
+    assert payload["metadata"]["node_count"] == 2
+    assert payload["metadata"]["edge_count"] == 2
+
+
+def test_knowledge_graph_inspect_resolves_memory_nodes(tmp_path):
+    """The node-click inspect fragment resolves a memory id: memory
+    identity plus the frontmatter neighbors as related rows whose links
+    aim at /memory detail pages; a dangling declaration draws no phantom
+    row and an unknown memory id renders the panel's not-found note."""
+    client, older_id, newer_id = _memory_graph_client(tmp_path)
+
+    resp = client.get(
+        "/knowledge/graph/inspect",
+        params={"doc": newer_id},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert "<html" not in resp.text  # fragment, not a page
+    assert "Tribal cache pattern v2" in resp.text
+    assert "badge-kind-extracted" in resp.text
+    assert "outgoing" in resp.text
+    older_href = 'href="/memory/tribal/' + older_id.split("/", 2)[2] + '"'
+    assert older_href in resp.text
+    assert "gone-abc123" not in resp.text
+
+    missing = client.get(
+        "/knowledge/graph/inspect",
+        params={"doc": "memory/tribal/ghost"},
+        headers={"HX-Request": "true"},
+    )
+    assert missing.status_code == 200
+    assert "no knowledge document" in missing.text
