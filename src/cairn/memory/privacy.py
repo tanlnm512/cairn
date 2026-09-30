@@ -6,7 +6,7 @@ import re
 # ``<private>...</private>`` tags → [REDACTED].
 _PRIVATE_TAG_RE = re.compile(r"<private>[\s\S]*?</private>", re.IGNORECASE)
 
-# URI connection strings with embedded credentials (audit F6):
+# URI connection strings with embedded credentials:
 # ``postgres://admin:pass@db``, ``redis://:pass@cache``, basic-auth URLs,
 # AMQP/MongoDB DSNs, ... The scheme and host are non-secret debugging
 # context, so only the ``user:password@`` segment is replaced. Applied

@@ -15,9 +15,9 @@ from . import sink
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Event-name catalog (spec §6.4).
+# Event-name catalog.
 #
-# Module-level constants so emitter sites (T09-T11) and consumers
+# Module-level constants so emitter sites and consumers
 # (``cairn doctor`` / ``cairn metrics --contention``) share one spelling -- a
 # typo in a string literal would silently drop a signal that exists only to be
 # observed. The catalog is the contract between producers and the doctor.
@@ -67,7 +67,7 @@ def _session_id() -> str:
     """The correlation id stamped on every event (mirrors tool_metrics).
 
     ``CAIRN_SESSION`` defaults to 'unknown'; the server/CLI set it per run so
-    events group into a 'session as trace' (spec §3, P1 tracing model).
+    events group into a 'session as trace' (the P1 tracing model).
     """
     return os.environ.get("CAIRN_SESSION", "unknown")
 
@@ -94,7 +94,7 @@ def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
     Returns ``None`` for an empty dict (NULL ``attrs`` column). Non-serializable
     values are stringified via ``default=str`` so :func:`emit` never raises --
     a caller passing an odd object is a bug, but telemetry must not propagate
-    it (spec §5.6). Stringified values and over-long strings are routed through
+    it. Stringified values and over-long strings are routed through
     ``strip_private_data``: ``str(exc)`` routinely embeds secret shapes and
     absolute paths, and this module is the policy point for what reaches the
     ``events`` table (and, with OTLP on, the network) -- attrs must stay
@@ -136,7 +136,7 @@ def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
 def emit(name: str, **attrs: Any) -> None:
     """Append a telemetry event to the shared sink buffer (best-effort).
 
-    No-op under ``CAIRN_TELEMETRY=off`` (the master kill switch, spec §5.1) or
+    No-op under ``CAIRN_TELEMETRY=off`` (the master kill switch) or
     ``CAIRN_READ_ONLY`` (a mode=ro daemon would fail every flush and buffer
     indefinitely -- same rationale as ``metric_buffering._log_metric``). Never
     raises: serialization/gating errors are swallowed at debug. The row is
@@ -163,7 +163,7 @@ def emit(name: str, **attrs: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# warn_once -- process-global one-time-warning (spec §6.3)
+# warn_once -- process-global one-time-warning
 #
 # Generalizes graph/embeddings.warn_hash_fallback_once and
 # graph/ann_index.warn_ann_fallback_once. Each degradation class warns at most
@@ -178,7 +178,7 @@ def warn_once(key: str, warn_logger: logging.Logger, msg: str) -> None:
     """Emit ``msg`` via ``warn_logger.warning`` at most once per (process, key).
 
     No-op under ``CAIRN_TELEMETRY=off`` (the whole telemetry module is a no-op
-    then, spec §6.1). Thread-safe: the guard set is mutated only under
+    then). Thread-safe: the guard set is mutated only under
     ``_WARN_LOCK``; the log call happens after release so logging can't
     serialize concurrent callers (mirrors the contention-helper pattern in
     ``graph.schema.note_contention``).

@@ -634,8 +634,8 @@ def build_graph(
 
         prepare_worktree_graph(workspace)
 
-    # Capture phase timings from the progress callbacks (spec observability-
-    # telemetry 6.2). First-seen timestamp for phase-start markers, last-seen
+    # Capture phase timings from the progress callbacks. First-seen timestamp
+    # for phase-start markers, last-seen
     # for done markers, so a multi-repo resolve span covers the whole window.
     # The caller's own progress callback still receives every event unchanged
     # (the golden progress-event test continues to pass).
@@ -689,7 +689,7 @@ def build_graph(
     # build backup_to() has already swapped the graph to disk by now, so the
     # row lands in the same DB as the rest of the graph. Best-effort: a
     # telemetry write must never fail a build (record_build_run swallows all
-    # errors and logs at DEBUG -- spec 5.4/5.6, analytics not correctness).
+    # errors and logs at DEBUG -- analytics, not correctness).
     duration_s = time.time() - started_epoch
     _record_build(resolved_db, "build", summary, started_epoch, duration_s, phase_ts)
     return summary
@@ -815,8 +815,7 @@ def record_build_run(
     event), so this writes a direct INSERT on a short-lived connection rather
     than routing through the buffered telemetry sink. Telemetry is analytics,
     not correctness: every failure is swallowed and logged at DEBUG so a
-    metrics write can never fail a build/sync/embed/incremental pass (spec
-    observability-telemetry 5.4/5.6).
+    metrics write can never fail a build/sync/embed/incremental pass.
 
     ``db_path`` None resolves to the central store for the workspace (mirrors
     ``schema.get_db``). Count columns are all optional -- each entry point
@@ -826,7 +825,7 @@ def record_build_run(
     (``CAIRN_WORKERS`` / ``CAIRN_SESSION``) so callers don't repeat that logic.
     """
     # CAIRN_TELEMETRY=off stops build-run recording too ("Set off to stop all
-    # event and build-run recording", docs/configuration.md / spec 5.1). Lazy
+    # event and build-run recording", docs/configuration.md). Lazy
     # import mirrors schema.note_contention's gating so the telemetry package
     # stays out of builder's import graph; a gating failure must not fail the
     # write (analytics, not correctness).

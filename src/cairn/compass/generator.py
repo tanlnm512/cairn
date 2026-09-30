@@ -99,13 +99,13 @@ def generate_compass(
     cross_deps = _cross_module_deps(conn, module_path, repo_filter)
 
     # 4. Quick commands (a gradle build command when the repo is known).
-    quick_commands = _quick_commands(module_path, repo_filter)
+    quick_commands = _quick_commands(conn, repo_filter)
 
     # 5. Synthesize body.
     if llm_synthesize:
         body = llm_synthesize(symbols, key_files, cross_deps, quick_commands)
     else:
-        body = _template_body(symbols, key_files, cross_deps, quick_commands)
+        body = _template_body(symbols, key_files, cross_deps)
 
     title = _derive_title(module_path)
     concept_id = f"compass/{module_path.strip('/').replace('/', '-')}"
@@ -237,15 +237,30 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
     return sorted(mods)[:8]
 
 
-def _quick_commands(module_path: str, repo: Optional[str]) -> List[str]:
+def _is_gradle_repo(conn: sqlite3.Connection, repo: str) -> bool:
+    """True when the repo's indexed files include a Gradle build file."""
+    cur = conn.cursor()
+    names = (
+        "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+    )
+    patterns = [p for name in names for p in (name, f"%/{name}")]
+    ph = " OR ".join("path LIKE ?" for _ in patterns)
+    row = cur.execute(
+        f"SELECT 1 FROM files WHERE repo_id = ? AND ({ph}) LIMIT 1",
+        (repo, *patterns),
+    ).fetchone()
+    return row is not None
+
+
+def _quick_commands(conn: sqlite3.Connection, repo: Optional[str]) -> List[str]:
     cmds = []
-    if repo:
+    if repo and _is_gradle_repo(conn, repo):
         cmds.append(f"Build {repo}: `./gradlew :assembleDebug` (run in {repo}/)")
     cmds.append("Find callers: `cairn callers <symbol>`")
     return cmds
 
 
-def _template_body(symbols, key_files, cross_deps, quick_commands, module_path=None) -> str:
+def _template_body(symbols, key_files, cross_deps) -> str:
     lines = ["# What Does This Module Do?"]
     if symbols:
         kinds: dict[str, int] = {}
@@ -305,7 +320,7 @@ def _gather_facts(conn: sqlite3.Connection, module_path: str, repo: Optional[str
     symbols = _symbols_in_module(conn, module_path, repo)
     key_files = _rank_key_files(conn, symbols)
     cross_deps = _cross_module_deps(conn, module_path, repo)
-    quick_commands = _quick_commands(module_path, repo)
+    quick_commands = _quick_commands(conn, repo)
     return {
         "resource": module_path,
         "module": module_path,

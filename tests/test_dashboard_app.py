@@ -2774,6 +2774,33 @@ def test_settings_post_actions_carry_the_store_in_the_url(tmp_path, monkeypatch)
     assert 'action="/settings/parity-check"' in bare.text
 
 
+def test_settings_post_actions_reject_cross_site_requests(tmp_path, monkeypatch):
+    """Both settings POST actions return 403 for browser cross-site requests
+    (mismatched Sec-Fetch-Site/Origin) before touching config. Sec-Fetch-Site
+    "same-site" is also rejected — another localhost port is same-site but is
+    exactly the cross-site write shape. Same-origin requests reach the
+    handler: the invalid knob forces the no-write refusal re-render (400)."""
+    client, _ = _switch_client(tmp_path, monkeypatch)
+
+    cross_site = (
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Origin": "https://evil.example"},
+    )
+    for path in ("/settings/save", "/settings/parity-check"):
+        for headers in cross_site:
+            resp = client.post(path, data={"CAIRN_EMBED_TIMEOUT": "1"}, headers=headers)
+            assert resp.status_code == 403, (path, headers)
+
+    resp = client.post(
+        "/settings/save",
+        data={"CAIRN_EMBED_TIMEOUT": "not-a-number"},
+        headers={"Sec-Fetch-Site": "same-origin"},
+    )
+    assert resp.status_code == 400
+    assert "Refused" in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Global workspace selector (topbar): server-rendered on every view from
 # enumerate_stores (populated only, never probed), labels from the

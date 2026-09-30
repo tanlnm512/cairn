@@ -26,8 +26,8 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag, 
     """Report MCP tool metrics and telemetry trends.
 
     With no flag, aggregates ``tool_metrics`` (calls / avg ms / errors) -- the
-    original behavior, unchanged. The extension flags render from the telemetry
-    tables added by spec observability-telemetry §6.5:
+    original behavior, unchanged. The extension flags render from the
+    telemetry tables:
 
       --builds      recent ``build_runs`` rows with the resolution mix
       --quality     empty-result rate, truncations, semantic backend mix
@@ -183,7 +183,7 @@ def _gather_quality(conn) -> dict:
     """Aggregate retrieval-quality signals from ``events``.
 
     ``empty_result`` is emitted from three query kinds (semantic_search,
-    explore, search_symbols -- spec §6.4). Only the ``semantic_search``
+    explore, search_symbols). Only the ``semantic_search``
     empties share a denominator with ``semantic_backend`` (the population at
     risk of an empty result), so the rate is scoped to that kind: semantic
     empties / semantic_backend total. ``empty_by_kind`` exposes the full

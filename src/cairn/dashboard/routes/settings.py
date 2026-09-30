@@ -3,12 +3,44 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
 from . import DashboardContext
+
+
+def _reject_cross_site(request: Request) -> Response | None:
+    """Return a 403 response for a POST whose browser origin headers name
+    another site, else None.
+
+    Loopback binding does not stop a web page from form-POSTing to the
+    dashboard (urlencoded bodies are CORS-safelisted, so no preflight
+    runs) — the mismatched Origin/Sec-Fetch-Site is the only signal.
+    Requests without these headers (curl, scripts) carry no cross-site
+    context and stay allowed.
+    """
+    from starlette.responses import PlainTextResponse
+
+    site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if site:
+        # "same-site" is not trusted: another localhost port counts as
+        # same-site and is exactly the cross-site write shape.
+        trusted = site in ("same-origin", "none")
+    else:
+        origin = (request.headers.get("Origin") or "").strip() or (
+            request.headers.get("Referer") or ""
+        ).strip()
+        trusted = not origin or urlsplit(origin).netloc == (
+            request.headers.get("Host") or ""
+        )
+    if trusted:
+        return None
+    return PlainTextResponse(
+        "cross-site request rejected", status_code=403
+    )
 
 
 def _settings_context(
@@ -320,10 +352,16 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         return _settings_page(request, context)
 
     async def settings_save(request: Request) -> Response:
+        deny = _reject_cross_site(request)
+        if deny is not None:
+            return deny
         form = await request.form()
         return await _settings_save(request, context, form)
 
     def settings_parity_check(request: Request) -> Response:
+        deny = _reject_cross_site(request)
+        if deny is not None:
+            return deny
         return _settings_parity_check(request, context)
 
     routes.extend(
@@ -331,8 +369,9 @@ def register(routes: list[Any], context: DashboardContext) -> None:
             Route("/embeddings", embeddings_status, name="embeddings"),
             Route("/database", database, name="database"),
             Route("/settings", settings, name="settings"),
-            # The app's first POST routes — loopback-only by the CLI's
-            # DEFAULT_HOST + _require_loopback; the GET views stay untouched.
+            # The app's only POST routes — the loopback bind plus
+            # _reject_cross_site guard them against cross-site form POSTs;
+            # the GET views stay untouched.
             Route(
                 "/settings/save",
                 settings_save,

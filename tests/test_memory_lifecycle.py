@@ -91,6 +91,20 @@ class TestSupersessionInsert:
         # Chain is relative paths, not absolute.
         assert all(not c.startswith("/") for c in chain)
 
+    def test_unreadable_memory_concept_is_skipped(self, db, bundle):
+        """A corrupt memory file (invalid encoding) is skipped during
+        supersession lookup, not propagated as a crash into capture_memory."""
+        r1 = capture_memory(
+            db, bundle, type_="decision", title="corrupt me", body="v1", confidence=0.8
+        )
+        # Corrupt the stored memory file so read_concept raises on decode.
+        (bundle.root / f"{r1['path']}.md").write_bytes(b"\xff\xfe not utf-8 \x80")
+
+        r2 = capture_memory(
+            db, bundle, type_="decision", title="still alive", body="v2", confidence=0.8
+        )
+        assert r2["path"], "capture must survive an unreadable sibling concept"
+
 class TestSupersessionSearch:
     """search_memory hides superseded memories by default."""
 

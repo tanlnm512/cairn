@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Rerank confidence gating (P0-2).
+# Rerank confidence gating.
 #
 # Steady-state profiling showed ~95% of a `semantic_search` call's wall time
 # is the optional cross-encoder rerank (predict on max(limit*5, 50) pairs).
@@ -33,9 +33,8 @@ logger = logging.getLogger(__name__)
 # exact-name corroboration (the fused #1 must be an exact reference of the
 # query).
 #
-# Calibration (bge-m3 embeddings + BAAI/bge-reranker-base over a copy of this
-# repo's src/ tree, 63 agent-style queries; see the PR description for the
-# full tables): at threshold 0.45 the gated population keeps top-1 agreement
+# Calibration (bge-m3 embeddings + BAAI/bge-reranker-base over an
+# agent-style query corpus): at threshold 0.45 the gated population keeps top-1 agreement
 # 1.00 (limit=10) / 0.94 (limit=20) with the reranked result on the
 # production-code corpus (0.91 on a corpus that also includes test-name
 # twins), skipping ~17-25% of calls (~70% of exact-name traffic -- the
@@ -178,12 +177,11 @@ def _mapping_rows(cursor) -> list:
 
     A bare ``sqlite3.connect()`` (no ``Row`` factory) yields plain tuples;
     this module reads rows by column name (``r["vec"]``, ``r["symbol_id"]``),
-    so a bare connection used to raise ``TypeError`` inside the retrieval
-    path and the search silently degraded to the FTS fallback (found while
-    minting the DS-v1 quality baseline: a quality run through a bare
-    connection measured recall 0.0). Normalizing once at each fetch boundary
-    makes any caller's connection shape safe. Row-connection rows pass
-    through untouched (zero copies on the standard path).
+    so a bare connection raises ``TypeError`` inside the retrieval
+    path and the search silently degrades to the FTS fallback. Normalizing
+    once at each fetch boundary makes any caller's connection shape safe.
+    Row-connection rows pass through untouched (zero copies on the standard
+    path).
     """
     rows = cursor.fetchall()
     if not rows or not isinstance(rows[0], tuple):

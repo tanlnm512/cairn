@@ -22,7 +22,7 @@ _log = logging.getLogger(__name__)
 # Report bundles pass private strings and filesystem paths through redaction filters
 # before printing or writing; the command never uploads data.
 
-# The error-ish event names mirrored from the spec §6.4 degradation catalog:
+# The error-ish event names mirrored from the degradation event catalog:
 # lock contention and the two silent backend fallbacks. (``stray_swept`` and
 # the quality/lifecycle signals are normal operation, not errors.)
 _ERROR_EVENTS: tuple[str, ...] = ("ann_fallback", "hash_fallback", "lock_contention")
@@ -54,7 +54,7 @@ def _scrub(value):
     """Privacy gate for one bundle field.
 
     Strings pass through ``strip_private_data`` (secret shapes / tags / URI
-    credentials, spec §7) and then ``_redact_paths`` (absolute local paths);
+    credentials) and then ``_redact_paths`` (absolute local paths);
     anything else (ints/floats/None/timestamps) is returned unchanged. Applied
     to every field below so the redaction invariant holds regardless of source.
     """
@@ -291,7 +291,7 @@ def report(db, as_json, out_path):
     sqlite/store), the 10 doctor checks, recent error-ish events and
     ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
 
-    PRIVACY GATE (spec observability-telemetry §7): every string field is
+    PRIVACY GATE: every string field is
     passed through ``memory.privacy.strip_private_data`` (known secret shapes
     -- API keys, bearer tokens, JWTs, ... -- and ``<private>`` tags are
     redacted to ``[REDACTED_SECRET]`` / ``[REDACTED]``) and then through path

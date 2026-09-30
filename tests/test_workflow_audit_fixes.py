@@ -6,6 +6,9 @@ change can't silently regress them.
 """
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from cairn.graph.builder import build_graph
@@ -323,3 +326,95 @@ def test_crashed_repo_build_leaves_marker_detectable(caller_callee_ws, tmp_path,
         )
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# files lookup scoping: files.path is unique per (repo_id, path), so every
+# lookup must be repo-scoped or a multi-repo workspace sharing a relative
+# path cross-corrupts during reindex.
+# ---------------------------------------------------------------------------
+
+def _two_repo_ws(tmp_path):
+    """Workspace with two repos whose trees share the relative path src/main.py."""
+    ws = tmp_path / "ws"
+    for repo, marker in (("repoA", "A"), ("repoB", "B")):
+        src = ws / repo / "src"
+        src.mkdir(parents=True)
+        (ws / repo / ".git").mkdir()
+        (src / "main.py").write_text(f'def shared():\n    return "{marker}"\n')
+    return ws
+
+
+def test_reindex_scopes_file_lookup_by_repo(tmp_path):
+    """Reindexing repoB's src/main.py must leave repoA's file row and symbols
+    untouched when both repos store the same repo-relative path."""
+    ws = _two_repo_ws(tmp_path)
+    db = str(tmp_path / "tworepo.db")
+    build_graph(workspace=str(ws), db_path=db)
+    conn = get_db(db)
+    try:
+
+        def repo_state(repo):
+            frow = conn.execute(
+                "SELECT id, hash FROM files WHERE repo_id = ? AND path = ?",
+                (repo, "src/main.py"),
+            ).fetchone()
+            assert frow is not None, f"missing files row for {repo}"
+            symbols = conn.execute(
+                "SELECT COUNT(*) AS c FROM symbols WHERE file_id = ?",
+                (frow["id"],),
+            ).fetchone()["c"]
+            return frow["hash"], symbols
+
+        a_before = repo_state("repoA")
+
+        (ws / "repoB" / "src" / "main.py").write_text(
+            'def shared():\n    return "B"\n\n\ndef added():\n    return 2\n'
+        )
+        reindex_paths(conn, str(ws), [str(ws / "repoB" / "src" / "main.py")])
+
+        assert repo_state("repoA") == a_before, (
+            "reindex of repoB's src/main.py must not touch repoA's file row "
+            "or symbols"
+        )
+        added_in_b = conn.execute(
+            "SELECT COUNT(*) AS c FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE f.repo_id = 'repoB' AND s.name = 'added'"
+        ).fetchone()["c"]
+        assert added_in_b == 1, "the new symbol must land under repoB's row"
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# New-file detection on the git path: `git diff --name-only HEAD` never
+# lists untracked files, so the changed-file signal must ask for them.
+# ---------------------------------------------------------------------------
+
+def _init_git_repo(repo: Path) -> None:
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
+    (repo / "app.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=env)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, env=env)
+
+
+def test_changed_source_files_reports_untracked_new_files(tmp_path):
+    """A newly created (untracked) source file must be reported as changed;
+    conn=None disables the stat fallback so the git path itself is pinned."""
+    from cairn.graph.incremental import _changed_source_files
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / "brand_new.py").write_text("def fresh():\n    return 2\n")
+
+    changed = _changed_source_files(repo, conn=None)
+
+    assert "brand_new.py" in changed
+    assert "app.py" not in changed

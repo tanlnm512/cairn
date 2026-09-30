@@ -30,7 +30,7 @@ __all__ = [
     "configure_conn",
     "flush",
     "start_flusher",
-    # Event-name catalog (spec §6.4)
+    # Event-name catalog
     "ANN_FALLBACK",
     "HASH_FALLBACK",
     "LOCK_CONTENTION",

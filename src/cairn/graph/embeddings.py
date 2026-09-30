@@ -336,8 +336,8 @@ def mv_text_for_kind(
 def _config_or_env(name: str, default: Optional[str] = None) -> Optional[str]:
     """Resolution choke point for the CAIRN_EMBED_* knobs: env var > config file
     > ``default``. Env and file values are stripped, so a blank env value
-    falls through to the file exactly as blanks used to fall through to
-    defaults. File values live in $CAIRN_HOME/config.json under the same
+    falls through to the file and a blank file value to the default. File
+    values live in $CAIRN_HOME/config.json under the same
     env-var name (paths.CONFIG_FILE); no config file means env-or-default.
     """
     from ..paths import get_config_value
@@ -367,7 +367,7 @@ _SERVER_PRESET_BASE_URL = {
 
 # Cache the loaded model so repeated calls don't reload weights.
 # Guarded by _MODEL_CACHE_LOCK: the lazy load is reachable from both the embed
-# flusher thread and tool threads (audit F5), and an unsynchronized load could
+# flusher thread and tool threads, and an unsynchronized load could
 # double-load the weights or -- with two different model keys racing the
 # single-entry eviction -- KeyError the loser on the final lookup.
 _MODEL_CACHE: dict = {}
@@ -615,7 +615,7 @@ def warn_hash_fallback_once(logger, context: str = "") -> None:
     """
     global _HASH_FALLBACK_WARNED
     if not _HASH_FALLBACK_WARNED and is_hash_fallback():
-        # Durable event (spec §6.4); the WARNING below keeps the human detail.
+        # Durable telemetry event; the WARNING below keeps the human detail.
         try:
             from cairn.telemetry import HASH_FALLBACK, emit as _emit
 
@@ -901,7 +901,7 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
 def _get_local_model(model_name: Optional[str] = None):
     """Lazily load the sentence-transformers model (cached per process).
 
-    Double-checked locking over _MODEL_CACHE (audit F5): the load is expensive
+    Double-checked locking over _MODEL_CACHE: the load is expensive
     (seconds) and reachable from concurrent threads, so exactly one thread
     loads per key. The loaded model is returned via a local reference rather
     than a final dict lookup -- a concurrent load of a DIFFERENT key evicting

@@ -70,9 +70,9 @@ def warn_ann_fallback_once(logger, context: str = "", reason: str = "") -> None:
             reason = "load failed or no index built"
         except ImportError:
             reason = "sqlite-vec not installed"
-    # Durable event (spec §6.4) with an enum reason for doctor/metrics
-    # aggregation; the WARNING below keeps the human-readable detail. Map the
-    # human reason to the spec's bounded enum so the attr value domain is fixed.
+    # Durable event with an enum reason for doctor/metrics aggregation; the
+    # WARNING below keeps the human-readable detail. Map the human reason to
+    # a bounded enum so the attr value domain is fixed.
     _REASON_ENUM = {
         "sqlite-vec not installed": "not_installed",
         "load failed": "load_failed",
@@ -383,8 +383,8 @@ def ann_query(
         # No vec0 index for this model (typically: embeddings were built but
         # `cairn embed` hasn't run since, or the DB predates sqlite-vec). This
         # is a recoverable setup state, not a crash -- but it silently costs
-        # the native path on EVERY query, so surface it once with the spec's
-        # `no_index` reason (spec §6.4) instead of returning None invisibly.
+        # the native path on EVERY query, so surface it once with the
+        # `no_index` reason instead of returning None invisibly.
         warn_ann_fallback_once(_logger, context="ann_index.ann_query", reason="no index built")
         return None
     try:

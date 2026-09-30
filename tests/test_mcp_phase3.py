@@ -96,6 +96,17 @@ class TestStructuredContent:
         for name in structured:
             assert tools[name].output_schema, f"{name} must derive an outputSchema"
 
+    def test_get_callees_result_model_keeps_stale_banner(self):
+        """get_callees_data returns stale_banner; the structured model must
+        carry it through validation (parity with GetCallersResult)."""
+        from cairn.mcp_server.structured import GetCalleesResult
+
+        model = GetCalleesResult.model_validate({
+            "symbol": "x", "count": 0, "used_fallback": False,
+            "hit_limit": False, "stale_banner": "pending sync", "callees": [],
+        })
+        assert model.stale_banner == "pending sync"
+
 
     def test_all_parse_heavy_tools_have_structured_kwarg(self):
         """get_callers, get_callees, search_symbols, semantic_search,

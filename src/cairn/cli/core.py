@@ -9,6 +9,44 @@ from pathlib import Path
 from .main import DEFAULT_DB_PATH, builder, get_db, main, queries, scanner_mod
 from ._helpers import _human_bytes
 
+
+def _build_progress_handler(r):
+    """Build a build_graph progress callback that renders phase events on
+    rail ``r`` (shared by init and build).
+
+    The caller opens the "Scanning files" sub-step itself: scan completes
+    before the first progress event fires.
+    """
+    phase_state = {"scan_done": False, "resolve_started": False}
+
+    def on_progress(phase, **kw):
+        if phase == "scan":
+            files = kw.get("files", 0)
+            r.tick(f"{files:,} found")
+            r.finish(f"{files:,} found")
+            r.start("Parsing code")
+            phase_state["scan_done"] = True
+        elif phase == "parse_progress":
+            total = kw.get("total", 0) or 1
+            pct = 50 * kw.get("done", 0) // total
+            r.tick(f"{pct}%")
+        elif phase == "insert_progress":
+            total = kw.get("total", 0) or 1
+            pct = 50 + 50 * kw.get("done", 0) // total
+            r.tick(f"{pct}%")
+        elif phase == "resolve_start":
+            if not phase_state["resolve_started"]:
+                r.finish("done")
+                r.start("Resolving refs")
+                phase_state["resolve_started"] = True
+            r.tick(kw.get("repo", ""))
+        elif phase == "persist":
+            r.finish("done")
+            r.start("Persisting graph")
+
+    return on_progress
+
+
 @main.command()
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: cwd).")
 @click.option("--from-legacy", "legacy_dir", default=None,
@@ -74,32 +112,7 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
             # Scan completes before the first progress event fires, so open the
             # sub-step before calling build_graph and settle it on `scan`.
             r.start("Scanning files")
-            phase_state = {"scan_done": False, "resolve_started": False}
-
-            def on_progress(phase, **kw):
-                if phase == "scan":
-                    files = kw.get("files", 0)
-                    r.tick(f"{files:,} found")
-                    r.finish(f"{files:,} found")
-                    r.start("Parsing code")
-                    phase_state["scan_done"] = True
-                elif phase == "parse_progress":
-                    total = kw.get("total", 0) or 1
-                    pct = 50 * kw.get("done", 0) // total
-                    r.tick(f"{pct}%")
-                elif phase == "insert_progress":
-                    total = kw.get("total", 0) or 1
-                    pct = 50 + 50 * kw.get("done", 0) // total
-                    r.tick(f"{pct}%")
-                elif phase == "resolve_start":
-                    if not phase_state["resolve_started"]:
-                        r.finish("done")
-                        r.start("Resolving refs")
-                        phase_state["resolve_started"] = True
-                    r.tick(kw.get("repo", ""))
-                elif phase == "persist":
-                    r.finish("done")
-                    r.start("Persisting graph")
+            on_progress = _build_progress_handler(r)
 
             t0 = time.time()
             # verbose stays False: the rail replaces the per-file print() noise,
@@ -302,32 +315,7 @@ def build(repo, workspace, db, verbose, staging, lsp):
         # on builder._log's raw print(), which would corrupt a live region.
         with display.rail("Building graph", animate=not verbose) as r:
             r.start("Scanning files")
-            phase_state = {"scan_done": False, "resolve_started": False}
-
-            def on_progress(phase, **kw):
-                if phase == "scan":
-                    files = kw.get("files", 0)
-                    r.tick(f"{files:,} found")
-                    r.finish(f"{files:,} found")
-                    r.start("Parsing code")
-                    phase_state["scan_done"] = True
-                elif phase == "parse_progress":
-                    total = kw.get("total", 0) or 1
-                    pct = 50 * kw.get("done", 0) // total
-                    r.tick(f"{pct}%")
-                elif phase == "insert_progress":
-                    total = kw.get("total", 0) or 1
-                    pct = 50 + 50 * kw.get("done", 0) // total
-                    r.tick(f"{pct}%")
-                elif phase == "resolve_start":
-                    if not phase_state["resolve_started"]:
-                        r.finish("done")
-                        r.start("Resolving refs")
-                        phase_state["resolve_started"] = True
-                    r.tick(kw.get("repo", ""))
-                elif phase == "persist":
-                    r.finish("done")
-                    r.start("Persisting graph")
+            on_progress = _build_progress_handler(r)
 
             try:
                 summary = builder.build_graph(

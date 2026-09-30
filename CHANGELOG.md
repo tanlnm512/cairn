@@ -79,6 +79,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opt-out.
 - C4 containers-level diagram says tree-sitter ×15, matching the parser
   registry and the context level (was ×14).
+- Incremental updates no longer cross-corrupt repos that share a
+  repo-relative source path: every `files` lookup on the incremental path
+  (`reindex_paths`, `_find_tracked_file_row`, derived-prestate capture) is
+  scoped by `repo_id`, matching the `UNIQUE(repo_id, path)` schema.
+- `cairn update` and the live watcher in git repos now index newly created
+  (untracked) source files: the changed-file signal merges
+  `git ls-files --others` with `git diff --name-only HEAD`, so the watcher
+  no longer erases their `pending_sync` staleness markers either.
+- One unreadable memory concept file no longer crashes every memory capture
+  (`record_memory`, `cairn memory record`, session-end hooks): the
+  supersession lookup skips concepts that fail to read instead of raising.
+- The dashboard's settings POST actions reject browser cross-site form POSTs
+  (mismatched `Sec-Fetch-Site`/`Origin`, 403) before touching config —
+  loopback binding alone does not stop a web page from posting to the port.
+- `cairn memory consolidate` unlinks the raw files it archives, so re-runs
+  are idempotent instead of duplicating tribal/archived copies each time.
+- The legacy yaml evaluation path routes `corpus: L4` queries to the L4
+  retriever and emits the L4 report bucket (previously scored by the L5
+  knowledge retriever and silently dropped).
+- `get_callees` applies the same per-file `pending_sync` staleness check as
+  `get_callers`, and `get_callees(structured=True)` carries the banner
+  through its structured model instead of dropping it at validation.
+- Compass quick-command facts suggest the Gradle build command only for
+  repos that actually have a Gradle wrapper (`_template_body`'s dead
+  parameters removed; `_mark_superseded`'s dead normalization store
+  removed).
+- Comment/docstring sweep: history tags (task IDs, spec-section and
+  audit-finding references, PR/version stories) removed across the source
+  tree per the mandatory comment rules; `init` and `build` share one
+  progress-rail callback helper.
 ## [0.21.1] - 2026-09-21
 
 ### Added

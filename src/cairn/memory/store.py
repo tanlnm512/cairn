@@ -442,7 +442,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
     Refuses (returns False) when ``memory_path`` resolves to a concept
     outside the memory/ namespace: ``get_memory``'s FileNotFoundError
     fallback retries the raw path, which can resolve compass/wiki/knowledge
-    concepts (audit F8) -- without this guard ``cairn memory forget
+    concepts -- without this guard ``cairn memory forget
     compass/foo`` would unlink a compass doc. Mirrors the scope check the
     CLI enforces upstream, at the store chokepoint so the CLI
     and every other caller inherit it.
@@ -623,6 +623,11 @@ def consolidate_memories(bundle: OKFBundle) -> int:
             for c in group:
                 if c.concept_id and c.concept_id != unified_concept.concept_id:
                     try:
+                        # Capture the raw-tier file before concept_id is
+                        # reassigned; archiving is a move, so the original is
+                        # unlinked after the write (same pattern as
+                        # _write_to_tier's old_id unlink).
+                        old_file = Path(bundle.root) / f"{c.concept_id}.md"
                         c.extensions["memory_tier"] = "archived"
                         # UUID suffix (same format as store_memory's non-raw tier)
                         # so distinct memories that share a title don't clobber
@@ -630,6 +635,8 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                         archived_suffix = uuid.uuid4().hex[:6]
                         c.concept_id = f"memory/archived/{_slugify(c.title or 'memory')}-{archived_suffix}"
                         bundle.write_concept(c)
+                        if old_file.exists():
+                            old_file.unlink()
                     except Exception:
                         pass
 

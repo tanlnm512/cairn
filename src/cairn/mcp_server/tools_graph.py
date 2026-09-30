@@ -208,8 +208,9 @@ def get_callees(name: str, fuzzy: bool = False, limit: int = 200, structured: bo
     limit: max rows returned (default 200).
 
     structured: when True, returns a dict (``{symbol, count, used_fallback,
-    hit_limit, callees: [...]}``) instead of a formatted string, so agents
-    don't have to regex the prose. Default False preserves the prose return."""
+    hit_limit, stale_banner, callees: [...]}``) instead of a formatted
+    string, so agents don't have to regex the prose. Default False preserves
+    the prose return."""
     data = get_callees_data(name, fuzzy=fuzzy, limit=limit)
     if structured:
         return GetCalleesResult.model_validate(data)
@@ -229,6 +230,13 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
         if not rows and not fuzzy:
             rows = queries.get_callees(conn, name, fuzzy=True, limit=limit)
             used_fallback = True
+        # Staleness banner: check while conn is open; only relevant when there
+        # are results (an empty answer can't be "stale").
+        banner = freshness.banner() or (
+            _staleness_banner(conn, [r["file_path"] for r in rows])
+            if rows
+            else ""
+        )
     finally:
         conn.close()
 
@@ -240,7 +248,7 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
         "count": len(rows),
         "used_fallback": used_fallback,
         "hit_limit": hit_limit,
-        "stale_banner": freshness.banner(),
+        "stale_banner": banner,
         "callees": [
             {
                 "name": r["callee_name"],
@@ -810,7 +818,7 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
         conn.close()
 
     if not rows:
-        # Zero matches -> emit a durable empty_result (spec §6.4) so the
+        # Zero matches -> emit a durable empty_result so the
         # empty-result rate is measurable for the lexical search tool too.
         # Emitted here at the MCP tool boundary, NOT in the search_symbols
         # primitive (lexical.py): that primitive is shared by explore/semantic
