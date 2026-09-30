@@ -60,14 +60,17 @@ def reindex_paths(
 
         cur = conn.cursor()
         # files.path is stored as REPO-RELATIVE (the portable-path contract);
-        # reindex_paths receives ABSOLUTE paths. Primary lookup: repo-relative.
+        # reindex_paths receives ABSOLUTE paths. Primary lookup: repo-relative,
+        # scoped to the inferred repo (path is only unique per (repo_id, path)).
         # Fallback: DBs not yet rebuilt store absolute paths.
         row = cur.execute(
-            "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
+            "SELECT id, repo_id, path FROM files WHERE path = ? AND repo_id = ?",
+            (rel_to_repo, repo),
         ).fetchone()
         if row is None:
             row = cur.execute(
-                "SELECT id, repo_id, path FROM files WHERE path = ?", (abs_path,)
+                "SELECT id, repo_id, path FROM files WHERE path = ? AND repo_id = ?",
+                (abs_path, repo),
             ).fetchone()
         # Use the STORED repo_id for downstream inserts so FK constraints on
         # files.repo_id -> repos.id hold (the inferred 'repo' may not exist in
@@ -427,7 +430,7 @@ def incremental_update(
     # Persist an 'incremental' build_runs row. Best-effort (record_build_run
     # swallows all errors). reindex_paths returns reindexed/deleted counts but
     # no resolution mix or parse-error breakdown, so those columns stay NULL --
-    # best-available per spec 6.2 rather than a refactor of the progress
+    # best-available rather than a refactor of the progress
     # contract. Recorded here (not inside the shared reindex_paths) so the
     # `cairn sync` CLI path records its own 'sync' row without double-counting.
     builder.record_build_run(
@@ -505,13 +508,15 @@ def _find_tracked_file_row(cur, workspace: str, abs_path: str):
     resolved = _repo_relative_path(workspace, abs_path)
     if resolved is None:
         return None
-    _repo, rel_to_repo = resolved
+    repo, rel_to_repo = resolved
     row = cur.execute(
-        "SELECT id, repo_id, path FROM files WHERE path = ?", (rel_to_repo,)
+        "SELECT id, repo_id, path FROM files WHERE path = ? AND repo_id = ?",
+        (rel_to_repo, repo),
     ).fetchone()
     if row is None:
         row = cur.execute(
-            "SELECT id, repo_id, path FROM files WHERE path = ?", (abs_path,)
+            "SELECT id, repo_id, path FROM files WHERE path = ? AND repo_id = ?",
+            (abs_path, repo),
         ).fetchone()
     return row
 
@@ -531,16 +536,18 @@ def _capture_derived_prestate(
     from .dataflow import _chunked
 
     cur = conn.cursor()
-    tracked_paths: set[str] = set()
+    tracked_rows: set[tuple[str, str]] = set()
     old_ids: set[str] = set()
     old_names: set[str] = set()
     for abs_path in paths:
         row = _find_tracked_file_row(cur, workspace, str(abs_path))
         if row is None:
             continue
-        tracked_paths.add(row["path"])
-    for rel_path in tracked_paths:
-        frow = cur.execute("SELECT id FROM files WHERE path = ?", (rel_path,)).fetchone()
+        tracked_rows.add((row["repo_id"], row["path"]))
+    for repo_id, rel_path in tracked_rows:
+        frow = cur.execute(
+            "SELECT id FROM files WHERE path = ? AND repo_id = ?", (rel_path, repo_id)
+        ).fetchone()
         if frow is None:
             continue
         for r in cur.execute(
@@ -768,7 +775,8 @@ def _maintain_derived_indexes(
 def _changed_source_files(repo_path: Path, conn=None) -> List[str]:
     """Return repo-relative paths of changed source files since last index.
 
-    Primary signal: ``git diff --name-only HEAD``. Falls back to size/mtime
+    Primary signal: ``git diff --name-only HEAD`` plus untracked source files
+    (``git ls-files --others``). Falls back to size/mtime
     comparison against the ``files`` table when git is unavailable or the repo
     has no HEAD yet. Without the fallback, such repos silently report "0 changed
     files" on every ``cairn update``.
@@ -779,11 +787,23 @@ def _changed_source_files(repo_path: Path, conn=None) -> List[str]:
     """
     out = _run_git(["diff", "--name-only", "HEAD"], str(repo_path))
     if out is not None:
-        # git ran (may still be empty if truly nothing changed).
+        # git ran (may still be empty if truly nothing changed). git diff never
+        # lists untracked files, so ask for those separately or newly created
+        # source files would never be indexed.
+        lines = list(out.splitlines())
+        untracked = _run_git(
+            ["ls-files", "--others", "--exclude-standard"], str(repo_path)
+        )
+        if untracked:
+            lines.extend(untracked.splitlines())
         changed = []
-        for line in out.splitlines():
+        for line in lines:
             line = line.strip()
-            if line and Path(line).suffix in scanner_mod.EXTENSION_MAP:
+            if (
+                line
+                and Path(line).suffix in scanner_mod.EXTENSION_MAP
+                and line not in changed
+            ):
                 changed.append(line)
         return changed
 
