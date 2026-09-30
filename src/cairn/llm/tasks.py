@@ -58,7 +58,7 @@ def create_task(
     parent_attempt: int = 0,
 ) -> Task:
     """Queue a new task. Returns the Task (already written to the bundle)."""
-    # Privacy floor (audit F9, mirrored from complete_task's result gate):
+    # Privacy floor (mirrored from complete_task's result gate):
     # memory-* task facts derive from user session content (memory-extract
     # carries the raw conversation transcript), so scrub secret-shaped
     # substrings BEFORE the concept is persisted -- facts land both in the
@@ -163,7 +163,7 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
         task.claimed_at = _now()
         bundle.write_concept(_task_to_concept(task))
         # task_lifecycle: claimed -- emit is best-effort (never raises), so a
-        # telemetry outage can't block a claim (spec §5.6).
+        # telemetry outage can't block a claim.
         _emit(
             TASK_LIFECYCLE,
             task_kind=task.task_kind,
@@ -284,7 +284,7 @@ def complete_task(
             "quality": 0.0,
         }
 
-    # Privacy floor (audit F9): memory-* task results are derived from user
+    # Privacy floor: memory-* task results are derived from user
     # session content (memory-extract embeds the transcript, memory-critic
     # quotes draft bodies), so scrub secret-shaped substrings before the
     # result body is persisted as a concept. Deliberately gated on a
@@ -374,7 +374,7 @@ def complete_task(
     # The claim marker goes now. From here the task is either finished by
     # the outcome branches below or left in-progress and re-completable
     # when the critic itself fails — done is never written without a
-    # verdict (that zombie used to display queued forever, unreachable by
+    # verdict (a zombie would display queued forever, unreachable by
     # retry).
     claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
     try:
@@ -744,7 +744,7 @@ def _task_to_concept(task: Task) -> OKFConcept:
     # plus stored structurally in extensions for programmatic access.
     extensions["facts"] = task.facts
     body = _render_body(task)
-    # Task lifecycle status rides on the OKF v0.2 first-class `status` field.
+    # Task lifecycle status rides on the concept's first-class `status` field.
     return OKFConcept(
         type="Task",
         title=f"{task.task_kind}: {task.resource}",
@@ -850,8 +850,8 @@ def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
 
 def _concept_to_task(concept: OKFConcept) -> Task:
     ext = concept.extensions
-    # Task status lives on the OKF v0.2 first-class `status` field; fall back
-    # to extensions["status"] for tasks written before the v0.2 upgrade.
+    # Task status lives on the concept's first-class `status` field; fall back
+    # to extensions["status"] for tasks that predate the field.
     task_status = concept.status or ext.get("status", "pending")
     return Task(
         id=concept.concept_id.split("/")[-1],

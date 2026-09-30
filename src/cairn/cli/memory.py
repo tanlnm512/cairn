@@ -303,7 +303,7 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
         click.echo(f"Captured {recorded} memories from session {session_id}.")
     else:
         # Decoupled fallback: queue a memory-extract task for any agent.
-        # Privacy floor (audit F2): the task .md persists the facts dict
+        # Privacy floor: the task .md persists the facts dict
         # (body + extensions) in the bundle, so the transcript must be
         # redacted BEFORE queueing -- truncation alone keeps a secret intact.
         from ..memory.privacy import strip_private_data

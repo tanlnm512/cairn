@@ -574,7 +574,7 @@ def _check_concurrency(conn) -> dict:
 
     WARN when any ``lock_contention`` event was recorded in the last
     ``CONTENTION_WINDOW_DAYS`` (cross-process lock waits absorbed by
-    busy_timeout -- the v0.9.x bug class). ``stray_swept`` totals are reported
+    busy_timeout). ``stray_swept`` totals are reported
     in the detail but are NOT a WARN trigger: sweeping strays is the
     stdio-leak remediation *working*, not failing.
     """
@@ -1241,7 +1241,7 @@ def doctor(db, as_json):
     writes to the
     store. Exit code is
     0 when every check is PASS or WARN, and 1 when any check FAILs, so agents
-    can gate on it (spec observability-telemetry §6.5).
+    can gate on it.
     """
     from .. import display
 

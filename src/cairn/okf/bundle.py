@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 # acquire path uses LOCK_NB, busy-wait to a spurious TimeoutError rather than
 # block forever. Tracked via a thread-local depth counter instead.
 #
-# KNOWN CONSTRAINT (deferred -- audit F6, fix spans memory/store.py +
-# memory/promotion.py, not this file): this flock is a cross-process mutex
+# KNOWN CONSTRAINT (the fix spans memory/store.py + memory/promotion.py,
+# not this file): this flock is a cross-process mutex
 # over the .knowledge/ tree, but some callers currently hold it across SQLite
 # writes on caller-owned connections (e.g. promote_memory ->
 # rename_memory_embedding under `with bundle.lock():`). A blocking DB write

@@ -382,7 +382,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_metrics_invoked ON tool_metrics(invoked_at, 
 
 -- One row per indexing pass (full build / incremental sync / embed) so build
 -- history, phase timings, and resolution quality survive the process that
--- produced them (spec observability-telemetry 6.2). Additive-only: plain
+-- produced them. Additive-only: plain
 -- CREATE TABLE IF NOT EXISTS rides the idempotent executescript in
 -- _apply_schema with NO MIGRATIONS entry, so existing DBs gain the table on
 -- next connect -- the same pattern tool_metrics used.
@@ -598,7 +598,7 @@ def note_contention(site: str, error: Exception | None = None) -> None:
 
     ``site`` is a stable, low-cardinality ``module.function`` tag (NO line
     numbers -- they drift). Also emits a durable ``lock_contention`` telemetry
-    event (spec §6.4) so ``cairn doctor`` / ``cairn metrics --contention`` can
+    event so ``cairn doctor`` / ``cairn metrics --contention`` can
     aggregate contention trends, not just log a one-time line. The event is
     gated by ``CAIRN_TELEMETRY`` internally; the WARNING stays unconditional
     (an operational signal, not telemetry data) -- turning telemetry off stops
@@ -1079,8 +1079,8 @@ def swap_db_file(tmp_path: str, db_path: str) -> None:
 # staged build). The swap replaces the entire file, so without this list the
 # build history, degradation events, and tool health reset to empty on every
 # rebuild -- defeating the retention contract that makes build trends,
-# contention history, and doctor's freshness/tool-health windows useful
-# (spec observability-telemetry §6.2). ``pending_sync`` is deliberately NOT
+# contention history, and doctor's freshness/tool-health windows useful.
+# ``pending_sync`` is deliberately NOT
 # carried: it is operational state (files with unindexed edits) tied to the
 # pre-swap graph's rows, and a full rebuild has recomputed that graph.
 _TELEMETRY_TABLE_COLUMNS = {

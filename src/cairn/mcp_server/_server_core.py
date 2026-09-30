@@ -32,14 +32,9 @@ from cairn.paths import resolve_store
 # ``_read_only_mode()`` helpers below, which read ``CAIRN_*`` env vars (set by
 # ``cairn serve``) or fall back to the workspace store. This is the single
 # source of truth — there is intentionally no per-request ``AppContext``
-# threaded through ``ctx.request_context.lifespan_context``. An earlier
-# iteration scaffolded one (``AppContext`` dataclass + ``app_lifespan`` body),
-# but no tool consumed it; it was dead code that implied a threading contract
-# that didn't exist. Removed to avoid confusing future readers.
-#
-# If per-request config (e.g. testable read-only overrides without env vars)
-# is ever needed, wire ``ctx: Context`` through the tools and read from a
-# revived lifespan context — see docs/audit-remediation/spec.md (A1).
+# threaded through ``ctx.request_context.lifespan_context``. Per-request
+# config, if ever needed, means wiring ``ctx: Context`` through the tools and
+# reviving a lifespan context.
 
 
 @asynccontextmanager
@@ -313,7 +308,7 @@ def _build_age_str(started_at) -> str | None:
 
 
 def _health_block(conn) -> dict:
-    """Compute the ``health`` block for the status resource (spec §6.5 / T14).
+    """Compute the ``health`` block for the status resource.
 
     Read-only + crash-proof: every probe is guarded so a missing table or
     unresolvable backend degrades to a null/0 field rather than raising --
@@ -448,7 +443,7 @@ def status_resource() -> str:
     Returns a compact status block: symbol/edge/file counts, edges-resolved
     fraction, files pending reindex (staleness), the DB path, and a ``health``
     block (backend degradations, pending-sync count, last-build age, 24h tool
-    error rate -- spec observability-telemetry §6.5 / T14).
+    error rate).
     """
 
     try:
@@ -499,7 +494,7 @@ def status_resource() -> str:
     if stats.get("skipped_total"):
         lines.append(f"  skipped files: {stats['skipped_total']}")
 
-    # Health block (spec §6.5 / T14): backend degradations, pending-sync count,
+    # Health block: backend degradations, pending-sync count,
     # last-build age, 24h tool error rate. ``health`` is None only when the
     # staleness/health connection itself failed -- then report unavailable
     # rather than omitting the block, so the surface shape stays stable.

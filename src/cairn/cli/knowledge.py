@@ -323,7 +323,7 @@ def _resolve_or_exit(bundle, doc_id: str):
         resolve_knowledge_doc(bundle, doc_id)
     except ValueError as e:
         # Unknown or out-of-namespace id: clean error, no traceback,
-        # no partial output, no store writes (VAL-INGEST-011).
+        # no partial output, no store writes.
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
@@ -546,7 +546,7 @@ def knowledge_impact(query, db, limit):
         if r.get("graph_deps"):
             for repo, deps in r["graph_deps"].items():
                 # cross_repo_deps returns {dependencies: [{repo, ...}], ...}.
-                # Extract repo names; pre-fix read a nonexistent `depends_on` key.
+                # Extract repo names.
                 if isinstance(deps, dict):
                     if deps.get("dependencies"):
                         dep_repos = [d["repo"] for d in deps["dependencies"] if d.get("repo")]
@@ -569,7 +569,7 @@ def knowledge_remove(doc_id, db):
         ok = delete_document(bundle, doc_id, conn=conn)
         conn.commit()
     except ValueError as e:
-        # Store-chokepoint namespace guard (audit F7): deleting a concept
+        # Store-chokepoint namespace guard: deleting a concept
         # outside knowledge/ is a refusal, not a "not found".
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -595,7 +595,7 @@ def knowledge_status(doc_id, new_status):
     try:
         ok = update_status(bundle, doc_id, new_status)
     except ValueError as e:
-        # Store-chokepoint namespace guard (audit F7): updating a concept
+        # Store-chokepoint namespace guard: updating a concept
         # outside knowledge/ is a refusal, not a lifecycle rejection.
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

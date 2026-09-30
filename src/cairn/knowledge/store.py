@@ -64,7 +64,7 @@ def normalize_doc_id(bundle: OKFBundle, concept_id: str) -> str:
 def _refuse_out_of_namespace(
     bundle: OKFBundle, doc_id: str, concept: Optional[OKFConcept]
 ) -> None:
-    """Namespace guard for the knowledge store's mutating chokepoints (audit F7).
+    """Namespace guard for the knowledge store's mutating chokepoints.
 
     ``get_document`` reads ANY concept path in the bundle, so without this
     guard ``update_status``/``delete_document`` happily act on compass/wiki/
@@ -135,7 +135,7 @@ def add_document(
     Refs are graph identifiers and are never redacted; the family is
     omitted entirely when nothing (or nothing resolvable) is passed.
 
-    Privacy floor (audit F1): title, body, description, and step
+    Privacy floor: title, body, description, and step
     descriptions are routed through :func:`strip_private_data` at this
     store chokepoint BEFORE the
     slug is derived and ``bundle.write_concept`` runs, so a secret pasted

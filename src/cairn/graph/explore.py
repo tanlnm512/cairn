@@ -235,7 +235,7 @@ def explore(
 
     if not seeds:
         # No seed symbols anywhere -> the query matched nothing. Emit a durable
-        # empty_result (spec §6.4) so the empty-result rate is measurable per
+        # empty_result so the empty-result rate is measurable per
         # query kind, not just for semantic_search. Best-effort (never raises):
         # telemetry is analytics. explore() has a single non-bench caller (the
         # MCP explore tool), so this engine-layer seam is per-tool -- it cannot

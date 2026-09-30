@@ -317,7 +317,7 @@ def sync_workflow(
     ext = dict(concept.extensions)
     new_steps = _redact_step_descriptions(new_steps)
     ext["steps"] = new_steps
-    # Privacy floor (audit F1): sync writes via bundle.write_concept rather
+    # Privacy floor: sync writes via bundle.write_concept rather
     # than add_document, so apply the same redaction the add chokepoint
     # enforces. Steps are graph-derived here, but the title/resource and the
     # rendered body are free text -- the strip is pattern-based, so this is
