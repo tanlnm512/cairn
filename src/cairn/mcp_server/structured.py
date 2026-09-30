@@ -43,6 +43,7 @@ class GetCalleesResult(BaseModel):
     count: int
     used_fallback: bool
     hit_limit: bool
+    stale_banner: str = ""
     callees: List[CalleeEntry]
 
 
