@@ -22,3 +22,9 @@ def test_memory_consolidation():
         merged = bundle.read_concept(tribal[0])
         assert "WAL mode" in merged.body
         assert "busy_timeout" in merged.body
+
+        # The raw tier is emptied (archived copies replace it) and a second
+        # run is a no-op instead of re-consolidating the same files.
+        assert bundle.list_concepts(prefix="memory/raw") == []
+        assert consolidate_memories(bundle) == 0
+        assert len(bundle.list_concepts(prefix="memory/tribal")) == 1

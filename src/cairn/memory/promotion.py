@@ -44,7 +44,7 @@ def capture_memory(
     strings, ``<private>`` tags) never reach disk regardless of which caller
     reached this function. The title matters as much as the body: it is
     persisted verbatim, duplicated into the concept description, and
-    slugified into the concept_id/filename (audit F3). The hook path already
+    slugified into the concept_id/filename. The hook path already
     redacts before calling here; this is the floor for every other caller
     (the MCP ``record_memory`` tool, the CLI).
     """
@@ -135,7 +135,7 @@ def _sanitize_ref_context(context: str) -> str:
     """Redact + hard-truncate a ref context before it reaches memory_refs.
 
     The ``context`` column stores the raw query that surfaced a memory
-    (search_memory passes its ``query`` verbatim, audit F10); queries can
+    (search_memory passes its ``query`` verbatim); queries can
     quote secrets (a pasted connection string, an API key being searched
     for). :func:`strip_private_data` handles the known secret shapes; the
     200-char cap bounds anything the regex floor misses. Refs are analytics,
@@ -186,8 +186,8 @@ def record_references_batch(
     """Insert N memory_refs in ONE transaction (best-effort).
 
     ``refs`` is a list of (memory_path, context) tuples. Contexts are
-    redacted + truncated via ``_sanitize_ref_context`` before persisting
-    (audit F10). Batching avoids acquiring the SQLite write lock N times
+    redacted + truncated via ``_sanitize_ref_context`` before persisting.
+    Batching avoids acquiring the SQLite write lock N times
     under concurrent servers.
     """
     if not refs:
@@ -688,8 +688,9 @@ def _find_supersession_candidate(
     """
     candidates: list[OKFConcept] = []
     for cid in bundle.list_concepts(prefix="memory/"):
-        c = bundle.read_concept(cid)
-        if c is None:
+        try:
+            c = bundle.read_concept(cid)
+        except Exception:
             continue
         if c.extensions.get("memory_type") != type_:
             continue
@@ -741,11 +742,6 @@ def _mark_superseded(bundle: OKFBundle, old_id: str, new_id: str) -> None:
         return
     old.extensions["memory_is_latest"] = False
     old.extensions["memory_superseded_by"] = new_id
-    old_id_norm = old.concept_id
-    try:
-        old_id_norm = str(Path(old_id_norm).relative_to(bundle.root))
-    except ValueError:
-        pass
     # Re-write in place (same path) so the version chain is durable on disk.
     bundle.write_concept(old)
 
@@ -768,9 +764,8 @@ def evolve_memory(
     before storage, mirroring ``capture_memory``'s floor -- the CLI
     ``cairn memory evolve`` verb and any other caller reach this function, so
     without redaction here a secret in an evolved body or the new title would
-    persist verbatim (the same two-codepath divergence that once left
-    ``record_memory`` unredacted; titles additionally leak into the
-    description field and the slugified filename, audit F3). ``new_body``
+    persist verbatim (titles additionally leak into the
+    description field and the slugified filename). ``new_body``
     is None when only the title changes; the old body was already redacted
     at capture time.
     """
