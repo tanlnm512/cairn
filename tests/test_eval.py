@@ -360,6 +360,48 @@ class TestRunEvaluationDispatch:
         assert report["L1"]["count"] == 30
         assert report["L5"]["count"] == 10
 
+    def test_yaml_l4_entries_score_on_the_l4_retriever(self, tmp_path, monkeypatch):
+        # A `corpus: L4` yaml entry is scored by the tribal-memory retriever
+        # and emitted as an L4 bucket; the L1/L5 zero buckets keep the
+        # legacy shape.
+        queries_path = tmp_path / "queries.yaml"
+        queries_path.write_text(
+            "- query: 'how do we handle numpy eviction'\n"
+            "  corpus: L4\n"
+            "  expect: ['memory/tribal/never-evict-numpy']\n",
+            encoding="utf-8",
+        )
+        conn = get_db(str(tmp_path / "eval.db"))
+
+        def no_l5(*args, **kwargs):
+            raise AssertionError(
+                "L4 yaml queries must not route through evaluate_l5_query"
+            )
+
+        seen = {}
+
+        def fake_l4(conn_, bundle_root, query, expect, k=10):
+            seen["query"] = query
+            return 1.0, 0.5
+
+        monkeypatch.setattr(eval_mod, "evaluate_l5_query", no_l5)
+        monkeypatch.setattr(eval_mod, "evaluate_l4_query", fake_l4)
+        try:
+            report = run_evaluation(
+                conn,
+                bundle_root=str(tmp_path),
+                queries_path=queries_path,
+                corpus_filter="all",
+            )
+        finally:
+            conn.close()
+
+        assert seen["query"] == "how do we handle numpy eviction"
+        assert set(report) == {"L1", "L4", "L5"}
+        assert report["L4"] == {"count": 1, "recall_at_10": 1.0, "mrr": 0.5}
+        assert report["L1"]["count"] == 0
+        assert report["L5"]["count"] == 0
+
     def test_empty_directory_raises_validation_error(self, tmp_path):
         # An existing directory without the file pair is a malformed graded
         # dataset (a *missing* path keeps the legacy yaml warning behavior).

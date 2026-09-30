@@ -615,6 +615,8 @@ def run_evaluation(
 
         if c_type == "L1":
             rec, rr = evaluate_l1_query(conn, q_text, expect, k=k, params=params)
+        elif c_type == "L4":
+            rec, rr = evaluate_l4_query(conn, bundle_root, q_text, expect, k=k)
         else:
             rec, rr = evaluate_l5_query(conn, bundle_root, q_text, expect, k=k)
 
@@ -623,7 +625,7 @@ def run_evaluation(
         stats[c_type]["mrr"] += rr
 
     report = {}
-    for c_key in ["L1", "L5"]:
+    for c_key in ["L1", "L4", "L5"]:
         cnt = stats[c_key]["count"]
         if cnt > 0:
             report[c_key] = {
@@ -631,7 +633,9 @@ def run_evaluation(
                 "recall_at_10": round(stats[c_key]["recall"] / cnt, 4),
                 "mrr": round(stats[c_key]["mrr"] / cnt, 4),
             }
-        else:
+        elif c_key != "L4":
+            # Legacy shape: L1/L5 always carry their (possibly zero-count)
+            # buckets; L4 appears only when the corpus has L4 queries.
             report[c_key] = {"count": 0, "recall_at_10": 0.0, "mrr": 0.0}
 
     return report
