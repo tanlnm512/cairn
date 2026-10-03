@@ -6,10 +6,14 @@ import os
 import sys
 
 from .main import main
+from ..agent_install import CLIENTS
+
+# "all" is a valid --client value meaning every registered client.
+_CLIENT_CHOICES = [*CLIENTS, "all"]
 
 @main.command(name="install-agents")
 @click.option("--client", "clients", multiple=True,
-              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo", "omp", "all"]),
+              type=click.Choice(_CLIENT_CHOICES),
               help="Override detection: install for these clients (repeatable). Skips the interactive prompt.")
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: cwd).")
 @click.option("--scope", "scope_arg", type=click.Choice(["workspace", "global"]), default=None,
@@ -214,7 +218,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
 
 @main.command(name="uninstall-agents")
 @click.option("--client", "clients", multiple=True,
-              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo", "omp", "all"]),
+              type=click.Choice(_CLIENT_CHOICES),
               help="Which clients to remove from (repeatable). Default: detected.")
 @click.option("--scope", "scope", type=click.Choice(["workspace", "global", "all"]), default="workspace",
               show_default=True,

@@ -15,10 +15,12 @@ import sys
 
 
 def _read_stdin() -> dict:
+    """Parsed hook payload as a dict; malformed or non-object JSON yields {}."""
     try:
-        return json.load(sys.stdin)
+        data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _cg_command() -> list[str]:
@@ -223,8 +225,10 @@ def post_tool_failure():
         # unfiltered error output.
         return
 
-    safe_input = strip_private_data(json.dumps(tool_input)[:4000])
-    safe_error = strip_private_data(str(error)[:4000])
+    # Redact BEFORE truncating: truncation first can split a secret so the
+    # patterns match nothing and the fragment is stored unredacted.
+    safe_input = strip_private_data(json.dumps(tool_input))[:4000]
+    safe_error = strip_private_data(str(error))[:4000]
     title = f"Tool failure: {tool_name}"
 
     # Recurrence gate: the signature comes from the already-filtered error,

@@ -138,9 +138,9 @@ def main(verbose: bool):
     # Central logging config point for the CLI surface. Configures ONLY the
     # `cairn` logger — never root — because stdout must stay clean (it's the
     # JSON-RPC channel for the stdio MCP transport, and FastMCP pins its own
-    # level to avoid clobbering root; see mcp_server/_server_core.py:75).
+    # level to avoid clobbering root; see mcp_server/_server_core.py).
     #
-    # Group-option placement note (click 8.x): `-v` must precede the
+    # Group-option placement: `-v` must precede the
     # subcommand, e.g. `cairn -v build`. Placing it after the subcommand
     # (`cairn build -v`) is rejected by click as an unknown option of the
     # subcommand. For position-independent control, set CAIRN_LOG_LEVEL=DEBUG.
@@ -148,3 +148,12 @@ def main(verbose: bool):
     # invocation and is idempotent (configure_logging attaches its handler at
     # most once).
     configure_logging(verbose=verbose)
+
+
+if __name__ == "__main__":
+    # `python -m cairn.cli.main` re-executes this module AFTER cairn.cli's
+    # __init__ has registered every subcommand on the imported `main` group;
+    # invoke that group, not the bare one re-defined in __main__.
+    from cairn.cli import main as _registered_main
+
+    _registered_main()

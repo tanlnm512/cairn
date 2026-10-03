@@ -49,14 +49,25 @@ def print_impact(result: dict) -> None:
             print(f"  ... and {len(rows) - 20} more")
 
 
+def _load_json_output(proc: subprocess.CompletedProcess, argv: list[str]) -> dict:
+    """Parse a cairn command's stdout as JSON; empty/unparseable output exits 1."""
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        print(f"error: `cairn {' '.join(argv)}` printed no JSON "
+              f"(exit {proc.returncode}, stdout {proc.stdout[:200]!r})", file=sys.stderr)
+        sys.exit(1)
+
+
 def try_dataflow_fallback(symbol: str) -> None:
     print("Trying the precomputed dataflow index instead (cached=True equivalent)...")
-    df = run_cg(["dataflow", "lookup", symbol, "--json"])
+    df_argv = ["dataflow", "lookup", symbol, "--json"]
+    df = run_cg(df_argv)
     if df.returncode != 0:
         print("  (no precomputed dataflow entry -- run `cairn dataflow build` first, "
               "or re-run impact_guard.py with a more specific qualified name)")
         return
-    data = json.loads(df.stdout)
+    data = _load_json_output(df, df_argv)
     within = data.get("within_repo", [])
     cross = data.get("cross_repo", [])
     print(f"  within-repo: {len(within)} symbols")
@@ -88,7 +99,7 @@ def main() -> None:
         print(proc.stderr or proc.stdout, file=sys.stderr)
         sys.exit(proc.returncode)
 
-    result = json.loads(proc.stdout)
+    result = _load_json_output(proc, cg_args)
     total = result.get("total", 0)
     cycles = result.get("cycles", [])
 

@@ -10,7 +10,8 @@ from pathlib import Path
 import click
 
 from .main import main
-from ._helpers import _human_bytes
+from ._helpers import _detect_install_method, _human_bytes, _pkg_root
+from ..agent_install import CLIENTS
 from ..paths import store_key
 
 
@@ -21,47 +22,6 @@ def _home() -> Path:
 
 
 # ─── detection helpers ─────────────────────────────────────────────────────
-
-def _pkg_root() -> Path:
-    """The source-checkout root (three levels above the cairn package)."""
-    from importlib.util import find_spec
-
-    spec = find_spec("cairn")
-    if spec is None or spec.origin is None:
-        raise RuntimeError("cannot locate the installed cairn package")
-    return Path(spec.origin).resolve().parents[2]
-
-
-def _detect_install_method() -> str:
-    """How cairn-intel was installed: 'uv', 'pipx', 'pip', 'venv', or 'unknown'."""
-    exe = sys.executable
-    try:
-        r = subprocess.run(
-            ["uv", "tool", "list"], capture_output=True, text=True, timeout=10,
-        )
-        if "cairn-intel" in r.stdout:
-            return "uv"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    try:
-        r = subprocess.run(
-            ["pipx", "list"], capture_output=True, text=True, timeout=10,
-        )
-        if "cairn-intel" in r.stdout:
-            return "pipx"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    # Source checkout's in-tree venv (.venv at the package root).
-    try:
-        pkg_root = _pkg_root()
-        if (pkg_root / ".venv").exists() and pkg_root / ".venv" in Path(exe).resolve().parents:
-            return "venv"
-    except Exception:
-        pass
-    if "venv" in exe or "virtualenv" in exe or ".local" in exe:
-        return "pip"
-    return "unknown"
-
 
 def _stale_artifacts() -> list[Path]:
     """Leftover build/, dist/, *.egg-info in the source tree (pip install -e debris)."""
@@ -83,7 +43,7 @@ def _stale_artifacts() -> list[Path]:
 def _remove_agents(ws: str, clients: list[str] | None, dry_run: bool,
                    scope: str = "workspace") -> None:
     click.echo("➜ Agent integrations")
-    from ..agent_install import CLIENTS, detect_clients, uninstall
+    from ..agent_install import detect_clients, uninstall
 
     if dry_run:
         # agent_install.uninstall has no dry-run mode of its own -- without
@@ -146,23 +106,24 @@ def _remove_hooks(ws: str, dry_run: bool) -> None:
         click.echo("  (none found)")
 
 
-def _resolve_store_target(ws: str, full: bool) -> tuple[Path, bool] | None:
-    """What gets deleted in step 3.
+def _resolve_store_target(ws: str, full: bool, allow_widen: bool) -> tuple[Path, bool] | None:
+    """What gets deleted in step 3: ``(directory, whole_home)`` or None.
 
-    Returns ``(directory, whole_home)`` or None if nothing is on disk.
-
-    - --full                                    -> (home, True)
-    - workspace has a pinned store              -> (that store, False)
-    - workspace not pinned, but home has stores -> (home, True)
-      (don't say "nothing to remove" when ~/.cairn clearly holds stores --
-      the user is running from the tool repo or an unregistered dir.)
+    The key is derived from the RESOLVED workspace path — the same form
+    registration writes — so a symlinked/unnormalized invocation still
+    targets its own store. --full targets the whole home; a missing
+    workspace store widens to the whole home only when ``allow_widen``
+    (an interactive run), so ``-y`` can never silently delete every
+    workspace's store.
     """
     home = _home()
-    if full or not (home / store_key(Path(ws))).exists():
-        if home.exists() and _home_has_stores(home):
-            return (home, True)
-        return None
-    return (home / store_key(Path(ws)), False)
+    if not full:
+        store = home / store_key(Path(ws).resolve())
+        if store.exists():
+            return (store, False)
+    if (full or allow_widen) and home.exists() and _home_has_stores(home):
+        return (home, True)
+    return None
 
 
 def _home_has_stores(home: Path) -> bool:
@@ -176,9 +137,9 @@ def _home_has_stores(home: Path) -> bool:
     return False
 
 
-def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
+def _remove_store(ws: str, full: bool, dry_run: bool, allow_widen: bool) -> None:
     click.echo("➜ Graph and knowledge data")
-    resolved = _resolve_store_target(ws, full)
+    resolved = _resolve_store_target(ws, full, allow_widen)
 
     if resolved is None:
         click.echo("  (no cairn store found — nothing to remove)")
@@ -227,8 +188,8 @@ def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
 
 def _remove_binary(installed_via: str, dry_run: bool) -> None:
     click.echo("➜ cairn binary")
+    stale = _stale_artifacts()
     if installed_via == "unknown":
-        stale = _stale_artifacts()
         if not stale:
             click.echo("  (cairn not found via uv/pipx/pip/venv — nothing to remove)")
             return
@@ -236,7 +197,6 @@ def _remove_binary(installed_via: str, dry_run: bool) -> None:
     else:
         click.echo(f"  installed via: {installed_via}")
 
-    stale = _stale_artifacts()
     for p in stale:
         click.echo(f"  stale: {p}")
 
@@ -296,7 +256,7 @@ def _dir_size(path: Path) -> int:
 @click.option("--graph-only", is_flag=True, help="Remove graph + knowledge data only.")
 @click.option("--package-only", is_flag=True, help="Remove the cairn binary only.")
 @click.option("--client", "clients", multiple=True,
-              type=click.Choice(["claude", "claude-desktop", "cursor", "droid", "zcode", "agy", "opencode", "kilo", "omp", "all"]),
+              type=click.Choice([*CLIENTS, "all"]),
               help="Limit agent removal to these clients (repeatable).")
 @click.option("--scope", "scope", type=click.Choice(["workspace", "global", "all"]), default="workspace",
               show_default=True,
@@ -369,7 +329,9 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
         click.echo("")
 
     if do_graph and (dry_run or confirm("graph and knowledge data")):
-        _remove_store(ws, full, dry_run)
+        # A -y run must never widen a store miss to the whole home
+        # (--full is the explicit opt-in for that; see _resolve_store_target).
+        _remove_store(ws, full, dry_run, allow_widen=not yes)
         click.echo("")
 
     if do_package and (dry_run or confirm("cairn binary")):

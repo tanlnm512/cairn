@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .._common import InstallResult, default_sse_url, resolve_cg_command
+from .._common import InstallResult, opencode_format_mcp_config_json
 from ..merge import _merge_json_file, _strip_mcp_opencode
-from ...paths import cairn_home_env
 
 
 def _opencode_config_path(workspace: str, scope: str = "workspace") -> Path:
@@ -23,33 +22,15 @@ def _opencode_config_path(workspace: str, scope: str = "workspace") -> Path:
 
 
 def opencode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """MCP server config in opencode's format.
+    """MCP server config in opencode's format (see opencode_format_mcp_config_json).
 
-    opencode differs from the Claude/Cursor ``mcpServers`` shape in three ways
-    (per https://opencode.ai/docs/mcp-servers):
-
-    1. Servers live under a top-level ``"mcp"`` key (not ``"mcpServers"``),
-       in ``opencode.json`` at the project root (or ``~/.config/opencode/``
-       globally). opencode does NOT read a standalone ``.opencode/mcp.json``.
-    2. Each server is keyed by name with ``"type": "local"`` (stdio) or
-       ``"type": "remote"`` (sse/http), plus ``"enabled": true``.
-    3. For local servers, the full invocation is a single ``"command"`` ARRAY
-       (e.g. ``["cairn", "serve"]``) -- not separate ``command``/``args`` fields.
-
-    Args:
-        transport: "stdio" (default) or "sse" (shared daemon).
-        sse_url: when transport="sse", the URL clients should connect to.
-
-    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
-    resolved CAIRN_HOME is non-default; the default home adds no env key.
+    opencode differs from the Claude/Cursor ``mcpServers`` shape: servers live
+    under a top-level ``"mcp"`` key in ``opencode.json`` (workspace root or
+    ``~/.config/opencode/``), each keyed by name with ``type``/``enabled``, and
+    a local server's full invocation is a single ``command`` ARRAY
+    (per https://opencode.ai/docs/mcp-servers).
     """
-    if transport == "sse":
-        return {"mcp": {"cairn": {"type": "remote", "url": default_sse_url(sse_url), "enabled": True}}}
-    entry: dict = {"type": "local", "command": resolve_cg_command() + ["serve"], "enabled": True}
-    env = cairn_home_env()
-    if env:
-        entry["env"] = env
-    return {"mcp": {"cairn": entry}}
+    return opencode_format_mcp_config_json(transport, sse_url)
 
 
 def install_opencode(workspace: str, force: bool = False, dry_run: bool = False,
