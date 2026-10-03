@@ -44,7 +44,9 @@ class FreshnessReport:
     repaired: bool
 
     def banner(self) -> str:
-        if not self.drifted_paths:
+        # Only UNREPAIRED drift is banner-worthy: repair=True means the strict
+        # refresh completed, so reporting the files would flag a current graph.
+        if not self.drifted_paths or self.repaired:
             return ""
         paths = list(self.drifted_paths)
         shown = ", ".join(paths[:3])

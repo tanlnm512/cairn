@@ -300,18 +300,22 @@ def _apply_prf(context: SearchContext) -> None:
     original_query = context.dense_query
     context.dense_query = expansion.dense_query
     try:
-        context.candidates = context.adapters.dense_retrieve(context)
-        if context.candidates is not None:
-            _fuse_candidates(context, expansion.terms)
+        second_pass = context.adapters.dense_retrieve(context)
     except Exception:
         try:
             context.adapters.dense_failure(context)
         except Exception:
             pass
-        context.candidates = []
-        context.dense_lost = True
+        second_pass = None
     finally:
         context.dense_query = original_query
+    # A failed second pass (raise or None) degrades to the first-pass
+    # candidates; only a real second-pass result replaces them.
+    if second_pass is None:
+        context.dense_lost = True
+    else:
+        context.candidates = second_pass
+        _fuse_candidates(context, expansion.terms)
 
 
 def rerank_stage(context: SearchContext) -> None:

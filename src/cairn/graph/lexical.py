@@ -132,12 +132,15 @@ def _search_like(
     ``*`` in the pattern is treated as a wildcard (mapped to ``%``), but any
     literal ``%`` or ``_`` that came *from the user* is escaped so it matches
     itself rather than acting as a LIKE wildcard (``_`` would otherwise match
-    any single char, ``%`` any run of chars). Order: escape meta-chars in the
-    raw pattern first, then turn ``*`` into the ``%`` wildcard.
+    any single char, ``%`` any run of chars). Order: split on ``*`` first, then
+    escape each literal segment; the wrap decision reads the raw pattern, so an
+    escaped literal ``_`` cannot suppress the substring wrap.
     """
-    escaped = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    sql_pattern = escaped.replace("*", "%")
-    if "%" not in sql_pattern and "_" not in sql_pattern:
+    sql_pattern = "%".join(
+        segment.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        for segment in pattern.split("*")
+    )
+    if "*" not in pattern:
         sql_pattern = f"%{sql_pattern}%"
     cur = conn.cursor()
     if kind:

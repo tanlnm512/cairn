@@ -483,3 +483,64 @@ def test_refresh_is_limited_to_the_drifted_file(freshness):
     assert after_symbols == untouched_symbols
     _assert_graph_refreshed(db_path)
     _assert_only_drifted_file_reindexed(freshness)
+
+
+def test_parser_unavailable_new_file_is_skipped_not_drift_flagged(
+    tmp_path, monkeypatch
+):
+    """A file whose grammar is missing must never wedge every graph read."""
+    from cairn.graph.builder import build_graph
+    from cairn.graph.schema import get_db
+    from cairn.graph.watcher import refresh_for_query
+    from cairn.parsers import _registry
+
+    workspace = tmp_path / "workspace"
+    repo = workspace / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "code.py").write_text("def existing():\n    return 1\n")
+    db_path = str(tmp_path / "graph.db")
+    build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
+
+    (repo / "extra.rs").write_text("fn extra() {}\n")
+
+    monkeypatch.setattr(
+        _registry, "is_language_available", lambda lang: lang != "rust"
+    )
+    real_capsule = _registry._load_language_capsule
+
+    def no_rust_capsule(language):
+        if language == "rust":
+            raise ValueError("Unsupported language: rust")
+        return real_capsule(language)
+
+    monkeypatch.setattr(_registry, "_load_language_capsule", no_rust_capsule)
+    from cairn.graph import builder as builder_mod
+
+    real_get_parser = builder_mod.get_parser
+
+    def no_rust_parser(language):
+        if language == "rust":
+            raise ValueError("Unsupported language: rust")
+        return real_get_parser(language)
+
+    monkeypatch.setattr(builder_mod, "get_parser", no_rust_parser)
+
+    conn = get_db(db_path)
+    try:
+        report = refresh_for_query(conn, str(workspace))
+        assert report.drifted_paths == ()
+        assert report.repaired is False
+    finally:
+        conn.close()
+
+
+def test_banner_reports_only_unrepaired_drift():
+    from cairn.graph.watcher import FreshnessReport
+
+    repaired = FreshnessReport(drifted_paths=("a.py",), repaired=True)
+    assert repaired.banner() == ""
+    unrepaired = FreshnessReport(drifted_paths=("a.py", "b.py"), repaired=False)
+    banner = unrepaired.banner()
+    assert "2 file(s) not refreshed" in banner
+    assert "a.py" in banner

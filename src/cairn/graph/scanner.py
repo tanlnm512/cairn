@@ -19,7 +19,7 @@ EXTENSION_MAP = {
     ".swift": "swift",
     ".py": "python",
     # TypeScript/JavaScript. .tsx picks the TSX grammar internally
-    # (src/parsers/typescript.py) but is tagged "typescript" here so it routes
+    # (parsers/typescript.py) but is tagged "typescript" here so it routes
     # to the same parser/builder dispatch as .ts.
     ".ts": "typescript",
     ".tsx": "typescript",
@@ -344,14 +344,12 @@ _gitignore_cache: dict[str, list[tuple[str, pathspec.PathSpec]]] = {}
 
 
 def _load_gitignores(repo_root: Path) -> list[tuple[str, pathspec.PathSpec]]:
-    """Find and compile every .gitignore from repo_root down (one level deep
-    into subdirs is NOT done eagerly -- we collect lazily by walking during
-    scan). Returns a list of (gitignore_dir_str, spec).
+    """Find and compile every .gitignore under repo_root (eager full walk,
+    cached per repo_root). Returns a list of (gitignore_dir_str, spec).
 
-    For correctness with nested .gitignore files, we collect ALL of them under
-    the repo via a single walk; each spec is checked against the path RELATIVE
-    TO THAT SPEC'S DIRECTORY. This mirrors git's semantics: a pattern in
-    ``src/.gitignore`` applies to paths under ``src/``.
+    Each spec is matched against paths RELATIVE TO THAT SPEC'S DIRECTORY,
+    mirroring git's semantics: a pattern in ``src/.gitignore`` applies to
+    paths under ``src/``.
     """
     key = str(repo_root)
     cached = _gitignore_cache.get(key)
@@ -401,7 +399,7 @@ def _is_gitignored(abs_path: Path, repo_root: Path,
 def _build_config_spec(repo_root: Path):
     """Return (exclude_spec_or_None, include_spec_or_None) from cairn.json.
 
-    Uses src.graph.config.load_config; compiled into pathspec PathSpecs here so
+    Uses graph.config.load_config; compiled into pathspec PathSpecs here so
     the scanner can match in one pass. Patterns are repo-root-relative.
     """
     from .config import load_config
@@ -554,7 +552,19 @@ def _iter_repo_files(repo_path: Path) -> Iterator[Path]:
             kept.append(name)
         names[:] = kept
         for name in sorted(files):
-            yield Path(directory) / name
+            child = Path(directory) / name
+            # Symlinked files are skipped like symlinked dirs: their content
+            # lives outside the repo root and must not enter the graph.
+            if child.is_symlink():
+                continue
+            yield child
+
+
+def _rust_grammar_available() -> bool:
+    """True if the optional rust grammar extra is importable."""
+    from ..parsers._registry import is_language_available
+
+    return is_language_available("rust")
 
 
 def iter_source_files(repo_path: Path) -> Iterator[Path]:
@@ -566,6 +576,7 @@ def iter_source_files(repo_path: Path) -> Iterator[Path]:
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
     exclude_spec, include_spec = _build_config_spec(repo_path)
+    rust_grammar_available: Optional[bool] = None
     for path in _iter_repo_files(repo_path):
         if not path.is_file():
             continue
@@ -574,8 +585,16 @@ def iter_source_files(repo_path: Path) -> Iterator[Path]:
         should_index, _ = classify_file(
             path, repo_path, specs, exclude_spec, include_spec
         )
-        if should_index:
-            yield path
+        if not should_index:
+            continue
+        if EXTENSION_MAP[path.suffix] == "rust":
+            # Parser-unavailable files must never be yielded: a caller that
+            # cannot index them (drift scan) would flag them forever.
+            if rust_grammar_available is None:
+                rust_grammar_available = _rust_grammar_available()
+            if not rust_grammar_available:
+                continue
+        yield path
 
 
 def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo]]:
@@ -606,9 +625,7 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
             language = resolve_file_language(path.suffix, str(path))
             if language == "rust":
                 if rust_grammar_available is None:
-                    from ..parsers._registry import is_language_available
-
-                    rust_grammar_available = is_language_available("rust")
+                    rust_grammar_available = _rust_grammar_available()
                 if not rust_grammar_available:
                     skips.append(
                         SkipInfo(

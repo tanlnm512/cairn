@@ -353,9 +353,10 @@ def trace_flow(
 
     The inverse of :func:`impact_analysis` (callers upward, flat set): this
     walks callees downward and records the ordered call chain
-    (``entry -> A -> B -> C``) across files and modules. BFS by symbol **id**
-    (each id visited once) with the same cycle detection and ``limit`` cap as
-    ``impact_analysis``. Branch points (a symbol with >1 distinct callee) and
+    (``entry -> A -> B -> C``) across files and modules. Recursive DFS keyed
+    on node identity (each node walked once; back-edges into the active path
+    record cycles) with the same ``limit`` cap as ``impact_analysis``.
+    Branch points (a symbol with >1 distinct callee) and
     leaves (terminal callees) are surfaced separately. By default only
     **structural** edges are followed; pass ``include_service_edges=True`` to
     follow ``http_call``/``service_call`` too.
@@ -472,7 +473,11 @@ def trace_flow(
                     "depth": depth + 1,
                     "parent": sym_name,
                 }
-            walk(cid, cname, depth + 1)
+                walk(cid, cname, depth + 1)
+            elif cid in on_path:
+                # Back-edge into the active DFS path: re-entering walk() is
+                # what records the cycle; fully-explored ids are never re-walked.
+                walk(cid, cname, depth + 1)
 
         if len(outgoing) > 1:
             branches.append({"symbol": sym_name, "callees": outgoing})
