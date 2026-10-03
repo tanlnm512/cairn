@@ -57,34 +57,38 @@ def _load(path: str) -> dict | None:
         return None
 
 
-def _baseline_source(baseline: dict) -> str:
+def _baseline_source(baseline: dict, rolling: bool) -> str:
     """One line naming WHICH baseline the numbers are against and why."""
     dataset = baseline.get("dataset")
     dataset = dataset if isinstance(dataset, dict) else {}
     base_corpus = baseline.get("corpus")
     base_corpus = base_corpus if isinstance(base_corpus, dict) else {}
+    if not rolling:
+        return (
+            f"Baseline **{dataset.get('version', 'DS-v1')}** "
+            f"({base_corpus.get('files', '?')} files) from "
+            f"**{baseline.get('timestamp', 'unknown time')}** -- COLD START: no "
+            f"rolling CI baseline cached yet (the next `main` push mints one); "
+            f"this fallback is the reference-local artifact, so deltas below "
+            f"carry cross-machine noise -- treat them as a prompt to run "
+            f"`cairn bench --compare` locally, not as a verdict;"
+        )
     sha = None
     if ROLLING_SHA.exists():
         sha = ROLLING_SHA.read_text(encoding="utf-8").strip() or None
-    if sha:
-        return (
-            f"Baseline **rolling CI** ({base_corpus.get('files', '?')} files) "
-            f"minted on `main` @ `{sha[:12]}` "
-            f"({baseline.get('timestamp', 'unknown time')}) -- same hosted "
-            f"runner class, deltas are comparable;"
-        )
+    minted = (
+        f"minted on `main` @ `{sha[:12]}`" if sha
+        else "minted on `main` (mint commit unavailable)"
+    )
     return (
-        f"Baseline **{dataset.get('version', 'DS-v1')}** "
-        f"({base_corpus.get('files', '?')} files) from "
-        f"**{baseline.get('timestamp', 'unknown time')}** -- COLD START: no "
-        f"rolling CI baseline cached yet (the next `main` push mints one); "
-        f"this fallback is the reference-local artifact, so deltas below "
-        f"carry cross-machine noise -- treat them as a prompt to run "
-        f"`cairn bench --compare` locally, not as a verdict;"
+        f"Baseline **rolling CI** ({base_corpus.get('files', '?')} files) "
+        f"{minted} "
+        f"({baseline.get('timestamp', 'unknown time')}) -- same hosted "
+        f"runner class, deltas are comparable;"
     )
 
 
-def _render(current: dict, baseline: dict | None) -> str:
+def _render(current: dict, baseline: dict | None, rolling: bool) -> str:
     corpus = current.get("corpus", {})
     lines = [
         "## Bench (advisory)",
@@ -113,7 +117,7 @@ def _render(current: dict, baseline: dict | None) -> str:
 
     # Cite the baseline's source + stamp so reviewers can attribute the
     # numbers (AC1/D-007; attribution is the rolling design's whole point).
-    lines += ["", _baseline_source(baseline),
+    lines += ["", _baseline_source(baseline, rolling),
               "", "| operation | baseline ms | current ms | delta |",
               "|---|---:|---:|---:|"]
     from cairn.bench import compare_reports
@@ -138,12 +142,13 @@ def main() -> int:
     current = _load("bench-current.json")
     # Rolling CI baseline first (restored by the workflow's cache step);
     # committed DS-v1 artifact otherwise (cold start / local default).
-    baseline = _load(str(ROLLING_BASELINE)) or _load(str(COMMITTED_BASELINE))
+    rolling = _load(str(ROLLING_BASELINE))
+    baseline = rolling or _load(str(COMMITTED_BASELINE))
 
     if current is None:
         body = "_Bench did not produce a result this run (see the job log)._"
     else:
-        body = _render(current, baseline)
+        body = _render(current, baseline, rolling is not None)
 
     Path("bench-comment.md").write_text(f"{MARKER}\n\n{body}\n", encoding="utf-8")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

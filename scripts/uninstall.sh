@@ -116,7 +116,7 @@ resolve_store() {
 
   if [[ -f "$home/workspaces.json" && -n "$ws" ]]; then
     local key
-    key="$("$PYTHON" -c '
+    key="$("${PYTHON_CMD[@]+"${PYTHON_CMD[@]}"}" -c '
 import json, sys
 home, ws = sys.argv[1], sys.argv[2]
 w = json.load(open(home + "/workspaces.json"))
@@ -166,15 +166,15 @@ if $DRY_RUN; then
 fi
 
 # ─── Detect Python (for workspaces.json parsing) ──────────────────────────
-PYTHON=""
+PYTHON_CMD=()
 for candidate in python3.12 python3.11 python3.10 python3; do
   if "$candidate" -c "import sys; assert sys.version_info >= (3, 10)" 2>/dev/null; then
-    PYTHON="$candidate"
+    PYTHON_CMD=("$candidate")
     break
   fi
 done
-if [[ -z "$PYTHON" ]] && command -v uv >/dev/null 2>&1; then
-  PYTHON="uv run python"
+if [[ ${#PYTHON_CMD[@]} -eq 0 ]] && command -v uv >/dev/null 2>&1; then
+  PYTHON_CMD=(uv run python)
 fi
 
 # ─── Step 1: Uninstall agent integrations ──────────────────────────────────
@@ -305,7 +305,7 @@ if $DO_GRAPH; then
         # also wipes workspaces.json with the directory; single-store removal
         # prunes just that workspace's entry).
         if ! $whole_home && [[ -f "$local_home/workspaces.json" ]]; then
-          "$PYTHON" -c '
+          "${PYTHON_CMD[@]+"${PYTHON_CMD[@]}"}" -c '
 import json, sys
 path, workspace = sys.argv[1], sys.argv[2]
 try:
@@ -364,7 +364,8 @@ if $DO_PACKAGE; then
   if [[ -z "$INSTALLED_VIA" && -d "$PROJECT_DIR/.venv" ]]; then
     INSTALLED_VIA="venv"
   fi
-  if [[ -z "$INSTALLED_VIA" ]] && [[ -n "$PYTHON" ]] && "$PYTHON" -m pip show cairn-intel >/dev/null 2>&1; then
+  if [[ -z "$INSTALLED_VIA" && ${#PYTHON_CMD[@]} -gt 0 ]] \
+     && "${PYTHON_CMD[@]}" -m pip show cairn-intel >/dev/null 2>&1; then
     INSTALLED_VIA="pip"
   fi
 
@@ -413,9 +414,9 @@ if $DO_PACKAGE; then
           ;;
         pip)
           if $DRY_RUN; then
-            echo -e "  ${DIM}Would run: $PYTHON -m pip uninstall -y cairn-intel${NC}"
+            echo -e "  ${DIM}Would run: ${PYTHON_CMD[*]} -m pip uninstall -y cairn-intel${NC}"
           else
-            "$PYTHON" -m pip uninstall -y cairn-intel 2>/dev/null || true
+            "${PYTHON_CMD[@]}" -m pip uninstall -y cairn-intel 2>/dev/null || true
           fi
           ;;
       esac

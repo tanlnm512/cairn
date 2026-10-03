@@ -1,50 +1,47 @@
 #!/usr/bin/env python3
-"""Ground-truth validator for the T2 dataset: re-verify every expectation on a fresh build.
+"""Ground-truth validator: re-verify every dataset expectation on a fresh graph build.
 
-FR-003/AC5, TC-021/TC-022. The D-004 ground-truth pair under
-``benchmarks/datasource/t2/ground_truth/`` (queries.jsonl + expectations.tsv,
-authored by T011) promises that each query's expected ``file#symbol`` ids are
-real facts about the vendored yarl snapshot. This script re-checks that
-promise from scratch:
+The ground-truth pair under ``benchmarks/datasource/t2/ground_truth/``
+(queries.jsonl + expectations.tsv) promises that each query's expected
+``file#symbol`` ids are real facts about the vendored yarl snapshot. This
+script re-checks that promise from scratch:
 
-1. Builds a FRESH graph over ``benchmarks/datasource/t2/yarl`` -- the tree is
-   copied to a throwaway workspace and the COPY gets the empty ``.git``
-   scanner marker exactly as ``generate_corpus`` does for T1
-   (``bench/corpus.py:50-52``); a marker is never written into the committed
-   tree (git does not track empty dirs anyway -- tech-spec pitfall).
-2. For every expectation, runs the T010 matcher -- ``cairn.eval.match_rank``,
-   the two-tier identity-first matcher -- against the fresh build's
-   retrieval surfaces. Not a reimplementation: the loader
-   (``load_ground_truth``) and the matcher come from ``src/cairn/eval.py``
-   verbatim, and the L5 knowledge surface goes through eval's own
-   ``_retrieve_l5`` when a bundle is in play.
+1. Builds a FRESH graph over ``benchmarks/datasource/t2/yarl`` -- the tree
+   is copied to a throwaway workspace and the COPY gets the empty ``.git``
+   scanner marker exactly as ``generate_corpus`` does; a marker is never
+   written into the committed tree (git does not track empty dirs anyway).
+2. For every expectation, runs ``cairn.eval.match_rank`` (the two-tier
+   identity-first matcher) against the fresh build's retrieval surfaces.
+   Not a reimplementation: the loader (``load_ground_truth``) and the
+   matcher come from ``src/cairn/eval.py`` verbatim, and the L5 knowledge
+   surface goes through eval's own ``_retrieve_l5`` when a bundle is in
+   play.
 
-Verification surfaces (why presence, not a top-10 text-retrieval window):
+Verification is presence, not a top-10 text-retrieval window: the
+staleness question is "does a fresh build still contain what the dataset
+promises" (an expectation pointing at a symbol absent from the snapshot),
+not "does lexical search rank it in the top-10 today". Natural-language
+queries against a bare graph return nothing through ``_retrieve_l1`` --
+FTS5 MATCH is an implicit AND over the sentence's tokens and a fresh build
+has no embeddings -- so a k=10 window would name every entry stale and
+detect nothing. Recall@10/MRR scoring over this pair is the baseline job,
+not the staleness gate.
 
-* The staleness question is "does a fresh build still contain what the
-  dataset promises" (TC-022's scratch tamper: an expectation pointing at a
-  symbol *absent from the snapshot*), not "does lexical search rank it in the
-  top-10 today". Natural-language queries against a bare graph return
-  nothing through ``_retrieve_l1`` -- FTS5 MATCH is an implicit AND over the
-  sentence's tokens and a fresh build has no embeddings -- so a k=10 window
-  would name every entry stale and detect nothing. Recall@10/MRR *scoring*
-  over this pair is the baseline job (T015), not the staleness gate.
 * L1 (code) expectations are verified against the graph's full symbol
   inventory -- the same ``symbols``/``files`` rows ``find_definition``
   reads -- with ``match_rank(exp, inventory, k=len(inventory))``: tier-1
   (file suffix + exact symbol name) dominates; the substring tier keeps
   matcher parity.
-* L5 (knowledge) expectations: T011 authored them as code-symbol ids
-  verified against a graph build (no OKF bundle exists for the snapshot),
-  so by default they verify through the same graph surface. When an OKF
+* L5 (knowledge) expectations: authored as code-symbol ids verified
+  against a graph build (no OKF bundle exists for the snapshot), so by
+  default they verify through the same graph surface. When an OKF
   knowledge bundle IS available (``--bundle <path>`` or auto-discovered at
   ``<t2>/.knowledge``), its results -- retrieved via eval's
   ``_retrieve_l5`` -- join the verification pool: an expectation verifies
   if it matches EITHER surface.
 
-D-010 -- the validator NEVER rewrites expectations. Stale sets ship as
-DS-v2; this script's job is to name the stale entries (query text + missing
-symbol) and exit non-zero so a human decides.
+The validator NEVER rewrites expectations: it names the stale entries
+(query text + missing symbol) and exits non-zero so a human decides.
 
 Usage:
     uv run python scripts/verify_ground_truth.py                 # committed pair
@@ -52,15 +49,13 @@ Usage:
     uv run python scripts/verify_ground_truth.py --dataset /tmp/scratch_gt
     uv run python scripts/verify_ground_truth.py --bundle /tmp/scratch/.knowledge
 
-Exit codes (the contract; precedence 2 > 1 > 0 -- an infrastructure failure
-means *nothing was verified*, so it outranks any stale verdict):
+Exit codes (precedence 2 > 1 > 0 -- an infrastructure failure means
+*nothing was verified*, so it outranks any stale verdict):
     0  verified -- every expectation matched a surface of the fresh build
-       (TC-021: all-green summary)
     1  stale entries -- one or more expectations matched nothing; each is
        named by query text + missing symbol_id (+ grade/level/kind).
-       Includes unverified grade-1 rows: AC5 says every expectation verifies
-       or names the stale entry (TC-022), so grade-1 misses are consciously
-       listed, grade-2 misses first.
+       Every expectation must verify or be named, so grade-1 misses are
+       consciously listed, grade-2 misses first.
     2  infrastructure -- missing/unreadable dataset or snapshot dir, a
        malformed dataset (``load_ground_truth`` ValueError), a failed or
        degraded graph build (0 repos, parse errors), or a ``--bundle`` root
@@ -92,7 +87,7 @@ if str(REPO_ROOT / "src") not in sys.path:
 from cairn.eval import load_ground_truth, match_rank  # noqa: E402
 import cairn.eval as eval_mod  # noqa: E402
 
-# Default locations: the T011-authored pair and the T005-vendored snapshot.
+# Default locations: the committed ground-truth pair and the vendored snapshot.
 DEFAULT_DATASET = REPO_ROOT / "benchmarks" / "datasource" / "t2" / "ground_truth"
 DEFAULT_SNAPSHOT = REPO_ROOT / "benchmarks" / "datasource" / "t2" / "yarl"
 
@@ -115,7 +110,7 @@ BUNDLE_RETRIEVE_LIMIT = 1000
 class StaleEntry:
     """One expectation that matched no surface of the fresh build.
 
-    Carries everything TC-022 requires (query text + missing symbol) plus the
+    Carries the reporting contract (query text + missing symbol) plus the
     grade/level/kind context needed to triage: grade-2 rows are primary
     targets and are listed before grade-1 rows in the human report.
     """
@@ -189,7 +184,7 @@ def build_fresh_graph(snapshot: Path, workroot: Path) -> tuple[Dict[str, Any], P
     """Copy ``snapshot`` into ``workroot`` and build a graph over the copy.
 
     The copy (never the committed tree) receives the empty ``.git`` scanner
-    marker, the same idiom as ``generate_corpus`` / the T008 smoke fixture:
+    marker, the same idiom as ``generate_corpus``:
     git does not track empty dirs, so the committed snapshot cannot carry the
     marker itself.
 
@@ -234,8 +229,8 @@ def symbol_inventory(db_path: Path) -> List[Dict[str, str]]:
 
     Every ``symbols`` row joined to its file path -- the same rows
     ``find_definition``/``get_callers`` read. This is the L1 verification
-    surface and, absent an OKF bundle, the L5 surface too (T011 authored L5
-    expectations as code-symbol ids against a graph build).
+    surface and, absent an OKF bundle, the L5 surface too (L5 expectations
+    are authored as code-symbol ids against a graph build).
     """
     conn = sqlite3.connect(str(db_path))
     try:
@@ -254,12 +249,12 @@ def verify_ground_truth(
     bundle: Path | str | None = None,
     workroot: Path | str | None = None,
 ) -> VerifyReport:
-    """Re-verify every expectation of a D-004 pair against a fresh build.
+    """Re-verify every expectation of a ground-truth pair against a fresh build.
 
     Args:
         dataset: ground-truth dir holding queries.jsonl + expectations.tsv
-            (default: the committed T011 pair). Scratch copies for TC-022
-            tampering go here.
+            (default: the committed pair). Scratch copies for tamper
+            testing go here.
         snapshot: the vendored source tree to build from (default: the
             committed t2 yarl snapshot).
         bundle: OKF knowledge bundle root for the L5 surface. None (default)
@@ -320,8 +315,12 @@ def verify_ground_truth(
             report.errors.append("fresh build produced an empty symbol inventory")
             return report
 
-        # ---- verification: every expectation through the T010 matcher ----
-        summary_out: Dict[str, Dict[str, Dict[str, int]]] = {"L1": {}, "L5": {}}
+        # ---- verification: every expectation through the matcher ----
+        # A bucket per level the loader admitted (VALID_LEVELS is L1/L4/L5);
+        # keying only L1/L5 crashes on a loaded level with no bucket.
+        summary_out: Dict[str, Dict[str, Dict[str, int]]] = {
+            level: {} for level in sorted({q.level for q in queries})
+        }
         totals = {
             "queries": len(queries),
             "expectations": 0,
@@ -373,8 +372,8 @@ def verify_ground_truth(
             for level, buckets in summary_out.items()
         }
         report.totals = totals
-        # Grade-2 primary targets first in the failure listing (D-004: the
-        # primary target outranks must-return context), stable within grade.
+        # Grade-2 primary targets first in the failure listing (the primary
+        # target outranks must-return context), stable within grade.
         report.stale = sorted(stale, key=lambda s: (s.grade != 2, s.query_id, s.symbol_id))
     finally:
         if owns_workroot:
@@ -402,8 +401,8 @@ def _print_human(report: VerifyReport) -> None:
     if report.bundle:
         print(f"bundle {report.bundle} ({report.bundle_status}) joins the L5 verification pool")
     else:
-        print("bundle none -- L5 expectations verify against the graph surface (T011 authoring)")
-    for level in ("L1", "L5"):
+        print("bundle none -- L5 expectations verify against the graph surface")
+    for level in sorted(report.summary):
         for kind, bucket in report.summary.get(level, {}).items():
             verdict = "OK  " if bucket["stale"] == 0 else "FAIL"
             print(
@@ -415,13 +414,13 @@ def _print_human(report: VerifyReport) -> None:
     if not report.stale:
         print(
             f"OK: {t['verified']}/{t['expectations']} expectations across {t['queries']} queries "
-            f"verified on a fresh build (FR-003/AC5, TC-021)."
+            f"verified on a fresh build."
         )
         return
     print(
         f"FAIL: {t['stale']}/{t['expectations']} expectation(s) stale "
         f"(grade-2: {t['stale_grade2']}, grade-1: {t['stale_grade1']}) "
-        f"(FR-003/AC5, TC-022):",
+        f":",
         file=sys.stderr,
     )
     for s in report.stale:
@@ -430,9 +429,9 @@ def _print_human(report: VerifyReport) -> None:
             f"\"{s.query_text}\" -> missing symbol {s.symbol_id}",
             file=sys.stderr,
         )
-    # D-010: stale sets ship as DS-v2; this validator never edits the pair.
+    # This validator never edits the pair.
     print(
-        "  (D-010: nothing was rewritten -- ship the corrected set as a new "
+        "  (nothing was rewritten -- ship the corrected set as a new "
         "dataset version, e.g. DS-v2)",
         file=sys.stderr,
     )

@@ -1,47 +1,30 @@
 #!/usr/bin/env python3
-"""Assert-mode validator for the T1 datasource pin + T2 size budgets.
+"""Assert-mode validator for the datasource manifest pin and the tree size budgets.
 
-Two independent assertions per run (FR-001/AC2 content, FR-002/AC4 size):
+Two independent assertions per run:
 
-1. Content (FR-001/AC2): reads ``benchmarks/datasource/manifest.json``,
-   regenerates the synthetic corpus per its recorded recipe (seed,
-   complexity) at every declared size into a throwaway temp root, and
-   asserts the regenerated tree hashes to the pinned value with the pinned
-   counts. This is the check that makes the manifest a promise rather than a
-   wish: if any generation input drifts (a generator edit, a seed change,
-   even a Python RNG change) without the manifest being re-minted,
+1. Content: reads ``benchmarks/datasource/manifest.json``, regenerates the
+   synthetic corpus per its recorded recipe (seed, complexity) at every
+   declared size into a throwaway temp root, and asserts the regenerated
+   tree hashes to the pinned value with the pinned counts. If any
+   generation input drifts without the manifest being re-minted,
    regeneration stops matching the pin and this exits non-zero naming the
-   mismatched fact (TC-003).
+   mismatched fact. The corpus is a pure function of (seed, size,
+   complexity), so regenerating on any runner and comparing the
+   path-order-independent tree hash proves byte-for-byte equality without
+   shipping the generated files. The comparison names the size and the
+   mismatched fact (hash / count field), not the offending file -- the
+   manifest pins one aggregate digest, so per-file attribution is
+   impossible by design; the expected/actual pair is the debugging handle.
 
-Why regeneration instead of committing the corpus: the corpus is a pure
-function of (seed, size, complexity), so regenerating on any runner and
-comparing the path-order-independent tree hash (decision D-003) proves
-byte-for-byte equality without shipping ~28 MB of generated files across
-sizes 100..5000. The comparison names the size and the mismatched fact
-(hash / count field), not the offending file -- the manifest pins one
-aggregate digest, so per-file attribution is impossible by design; the
-expected/actual pair is the debugging handle.
-
-Manifest schema errors are deliberately a DISTINCT failure class from
-content drift: a manifest that fails ``validate_manifest`` was never
-compared at all (exit 2), so CI can tell "the pin is stale" (exit 1) from
-"the pin is malformed" (exit 2).
-
-2. Size budgets (FR-002/AC4): EVERY invocation also asserts the committed
-   tree's byte size -- ``benchmarks/datasource/t2/`` <= 3072 KB (the vendored
-   snapshot, decision D-002), ``benchmarks/datasource/ds2/`` <= 3072 KB (the
-   second corpus; an absent dir measures 0 and passes), and
-   ``benchmarks/datasource/`` <= 5120 KB total --
-so one CI step gets content and budget enforcement for free. Trees are
-measured as the sum of file sizes (``sum(f.stat().st_size)``), NOT
-``du``-style disk blocks: block accounting varies by filesystem and block
-size (APFS vs ext4 vs tmpfs), byte sums do not, so the budget means the same
-thing on every runner. This check is load-bearing, not ceremony: the
-pre-commit ``check-added-large-files --maxkb=500`` hook caps a single FILE,
-and nothing else caps the tree -- fifty compliant 400 KB files would sail
-past it straight into repo bloat (survey FR-002). ``--budget`` requests a
-fast budget-only run (the manifest is still schema-validated -- cheap -- but
-no corpus is regenerated); budgets are checked on every run regardless.
+2. Size budgets: EVERY invocation also asserts the committed tree's byte
+   size against the BUDGETS below (trees are measured as the sum of file
+   sizes, NOT ``du``-style disk blocks: block accounting varies by
+   filesystem, byte sums do not). This check is load-bearing: the
+   pre-commit ``check-added-large-files --maxkb=500`` hook caps a single
+   FILE, and nothing else caps the tree. ``--budget`` requests a fast
+   budget-only run (the manifest is still schema-validated -- cheap -- but
+   no corpus is regenerated); budgets are checked on every run regardless.
 
 Usage:
     uv run python scripts/verify_datasource.py             # all declared sizes
@@ -52,11 +35,11 @@ Usage:
 
 Exit codes (the contract the CI step depends on):
     0  verified -- every requested size matched tree-hash AND counts AND all
-       size budgets held (TC-002, TC-017)
-    1  content drift -- a hash and/or count mismatch (TC-003)
+       size budgets held
+    1  content drift -- a hash and/or count mismatch
     2  unusable manifest -- unreadable/invalid JSON, schema errors, or a
        --size the manifest does not declare (nothing was compared)
-    3  size-budget breach -- the committed tree exceeds a budget (TC-018).
+    3  size-budget breach -- the committed tree exceeds a budget.
        Precedence when several fire: 2 > 1 > 3 -- an unusable pin means
        nothing was compared, and drift outranks size because the pin
        contract is the primary fact.
@@ -81,9 +64,8 @@ if str(REPO_ROOT / "src") not in sys.path:
 from cairn.bench.corpus import corpus_stats, generate_corpus  # noqa: E402
 from cairn.bench.datasource import load_manifest, tree_hash, validate_manifest  # noqa: E402
 
-# Default pin location: the serial-spine artifact minted by T002 (and later
-# extended by T019). Overridable via --manifest so scratch experiments and
-# tests never touch the committed file.
+# Default pin location: the committed manifest artifact. Overridable via
+# --manifest so scratch experiments and tests never touch the committed file.
 DEFAULT_MANIFEST = REPO_ROOT / "benchmarks" / "datasource" / "manifest.json"
 
 # Exit-code contract (see module docstring). Named because tests and the CI
@@ -93,12 +75,12 @@ EXIT_DRIFT = 1
 EXIT_MANIFEST = 2
 EXIT_BUDGET = 3
 
-# Size budgets (FR-002/AC4), keyed by repo-relative path with limits in KiB
+# Size budgets, keyed by repo-relative path with limits in KiB
 # (1 KB = 1024 bytes, matching du -sk and the pre-commit --maxkb convention).
 # Ordered subtree-before-total so the report reads inside-out.
-T2_BUDGET_KB = 3072  # the vendored snapshot alone: "<= 3 MB" (FR-002)
-DS2_BUDGET_KB = 3072  # the second-corpus dir: same per-corpus "<= 3 MB" ceiling as t2 (FR-002); an absent dir measures 0 and passes
-DATASOURCE_BUDGET_KB = 5120  # the whole datasource tree: "5 MB total" (FR-002)
+T2_BUDGET_KB = 3072  # the vendored snapshot alone: "<= 3 MB"
+DS2_BUDGET_KB = 3072  # the second-corpus dir: same per-corpus "<= 3 MB" ceiling as t2; an absent dir measures 0 and passes
+DATASOURCE_BUDGET_KB = 5120  # the whole datasource tree: "5 MB total"
 BUDGETS: tuple[tuple[str, int], ...] = (
     ("benchmarks/datasource/t2", T2_BUDGET_KB),
     ("benchmarks/datasource/ds2", DS2_BUDGET_KB),
@@ -143,7 +125,7 @@ class SizeResult:
 
 @dataclass(frozen=True)
 class BudgetResult:
-    """Measured size of one budget scope against its limit (FR-002/AC4).
+    """Measured size of one budget scope against its limit.
 
     ``actual_bytes`` is the raw fact; ``breached`` compares exact bytes (so
     rounding in the KB view can never flip a verdict) and the limit itself
@@ -180,7 +162,7 @@ def tree_bytes(root: Path) -> int:
     portable. ``__pycache__`` directories are skipped: they are git-ignored
     build noise (a local graph build over t2/ drops ~1.4 MB of .pyc into the
     vendored tree; a fresh CI checkout has none), and this budget guards the
-    COMMITTED tree (D-002), not a dev machine's litter. A missing root
+    COMMITTED tree, not a dev machine's litter. A missing root
     measures 0 -- an absent tree has no bytes to guard. The vendored snapshot
     contains no symlinks; if one appeared, ``stat()`` follows it and counts
     the target's size.
@@ -360,7 +342,7 @@ def _print_budgets(report: VerifyReport) -> None:
         if b.breached:
             print(
                 f"FAIL: budget {b.path} breached: {b.actual_kb} KB exceeds "
-                f"limit {b.limit_kb} KB (FR-002/AC4).",
+                f"limit {b.limit_kb} KB.",
                 file=sys.stderr,
             )
         else:
@@ -368,10 +350,10 @@ def _print_budgets(report: VerifyReport) -> None:
     good = sum(1 for b in report.budgets if not b.breached)
     total = len(report.budgets)
     if good == total:
-        print(f"OK: {good}/{total} size budget(s) within limits (FR-002/AC4, TC-017).")
+        print(f"OK: {good}/{total} size budget(s) within limits.")
     else:
         print(
-            f"FAIL: {total - good}/{total} size budget(s) breached (FR-002/AC4, TC-018).",
+            f"FAIL: {total - good}/{total} size budget(s) breached.",
             file=sys.stderr,
         )
 
@@ -406,8 +388,11 @@ def _print_human(report: VerifyReport) -> None:
                 f"bytes={counts.get('bytes')}"
             )
         else:
+            headline = (
+                "tree-hash mismatch" if res.status == "hash_mismatch" else "count mismatch"
+            )
             print(
-                f"FAIL: size {res.size}: tree-hash mismatch",
+                f"FAIL: size {res.size}: {headline}",
                 file=sys.stderr,
             )
             print(f"  expected {res.expected_hash}", file=sys.stderr)
@@ -423,10 +408,10 @@ def _print_human(report: VerifyReport) -> None:
     # Sizes-only verdict: report.ok folds budgets in too, so using it here
     # would mislabel a verified pin as "drifted" when only the tree is fat.
     if good == total:
-        print(f"OK: {good}/{total} size(s) match the pinned tree-hash and counts (FR-001/AC2).")
+        print(f"OK: {good}/{total} size(s) match the pinned tree-hash and counts.")
     else:
         print(
-            f"FAIL: {total - good}/{total} size(s) drifted from the manifest pin (TC-003).",
+            f"FAIL: {total - good}/{total} size(s) drifted from the manifest pin.",
             file=sys.stderr,
         )
     _print_budgets(report)
