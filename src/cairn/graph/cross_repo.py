@@ -7,8 +7,8 @@ import sqlite3
 from typing import Dict
 
 
-# Built-in fallback: per the spec's be-workspace conventions. Used when neither
-# the env var nor cairn.json supplies a namespace map.
+# Built-in fallback mapping be-workspace import namespaces to repo names.
+# Used when neither the env var nor cairn.json supplies a namespace map.
 _DEFAULT_NAMESPACES: Dict[str, str] = {
     "xyz.be.utils": "be-sdk",
     "xyz.be.customer.networking": "be-sdk",
@@ -131,25 +131,32 @@ def cross_repo_deps(conn: sqlite3.Connection, repo: str) -> dict:
     ).fetchall():
         path = row["imported_path"]
         for ns, owner in namespaces.items():
-            if path.startswith(ns) and owner != repo:
+            # Dot boundary: only the exact namespace or a segment extension
+            # counts, so "xyz.be.common_extra" never matches "xyz.be.common".
+            if (path == ns or path.startswith(ns + ".")) and owner != repo:
                 d = deps.setdefault(owner, {"repo": owner, "type": "import", "evidence": ns, "count": 0})
                 d["count"] += 1
 
     # Dependents: imports in OTHER repos referencing `repo`'s namespaces.
-    # The prefix filter is pushed into SQL (``imported_path LIKE ns || '%'``)
-    # rather than loading every import row into memory and filtering in Python.
-    # Namespace prefixes may contain LIKE meta-characters (``_``), so they are
-    # escaped and the LIKE uses ``ESCAPE '\\'``.
+    # The prefix filter is pushed into SQL rather than loading every import
+    # row into memory and filtering in Python. Namespace prefixes may contain
+    # LIKE meta-characters (``_``), so they are escaped and every LIKE uses
+    # ``ESCAPE '\\'``.
     my_namespaces = [ns for ns, owner in namespaces.items() if owner == repo]
     dependents: dict[str, dict] = {}
     if my_namespaces:
         escaped_ns = [_escape_like(ns) for ns in my_namespaces]
-        # Each namespace contributes ``imported_path LIKE ? || '%' ESCAPE '\'``;
-        # ESCAPE is a per-LIKE modifier, so it must be repeated on every term.
+        # Each namespace contributes an exact match plus a dot-boundary
+        # extension (``ns`` / ``ns || '.%'``); ESCAPE is a per-LIKE modifier,
+        # so it is repeated on every term.
         where_clause = " OR ".join(
-            "imported_path LIKE ? || '%' ESCAPE '\\'" for _ in escaped_ns
+            "(imported_path LIKE ? ESCAPE '\\' "
+            "OR imported_path LIKE ? || '.%' ESCAPE '\\')"
+            for _ in escaped_ns
         )
-        params = [repo, *escaped_ns]
+        params = [repo]
+        for ns in escaped_ns:
+            params.extend([ns, ns])
         for row in cur.execute(
             f"""SELECT imported_path, repo_id
                 FROM imports JOIN files ON imports.file_id = files.id

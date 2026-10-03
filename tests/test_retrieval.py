@@ -206,3 +206,29 @@ def test_fallback_skips_empty_and_single_rows():
             sys.modules.pop("numpy", None)
         else:
             sys.modules["numpy"] = saved
+
+
+def test_fallback_skips_malformed_blob_like_numpy_path():
+    import struct
+    import sys
+
+    dim = 2
+    q_blob = struct.pack(f"<{dim}f", *(1.0, 0.0))
+    rows = [
+        (b"", dim, "empty"),
+        (struct.pack("<f", 0.6)[:3], dim, "ragged"),  # not dim*4 bytes
+        (_f32(0.6, 0.8), dim, "good"),
+    ]
+
+    saved = sys.modules.get("numpy", "ABSENT")
+    sys.modules["numpy"] = None
+    try:
+        out = cosine_scan(q_blob, dim, rows)
+    finally:
+        if saved == "ABSENT":
+            sys.modules.pop("numpy", None)
+        else:
+            sys.modules["numpy"] = saved
+
+    assert [p for _, p in out] == ["good"]
+    assert abs(out[0][0] - 0.6) < 1e-6

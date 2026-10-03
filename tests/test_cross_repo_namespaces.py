@@ -158,3 +158,28 @@ def test_cross_repo_deps_default_map_finds_nothing(reset_cache, fresh_db, monkey
 
     result = cross_repo.cross_repo_deps(fresh_db, "repo-a")
     assert result["dependencies"] == []  # default map doesn't know com.custom.sdk
+
+
+def test_cross_repo_deps_requires_dot_boundary(reset_cache, fresh_db, monkeypatch):
+    """A shared-prefix namespace ("a.b.common_extra") must not count under
+    "a.b.common" -- while a real-segment import still does, in both legs."""
+    cur = fresh_db.cursor()
+    cur.execute("INSERT INTO repos(id,name,path,language) VALUES(?,?,?,?)",
+                ("app", "app", "/app", "kotlin"))
+    cur.execute("INSERT INTO repos(id,name,path,language) VALUES(?,?,?,?)",
+                ("sdk", "sdk", "/sdk", "kotlin"))
+    cur.execute("INSERT INTO files(id,repo_id,path,language) VALUES(?,?,?,?)",
+                ("f-app", "app", "/app/A.kt", "kotlin"))
+    # app imports the lookalike prefix and the real one.
+    cur.execute("INSERT INTO imports(id,file_id,imported_path,line) VALUES(?,?,?,?)",
+                ("i-app-lookalike", "f-app", "a.b.common_extra.thing", 1))
+    cur.execute("INSERT INTO imports(id,file_id,imported_path,line) VALUES(?,?,?,?)",
+                ("i-app-real", "f-app", "a.b.common.api", 1))
+    fresh_db.commit()
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", json.dumps({"a.b.common": "sdk"}))
+
+    deps = cross_repo.cross_repo_deps(fresh_db, "app")["dependencies"]
+    assert [d["count"] for d in deps] == [1], "only the real-prefix import counts"
+
+    dependents = cross_repo.cross_repo_deps(fresh_db, "sdk")["dependents"]
+    assert [d["repo"] for d in dependents] == ["app"], "real-prefix import still counts"
