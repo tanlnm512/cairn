@@ -154,6 +154,6 @@ if __name__ == "__main__":
     # `python -m cairn.cli.main` re-executes this module AFTER cairn.cli's
     # __init__ has registered every subcommand on the imported `main` group;
     # invoke that group, not the bare one re-defined in __main__.
-    from cairn.cli import main as _registered_main
+    from cairn.cli.main import main as _registered_main
 
     _registered_main()
