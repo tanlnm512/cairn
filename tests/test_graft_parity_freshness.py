@@ -485,8 +485,52 @@ def test_refresh_is_limited_to_the_drifted_file(freshness):
     _assert_only_drifted_file_reindexed(freshness)
 
 
+_UNAVAILABLE_LANGUAGE_FILES = {
+    # language: (tracked, original, modified, new_name, new_code)
+    "rust": (
+        "lib.rs",
+        "fn tracked_fn() {}\n",
+        "fn tracked_fn() { /* modified */ }\n",
+        "extra.rs",
+        "fn extra() {}\n",
+    ),
+    "python": (
+        "lib.py",
+        "def tracked_fn():\n    return 1\n",
+        "def tracked_fn():\n    return 2  # changed\n",
+        "extra.py",
+        "def extra():\n    return 1\n",
+    ),
+}
+
+
+def _block_language(monkeypatch, _registry, builder_mod, language):
+    """Make `language`'s parser unavailable through every lookup path."""
+    monkeypatch.setattr(
+        _registry, "is_language_available", lambda lang: lang != language
+    )
+    real_capsule = _registry._load_language_capsule
+
+    def no_capsule(lang):
+        if lang == language:
+            raise ValueError(f"Unsupported language: {lang}")
+        return real_capsule(lang)
+
+    monkeypatch.setattr(_registry, "_load_language_capsule", no_capsule)
+
+    real_get_parser = builder_mod.get_parser
+
+    def no_parser(lang):
+        if lang == language:
+            raise ValueError(f"Unsupported language: {lang}")
+        return real_get_parser(lang)
+
+    monkeypatch.setattr(builder_mod, "get_parser", no_parser)
+
+
+@pytest.mark.parametrize("language", ["rust", "python"])
 def test_parser_unavailable_new_file_is_skipped_not_drift_flagged(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, language
 ):
     """A file whose grammar is missing must never wedge every graph read."""
     from cairn.graph.builder import build_graph
@@ -494,6 +538,7 @@ def test_parser_unavailable_new_file_is_skipped_not_drift_flagged(
     from cairn.graph.watcher import refresh_for_query
     from cairn.parsers import _registry
 
+    _, _, _, new_name, new_code = _UNAVAILABLE_LANGUAGE_FILES[language]
     workspace = tmp_path / "workspace"
     repo = workspace / "demo"
     repo.mkdir(parents=True)
@@ -502,29 +547,11 @@ def test_parser_unavailable_new_file_is_skipped_not_drift_flagged(
     db_path = str(tmp_path / "graph.db")
     build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
 
-    (repo / "extra.rs").write_text("fn extra() {}\n")
+    (repo / new_name).write_text(new_code)
 
-    monkeypatch.setattr(
-        _registry, "is_language_available", lambda lang: lang != "rust"
-    )
-    real_capsule = _registry._load_language_capsule
-
-    def no_rust_capsule(language):
-        if language == "rust":
-            raise ValueError("Unsupported language: rust")
-        return real_capsule(language)
-
-    monkeypatch.setattr(_registry, "_load_language_capsule", no_rust_capsule)
     from cairn.graph import builder as builder_mod
 
-    real_get_parser = builder_mod.get_parser
-
-    def no_rust_parser(language):
-        if language == "rust":
-            raise ValueError("Unsupported language: rust")
-        return real_get_parser(language)
-
-    monkeypatch.setattr(builder_mod, "get_parser", no_rust_parser)
+    _block_language(monkeypatch, _registry, builder_mod, language)
 
     conn = get_db(db_path)
     try:
@@ -535,8 +562,9 @@ def test_parser_unavailable_new_file_is_skipped_not_drift_flagged(
         conn.close()
 
 
+@pytest.mark.parametrize("language", ["rust", "python"])
 def test_parser_unavailable_modified_tracked_file_drops_not_raises(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, language
 ):
     """Editing a tracked file while its grammar is missing drops it, not wedges reads."""
     from cairn.graph.builder import build_graph
@@ -544,43 +572,35 @@ def test_parser_unavailable_modified_tracked_file_drops_not_raises(
     from cairn.graph.watcher import refresh_for_query
     from cairn.parsers import _registry
 
+    tracked, original, modified, _, _ = _UNAVAILABLE_LANGUAGE_FILES[language]
     workspace = tmp_path / "workspace"
     repo = workspace / "demo"
     repo.mkdir(parents=True)
     (repo / ".git").mkdir()
     (repo / "code.py").write_text("def existing():\n    return 1\n")
-    (repo / "lib.rs").write_text("fn existing_rs() {}\n")
+    (repo / tracked).write_text(original)
     db_path = str(tmp_path / "graph.db")
     build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
 
-    (repo / "lib.rs").write_text("fn existing_rs() { /* modified */ }\n")
+    (repo / tracked).write_text(modified)
 
-    monkeypatch.setattr(
-        _registry, "is_language_available", lambda lang: lang != "rust"
-    )
     from cairn.graph import builder as builder_mod
 
-    real_get_parser = builder_mod.get_parser
-
-    def no_rust_parser(language):
-        if language == "rust":
-            raise ValueError("Unsupported language: rust")
-        return real_get_parser(language)
-
-    monkeypatch.setattr(builder_mod, "get_parser", no_rust_parser)
+    _block_language(monkeypatch, _registry, builder_mod, language)
 
     conn = get_db(db_path)
     try:
         report = refresh_for_query(conn, str(workspace))
         assert len(report.drifted_paths) == 1
-        assert report.drifted_paths[0].endswith("lib.rs")
+        assert report.drifted_paths[0].endswith(tracked)
         assert report.repaired is True
 
         rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
         assert [r["path"] for r in rows] == ["code.py"]
         assert (
             conn.execute(
-                "SELECT count(*) FROM parse_errors WHERE file_path LIKE '%lib.rs'"
+                "SELECT count(*) FROM parse_errors WHERE file_path LIKE ?",
+                (f"%{tracked}",),
             ).fetchone()[0]
             == 0
         )
@@ -590,6 +610,61 @@ def test_parser_unavailable_modified_tracked_file_drops_not_raises(
         assert again.repaired is False
     finally:
         conn.close()
+
+
+def test_reindex_counts_parser_unavailable_new_file_as_handled(
+    tmp_path, monkeypatch
+):
+    """A never-indexed file with an unavailable parser counts toward repair."""
+    from cairn.graph.incremental import reindex_paths
+    from cairn.graph.schema import get_db
+    from cairn.parsers import _registry
+
+    monkeypatch.setattr(_registry, "is_language_available", lambda lang: lang != "rust")
+
+    workspace = tmp_path / "workspace"
+    repo = workspace / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "extra.rs").write_text("fn extra() {}\n")
+    db_path = str(tmp_path / "graph.db")
+    conn = get_db(db_path)
+    try:
+        result = reindex_paths(conn, str(workspace), [str(repo / "extra.rs")])
+
+        assert result["errors"] == []
+        assert result["deleted"] == 1
+        assert result["reindexed"] == 0
+    finally:
+        conn.close()
+
+
+def test_build_with_unavailable_non_rust_grammar_records_skip(tmp_path, monkeypatch):
+    """A missing core grammar wheel yields a recorded skip, not a crashed build."""
+    import sys
+
+    from cairn.graph.builder import build_graph
+    from cairn.graph.schema import get_db
+
+    workspace = tmp_path / "workspace"
+    repo = workspace / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "code.py").write_text("def existing():\n    return 1\n")
+    monkeypatch.setitem(sys.modules, "tree_sitter_python", None)
+
+    db_path = str(tmp_path / "graph.db")
+    summary = build_graph(workspace=str(workspace), db_path=str(db_path), verbose=False)
+
+    assert summary["files"] == 0
+    assert summary["parse_errors"] == 0
+    assert summary["skipped"] == 1
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute("SELECT path, reason FROM skipped_files").fetchall()
+    finally:
+        conn.close()
+    assert [tuple(r) for r in rows] == [("code.py", "parser_unavailable")]
 
 
 def test_banner_reports_only_unrepaired_drift():

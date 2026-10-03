@@ -212,10 +212,11 @@ def reindex_paths(
             parser = builder.get_parser(language) if available else None
             if parser is None:
                 # Drop the file's rows: the graph converges to fresh-build
-                # state, which skips unavailable-language files. Counted and
-                # pending_sync-cleared so strict refresh and the staleness
-                # banner settle; the scanner re-detects the file once the
-                # grammar returns.
+                # state, which skips unavailable-language files. Counted even
+                # for never-indexed files so strict refresh's
+                # repaired==len(drifted) holds; pending_sync is cleared so the
+                # staleness banner settles. The scanner re-detects the file
+                # once the grammar returns.
                 try:
                     conn.execute(
                         "DELETE FROM pending_sync WHERE path IN (?, ?)",
@@ -225,12 +226,11 @@ def reindex_paths(
                     note_contention("incremental.pending_sync_clear", error=e)
                     logger.debug("pending_sync table missing", exc_info=True)
                 conn.execute("COMMIT")
-                if file_id is not None:
-                    deleted += 1
-                    if deleted_names:
-                        repo_changed_target_names.setdefault(
-                            stored_repo, set()
-                        ).update(deleted_names)
+                deleted += 1
+                if file_id is not None and deleted_names:
+                    repo_changed_target_names.setdefault(
+                        stored_repo, set()
+                    ).update(deleted_names)
                 continue
 
             file_hash = file_sha256(Path(abs_path))

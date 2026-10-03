@@ -560,11 +560,11 @@ def _iter_repo_files(repo_path: Path) -> Iterator[Path]:
             yield child
 
 
-def _rust_grammar_available() -> bool:
-    """True if the optional rust grammar extra is importable."""
+def _grammar_available(language: str) -> bool:
+    """True if the parser for `language` can load in this process."""
     from ..parsers._registry import is_language_available
 
-    return is_language_available("rust")
+    return is_language_available(language)
 
 
 def iter_source_files(repo_path: Path) -> Iterator[Path]:
@@ -576,7 +576,7 @@ def iter_source_files(repo_path: Path) -> Iterator[Path]:
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
     exclude_spec, include_spec = _build_config_spec(repo_path)
-    rust_grammar_available: Optional[bool] = None
+    grammar_available: dict[str, bool] = {}
     for path in _iter_repo_files(repo_path):
         if not path.is_file():
             continue
@@ -587,13 +587,14 @@ def iter_source_files(repo_path: Path) -> Iterator[Path]:
         )
         if not should_index:
             continue
-        if EXTENSION_MAP[path.suffix] == "rust":
+        language = EXTENSION_MAP[path.suffix]
+        available = grammar_available.get(language)
+        if available is None:
+            available = grammar_available[language] = _grammar_available(language)
+        if not available:
             # Parser-unavailable files must never be yielded: a caller that
             # cannot index them (drift scan) would flag them forever.
-            if rust_grammar_available is None:
-                rust_grammar_available = _rust_grammar_available()
-            if not rust_grammar_available:
-                continue
+            continue
         yield path
 
 
@@ -611,7 +612,7 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
 
     files: List[FileInfo] = []
     skips: List[SkipInfo] = []
-    rust_grammar_available: Optional[bool] = None
+    grammar_available: dict[str, bool] = {}
     for path in _iter_repo_files(repo_path):
         if not path.is_file():
             continue
@@ -623,19 +624,19 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
         rel = str(path.relative_to(repo_path))
         if should_index:
             language = resolve_file_language(path.suffix, str(path))
-            if language == "rust":
-                if rust_grammar_available is None:
-                    rust_grammar_available = _rust_grammar_available()
-                if not rust_grammar_available:
-                    skips.append(
-                        SkipInfo(
-                            repo=repo_id,
-                            path=str(path),
-                            rel_path=rel,
-                            reason=REASON_PARSER_UNAVAILABLE,
-                        )
+            available = grammar_available.get(language)
+            if available is None:
+                available = grammar_available[language] = _grammar_available(language)
+            if not available:
+                skips.append(
+                    SkipInfo(
+                        repo=repo_id,
+                        path=str(path),
+                        rel_path=rel,
+                        reason=REASON_PARSER_UNAVAILABLE,
                     )
-                    continue
+                )
+                continue
             files.append(
                 FileInfo(
                     repo=repo_id,

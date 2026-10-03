@@ -879,10 +879,10 @@ def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, 
     """
     import traceback
     path, rel_path, language, repo = args
-    parser = get_parser(language)
-    if parser is None:
-        return path, rel_path, language, repo, None, f"No parser for {language}", None
     try:
+        parser = get_parser(language)
+        if parser is None:
+            return path, rel_path, language, repo, None, f"No parser for {language}", None
         pf = parser.parse(path)
         return path, rel_path, language, repo, pf, None, None
     except Exception as e:
