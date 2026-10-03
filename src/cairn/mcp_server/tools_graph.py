@@ -131,7 +131,7 @@ def _neighbor_rows(
     conn = _conn()
     try:
         freshness = _fresh_graph(conn)
-        rows = query(conn, name, False, limit)
+        rows = query(conn, name, fuzzy, limit)
         used_fallback = False
         if not rows and not fuzzy:
             rows = query(conn, name, True, limit)
