@@ -244,6 +244,7 @@ def store_memory(
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():
             old_file.unlink()
+            bundle.invalidate_search_index()
         if conn is not None:
             conn.execute(
                 "DELETE FROM memory_validity WHERE concept_id = ?",
@@ -504,6 +505,9 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
         if not file_path.exists():
             return False
         file_path.unlink()
+        # Unlink bypasses write_concept: drop the cached index or the deleted
+        # concept stays searchable.
+        bundle.invalidate_search_index()
     # Clean up memory_refs in DB. Writers persist both id forms (search paths
     # store the absolute concept_id read from disk; capture paths store the
     # relative one), so delete both — exact-match per form, never a substring.
@@ -573,6 +577,7 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
                 file_path = Path(bundle.root) / f"{concept.concept_id}.md"
                 if file_path.exists():
                     file_path.unlink()
+                    bundle.invalidate_search_index()
                 purged += 1
     return purged
 
@@ -661,6 +666,7 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                         bundle.write_concept(c)
                         if old_file.exists():
                             old_file.unlink()
+                            bundle.invalidate_search_index()
                     except Exception:
                         pass
 

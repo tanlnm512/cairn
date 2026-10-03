@@ -519,6 +519,7 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():
             old_file.unlink()
+            bundle.invalidate_search_index()
         return new_id
 
 
