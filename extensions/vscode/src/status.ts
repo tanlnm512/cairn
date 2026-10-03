@@ -1,6 +1,6 @@
 /**
  * Status-bar item rendering the shell's aggregate server/index state.
- * Non-intrusive by contract: text-only indicator, never a dialog (FR-004).
+ * Non-intrusive by contract: text-only indicator, never a dialog.
  */
 import * as vscode from "vscode";
 import type { ServerState } from "./server";

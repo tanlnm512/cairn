@@ -5,7 +5,6 @@ import click
 import sys
 
 from .main import DEFAULT_DB_PATH, get_db, main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 
 @main.group()
 def compass():

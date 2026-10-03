@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Warm-time harness: first semantic query wall-time in a fresh process (T022, FR-007).
+"""Warm-time harness: first semantic query wall-time in a fresh process, cold vs boot-warmed.
 
-Measures what the boot-time model warm-up (``cairn.graph.model_warmup``,
-wired in ``mcp_server/server.py``) buys the user on their first
-``semantic_search``: two FRESH subprocesses over one pre-built tiny embedded
-DB --
+Two FRESH subprocesses over one pre-built tiny embedded DB measure what the
+boot-time model warm-up (``cairn.graph.model_warmup``, wired in
+``src/cairn/mcp_server/server.py``) buys the first ``semantic_search``:
 
 * **cold arm**: no warm-up; the first query pays the full lazy load of the
-  sentence-transformers embedder (inside ``embed_query``) and the
-  CrossEncoder reranker (inside ``rerank()``), exactly as a server without
-  warm-up would.
+  sentence-transformers embedder and the CrossEncoder reranker.
 * **warm arm**: ``warm_models_in_background()`` is called and its boot
   thread JOINED before the query. A real server never joins (serving starts
   while weights load); the harness joins because it is the deterministic
@@ -17,22 +14,16 @@ DB --
   warm-up function itself -- the harness never bypasses the kill switch.
 
 The fixture is deliberately tiny and synthetic: the metric is MODEL LOAD
-time, corpus-independent by design (a bigger corpus only grows the encode/
-scan share of the query). The artifact therefore stamps the checkout's
-dataset identity (same T013 ``build_artifact_stamp`` as every bench
-artifact) for machine/version context and records the actual fixture under
-``fixture``.
-
-The committed artifact (``benchmarks/quality/warm_time.json``) carries a
-``notes`` field stating that the phase-doc figure -- first semantic query
-9,428 -> 322 ms, ``docs/phases/performance-gap/task.md:40`` (P0-1) -- is
-ADVISORY context, not a gate: no committed baseline ever carried a
-warm-time number, so there is no BEFORE to regress against. This harness
-is the re-measurement path the phase figure never had.
+time, corpus-independent by design. The artifact stamps the checkout's
+dataset identity (``build_artifact_stamp``, same as every bench artifact)
+for machine/version context and records the actual fixture under
+``fixture``. No committed warm-time baseline precedes this artifact: the
+committed ``benchmarks/quality/warm_time.json`` is advisory context, not a
+regression gate.
 
 Usage:
     uv run python scripts/measure_warm_time.py              # full mint -> benchmarks/quality/warm_time.json
-    uv run python scripts/measure_warm_time.py --force      # overwrite a pre-commit mint (D-010 spirit)
+    uv run python scripts/measure_warm_time.py --force      # overwrite a pre-commit mint
     uv run python scripts/measure_warm_time.py --mode build --workroot /tmp/wt   # build fixture only
     uv run python scripts/measure_warm_time.py --mode cold --db /tmp/wt/graph.db # one arm, JSON on stdout
     uv run python scripts/measure_warm_time.py --mode cold --backend hash --db ...  # dep-free smoke arm
@@ -330,7 +321,7 @@ def preflight(backend: str) -> dict:
     if os.environ.get("GITHUB_ACTIONS"):
         raise _refuse(
             "under GitHub Actions -- warm-time is a reference-machine artifact "
-            "(machine_profile records the class; D-005)"
+            "(machine_profile records the class)"
         )
     if backend != "local":
         raise _refuse(
@@ -426,8 +417,7 @@ def mint(out_path: Path, backend: str, query: str, force: bool) -> dict:
     if out_path.exists() and not force:
         raise SystemExit(
             f"{out_path} already exists; committed artifacts are re-measured "
-            "with --force before they land, never silently overwritten "
-            "(D-010 spirit)"
+            "with --force before they land, never silently overwritten"
         )
 
     workroot = Path(tempfile.mkdtemp(prefix="cairn-warm-time-"))
@@ -458,7 +448,7 @@ def mint(out_path: Path, backend: str, query: str, force: bool) -> dict:
         "schema": WARM_TIME_SCHEMA,
         "suite": "warm-time",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        # T013 stamp: checkout dataset identity + cairn version + machine
+        # Stamp: checkout dataset identity + cairn version + machine
         # profile. The measured fixture is the synthetic workspace below --
         # warm-time is model-load time, corpus-independent by design.
         **stamp,
@@ -489,12 +479,9 @@ def mint(out_path: Path, backend: str, query: str, force: bool) -> dict:
             "speedup_cold_over_warm": round(cold_ms / warm_ms, 1) if warm_ms else None,
         },
         "notes": (
-            "ADVISORY HISTORY: the phase-doc figure 'first semantic query "
-            "9,428 -> 322 ms (29x)' (docs/phases/performance-gap/task.md:40, "
-            "P0-1) is context, NOT a gate -- no committed baseline ever carried "
-            "a warm-time number, so this artifact is the first committed "
-            "measurement and has no BEFORE to regress against; T022 minted it "
-            "to give warm-time a committed re-measurement path. METHODOLOGY: "
+            "ADVISORY: this is the first committed warm-time measurement -- "
+            "no earlier baseline exists, so there is no BEFORE to regress "
+            "against; treat it as context, not a gate. METHODOLOGY: "
             "two fresh subprocesses over one pre-built tiny embedded DB; the "
             "cold arm's first semantic_search pays the lazy embedder + "
             "cross-encoder loads inside the timed region, the warm arm calls "
@@ -504,8 +491,7 @@ def mint(out_path: Path, backend: str, query: str, force: bool) -> dict:
             "once boot finishes). The cold arm runs fully ONLINE -- "
             "warm-up's HF-offline window exists only in the warm arm -- so "
             "cold.first_query_ms includes the HuggingFace Hub metadata "
-            "round-trips that fire even on cached weights (the ~5s tax the "
-            "phase doc attributes to the pre-warm-up path). env records the "
+            "round-trips that fire even on cached weights. env records the "
             "child-runtime values: the mint pins CAIRN_EMBED_BACKEND unset "
             "to measure the default boot configuration. CAIRN_WARM_MODELS is honored by "
             "warm_models_in_background itself -- the harness never bypasses "
@@ -553,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="overwrite an existing artifact (pre-commit re-mint only; D-010 spirit)",
+        help="overwrite an existing artifact (pre-commit re-mint only)",
     )
     args = parser.parse_args(argv)
 

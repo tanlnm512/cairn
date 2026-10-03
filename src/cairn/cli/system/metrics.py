@@ -357,29 +357,32 @@ def _attr_value(raw, key):
     return attrs.get(key) if isinstance(attrs, dict) else None
 
 
-def _fmt_ts(value) -> str:
-    """Readable timestamp from an epoch float OR ISO string; '—' for None.
+def _parse_ts(value) -> datetime | None:
+    """Parse an epoch float or ISO-8601 string (Z-suffixed included) into an aware UTC datetime; None when unparseable.
 
-    cairn stores timestamps inconsistently: ``build_runs.started_at`` is ISO
-    (``builder._iso_ts``) while ``events.ts`` is a raw ``time.time()`` epoch
-    float. Both are handled so each metrics section needn't track the shape.
-    Display-only; the JSON path keeps the raw value.
+    cairn stores timestamps in both shapes: ``build_runs.started_at`` is ISO
+    (``builder._iso_ts``) while ``events.ts`` and ``tool_metrics.invoked_at``
+    are raw ``time.time()`` epoch floats, so every reader routes through this
+    one parser instead of tracking each column's shape.
     """
     if value is None:
-        return "—"
-    dt = None
+        return None
     if isinstance(value, (int, float)):
         try:
-            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
         except (OverflowError, OSError, ValueError):
-            dt = None
-    else:
-        try:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            dt = None
+            return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _fmt_ts(value) -> str:
+    """Readable timestamp from an epoch float OR ISO string; '—' for None."""
+    dt = _parse_ts(value)
     if dt is None:
-        return str(value)
+        return str(value) if value is not None else "—"
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 

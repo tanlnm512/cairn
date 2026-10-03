@@ -164,11 +164,14 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
 
         if t == "class_parameter":
             # Constructor parameter like `private val baseUrl: String`.
-            # These are properties when they declare val/var.
+            # These are properties when they declare val/var. Descend so a
+            # default-value call (`val repo: Repo = createRepo()`) emits
+            # its call edge.
             sym = self._parse_class_parameter(node, source)
             if sym:
                 pf.symbols.append(sym)
-            return  # leaf; no further meaningful children
+            self._walk(node, source, pf)
+            return
 
         if t == "call_expression":
             edge = self._parse_call(node, source)
@@ -721,7 +724,12 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         """Extract the called name from a call_expression.
 
         The called name is the last simple_identifier before the value_arguments.
+        A callee that is itself a call (``getHandler()(argOne)``) emits its own
+        inner call edge, so the outer call adds none.
         """
+        lead = node.children[0] if node.children else None
+        if lead is not None and lead.type == "call_expression":
+            return None
         last_id = None
         for child in node.children:
             if child.type in ("simple_identifier", "identifier"):
@@ -742,12 +750,18 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _tail_identifier(self, node: Node, source: bytes) -> Optional[str]:
-        """Last simple_identifier in a subtree (the called property)."""
+        """Last simple_identifier in a subtree (the called property).
+
+        ``call_suffix`` subtrees are excluded: an argument identifier is never
+        the call target (``getHandler()(argOne)`` targets ``getHandler``).
+        """
         last = None
         stack = [node]
         while stack:
             n = stack.pop()
             if n.type in ("simple_identifier", "identifier"):
                 last = self._node_text(n, source).strip()
+            if n.type == "call_suffix":
+                continue
             stack.extend(reversed(n.children))
         return last

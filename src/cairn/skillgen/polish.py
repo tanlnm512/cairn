@@ -7,7 +7,13 @@ from typing import Optional, Tuple
 
 import yaml
 
-from ..llm.tasks import TASK_DIR, Task, create_task, list_tasks, read_result
+from ..llm.tasks import (
+    create_task,
+    latest_task,
+    list_tasks,
+    read_result,
+    result_critic_status,
+)
 from ..okf.bundle import OKFBundle
 from .gate import verify_draft
 
@@ -56,10 +62,10 @@ def run_polish_stage(
     ]
     live = [t for t in tasks if t.status in _LIVE_STATUSES]
     if live:
-        return PolishOutcome("pending", task_id=_latest(live).id)
+        return PolishOutcome("pending", task_id=latest_task(live).id)
     done = [t for t in tasks if t.status == "done"]
     if done:
-        latest = _latest(done)
+        latest = latest_task(done)
         # The concept wrapper pads the stored body; strip back to the document.
         polished = (read_result(bundle, latest.id) or "").lstrip("\n") or None
         if polished and not _result_rejected(bundle, latest.id):
@@ -102,11 +108,7 @@ def _gate(
 
 def _result_rejected(bundle: OKFBundle, task_id: str) -> bool:
     """True when the task's stored result carries a failed critic verdict."""
-    try:
-        result = bundle.read_concept(f"{TASK_DIR}/{task_id}.result")
-    except Exception:
-        return True
-    return result.extensions.get("critic_status") == "failed"
+    return result_critic_status(bundle, task_id, default="failed") == "failed"
 
 
 def _frontmatter_name(rendered: str) -> Optional[str]:
@@ -121,7 +123,3 @@ def _frontmatter_name(rendered: str) -> Optional[str]:
     except yaml.YAMLError:
         return None
     return meta.get("name") if isinstance(meta, dict) else None
-
-
-def _latest(tasks: list[Task]) -> Task:
-    return max(tasks, key=lambda t: (t.created_at, t.attempt))

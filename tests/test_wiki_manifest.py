@@ -493,6 +493,26 @@ class TestLiveTaskSkip:
         assert len(list_tasks(bundle)) == len(plan) + 1
 
 
+class TestManifestWriteFailureSurfaces:
+    """A failed manifest write must not report success: the pipeline
+    raises instead of silently losing the queued tasks."""
+
+    def test_failed_save_manifest_raises_after_queueing(
+        self, fresh_db, bundle, plan, monkeypatch
+    ):
+        from cairn.llm.tasks import list_tasks
+        from cairn.wiki.pipeline import WikiManifestWriteError, run_wiki_generate
+
+        def _fail(root, manifest):
+            return False
+
+        monkeypatch.setattr("cairn.wiki.pipeline.save_manifest", _fail)
+        with pytest.raises(WikiManifestWriteError):
+            run_wiki_generate(fresh_db, bundle, REPO)
+        # The tasks exist; only their recording failed — hence the raise.
+        assert list_tasks(bundle, kind="wiki-page")
+
+
 class TestRowCarriesNoContentProvenance:
     """The two-kind anti-collapse contract, pinned from the negative side:
     queueing never writes content provenance (commit_sha) or a lifecycle

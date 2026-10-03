@@ -185,6 +185,17 @@ class TestSymbolExists:
         conn = _conn_with_fixture(fresh_db)
         assert _symbol_exists(conn, "totallyMadeUpMethod") is False
 
+    def test_underscore_ref_does_not_wildcard(self, fresh_db):
+        conn = _conn_with_fixture(fresh_db)
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+            "VALUES (2, 1, 'fooXbar', 'function', 'pkg.fooXbar', 1, 10)"
+        )
+        conn.commit()
+        # Unescaped LIKE would let `foo_bar` match `pkg.fooXbar`.
+        assert _symbol_exists(conn, "foo_bar") is False
+        assert _symbol_exists(conn, "fooXbar") is True
+
 
 class TestCriticConceptIntegration:
     def test_hallucinated_file_ref_flagged_as_error(self, fresh_db):

@@ -129,6 +129,21 @@ def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
         return concept_id
 
 
+def parse_memory_timestamp(ts) -> Optional[datetime]:
+    """Parse a memory timestamp to an aware UTC datetime; None when malformed or naive.
+
+    Z-suffixed input is accepted down to the 3.10 floor; naive values yield
+    None so callers degrade instead of raising an aware-minus-naive TypeError.
+    """
+    if not isinstance(ts, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else None
+
+
 def write_validity(
     concept: OKFConcept,
     *,
@@ -229,6 +244,7 @@ def store_memory(
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():
             old_file.unlink()
+            bundle.invalidate_search_index()
         if conn is not None:
             conn.execute(
                 "DELETE FROM memory_validity WHERE concept_id = ?",
@@ -461,6 +477,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
             concept = get_memory(bundle, memory_path)
         except ValueError:
             return False
+        abs_cid = cid
         if concept is not None:
             # Namespace guard: only the memory/ fallback resolution can land
             # here outside memory/ (the memory/-prefixed cid above is always
@@ -476,6 +493,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
             if not (resolved == "memory/" or resolved.startswith("memory/")):
                 return False
             cid = concept.concept_id
+            abs_cid = cid
             cid = _rel_id(bundle, cid)
         # Route the file path through the write-path validator so a malformed
         # concept_id can't escape the bundle root via the delete path. Raises
@@ -487,11 +505,24 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
         if not file_path.exists():
             return False
         file_path.unlink()
-    # Clean up memory_refs in DB. Do NOT commit here -- the caller owns the
-    # transaction boundary; committing a connection we don't own can either
-    # commit an in-flight caller transaction or hit "database is locked".
+        # Unlink bypasses write_concept: drop the cached index or the deleted
+        # concept stays searchable.
+        bundle.invalidate_search_index()
+    # Clean up memory_refs in DB. Writers persist both id forms (search paths
+    # store the absolute concept_id read from disk; capture paths store the
+    # relative one), so delete both — exact-match per form, never a substring.
+    # Do NOT commit here -- the caller owns the transaction boundary;
+    # committing a connection we don't own can either commit an in-flight
+    # caller transaction or hit "database is locked".
     if conn is not None:
-        conn.execute("DELETE FROM memory_refs WHERE memory_path = ?", (cid,))
+        ref_ids = [cid]
+        if abs_cid != cid:
+            ref_ids.append(abs_cid)
+        placeholders = ",".join("?" * len(ref_ids))
+        conn.execute(
+            f"DELETE FROM memory_refs WHERE memory_path IN ({placeholders})",
+            ref_ids,
+        )
     return True
 
 
@@ -539,17 +570,15 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
     purged = 0
     with bundle.lock():
         for concept in list_memories(bundle, tier="archived"):
-            ts = concept.timestamp
-            if ts:
-                try:
-                    age = (now - datetime.fromisoformat(ts)).days
-                except (ValueError, TypeError):
-                    age = 0
-                if age > max_days:
-                    file_path = Path(bundle.root) / f"{concept.concept_id}.md"
-                    if file_path.exists():
-                        file_path.unlink()
-                    purged += 1
+            dt = parse_memory_timestamp(concept.timestamp)
+            if dt is None:
+                continue
+            if (now - dt).days > max_days:
+                file_path = Path(bundle.root) / f"{concept.concept_id}.md"
+                if file_path.exists():
+                    file_path.unlink()
+                    bundle.invalidate_search_index()
+                purged += 1
     return purged
 
 
@@ -637,6 +666,7 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                         bundle.write_concept(c)
                         if old_file.exists():
                             old_file.unlink()
+                            bundle.invalidate_search_index()
                     except Exception:
                         pass
 

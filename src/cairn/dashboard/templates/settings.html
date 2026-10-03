@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_links.html" as links with context %}
+{% import "_embed_banner.html" as notices with context %}
 {% block title %}Settings — Cairn Dashboard{% endblock %}
 {#- The env-pin marker: an env var shadowing the file value must be
     visible, or a save that "does nothing" is unexplainable. The API key's
@@ -19,10 +20,10 @@
     restart.
   </p>
   {% if saved %}
-  <p role="status" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--ok) 12%, transparent); font-weight: 600;">Settings saved.</p>
+  {{ notices.notice('Settings saved.', kind='ok') }}
   {% endif %}
   {% if error %}
-  <p role="alert" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font-weight: 600;">{{ error }}</p>
+  {{ notices.notice(error, role='alert') }}
   {% endif %}
   {#- The POST actions carry the store in the action URL's query string
       (POST forms keep it; GET forms drop it — hence store_field elsewhere):

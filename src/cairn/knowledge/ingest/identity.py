@@ -16,7 +16,7 @@ from cairn.knowledge.ingest.parser import (
 # in _stable_id always matches slugify's charset by construction.
 from cairn.okf.utils import _NON_ALNUM, slugify
 
-# slugify truncates to 60 chars (src/cairn/okf/utils.py:13-20); every slug
+# slugify truncates to 60 chars (okf/utils.py); every slug
 # built here must keep the stable-id prefix (and any collision suffix)
 # inside that bound.
 _SLUG_MAX = 60

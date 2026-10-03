@@ -205,6 +205,44 @@ def test_server_requests_do_not_consume_pending_responses() -> None:
     assert rejection["error"]["code"] == -32601
 
 
+class _ByteAtATimeReader:
+    def __init__(self, payload: bytes):
+        self._stream = BytesIO(payload)
+
+    def readline(self) -> bytes:
+        return self._stream.readline()
+
+    def read(self, size: int) -> bytes:
+        return self._stream.read(1)
+
+
+def test_short_read_body_is_accumulated_before_dispatch() -> None:
+    from cairn.graph.lsp import PyrightStdioTransport
+
+    transport = object.__new__(PyrightStdioTransport)
+    transport._pending = {}
+    transport._lock = threading.Lock()
+    transport._write_lock = threading.Lock()
+    response = queue.Queue()
+    with transport._lock:
+        transport._pending[7] = response
+
+    payload = _frame(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": [{"uri": "file:///tmp/short.py"}],
+        }
+    )
+    transport._process = SimpleNamespace(
+        stdout=_ByteAtATimeReader(payload), stdin=_FakeStdin()
+    )
+
+    transport._read_responses()
+
+    assert response.get_nowait()["result"] == [{"uri": "file:///tmp/short.py"}]
+
+
 @pytest.mark.parametrize(
     "unresolved_response",
     [
@@ -259,7 +297,7 @@ def test_unique_definition_upgrades_only_that_ambiguous_edge(
     assert [
         (params["position"]["line"], params["position"]["character"])
         for params in definition_requests
-    ] == [(1, 0), (2, 0)]
+    ] == [(1, 4), (2, 4)]
     assert transport.lifecycle == ["initialize", "shutdown"]
     assert transport.closed
 

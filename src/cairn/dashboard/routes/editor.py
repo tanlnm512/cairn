@@ -127,7 +127,7 @@ def _relevant_memories(bundle: Any, path: str, module: str) -> list:
     A memory is relevant when the file's path or module appears in the
     memory's resource, title, or body; blank keys never match.
     """
-    from ..data import _EPOCH, _parse_ts
+    from ..data import EPOCH, parse_ts
 
     needles = sorted({key for key in (path, module) if key})
     if not needles:
@@ -141,7 +141,7 @@ def _relevant_memories(bundle: Any, path: str, module: str) -> list:
         haystacks = (concept.resource or "", concept.title or "", concept.body or "")
         if not any(needle in hay for needle in needles for hay in haystacks):
             continue
-        scored.append((_parse_ts(concept.timestamp) or _EPOCH, cid, concept))
+        scored.append((parse_ts(concept.timestamp) or EPOCH, cid, concept))
     scored.sort(key=lambda item: item[0], reverse=True)
     return [
         {

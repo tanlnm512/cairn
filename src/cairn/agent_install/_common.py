@@ -27,7 +27,7 @@ _SLASH_COMMANDS = [
     "cairn-refresh",
 ]
 
-# Resources bundled under src/agent_integration/.
+# Resources bundled under src/cairn/agent_integration/.
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "agent_integration"
 _MARKER = "cairn"  # used to identify our entries when merging/uninstalling
 
@@ -83,10 +83,21 @@ def resolve_cg_command() -> list[str]:
     return [sys.executable, "-m", "cairn.cli.main"]
 
 
-def resolve_cg_str() -> str:
-    """Single-string form for config files (command + args joined)."""
-    cmd = resolve_cg_command()
-    return " ".join(cmd)
+def opencode_format_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
+    """MCP config in the opencode/kilo schema: ``mcp.<name>`` entries whose
+    local form carries the whole invocation as one ``command`` array, plus
+    ``enabled``/``type``; remote form carries ``url``.
+
+    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
+    resolved CAIRN_HOME is non-default; the default home adds no env key.
+    """
+    if transport == "sse":
+        return {"mcp": {"cairn": {"type": "remote", "url": default_sse_url(sse_url), "enabled": True}}}
+    entry: dict = {"type": "local", "command": resolve_cg_command() + ["serve"], "enabled": True}
+    env = paths.cairn_home_env()
+    if env:
+        entry["env"] = env
+    return {"mcp": {"cairn": entry}}
 
 
 def default_sse_url(sse_url: str | None = None) -> str:

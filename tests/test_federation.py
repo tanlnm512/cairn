@@ -644,6 +644,32 @@ class FederatedAskTests(FederationStoreCase):
         self.assertIn("session.py", beta_json)
         self.assertNotIn("auth.py", beta_json)
 
+    def test_ask_all_repos_reports_route_failure_as_error(self):
+        """A router crash on a readable store reports state 'error', not 'locked'."""
+        import json
+        from unittest.mock import patch
+
+        import cairn.compass.router as router
+
+        def _boom(question, conn, bundle):
+            raise RuntimeError("router exploded")
+
+        with patch.object(router, "route_query", _boom):
+            result = self._invoke_ask("--all-repos", "--json", "authenticate")
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            payload = json.loads(result.stdout)
+            ws_a = str(self.store_a.workspace)
+            ws_b = str(self.store_b.workspace)
+            self.assertEqual(payload["states"], {ws_a: "error", ws_b: "error"})
+            self.assertEqual(payload["answers"], {})
+            self.assertEqual(payload["dropped"], [ws_a, ws_b])
+
+            text = self._invoke_ask("--all-repos", "authenticate")
+            self.assertEqual(text.exit_code, 0, text.output)
+            self.assertIn(f"error: {ws_a}", text.output)
+            self.assertNotIn(f"locked: {ws_a}", text.output)
+
     def test_ask_all_repos_names_dropped_stores(self):
         import json
 
@@ -684,6 +710,61 @@ class FederatedAskTests(FederationStoreCase):
             combined = result.output + result.stderr
             self.assertIn("must not be empty", combined)
             self.assertNotIn(touched, combined)
+
+
+class ContextCommandTests(FederationStoreCase):
+    """``cairn context`` derives the search stem for every source language."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.mkdtemp(prefix="cairn-federation-context-")
+        cls._cairn_home = Path(cls._tmp) / "_cairn_home"
+        token = cls._enter_sandbox()
+        try:
+            cls.store_a = cls._make_store("alpha", "login.py", ALPHA_SRC)
+        finally:
+            cls._exit_sandbox(token)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls._tmp, ignore_errors=True)
+
+    def setUp(self):
+        self._token = self._enter_sandbox()
+
+    def tearDown(self):
+        self._exit_sandbox(self._token)
+
+    def test_context_python_file_gets_wiki_enrichment(self):
+        """A .py path's stem (not the bare filename) drives bundle search."""
+        import os
+
+        from click.testing import CliRunner
+
+        from cairn.cli.main import main
+
+        kb = Path(self._tmp) / "kb"
+        wiki_dir = kb / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "login_flow.md").write_text(
+            "---\ntype: Wiki-Article\ntitle: login flow\n"
+            "description: how login authenticates\n---\n"
+            "The `login()` entry point validates credentials.\n",
+            encoding="utf-8",
+        )
+
+        ws = self.store_a.workspace
+        cwd = os.getcwd()
+        os.chdir(ws)
+        try:
+            result = CliRunner().invoke(main, [
+                "context", str(ws / "login.py"), "--knowledge", str(kb),
+            ])
+        finally:
+            os.chdir(cwd)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("# Wiki: login flow", result.output)
 
 
 class SingleStoreBaselineTests(FederationStoreCase):

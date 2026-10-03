@@ -329,7 +329,7 @@ class TestDetectFlowGaps:
         from cairn.okf.concept import OKFConcept
         know = str(tmp_path / ".knowledge")
         bundle = OKFBundle(know)
-        # Write a flow compass for richFlow.
+        # Write a flow compass for richFlow (unique name -> bare-name key).
         concept = OKFConcept(
             type="Compass", title="Flow: richFlow", resource="richFlow",
             concept_id="compass/flow-richFlow", body="# test\n",
@@ -397,6 +397,29 @@ class TestDetectFlowGaps:
         resources = {e["resource"] for e in handles}
         assert resources == {"handle#chat/view.py", "handle#home/view.py"}
 
+    def test_generated_resource_matches_the_coverage_key(self, fresh_db, tmp_path):
+        """generate_flow_compass' default resource is the same collision-safe
+        ``name#suffix`` key detect_flow_gaps marks coverage by, so one
+        generated compass stops its gap from regenerating."""
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.compass.generator import generate_flow_compass
+        from cairn.okf.bundle import OKFBundle
+        know = str(tmp_path / ".knowledge")
+        bundle = OKFBundle(know)
+        _seed_name_collision(fresh_db)
+        candidate = next(
+            e for e in detect_flow_gaps(fresh_db, bundle, min_edges=5)["uncovered"]
+            if e["name"] == "handleCommand"
+        )
+        concept = generate_flow_compass(
+            candidate["name"], fresh_db, bundle, entry_id=candidate["id"]
+        )
+        assert concept.resource == candidate["resource"]
+        expected_id = "compass/flow-" + candidate["resource"].replace(
+            "/", "-"
+        ).replace(".", "-").replace("#", "-")
+        assert concept.concept_id == expected_id
+
     def test_empty_graph(self, fresh_db):
         from cairn.compass.flow_gaps import detect_flow_gaps
         from cairn.okf.bundle import OKFBundle
@@ -437,7 +460,7 @@ class TestFlowGapsCLI:
             conn = get_db(db)
             _seed_flows(conn)
             conn.close()
-            # Document both qualifying flows.
+            # Document both qualifying flows (unique names -> bare keys).
             bundle = OKFBundle(know)
             for name in ("richFlow", "midFlow"):
                 bundle.write_concept(OKFConcept(

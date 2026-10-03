@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from mcp.types import ToolAnnotations
 
@@ -96,32 +95,18 @@ def knowledge_search(query: str, limit: int = 20) -> str:
 @instrument
 def knowledge_delete(doc_id: str) -> str:
     """Delete a knowledge document and its embedding rows. Irreversible."""
-    from cairn.knowledge.store import delete_document
-    from cairn.knowledge.store import get_document
+    from cairn.knowledge.store import (
+        _refuse_out_of_namespace,
+        delete_document,
+        get_document,
+    )
 
     bundle = _bundle()
-    # Scope check: confirm the resolved concept_id stays inside the knowledge/
-    # namespace before deleting, so an LLM client can't point this destructive
-    # tool at a compass/wiki/memory doc via a crafted doc_id.
-    concept = get_document(bundle, doc_id)
-    if concept is not None:
-        # OKFConcept.from_file sets a resolved absolute concept_id; normalize to
-        # bundle-relative before the namespace check (resolve both sides so
-        # symlinked roots don't trip relative_to).
-        resolved = concept.concept_id
-        try:
-            resolved = str(Path(resolved).resolve().relative_to(Path(bundle.root).resolve()))
-        except ValueError:
-            pass
-        if not (resolved == "knowledge/" or resolved.startswith("knowledge/")):
-            logger.warning(
-                "knowledge_delete refused out-of-namespace target: requested=%r resolved=%r",
-                doc_id, resolved,
-            )
-            return (
-                f"Refused: '{doc_id}' resolves outside the knowledge/ namespace "
-                f"(resolved to '{resolved}'). knowledge_delete only removes knowledge docs."
-            )
+    try:
+        _refuse_out_of_namespace(bundle, doc_id, get_document(bundle, doc_id))
+    except ValueError as exc:
+        logger.warning("knowledge_delete refused out-of-namespace target: %r", doc_id)
+        return str(exc)
     conn = _rw_conn()
     try:
         ok = delete_document(bundle, doc_id, conn=conn)
@@ -130,7 +115,7 @@ def knowledge_delete(doc_id: str) -> str:
         conn.close()
     if not ok:
         return f"Knowledge document not found: '{doc_id}'."
-    logger.warning("knowledge_delete: deleted knowledge concept_id=%r", concept.concept_id if concept else doc_id)
+    logger.warning("knowledge_delete: deleted knowledge doc_id=%r", doc_id)
     return f"Deleted knowledge document: '{doc_id}'."
 
 
@@ -143,28 +128,14 @@ def knowledge_status(doc_id: str, new_status: str) -> str:
     unlike the read-only knowledge_search it advertises readOnlyHint=False and
     idempotentHint=False (re-applying a forward status transition can fail or be
     a no-op depending on the current lifecycle state)."""
-    from cairn.knowledge.store import get_document, update_status
+    from cairn.knowledge.store import _refuse_out_of_namespace, get_document, update_status
 
     bundle = _bundle()
-    # Scope check: same guard knowledge_delete enforces, so an LLM client
-    # can't archive a compass/wiki/memory concept that was never a knowledge
-    # doc via a crafted doc_id.
-    concept = get_document(bundle, doc_id)
-    if concept is not None:
-        resolved = concept.concept_id
-        try:
-            resolved = str(Path(resolved).resolve().relative_to(Path(bundle.root).resolve()))
-        except ValueError:
-            pass
-        if not (resolved == "knowledge/" or resolved.startswith("knowledge/")):
-            logger.warning(
-                "knowledge_status refused out-of-namespace target: requested=%r resolved=%r",
-                doc_id, resolved,
-            )
-            return (
-                f"Refused: '{doc_id}' resolves outside the knowledge/ namespace "
-                f"(resolved to '{resolved}'). knowledge_status only updates knowledge docs."
-            )
+    try:
+        _refuse_out_of_namespace(bundle, doc_id, get_document(bundle, doc_id))
+    except ValueError as exc:
+        logger.warning("knowledge_status refused out-of-namespace target: %r", doc_id)
+        return str(exc)
     ok = update_status(bundle, doc_id, new_status)
     if not ok:
         return f"Knowledge document not found: '{doc_id}'."

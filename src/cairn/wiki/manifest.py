@@ -16,6 +16,12 @@ MANIFEST_DIR = "_wiki"
 MANIFEST_FILENAME = "manifest.json"
 
 
+def split_page_key(key: str) -> "tuple[str, str]":
+    """A manifest key ``"{repo}/{page_id}"`` -> ``(repo, page_id)``."""
+    repo, _, page_id = str(key).partition("/")
+    return repo, page_id
+
+
 def _root_of(bundle_or_knowledge_root: Any) -> Path:
     if isinstance(bundle_or_knowledge_root, OKFBundle):
         return Path(bundle_or_knowledge_root.root)

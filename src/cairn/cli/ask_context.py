@@ -1,6 +1,8 @@
 """Ask + Context CLI: NL routing and file-context loading."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 import json
 
@@ -50,7 +52,7 @@ def _ask_all_repos(question, as_json):
                     bundle = OKFBundle(str(store.knowledge))
                     answers[ws_path] = route_query(question, conn, bundle)
                 except Exception:
-                    state = "locked"
+                    state = "error"
                 finally:
                     conn.close()
         states[ws_path] = state
@@ -135,7 +137,7 @@ def context(file_path, knowledge, refresh):
         if c.resource and (c.resource in file_path or file_path in c.resource):
             out.append(f"\n# Compass: {c.title}\n{c.body}")
             break
-    seg = parts[-1].replace(".kt", "").replace(".java", "") if parts else ""
+    seg = Path(file_path).stem
     if seg:
         for c in bundle.search(seg, limit=3):
             if c.type in ("Wiki-Article", "Wiki-Feature"):

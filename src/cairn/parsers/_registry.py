@@ -74,12 +74,7 @@ def _load_plugin_capsule(language: str):
     """
     import importlib.metadata
 
-    try:
-        eps = importlib.metadata.entry_points(group=_PLUGIN_ENTRY_POINT_GROUP)
-    except TypeError:
-        # Python <3.10: entry_points() returns a dict keyed by group.
-        all_eps = importlib.metadata.entry_points()
-        eps = all_eps.get(_PLUGIN_ENTRY_POINT_GROUP, [])  # type: ignore[arg-type, attr-defined]  # <3.10 dict shape; typeshed (varies by mypy version) types the no-arg call as EntryPoints
+    eps = importlib.metadata.entry_points(group=_PLUGIN_ENTRY_POINT_GROUP)
     for ep in eps:
         if ep.name == language:
             try:
@@ -100,7 +95,7 @@ def _load_plugin_capsule(language: str):
     return None
 
 
-# Entry-point group for external parser plugins (see module docstring).
+# Entry-point group for external parser plugins.
 _PLUGIN_ENTRY_POINT_GROUP = "cairn.parsers.v1"
 
 

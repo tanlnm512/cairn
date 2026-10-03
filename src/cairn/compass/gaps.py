@@ -5,6 +5,7 @@ import sqlite3
 from typing import List
 
 from ..okf.bundle import OKFBundle
+from .generator import _escape_like
 
 
 def detect_gaps(conn: sqlite3.Connection, bundle: OKFBundle) -> List[str]:
@@ -63,11 +64,21 @@ def _get_all_modules(conn: sqlite3.Connection) -> List[str]:
                 dirs.add(f"{repo['id']}/" + "/".join(parts[:3]))
         # Only keep dirs that have a reasonable number of symbols (real modules).
         for d in sorted(dirs):
-            n = cur.execute(
-                "SELECT COUNT(*) AS c FROM symbols s JOIN files f ON s.file_id=f.id "
-                "WHERE f.path LIKE ?",
-                (f"%{d.split('/', 1)[1]}%",),
-            ).fetchone()["c"]
+            # Repo-scoped, segment-anchored count over both stored path
+            # shapes (repo-relative and legacy absolute); escaped so a
+            # literal '%'/'_' in a path never acts as a wildcard and a
+            # same-named path in another repo never inflates the count.
+            prefix = d.split("/", 1)[1]
+            root = (repo["path"] or "").rstrip("/")
+            prefixes = (prefix, f"{root}/{prefix}") if root else (prefix,)
+            n = sum(
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM symbols s JOIN files f ON s.file_id=f.id "
+                    "WHERE f.repo_id = ? AND (f.path = ? OR f.path LIKE ? ESCAPE '\\')",
+                    (repo["id"], p, _escape_like(p) + "/%"),
+                ).fetchone()["c"]
+                for p in prefixes
+            )
             if n >= 5:
                 modules.append(d)
     return modules

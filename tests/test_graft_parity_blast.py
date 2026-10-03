@@ -249,6 +249,122 @@ def test_changed_hunk_seeds_only_intersecting_symbols(tmp_path, monkeypatch):
     assert payload["radius"] == []
 
 
+def test_pure_deletion_hunk_seeds_the_shrunk_symbol(tmp_path, monkeypatch):
+    _workspace, repo, db_path = _prepare_workspace(
+        tmp_path,
+        monkeypatch,
+        files={
+            "mod.py": (
+                "def seed_fn():\n"
+                "    x = 1\n"
+                "    y = 2\n"
+                "    return x + y\n"
+                "\n"
+                "\n"
+                "def caller():\n"
+                "    return seed_fn()\n"
+            )
+        },
+        graph_files={
+            "mod.py": [
+                ("seed_fn", "function", 1, 4),
+                ("caller", "function", 7, 8),
+            ],
+            "edges": [("caller", "seed_fn", 8)],
+        },
+    )
+    (repo / "mod.py").write_text(
+        "def seed_fn():\n"
+        "    return x + y\n"
+        "\n"
+        "\n"
+        "def caller():\n"
+        "    return seed_fn()\n"
+    )
+
+    result = _blast(db_path)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert [seed["name"] for seed in payload["seeds"]] == ["seed_fn"]
+    assert {row["symbol"] for row in payload["radius"]} == {"caller"}
+
+
+def test_non_ascii_path_diff_matches_indexed_file(tmp_path, monkeypatch):
+    name = "café.py"
+    _workspace, repo, db_path = _prepare_workspace(
+        tmp_path,
+        monkeypatch,
+        files={
+            name: (
+                "def changed():\n"
+                "    return 1\n"
+                "\n"
+                "\n"
+                "def direct():\n"
+                "    return changed()\n"
+            )
+        },
+        graph_files={
+            name: [
+                ("changed", "function", 1, 2),
+                ("direct", "function", 5, 6),
+            ],
+            "edges": [("direct", "changed", 6)],
+        },
+    )
+    # Force git's octal quoting deterministically (a UTF-8 locale would
+    # otherwise leave the path unquoted and mask the diff-path mismatch).
+    _git(repo, "config", "core.quotePath", "true")
+    target = repo / name
+    target.write_text(target.read_text().replace("    return 1", "    return 11"))
+
+    result = _blast(db_path)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["unindexed_files"] == []
+    assert [seed["name"] for seed in payload["seeds"]] == ["changed"]
+    assert {row["symbol"] for row in payload["radius"]} == {"direct"}
+
+
+def test_parse_diff_hunk_body_never_overrides_paths():
+    from cairn.graph.blast import _parse_diff
+
+    text = (
+        "diff --git a/mod.py b/mod.py\n"
+        "--- a/mod.py\n"
+        "+++ b/mod.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        "--- a/not_a_header.py\n"
+        "+++ b/not_a_header.py\n"
+        " context line\n"
+        "-old\n"
+        "+new\n"
+    )
+
+    parsed = _parse_diff(text)
+
+    assert len(parsed) == 1
+    assert parsed[0]["old_path"] == "mod.py"
+    assert parsed[0]["path"] == "mod.py"
+    assert len(parsed[0]["hunks"]) == 1
+
+
+def test_diff_path_unescapes_quoted_octal_paths():
+    from cairn.graph.blast import _diff_path, _parse_diff
+
+    assert _diff_path('"a/caf\\303\\251.py"') == "café.py"
+    assert _diff_path("b/mod.py") == "mod.py"
+    parsed = _parse_diff(
+        'diff --git a/x.py b/x.py\n'
+        'rename from "caf\\303\\251.py"\n'
+        'rename to "caf\\303\\251.py"\n'
+    )
+    assert parsed[0]["old_path"] == "café.py"
+    assert parsed[0]["path"] == "café.py"
+
+
 def test_duplicate_seed_names_do_not_import_namesake_dependents(
     tmp_path, monkeypatch
 ):

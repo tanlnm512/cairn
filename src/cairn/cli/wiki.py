@@ -49,7 +49,10 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
         if llm:
             from ..wiki.catalog import WikiPlannerError, build_page_plan
             from ..wiki.manifest import load_manifest
-            from ..wiki.pipeline import run_wiki_generate
+            from ..wiki.pipeline import (
+                WikiManifestWriteError,
+                run_wiki_generate,
+            )
 
             if not repos:
                 click.echo("No repos indexed; run 'cairn build' first.", err=True)
@@ -61,6 +64,17 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
             except WikiPlannerError as exc:
                 click.echo(f"Cannot plan wiki pages: {exc}", err=True)
                 sys.exit(1)
+            if dry_run:
+                for r, plan in plans:
+                    click.echo(f"--- {r} (dry-run; nothing queued) ---")
+                    for page in plan:
+                        click.echo(
+                            f"  {page['page_id']}: {page['title']} "
+                            f"[module {page['module']}]"
+                        )
+                click.echo(f"Dry-run: planned {sum(len(p) for _, p in plans)} "
+                           "wiki page(s); queued nothing.")
+                return
             queued_total = 0
             skipped_total = 0
             catalog_total = 0
@@ -70,8 +84,8 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
                                                force=force,
                                                diagrams=diagrams,
                                                refine_catalog=refine_catalog)
-                except ValueError as exc:
-                    _unreadable_manifest_exit(exc)
+                except (ValueError, WikiManifestWriteError) as exc:
+                    _manifest_error_exit(exc)
                 catalog_id = result.get("catalog_task_id")
                 if catalog_id:
                     catalog_total += 1
@@ -91,7 +105,7 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
                 try:
                     rows = load_manifest(bundle).get("pages", {})
                 except ValueError as exc:
-                    _unreadable_manifest_exit(exc)
+                    _manifest_error_exit(exc)
                 for page in result["plan"]:
                     task_id = rows.get(f"{r}/{page['page_id']}", {}).get("task_id")
                     if task_id in queued_ids:
@@ -170,10 +184,10 @@ def wiki_search(query, knowledge):
             click.echo(f"      {c.description}")
 
 
-def _unreadable_manifest_exit(exc: ValueError) -> NoReturn:
-    """The single clean unreadable-manifest exit: one stderr line naming
-    the loader's problem, exit 1 — never a traceback."""
-    click.echo(f"Cannot read wiki manifest: {exc}", err=True)
+def _manifest_error_exit(exc: Exception) -> NoReturn:
+    """The single clean manifest-failure exit: one stderr line naming the
+    loader's or writer's problem, exit 1 — never a traceback."""
+    click.echo(f"Wiki manifest error: {exc}", err=True)
     sys.exit(1)
 
 
@@ -185,13 +199,7 @@ def _load_manifest_or_exit(knowledge):
     try:
         return bundle, load_manifest(bundle)
     except ValueError as exc:
-        _unreadable_manifest_exit(exc)
-
-
-def _split_page_key(key: str) -> tuple:
-    """A manifest key ``"{repo}/{page_id}"`` -> ``(repo, page_id)``."""
-    repo, _, page_id = str(key).partition("/")
-    return repo, page_id
+        _manifest_error_exit(exc)
 
 
 @wiki.command("status")
@@ -210,6 +218,7 @@ def wiki_status(repo, knowledge):
         recorded_sha,
         staleness,
     )
+    from ..wiki.manifest import split_page_key
 
     bundle, manifest = _load_manifest_or_exit(knowledge)
     pages = manifest.get("pages", {})
@@ -222,7 +231,7 @@ def wiki_status(repo, knowledge):
     heads = {}
     shown = 0
     for key in sorted(pages):
-        page_repo, page_id = _split_page_key(key)
+        page_repo, page_id = split_page_key(key)
         if repo and page_repo != repo:
             continue
         row = pages[key]
@@ -254,7 +263,7 @@ def wiki_retry(repo, knowledge):
     verdict counts — the zombie rescue), never read from a stored state."""
     from ..llm.tasks import create_task
     from ..wiki.lifecycle import derived_state, page_chains, plan_facts
-    from ..wiki.manifest import save_manifest
+    from ..wiki.manifest import save_manifest, split_page_key
 
     bundle, manifest = _load_manifest_or_exit(knowledge)
     pages = manifest.get("pages", {})
@@ -264,7 +273,7 @@ def wiki_retry(repo, knowledge):
     chains = page_chains(bundle)
     failed = []
     for key in sorted(pages):
-        page_repo, page_id = _split_page_key(key)
+        page_repo, page_id = split_page_key(key)
         if repo and page_repo != repo:
             continue
         if derived_state(bundle, page_repo, page_id, chains.get(key, [])) == "failed":
@@ -302,6 +311,7 @@ def wiki_retry(repo, knowledge):
 def export(out_dir: Path, force, knowledge):
     """Write every promoted page as DIR/{repo}/{page_id}.md."""
     from ..wiki.lifecycle import read_page_concept
+    from ..wiki.manifest import split_page_key
 
     if out_dir.is_dir() and any(out_dir.iterdir()) and not force:
         click.echo(f"Refusing to export into non-empty directory {out_dir}; "
@@ -310,7 +320,7 @@ def export(out_dir: Path, force, knowledge):
     bundle, manifest = _load_manifest_or_exit(knowledge)
     exported = 0
     for key in sorted(manifest.get("pages", {})):
-        page_repo, page_id = _split_page_key(key)
+        page_repo, page_id = split_page_key(key)
         concept = read_page_concept(bundle, page_repo, page_id)
         if concept is None:
             continue

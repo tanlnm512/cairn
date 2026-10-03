@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -551,6 +552,73 @@ class TestNonObjectKeyHandling:
         data = json.loads(cfg.read_text(encoding="utf-8"))
         assert "PostToolUse" in data["hooks"]
 
+    # -- uninstall-side strip helpers (S1) ------------------------------------
+
+    @pytest.mark.parametrize("client,relpath,payload", [
+        ("claude", ".mcp.json", {"mcpServers": "cairn"}),
+        ("claude", ".claude/settings.json", {"hooks": "nope"}),
+        ("cursor", ".cursor/hooks.json", {"hooks": 7}),
+        ("zcode", ".zcode/config.json", {"mcp": 5}),
+        ("opencode", "opencode.json", {"mcp": ["cairn"]}),
+        ("kilo", "kilo.json", {"mcp": "cairn"}),
+    ])
+    def test_uninstall_tolerates_non_object_values(
+            self, fake_home, tmp_path, monkeypatch, client, relpath, payload):
+        """Uninstall strip helpers must no-op on non-dict values under
+        mcpServers/mcp/hooks instead of crashing on them."""
+        _no_cli(monkeypatch, "claude", "cursor", "zcode", "droid",
+                "opencode", "agy", "kilo", "omp")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        cfg = ws / relpath
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps(payload), encoding="utf-8")
+
+        uninstall(str(ws), clients=[client])  # must not raise
+
+        assert json.loads(cfg.read_text(encoding="utf-8")) == payload, \
+            "nothing cairn-shaped to strip; the user's value must survive untouched"
+
+    def test_zcode_install_tolerates_non_dict_mcp_servers(
+            self, fake_home, tmp_path, monkeypatch):
+        """_already_installed's mcp.servers chain must not crash on a
+        non-dict nested value."""
+        _no_cli(monkeypatch, "zcode")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        cfg = ws / ".zcode" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"mcp": {"servers": 5}}), encoding="utf-8")
+
+        install(str(ws), clients=["zcode"], transport="stdio")  # must not raise
+
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        assert "cairn" in data["mcp"]["servers"]
+
+    # -- .bak rotation (S2) ----------------------------------------------------
+
+    def test_backup_rotation_preserves_the_existing_bak(
+            self, fake_home, tmp_path, monkeypatch):
+        """_backup_to_bak must never overwrite an existing .bak — it may be
+        the only preserved copy of the user's earlier config."""
+        _no_cli(monkeypatch, "zcode")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        cfg = ws / ".zcode" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"mcp": True, "gen": 1}), encoding="utf-8")
+
+        install(str(ws), clients=["zcode"], transport="stdio")
+        bak = cfg.with_suffix(".json.bak")
+        first = bak.read_bytes()
+
+        cfg.write_text(json.dumps({"mcp": False, "gen": 2}), encoding="utf-8")
+        install(str(ws), clients=["zcode"], transport="stdio")
+
+        assert bak.read_bytes() == first, "the existing .bak must survive untouched"
+        rotated = cfg.with_suffix(".json.bak.1")
+        assert json.loads(rotated.read_text(encoding="utf-8")) == {"mcp": False, "gen": 2}
+
 
 # --------------------------------------------------------------------------
 # F7: atomic workspaces.json rewrite
@@ -653,6 +721,106 @@ class TestCliScopeWiring:
         assert (ws / ".cursor" / "hooks.json").read_text(encoding="utf-8") == before
         assert (ws / ".agents" / "skills" / "cairn").exists(), \
             "dry-run must not remove the cross-tool copies either"
+
+
+# --------------------------------------------------------------------------
+# Store targeting (resolved-workspace key; -y never widens a miss)
+# --------------------------------------------------------------------------
+
+class TestStoreTargeting:
+    """`uninstall --graph-only` must key the store on the RESOLVED workspace
+    path (the form registration writes), and a -y run with no matching store
+    must never widen to the whole home."""
+
+    def _graph_only(self, ws: Path, home: Path, extra: list[str] | None = None):
+        from cairn.cli import main
+        return CliRunner().invoke(
+            main,
+            ["uninstall", "--graph-only", "-y", "--workspace", str(ws),
+             *(extra or [])],
+            env={"CAIRN_HOME": str(home)},
+        )
+
+    @pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows")
+    def test_symlinked_workspace_targets_its_own_store(self, tmp_path):
+        from cairn.paths import store_key
+
+        home = tmp_path / "home"
+        real = tmp_path / "real_ws"
+        real.mkdir()
+        (home / store_key(real)).mkdir(parents=True)
+        (home / store_key(real) / ".kg").write_bytes(b"")
+        other = tmp_path / "other_ws"
+        other.mkdir()
+        (home / store_key(other)).mkdir(parents=True)
+        (home / store_key(other) / ".kg").write_bytes(b"")
+        link = tmp_path / "link_ws"
+        link.symlink_to(real, target_is_directory=True)
+
+        result = self._graph_only(link, home)
+
+        assert result.exit_code == 0, result.output
+        assert not (home / store_key(real)).exists(), \
+            "the symlinked workspace's own store must be removed"
+        assert (home / store_key(other)).exists(), \
+            "a symlinked invocation must not widen the delete to the whole home"
+
+    def test_y_skips_whole_home_fallback_on_store_miss(self, tmp_path):
+        from cairn.paths import store_key
+
+        home = tmp_path / "home"
+        unregistered = tmp_path / "unregistered_ws"
+        unregistered.mkdir()
+        other = home / store_key(tmp_path / "some_other_ws")
+        (other / ".kg").mkdir(parents=True)
+
+        result = self._graph_only(unregistered, home)
+
+        assert result.exit_code == 0, result.output
+        assert "nothing to remove" in result.output
+        assert other.exists(), \
+            "-y must not widen a store miss to every workspace's store"
+
+    def test_interactive_miss_fallback_still_offers_the_whole_home(self, tmp_path):
+        """Without -y, a store miss still widens to the whole home behind the
+        interactive confirm (declining -- the default -- keeps everything)."""
+        from cairn.cli import main
+
+        home = tmp_path / "home"
+        unregistered = tmp_path / "unregistered_ws"
+        unregistered.mkdir()
+        other = home / "abcd1234abcd1234"
+        (other / ".kg").mkdir(parents=True)
+
+        result = CliRunner().invoke(
+            main,
+            ["uninstall", "--graph-only", "--workspace", str(unregistered)],
+            env={"CAIRN_HOME": str(home)},
+            input="n\n",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert other.exists(), "declining the confirm must keep everything"
+
+
+# --------------------------------------------------------------------------
+# agy probe path (installer and probe must resolve the same config path)
+# --------------------------------------------------------------------------
+
+class TestAgyProbePath:
+    def test_check_installed_probes_the_installer_config_path(
+            self, fake_home, tmp_path, monkeypatch):
+        """The agy probe must read the path the installer writes (XDG-aware),
+        not a hardcoded ~/.gemini — otherwise a Linux/XDG install reads as
+        not installed."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(fake_home / "xdg"))
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        install(str(ws), clients=["agy"], transport="stdio")
+
+        assert check_installed(str(ws))["agy"] is True
 
 
 # --------------------------------------------------------------------------
@@ -1087,6 +1255,23 @@ class TestClaudeGlobalMcpRegistration:
                       if c == "droid"]
         assert ("droid", "~/.factory/mcp.json", entry, False) in droid_hits
 
+    def test_claude_probe_reads_the_hooks_cairn_writes(self, fake_home, tmp_path):
+        """check_installed's ~/.claude/settings.json probe must look at the
+        hooks block cairn writes there — MCP keys never land in settings.json."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        settings = fake_home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps(
+            {"hooks": {"Stop": [{"hooks": [
+                {"type": "command",
+                 "command": "/usr/bin/python3 -m cairn.hooks.claude_hooks session_end"},
+            ]}]}}),
+            encoding="utf-8",
+        )
+
+        assert check_installed(str(ws))["claude"] is True
+
     @pytest.mark.skipif(
         not os.environ.get("CAIRN_TEST_CLAUDE_CLI") or not shutil.which("claude"),
         reason="opt-in end-to-end probe (CAIRN_TEST_CLAUDE_CLI=1); needs the real claude CLI",
@@ -1193,6 +1378,23 @@ class TestDroidCliRegistration:
         assert any("exited 1" in n and "already exists" in n for n in res.notes)
         fallback = json.loads((ws / ".factory" / "mcp.json").read_text(encoding="utf-8"))
         assert fallback["mcpServers"]["cairn"]["command"] == "/fake/cairn"
+
+    def test_dry_run_reports_the_registration_a_real_run_performs(
+            self, tmp_path, monkeypatch):
+        """With the droid CLI on PATH, dry-run must still report the
+        `droid mcp add` registration a real run performs (and spawn nothing)."""
+        _cli_at(monkeypatch, "droid")
+        calls = _spy_subprocess(monkeypatch)
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        rep = install(str(ws), clients=["droid"], transport="stdio", dry_run=True)
+
+        res = next(r for r in rep.results if r.client == "droid")
+        assert any("droid mcp add" in n for n in res.notes), \
+            "dry-run must report the registration a real run performs"
+        assert calls == [], "dry-run must not spawn the droid CLI"
 
     def test_remove_nonzero_exit_reports_warning(
             self, fake_home, tmp_path, monkeypatch):

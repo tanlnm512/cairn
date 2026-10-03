@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
+def doc_type_slug(doc_type: str) -> str:
+    """The path-safe doc_type for knowledge ids: slugified, "general" fallback."""
+    return slugify(doc_type) or "general"
+
+
 def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
     """Redact the free-text ``description`` of each workflow step.
 
@@ -120,7 +125,7 @@ def add_document(
 
     ``steps`` is an optional ordered list of step dicts stored under the
     ``steps`` extension (intended for ``doc_type="workflow"``; see
-    ``src/knowledge/workflow.py``).
+    ``cairn/knowledge/workflow.py``).
 
     ``relationships`` is an optional list of relationship entries stored
     verbatim under the ``relates_to`` extension (D1.1), each normalized
@@ -156,7 +161,7 @@ def add_document(
     if steps:
         steps = _redact_step_descriptions(steps)
     slug = slugify(title)
-    safe_doc_type = slugify(doc_type) or "general"
+    safe_doc_type = doc_type_slug(doc_type)
     concept_id = f"knowledge/{safe_doc_type}/{slug}"
 
     extensions: dict = {
@@ -302,6 +307,9 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
         if not file_path.exists():
             return False
         file_path.unlink()
+        # Unlink bypasses write_concept: drop the cached index or the deleted
+        # concept stays searchable.
+        bundle.invalidate_search_index()
     # Clean up embeddings in DB. Normalize doc_id to relative for DB lookup.
     try:
         rel_id = str(Path(doc_id).relative_to(bundle.root))
@@ -330,8 +338,12 @@ def import_directory(
     """
     imported = []
     for md_file in sorted(Path(dir_path).rglob("*.md")):
-        # Validate file size
-        file_size = md_file.stat().st_size
+        # Validate file size; one vanished file skips, never aborts the import.
+        try:
+            file_size = md_file.stat().st_size
+        except OSError as e:
+            logger.warning("Skipping vanished file %s: %s", md_file, e)
+            continue
         if file_size > IMPORT_MAX_FILE_SIZE:
             logger.warning(
                 "Skipping oversized file %s (%d bytes, max %d bytes)",

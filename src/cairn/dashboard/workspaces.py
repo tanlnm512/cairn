@@ -121,7 +121,9 @@ def _count_tool_calls(kg_path: Path) -> Optional[int]:
         conn = get_db(str(kg_path), read_only=True)
         try:
             return conn.execute("SELECT COUNT(*) FROM tool_metrics").fetchone()[0]
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise  # locked/corrupt: the outer handler reclassifies to unreadable
             return 0  # no such table — an older store, not a broken one
     except sqlite3.Error:
         return None  # corrupt DB, locked beyond timeout: unreadable, never raise

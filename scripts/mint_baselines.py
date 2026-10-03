@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Mint the committed bench baselines for one dataset version (T015, FR-004).
+"""Mint the committed bench baselines for one dataset version.
 
 Run this ONLY on the reference machine (``runner_class=reference-local`` --
 any non-GitHub-Actions host qualifies; the stamp records the profile so a
-cross-machine use warns, D-005). It produces, under
+cross-machine use warns). It produces, under
 ``benchmarks/baselines/<version>/``:
 
     perf.json     from ``cairn bench --suite perf --json``
@@ -12,15 +12,15 @@ cross-machine use warns, D-005). It produces, under
                   closure builds dominate. Do not shrink this.)
     agent.json    from ``cairn bench --suite agent --json``
     quality.json  from a FRESH t2 build + local-embed + ``run_evaluation``
-                  over the T011 graded pair (see ``mint_quality``)
+                  over the graded ground-truth pair (see ``mint_quality``)
 
-Every artifact is self-describing (D-001): the additive top-level
-``"schema": "cairn-bench-baseline/1"`` tag beside the T013 stamp
+Every artifact is self-describing: the additive top-level
+``"schema": "cairn-bench-baseline/1"`` tag beside the artifact stamp
 (``dataset`` / ``cairn_version`` / ``machine_profile`` / ``timestamp``).
 The three CLI-suite payloads are the CLI's own JSON verbatim -- the script
 only adds the schema tag (additive; the CLI already carries the stamp).
 
-D-010 (immutability): once a version directory is committed it is NEVER
+Immutability: once a version directory is committed it is NEVER
 edited -- corrections and re-measurements ship as a NEW version directory
 (DS-v2, DS-v3, ...). The script refuses to overwrite an existing artifact
 unless ``--force`` is passed, and ``--force`` is for pre-commit re-mints
@@ -50,8 +50,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
-# The self-describing tag every minted artifact carries (D-001). Version 1 =
-# the T015 shape: schema tag + T013 stamp + the suite payload keys.
+# The self-describing tag every minted artifact carries. Version 1 =
+# schema tag + artifact stamp + the suite payload keys.
 BASELINE_SCHEMA = "cairn-bench-baseline/1"
 
 # CLI suites minted verbatim from `cairn bench --json` output. quality.json
@@ -68,15 +68,11 @@ def _write_artifact(path: Path, payload: dict) -> None:
 
 
 def _retrieval_state() -> dict:
-    """Record the effective retrieval state (D-009 consequence: quality mints
-    from DS-v1.1 on carry their rerank/threading state so the artifact is
-    reproducible by construction).
-
-    DS-v1's figures (0.4174/0.2862) were not bit-reproducible because the
-    rerank-active pipeline flips near-tie rankings under mint-time state
-    (reranker warm/cold, torch threading under a concurrent mint). Recording
-    that state here turns "reproduce the session" into "reproduce the recorded
-    configuration".
+    """Record the effective retrieval state so a quality mint is reproducible
+    by construction: the rerank-active pipeline flips near-tie rankings under
+    mint-time state (reranker warm/cold, torch threading under a concurrent
+    mint). Recording the state turns "reproduce the session" into "reproduce
+    the recorded configuration".
     """
     import os
 
@@ -100,8 +96,8 @@ def _retrieval_state() -> dict:
     )
     return {
         "rerank": {
-            # EFFECTIVE state (env OR the persistent auto-enable marker --
-            # the T019 shipped config is rerank-auto), not just the env var.
+            # EFFECTIVE state (env OR the persistent auto-enable marker,
+            # which ships enabled by default), not just the env var.
             "enabled": reranker.rerank_enabled(),
             "model": reranker.current_rerank_model(),
             "available": reranker.reranker_available(),
@@ -115,8 +111,8 @@ def mint_cli_suite(suite: str, out_path: Path) -> dict:
     """Mint one CLI-suite baseline from `cairn bench --suite <s> --json`.
 
     The subprocess is the exact documented mint command, so the artifact and
-    the README can never drift: whatever the CLI stamps (T013) is what lands
-    in the file, plus the additive schema tag at the top.
+    the README can never drift: whatever the CLI stamps is what lands in the
+    file, plus the additive schema tag at the top.
     """
     cmd = ["uv", "run", "cairn", "bench", "--suite", suite, "--json"]
     print(f"[mint:{suite}] {' '.join(cmd)}", flush=True)
@@ -134,7 +130,7 @@ def mint_cli_suite(suite: str, out_path: Path) -> dict:
 
 
 def mint_quality(out_path: Path) -> dict:
-    """Mint quality.json: run_evaluation over the T011 graded ground truth.
+    """Mint quality.json: run_evaluation over the graded ground truth.
 
     Pipeline (documented so the numbers are reproducible):
 
@@ -147,23 +143,23 @@ def mint_quality(out_path: Path) -> dict:
        numbers over hash vectors would be meaningless token-overlap, not
        semantics).
     4. ``run_evaluation(conn, bundle_root=None, queries_path=<t2
-       ground_truth>)`` -- the graded loader + identity-first matcher path
-       (D-008). ``bundle_root=None`` matches the committed dataset state:
+       ground_truth>)`` -- the graded loader + identity-first matcher path.
+       ``bundle_root=None`` matches the committed dataset state:
        no OKF knowledge bundle exists for the t2 snapshot, so the L5
        retrieval surface is empty and L5 scores 0.0 by construction. The
        payload records that explicitly (``l5_surface``) so a future L5
        bundle baseline is an additive change, never a silent rewrite.
-    5. Stamp the payload with ``build_artifact_stamp()`` (T013) + the same
+    5. Stamp the payload with ``build_artifact_stamp()`` + the same
        schema tag as the CLI suites, plus a ``retrieval`` block recording the
-       effective rerank/threading state (D-009: mints from DS-v1.1 on are
-       reproducible by construction).
+       effective rerank/threading state (mints are reproducible by
+       construction).
     """
     import os
 
     if os.environ.get("GITHUB_ACTIONS"):
         raise SystemExit(
             "refusing to mint baselines under GitHub Actions: baselines are a "
-            "reference-machine artifact (D-005 runner_class=reference-local)"
+            "reference-machine artifact (runner_class=reference-local)"
         )
     # The local backend must be the EFFECTIVE one, not just the configured
     # one: an unset CAIRN_EMBED_BACKEND silently degrades to hash when
@@ -278,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="overwrite existing artifacts (pre-commit re-mints only; D-010: a "
+        help="overwrite existing artifacts (pre-commit re-mints only; a "
         "committed version directory is immutable -- re-measure as a new version)",
     )
     args = parser.parse_args(argv)
@@ -296,8 +292,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         if existing:
             raise SystemExit(
-                f"{out_dir.relative_to(REPO_ROOT)} already holds {existing}; D-010 makes a "
-                f"committed version immutable -- re-measure as a NEW version, or pass "
+                f"{out_dir.relative_to(REPO_ROOT)} already holds {existing}; a "
+                f"committed version is immutable -- re-measure as a NEW version, or pass "
                 f"--force for a pre-commit re-mint on the minter's machine"
             )
 

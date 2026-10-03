@@ -224,6 +224,9 @@ def _paths_from_entry(
     parent: dict[str, tuple[Optional[str], TaintHop]] = {
         entry["id"]: (None, TaintHop(entry["file"], entry["name"], "exact"))
     }
+    if entry["id"] in terminator_ids:
+        # The entry itself calls a sink: single-hop source-to-sink path.
+        paths.append(_hop_chain(entry["id"], parent))
     visited = {entry["id"]}
     frontier = [entry["id"]]
     depth = 0
@@ -297,7 +300,8 @@ def _fuzzy_neighbors(
     """Ambiguous/unresolved edges hopped by their preserved target name.
 
     An ambiguous name hops to every same-repo definition (the fuzzy
-    candidate list); an unresolved name has no definition and yields no hop.
+    candidate list); an unresolved name has no same-repo definition and
+    yields no hop.
     """
     id_ph = ",".join("?" * len(source_ids))
     kind_ph = ",".join("?" * len(STRUCTURAL_EDGE_KINDS))
@@ -308,9 +312,12 @@ def _fuzzy_neighbors(
         FROM edges e
         JOIN symbols s ON s.name = e.target_name
         JOIN files f ON f.id = s.file_id
+        JOIN symbols src ON src.id = e.source_id
+        JOIN files src_file ON src_file.id = src.file_id
         WHERE e.source_id IN ({id_ph})
           AND e.resolution IN ('ambiguous', 'unresolved')
           AND e.kind IN ({kind_ph})
+          AND src_file.repo_id = f.repo_id
         ORDER BY s.name, f.path, s.id
         """,
         (*source_ids, *STRUCTURAL_EDGE_KINDS),

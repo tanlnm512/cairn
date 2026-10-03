@@ -74,6 +74,27 @@ class TestImportDirectoryValidation:
             assert len(imported) == 1
             assert "normal" in imported[0]
 
+    def test_vanished_file_skips_not_aborts(self, bundle, monkeypatch):
+        """A file that vanishes between listing and stat skips with a log;
+        the rest of the directory still imports."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            keep = Path(tmpdir) / "keep.md"
+            keep.write_text("# Keep\n\nImported.", encoding="utf-8")
+            gone = Path(tmpdir) / "gone.md"
+            gone.write_text("# Gone", encoding="utf-8")
+
+            real_stat = Path.stat
+
+            def _vanishing_stat(self, *args, **kwargs):
+                if self.name == "gone.md":
+                    raise FileNotFoundError(f"vanished: {self}")
+                return real_stat(self, *args, **kwargs)
+
+            monkeypatch.setattr(Path, "stat", _vanishing_stat)
+            imported = import_directory(bundle, tmpdir)
+        assert len(imported) == 1
+        assert "Keep" in bundle.read_concept(imported[0]).title
+
     def test_import_directory_normal_files_succeed(self, bundle):
         """Normal-sized files should be imported successfully."""
         with tempfile.TemporaryDirectory() as tmpdir:

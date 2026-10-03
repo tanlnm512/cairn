@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from ..compass.generator import (
     ModuleResolutionError,
-    _resolve_module,
+    resolve_module,
     _symbols_in_module,
 )
 
@@ -65,7 +65,7 @@ def _exact_symbol_names(conn: sqlite3.Connection, token: str) -> list[str]:
 def _symbols_under_path(conn: sqlite3.Connection, token: str) -> list[str]:
     """Symbols whose file lives under the token's module path."""
     try:
-        repo, module_path = _resolve_module(conn, token, None)
+        repo, module_path = resolve_module(conn, token, None)
     except ModuleResolutionError:
         return []
     rows = _symbols_in_module(conn, module_path, repo)

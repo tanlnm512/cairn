@@ -99,19 +99,25 @@ _KINDS = (
 
 def test_kind_colors_resolve_through_token_names():
     """The graph script maps each node kind to a --kind-* theme token and
-    reads it through the getComputedStyle proxy — the palette ships with
-    the stylesheet, never with the script."""
+    reads it through the shared getComputedStyle proxy — the palette
+    ships with the stylesheet, never with a script."""
     app = _script("app.js")
     for kind in _KINDS:
         assert f'"--kind-{kind}"' in app, kind
-    assert "getComputedStyle" in app
+    assert "getComputedStyle" in _script("graph-shared.js")
 
 
 def test_hand_written_scripts_carry_no_hex_colors():
     """Every canvas color arrives via a CSS variable — a hex literal in a
     hand-written script is a hardcoded palette that a theme flip cannot
     reach (vendored bundles are excluded from this sweep)."""
-    for name in ("app.js", "db-graph.js", "shell.js", "knowledge-graph.js"):
+    for name in (
+        "app.js",
+        "db-graph.js",
+        "shell.js",
+        "knowledge-graph.js",
+        "graph-shared.js",
+    ):
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b", _script(name)), name
 
 
@@ -121,12 +127,16 @@ def test_hand_written_scripts_carry_no_hex_colors():
 
 
 def test_graph_setup_reads_reduced_motion_and_drops_physics():
-    """The graph setups consult matchMedia('(prefers-reduced-motion:
-    reduce)') and gate the physics block behind it — CSS collapse cannot
-    reach a canvas simulation, so the setup must."""
+    """The graph setups gate the physics block behind
+    prefers-reduced-motion — CSS collapse cannot reach a canvas
+    simulation, so the setup must. The matchMedia probe itself is the
+    shared canvas helper both setups consume."""
+    assert (
+        'matchMedia("(prefers-reduced-motion: reduce)")'
+        in _script("graph-shared.js")
+    )
     for name in ("app.js", "knowledge-graph.js"):
-        script = _script(name)
-        assert 'matchMedia("(prefers-reduced-motion: reduce)")' in script, name
+        assert "prefersReducedMotion" in _script(name), name
 
 
 # ---------------------------------------------------------------------------

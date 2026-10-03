@@ -34,8 +34,8 @@ _STALL_EVENT_SENT = False
 def _failures_bucket(n: int) -> str:
     """Collapse a consecutive-failure count into a bounded cardinality bucket.
 
-    Buckets are the telemetry cardinality mechanism for numeric attrs (spec
-    §6.4): an unbucketed count would grow a distinct value per tick. The lower
+    Buckets are the telemetry cardinality mechanism for numeric attrs: an
+    unbucketed count would grow a distinct value per tick. The lower
     edge is the escalation threshold (_WARN_AFTER) -- the event only fires at
     or above it.
     """

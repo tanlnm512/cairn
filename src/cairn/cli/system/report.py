@@ -288,7 +288,7 @@ def report(db, as_json, out_path):
     """Print a redacted diagnostic bundle for bug reports / GitHub issues.
 
     Assembles four sections into one bundle: versions (cairn/Python/platform/
-    sqlite/store), the 10 doctor checks, recent error-ish events and
+    sqlite/store), the 11 doctor checks, recent error-ish events and
     ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
 
     PRIVACY GATE: every string field is

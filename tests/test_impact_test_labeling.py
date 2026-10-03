@@ -77,6 +77,19 @@ def test_real_test_file_in_main_with_testpath_dir_still_detected():
     assert r["is_test"]
 
 
+def test_test_substring_inside_production_path_is_not_a_test():
+    """The pytest signal is basename-anchored: "test_" inside a path
+    component (contest_data) must not classify production code as tests."""
+    r = is_test_symbol("/repo/app/contest_data/loader.py", "loader", "")
+    assert not r["is_test"] and r["detection_method"] == ""
+
+
+def test_pytest_basename_prefix_outside_test_dirs_is_a_test():
+    """A test_-prefixed file under a non-test dir is still a pytest module."""
+    r = is_test_symbol("/repo/app/payment/test_payment.py", "make_payment", "")
+    assert r["is_test"] and "path" in r["detection_method"]
+
+
 def test_filter_tests_isolates_and_annotates():
     impacted = [
         {"symbol": "Repo.create", "file": "/src/main/Repo.kt", "repo": "r", "depth": 1},

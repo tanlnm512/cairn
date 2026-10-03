@@ -17,7 +17,6 @@ from ._common import (
     _SLASH_COMMANDS,
     mcp_config_json,
     resolve_cg_command,
-    resolve_cg_str,
 )
 from .detect import (
     Detection,
@@ -83,7 +82,6 @@ __all__ = [
     "InstallResult",
     # Path/command resolution
     "resolve_cg_command",
-    "resolve_cg_str",
     "claude_desktop_config_path",
     "verify_registration",
     # MCP config generators

@@ -39,7 +39,6 @@ fi
 echo "  resolved SHA: $SHA"
 
 echo "→ generating _scip_pb2.py (needs grpcio-tools)"
-cp "$WORK/scip.proto" "$WORK/"
 ( cd "$WORK" && python3 -m grpc_tools.protoc -I. --python_out=. scip.proto )
 
 echo "→ installing to $REPO_ROOT/src/cairn/parsers/_scip_pb2.py"

@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 from ..okf.concept import OKFConcept
 from ..okf.bundle import OKFBundle
+from .store import parse_memory_timestamp
 
 WEIGHTS = {
     "graph_verification": 0.357,
@@ -28,7 +29,7 @@ def score_memory(
     bundle: OKFBundle,
     critic_score: Optional[float] = None,
 ) -> Dict:
-    """Compute the 6-signal score for a memory concept.
+    """Score a memory concept across its verification/confidence/freshness signals.
 
     Returns a dict with each signal (0.0-1.0) and the weighted `score`.
     Does not mutate the concept; caller decides whether to store the new score.
@@ -156,9 +157,8 @@ def _freshness(concept: OKFConcept) -> float:
         return 0.5
     if concept.extensions.get("doc_source") == "manual":
         return 1.0
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
+    dt = parse_memory_timestamp(ts)
+    if dt is None:
         return 0.5
     now = datetime.now(timezone.utc)
     days = (now - dt).total_seconds() / 86400.0

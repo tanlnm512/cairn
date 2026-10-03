@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Structural validation runner for the skill eval specs.
 
-The evals in ``src/agent_integration/skill/evals/*.md`` are scenario
+The evals in ``src/cairn/agent_integration/skill/evals/*.md`` are scenario
 descriptions (prose), not executable assertions. This runner turns them into a
-CI-checkable artifact by validating the *structured frontmatter* each spec now
+CI-checkable artifact by validating the *structured frontmatter* each spec
 declares at its top:
 
   1. every spec has the required frontmatter keys;
   2. every ``expected_calls`` / ``wrong_calls`` entry has its required fields;
   3. every referenced ``tool`` is a real registered MCP tool
-     (``@mcp.tool()`` in ``src/mcp_server/tools_*.py``), a real ``cairn`` CLI
-     command (scraped from ``src/cli/*.py``), or a shipped script under
-     ``scripts/`` / ``src/agent_integration/skill/scripts/``.
+     (``@mcp.tool()`` in ``src/cairn/mcp_server/tools_*.py``), a real ``cairn``
+     CLI command (scraped from ``src/cairn/cli/*.py``), or a shipped script
+     under ``scripts/`` / ``src/cairn/agent_integration/skill/scripts/``.
 
 It is a STRUCTURAL validator only -- it does not (cannot, cheaply) run an agent
 and grade its behavior. Its value is catching drift: a spec whose frontmatter
@@ -187,15 +187,17 @@ def resolve_tool(
     mcp_tools: set[str],
     cli_commands: dict[str, set[str]],
     scripts: set[str],
+    allow_unregistered_mcp: bool = False,
 ) -> tuple[bool, str]:
     """Return ``(ok, reason)`` describing whether ``tool`` is a known surface.
 
     Recognized forms:
       * bare MCP tool name        -> ``impact_analysis``
       * fully-qualified MCP name  -> ``mcp__cairn__rebuild_graph`` (the
-        tail after the last ``__`` must match a registered tool; we also allow
-        it to be *unregistered*, which is legitimate for a ``wrong_calls``
-        entry that documents a nonexistent tool an agent might wrongly invoke)
+        tail after the last ``__`` must match a registered tool; an
+        *unregistered* tail is accepted only with ``allow_unregistered_mcp``,
+        for ``wrong_calls`` entries that document a nonexistent tool an agent
+        might wrongly invoke)
       * ``cairn <cmd>`` / ``cairn <group> <cmd>`` CLI commands
       * shipped script filenames  -> ``scripts/impact_guard.py``
 
@@ -207,16 +209,20 @@ def resolve_tool(
 
     t = tool.strip()
 
-    # Fully-qualified MCP name, e.g. mcp__cairn__rebuild_graph. The tail is
-    # the real tool name; if it is NOT registered that is expected for a
-    # wrong_calls entry (it documents a tool that does not exist), so we report
-    # it as a known *documented-as-nonexistent* MCP surface.
+    # Fully-qualified MCP name, e.g. mcp__cairn__rebuild_graph. The tail must
+    # be a registered tool; an unregistered tail is accepted only for
+    # wrong_calls entries, which document tools that do not exist.
     mq = _MCP_REMOTE_PREFIX_RE.match(t)
     if mq:
         tail = mq.group(1)
         if tail in mcp_tools:
             return True, f"MCP tool (fully-qualified, registered: {tail})"
-        return True, f"MCP tool name (documented-as-nonexistent: {tail})"
+        if allow_unregistered_mcp:
+            return True, f"MCP tool name (documented-as-nonexistent: {tail})"
+        return False, (
+            f"unregistered MCP tool: {t!r} (tail {tail!r} matches no "
+            f"registered @mcp.tool(); expected_calls must name real tools)"
+        )
 
     # Bare MCP tool name.
     if t in mcp_tools:
@@ -323,7 +329,13 @@ def validate_spec(path: Path, mcp_tools, cli_commands, scripts) -> list[str]:
                     problems.append(f"{tag}: field '{rf}' must be a non-empty string")
             tool = entry.get("tool")
             if tool is not None:
-                ok, why = resolve_tool(tool, mcp_tools, cli_commands, scripts)
+                ok, why = resolve_tool(
+                    tool,
+                    mcp_tools,
+                    cli_commands,
+                    scripts,
+                    allow_unregistered_mcp=(field == "wrong_calls"),
+                )
                 if not ok:
                     problems.append(f"{tag}: {why}")
 

@@ -20,8 +20,8 @@ _URI_CREDENTIAL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Each pattern is cloned per-call to avoid the stateful ``lastIndex`` bug that
-# would arise from reusing a compiled ``/g`` regex across multiple calls.
+# Patterns are pre-compiled once; ``re.sub`` is stateless, so reuse across
+# calls is safe.
 _SECRET_PATTERN_SOURCES: list[str] = [
     r"(?:api[_-]?key|secret|token|password|credential|auth)[\s]*[=:]\s*[\"']?[A-Za-z0-9_\-/.+]{20,}[\"']?",
     r"Bearer\s+[A-Za-z0-9._\-+/=]{20,}",
@@ -39,8 +39,7 @@ _SECRET_PATTERN_SOURCES: list[str] = [
     r"dop_v1_[A-Za-z0-9]{64}",
 ]
 
-# Pre-compile once (module load). Each is stateless because we use
-# ``re.sub`` (which resets match position), not ``.finditer`` with state.
+# Pre-compile once (module load); ``re.sub`` carries no match state.
 _COMPILED_SECRETS = [re.compile(p, re.IGNORECASE) for p in _SECRET_PATTERN_SOURCES]
 
 

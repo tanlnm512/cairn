@@ -46,24 +46,21 @@ class RustParser(GenericTreeSitterParser):
         for child in reversed(node.children):
             if child.type == "declaration_list":
                 continue
-            name = self._simple_type_name(child)
+            name = self._simple_type_name(child, source)
             if name is not None:
                 return name
         return None
 
-    def _simple_type_name(self, node: Node) -> Optional[str]:
+    def _simple_type_name(self, node: Node, source: bytes) -> Optional[str]:
         if node.type in {"type_identifier", "generic_type", "scoped_type_identifier"}:
-            return self._first_type_identifier(node)
+            return self._first_type_identifier(node, source)
         return None
 
-    def _first_type_identifier(self, node: Node) -> Optional[str]:
+    def _first_type_identifier(self, node: Node, source: bytes) -> Optional[str]:
         if node.type == "type_identifier":
-            text = node.text
-            if text is None:
-                return None
-            return text.decode("utf-8")
+            return self._node_text(node, source).strip()
         for child in node.children:
-            name = self._first_type_identifier(child)
+            name = self._first_type_identifier(child, source)
             if name is not None:
                 return name
         return None

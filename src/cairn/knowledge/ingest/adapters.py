@@ -5,7 +5,9 @@ import logging
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
-from typing import Iterable, Iterator, List, Protocol, Tuple, Union
+from typing import Iterable, Iterator, List, Tuple, Union
+
+from cairn.knowledge.store import IMPORT_MAX_FILE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,10 @@ FED_ORIGIN = "fed"
 #: Fed documents have no originating repo; the workspace is their scope.
 FED_REPO = "workspace"
 
-#: Maximum source file size read by ingest adapters (10MB), mirroring the
-#: store's IMPORT_MAX_FILE_SIZE cap on import_directory. Larger files skip
-#: with a reason instead of being loaded whole into memory.
-INGEST_MAX_FILE_SIZE = 10 * 1024 * 1024
+#: Maximum source file size read by ingest adapters — the store's import
+#: cap, shared so both paths reject the same file; adapters skip with a
+#: reason instead of loading it whole into memory.
+INGEST_MAX_FILE_SIZE = IMPORT_MAX_FILE_SIZE
 
 #: The adapter yield contract: (repo, relpath, text, origin).
 SourcedDoc = Tuple[str, str, str, str]
@@ -33,12 +35,6 @@ def _size_skip_reason(path: Path) -> str | None:
     if size > INGEST_MAX_FILE_SIZE:
         return f"file too large ({size} > {INGEST_MAX_FILE_SIZE} bytes)"
     return None
-
-
-class SourceAdapter(Protocol):
-    """Protocol for document sources yielding SourcedDoc tuples."""
-
-    def iter_docs(self) -> Iterator[SourcedDoc]: ...
 
 
 class FedMarkdownAdapter:
@@ -104,7 +100,7 @@ class SkipRule:
 
 
 #: Skip-list for knowledge ingestion. Distinct from the graph
-#: scanner's DEFAULT_SKIP_DIRS (src/cairn/graph/scanner.py:102), which is
+#: scanner's DEFAULT_SKIP_DIRS (cairn/graph/scanner.py), which is
 #: code-indexing only and logs no reason; every rule here carries one.
 SKIP_LIST: Tuple[SkipRule, ...] = (
     SkipRule("dir", "drafts", "skip-list: drafts directory", "drafts"),

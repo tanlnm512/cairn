@@ -1,5 +1,5 @@
 /**
- * Pure compass/memory panel model (FR-002): file-endpoint payload parsing,
+ * Pure compass/memory panel model: file-endpoint payload parsing,
  * panel view mapping, HTML rendering, and the latest-wins request runner.
  * No editor API here so the mapping is testable under plain Node.
  */
@@ -19,7 +19,7 @@ export interface MemoryItem {
   body: string;
 }
 
-/** The frozen /editor/file response shape (D-004); memories arrive newest-first. */
+/** The frozen /editor/file response shape; memories arrive newest-first. */
 export interface FilePanelPayload {
   path: string;
   module: string;
@@ -78,7 +78,7 @@ export function hasContent(payload: FilePanelPayload): boolean {
   return payload.compass.found || payload.memories.length > 0;
 }
 
-/** The aggregate status note while inline data is withheld (FR-004), else null. */
+/** The aggregate status note while inline data is withheld, else null. */
 export function degradedNote(states: ServerState[]): string | null {
   return isDegraded(states) ? aggregateDisplay(states).tooltip : null;
 }

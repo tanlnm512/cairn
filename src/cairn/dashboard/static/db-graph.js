@@ -8,20 +8,21 @@
 (function () {
   "use strict";
 
+  var shared =
+    typeof window.CairnGraphShared === "undefined"
+      ? null
+      : window.CairnGraphShared;
   var dataEl = document.getElementById("db-graph-data");
   var canvas = document.getElementById("db-graph-canvas");
-  if (!dataEl || !canvas || typeof vis === "undefined") {
+  if (!shared || !dataEl || !canvas || typeof vis === "undefined") {
     return;
   }
+  var cssVar = shared.cssVar;
   var schema = JSON.parse(dataEl.textContent);
   var byName = {};
   schema.tables.forEach(function (t) {
     byName[t.name] = t;
   });
-
-  function cssVar(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  }
 
   function edgeStyle(kind) {
     var fk = kind === "fk";
@@ -100,27 +101,17 @@
     })
   );
 
-  var options = {
-    autoResize: true,
-    interaction: {
-      dragNodes: true,
-      dragView: true,
-      zoomView: true,
-      hover: true,
-      tooltipDelay: 120,
-      selectConnectedEdges: true,
-      hoverConnectedEdges: true
-    }
-  };
+  var options = shared.interactionOptions();
   var themed = themeOptions();
   Object.keys(themed).forEach(function (key) {
     options[key] = themed[key];
   });
-  options.physics = {
-    solver: "barnesHut",
-    barnesHut: { gravitationalConstant: -2200, springLength: 110 },
-    stabilization: { iterations: 250 }
-  };
+  /* The schema graph is far smaller than the code graph, so the physics
+     tuning is lighter. */
+  options.physics = shared.physicsOptions(
+    { gravitationalConstant: -2200, springLength: 110 },
+    250
+  );
 
   var network = new vis.Network(canvas, { nodes: nodes, edges: edges }, options);
 
@@ -212,17 +203,7 @@
     }
   });
 
-  /* Overlay buttons mirror the graph view's zoom controls. */
-  document.querySelectorAll("button[data-db-action]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var action = btn.getAttribute("data-db-action");
-      if (action === "zoom-in") {
-        network.moveTo({ scale: network.getScale() * 1.25 });
-      } else if (action === "zoom-out") {
-        network.moveTo({ scale: network.getScale() * 0.8 });
-      } else if (action === "fit") {
-        network.fit({ animation: false });
-      }
-    });
-  });
+  /* Overlay buttons mirror the graph view's zoom controls (snapped, no
+     eased camera move). */
+  shared.wireOverlayControls(canvas, network, "data-db-action", 1.25, false);
 })();

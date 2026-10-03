@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ..main import DEFAULT_DB_PATH, get_db, main
+from .metrics import _parse_ts
 
 _log = logging.getLogger(__name__)
 
@@ -59,28 +60,6 @@ HEALTH_CHECKS: tuple[HealthCheck, ...] = (
 def _result(name: str, status: str, detail: str, hint: str | None = None) -> dict:
     """One doctor result row. ``hint`` is an optional remediation string."""
     return {"name": name, "status": status, "detail": detail, "hint": hint}
-
-
-def _parse_ts(value) -> datetime | None:
-    """Parse an ISO-8601 string OR an epoch float into an aware UTC datetime.
-
-    cairn stores timestamps inconsistently: ``build_runs.started_at`` is ISO
-    (``builder._iso_ts``), while ``events.ts`` and ``tool_metrics.invoked_at``
-    are raw ``time.time()`` epoch floats (the buffered sinks enqueue
-    ``time.time()`` directly). This helper accepts both so each check needn't
-    track which column shape it reads.
-    """
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _age_str(now: datetime, ts) -> str:
@@ -170,10 +149,10 @@ def _check_embeddings(conn) -> dict:
     backend is active OR the user explicitly chose ``hash`` (an informed
     choice, never a degradation). Mirrors ``embeddings.is_hash_fallback()``.
     """
-    from ...graph.embeddings import _backend_name, is_hash_fallback
+    from ...graph.embeddings import backend_name, is_hash_fallback
 
     # Report the effective backend, including config and defaults.
-    configured = _backend_name()
+    configured = backend_name()
     if is_hash_fallback():
         return _result(
             "embeddings",
@@ -195,8 +174,8 @@ def _check_ann(conn) -> dict:
     index-level states the load probe can't see: embeddings exist for the
     current model but no vec0 table was ever built (the index-less state
     emitted as ``ann_fallback reason=no_index``), and a vec0 table whose row
-    count no longer matches the embeddings table (index drift). Drift now
-    has two reported directions: too FEW vec rows means recent embeddings
+    count no longer matches the embeddings table (index drift). Drift has
+    two reported directions: too FEW vec rows means recent embeddings
     were never indexed (recall loss), too MANY means stale entries survived
     a deletion (which can mis-pair a reused rowid with an unrelated vector).
     Recovery is instructed, not performed -- doctor is read-only by
@@ -318,8 +297,8 @@ def _check_embed_server(conn) -> list[dict]:
         degradation_footnote,
     )
     from ...graph.embeddings import (
-        _SERVER_FAMILY,
-        _backend_name,
+        SERVER_FAMILY,
+        backend_name,
         _embed_server,
         _server_base_url,
         _server_model,
@@ -330,8 +309,8 @@ def _check_embed_server(conn) -> list[dict]:
     from ...graph.semantic import _ms_bucket
 
     # Resolve the backend from env, config file, and defaults.
-    configured = _backend_name()
-    if configured not in _SERVER_FAMILY:
+    configured = backend_name()
+    if configured not in SERVER_FAMILY:
         return [
             _result(
                 "embed_server",
@@ -516,7 +495,7 @@ def _check_freshness(conn) -> dict:
         last_build = None
     if last_build:
         last_dt = _parse_ts(last_build)
-        stale = last_dt is not None and (now - last_dt).days > STALE_BUILD_DAYS
+        stale = last_dt is not None and (now - last_dt) > timedelta(days=STALE_BUILD_DAYS)
         tag = f" (>{STALE_BUILD_DAYS}d)" if stale else ""
         parts.append(f"last build {_age_str(now, last_build)}{tag}")
         if stale:
@@ -1054,7 +1033,7 @@ def _check_environment(db: str) -> dict:
 
     (a) resolved-store existence -- WARN with the ``cairn init`` + ``cairn
         build`` hint when missing, mirroring _run_doctor's own missing-store
-        branch (the mixed ruling forbids repeating schema's FAIL);
+        branch (WARN, not a second FAIL for the same root cause);
     (b) registration consistency -- enumerates installed clients via
         ``check_installed``; stdio registrations are env-inspected (stale
         registrations WARN) and spawn-probed against this doctor's own store
@@ -1145,8 +1124,8 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
     Config echo still PASSes (env/file only, independent of the store). Embeddings/
     ANN/embed-server are reported unavailable too: when the store is broken
     the backend state is moot until the store is fixed. This is what makes
-    doctor crash-proof against a missing / read-only / corrupt store (spec:
-    degrade to WARN with the reason, never crash).
+    doctor crash-proof against a missing / read-only / corrupt store:
+    degrade to WARN with the reason, never crash.
     """
     msg = f"cannot open database: {error}"
     return [

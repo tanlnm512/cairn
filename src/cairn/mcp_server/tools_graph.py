@@ -117,6 +117,39 @@ def get_callers(name: str, fuzzy: bool = False, limit: int = 200, structured: bo
     return _render_callers(data)
 
 
+def _neighbor_rows(
+    name: str, fuzzy: bool, limit: int, query
+) -> tuple[list, bool, str, bool]:
+    """Shared precise-then-fuzzy edge query behind get_callers_data/get_callees_data.
+
+    ``query(conn, name, fuzzy, limit)`` runs one direction of the edge lookup.
+    Returns ``(rows, used_fallback, stale_banner, hit_limit)``; the staleness
+    banner is computed while the connection is open and only when rows exist
+    (an empty answer can't be "stale").
+    """
+    limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
+    conn = _conn()
+    try:
+        freshness = _fresh_graph(conn)
+        rows = query(conn, name, fuzzy, limit)
+        used_fallback = False
+        if not rows and not fuzzy:
+            rows = query(conn, name, True, limit)
+            used_fallback = True
+        banner = freshness.banner() or (
+            _staleness_banner(conn, [r["file_path"] for r in rows])
+            if rows
+            else ""
+        )
+    finally:
+        conn.close()
+    # hit_limit only makes sense on the precise (non-fallback) path: when we
+    # fell back to fuzzy it's because the precise rows don't exist, so a
+    # higher limit wouldn't surface more precise results.
+    hit_limit = (not used_fallback) and len(rows) >= limit
+    return rows, used_fallback, banner, hit_limit
+
+
 def get_callers_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
     """Structured core of ``get_callers``: returns a dict, no prose.
 
@@ -126,29 +159,12 @@ def get_callers_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
     """
     from cairn.graph import queries
 
-    limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
-    conn = _conn()
-    try:
-        freshness = _fresh_graph(conn)
-        rows = queries.get_callers(conn, name, fuzzy=fuzzy, limit=limit)
-        used_fallback = False
-        if not rows and not fuzzy:
-            rows = queries.get_callers(conn, name, fuzzy=True, limit=limit)
-            used_fallback = True
-        # Staleness banner: check while conn is open; only relevant when there
-        # are results (an empty answer can't be "stale").
-        banner = freshness.banner() or (
-            _staleness_banner(conn, [r["file_path"] for r in rows])
-            if rows
-            else ""
-        )
-    finally:
-        conn.close()
-
-    # hit_limit only makes sense on the precise (non-fallback) path: when we
-    # fell back to fuzzy it's because the precise callers don't exist, so a
-    # higher limit wouldn't surface more precise results.
-    hit_limit = (not used_fallback) and len(rows) >= limit
+    rows, used_fallback, banner, hit_limit = _neighbor_rows(
+        name,
+        fuzzy,
+        limit,
+        lambda conn, n, fuzzy, limit: queries.get_callers(conn, n, fuzzy=fuzzy, limit=limit),
+    )
     return {
         "symbol": name,
         "count": len(rows),
@@ -221,28 +237,12 @@ def get_callees_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
     """Structured core of ``get_callees``."""
     from cairn.graph import queries
 
-    limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
-    conn = _conn()
-    try:
-        freshness = _fresh_graph(conn)
-        rows = queries.get_callees(conn, name, fuzzy=fuzzy, limit=limit)
-        used_fallback = False
-        if not rows and not fuzzy:
-            rows = queries.get_callees(conn, name, fuzzy=True, limit=limit)
-            used_fallback = True
-        # Staleness banner: check while conn is open; only relevant when there
-        # are results (an empty answer can't be "stale").
-        banner = freshness.banner() or (
-            _staleness_banner(conn, [r["file_path"] for r in rows])
-            if rows
-            else ""
-        )
-    finally:
-        conn.close()
-
-    # hit_limit only makes sense on the precise (non-fallback) path: when we
-    # fell back to fuzzy it's because the precise callees don't exist.
-    hit_limit = (not used_fallback) and len(rows) >= limit
+    rows, used_fallback, banner, hit_limit = _neighbor_rows(
+        name,
+        fuzzy,
+        limit,
+        lambda conn, n, fuzzy, limit: queries.get_callees(conn, n, fuzzy=fuzzy, limit=limit),
+    )
     return {
         "symbol": name,
         "count": len(rows),

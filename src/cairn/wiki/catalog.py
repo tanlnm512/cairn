@@ -198,10 +198,20 @@ def build_page_plan(
             seeds={"files": _top_files(cur, repo), "symbols": _top_symbols(cur, repo)},
         )
     ]
+    # page_id keys the manifest row; _slug is not injective so collisions
+    # get a numeric suffix instead of silently sharing one manifest key.
+    used_ids = {"overview"}
     for module in ranked[: max(pages_cap - 1, 0)]:
+        base_id = _slug(module) or "module"
+        page_id = base_id
+        n = 2
+        while page_id in used_ids:
+            page_id = f"{base_id}-{n}"
+            n += 1
+        used_ids.add(page_id)
         plan.append(
             _page(
-                page_id=_slug(module),
+                page_id=page_id,
                 title=module,
                 description=(
                     f"Module {module}: {len(module_files[module])} indexed files."

@@ -28,12 +28,11 @@ MAX_ARGS_SUMMARY_CHARS = 200
 
 
 def _chars_bucket(n: int) -> str:
-    """Bucket a result length into a fixed low-cardinality set (spec §6.4).
+    """Bucket a result length into a fixed low-cardinality set.
 
-    Truncation is observable analytics, not correctness: a coarse bucket is
-    enough to see ``explore`` blowing past 60k chars vs ``search_symbols``
-    clipping at ~2k -- the exact count carries no extra diagnostic value and
-    would balloon the ``events`` row cardinality.
+    Truncation is observable analytics, not correctness: a coarse bucket
+    bounds the ``events`` row cardinality; the exact count carries no extra
+    diagnostic value.
     """
     if n <= 500:
         return "<=500"
@@ -48,7 +47,7 @@ def _truncate_result(name: str, result: str) -> str:
     if len(result) <= MAX_RESULT_CHARS:
         return result
     # Over-cap: emit a durable truncate_result event so truncation rate is
-    # measurable per tool (spec §4.2 gap 8). Emitted ONLY on the actual
+    # measurable per tool. Emitted ONLY on the actual
     # truncation branch, not every call. The import is lazy (mirrors the lazy
     # cairn.telemetry.sink imports in configure_conn / _start_metric_flusher,
     # kept lazy to avoid any boot-order cycle) and the whole block is guarded
@@ -103,7 +102,7 @@ def _result_chars(result: object) -> Optional[int]:
 
 
 # Connection factory injected by the server core (avoids a circular import
-# with src.graph.schema / src.paths). Defaults to None; configure_conn() must
+# with the graph schema module). Defaults to None; configure_conn() must
 # be called once at server boot before any tool is invoked.
 _conn_factory: Optional[Callable[[], "object"]] = None
 
@@ -112,7 +111,7 @@ def configure_conn(conn_factory: Callable[[], "object"]) -> None:
     """Inject the connection factory used by _flush_metrics.
 
     Called once from server.run() at boot. Also mirrors into the shared
-    telemetry sink (spec §6.1) so the single boot call wires both
+    telemetry sink so the single boot call wires both
     ``tool_metrics`` (this module's table) and ``events`` (the sink's table).
     Must come from outside so this module stays free of the schema/store
     dependency.
@@ -129,22 +128,25 @@ def configure_conn(conn_factory: Callable[[], "object"]) -> None:
 def _flush_metrics():
     """Drain the metric buffer into tool_metrics (best-effort).
 
-    The buffer is only cleared *after* a successful commit, so a transient
-    failure (e.g. "database is locked") leaves the rows in place for the next
-    flush attempt instead of silently dropping them.
+    Rows are removed from the buffer atomically with the snapshot, so rows
+    appended mid-flush can never be mistaken for the batch being drained;
+    a failed flush re-queues its batch ahead of those newer rows for the
+    next attempt.
     """
     import logging
 
     logger = logging.getLogger(__name__)
 
-    # Snapshot the buffer WITHOUT clearing it yet -- a failed flush leaves the
-    # rows queued for the next attempt. The deque's maxlen caps unbounded
-    # growth during a long outage.
+    # Snapshot AND clear under one lock acquisition: the deque's maxlen could
+    # otherwise evict snapshot rows while the flush runs, and a positional
+    # drain afterwards would pop never-written rows instead.
     with _METRIC_LOCK:
         if not _METRIC_BUFFER:
             return
         batch = list(_METRIC_BUFFER)
+        _METRIC_BUFFER.clear()
     if _conn_factory is None:
+        _requeue(batch)
         return
     conn = None
     try:
@@ -163,9 +165,10 @@ def _flush_metrics():
         )
         conn.commit()
     except Exception:
-        # Couldn't flush this batch -- leave it buffered for the next attempt.
+        # Couldn't flush this batch -- re-queue it for the next attempt.
         # Metrics are best-effort and must never block tool execution or hold a
         # lock, but log at debug so silent drops/backlog are still observable.
+        _requeue(batch)
         logger.debug(
             "metric flush failed; %d rows remain buffered", len(batch), exc_info=True
         )
@@ -176,25 +179,29 @@ def _flush_metrics():
                 conn.close()
             except Exception:
                 pass
-    # Commit succeeded -> safe to drop these rows from the buffer. Only remove
-    # the rows we actually wrote; newer rows appended during the flush stay.
+
+
+def _requeue(batch: list) -> None:
+    """Return unflushed rows to the front of the buffer, FIFO order preserved.
+
+    When newer rows already fill the deque, only the newest ``room`` rows of
+    the batch are re-queued (the oldest are dropped) so the re-queue never
+    evicts rows that have not been written yet.
+    """
     with _METRIC_LOCK:
-        for _ in range(len(batch)):
-            try:
-                _METRIC_BUFFER.popleft()
-            except IndexError:
-                break
+        room = (_METRIC_BUFFER.maxlen or len(batch)) - len(_METRIC_BUFFER)
+        if room <= 0:
+            return
+        requeue = batch[-room:]
+        _METRIC_BUFFER.extendleft(reversed(requeue))
 
 
 def _start_metric_flusher():
-    """Ensure the shared telemetry flush thread is running and that this
-    module's ``_flush_metrics`` is registered with it.
+    """Register this module's ``_flush_metrics`` with the shared telemetry
+    flusher thread and ensure that thread is running.
 
-    Previously metric_buffering spawned its own daemon thread + atexit; now it
-    reuses the single shared sink thread (spec §6.1) so events and tool_metrics
-    share one writer cadence and one atexit drain. ``_METRIC_FLUSHER_STARTED``
-    stays as this module's idempotency flag (and is what the test fixture
-    resets between tests).
+    ``_METRIC_FLUSHER_STARTED`` is the idempotency flag (and what the test
+    fixture resets between tests).
     """
     global _METRIC_FLUSHER_STARTED
     if _METRIC_FLUSHER_STARTED:
@@ -234,21 +241,18 @@ def _log_metric(
     # thread doesn't spin on a guaranteed failure.
     if os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes"):
         return
-    # CAIRN_TELEMETRY=off is the documented master kill switch: "off stops
-    # ALL recording". tool_metrics bypassed it (audit F5) because this gate
-    # only checked CAIRN_READ_ONLY. Lazy import mirrors the sink imports in
-    # configure_conn / _start_metric_flusher (avoids any boot-order cycle);
-    # is_telemetry_off() re-reads the env every call, like the check above.
+    # CAIRN_TELEMETRY=off is the documented master kill switch ("off stops
+    # ALL recording"): tool_metrics must honor it like events do. Lazy
+    # import mirrors the sink imports in configure_conn / _start_metric_flusher
+    # (avoids any boot-order cycle); is_telemetry_off() re-reads the env
+    # every call, like the check above.
     from cairn.telemetry.sink import is_telemetry_off
 
     if is_telemetry_off():
         return
-    # Redact at the write chokepoint (audit F4): exceptions routinely echo
-    # request payloads (connection strings, auth headers), and error_message
-    # used to persist raw -- truncated, but only scrubbed at report read
-    # time (a redaction-after-persistence inversion: the raw secret sat in
-    # the DB for up to the flush interval + forever in backups). Scrub
-    # BEFORE the row is buffered, then truncate.
+    # Redact at the write chokepoint: exceptions routinely echo request
+    # payloads (connection strings, auth headers), so scrub BEFORE the row
+    # is buffered, then truncate.
     if error_message:
         from cairn.memory.privacy import strip_private_data
 
@@ -303,12 +307,19 @@ def instrument(fn):
         try:
             result = fn(*args, **kwargs)
             truncated_from = truncated_to = None
-            if isinstance(result, str):
-                original_chars = len(result)
-                result = _truncate_result(name, result)
-                if original_chars > MAX_RESULT_CHARS:
-                    truncated_from = original_chars
-                    truncated_to = len(result)
+            # The cap applies to every result shape: structured (non-str)
+            # results are measured via str() and degrade to the truncated
+            # string form when over cap, so no tool can bypass the client's
+            # token ceiling by returning a model instead of prose.
+            original_chars = (
+                len(result) if isinstance(result, str) else _result_chars(result)
+            )
+            if original_chars is not None and original_chars > MAX_RESULT_CHARS:
+                result = _truncate_result(
+                    name, result if isinstance(result, str) else str(result)
+                )
+                truncated_from = original_chars
+                truncated_to = len(result)
             # resp_chars is measured post-truncation: the capped payload is
             # what the client's context actually receives.
             _log_metric(

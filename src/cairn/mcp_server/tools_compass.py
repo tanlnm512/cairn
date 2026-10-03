@@ -7,6 +7,39 @@ from ._server_core import _append_embed_degradation_footnote, _bundle, _conn, _r
 from .metric_buffering import instrument
 
 
+def find_compass_concept(bundle, module: str):
+    """First compass concept matching ``module`` by resource or concept id; None when absent.
+
+    Shared matcher behind get_compass and the skillgen assembler; corrupt
+    (unreadable) concepts are skipped so one bad file can't fail the read.
+    """
+    for cid in bundle.list_concepts(prefix="compass/"):
+        try:
+            concept = bundle.read_concept(cid)
+        except Exception:
+            continue
+        if module in (concept.resource or "") or module in cid:
+            return concept
+    return None
+
+
+def search_knowledge_data(query: str, type_filter: str = "", limit: int = 10) -> list:
+    """Matching concepts from ``bundle.search``, optionally filtered by type prefix."""
+    bundle = _bundle()
+    results = bundle.search(query, limit=limit)
+    if type_filter:
+        results = [c for c in results if c.type.startswith(type_filter)]
+    return results
+
+
+def _render_full_body(results) -> str:
+    """Render concepts as ``# title`` + body blocks joined by a divider."""
+    out = []
+    for c in results:
+        out.append(f"# {c.title}\n{c.body}")
+    return "\n\n---\n\n".join(out)
+
+
 def _critic_verdict_block(result) -> str:
     """A machine-readable critic verdict appended to a tool's prose response.
 
@@ -28,16 +61,10 @@ def _critic_verdict_block(result) -> str:
 @instrument
 def get_compass(module: str) -> str:
     """Get the compass navigation guide for a module. Returns the OKF compass body."""
-    bundle = _bundle()
-    # Try to find a compass concept matching the module.
-    for cid in bundle.list_concepts(prefix="compass/"):
-        try:
-            c = bundle.read_concept(cid)
-            if module in (c.resource or "") or module in cid:
-                return f"# {c.title}\n\n{c.body}"
-        except Exception:
-            continue
-    return f"No compass file found for '{module}'. Generate with: cairn compass generate {module}"
+    concept = find_compass_concept(_bundle(), module)
+    if concept is None:
+        return f"No compass file found for '{module}'. Generate with: cairn compass generate {module}"
+    return f"# {concept.title}\n\n{concept.body}"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -50,18 +77,12 @@ def search_knowledge(query: str, type_filter: str = "", limit: int = 10, full_bo
                  'Compass' (module guides), 'Memory' (past decisions).
     full_body: True returns the full concept body; False returns title + description only.
     """
-    bundle = _bundle()
-    results = bundle.search(query, limit=limit)
-    if type_filter:
-        results = [c for c in results if c.type.startswith(type_filter)]
+    results = search_knowledge_data(query, type_filter=type_filter, limit=limit)
     if not results:
         label = f" {type_filter}" if type_filter else ""
         return f"No{label} results matching '{query}'."
     if full_body:
-        out = []
-        for c in results:
-            out.append(f"# {c.title}\n{c.body}")
-        return "\n\n---\n\n".join(out)
+        return _render_full_body(results)
     out = [f"{len(results)} results matching '{query}':"]
     for c in results:
         out.append(f"  {c.title} ({c.concept_id})")
@@ -107,9 +128,14 @@ def ask_compass(query: str, file_path: str = "") -> str:
         conn = _conn()
         loaded_compass_concept = None
         try:
-            # Compass whose resource overlaps the path.
+            # Compass whose resource overlaps the path; corrupt concepts are
+            # skipped (same guard as find_compass_concept) so one bad file
+            # can't fail the whole context load.
             for cid in bundle.list_concepts(prefix="compass/"):
-                c = bundle.read_concept(cid)
+                try:
+                    c = bundle.read_concept(cid)
+                except Exception:
+                    continue
                 if c.resource and (c.resource in file_path or file_path in c.resource):
                     out.append(f"\n# Compass: {c.title}\n{c.body}")
                     loaded_compass_concept = c

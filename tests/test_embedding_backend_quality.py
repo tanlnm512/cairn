@@ -75,13 +75,13 @@ class TestIsHashFallback:
         monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
         with mock.patch(
             "cairn.graph.embeddings._effective_backend", return_value="hash"
-        ), mock.patch("cairn.graph.embeddings._backend_name", return_value="local"):
+        ), mock.patch("cairn.graph.embeddings.backend_name", return_value="local"):
             assert emb.is_hash_fallback() is True
 
     def test_false_when_explicit_hash(self, monkeypatch):
         # User explicitly opted into hash -> not a *silent* fallback.
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
-        with mock.patch("cairn.graph.embeddings._backend_name", return_value="hash"):
+        with mock.patch("cairn.graph.embeddings.backend_name", return_value="hash"):
             assert emb.is_hash_fallback() is False
 
 
@@ -249,6 +249,60 @@ class TestFrozenBackendsContract:
         assert captured["authorization"] == "Bearer test-key"
         assert dim == 3
         assert len(blobs) == 1 and len(blobs[0]) == dim * 4
+
+    def test_embed_openai_rejects_malformed_envelope(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"<html>not json</html>"
+
+        monkeypatch.setattr(
+            "urllib.request.urlopen", lambda req, timeout=None: _FakeResponse()
+        )
+        with pytest.raises(RuntimeError, match="malformed response"):
+            emb._embed_openai(["hello"])
+
+    def test_embed_openai_rejects_short_vector_list(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"data": [{"index": 0, "embedding": [1.0, 0.0, 0.5]}]}
+                ).encode("utf-8")
+
+        monkeypatch.setattr(
+            "urllib.request.urlopen", lambda req, timeout=None: _FakeResponse()
+        )
+        with pytest.raises(RuntimeError, match="1 vectors for 2 inputs"):
+            emb._embed_openai(["hello", "world"])
+
+    def test_embed_fails_loudly_on_short_backend_list(self, monkeypatch):
+        """A backend returning fewer blobs than texts must raise, never let a
+        write-site zip truncate the batch silently."""
+
+        class _ShortBackend:
+            def embed(self, texts):
+                return [b"\x00\x00\x00\x00"], 1
+
+        monkeypatch.setattr(
+            emb, "resolve_embedding_backend", lambda name: _ShortBackend()
+        )
+        with pytest.raises(RuntimeError, match="1 vectors for 3 inputs"):
+            emb._embed(["a", "b", "c"])
 
 
 # ---------------------------------------------------------------------------

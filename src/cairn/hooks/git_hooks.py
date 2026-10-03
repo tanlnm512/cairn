@@ -50,11 +50,8 @@ def _render_post_commit(repo: str) -> str:
     return f'{shebang}\nexport CAIRN_HOME="{path}"\n{rest}'
 
 
-def install_hooks(repos: List[str], workspace: str, cairn_dir: str = "") -> List[str]:
+def install_hooks(repos: List[str], workspace: str) -> List[str]:
     """Install post-commit hooks in each repo. Returns list of installed repo names.
-
-    `cairn_dir` is accepted but unused: the hook invokes `cairn` (resolved on
-    PATH), which finds the store via workspace context.
 
     Raises ValueError if any repo name fails the shell-injection guard.
     """

@@ -14,7 +14,7 @@ import { request as httpRequest } from "node:http";
 export const SERVER_HOST = "127.0.0.1";
 export const SERVER_PORT = 8765;
 
-/** Frozen editor JSON contract (D-004); status is the shell's health-check target. */
+/** Frozen editor JSON contract; status is the shell's health-check target. */
 export const EDITOR_ENDPOINTS = {
   status: "/editor/status",
   symbol: "/editor/symbol",
@@ -66,21 +66,15 @@ export function parseIndexState(payload: unknown): IndexState {
 }
 
 /**
- * One GET against the local server: the parsed JSON body, or null on
- * timeout, transport failure, or a non-JSON body.
+ * One GET against the local server: the raw UTF-8 body, or null on
+ * timeout or transport failure (a non-JSON body is still a response).
  */
-export function getJson(host: string, port: number, path: string, timeoutMs: number): Promise<unknown | null> {
+function getText(host: string, port: number, path: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
     const request = httpRequest({ host, port, path, timeout: timeoutMs }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () => {
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-        } catch {
-          resolve(null);
-        }
-      });
+      response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
       response.on("error", () => resolve(null));
     });
     request.on("timeout", () => {
@@ -92,31 +86,32 @@ export function getJson(host: string, port: number, path: string, timeoutMs: num
   });
 }
 
+/**
+ * One GET against the local server: the parsed JSON body, or null on
+ * timeout, transport failure, or a non-JSON body.
+ */
+export function getJson(host: string, port: number, path: string, timeoutMs: number): Promise<unknown | null> {
+  return getText(host, port, path, timeoutMs).then((text) => {
+    if (text === null) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  });
+}
+
+/** Probe the status endpoint: null when nothing answered; a non-JSON answer still counts as answered. */
 function defaultProbe(): Promise<ProbeResult> {
-  return new Promise((resolve) => {
-    const request = httpRequest(
-      { host: SERVER_HOST, port: SERVER_PORT, path: EDITOR_ENDPOINTS.status, timeout: PROBE_TIMEOUT_MS },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.on("end", () => {
-          let index: IndexState = "unknown";
-          try {
-            index = parseIndexState(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-          } catch {
-            index = "unknown";
-          }
-          resolve({ index });
-        });
-        response.on("error", () => resolve(null));
-      },
-    );
-    request.on("timeout", () => {
-      request.destroy();
-      resolve(null);
-    });
-    request.on("error", () => resolve(null));
-    request.end();
+  return getText(SERVER_HOST, SERVER_PORT, EDITOR_ENDPOINTS.status, PROBE_TIMEOUT_MS).then((text) => {
+    if (text === null) return null;
+    let index: IndexState = "unknown";
+    try {
+      index = parseIndexState(JSON.parse(text));
+    } catch {
+      index = "unknown";
+    }
+    return { index };
   });
 }
 
@@ -273,7 +268,7 @@ export class ServerManager {
     notify?.();
   }
 
-  /** While served, keep probing the health endpoint so a stopped server degrades the state (FR-004). */
+  /** While served, keep probing the health endpoint so a stopped server degrades the state. */
   private armWatch(binding: Binding): void {
     binding.watchTimer = setInterval(() => {
       void this.probe(binding.root).then((probed) => {

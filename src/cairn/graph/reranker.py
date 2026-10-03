@@ -4,18 +4,16 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
 
-# The pair budget, pinned explicitly rather than
-# inherited from whatever the installed sentence-transformers resolves: a
-# bare CrossEncoder("BAAI/bge-reranker-base") may resolve a different
-# max_length depending on the installed model/tokenizer config, and a
-# silently changed effective window would shift every rerank score. The
-# bge-reranker-base model card lists 512 as the max.
+# Pair budget pinned explicitly (not inherited from the installed
+# tokenizer config) so the effective truncation window cannot silently
+# shift every rerank score.
 RERANK_MAX_LENGTH = 512
 
 # Special tokens the pair encoding spends outside the two text bodies
@@ -38,20 +36,22 @@ _CHUNK_SECTION_LABELS = (
     "Body:",
 )
 
-# Cache the loaded CrossEncoder so repeated calls within a process (e.g. one
-# long-lived MCP server) don't reload weights on every semantic_search call.
+# Loaded-CrossEncoder cache for long-lived processes; the lazy load is
+# reachable from concurrent search threads and must stay behind
+# _RERANKER_CACHE_LOCK (an unsynchronized load can double-load weights or
+# KeyError the eviction loser).
 _RERANKER_CACHE: dict = {}
+_RERANKER_CACHE_LOCK = threading.Lock()
 
 
 def _rerank_marker_path():
-    """Persistent marker file (<CAIRN_HOME>/rerank_enabled) recording that
-    `cairn download-reranker` succeeded and reranking should be auto-enabled.
+    """Marker file (<CAIRN_HOME>/rerank_enabled) recording that
+    `cairn download-reranker` succeeded and reranking should auto-enable.
 
-    A CLI process cannot export an env var into its parent shell, so successful
-    pre-download writes this marker and `rerank_enabled()` honors it as if
-    CAIRN_RERANK=1 had been set. Imported lazily so importing this module never
-    forces paths.CAIRN_HOME resolution (which would pin the home dir at import
-    time and break tests that relocate it).
+    A CLI process cannot export an env var into its parent shell, so
+    `rerank_enabled()` honors the marker as if CAIRN_RERANK=1 had been set.
+    CAIRN_HOME is imported lazily so importing this module never pins the
+    home dir at import time (tests relocate it).
     """
     from ..paths import CAIRN_HOME
     return CAIRN_HOME / "rerank_enabled"
@@ -120,12 +120,13 @@ def install_hint() -> str:
 def reranker_model_is_cached(model_name: Optional[str] = None) -> bool:
     """Whether the reranker's weights are present in the local HuggingFace cache."""
     try:
-        from huggingface_hub import try_to_load_from_cache
+        from huggingface_hub import _CACHED_NO_EXIST, try_to_load_from_cache
     except ImportError:
         return False
     m_name = model_name or current_rerank_model()
     # CrossEncoder models store config.json at the repo root like embedders.
-    return try_to_load_from_cache(m_name, "config.json") is not None
+    result = try_to_load_from_cache(m_name, "config.json")
+    return result is not None and result is not _CACHED_NO_EXIST
 
 
 def download_reranker_model(model_name: Optional[str] = None) -> bool:
@@ -181,31 +182,31 @@ def download_reranker_model(model_name: Optional[str] = None) -> bool:
 
 def _get_reranker():
     model_name = current_rerank_model()
-    if model_name not in _RERANKER_CACHE:
-        from sentence_transformers import CrossEncoder
+    model = _RERANKER_CACHE.get(model_name)
+    if model is None:
+        with _RERANKER_CACHE_LOCK:
+            model = _RERANKER_CACHE.get(model_name)
+            if model is None:
+                from sentence_transformers import CrossEncoder
 
-        # Single-model cache: a model-name change evicts the stale entry.
-        if _RERANKER_CACHE and next(iter(_RERANKER_CACHE)) != model_name:
-            _RERANKER_CACHE.clear()
-        # max_length pinned explicitly: relying on the implicit resolution
-        # means a sentence-transformers/config upgrade could silently change
-        # the truncation window and shift every rerank score with no code
-        # diff.
-        _RERANKER_CACHE[model_name] = CrossEncoder(
-            model_name, max_length=RERANK_MAX_LENGTH
-        )
-    return _RERANKER_CACHE[model_name]
+                # Single-model cache: a model-name change evicts the stale entry.
+                if _RERANKER_CACHE and next(iter(_RERANKER_CACHE)) != model_name:
+                    _RERANKER_CACHE.clear()
+                # max_length pinned explicitly: relying on the implicit
+                # resolution means a sentence-transformers/config upgrade
+                # could silently change the truncation window and shift
+                # every rerank score with no code diff.
+                model = CrossEncoder(model_name, max_length=RERANK_MAX_LENGTH)
+                _RERANKER_CACHE[model_name] = model
+    return model
 
 
 def _sigmoid(x: float) -> float:
     """Numerically stable logistic function: unbounded logit -> [0, 1].
 
-    bge-reranker raw scores are unbounded logits (model card; research RQ4),
-    so any thresholding/interpretation must go through this map. Ranking is
-    unchanged (sigmoid is monotone) -- it exists so future score cutoffs and
-    score distribution analysis see calibrated probabilities, never raw
-    logits. The naive 1/(1+exp(-x)) overflows for x < ~-709; the two-branch
-    form below is exact for all finite floats.
+    Raw reranker scores are unbounded logits; thresholding must go through
+    this map. The naive 1/(1+exp(-x)) overflows for x < ~-709; the
+    two-branch form is exact for all finite floats.
     """
     if x >= 0.0:
         return 1.0 / (1.0 + math.exp(-x))
@@ -374,36 +375,16 @@ def rerank(
     """Rerank a candidate shortlist; returns (results, reranked).
 
     ``candidates`` must each have a ``"chunk"`` key. Non-fatal on any failure
-    (disabled, uninstalled, model not cached, or a `predict()` exception): falls
-    back to ``candidates[:limit]`` unchanged with ``reranked=False`` — i.e. the
-    hybrid (vector + BM25 + RRF) order is returned as-is. On success, each
-    returned dict gains a ``"rerank_score"`` float and the list is truncated
-    to ``limit`` by that score, descending.
-
-    Pair format: ``structured=True`` builds the
-    candidate side as importance-ordered structured text (kind + qualified
-    name, file path, signature, docstring, then the stored chunk — see
-    `_structured_candidate_text`), pre-truncated with query priority to
-    `RERANK_MAX_LENGTH` so the query always reaches the cross-encoder
-    verbatim and only the candidate's tail loses tokens.
-
-    Measured on identical production 50-candidate pools:
-    structured buys
-    +0.7pp recall but costs -10.4pp MRR and ~10% stage latency vs the
-    legacy flat format — the default is therefore FLAT (``structured=
-    False``); the structured format stays reachable for future work and
-    re-measurement under other recipe/gate combinations.
-
-    Scores: ``rerank_score`` stays the RAW logit (bge-reranker outputs are
-    unbounded — ordering only, never threshold it directly); each result
-    additionally carries ``rerank_score_norm``, the sigmoid-mapped [0, 1]
-    value, for any future thresholding and score distribution analysis.
-    Nothing in semantic.py's confidence gate consumes either field (the
-    gate reads pre-rerank fused RRF scores), so both are purely additive.
-
-    The model-cache check is proactive (before `_get_reranker`) so a missing
-    or evicted model logs once at info and returns the hybrid fallback, rather
-    than attempting a network download mid-query or crashing.
+    (disabled, uninstalled, model not cached, or a `predict()` exception):
+    returns ``candidates[:limit]`` unchanged with ``reranked=False`` — i.e.
+    the hybrid (vector + BM25 + RRF) order as-is. On success, each returned
+    dict gains a raw-logit ``"rerank_score"`` (never threshold it directly)
+    plus sigmoid-mapped ``"rerank_score_norm"`` in [0, 1], and the list is
+    truncated to ``limit`` by score, descending. ``structured=True`` builds
+    the candidate pair side as importance-ordered structured text
+    (see `_structured_candidate_text`), pre-truncated with query priority to
+    ``RERANK_MAX_LENGTH`` so the query always reaches the cross-encoder
+    verbatim.
     """
     if not candidates:
         return candidates[:limit], False

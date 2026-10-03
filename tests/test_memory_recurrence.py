@@ -88,6 +88,53 @@ def test_note_failure_signature_returns_count_before_this_occurrence(tmp_path):
         conn.close()
 
 
+def test_note_failure_signature_concurrent_recorders_no_integrity_error(tmp_path):
+    """Concurrent recorders on one sig serialize on the PRIMARY KEY upsert
+    instead of the loser aborting with IntegrityError."""
+    import threading
+
+    from cairn.graph.schema import get_db
+    from cairn.memory.recurrence import note_failure_signature
+
+    threads = 8
+    barrier = threading.Barrier(threads)
+    results: list = []
+    errors: list = []
+    lock = threading.Lock()
+
+    def record():
+        conn = get_db(str(tmp_path / "graph.db"))
+        try:
+            barrier.wait(timeout=5)
+            prior = note_failure_signature(conn, "fedcba9876543210", "Bash")
+            conn.commit()
+            with lock:
+                results.append(prior)
+        except Exception as e:  # noqa: BLE001 - the pin is "no exception"
+            with lock:
+                errors.append(e)
+        finally:
+            conn.close()
+
+    workers = [threading.Thread(target=record) for _ in range(threads)]
+    for t in workers:
+        t.start()
+    for t in workers:
+        t.join(timeout=15)
+
+    assert errors == []
+    assert sorted(results) == list(range(threads))
+    conn = get_db(str(tmp_path / "graph.db"))
+    try:
+        row = conn.execute(
+            "SELECT occurrences FROM memory_failure_signatures WHERE sig = ?",
+            ("fedcba9876543210",),
+        ).fetchone()
+        assert row[0] == threads
+    finally:
+        conn.close()
+
+
 # --------------------------------------------------------------------------
 # `memory record --recurrence-key` capture gate
 # --------------------------------------------------------------------------

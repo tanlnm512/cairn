@@ -66,19 +66,11 @@ PY_VER="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.versio
 ok "Python $PY_VER ($PYTHON)"
 
 # ─── Step 1: Clean stale build artifacts ───────────────────────────────────
-# setuptools' build_py does mtime-based incremental copying into build/lib,
-# not content hashing. A leftover build/ (or *.egg-info) from a previous
-# install can get silently repackaged into the new wheel even with
-# `uv tool install --force`, keeping old bugs alive after src/ is already
-# fixed (see 2026-07-21/22 incident: mcp_server tool schemas stayed broken
-# for a day after the fix landed, purely because of a stale build/ dir).
-#
-# 2026-07-28 follow-up: `uv tool install --force .` reused a stale build even
-# with build/dist/*.egg-info absent — uv's own package cache also needs
-# clearing, or the old wheel gets served again. `uv cache clean` is scoped to
-# this package (not a full cache wipe) so repeat installs stay cheap.
-# Always clean before building — this is cheap and has no downside, so it
-# is unconditional rather than gated behind a flag.
+# setuptools' build_py copies into build/lib by mtime, not content hash:
+# a stale build/ or *.egg-info can be repackaged into the new wheel even
+# with `uv tool install --force`. uv's package cache must also be cleared
+# (`uv cache clean cairn-intel`, scoped to this package) or the old wheel
+# is served again. Unconditional — cheap and has no downside.
 info "Cleaning stale build artifacts..."
 rm -rf "$PROJECT_DIR"/build "$PROJECT_DIR"/dist "$PROJECT_DIR"/*.egg-info
 ok "Removed build/, dist/, *.egg-info"
@@ -144,14 +136,11 @@ ok "cairn --version: $CAIRN_VERSION"
 # `cairn embed --install-deps` (ensure_semantic_deps in
 # src/cairn/graph/embeddings.py) is the canonical installer: it resolves the
 # shared lib dir (~/.cairn/lib by default, honoring CAIRN_HOME/CAIRN_LIB) and
-# installs sentence-transformers/numpy/sqlite-vec there, NOT into cairn's own
-# venv -- deliberate, since the deps are heavy (~hundreds of MB via torch)
-# and would be wiped on every `uv tool install --force`. Delegate to it here
-# instead of re-deriving the same lib-dir resolution and pip/uv fallback
-# logic in bash.
+# installs sentence-transformers/numpy/sqlite-vec there — not into cairn's own
+# venv, which is wiped on every `uv tool install --force`.
 if $EXTRA_SEMANTIC; then
   if $USE_VENV && [[ -f "$PROJECT_DIR/.venv/bin/pip" ]]; then
-    # venv mode: the venv IS the runtime, so install there directly instead
+    # venv mode: the venv is the runtime, so install there directly instead
     # of the shared lib dir `cairn embed --install-deps` targets.
     info "Installing semantic search extras (sentence-transformers + numpy + sqlite-vec)..."
     "$PROJECT_DIR/.venv/bin/pip" install "sentence-transformers>=3.0" "numpy>=1.24" "sqlite-vec>=0.1.0" >/dev/null 2>&1

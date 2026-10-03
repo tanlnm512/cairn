@@ -19,7 +19,7 @@ def _exit_backend_unavailable() -> None:
     from . import display
     from cairn.graph import embeddings as emb
 
-    if emb._backend_name() not in emb._SERVER_FAMILY:
+    if emb.backend_name() not in emb.SERVER_FAMILY:
         display.error("Semantic dependencies unavailable")
         display.dim(emb.install_hint())
         display.dim("Run `cairn embed --install-deps` to auto-install.")
@@ -217,7 +217,7 @@ def embed(
         # The ladder, not the availability probe, is the evaluator here: the
         # configured model is typically already missing from /v1/models (the
         # case adoption exists for), so a failed probe must not exit early.
-        if emb._backend_name() not in emb._SERVER_FAMILY:
+        if emb.backend_name() not in emb.SERVER_FAMILY:
             display.error(
                 "--adopt-server-model requires a server-family embedding "
                 "backend (server, omlx, or ollama)"

@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from ..graph.dataflow import closure_available
-from ..graph.repo_map import _projection
+from ..graph.repo_map import projection
 
 CLOSURE_TIER = "closure"
 DEGREE_TIER = "degree"
@@ -60,7 +60,7 @@ def _rank_from_degrees(conn: sqlite3.Connection, candidates: list[str]) -> list[
     """Order candidates by direct in/out degree from the build_repo_map rows."""
     wanted = set(candidates)
     degrees: dict[str, int] = {}
-    for row in _projection(conn).symbols:
+    for row in projection(conn).symbols:
         if row.qualified_name in wanted:
             degrees[row.qualified_name] = (
                 degrees.get(row.qualified_name, 0) + row.incoming + row.outgoing

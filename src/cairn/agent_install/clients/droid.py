@@ -47,44 +47,50 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
 
     # MCP: prefer `droid mcp add` if the CLI is available; a failed CLI add
     # falls back to the .factory/mcp.json file so the registration lands
-    # either way (droid reads both; uninstall strips both).
-    if shutil.which("droid") and not dry_run:
-        if transport == "sse":
-            url = default_sse_url(sse_url)
-            argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
-        else:
-            # Documented stdio shape: the full server command arrives as ONE
-            # argument (droid splits it), so server-command flags are never
-            # parsed as droid options. `--env` entries persist into the
-            # registration; a non-default home must ride along or the
-            # spawned server resolves the default store.
-            argv = ["droid", "mcp", "add", "cairn",
-                    " ".join([*resolve_cg_command(), "serve"]),
-                    "--type", "stdio"]
-            for key, value in cairn_home_env().items():
-                argv += ["--env", f"{key}={value}"]
-        registered = False
-        try:
-            proc = subprocess.run(argv, capture_output=True, timeout=10, check=False,
-                                  text=True, errors="replace")
-            registered = proc.returncode == 0
-            if registered:
-                res.notes.append("Registered MCP via `droid mcp add`.")
-            else:
-                err = (proc.stderr or proc.stdout or "").strip()
-                res.notes.append(
-                    f"WARNING: `droid mcp add` exited {proc.returncode}: "
-                    f"{err[:200]}.")
-        except (subprocess.SubprocessError, OSError) as e:
-            res.notes.append(f"WARNING: `droid mcp add` failed ({e}).")
-        if not registered:
-            _merge_json_file(ws / ".factory" / "mcp.json",
-                             mcp_config_json(transport, sse_url), force, res,
-                             dry_run=False)
+    # either way (droid reads both; uninstall strips both). Dry-run reports
+    # the registration a real run would perform instead of skipping it.
+    if shutil.which("droid"):
+        if dry_run:
             res.notes.append(
-                "Wrote .factory/mcp.json so the registration is present on "
-                "the next droid run.")
-    elif not shutil.which("droid"):
+                "Would register MCP via `droid mcp add` "
+                "(falls back to .factory/mcp.json on failure).")
+        else:
+            if transport == "sse":
+                url = default_sse_url(sse_url)
+                argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
+            else:
+                # Documented stdio shape: the full server command arrives as ONE
+                # argument (droid splits it), so server-command flags are never
+                # parsed as droid options. `--env` entries persist into the
+                # registration; a non-default home must ride along or the
+                # spawned server resolves the default store.
+                argv = ["droid", "mcp", "add", "cairn",
+                        " ".join([*resolve_cg_command(), "serve"]),
+                        "--type", "stdio"]
+                for key, value in cairn_home_env().items():
+                    argv += ["--env", f"{key}={value}"]
+            registered = False
+            try:
+                proc = subprocess.run(argv, capture_output=True, timeout=10, check=False,
+                                      text=True, errors="replace")
+                registered = proc.returncode == 0
+                if registered:
+                    res.notes.append("Registered MCP via `droid mcp add`.")
+                else:
+                    err = (proc.stderr or proc.stdout or "").strip()
+                    res.notes.append(
+                        f"WARNING: `droid mcp add` exited {proc.returncode}: "
+                        f"{err[:200]}.")
+            except (subprocess.SubprocessError, OSError) as e:
+                res.notes.append(f"WARNING: `droid mcp add` failed ({e}).")
+            if not registered:
+                _merge_json_file(ws / ".factory" / "mcp.json",
+                                 mcp_config_json(transport, sse_url), force, res,
+                                 dry_run=False)
+                res.notes.append(
+                    "Wrote .factory/mcp.json so the registration is present on "
+                    "the next droid run.")
+    else:
         # No droid CLI: write a .factory/mcp.json so it's present when droid is installed.
         _merge_json_file(ws / ".factory" / "mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
         res.notes.append("droid CLI not found; wrote .factory/mcp.json (registers on next droid run).")

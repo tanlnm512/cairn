@@ -191,10 +191,9 @@ case "$JOB" in
 
   bench)
     # ci.yml: bench job -- fixed corpus, hash backend, advisory throughout.
-    # Mirrors the T016 rewiring: compare against the COMMITTED DS-v1
-    # baseline (the old rolling bench-baseline.json cache dance is gone;
-    # bench_compare.py still honors an explicit bench-baseline.json as a
-    # local override, and falls back to the committed artifact without it).
+    # Compare against the COMMITTED DS-v1 baseline; bench_compare.py honors
+    # an explicit bench-baseline.json as a local override and falls back to
+    # the committed artifact without it.
     install_extras ""
     log "cairn bench vs committed DS-v1 (CI: Run bench -- advisory)"
     cairn bench --suite perf --embed-backend hash --repeats 3 \

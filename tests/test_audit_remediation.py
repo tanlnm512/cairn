@@ -366,3 +366,39 @@ def test_p10_swift_modifiers_filtered(tmp_path):
         assert 'final' in cls.modifiers
     finally:
         os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# C35: ask_compass's file-path compass loop skips corrupt concepts instead of
+# failing the whole tool (get_compass already had this guard).
+# ---------------------------------------------------------------------------
+
+def test_c35_ask_compass_survives_corrupt_compass_concept(tmp_path, monkeypatch):
+    """One unreadable compass concept degrades to a context answer, not a raise."""
+    from cairn.graph.schema import get_db
+
+    db = tmp_path / "c35.db"
+    get_db(str(db)).close()
+    monkeypatch.setenv("CAIRN_DB", str(db))
+    monkeypatch.setenv("CAIRN_KNOWLEDGE", str(tmp_path / "knowledge"))
+
+    import cairn.okf.bundle as bundle_mod
+
+    real_read = bundle_mod.OKFBundle.read_concept
+    real_list = bundle_mod.OKFBundle.list_concepts
+
+    def flaky_read(self, cid):
+        if str(cid).endswith("compass/broken"):
+            raise ValueError("corrupt concept file")
+        return real_read(self, cid)
+
+    def list_with_broken(self, prefix=""):
+        return ["compass/broken", *real_list(self, prefix)]
+
+    monkeypatch.setattr(bundle_mod.OKFBundle, "read_concept", flaky_read)
+    monkeypatch.setattr(bundle_mod.OKFBundle, "list_concepts", list_with_broken)
+
+    from cairn.mcp_server.tools_compass import ask_compass
+
+    out = ask_compass(query="", file_path="src/mod/ledger/engine.py")
+    assert "Context for src/mod/ledger/engine.py" in out

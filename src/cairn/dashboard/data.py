@@ -28,7 +28,7 @@ from cairn.graph.ann_index import (
     index_row_count,
 )
 from cairn.graph.embeddings import (
-    _backend_name,
+    backend_name,
     current_model,
     embed_count,
     is_hash_fallback,
@@ -38,6 +38,7 @@ from cairn.graph.schema import get_db
 from cairn.knowledge.store import normalize_doc_id, resolve_knowledge_doc
 from cairn.llm.tasks import list_tasks
 from cairn.okf.bundle import OKFBundle
+from cairn.wiki.manifest import split_page_key
 from cairn.paths import resolve_store
 from cairn.telemetry.sink import retention_policy
 from cairn.utils.git import get_repo_head
@@ -371,7 +372,7 @@ def symbol_suggest(
     return {"matches": matches, "truncated": len(fetched) > limit}
 
 
-def _parse_ts(value) -> Optional[datetime]:
+def parse_ts(value) -> Optional[datetime]:
     """Parse an ISO-8601 timestamp (concept or ``build_runs``) to an aware
     UTC datetime, or None when missing/unparseable."""
     if not value:
@@ -383,7 +384,7 @@ def _parse_ts(value) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _age_str(started_at) -> Optional[str]:
@@ -392,7 +393,7 @@ def _age_str(started_at) -> Optional[str]:
     Formatted exactly as ``cairn doctor``'s freshness check renders it, so
     the panel and doctor read identically on the same database.
     """
-    dt = _parse_ts(started_at)
+    dt = parse_ts(started_at)
     if dt is None:
         return None
     secs = int((datetime.now(timezone.utc) - dt).total_seconds())
@@ -588,7 +589,7 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         # Precedence via the embeddings resolver (env > config file >
         # "local"), not a bare env read — data.py already imports the
         # embeddings module at load, so this adds no import cost here.
-        "embed_backend": _backend_name(),
+        "embed_backend": backend_name(),
         "hash_fallback": probes.get("hash_fallback"),
         "ann_configured": configured_backend(),
         "ann_backend_enabled": probes.get("ann_backend_enabled"),
@@ -724,7 +725,7 @@ def get_recent_memories(
                 "timestamp": concept.timestamp or "",
             }
         )
-    entries.sort(key=lambda e: _parse_ts(e["timestamp"]) or _EPOCH, reverse=True)
+    entries.sort(key=lambda e: parse_ts(e["timestamp"]) or EPOCH, reverse=True)
     return entries[:limit]
 
 
@@ -1305,12 +1306,6 @@ def get_knowledge_graph_inspect(
 HISTORY_PAGE_SIZE = 50
 
 
-def _split_page_key(key: str) -> Tuple[str, str]:
-    """A manifest key ``"{repo}/{page_id}"`` -> ``(repo, page_id)``."""
-    repo, _, page_id = str(key).partition("/")
-    return repo, page_id
-
-
 def _recorded_sha(concept: Optional["OKFConcept"]) -> Optional[str]:
     """The page content's provenance sha — the concept extension alone. A
     page with no content has no sha: the plan kind keeps no provenance, so
@@ -1338,7 +1333,7 @@ def _wiki_rows(
     chains = page_chains(bundle)
     heads: Dict[str, Optional[str]] = {}
     for key, row in load_manifest(knowledge_dir)["pages"].items():
-        key_repo, key_page = _split_page_key(key)
+        key_repo, key_page = split_page_key(key)
         if repo and key_repo != repo:
             continue
         if page_id and key_page != page_id:

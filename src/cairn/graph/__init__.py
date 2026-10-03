@@ -7,8 +7,8 @@ from .traversal import find_definition, get_callers, get_callees, impact_analysi
 
 
 def __getattr__(name):
-    # Lazy: pull semantic_search only when asked for, so importing
-    # src.graph for structural queries doesn't drag in the embeddings stack.
+    # Lazy: pull semantic_search only when asked for, so structural-only
+    # consumers of this package don't drag in the embeddings stack.
     if name == "semantic_search":
         from .semantic import semantic_search
 

@@ -19,7 +19,8 @@ from cairn.compass.generator import (
     ModuleResolutionError,
     _cross_module_deps,
     _infer_repo,
-    _resolve_module,
+    _rank_key_files,
+    resolve_module,
     _symbols_in_module,
     generate_compass,
     generate_compass_with_llm,
@@ -93,7 +94,7 @@ class TestModuleResolution:
 
     def test_repo_prefixed_module_infers_and_normalizes(self, conn):
         # `repo/module` resolves to (repo, repo-relative module).
-        assert _resolve_module(conn, "polaris-app/app", None) == ("polaris-app", "app")
+        assert resolve_module(conn, "polaris-app/app", None) == ("polaris-app", "app")
 
     def test_substring_path_not_matched(self, conn):
         # `app` must not match `trapper/decoy.py`.
@@ -160,6 +161,37 @@ def test_no_match_module_reports_empty_not_cross_repo(fresh_db, tmp_path):
     concept = generate_compass("typo", fresh_db, OKFBundle(str(tmp_path / "k")))
     assert "(no symbols detected in this module)" in concept.body
     assert concept.tags[0] == "solo"
+    # A small module with no heuristics still gets the empty-section
+    # fallback under Build-Failure Patterns (reachable per section).
+    _row(fresh_db, "files", id="sf2", repo_id="solo", path="app/extra.py", language="python")
+    _row(fresh_db, "symbols", id="ss2", file_id="sf2", name="extra_fn",
+         qualified_name="solo.extra_fn", kind="function", line_start=1, line_end=5)
+    fresh_db.commit()
+    small = generate_compass("app", fresh_db, OKFBundle(str(tmp_path / "k")))
+    section = small.body.split("# Build-Failure Patterns", 1)[1].split("#", 1)[0]
+    assert "(run the critic pass with an LLM" in section
+
+
+class TestRankKeyFiles:
+    def test_counts_edges_to_the_files_symbols_only(self, conn):
+        """A same-named symbol in another repo carries 5 incoming edges;
+        the module's own agent_run carries only the 2 seeded ones. The
+        score must reflect the module's symbol ids, not the name store-wide."""
+        for i in range(5):
+            _row(conn, "symbols", id=f"x{i}", file_id="f4", name="agent_run",
+                 qualified_name=f"adk.x{i}", kind="function", line_start=1, line_end=2)
+            _row(conn, "edges", id=f"xe{i}", source_id=f"x{i}", target_id=f"x{i}",
+                 target_name="agent_run", kind="call", line=1, column=0,
+                 resolution="exact")
+        _row(conn, "edges", id="e3", source_id="s4", target_id="s1",
+             target_name="agent_run", kind="call", line=7, column=0, resolution="exact")
+        _row(conn, "edges", id="e4", source_id="s2", target_id="s1",
+             target_name="agent_run", kind="call", line=8, column=0, resolution="exact")
+        conn.commit()
+        syms = _symbols_in_module(conn, "app", "polaris-app")
+        ranked = _rank_key_files(conn, syms, top=5)
+        agent = next(f for f in ranked if f["path"] == "app/adk/agent.py")
+        assert agent["score"] == 2
 
 
 class TestCrossModuleDeps:

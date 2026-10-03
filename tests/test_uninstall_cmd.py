@@ -10,6 +10,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from cairn.cli import main
+from cairn.paths import store_key
 
 
 def test_uninstall_help_lists_steps():
@@ -45,21 +46,23 @@ def test_dry_run_deletes_nothing_when_store_absent():
 
 
 def test_dry_run_targets_store_when_present():
-    """A home with a store subdir is detected and reported (not deleted)."""
+    """The resolved workspace's own store is detected and reported (not deleted)."""
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp) / "ws"
+        ws.mkdir()
         home = Path(tmp) / "fake_home"
-        store = home / "deadbeefdeadbeef"  # any 16-hex key
+        store = home / store_key(ws.resolve())
         (store / ".knowledge").mkdir(parents=True)
         (store / ".kg").write_bytes(b"\x00")  # a fake DB file
 
         result = runner.invoke(
             main,
-            ["uninstall", "--graph-only", "--dry-run", "-y"],
+            ["uninstall", "--graph-only", "--dry-run", "-y", "--workspace", str(ws)],
             env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0
-        assert str(home) in result.output
+        assert str(store) in result.output
         assert "would: rm -rf" in result.output
         # Dry-run must not have deleted anything.
         assert store.exists()
@@ -67,17 +70,19 @@ def test_dry_run_targets_store_when_present():
 
 
 def test_non_dry_run_removes_store():
-    """Without --dry-run, the store is actually removed."""
+    """Without --dry-run, the workspace's own store is actually removed."""
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp) / "ws"
+        ws.mkdir()
         home = Path(tmp) / "fake_home"
-        store = home / "cafef00dcafef00d"
+        store = home / store_key(ws.resolve())
         (store / ".knowledge").mkdir(parents=True)
         (store / ".kg").write_bytes(b"\x00")
 
         result = runner.invoke(
             main,
-            ["uninstall", "--graph-only", "-y"],
+            ["uninstall", "--graph-only", "-y", "--workspace", str(ws)],
             env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0

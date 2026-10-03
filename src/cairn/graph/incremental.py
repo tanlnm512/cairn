@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ def reindex_paths(
     """Re-index a set of absolute file paths. Handles repo resolution, deletion,
     and resolver re-run. Returns {'reindexed': n, 'deleted': m,
     'embedded_symbols': k, 'deferred_embeds': d, 'errors': [...]}.
+    'deleted' also counts files dropped because their parser is unavailable.
 
     Idempotent and safe to call from the watcher thread (as long as the watcher
     opens its own connection).
@@ -42,6 +44,8 @@ def reindex_paths(
     embedded_symbols = 0
     deferred_embeds = 0
     errors: list[str] = []
+    # Per-call parser-availability memo (one registry probe per language).
+    _lang_available: dict[str, bool] = {}
 
     # Group paths by repo for batched resolver re-run.
     repo_edges_by_file: dict[str, dict[str, list]] = {}
@@ -60,18 +64,10 @@ def reindex_paths(
 
         cur = conn.cursor()
         # files.path is stored as REPO-RELATIVE (the portable-path contract);
-        # reindex_paths receives ABSOLUTE paths. Primary lookup: repo-relative,
-        # scoped to the inferred repo (path is only unique per (repo_id, path)).
-        # Fallback: DBs not yet rebuilt store absolute paths.
-        row = cur.execute(
-            "SELECT id, repo_id, path FROM files WHERE path = ? AND repo_id = ?",
-            (rel_to_repo, repo),
-        ).fetchone()
-        if row is None:
-            row = cur.execute(
-                "SELECT id, repo_id, path FROM files WHERE path = ? AND repo_id = ?",
-                (abs_path, repo),
-            ).fetchone()
+        # reindex_paths receives ABSOLUTE paths. Shared lookup: repo-relative
+        # primary scoped to the inferred repo, absolute fallback for DBs not
+        # yet rebuilt (path is only unique per (repo_id, path)).
+        row = _find_tracked_file_row(cur, workspace, abs_path)
         # Use the STORED repo_id for downstream inserts so FK constraints on
         # files.repo_id -> repos.id hold (the inferred 'repo' may not exist in
         # repos at all). If no existing row, keep the inferred repo but ensure
@@ -202,12 +198,42 @@ def reindex_paths(
                 continue
             language = resolve_file_language(suffix, abs_path)
 
-            file_hash = file_sha256(Path(abs_path))
             from .builder import insert_parsed_file
-            parser = builder.get_parser(language)
-            if not parser:
+            # Parser unavailability is probed through the registry (not the
+            # factory) because get_parser RAISES for a missing grammar wheel;
+            # the drop arm below must be reachable, not bypassed.
+            from ..parsers._registry import is_language_available
+
+            available = _lang_available.get(language)
+            if available is None:
+                available = _lang_available[language] = is_language_available(
+                    language
+                )
+            parser = builder.get_parser(language) if available else None
+            if parser is None:
+                # Drop the file's rows: the graph converges to fresh-build
+                # state, which skips unavailable-language files. Counted even
+                # for never-indexed files so strict refresh's
+                # repaired==len(drifted) holds; pending_sync is cleared so the
+                # staleness banner settles. The scanner re-detects the file
+                # once the grammar returns.
+                try:
+                    conn.execute(
+                        "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                        (rel_to_repo, abs_path),
+                    )
+                except sqlite3.OperationalError as e:
+                    note_contention("incremental.pending_sync_clear", error=e)
+                    logger.debug("pending_sync table missing", exc_info=True)
                 conn.execute("COMMIT")
+                deleted += 1
+                if file_id is not None and deleted_names:
+                    repo_changed_target_names.setdefault(
+                        stored_repo, set()
+                    ).update(deleted_names)
                 continue
+
+            file_hash = file_sha256(Path(abs_path))
 
             pf = parser.parse(abs_path)
             name_to_symbol_ids: dict = {}
@@ -228,6 +254,30 @@ def reindex_paths(
                 logger.debug("pending_sync table missing", exc_info=True)
                 pass
             conn.execute("COMMIT")
+        except Exception as e:
+            # Roll back the whole delete+reinsert so a failed re-parse leaves
+            # the old rows intact rather than a half-deleted gap.
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            import traceback
+            # Bound here, not in the parse section, so a failure raised
+            # before that import -- e.g. the delete leg -- surfaces as itself.
+            from .builder import insert_parse_error
+            # insert_parse_error opens its own implicit transaction; safe after
+            # the ROLLBACK above.
+            try:
+                insert_parse_error(cur, stored_repo, rel_to_repo, str(e), traceback.format_exc())
+                conn.commit()
+            except sqlite3.Error:
+                logger.debug("failed to record parse error", exc_info=True)
+            errors.append(f"{abs_path}: {e}")
+            continue
+
+        # Post-COMMIT embed leg: the file is durable here, so a failure in
+        # this block defers the embeds and is never a parse failure.
+        try:
             # embed_symbols self-commits its batches: keep it after the COMMIT
             # above or its commit would defeat the rollback on re-parse
             # failure. A closed gate or a failing embed defers, never fails,
@@ -279,25 +329,17 @@ def reindex_paths(
             changed_names = set(deleted_names) | set(name_to_symbol_ids.keys())
             if changed_names:
                 repo_changed_target_names.setdefault(stored_repo, set()).update(changed_names)
-        except Exception as e:
-            # Roll back the whole delete+reinsert so a failed re-parse leaves
-            # the old rows intact rather than a half-deleted gap.
+        except Exception:
+            logger.debug("post-commit embed leg failed; deferring", exc_info=True)
+            deferred_embeds += sum(
+                len(entries) for entries in name_to_symbol_ids.values()
+            )
+            # Drop partially buffered writes so an open transaction cannot
+            # break the next file leg's BEGIN.
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except sqlite3.Error:
                 pass
-            import traceback
-            # Bound here, not in the parse section, so a failure raised
-            # before that import -- e.g. the delete leg -- surfaces as itself.
-            from .builder import insert_parse_error
-            # insert_parse_error opens its own implicit transaction; safe after
-            # the ROLLBACK above.
-            try:
-                insert_parse_error(cur, stored_repo, rel_to_repo, str(e), traceback.format_exc())
-                conn.commit()
-            except sqlite3.Error:
-                logger.debug("failed to record parse error", exc_info=True)
-            errors.append(f"{abs_path}: {e}")
 
     # Run resolver per repo (batched): re-resolves the edges of the files that
     # were just re-parsed.
@@ -484,17 +526,13 @@ def _repo_relative_path(workspace: str, abs_path: str) -> tuple[str, str] | None
     repo = scanner_mod.infer_repo_for_path(abs_path, workspace)
     if not repo:
         return None
-    repo_path = str(scanner_mod.resolve_repo_path(workspace, repo))
+    repo_path = os.path.normpath(str(scanner_mod.resolve_repo_path(workspace, repo)))
+    abs_norm = os.path.normpath(abs_path)
     try:
-        Path(abs_path).relative_to(repo_path)
+        rel = Path(abs_norm).relative_to(repo_path)
     except ValueError:
         return None
-    rel_to_repo = (
-        str(Path(abs_path).relative_to(repo_path))
-        if abs_path.startswith(repo_path)
-        else Path(abs_path).name
-    )
-    return repo, rel_to_repo
+    return repo, str(rel)
 
 
 def _find_tracked_file_row(cur, workspace: str, abs_path: str):
@@ -874,31 +912,3 @@ def _reindex_file(
     # Derive workspace from repo_path.parent (multi-repo) or use explicit value.
     effective_ws = workspace or str(repo_path.parent)
     reindex_paths(conn, effective_ws, [abs_path])
-
-
-def incremental_via_rebuild(
-    repo: Optional[str] = None,
-    workspace: str = scanner_mod.DEFAULT_WORKSPACE,
-    db_path: Optional[str] = None,
-) -> dict:
-    """Pragmatic incremental: rebuild only the repo(s) that changed.
-
-    Detects which repos have uncommitted changes and rebuilds just those --
-    faster than a full rebuild, and reuses the tested builder path.
-    """
-    repos_all = [
-        scanner_mod.repository_id(r)
-        for r in scanner_mod.discover_repos(workspace)
-    ]
-    if repo:
-        target_repos = [repo]
-    else:
-        target_repos = [
-            r for r in repos_all
-            if _changed_source_files(scanner_mod.resolve_repo_path(workspace, r))
-        ]
-    if not target_repos:
-        return {"repos_rebuilt": 0, "msg": "no changes detected"}
-    for r in target_repos:
-        builder.build_graph(workspace=workspace, repo_filter=r, db_path=db_path)
-    return {"repos_rebuilt": target_repos}

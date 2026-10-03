@@ -197,6 +197,57 @@ def test_no_duplicate_ids_after_merge(fresh_db):
 
 
 # ---------------------------------------------------------------------------
+# LIKE fallback: escape/wrap order (underscore patterns stay substring).
+# ---------------------------------------------------------------------------
+
+
+def _seed_repo_map_symbol(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """One underscored symbol: build_repo_map."""
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('test', 'test', '/tmp/test')")
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (1, 'test', '/tmp/test/Map.kt', 'kotlin')"
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+        "VALUES (1, 1, 'build_repo_map', 'function', 'map.build_repo_map', 1, 10)"
+    )
+    conn.commit()
+    return conn
+
+
+def test_like_fallback_underscore_pattern_is_substring(fresh_db):
+    """The LIKE path must substring-match underscored patterns: the escaped
+    literal ``_`` may not suppress the ``%...%`` wrap (exact-match degradation)."""
+    from cairn.graph.lexical import _search_like
+
+    _seed_repo_map_symbol(fresh_db)
+    names = {r["name"] for r in _search_like(fresh_db, "repo_map", None, 100)}
+    assert "build_repo_map" in names
+
+
+def test_like_fallback_underscore_wildcard_mix_still_substrings(fresh_db):
+    """``*`` wildcards and escaped literal underscores compose correctly."""
+    from cairn.graph.lexical import _search_like
+
+    _seed_repo_map_symbol(fresh_db)
+    names = {r["name"] for r in _search_like(fresh_db, "*repo_map*", None, 100)}
+    assert "build_repo_map" in names
+
+
+def test_search_symbols_underscore_pattern_still_finds_via_fts(fresh_db):
+    """search_symbols("repo_map") still returns build_repo_map (FTS path)."""
+    from cairn.graph.queries import search_symbols
+
+    conn = _seed_repo_map_symbol(fresh_db)
+    try:
+        conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
+    except sqlite3.OperationalError:
+        pass  # FTS5 not available in this build
+    names = {r["name"] for r in search_symbols(conn, "repo_map")}
+    assert "build_repo_map" in names
+
+
+# ---------------------------------------------------------------------------
 # Term mode: search_symbols_terms / _terms_to_fts.
 #
 # The OR-of-quoted-prefix path for enriched sentence queries. The contract

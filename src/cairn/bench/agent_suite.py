@@ -13,6 +13,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
+from ._env import restore_env, snapshot_env
 from .corpus import DEFAULT_SEED, corpus_stats
 
 # Token proxy shared by the embeddings chunker and the MCP result cap: ~4
@@ -611,20 +612,7 @@ def run_agent_suite(
     # Same env discipline as the perf suite: pin the DB/backend for the
     # build+embed, and pin the reranker OFF so results never depend on the
     # optional cross-encoder or its auto-enable marker. Snapshot + restore.
-    _saved = {
-        var: os.environ.get(var)
-        for var in ("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK")
-    }
-
-    def _restore_env() -> None:
-        for var, val in _saved.items():
-            if val is None:
-                os.environ.pop(var, None)
-            else:
-                os.environ[var] = val
-        from cairn.graph import embeddings as _emb
-
-        _emb.reset_backend_cache()
+    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK"))
 
     os.environ["CAIRN_DB"] = db_path
     os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
@@ -725,4 +713,4 @@ def run_agent_suite(
         finally:
             conn.close()
     finally:
-        _restore_env()
+        restore_env(saved_env)

@@ -12,7 +12,7 @@ export interface StatusDisplay {
 
 /**
  * The root needing attention wins: offline > unindexed > connecting > indexed.
- * The first two inputs are the degraded states every surface reads (FR-004);
+ * The first two inputs are the degraded states every surface reads;
  * degradation derives from this one aggregate, never per-provider.
  */
 export function worstState(states: ServerState[]): ServerState {
@@ -29,7 +29,7 @@ export function worstState(states: ServerState[]): ServerState {
   return states.reduce((worst, state) => (rank(state) < rank(worst) ? state : worst));
 }
 
-/** True while inline data is withheld: the worst root is offline, connecting, or unindexed (FR-004). Every surface reads this one verdict. */
+/** True while inline data is withheld: the worst root is offline, connecting, or unindexed. Every surface reads this one verdict. */
 export function isDegraded(states: ServerState[]): boolean {
   if (states.length === 0) return false;
   const worst = worstState(states);

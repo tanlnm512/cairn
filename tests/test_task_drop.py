@@ -240,3 +240,42 @@ def test_task_list_kind_prefix_flag_splits_wiki_chains_from_catalog(cli_env):
     assert hop2.id not in cats.stdout
 
 
+
+
+# --- complete --as (claimer wiring) -------------------------------------
+
+
+def test_complete_cli_passes_claimer_to_ownership_guard(cli_env, tmp_path):
+    """`--as` on complete must reach complete_task: a mismatching claimer is
+    refused while the task stays untouched, and the owner completes."""
+    import sqlite3
+
+    from cairn.graph.schema import _apply_schema
+
+    db = tmp_path / "graph.db"
+    conn = sqlite3.connect(str(db))
+    _apply_schema(conn)
+    conn.commit()
+    conn.close()
+
+    bundle = _bundle(cli_env)
+    queued = create_task(bundle, "wiki-catalog", "outline")
+    assert claim_task(bundle, queued.id, "alice") is not None
+
+    wrong = CliRunner().invoke(
+        task,
+        ["complete", queued.id, "--result", "[]", "--as", "bob",
+         "--db", str(db), "--knowledge", str(cli_env)],
+    )
+    assert wrong.exit_code == 1, wrong.output
+    assert "ownership mismatch" in wrong.stderr
+    assert "not completed" in wrong.stderr
+    assert get_task(bundle, queued.id).status == "in-progress"
+
+    right = CliRunner().invoke(
+        task,
+        ["complete", queued.id, "--result", "[]", "--as", "alice",
+         "--db", str(db), "--knowledge", str(cli_env)],
+    )
+    assert right.exit_code == 0, right.output
+    assert get_task(bundle, queued.id).status == "done"
