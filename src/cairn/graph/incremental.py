@@ -25,6 +25,7 @@ def reindex_paths(
     """Re-index a set of absolute file paths. Handles repo resolution, deletion,
     and resolver re-run. Returns {'reindexed': n, 'deleted': m,
     'embedded_symbols': k, 'deferred_embeds': d, 'errors': [...]}.
+    'deleted' also counts files dropped because their parser is unavailable.
 
     Idempotent and safe to call from the watcher thread (as long as the watcher
     opens its own connection).
@@ -43,6 +44,8 @@ def reindex_paths(
     embedded_symbols = 0
     deferred_embeds = 0
     errors: list[str] = []
+    # Per-call parser-availability memo (one registry probe per language).
+    _lang_available: dict[str, bool] = {}
 
     # Group paths by repo for batched resolver re-run.
     repo_edges_by_file: dict[str, dict[str, list]] = {}
@@ -195,12 +198,42 @@ def reindex_paths(
                 continue
             language = resolve_file_language(suffix, abs_path)
 
-            file_hash = file_sha256(Path(abs_path))
             from .builder import insert_parsed_file
-            parser = builder.get_parser(language)
-            if not parser:
+            # Parser unavailability is probed through the registry (not the
+            # factory) because get_parser RAISES for a missing grammar wheel;
+            # the drop arm below must be reachable, not bypassed.
+            from ..parsers._registry import is_language_available
+
+            available = _lang_available.get(language)
+            if available is None:
+                available = _lang_available[language] = is_language_available(
+                    language
+                )
+            parser = builder.get_parser(language) if available else None
+            if parser is None:
+                # Drop the file's rows: the graph converges to fresh-build
+                # state, which skips unavailable-language files. Counted and
+                # pending_sync-cleared so strict refresh and the staleness
+                # banner settle; the scanner re-detects the file once the
+                # grammar returns.
+                try:
+                    conn.execute(
+                        "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                        (rel_to_repo, abs_path),
+                    )
+                except sqlite3.OperationalError as e:
+                    note_contention("incremental.pending_sync_clear", error=e)
+                    logger.debug("pending_sync table missing", exc_info=True)
                 conn.execute("COMMIT")
+                if file_id is not None:
+                    deleted += 1
+                    if deleted_names:
+                        repo_changed_target_names.setdefault(
+                            stored_repo, set()
+                        ).update(deleted_names)
                 continue
+
+            file_hash = file_sha256(Path(abs_path))
 
             pf = parser.parse(abs_path)
             name_to_symbol_ids: dict = {}

@@ -535,6 +535,63 @@ def test_parser_unavailable_new_file_is_skipped_not_drift_flagged(
         conn.close()
 
 
+def test_parser_unavailable_modified_tracked_file_drops_not_raises(
+    tmp_path, monkeypatch
+):
+    """Editing a tracked file while its grammar is missing drops it, not wedges reads."""
+    from cairn.graph.builder import build_graph
+    from cairn.graph.schema import get_db
+    from cairn.graph.watcher import refresh_for_query
+    from cairn.parsers import _registry
+
+    workspace = tmp_path / "workspace"
+    repo = workspace / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "code.py").write_text("def existing():\n    return 1\n")
+    (repo / "lib.rs").write_text("fn existing_rs() {}\n")
+    db_path = str(tmp_path / "graph.db")
+    build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
+
+    (repo / "lib.rs").write_text("fn existing_rs() { /* modified */ }\n")
+
+    monkeypatch.setattr(
+        _registry, "is_language_available", lambda lang: lang != "rust"
+    )
+    from cairn.graph import builder as builder_mod
+
+    real_get_parser = builder_mod.get_parser
+
+    def no_rust_parser(language):
+        if language == "rust":
+            raise ValueError("Unsupported language: rust")
+        return real_get_parser(language)
+
+    monkeypatch.setattr(builder_mod, "get_parser", no_rust_parser)
+
+    conn = get_db(db_path)
+    try:
+        report = refresh_for_query(conn, str(workspace))
+        assert len(report.drifted_paths) == 1
+        assert report.drifted_paths[0].endswith("lib.rs")
+        assert report.repaired is True
+
+        rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
+        assert [r["path"] for r in rows] == ["code.py"]
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM parse_errors WHERE file_path LIKE '%lib.rs'"
+            ).fetchone()[0]
+            == 0
+        )
+
+        again = refresh_for_query(conn, str(workspace))
+        assert again.drifted_paths == ()
+        assert again.repaired is False
+    finally:
+        conn.close()
+
+
 def test_banner_reports_only_unrepaired_drift():
     from cairn.graph.watcher import FreshnessReport
 
