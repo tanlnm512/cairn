@@ -19,7 +19,7 @@ _SKIP_PARSE_ERROR = "scip_parse_error"
 _SKIP_JOIN_ANOMALY = "scip_join_anomaly"
 
 # Per-document position-join rate below which the file keeps its tree-sitter
-# edges and the anomaly is recorded (FR-005).
+# edges and the anomaly is recorded.
 _JOIN_ANOMALY_THRESHOLD = 0.5
 
 _INSTALL_HINT = (
@@ -70,7 +70,7 @@ _TS_SITES_SQL = (
     "AND coalesce(e.source, '') != 'scip'"
 )
 
-# --- protobuf availability (FR-006) ----------------------------------------
+# --- protobuf availability --------------------------------------------------
 # A missing runtime AND a runtime older than the vendored stub's gencode
 # (ValidateProtobufRuntimeVersion raises VersionError, not ImportError)
 # degrade identically: the module imports, scip_available() is False.
@@ -267,7 +267,7 @@ def _count_disagreements(
     """(disagreements, upgrades) between planned scip edges and the file's
     tree-sitter edges, matched by (kind, line): both sides resolved to
     different targets counts a disagreement; an ambiguous/unresolved
-    tree-sitter site the scip edge resolves exact counts an upgrade (FR-014).
+    tree-sitter site the scip edge resolves exact counts an upgrade.
     The scip edge wins either way."""
     sites: Dict[Tuple[str, int], List[Tuple[Optional[str], str]]] = {}
     for kind, line, target_id, resolution in conn.execute(_TS_SITES_SQL, (file_id,)):

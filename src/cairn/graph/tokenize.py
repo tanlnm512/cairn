@@ -6,7 +6,7 @@ from typing import Iterable, List, Optional, Set
 
 # Common English words filtered from query tokens before matching. Shared
 # baseline; callers may extend with domain-specific stop words (see
-# src/compass/router.py's ROUTER_EXTRA_STOP_WORDS).
+# compass/router.py's ROUTER_EXTRA_STOP_WORDS).
 BASE_STOP_WORDS = frozenset({
     "the", "how", "does", "what", "is", "where", "when", "why", "this", "that",
     "are", "can", "work", "for", "with", "from", "into", "about", "which",

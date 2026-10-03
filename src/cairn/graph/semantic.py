@@ -22,64 +22,25 @@ from .traversal import get_callers, get_callees
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Rerank confidence gating.
-#
-# Steady-state profiling showed ~95% of a `semantic_search` call's wall time
-# is the optional cross-encoder rerank (predict on max(limit*5, 50) pairs).
-# When the FUSED ranking is already decisive the rerank re-sorts a list whose
-# answer it cannot improve, so the stage is skipped. The gate is deliberately
-# simple and deterministic: a normalized margin over the RRF scores, plus an
-# exact-name corroboration (the fused #1 must be an exact reference of the
-# query).
-#
-# Calibration (bge-m3 embeddings + BAAI/bge-reranker-base over an
-# agent-style query corpus): at threshold 0.45 the gated population keeps top-1 agreement
-# 1.00 (limit=10) / 0.94 (limit=20) with the reranked result on the
-# production-code corpus (0.91 on a corpus that also includes test-name
-# twins), skipping ~17-25% of calls (~70% of exact-name traffic -- the
-# dominant agent query shape). BM25-#1 corroboration was measured and
-# REJECTED: populations it admits only reach 0.73-0.76 top-1 agreement
-# (fragment queries like "schema"/"bm25" where BM25's #1 is not the answer).
-# The gate is disabled under hash (token-overlap) vectors: there the vector
-# signal is token overlap only, and the measured top-1 agreement of skip
-# populations drops to ~0.0 -- rerank is the only semantic component left,
-# so it must run.
-#
-# Calibration basis: 0.45, with the numbers on
-# record. At margins {0.30, 0.45, 0.60, 0.75} the gate skips 0/29 tune
-# queries both at the shipped config and with query enrichment forced on:
-# every corpus query is a natural-language question and none is an exact-name
-# reference of its fused #1 -- the gate
-# deliberately still sees the RAW query, so flipping enrichment cannot
-# shift the corroboration -- which makes the skip-rate curve flat at zero
-# across the entire margin axis. A margin cannot be re-calibrated on a
-# population with no skip traffic; the agent-style calibration above remains
-# the operative basis. Under the shipped config the margin axis is degenerate
-# anyway: the BM25 leg is empty for sentence queries, RRF fuses a single
-# list, and all margins collapse to the same constant. The
-# margin-only hypothetical (corroboration dropped) was rejected: it would
-# skip too many qualifying queries at low agreement -- the exact-name
-# corroboration, not the margin, is what makes skips safe. The gate is
-# pair-format-safe by construction: it reads the fused RRF ranking BEFORE
-# the rerank call, so pair
+# --- Rerank confidence gating ---
+# The rerank stage is skipped when the fused (RRF) ranking is already
+# decisive: a normalized margin over the RRF scores plus an exact-name
+# corroboration on the fused #1 (the gate sees the RAW query, so query
+# enrichment cannot shift the corroboration). Disabled under hash
+# (token-overlap) vectors, where rerank is the only semantic signal. The
+# gate reads the fused ranking BEFORE the rerank call, so pair
 # construction cannot shift its inputs. tests/test_rerank_gating.py pins
-# this decision (TestCalibrationPin).
-# ---------------------------------------------------------------------------
+# the gate and the default below.
 
-# Default for CAIRN_RERANK_MIN_MARGIN. See the calibration note above.
 _DEFAULT_RERANK_MIN_MARGIN = 0.45
 
 
 def _rerank_min_margin() -> float:
-    """The confidence threshold above which rerank is skipped (0.0-1.0).
+    """Confidence threshold above which rerank is skipped (0.0-1.0).
 
-    ``CAIRN_RERANK_MIN_MARGIN`` overrides the calibrated default; values are
-    clamped to [0, 1] because the signal is a ratio (1.0 effectively disables
-    skipping -- a fused ranking never has a perfect margin -- and 0.0 skips
-    on every fused call that passes the corroboration check).
-    Unparseable values fall back to the default rather than raising: this is
-    a latency knob, not correctness.
+    ``CAIRN_RERANK_MIN_MARGIN`` overrides the default; values clamp to
+    [0, 1] and unparseable values fall back to the default (latency knob,
+    never raises).
     """
     raw = os.environ.get("CAIRN_RERANK_MIN_MARGIN", "")
     if not raw:
@@ -114,12 +75,9 @@ def _fused_margin(candidates: List[dict], limit: int) -> float:
 def _exact_name_hit(query: str, top: dict) -> bool:
     """Whether the query is an exact (case-insensitive) reference to `top`.
 
-    The corroboration half of the confidence gate. Covers the agent idiom of
-    querying a known symbol name verbatim (``"ApiFactory"`` or its qualified
-    form) -- the one lexical shape that is conclusive on its own. Calibration
-    showed BM25-#1 agreement is NOT a safe substitute (fragment queries where
-    BM25's #1 is a module or same-token neighbor reach only ~0.75 top-1
-    agreement after the skip), so the gate requires this stronger check.
+    The corroboration half of the confidence gate: the name (or its
+    qualified form) queried verbatim is conclusive on its own; weaker
+    lexical corroboration must not substitute for this check.
     """
     q = query.strip().lower()
     if not q:
@@ -132,13 +90,9 @@ def _exact_name_hit(query: str, top: dict) -> bool:
 def _vectors_carry_token_overlap_only(hash_fallback_flag: bool) -> bool:
     """True when this call's embeddings are hash (token-overlap) vectors.
 
-    Covers BOTH hash modes: the silent local-backend fallback (the caller's
-    ``is_hash_fallback()`` flag) and an explicit ``CAIRN_EMBED_BACKEND=hash``
-    (the documented dep-free smoke-test mode, which ``is_hash_fallback``
-    deliberately does not flag because the user chose it). For the rerank
-    gate the distinction doesn't matter -- the vectors carry no semantic
-    signal either way, and calibration measured ~0.0 top-1 agreement between
-    skip populations and the cross-encoder under hash vectors.
+    Covers both the silent local-backend fallback (``hash_fallback_flag``)
+    and an explicit ``CAIRN_EMBED_BACKEND=hash``; the rerank gate must stay
+    on for both because the vectors carry no semantic signal.
     """
     if hash_fallback_flag:
         return True
@@ -633,7 +587,7 @@ def semantic_search(
     confidence gate when it is enabled (``CAIRN_RERANK=0`` still wins); ``False``
     never reranks regardless of enablement. Confidence gating (auto mode
     only): when the fused RRF ranking's #1 leads the last-returned slot by a
-    normalized margin >= ``CAIRN_RERANK_MIN_MARGIN`` (default 0.45, calibrated)
+    normalized margin >= ``CAIRN_RERANK_MIN_MARGIN`` (default 0.45)
     AND the #1 is an exact-name hit for the query, the expensive cross-encoder
     pass is skipped because it cannot change the answer -- the fused order,
     scores, and provenance are returned as-is (``reranked=False``) and a
@@ -646,7 +600,7 @@ def semantic_search(
     :class:`RetrievalParams` carrying explicit retrieval tunables (dense
     threshold, RRF k/weights, pool sizes, sparse fetch limit and top-N
     cutoff, rerank/gate overrides). ``params=None`` -- and every ``None`` field of a passed
-    object -- preserves today's exact behavior; the eval/sweep path injects
+    object -- preserves standard behavior; the eval/sweep path injects
     combinations through this object rather than mutating the environment.
     ``params.enrich=True`` computes query enrichment ONCE at
     this boundary and feeds both legs from it: the single ``embed_query``
