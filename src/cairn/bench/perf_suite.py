@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ._env import restore_env, snapshot_env
 from .corpus import corpus_stats
 from .report import OpTiming, PerfReport
 from .timing import time_call
@@ -82,158 +83,132 @@ def run_perf_suite(
     report = PerfReport(db_path=db_path)
     report.corpus = corpus_stats(Path(workspace))
 
-    # This suite mutates two process-global env vars to point the build/embed
-    # at the bench DB and the chosen backend. Snapshot and restore them so
-    # callers reusing one process aren't left with the bench's values.
-    _saved_db = os.environ.get("CAIRN_DB")
-    _saved_embed_backend = os.environ.get("CAIRN_EMBED_BACKEND")
-    _had_db = "CAIRN_DB" in os.environ
-    _had_embed_backend = "CAIRN_EMBED_BACKEND" in os.environ
-
-    def _restore_env() -> None:
-        if _had_db:
-            os.environ["CAIRN_DB"] = _saved_db  # type: ignore[assignment]
-        else:
-            os.environ.pop("CAIRN_DB", None)
-        if _had_embed_backend:
-            os.environ["CAIRN_EMBED_BACKEND"] = _saved_embed_backend  # type: ignore[assignment]
-        else:
-            os.environ.pop("CAIRN_EMBED_BACKEND", None)
-        # The embed backend resolution is cached for the process lifetime (see
-        # embeddings.reset_backend_cache). Reset again here so non-bench
-        # in-process callers see the restored backend rather than the bench's.
-        from cairn.graph import embeddings as _emb
-        _emb.reset_backend_cache()
-
-    # --- Build phase ------------------------------------------------------
-    # Build timing is single-shot (the phase-event split is the signal, and a
-    # second build into the same DB is incremental, not a clean rebuild).
-    os.environ["CAIRN_DB"] = db_path
-    build_stats, phase_seconds = _phase_timings(workspace, db_path)
-    report.symbols = build_stats.get("symbols", 0)
-    report.edges = build_stats.get("edges", 0)
-    if progress:
-        progress("build_done", symbols=report.symbols, edges=report.edges)
-
-    from .timing import TimingResult
-    # Total build from the phase sum (more stable than a single wall-clock).
-    total_build = sum(phase_seconds.values())
-    report.ops.append(OpTiming(
-        name="build (total)",
-        timing=TimingResult(name="build (total)", samples=[total_build],
-                            median=total_build, p50=total_build, p95=total_build,
-                            p99=total_build, mean=total_build,
-                            minimum=total_build, maximum=total_build),
-    ))
-    for phase, secs in sorted(phase_seconds.items()):
-        if secs > 0:
-            report.ops.append(OpTiming(
-                name=f"build.{phase}",
-                timing=TimingResult(name=phase, samples=[secs], median=secs,
-                                    p50=secs, p95=secs, p99=secs, mean=secs,
-                                    minimum=secs, maximum=secs),
-            ))
-
-    # --- Embed phase ------------------------------------------------------
-    from cairn.graph import embeddings as emb
-    from cairn.graph.schema import get_db
-
-    os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
-    emb.reset_backend_cache()
-
-    conn = get_db(db_path)
+    # This suite pins process-global env vars to point the build/embed at
+    # the bench DB and the chosen backend; restore them however the run ends.
+    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND"))
     try:
-        # multivector pinned off: embed is a timed op here.
-        def _do_embed():
-            c = get_db(db_path)
-            try:
-                return emb.embed_all(c, reap_orphans=False, multivector=False)
-            finally:
-                c.close()
+        # --- Build phase ------------------------------------------------------
+        # Build timing is single-shot (the phase-event split is the signal, and a
+        # second build into the same DB is incremental, not a clean rebuild).
+        os.environ["CAIRN_DB"] = db_path
+        build_stats, phase_seconds = _phase_timings(workspace, db_path)
+        report.symbols = build_stats.get("symbols", 0)
+        report.edges = build_stats.get("edges", 0)
+        if progress:
+            progress("build_done", symbols=report.symbols, edges=report.edges)
 
-        embed_timing, embed_result = time_call(
-            _do_embed, name="embed_all", warmup=warmup, repeats=repeats
-        )
-        report.ops.append(OpTiming(name="embed_all", timing=embed_timing))
-    finally:
-        conn.close()
+        from .timing import TimingResult
+        # Total build from the phase sum (more stable than a single wall-clock).
+        total_build = sum(phase_seconds.values())
+        report.ops.append(OpTiming(
+            name="build (total)",
+            timing=TimingResult(name="build (total)", samples=[total_build],
+                                median=total_build, p50=total_build, p95=total_build,
+                                p99=total_build, mean=total_build,
+                                minimum=total_build, maximum=total_build),
+        ))
+        for phase, secs in sorted(phase_seconds.items()):
+            if secs > 0:
+                report.ops.append(OpTiming(
+                    name=f"build.{phase}",
+                    timing=TimingResult(name=phase, samples=[secs], median=secs,
+                                        p50=secs, p95=secs, p99=secs, mean=secs,
+                                        minimum=secs, maximum=secs),
+                ))
 
-    # DB size after build + embed.
-    report.db_size_mb = Path(db_path).stat().st_size / (1024 * 1024)
+        # --- Embed phase ------------------------------------------------------
+        from cairn.graph import embeddings as emb
+        from cairn.graph.schema import get_db
 
-    # --- Derived-index phase ----------------------------------------------
-    # Materialise the transitive closure so the query battery measures the
-    # deployment users actually have (every cairn build/update builds it) and
-    # impact_analysis index mode is exercised. Timed separately from the
-    # build phases so build.* baselines stay comparable.
-    from cairn.graph.dataflow import build_transitive_closure
+        os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
+        emb.reset_backend_cache()
 
-    conn = get_db(db_path)
-    try:
-        closure_timing, _ = time_call(
-            lambda: build_transitive_closure(conn), name="transitive_closure",
-            warmup=0, repeats=1,
-        )
-        report.ops.append(OpTiming(name="build.derived.closure", timing=closure_timing))
-    finally:
-        conn.close()
+        conn = get_db(db_path)
+        try:
+            # multivector pinned off: embed is a timed op here.
+            def _do_embed():
+                c = get_db(db_path)
+                try:
+                    return emb.embed_all(c, reap_orphans=False, multivector=False)
+                finally:
+                    c.close()
 
-    # --- Query battery ----------------------------------------------------
-    # Each query runs warmup + query_repeats against the freshly built graph.
-    # The query set mirrors the operations users actually feel latency on.
-    from cairn.graph import queries as q
-
-    conn = get_db(db_path)
-    try:
-        # Pick real symbols to query — the first few from the graph.
-        sample_rows = conn.execute(
-            "SELECT name FROM symbols WHERE name != '' LIMIT 5"
-        ).fetchall()
-        sample_names = [r["name"] for r in sample_rows] if sample_rows else ["main"]
-        query_target = sample_names[0] if sample_names else "main"
-
-        query_ops = [
-            ("find_definition", lambda: q.find_definition(conn, query_target, limit=5)),
-            ("search_symbols", lambda: q.search_symbols(conn, query_target[:4] + "*", limit=20)),
-            ("get_callers", lambda: q.get_callers(conn, query_target, limit=50)),
-            ("get_callees", lambda: q.get_callees(conn, query_target, limit=50)),
-            ("impact_analysis", lambda: q.impact_analysis(conn, query_target, max_depth=3, limit=100)),
-        ]
-        # Impact-heavy target: the most-called common name exercises the
-        # closure index path at its worst-case fan-in, not just the first
-        # symbol in the table.
-        wide_row = conn.execute(
-            """
-            SELECT e.target_name AS name, COUNT(*) AS fanin
-            FROM edges e
-            WHERE e.target_name IS NOT NULL AND e.target_name != ''
-            GROUP BY e.target_name ORDER BY fanin DESC LIMIT 1
-            """
-        ).fetchone()
-        if wide_row and wide_row["name"]:
-            wide_target = wide_row["name"]
-            query_ops.append(
-                ("impact_analysis_wide", lambda: q.impact_analysis(conn, wide_target, max_depth=3, limit=100))
+            embed_timing, embed_result = time_call(
+                _do_embed, name="embed_all", warmup=warmup, repeats=repeats
             )
-        # semantic_search + explore may need embeddings; guard with try.
+            report.ops.append(OpTiming(name="embed_all", timing=embed_timing))
+        finally:
+            conn.close()
+
+        # DB size after build + embed.
+        report.db_size_mb = Path(db_path).stat().st_size / (1024 * 1024)
+
+        # --- Derived-index phase ----------------------------------------------
+        # Materialise the transitive closure so the query battery measures the
+        # deployment users actually have (every cairn build/update builds it) and
+        # impact_analysis index mode is exercised. Timed separately from the
+        # build phases so build.* baselines stay comparable.
+        from cairn.graph.dataflow import build_transitive_closure
+
+        conn = get_db(db_path)
         try:
+            closure_timing, _ = time_call(
+                lambda: build_transitive_closure(conn), name="transitive_closure",
+                warmup=0, repeats=1,
+            )
+            report.ops.append(OpTiming(name="build.derived.closure", timing=closure_timing))
+        finally:
+            conn.close()
+
+        # --- Query battery ----------------------------------------------------
+        # Each query runs warmup + query_repeats against the freshly built graph.
+        # The query set mirrors the operations users actually feel latency on.
+        from cairn.graph import queries as q
+
+        conn = get_db(db_path)
+        try:
+            # Pick real symbols to query — the first few from the graph.
+            sample_rows = conn.execute(
+                "SELECT name FROM symbols WHERE name != '' LIMIT 5"
+            ).fetchall()
+            sample_names = [r["name"] for r in sample_rows] if sample_rows else ["main"]
+            query_target = sample_names[0] if sample_names else "main"
+
+            query_ops = [
+                ("find_definition", lambda: q.find_definition(conn, query_target, limit=5)),
+                ("search_symbols", lambda: q.search_symbols(conn, query_target[:4] + "*", limit=20)),
+                ("get_callers", lambda: q.get_callers(conn, query_target, limit=50)),
+                ("get_callees", lambda: q.get_callees(conn, query_target, limit=50)),
+                ("impact_analysis", lambda: q.impact_analysis(conn, query_target, max_depth=3, limit=100)),
+            ]
+            # Impact-heavy target: the most-called common name exercises the
+            # closure index path at its worst-case fan-in, not just the first
+            # symbol in the table.
+            wide_row = conn.execute(
+                """
+                SELECT e.target_name AS name, COUNT(*) AS fanin
+                FROM edges e
+                WHERE e.target_name IS NOT NULL AND e.target_name != ''
+                GROUP BY e.target_name ORDER BY fanin DESC LIMIT 1
+                """
+            ).fetchone()
+            if wide_row and wide_row["name"]:
+                wide_target = wide_row["name"]
+                query_ops.append(
+                    ("impact_analysis_wide", lambda: q.impact_analysis(conn, wide_target, max_depth=3, limit=100))
+                )
+            # semantic_search and explore may need embeddings.
             query_ops.append(("semantic_search", lambda: q.semantic_search(conn, query_target, limit=10)))
-        except Exception:
-            pass
-        try:
             query_ops.append(("explore", lambda: q.explore(conn, query_target)))
-        except Exception:
-            pass
 
-        for name, fn in query_ops:
-            timing, _ = time_call(fn, name=name, warmup=1, repeats=query_repeats)
-            report.ops.append(OpTiming(name=name, timing=timing))
-    finally:
-        conn.close()
+            for name, fn in query_ops:
+                timing, _ = time_call(fn, name=name, warmup=1, repeats=query_repeats)
+                report.ops.append(OpTiming(name=name, timing=timing))
+        finally:
+            conn.close()
 
-    if progress:
-        progress("perf_done", ops=len(report.ops))
-    try:
+        if progress:
+            progress("perf_done", ops=len(report.ops))
         return report
     finally:
-        _restore_env()
+        restore_env(saved_env)

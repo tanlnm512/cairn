@@ -144,6 +144,25 @@ class TestPerfSuite:
         payload = json.loads(report.to_json())
         assert "ops" in payload and payload["symbols"] > 0
 
+    def test_env_restored_when_suite_raises(self, tmp_path, monkeypatch):
+        """Env restoration covers failure paths, not only the success return."""
+        monkeypatch.setenv("CAIRN_DB", "pre.db")
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "sentinel")
+
+        import cairn.graph.builder as builder
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(builder, "build_graph", _boom)
+        with pytest.raises(RuntimeError, match="boom"):
+            run_perf_suite(
+                str(tmp_path), str(tmp_path / "x.db"),
+                embed_backend="hash", warmup=0, repeats=1,
+            )
+        assert os.environ["CAIRN_DB"] == "pre.db"
+        assert os.environ["CAIRN_EMBED_BACKEND"] == "sentinel"
+
 
 class TestScalingSuite:
     def test_runs_over_tiny_sizes(self, tmp_path, monkeypatch):
@@ -158,6 +177,14 @@ class TestScalingSuite:
         assert p1.symbols >= p0.symbols
         # Times are non-negative.
         assert p0.build_seconds >= 0 and p1.embed_seconds >= 0
+
+    def test_env_restored_after_suite(self, tmp_path, monkeypatch):
+        """The suite restores the env vars it pins, like the other suites."""
+        monkeypatch.setenv("CAIRN_DB", "pre.db")
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "sentinel")
+        run_scaling_suite(tmp_path, sizes=(3,), complexity="low", embed_backend="hash")
+        assert os.environ["CAIRN_DB"] == "pre.db"
+        assert os.environ["CAIRN_EMBED_BACKEND"] == "sentinel"
 
 
 # --- report comparison (regression detection) ---------------------------
@@ -210,9 +237,8 @@ class TestBenchCliJson:
         """
         from datetime import datetime
 
-        # Pin CAIRN_DB: the perf suite restores it to whatever it saw on entry
-        # (a value the CLI sets to its own temp DB), so without a pin the
-        # leaked path would outlive this test inside the shared process.
+        # Pin CAIRN_DB so this test's env state is deterministic regardless
+        # of the suite/CLI env restore discipline.
         monkeypatch.setenv("CAIRN_DB", str(tmp_path / "bench_cli.db"))
         result = _run_bench_cli(["--json"])
         assert result.exit_code == 0, result.output
@@ -230,6 +256,23 @@ class TestBenchCliJson:
         result = _run_bench_cli([])
         assert result.exit_code == 0, result.output
         assert not result.stdout.lstrip().startswith("{")
+
+
+class TestBenchCliCairnDbEnv:
+    """The CLI's CAIRN_DB pin must not outlive the ``cairn bench`` run."""
+
+    def test_cli_unsets_cairn_db_it_pinned(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_DB", raising=False)
+        result = _run_bench_cli(["--json"])
+        assert result.exit_code == 0, result.output
+        assert "CAIRN_DB" not in os.environ
+
+    def test_cli_restores_caller_cairn_db(self, tmp_path, monkeypatch):
+        caller_db = str(tmp_path / "callers.db")
+        monkeypatch.setenv("CAIRN_DB", caller_db)
+        result = _run_bench_cli(["--json"])
+        assert result.exit_code == 0, result.output
+        assert os.environ["CAIRN_DB"] == caller_db
 
 
 # --- CLI --baseline resolution (/AC1, .. ) ----------
@@ -309,8 +352,8 @@ def _invoke_perf_cli(extra_args, tmp_path, monkeypatch):
     from click.testing import CliRunner
     from cairn.cli import main
 
-    # Pin CAIRN_DB: the CLI writes its own temp DB path into os.environ and
-    # only monkeypatch restores the pre-test value (same reason as above).
+    # Pin CAIRN_DB so this test's env state is deterministic regardless of
+    # the CLI env restore discipline.
     monkeypatch.setenv("CAIRN_DB", str(tmp_path / "baseline_cli.db"))
     return CliRunner().invoke(main, [
         "bench", "--suite", "perf",
@@ -552,3 +595,40 @@ class TestProfileClassBucketing:
         assert _profile_class("arch", "x86_64") == "x86_64"
         assert _profile_class("cpu_count", 4) == "4"
         assert _profile_class("runner_class", _UNSTAMPED) is _UNSTAMPED
+
+
+class TestSweBenchWorkspaceValidation:
+    """_swe_bench_workspaces rejects malformed repo/base_commit row fields."""
+
+    @pytest.mark.parametrize(
+        "repo, sha",
+        [
+            ("ok/repo", "../../outside"),  # traversal via base_commit
+            ("../escape", "c" * 40),  # traversal via repo
+        ],
+    )
+    def test_malformed_row_fields_rejected(self, tmp_path, repo, sha):
+        from pathlib import Path
+
+        from cairn.cli.bench import _swe_bench_workspaces
+
+        cache_root = tmp_path / "cache"
+        task = {"instance_id": "t", "repo": repo, "base_commit": sha}
+        # The fields resolve to an existing warm-cache entry (outside the
+        # cache root for the traversal case), so the lookup never reaches
+        # the clone branch and no network is touched.
+        target = Path(os.path.normpath(cache_root / f"{repo.replace('/', '__')}-{sha}"))
+        (target / ".git").mkdir(parents=True)
+        with pytest.raises(ValueError):
+            _swe_bench_workspaces([task], cache_root=cache_root, quiet=True)
+
+    def test_valid_fields_warm_cache_hit(self, tmp_path):
+        from cairn.cli.bench import _swe_bench_workspaces
+
+        cache_root = tmp_path / "cache"
+        sha = "c" * 40
+        target = cache_root / f"ok__repo-{sha}"
+        (target / ".git").mkdir(parents=True)
+        task = {"instance_id": "t", "repo": "ok/repo", "base_commit": sha}
+        workspaces = _swe_bench_workspaces([task], cache_root=cache_root, quiet=True)
+        assert workspaces == {"t": str(target)}

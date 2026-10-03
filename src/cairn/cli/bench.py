@@ -136,6 +136,13 @@ def _parse_swe_bench_slice(text: str) -> slice:
     return slice(start, stop)
 
 
+# _swe_bench_workspaces interpolates these row fields into cache paths and
+# git args: repo must be a GitHub owner/name pair (no traversal components),
+# base_commit a hex commit sha.
+_SWE_REPO_RX = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_SWE_COMMIT_RX = re.compile(r"[0-9a-f]{7,40}")
+
+
 def _swe_bench_workspaces(
     tasks: list[dict], cache_root: Path | None = None, *, quiet: bool = False
 ) -> dict[str, str]:
@@ -147,7 +154,9 @@ def _swe_bench_workspaces(
     never touch the network). The clone stages into a pid-suffixed temp dir
     and is renamed into place; a run that loses the rename to a concurrent
     run uses the winner's checkout. ``quiet`` suppresses progress output
-    (machine-readable stdout).
+    (machine-readable stdout). Raises ValueError when a task's
+    ``repo``/``base_commit`` fields are malformed -- they reach cache paths
+    and git args verbatim.
     """
     from . import display
 
@@ -159,6 +168,20 @@ def _swe_bench_workspaces(
     workspaces: dict[str, str] = {}
     for task in tasks:
         repo, sha = task["repo"], task["base_commit"]
+        if (
+            not isinstance(repo, str)
+            or not _SWE_REPO_RX.fullmatch(repo)
+            or any(part in (".", "..") for part in repo.split("/"))
+        ):
+            raise ValueError(
+                f"task {task.get('instance_id')!r}: repo must be a GitHub "
+                f"owner/name pair, got {repo!r}"
+            )
+        if not isinstance(sha, str) or not _SWE_COMMIT_RX.fullmatch(sha):
+            raise ValueError(
+                f"task {task.get('instance_id')!r}: base_commit must be a hex "
+                f"commit sha, got {sha!r}"
+            )
         target = cache_root / f"{repo.replace('/', '__')}-{sha}"
         workspaces[task["instance_id"]] = str(target)
         if (target / ".git").is_dir():
@@ -279,6 +302,19 @@ def _render_swe_bench_report(payload: dict) -> None:
         ],
         rows=rows,
     )
+
+
+def _stamp_and_emit(report, stamp: dict, as_json: bool) -> dict:
+    """Stamp the report payload with the measurement timestamp + artifact stamp, then print the table or emit the JSON."""
+    payload = report.to_dict()
+    payload["timestamp"] = datetime.now(timezone.utc).isoformat()
+    payload.update(stamp)
+    if not as_json:
+        report.to_table()
+    else:
+        # Same content as report.to_json() plus the timestamp.
+        click.echo(json.dumps(payload, indent=2))
+    return payload
 
 
 def _render_baseline_header(version: str, path: Path, data: dict) -> None:
@@ -533,6 +569,13 @@ def bench(
         baseline_version = baseline
         compare = str(_resolve_baseline_file(baseline, suite))
 
+    # CAIRN_DB is pinned below for the perf/agent suites; restore the
+    # caller's value (or unset it) however the run ends, or it keeps pointing
+    # at a temp DB path the finally deletes.
+    from cairn.bench._env import restore_env, snapshot_env
+
+    saved_db = snapshot_env(("CAIRN_DB",))
+
     tmp_root = None
     tmp_db = None  # cg_bench_db_* dir created only by the perf/agent suites
     try:
@@ -545,18 +588,7 @@ def bench(
                 complexity=complexity,
                 embed_backend=embed_backend,
             )
-            payload = report.to_dict()
-            # Stamp the machine-readable payload so a saved baseline records
-            # when it was measured (consumed by the CI comparison + humans),
-            # and what measured it: dataset identity + cairn version +
-            # machine profile.
-            payload["timestamp"] = datetime.now(timezone.utc).isoformat()
-            payload.update(stamp)
-            if not as_json:
-                report.to_table()
-            else:
-                # Same content as report.to_json() plus the timestamp above.
-                click.echo(json.dumps(payload, indent=2))
+            payload = _stamp_and_emit(report, stamp, as_json)
         elif suite == "swe-bench":
             # Manifest already resolved + validated above (fail promptly);
             # the first run fetches the pinned split and clones the task
@@ -624,18 +656,7 @@ def bench(
                     embed_backend=embed_backend,
                     repeats=repeats,
                 )
-            payload = report.to_dict()
-            # Stamp the machine-readable payload so a saved baseline records
-            # when it was measured (consumed by the CI comparison + humans),
-            # and what measured it: dataset identity + cairn version +
-            # machine profile.
-            payload["timestamp"] = datetime.now(timezone.utc).isoformat()
-            payload.update(stamp)
-            if not as_json:
-                report.to_table()
-            else:
-                # Same content as report.to_json() plus the timestamp above.
-                click.echo(json.dumps(payload, indent=2))
+            payload = _stamp_and_emit(report, stamp, as_json)
 
         # Save baseline if requested.
         if save:
@@ -693,6 +714,7 @@ def bench(
             else:
                 display.success("No comparable operations vs baseline.")
     finally:
+        restore_env(saved_db)
         if tmp_root and tmp_root.exists():
             shutil.rmtree(tmp_root, ignore_errors=True)
         # The perf suite creates a separate cg_bench_db_* dir for its SQLite

@@ -10,6 +10,7 @@ import time
 from collections import Counter
 from typing import Any, Callable, Dict, List, Mapping, Sequence
 
+from ._env import restore_env, snapshot_env
 from .agent_suite import (
     CHARS_PER_TOKEN,
     ArmEffort,
@@ -146,20 +147,7 @@ def run_swe_bench_suite(
 
     # Same env discipline as run_agent_suite: pin DB/backend for the build
     # and the reranker OFF; snapshot + restore around the whole run.
-    _saved = {
-        var: os.environ.get(var)
-        for var in ("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK")
-    }
-
-    def _restore_env() -> None:
-        for var, val in _saved.items():
-            if val is None:
-                os.environ.pop(var, None)
-            else:
-                os.environ[var] = val
-        from cairn.graph import embeddings as _emb
-
-        _emb.reset_backend_cache()
+    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK"))
 
     os.environ["CAIRN_DB"] = db_path
     os.environ["CAIRN_EMBED_BACKEND"] = "hash"
@@ -226,4 +214,4 @@ def run_swe_bench_suite(
             "chars_per_token": CHARS_PER_TOKEN,
         }
     finally:
-        _restore_env()
+        restore_env(saved_env)
