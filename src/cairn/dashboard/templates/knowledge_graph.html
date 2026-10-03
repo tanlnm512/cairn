@@ -25,8 +25,9 @@
       the chips from the same data the canvas drew, so they cannot drift. -#}
   <div class="graph-legend" id="knowledge-graph-legend" hidden></div>
   <p class="muted" id="knowledge-graph-counts">
-    {{ graph.metadata.node_count }} items — {{ graph.metadata.edge_count }} of
-    {{ graph.metadata.edge_count }} edges shown
+    {#- The canvas script rewrites this line with the live shown/total
+        share as legend filters toggle. -#}
+    {{ graph.metadata.node_count }} items — {{ graph.metadata.edge_count }} edges shown
   </p>
   <div class="graph-layout">
     <div class="graph-stage">
@@ -62,6 +63,7 @@
 {% block scripts %}
 {% if graph.nodes %}
 <script src="{{ url_for('static', path='/vis-network.min.js') }}?v={{ asset_version }}"></script>
+<script src="{{ url_for('static', path='/graph-shared.js') }}?v={{ asset_version }}"></script>
 <script src="{{ url_for('static', path='/knowledge-graph.js') }}?v={{ asset_version }}"></script>
 {% endif %}
 {% endblock %}

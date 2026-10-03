@@ -43,9 +43,13 @@
      animation too. */
 (function () {
   "use strict";
+  var shared =
+    typeof window.CairnGraphShared === "undefined"
+      ? null
+      : window.CairnGraphShared;
   var block = document.getElementById("graph-data");
   var canvas = document.getElementById("graph-canvas");
-  if (!block || !canvas || typeof vis === "undefined") {
+  if (!shared || !block || !canvas || typeof vis === "undefined") {
     return;
   }
   var data;
@@ -57,21 +61,8 @@
   if (!data.nodes || !data.nodes.length) {
     return;
   }
-  /* The token proxy: colors resolve from the live stylesheet at read
-     time, so a theme flip re-reads to the new palette with no JS-side
-     color state to keep in sync. */
-  function cssVar(name) {
-    var v = getComputedStyle(document.documentElement).getPropertyValue(
-      name
-    );
-    return v ? v.trim() : "";
-  }
-  function prefersReducedMotion() {
-    return !!(
-      window.matchMedia &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    );
-  }
+  var cssVar = shared.cssVar;
+  var prefersReducedMotion = shared.prefersReducedMotion;
 
   /* ---- Kind coloring & filters ---- */
 
@@ -235,15 +226,7 @@
 
   var labelsShown = true;
 
-  var GOLDEN = Math.PI * (3 - Math.sqrt(5));
-  var spiralCursor = 0;
-  function spiralPosition() {
-    var i = spiralCursor;
-    spiralCursor += 1;
-    var r = 100 * Math.sqrt(i + 0.6);
-    var a = i * GOLDEN;
-    return { x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) };
-  }
+  var spiralPosition = shared.makeSpiralPosition();
   var edgeless = !data.edges.length;
 
   /* A static layout (no simulation): edgeless graphs always, and any
@@ -366,18 +349,7 @@
   }
 
   function optionsFor(kind) {
-    var options = {
-      autoResize: true,
-      interaction: {
-        dragNodes: true,
-        dragView: true,
-        zoomView: true,
-        hover: true,
-        tooltipDelay: 120,
-        selectConnectedEdges: true,
-        hoverConnectedEdges: true
-      }
-    };
+    var options = shared.interactionOptions();
     var themed = themeOptions();
     Object.keys(themed).forEach(function (key) {
       options[key] = themed[key];
@@ -391,18 +363,16 @@
          simulation is motion, so it never runs at all. */
       options.physics = { enabled: false };
     } else {
-      options.physics = {
-        enabled: true,
-        solver: "barnesHut",
-        barnesHut: {
+      options.physics = shared.physicsOptions(
+        {
           gravitationalConstant: -6000,
           springLength: 160,
           springConstant: 0.04,
           damping: 0.45,
           avoidOverlap: 0.4
         },
-        stabilization: { enabled: true, iterations: 350, fit: true }
-      };
+        350
+      );
     }
     return options;
   }
@@ -438,38 +408,7 @@
 
   /* Canvas overlay controls (GitNexus-style zoom/fit cluster at the
      canvas's bottom-left); the overlay markup lives in graph.html. */
-  var overlay = canvas.parentNode
-    ? canvas.parentNode.querySelector(".graph-overlay")
-    : null;
-  if (overlay) {
-    overlay.addEventListener("click", function (event) {
-      var btn =
-        event.target && event.target.closest
-          ? event.target.closest("button[data-graph-action]")
-          : null;
-      if (!btn || !overlay.contains(btn)) {
-        return;
-      }
-      var action = btn.getAttribute("data-graph-action");
-      /* The eased camera move is animation; reduced motion snaps. */
-      var animation = prefersReducedMotion()
-        ? false
-        : { duration: 250, easingFunction: "easeInOutQuad" };
-      if (action === "zoom-in") {
-        network.moveTo({
-          scale: network.getScale() * 1.35,
-          animation: animation
-        });
-      } else if (action === "zoom-out") {
-        network.moveTo({
-          scale: Math.max(network.getScale() / 1.35, 0.05),
-          animation: animation
-        });
-      } else if (action === "fit") {
-        network.fit({ animation: animation });
-      }
-    });
-  }
+  shared.wireOverlayControls(canvas, network, "data-graph-action", 1.35, true);
 
   /* ---- Legend: kind swatches with counts, doubling as filters ---- */
 
@@ -742,18 +681,6 @@
      panel. The loading text is the only client-authored content; the
      panel body is server-authored template markup. */
   var panel = document.getElementById("graph-panel");
-  var latestInspectUrl = "";
-
-  function el(tag, className, text) {
-    var node = document.createElement(tag);
-    if (className) {
-      node.className = className;
-    }
-    if (text !== undefined && text !== null && text !== "") {
-      node.textContent = text;
-    }
-    return node;
-  }
 
   function inspectUrl(id) {
     return (
@@ -763,86 +690,16 @@
     );
   }
 
+  var inspect = shared.wireInspectPanel(panel, "/graph/inspect", inspectUrl);
+  /* A null selection is the deselect: hide the panel and drop any
+     in-flight fetch for it. */
   function inspectPanel(id) {
-    if (!panel) {
-      return;
-    }
     if (!id || typeof htmx === "undefined") {
-      abortInFlightInspect();
-      latestInspectUrl = "";
-      panel.hidden = true;
-      panel.textContent = "";
+      inspect.deselect();
       return;
     }
-    latestInspectUrl = inspectUrl(id);
-    panel.hidden = false;
-    panel.textContent = "";
-    panel.appendChild(el("p", "panel-empty", "loading '" + id + "'…"));
-    htmx.ajax("GET", latestInspectUrl, { target: panel, swap: "innerHTML" });
+    inspect.select(id);
   }
-
-  /* One selection owns the panel: a superseded inspect fetch is aborted
-     outright (htmx:beforeSend carries the live xhr), and htmx swaps
-     inside ajax(), so a stale response completing late is cancelled at
-     htmx:beforeSwap too — only the latest inspect request may swap. */
-  var inFlightInspect = null;
-  function abortInFlightInspect() {
-    if (inFlightInspect) {
-      try {
-        inFlightInspect.abort();
-      } catch (err) {
-        /* abort() on an already-settled xhr is a no-op; nothing to free */
-      }
-      inFlightInspect = null;
-    }
-  }
-  document.body.addEventListener("htmx:beforeSend", function (event) {
-    var detail = event.detail || {};
-    var path =
-      detail.requestConfig && typeof detail.requestConfig.path === "string"
-        ? detail.requestConfig.path
-        : "";
-    if (path.indexOf("/graph/inspect") !== 0) {
-      return;
-    }
-    abortInFlightInspect();
-    inFlightInspect = detail.xhr;
-  });
-  document.body.addEventListener("htmx:beforeSwap", function (event) {
-    var path =
-      event.detail && event.detail.requestConfig
-        ? event.detail.requestConfig.path
-        : "";
-    if (
-      typeof path === "string" &&
-      path.indexOf("/graph/inspect") === 0 &&
-      path !== latestInspectUrl
-    ) {
-      event.detail.shouldSwap = false;
-    }
-  });
-
-  /* A failed inspect (HTTP error status or dead server) replaces the
-     loading text with the failure note — htmx swaps only on 2xx, and an
-     aborted predecessor fires neither event. */
-  ["htmx:responseError", "htmx:sendError"].forEach(
-    function (name) {
-      document.body.addEventListener(name, function (event) {
-        var detail = event.detail || {};
-        var path = detail.requestConfig ? detail.requestConfig.path : "";
-        if (
-          !panel ||
-          typeof path !== "string" ||
-          path.indexOf("/graph/inspect") !== 0 ||
-          path !== latestInspectUrl
-        ) {
-          return;
-        }
-        panel.textContent = "";
-        panel.appendChild(el("p", "panel-empty", "inspect request failed"));
-      });
-    }
-  );
 
   network.on("selectNode", function (event) {
     var id = event.nodes && event.nodes.length ? event.nodes[0] : null;

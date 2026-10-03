@@ -1068,6 +1068,31 @@ def test_database_schema_reports_skipped_tables(tmp_path):
     assert "vec0" in schema["skipped"][0]["reason"]
 
 
+def test_database_route_reports_each_skipped_tables_own_reason(
+    tmp_path, monkeypatch
+):
+    """The page pairs every skipped table with its own reason — listing
+    the names and then one table's reason misdiagnoses the others."""
+    pytest.importorskip("httpx")
+    import cairn.dashboard.data as dashboard_data
+
+    schema = {
+        "tables": [],
+        "edges": [],
+        "skipped": [
+            {"name": "vec_alpha", "reason": "no such module: alpha0"},
+            {"name": "vec_beta", "reason": "no such module: beta0"},
+        ],
+    }
+    monkeypatch.setattr(dashboard_data, "get_database_schema", lambda conn: schema)
+    client = _panel_client(tmp_path, _graph_db_file(tmp_path, seed=False), str(tmp_path / "missing"))
+    resp = client.get("/database")
+    assert resp.status_code == 200
+    assert "<code>vec_alpha</code> (no such module: alpha0)" in resp.text
+    assert "<code>vec_beta</code> (no such module: beta0)" in resp.text
+    assert "alpha0, <code>vec_beta</code>" not in resp.text
+
+
 def test_memory_route_empty_knowledge_dir_renders_empty_state(tmp_path):
     client = _panel_client(
         tmp_path,
@@ -1119,6 +1144,29 @@ def test_tasks_route_lists_entries_and_honors_status_filter(tmp_path):
     assert bogus.status_code == 200
     assert 'value="all" selected' in bogus.text
     assert pending.id in bogus.text and claimed.id in bogus.text
+
+
+def test_tasks_route_dropped_status_selects_dropped_tasks(tmp_path):
+    """?status=dropped is a real filter value (drop_task writes the
+    status): selecting it narrows to dropped tasks, never the silent
+    degrade to "all" an out-of-vocabulary value earns."""
+    from cairn.llm.tasks import create_task, drop_task
+    from cairn.okf.bundle import OKFBundle
+
+    knowledge_dir = tmp_path / "knowledge"
+    bundle = OKFBundle(str(knowledge_dir))
+    pending = create_task(bundle, "compass-synthesize", "src/cairn/viz")
+    dropped = create_task(bundle, "wiki", "wiki/dashboard")
+    assert drop_task(bundle, dropped.id)["dropped"] is True
+
+    client = _panel_client(
+        tmp_path, _graph_db_file(tmp_path, seed=False), str(knowledge_dir)
+    )
+    resp = client.get("/tasks", params={"status": "dropped"})
+    assert resp.status_code == 200
+    assert 'value="dropped" selected' in resp.text
+    assert dropped.id in resp.text
+    assert pending.id not in resp.text
 
 
 def test_tasks_route_empty_queue_renders_empty_state(tmp_path):
@@ -1416,6 +1464,61 @@ def test_chains_route_session_param_filters_to_one_session(tmp_path):
     # Without the param: every session renders (5 chains as above).
     plain = client.get("/chains")
     assert len(_chain_blocks(plain.text)) == 5
+
+
+def _null_invoked_at_db(tmp_path, session: str, calls: int):
+    """A store whose tool_metrics rows all carry NULL invoked_at — the
+    pre-migration shape data.py's chain grouping documents (the current
+    schema's NOT NULL cannot produce it; old stores still hold it)."""
+    db = tmp_path / "null-invoked.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE tool_metrics ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, tool_name TEXT, "
+        "session_id TEXT, invoked_at TIMESTAMP, duration_ms REAL, "
+        "status TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, "
+        "duration_ms, status) VALUES (?, ?, NULL, ?, 'ok')",
+        [(f"legacy_{i}", session, 5.0) for i in range(calls)],
+    )
+    conn.commit()
+    conn.close()
+    return str(db)
+
+
+def test_chains_route_null_invoked_at_chain_renders_without_span(tmp_path):
+    """A multi-call chain whose every invoked_at is NULL renders its call
+    count alone — the span subtracts chain.ended_at from chain.started_at,
+    and both are None here (a None-None subtraction 500s the page and
+    every poll of it)."""
+    client = _panel_client(
+        tmp_path, _null_invoked_at_db(tmp_path, "sess-null", 3), str(tmp_path / "missing")
+    )
+    resp = client.get("/chains")
+    assert resp.status_code == 200
+
+    blocks = _chain_blocks(resp.text)
+    assert len(blocks) == 1
+    assert "3 calls" in blocks[0]
+    assert "· span" not in blocks[0]  # the arrow/span segment stays hidden
+    assert "—" in blocks[0]  # the unknown start renders as the em-dash
+
+
+def test_chains_expand_anchor_keeps_the_session_filter(tmp_path):
+    """The expand anchor of a truncated chain preserves an active session
+    filter — the poll URL keeps it, so expanding inside a filtered view
+    must re-request the same slice, not the unfiltered page."""
+    client = _panel_client(
+        tmp_path, _null_invoked_at_db(tmp_path, "sess-big", 30), str(tmp_path / "missing")
+    )
+    resp = client.get("/chains", params={"session": "sess-big"})
+    assert resp.status_code == 200
+
+    block = _chain_blocks(resp.text)[0]
+    assert "showing" in block  # the per-chain cap truncated the calls
+    assert 'href="/chains?expand=sess-big&amp;session=sess-big"' in resp.text
 
 
 def test_tokens_and_chains_routes_empty_db_render_empty_states(tmp_path):
@@ -2468,6 +2571,42 @@ def test_probe_cap_degrades_counts_visibly(tmp_path, monkeypatch):
     assert '<td class="num">3</td>' not in second
     assert '<td class="num">—</td>' in second  # unknown, not zero
     assert "counts unavailable for some stores (probe cap)" in resp.text
+
+
+def test_probe_classifies_locked_and_legacy_stores_apart(tmp_path, monkeypatch):
+    """The COUNT failing with OperationalError splits two ways: a missing
+    tool_metrics table is a legacy store (real count 0, still populated);
+    a locked/corrupt store is unreadable (count unknown, state
+    reclassified) — never legacy."""
+    import sqlite3
+
+    from cairn.dashboard import workspaces as ws_module
+
+    class _LockedConn:
+        def execute(self, sql, params=()):
+            raise sqlite3.OperationalError("database is locked")
+
+        def close(self):
+            pass
+
+    class _LegacyConn:
+        def execute(self, sql, params=()):
+            raise sqlite3.OperationalError("no such table: tool_metrics")
+
+        def close(self):
+            pass
+
+    entry = {"key": "a" * 16, "path": None, "state": "populated"}
+    monkeypatch.setattr(ws_module, "get_db", lambda *a, **k: _LockedConn())
+    locked = ws_module.probe_store(tmp_path, entry)
+    assert locked["state"] == "unreadable"
+    assert locked["call_count"] is None
+    assert locked["counts_capped"] is False
+
+    monkeypatch.setattr(ws_module, "get_db", lambda *a, **k: _LegacyConn())
+    legacy = ws_module.probe_store(tmp_path, entry)
+    assert legacy["state"] == "populated"
+    assert legacy["call_count"] == 0
 
 
 # ---------------------------------------------------------------------------

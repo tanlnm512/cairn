@@ -20,6 +20,15 @@
 {%- set poll_q = {} %}
 {%- if before %}{% set _ = poll_q.update({'before': before}) %}{% endif %}
 {%- if after %}{% set _ = poll_q.update({'after': after}) %}{% endif %}
+{#- The view's active filters merged into ``q`` (window unless unbounded):
+    one block for the export links and both paging links; before/after are
+    page cursors the caller adds. -#}
+{% macro with_filters(q) -%}
+{%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif -%}
+{%- if session %}{% set _ = q.update({'session': session}) %}{% endif -%}
+{%- if source %}{% set _ = q.update({'source': source}) %}{% endif -%}
+{%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif -%}
+{%- endmacro %}
 <div id="refresh-region"
      hx-get="{{ links.url('/history', poll_q) }}" hx-trigger="every 5s" hx-swap="morph"
      hx-include="#history-filters" aria-live="polite">
@@ -32,11 +41,7 @@
   {% include "window_control.html" %}
   {#- Exports ride the view's current filters (the selected store
       rides links.url); before/after are page cursors, not filters. -#}
-  {%- set export_q = {} %}
-  {%- if tool %}{% set _ = export_q.update({'tool': tool}) %}{% endif %}
-  {%- if session %}{% set _ = export_q.update({'session': session}) %}{% endif %}
-  {%- if source %}{% set _ = export_q.update({'source': source}) %}{% endif %}
-  {%- if window != "all" %}{% set _ = export_q.update({'window': window}) %}{% endif %}
+  {%- set export_q = {} %}{{ with_filters(export_q) }}
   <p class="muted">
     Export:
     <a class="btn-secondary" href="{{ links.url('/history.csv', export_q) }}">CSV</a>
@@ -62,20 +67,12 @@
       store (links.url); empty selection keeps the bare hrefs. -#}
   <p class="muted">
     {%- if prev_cursor %}
-    {%- set q = {'after': prev_cursor} %}
-    {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
-    {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
-    {%- if source %}{% set _ = q.update({'source': source}) %}{% endif %}
-    {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
+    {%- set q = {'after': prev_cursor} %}{{ with_filters(q) }}
     <a href="{{ links.url('/history', q) }}">Newer</a>
     {%- endif %}
     {%- if prev_cursor and next_cursor %} · {% endif %}
     {%- if next_cursor %}
-    {%- set q = {'before': next_cursor} %}
-    {%- if tool %}{% set _ = q.update({'tool': tool}) %}{% endif %}
-    {%- if session %}{% set _ = q.update({'session': session}) %}{% endif %}
-    {%- if source %}{% set _ = q.update({'source': source}) %}{% endif %}
-    {%- if window != "all" %}{% set _ = q.update({'window': window}) %}{% endif %}
+    {%- set q = {'before': next_cursor} %}{{ with_filters(q) }}
     <a href="{{ links.url('/history', q) }}">Older</a>
     {%- endif %}
   </p>

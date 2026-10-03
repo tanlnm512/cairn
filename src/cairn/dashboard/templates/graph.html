@@ -119,5 +119,6 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', path='/vis-network.min.js') }}?v={{ asset_version }}"></script>
+<script src="{{ url_for('static', path='/graph-shared.js') }}?v={{ asset_version }}"></script>
 <script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>
 {% endblock %}

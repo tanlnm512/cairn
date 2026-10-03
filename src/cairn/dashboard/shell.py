@@ -73,20 +73,6 @@ def launch_option_label(stores: List[dict], launch_db: Optional[str]) -> str:
     return LAUNCH_LABEL
 
 
-def selector_context(
-    stores: List[dict], store_key: str
-) -> dict:
-    """The topbar selector's render context: populated stores only (the
-    switch targets the same validated set resolve_selection serves), each
-    as ``{key, label, path}`` with the registry path kept for the option's
-    title tooltip; ``selected`` is the active key ("" = launch store)."""
-    return {
-        "options": _populated_options(stores),
-        "selected": store_key,
-        "launch_label": LAUNCH_LABEL,
-    }
-
-
 def _populated_options(stores: List[dict]) -> List[dict]:
     return [
         {
