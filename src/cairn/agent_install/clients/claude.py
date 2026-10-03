@@ -76,7 +76,7 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
     ``<workspace>/.mcp.json`` (default). ``scope="global"`` writes to
     ``~/.claude/`` so all projects inherit cairn's skills/commands/agents
     without per-workspace installation. Global MCP registration uses
-    ``claude mcp add --scope user`` (see module docstring).
+    ``claude mcp add --scope user``.
     """
     ws = Path(workspace)
     res = InstallResult("claude")

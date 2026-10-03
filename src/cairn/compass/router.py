@@ -309,7 +309,7 @@ def _extract_query_tokens(query: str) -> List[str]:
 def _stem_token(token: str) -> str:
     """Rudimentary stemming for FTS5 prefix search.
 
-    Strips common English suffixes so 'retries' -> 'retri', 'handling' -> 'handl'
+    Strips common English suffixes so 'retries' -> 'retry', 'handling' -> 'handl'
     (the trailing wildcard in _pattern_to_fts handles the rest). Returns empty
     if stripping would leave < 3 chars.
     """

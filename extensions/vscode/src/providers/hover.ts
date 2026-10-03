@@ -1,9 +1,9 @@
 /**
- * Hover provider (FR-001): one /editor/symbol round-trip per hover renders
+ * Hover provider: one /editor/symbol round-trip per hover renders
  * caller/callee counts and the depth-limited precise blast radius. The
  * radius depth is bounded in the request, never client-side. Degraded
  * shells (the one aggregate isDegraded verdict) issue no request and render
- * nothing (FR-004); unknown symbols render nothing, never an error surface.
+ * nothing when degraded; unknown symbols render nothing, never an error surface.
  * No runtime editor-API dependency — the platform hover is injected, so the
  * logic runs under plain Node.
  */
@@ -21,7 +21,7 @@ import { isDegraded } from "../statusModel";
 export const DEFAULT_HOVER_DEPTH = 2;
 const SYMBOL_TIMEOUT_MS = 1_500;
 
-/** Frozen /editor/symbol response shape (D-004 contract); keys are wire-exact. */
+/** Frozen /editor/symbol response shape; keys are wire-exact. */
 export interface BlastRadiusEntry {
   symbol: string;
   file: string;
@@ -141,7 +141,7 @@ export function symbolAt(document: TextDocument, position: Position): string {
 }
 
 export interface HoverProviderOptions {
-  /** Live shell states; the one aggregate isDegraded verdict gates every request (FR-004). */
+  /** Live shell states; the one aggregate isDegraded verdict gates every request. */
   states: () => ServerState[];
   /** Builds the platform hover from rendered markdown. */
   hover: (markdown: string) => Hover;

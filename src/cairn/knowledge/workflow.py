@@ -317,17 +317,15 @@ def sync_workflow(
     ext = dict(concept.extensions)
     new_steps = _redact_step_descriptions(new_steps)
     ext["steps"] = new_steps
-    # Privacy floor: sync writes via bundle.write_concept rather
-    # than add_document, so apply the same redaction the add chokepoint
-    # enforces. Steps are graph-derived here, but the title/resource and the
-    # rendered body are free text -- the strip is pattern-based, so this is
-    # a no-op for clean content.
+    # Privacy floor: this sync path bypasses the add_document chokepoint, so
+    # apply the same redaction it would enforce. Steps are graph-derived;
+    # title/resource and the rendered body are free text.
     new_body = strip_private_data(
         render_steps_body(concept.title or resource, new_steps)
     )
 
-    # Write via add_document to reuse the store's atomic write + lifecycle.
-    # We pass the existing concept_id so it overwrites in place.
+    # Write via bundle.write_concept (not add_document, which derives a fresh
+    # concept_id from the title): the existing concept_id overwrites in place.
     updated = OKFConcept(
         type=concept.type,
         title=concept.title,

@@ -13,7 +13,7 @@ OKF_VERSION = "0.2"
 
 
 def _default_generated_by() -> str:
-    """Actor for `generated.by` (spec §7 `<producer>/<version>` form).
+    """Actor for `generated.by`, in `<producer>/<version>` form.
 
     Imported lazily to avoid a circular import back into the top-level package.
     """
@@ -60,13 +60,13 @@ class OKFConcept:
     # out as `generated.at` by `to_markdown`.
     timestamp: Optional[str] = None
 
-    # v0.2 first-class optional families (spec §5). Parsed out of frontmatter
+    # First-class optional families. Parsed out of frontmatter
     # so they don't silently land in `extensions`; emitted only when set.
-    generated_by: Optional[str] = None     # actor for `generated.by` (§7)
+    generated_by: Optional[str] = None     # actor for `generated.by`
     sources: Optional[List[Dict[str, Any]]] = None
     verified: Optional[List[Dict[str, Any]]] = None
-    status: Optional[str] = None           # draft | stable | deprecated (§5.4)
-    stale_after: Optional[str] = None      # YYYY-MM-DD absolute date (§5.5)
+    status: Optional[str] = None           # draft | stable | deprecated
+    stale_after: Optional[str] = None      # YYYY-MM-DD absolute date
 
     # Concept identity (file path without .md, relative to bundle root)
     concept_id: str = ""
@@ -95,7 +95,7 @@ class OKFConcept:
         resource = frontmatter.pop("resource", None)
         tags = frontmatter.pop("tags", []) or []
         # v0.2 `generated: {by, at}` first; fall back to a bare `timestamp`
-        # (spec §13.1 "MAY fall back") so on-disk v0.1 files still parse.
+        # so on-disk v0.1 files still parse.
         generated = frontmatter.pop("generated", None) or {}
         generated_by = generated.get("by") if isinstance(generated, dict) else None
         timestamp = generated.get("at") if isinstance(generated, dict) else None
@@ -105,10 +105,10 @@ class OKFConcept:
         # survive intact.
         timestamp = _coerce_timestamp(timestamp)
         frontmatter.pop("okf_version", None)
-        # v0.2 optional families (spec §5).
+        # v0.2 optional families.
         sources = frontmatter.pop("sources", None)
         verified = frontmatter.pop("verified", None)
-        # Spec §11: a bare `verified` mapping MUST be treated as a one-element
+        # A bare `verified` mapping MUST be treated as a one-element
         # list. Normalize at parse time so consumers always see a list.
         if isinstance(verified, dict):
             verified = [verified]
@@ -167,7 +167,7 @@ class OKFConcept:
         # to_markdown is a read-only serializer; callers wanting the timestamp
         # persisted should set it explicitly.
         ts = self.timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # v0.2 wire format (spec §5.2/§13.1): emit `generated: {by, at}`.
+        # v0.2 wire format: emit `generated: {by, at}`.
         fm["generated"] = {
             "by": self.generated_by or _default_generated_by(),
             "at": ts,

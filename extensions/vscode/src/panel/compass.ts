@@ -1,8 +1,8 @@
 /**
- * Compass/memory panel for the active file (FR-002): one file-endpoint
+ * Compass/memory panel for the active file: one file-endpoint
  * request per active-file change rendered into a dockable webview. The
  * shell's aggregate degradation verdict swaps data for a status note and
- * empty content renders the empty state — never an error surface (FR-004).
+ * empty content renders the empty state — never an error surface.
  */
 import * as vscode from "vscode";
 import type { ServerManager, ServerState } from "../server";
