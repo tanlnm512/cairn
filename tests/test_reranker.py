@@ -708,14 +708,14 @@ def test_download_reranker_model_failure_surfaces_child_output(monkeypatch, caps
 def test_reranker_model_is_cached_rejects_no_exist_sentinel(monkeypatch):
     """A repo-cached-but-file-absent verdict (the _CACHED_NO_EXIST sentinel)
     is not a cache hit."""
-    import huggingface_hub
+    import sys
+    import types
 
-    pytest.importorskip("huggingface_hub")
+    fake = types.ModuleType("huggingface_hub")
+    fake._CACHED_NO_EXIST = object()
+    fake.try_to_load_from_cache = lambda repo_id, filename: fake._CACHED_NO_EXIST
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+
     from cairn.graph import reranker as rrk
 
-    monkeypatch.setattr(
-        huggingface_hub,
-        "try_to_load_from_cache",
-        lambda repo_id, filename: huggingface_hub._CACHED_NO_EXIST,
-    )
     assert rrk.reranker_model_is_cached("BAAI/bge-reranker-base") is False
