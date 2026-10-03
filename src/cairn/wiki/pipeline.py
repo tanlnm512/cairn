@@ -6,11 +6,12 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from ..llm.tasks import (
-    TASK_DIR,
     Task,
     create_task,
+    latest_task,
     list_tasks,
     read_result,
+    result_critic_status,
 )
 from ..okf.bundle import OKFBundle
 from .catalog import build_page_plan
@@ -125,10 +126,6 @@ def queue_enrich_tasks(
     return queued
 
 
-def _latest(tasks: List[Task]) -> Task:
-    return max(tasks, key=lambda t: (t.created_at, t.attempt))
-
-
 def _parse_outline(result: Optional[str]) -> Optional[List[Any]]:
     """The refined outline JSON array, or None when the result never landed."""
     if not result:
@@ -138,17 +135,6 @@ def _parse_outline(result: Optional[str]) -> Optional[List[Any]]:
     except ValueError:
         return None
     return parsed if isinstance(parsed, list) else None
-
-
-def _chain_dropped(bundle: OKFBundle, task_id: str) -> bool:
-    """True when the chain's last attempt failed the critic: with no pending
-    task left, a critic-failed result means the chain exhausted its revise
-    cycles and the refinement never landed."""
-    try:
-        result_concept = bundle.read_concept(f"{TASK_DIR}/{task_id}.result")
-    except Exception:
-        return True
-    return result_concept.extensions.get("critic_status") == "failed"
 
 
 def _refine_catalog_step(
@@ -173,14 +159,16 @@ def _refine_catalog_step(
         return {
             "plan": plan,
             "queued_task_ids": [],
-            "catalog_task_id": _latest(pending).id,
+            "catalog_task_id": latest_task(pending).id,
             "catalog_pending": True,
         }
     done = [t for t in tasks if t.status == "done"]
     refined = None
     if done:
-        latest = _latest(done)
-        if not _chain_dropped(bundle, latest.id):
+        latest = latest_task(done)
+        # A critic-failed (or missing) result means the chain exhausted its
+        # revise cycles and the refinement never landed.
+        if result_critic_status(bundle, latest.id, default="failed") != "failed":
             refined = _parse_outline(read_result(bundle, latest.id))
     if refined is None:
         if not tasks:

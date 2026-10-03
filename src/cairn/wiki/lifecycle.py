@@ -123,22 +123,6 @@ def live_generation_tasks(bundle: Any) -> Dict[str, List[Any]]:
     return live
 
 
-def _latest(tasks: List[Any]) -> Any:
-    return max(tasks, key=lambda t: (t.created_at, t.attempt))
-
-
-def _result_critic_status(bundle: Any, task_id: str) -> Optional[str]:
-    """The chain task's result critic verdict, or None when it never landed
-    (a done task with no verdict is a zombie: completion failed mid-flight)."""
-    from ..llm.tasks import TASK_DIR
-
-    try:
-        result = bundle.read_concept(f"{TASK_DIR}/{task_id}.result")
-    except Exception:
-        return None
-    return result.extensions.get("critic_status")
-
-
 def derived_state(
     bundle: Any, repo: str, page_id: str, chain: List[Any]
 ) -> str:
@@ -150,6 +134,8 @@ def derived_state(
     as failed, which rescues zombies (completion that died mid-flight)
     into ``wiki retry``'s reach; else planned (in the plan, never queued).
     """
+    from ..llm.tasks import latest_task, result_critic_status
+
     if is_promoted(bundle, repo, page_id):
         return "promoted"
     if any(t.status == "in-progress" for t in chain):
@@ -159,7 +145,7 @@ def derived_state(
     if any(t.status == "dropped" for t in chain):
         return "dropped"
     done = [t for t in chain if t.status == "done"]
-    if done and _result_critic_status(bundle, _latest(done).id) != "passed":
+    if done and result_critic_status(bundle, latest_task(done).id) != "passed":
         return "failed"
     return "planned"
 
