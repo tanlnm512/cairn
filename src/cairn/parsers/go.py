@@ -66,7 +66,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
             return
 
         if t == "function_declaration":
-            sym = self._parse_function(node, source, receiver_type=None)
+            sym = self._parse_function(node, source)
             if sym:
                 pf.symbols.append(sym)
                 self._callable_scope.append(sym.name)
@@ -170,16 +170,15 @@ class GoParser(BaseParser, TreeSitterParserBase):
 
     # ------------------------------------------------------- function parsing
 
-    def _parse_function(
-        self, node: Node, source: bytes, receiver_type: Optional[str]
-    ) -> Optional[Symbol]:
+    def _parse_function(self, node: Node, source: bytes) -> Optional[Symbol]:
+        """Symbol for a receiver-less ``func`` declaration."""
         name = self._find_name(node, source, types=("identifier",))
         if not name:
             return None
         params, return_type, arity = self._parse_signature(node, source)
         return Symbol(
             name=name,
-            kind="method" if receiver_type else "function",
+            kind="function",
             qualified_name=self._qualified_name(name),
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
@@ -187,7 +186,6 @@ class GoParser(BaseParser, TreeSitterParserBase):
             column_end=node.end_point[1],
             parameters=params,
             return_type=return_type,
-            parent_scope=receiver_type,
             arity=arity,
         )
 

@@ -226,6 +226,7 @@ def _run_tool(
         capture_output=True,
         text=True,
         timeout=_INDEX_TIMEOUT_S,
+        cwd=repo_path,
         env={**os.environ, **spec.env(str(output_path))},
     )
 
