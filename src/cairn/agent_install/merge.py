@@ -468,7 +468,9 @@ def _strip_mcp_zcode(path: Path, res) -> None:
     if not isinstance(data, dict):
         return
     mcp = data.get("mcp")
-    servers = mcp.get("servers") if isinstance(mcp, dict) else None
+    if not isinstance(mcp, dict):
+        return
+    servers = mcp.get("servers")
     if not (isinstance(servers, dict) and "cairn" in servers):
         return
     del servers["cairn"]
