@@ -121,7 +121,7 @@ def test_reader_failure_degrades_the_section(monkeypatch):
 
     monkeypatch.setattr(promotion, "search_memory", _raise_reader)
     monkeypatch.setattr(tools_compass, "get_compass", _raise_reader)
-    monkeypatch.setattr(tools_compass, "search_knowledge", _raise_reader)
+    monkeypatch.setattr(tools_compass, "search_knowledge_data", _raise_reader)
 
     pack = enrich_pack(None, "unused-ws", _pack())
     assert pack["memories"]["error"] == "reader down"
@@ -148,10 +148,8 @@ def test_empty_reader_results_render_as_absence(monkeypatch):
     )
     monkeypatch.setattr(
         tools_compass,
-        "search_knowledge",
-        lambda query, type_filter="", limit=10, full_body=False: (
-            f"No {type_filter} results matching '{query}'."
-        ),
+        "search_knowledge_data",
+        lambda query, type_filter="", limit=10: [],
     )
 
     pack = enrich_pack(None, "unused-ws", _pack())
@@ -166,6 +164,32 @@ def test_empty_reader_results_render_as_absence(monkeypatch):
         assert "no matching memories" in rendered
         assert "no compass guide" in rendered
         assert "no wiki pages" in rendered
+
+
+def test_wiki_page_containing_miss_marker_still_renders(monkeypatch):
+    """A wiki page whose body contains the no-results marker must not drop the section."""
+    import cairn.mcp_server.tools_compass as tools_compass
+    from types import SimpleNamespace
+
+    page = SimpleNamespace(
+        title="Ledger architecture",
+        body="10 results matching 'ledger' were found during generation.",
+    )
+    monkeypatch.setattr(
+        tools_compass,
+        "search_knowledge_data",
+        lambda query, type_filter="", limit=10: [page],
+    )
+
+    pack = enrich_pack(None, "unused-ws", _pack())
+    assert pack["wiki"]["error"] is None
+    entry = pack["wiki"]["entries"][0]
+    assert entry["found"] is True
+    assert "results matching 'ledger' were found during generation" in entry["pages"]
+
+    for output_format in PACK_FORMATS:
+        rendered = render_pack(pack, output_format)
+        assert "10 results matching" in rendered
 
 
 def test_pack_without_seeds_renders_idle_sections():

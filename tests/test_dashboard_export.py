@@ -4,7 +4,7 @@ spec ui-dashboard-polish).
 An export must contain exactly the rows the filtered view shows: every
 route's rows are compared for identity against the view's own data
 function (``list_history`` / ``get_tool_tokens``) under the same filter,
-window, and store params the request carried -- ``limit=_EXPORT_ROW_LIMIT``
+window, and store params the request carried -- ``limit=EXPORT_ROW_LIMIT``
 on the history side, because exports are unpaginated while the view pages.
 The CSV half round-trips through :mod:`csv` (RFC 4180): the seeded
 ``args_summary`` / ``error_message`` values contain commas, double quotes,
@@ -116,12 +116,12 @@ def _client_over(db_path: str, tmp_path):
 def _history_rows(db_path: str, **params) -> list:
     """The view's data function under the caller's exact filters, at the
     export's unpaginated limit -- the parity oracle."""
-    from cairn.dashboard.app import _EXPORT_ROW_LIMIT
+    from cairn.dashboard.app import EXPORT_ROW_LIMIT
     from cairn.dashboard.data import get_read_only_db, list_history
 
     conn = get_read_only_db(db_path)
     try:
-        return list_history(conn, limit=_EXPORT_ROW_LIMIT, **params)["rows"]
+        return list_history(conn, limit=EXPORT_ROW_LIMIT, **params)["rows"]
     finally:
         conn.close()
 

@@ -167,6 +167,14 @@ def verify_tool_count() -> None:
     )
 
 
+def _timestamped_print(msg: str, file=None) -> None:
+    """Print ``[<local time>] <msg>``; defaults to stderr (stdout is the stdio JSON-RPC channel)."""
+    from datetime import datetime
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", file=file or sys.stderr, flush=True)
+
+
 def run(transport: str = "stdio", port: int | None = None):
     """Run the MCP server.
 
@@ -186,8 +194,8 @@ def run(transport: str = "stdio", port: int | None = None):
     # (default WARNING) and attaches a stderr handler to the `cairn` logger
     # only — never root. stdout is the JSON-RPC channel under stdio, so every
     # other diagnostic in this file is already hand-stamped to stderr; the
-    # logger handler follows the same rule. FastMCP pins its own level
-    # (_server_core.py:75) to avoid reconfiguring root, which this complements
+    # logger handler follows the same rule. FastMCP pins its own level in
+    # _server_core.py to avoid reconfiguring root, which this complements
     # rather than fights (it configures the `cairn` namespace, not root).
     configure_logging()
 
@@ -215,10 +223,10 @@ def run(transport: str = "stdio", port: int | None = None):
             "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
         ).fetchall()
         if not tables:
-            from datetime import datetime
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] cairn: error: database is missing the 'symbols' table. "
-                  f"Run 'cairn init && cairn build' first.", file=sys.stderr, flush=True)
+            _timestamped_print(
+                "cairn: error: database is missing the 'symbols' table. "
+                "Run 'cairn init && cairn build' first."
+            )
             check_conn.close()
             sys.exit(1)
         check_conn.close()
@@ -226,14 +234,13 @@ def run(transport: str = "stdio", port: int | None = None):
         # If we can't even check the DB, exit with a helpful message.
         # Name the resolved db path, the env resolution chain
         # in effect, and the CAIRN_HOME remediation -- not the bare exception.
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{ts}] cairn: error: failed to check database: {e}. "
-              f"Resolved db path: {db_path}. "
-              f"Env resolution chain: {render_env_resolution_chain()}. "
-              f"Fix: set CAIRN_HOME to the parent of the populated store "
-              f"(default ~/.cairn), then run 'cairn init && cairn build' first.",
-              file=sys.stderr, flush=True)
+        _timestamped_print(
+            f"cairn: error: failed to check database: {e}. "
+            f"Resolved db path: {db_path}. "
+            f"Env resolution chain: {render_env_resolution_chain()}. "
+            f"Fix: set CAIRN_HOME to the parent of the populated store "
+            f"(default ~/.cairn), then run 'cairn init && cairn build' first."
+        )
         sys.exit(1)
 
     # Warm the semantic models (embedder + reranker) in a background daemon
@@ -267,11 +274,10 @@ def run(transport: str = "stdio", port: int | None = None):
     # mid-transaction failure doesn't leave an uncommitted write transaction
     # pinning SQLite's writer lock for the life of this process.
     if read_only:
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{ts}] cairn: read-only mode -- boot catch-up and memory decay "
-              f"skipped (run `cairn update` / `cairn memory decay` on the writable side)",
-              file=sys.stderr, flush=True)
+        _timestamped_print(
+            "cairn: read-only mode -- boot catch-up and memory decay "
+            "skipped (run `cairn update` / `cairn memory decay` on the writable side)"
+        )
     else:
         conn = None
         try:
@@ -284,13 +290,11 @@ def run(transport: str = "stdio", port: int | None = None):
                 # stdout IS the JSON-RPC channel the MCP client reads, and a
                 # plain-text line written there before mcp.run() corrupts the
                 # framing.
-                from datetime import datetime
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{ts}] cairn: caught up {n} file(s) changed while the server was down", file=sys.stderr, flush=True)
+                _timestamped_print(
+                    f"cairn: caught up {n} file(s) changed while the server was down"
+                )
         except Exception as e:
-            from datetime import datetime
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] cairn: catch-up failed: {e}", file=sys.stderr, flush=True)
+            _timestamped_print(f"cairn: catch-up failed: {e}")
             if conn is not None:
                 conn.rollback()
         finally:
@@ -315,18 +319,13 @@ def run(transport: str = "stdio", port: int | None = None):
             finally:
                 reap_conn.close()
             if decay_result.get("expired_raw", 0) > 0 or decay_result.get("archived_tribal", 0) > 0:
-                from datetime import datetime
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(
-                    f"[{ts}] cairn: memory decay: archived {decay_result['expired_raw']} stale raw memories, "
-                    f"{decay_result['archived_tribal']} stale tribal memories",
-                    file=sys.stderr, flush=True
+                _timestamped_print(
+                    f"cairn: memory decay: archived {decay_result['expired_raw']} stale raw memories, "
+                    f"{decay_result['archived_tribal']} stale tribal memories"
                 )
         except Exception as e:
             # Don't fail server boot if decay has an issue (e.g., knowledge dir doesn't exist yet)
-            from datetime import datetime
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] cairn: memory decay failed (non-critical): {e}", file=sys.stderr, flush=True)
+            _timestamped_print(f"cairn: memory decay failed (non-critical): {e}")
 
     # Live file watching (FRESH-1): keep the graph fresh for edits made while
     # this server runs. Started on the shared path so BOTH stdio and SSE get
@@ -359,12 +358,12 @@ def run(transport: str = "stdio", port: int | None = None):
             # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not kwargs.
             if port:
                 mcp.settings.port = port
-            from datetime import datetime
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(
-                f"[{ts}] cairn: MCP server listening on "
+            # stdout (the default stream here): SSE has no JSON-RPC stdio
+            # framing to protect, and this line is the daemon's readiness signal.
+            _timestamped_print(
+                f"cairn: MCP server listening on "
                 f"http://{mcp.settings.host}:{mcp.settings.port}/sse",
-                flush=True,
+                file=sys.stdout,
             )
             mcp.run(transport="sse")
         else:
@@ -381,7 +380,7 @@ def _run_stray_sweep(db_path: str) -> int:
     """One stray-sweep pass: kill orphan ``cairn serve`` PIDs + emit when any die.
 
     Factored out of ``_install_stray_sweeper``'s loop so the
-    emit-on-genuine-kill behavior (spec §6.4 ``stray_swept``) is unit-testable
+    emit-on-genuine-kill behavior is unit-testable
     without spinning the daemon thread (which sleeps ``interval_s`` between
     ticks). Returns the count killed. The emit fires ONLY when a pass actually
     killed something -- an idle sweep (the common case) emits nothing, so a

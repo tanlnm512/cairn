@@ -14,11 +14,9 @@ def to_mermaid(graph: Dict) -> str:
     meta = graph.get("metadata", {})
     scope = meta.get("scope", "graph")
     lines = [f"graph {'TB' if scope in ('impact', 'module', 'repo') else 'LR'}"]
-    # Sanitize node ids (Mermaid ids can't contain some chars).
-    safe = {}
+    safe = _node_ids(nodes)
     for n in nodes:
-        sid = "".join(c if c.isalnum() else "_" for c in n["id"])[:30]
-        safe[n["id"]] = sid
+        sid = safe[n["id"]]
         label = _mermaid_esc(n["id"])
         shape = _shape_for_kind(n.get("kind", ""))
         lines.append(f'    {sid}{shape.format(label)}')
@@ -40,10 +38,9 @@ def to_dot(graph: Dict) -> str:
     lines = ["digraph cairn {"]
     lines.append('    rankdir=LR;')
     lines.append('    node [shape=box, style=rounded];')
-    safe = {}
+    safe = _node_ids(nodes)
     for n in nodes:
-        sid = _sanitize(n["id"])
-        safe[n["id"]] = sid
+        sid = safe[n["id"]]
         lines.append(f'    {sid} [label="{_esc(n["id"])}"];')
     for e in edges:
         s = safe.get(e["source"], _sanitize(e["source"]))
@@ -119,6 +116,22 @@ def embed(graph: Dict) -> str:
 
 def _sanitize(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in str(name))[:30]
+
+
+def _node_ids(nodes) -> Dict[str, str]:
+    """Sanitized renderer ids keyed by node id; distinct nodes never share an id."""
+    used: set[str] = set()
+    safe: Dict[str, str] = {}
+    for n in nodes:
+        base = _sanitize(n["id"])
+        sid = base
+        i = 1
+        while sid in used:
+            sid = f"{base[:28]}_{i}"
+            i += 1
+        used.add(sid)
+        safe[n["id"]] = sid
+    return safe
 
 
 def _esc(s: str) -> str:
