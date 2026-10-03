@@ -38,6 +38,7 @@ from cairn.graph.schema import get_db
 from cairn.knowledge.store import normalize_doc_id, resolve_knowledge_doc
 from cairn.llm.tasks import list_tasks
 from cairn.okf.bundle import OKFBundle
+from cairn.wiki.manifest import split_page_key
 from cairn.paths import resolve_store
 from cairn.telemetry.sink import retention_policy
 from cairn.utils.git import get_repo_head
@@ -1305,12 +1306,6 @@ def get_knowledge_graph_inspect(
 HISTORY_PAGE_SIZE = 50
 
 
-def _split_page_key(key: str) -> Tuple[str, str]:
-    """A manifest key ``"{repo}/{page_id}"`` -> ``(repo, page_id)``."""
-    repo, _, page_id = str(key).partition("/")
-    return repo, page_id
-
-
 def _recorded_sha(concept: Optional["OKFConcept"]) -> Optional[str]:
     """The page content's provenance sha — the concept extension alone. A
     page with no content has no sha: the plan kind keeps no provenance, so
@@ -1338,7 +1333,7 @@ def _wiki_rows(
     chains = page_chains(bundle)
     heads: Dict[str, Optional[str]] = {}
     for key, row in load_manifest(knowledge_dir)["pages"].items():
-        key_repo, key_page = _split_page_key(key)
+        key_repo, key_page = split_page_key(key)
         if repo and key_repo != repo:
             continue
         if page_id and key_page != page_id:

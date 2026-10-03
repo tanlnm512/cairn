@@ -30,8 +30,9 @@ Validator unit contract (implemented over the graph, LIKE prefix precedent
 effective page plan in refined order; every record carries the planner
 record shape (``page_id/title/description/module/seeds/input_hash``). An
 entry is kept when its ``module`` matches a real ``files.path`` prefix
-(``module == ""`` is the repo-wide overview and always valid) and every
-``seeds.files`` path resolves; otherwise the deterministic plan's entry for
+within the planning repo (``module == ""`` is the repo-wide overview and
+always valid) and every ``seeds.files`` path resolves within that repo —
+never across all repos; otherwise the deterministic plan's entry for
 the same slot (same index) is kept verbatim. Omitted ``seeds`` are inherited
 from the deterministic entry for the same module; ``input_hash`` is
 recomputed with the planner's sha256-canonical-JSON scheme.
@@ -368,7 +369,7 @@ class TestValidateRefinedOutline:
             {"title": "C utilities", "description": "d1", "module": "m_c"},
             {"title": "A core", "description": "d2", "module": "m_a"},
         ]
-        eff = validate_refined_outline(refined, det, fresh_db)
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
         # Refined order is kept; deterministic entries the refinement never
         # mentioned are appended (a refinement reorders/reseeds, never loses).
         assert [page["module"] for page in eff] == [
@@ -388,7 +389,7 @@ class TestValidateRefinedOutline:
             {"title": "Repository overview", "description": "d0", "module": ""},
             {"title": "Ghost page", "description": "g", "module": "m_ghost"},
         ]
-        eff = validate_refined_outline(refined, det, fresh_db)
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
         # The ghost module is rejected (no positional slot to inherit); the
         # untouched deterministic pages follow in plan order.
         assert eff[0]["title"] == "Repository overview"
@@ -409,7 +410,7 @@ class TestValidateRefinedOutline:
                 "seeds": {"files": ["m_c/util.py"], "symbols": ["c_util"]},
             },
         ]
-        eff = validate_refined_outline(refined, det, fresh_db)
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
         assert eff[0]["title"] == "Repository overview"
         assert eff[1]["title"] == "B good seeds"
         assert eff[1]["seeds"] == {
@@ -427,7 +428,7 @@ class TestValidateRefinedOutline:
         refined = [
             {"title": "Custom overview", "description": "d", "module": ""},
         ]
-        eff = validate_refined_outline(refined, det, fresh_db)
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
         assert eff[0]["title"] == "Custom overview"
         assert eff[0]["page_id"] == "overview"
         # Deterministic pages the refinement never covered still follow.
@@ -445,7 +446,7 @@ class TestValidateRefinedOutline:
             },
             {"title": "Ghost page", "description": "g", "module": "m_ghost"},
         ]
-        eff = validate_refined_outline(refined, det, fresh_db)
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
         assert set(eff[0].keys()) == set(det[0].keys())
         assert eff[0]["page_id"] == "m-b"
         assert eff[0]["input_hash"] == _expected_hash(
@@ -468,7 +469,7 @@ class TestValidateRefinedOutline:
         det = self._det(fresh_db)
         det_b = next(page for page in det if page["module"] == "m_b")
         refined = [{"title": "B!", "description": "d", "module": "m_b"}]
-        eff = validate_refined_outline(refined, det, fresh_db)
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
         assert eff[0]["title"] == "B!"
         assert eff[0]["seeds"] == det_b["seeds"]
         assert eff[0]["input_hash"] == _expected_hash(
@@ -477,6 +478,31 @@ class TestValidateRefinedOutline:
                 "module": "m_b", "source": "code", "seeds": det_b["seeds"],
             }
         )
+
+    def test_module_and_seeds_in_another_repo_are_rejected(self, fresh_db):
+        """Validation is repo-scoped: a module that exists only in another
+        repo, and a seed file that resolves only there, are both rejected —
+        the deterministic plan for the planning repo stands."""
+        from cairn.wiki.refine import validate_refined_outline
+
+        det = self._det(fresh_db)
+        fresh_db.execute(
+            "INSERT INTO repos (id, name, path) VALUES ('other', 'other', '/tmp/other')"
+        )
+        fresh_db.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES "
+            "('of1', 'other', 'm_a/elsewhere.py', 'python')"
+        )
+        fresh_db.commit()
+        refined = [
+            {"title": "Cross repo", "description": "d", "module": "other/m_a"},
+            {
+                "title": "Cross repo seeds", "description": "d", "module": "m_b",
+                "seeds": {"files": ["m_a/elsewhere.py"], "symbols": []},
+            },
+        ]
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
+        assert eff == det
 
 
 # --- the queue stays untouched by the refine contract ----------------------

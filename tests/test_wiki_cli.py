@@ -368,6 +368,28 @@ def test_generate_llm_force_requeues_unchanged_promoted_page(cli_env, tmp_path):
     assert len(ids) == 2 and queued[0].id in ids
 
 
+def test_generate_llm_dry_run_queues_nothing(cli_env, tmp_path):
+    """`--llm --dry-run` prints the plan and writes nothing: no task is
+    queued and no manifest lands."""
+    db = tmp_path / "graph.db"
+    conn = get_db(str(db))
+    try:
+        _seed_indexed_repo(conn)
+    finally:
+        conn.close()
+    knowledge = cli_env
+    result = CliRunner().invoke(wiki, [
+        "generate", "--llm", "--dry-run", "--pages", "1",
+        "--db", str(db), "--knowledge", str(knowledge),
+    ])
+    assert result.exit_code == 0, result.output
+    assert "dry-run" in result.stdout
+    assert "queued nothing" in result.stdout
+    bundle = _bundle(knowledge)
+    assert list_tasks(bundle) == []
+    assert not (knowledge / "_wiki" / "manifest.json").exists()
+
+
 def test_generate_llm_malformed_manifest_errors_clean(cli_env, tmp_path):
     """`generate --llm` over a malformed manifest (list-shaped pages) prints
     the unreadable-manifest error once on stderr and exits 1 — the loader's
@@ -396,7 +418,7 @@ def test_generate_llm_malformed_manifest_errors_clean(cli_env, tmp_path):
     assert isinstance(result.exception, SystemExit), result.exception
     err_lines = [line for line in result.stderr.splitlines() if line.strip()]
     assert len(err_lines) == 1
-    assert "Cannot read wiki manifest" in err_lines[0]
+    assert "Wiki manifest error" in err_lines[0]
     assert "mapping keyed by" in err_lines[0]
 
 

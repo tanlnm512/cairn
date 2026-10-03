@@ -13,10 +13,10 @@ from cairn.knowledge.ingest.identity import DocIdentity
 from cairn.knowledge.ingest.parser import ParsedDoc
 from cairn.knowledge.relationships import extract_relationships
 from cairn.knowledge.relationships import normalize_relationships
+from cairn.knowledge.store import doc_type_slug
 from cairn.memory.privacy import strip_private_data
 from cairn.okf.concept import OKFConcept
 from cairn.okf.provenance import Tier
-from cairn.okf.utils import slugify
 
 #: Manifest schema version.
 MANIFEST_VERSION = 1
@@ -27,7 +27,7 @@ MANIFEST_NAME = "manifest.json"
 
 @dataclass(frozen=True)
 class StagedEntry:
-    """One source document ready to stage: T001 tuple + T002-T004 outputs."""
+    """One source document ready to stage: parsed, classified, identified."""
 
     repo: str
     relpath: str
@@ -71,7 +71,7 @@ def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
         detected = detected_rels.get((entry.repo, entry.relpath)) or []
         rows.append(_stage_document(entry, source_path, outbox_dir, detected))
         accepted += 1
-        doc_type = _safe_doc_type(entry.classification.doc_type)
+        doc_type = doc_type_slug(entry.classification.doc_type)
         by_type[doc_type] = by_type.get(doc_type, 0) + 1
         by_repo[entry.repo] = by_repo.get(entry.repo, 0) + 1
 
@@ -102,19 +102,6 @@ def _source_path(entry: StagedEntry) -> str:
     return f"{entry.repo}/{PurePosixPath(entry.relpath).as_posix()}"
 
 
-def _safe_doc_type(doc_type: str) -> str:
-    """Slugified doc_type, mirroring ``knowledge.store.add_document``.
-
-    doc_type can come from workspace config (``cairn.json``
-    ``ingest.classification``), which is only checked for non-emptiness,
-    so an unsanitized value like ``"../../escaped"`` must never reach a
-    staged path. ``slugify`` reduces it to path-safe alphanumerics and
-    the ``or "general"`` fallback matches the store exactly, so the
-    staged path and the stored concept_id always agree.
-    """
-    return slugify(doc_type) or "general"
-
-
 def _stage_document(
     entry: StagedEntry,
     source_path: str,
@@ -122,7 +109,10 @@ def _stage_document(
     detected: list[dict[str, Any]],
 ) -> dict:
     """Write one accepted document's OKF file; return its manifest row."""
-    doc_type = _safe_doc_type(entry.classification.doc_type)
+    # doc_type can come from workspace config, which is only checked for
+    # non-emptiness: doc_type_slug keeps the staged path path-safe and
+    # identical to the concept_id the store creates.
+    doc_type = doc_type_slug(entry.classification.doc_type)
     identity = entry.identity
     concept_id = f"knowledge/{doc_type}/{identity.slug}"
     staged_path = f"{concept_id}.md"

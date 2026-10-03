@@ -21,6 +21,10 @@ from .refine import validate_refined_outline
 _CATALOG_KIND = "wiki-catalog"
 
 
+class WikiManifestWriteError(RuntimeError):
+    """The wiki manifest write failed; queued work is not recorded."""
+
+
 def _queue_pages(
     conn: sqlite3.Connection,
     bundle: OKFBundle,
@@ -76,7 +80,10 @@ def _queue_pages(
             row_out["diagrams"] = True
         pages[key] = row_out
 
-    save_manifest(bundle.root, manifest)
+    if not save_manifest(bundle.root, manifest):
+        raise WikiManifestWriteError(
+            "failed to write the wiki manifest; queued tasks are not recorded"
+        )
     return queued_task_ids
 
 
@@ -108,7 +115,12 @@ def queue_enrich_tasks(
         if read_page_concept(bundle, row_repo, row_page) is None:
             continue
         queued.append(
-            create_task(bundle, "wiki-page-enrich", key, facts=plan_facts(row, row_repo))
+            create_task(
+                bundle,
+                "wiki-page-enrich",
+                key,
+                facts=plan_facts(row, row_repo, diagrams=bool(row.get("diagrams"))),
+            )
         )
     return queued
 
@@ -181,7 +193,7 @@ def _refine_catalog_step(
             return {"plan": plan, "queued_task_ids": [], "catalog_task_id": task.id}
         queued = _queue_pages(conn, bundle, repo, plan, force, diagrams)
         return {"plan": plan, "queued_task_ids": queued}
-    effective = validate_refined_outline(refined, plan, conn)
+    effective = validate_refined_outline(refined, plan, conn, repo)
     queued = _queue_pages(conn, bundle, repo, effective, force, diagrams)
     return {"plan": effective, "queued_task_ids": queued}
 

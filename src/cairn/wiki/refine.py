@@ -1,19 +1,46 @@
-"""Validator for an LLM-refined wiki catalog outline."""
+"""Validator for an LLM-refined wiki catalog outline.
+
+Resolution is repo-scoped: a refined entry's module and seed files must
+resolve within the planning repo's graph rows, never across all repos.
+"""
 from __future__ import annotations
 
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from ..refs import file_exists
+from ..refs import _path_match_params, _path_match_sql
 from .catalog import _like_under_prefix, _page, _slug
 
 _OVERVIEW_PAGE_ID = "overview"
 
 
-def _module_in_graph(conn: sqlite3.Connection, module: str) -> bool:
+def _module_in_graph(conn: sqlite3.Connection, module: str, repo: str) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\' LIMIT 1",
-        (module, _like_under_prefix(module)),
+        "SELECT 1 FROM files WHERE repo_id = ? "
+        "AND (path = ? OR path LIKE ? ESCAPE '\\') LIMIT 1",
+        (repo, module, _like_under_prefix(module)),
+    ).fetchone()
+    return row is not None
+
+
+def _file_in_repo(conn: sqlite3.Connection, repo: str, ref: str) -> bool:
+    """True when ``ref`` resolves within ``repo``: the segment-anchored
+    arms of :func:`cairn.refs.file_exists`, constrained to the repo."""
+    ref = ref.strip("/")
+    if not ref:
+        return False
+    row = conn.execute(
+        f"SELECT 1 FROM files WHERE repo_id = ? AND {_path_match_sql()} LIMIT 1",
+        (repo, *_path_match_params(ref)),
+    ).fetchone()
+    if row is not None:
+        return True
+    rid, _, rest = ref.partition("/")
+    if not rest or rid != repo:
+        return False
+    row = conn.execute(
+        f"SELECT 1 FROM files WHERE repo_id = ? AND {_path_match_sql()} LIMIT 1",
+        (repo, *_path_match_params(rest)),
     ).fetchone()
     return row is not None
 
@@ -22,6 +49,7 @@ def _effective_entry(
     entry: Any,
     det_by_module: Dict[str, Dict[str, Any]],
     conn: sqlite3.Connection,
+    repo: str,
 ) -> Optional[Dict[str, Any]]:
     """The effective record for one refined entry, or None when the entry
     is rejected (the deterministic plan still owns its module's page via
@@ -31,7 +59,7 @@ def _effective_entry(
     module = entry.get("module")
     if not isinstance(module, str):
         return None
-    if module != "" and not _module_in_graph(conn, module):
+    if module != "" and not _module_in_graph(conn, module, repo):
         return None
     raw_seeds = entry.get("seeds")
     if raw_seeds is None:
@@ -49,7 +77,9 @@ def _effective_entry(
         }
     else:
         return None
-    if not all(isinstance(p, str) and file_exists(conn, p) for p in seeds["files"]):
+    if not all(
+        isinstance(p, str) and _file_in_repo(conn, repo, p) for p in seeds["files"]
+    ):
         return None
     return _page(
         page_id=_OVERVIEW_PAGE_ID if module == "" else _slug(module),
@@ -64,6 +94,7 @@ def validate_refined_outline(
     refined: List[Any],
     deterministic_plan: List[Dict[str, Any]],
     conn: sqlite3.Connection,
+    repo: str,
 ) -> List[Dict[str, Any]]:
     """Validate a refined catalog outline against the graph.
 
@@ -77,7 +108,7 @@ def validate_refined_outline(
     det_by_module = {entry["module"]: entry for entry in deterministic_plan}
     effective: List[Dict[str, Any]] = []
     for entry in refined:
-        record = _effective_entry(entry, det_by_module, conn)
+        record = _effective_entry(entry, det_by_module, conn, repo)
         if record is not None:
             effective.append(record)
     covered = {record["module"] for record in effective}
