@@ -211,3 +211,34 @@ def test_search_symbols_tool_emits_empty_result_when_no_match(tmp_path, monkeypa
     empties = [a for n, a in _buffered_events() if n == EMPTY_RESULT]
     assert len(empties) == 1
     assert empties[0] == {"query_kind": "search_symbols"}
+
+
+# ---------------------------------------------------------------------------
+# attr redaction: every string value is scrubbed at the emit chokepoint
+# ---------------------------------------------------------------------------
+
+
+def test_emit_redacts_plain_string_attrs():
+    """A secret-shaped plain-string attr never reaches the buffered row."""
+    from cairn.telemetry import emit
+
+    emit("redaction_probe", note="token sk-ant-TEST123CANARY00000000 in prose")
+
+    [(name, attrs)] = _buffered_events()
+    assert name == "redaction_probe"
+    assert "sk-ant-TEST123CANARY00000000" not in json.dumps(attrs)
+    assert "[REDACTED_SECRET]" in json.dumps(attrs)
+
+
+def test_emit_redacts_strings_nested_in_container_attrs():
+    """Strings inside dict/list attrs are scrubbed at depth too."""
+    from cairn.telemetry import emit
+
+    emit(
+        "redaction_probe",
+        tags=["Bearer abcdefghijklmnopqrstuvwxyz1234567890abcd"],
+    )
+
+    [(_name, attrs)] = _buffered_events()
+    assert "abcdefghijklmnopqrstuvwxyz1234567890abcd" not in json.dumps(attrs)
+    assert "[REDACTED_SECRET]" in json.dumps(attrs)

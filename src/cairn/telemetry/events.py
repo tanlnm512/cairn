@@ -73,14 +73,17 @@ def _session_id() -> str:
 
 
 def _coerce_value(v: Any) -> Any:
-    """Defensively cap one attr value at any nesting depth.
+    """Defensively cap and redact one attr value at any nesting depth.
 
-    Strings are truncated to ``_MAX_ATTR_CHARS``; dicts/lists are walked so a
-    nested blob can't smuggle an unbounded string past the top-level check.
+    Strings are routed through ``strip_private_data`` then truncated to
+    ``_MAX_ATTR_CHARS``; dicts/lists are walked so a nested blob can't
+    smuggle an unbounded or secret-bearing string past the top-level check.
     Anything else (int/float/bool/None/enums) passes through as-is.
     """
     if isinstance(v, str):
-        return v[:_MAX_ATTR_CHARS]
+        from ..memory.privacy import strip_private_data
+
+        return strip_private_data(v)[:_MAX_ATTR_CHARS]
     if isinstance(v, dict):
         return {str(k)[:64]: _coerce_value(x) for k, x in v.items()}
     if isinstance(v, (list, tuple)):
@@ -89,26 +92,28 @@ def _coerce_value(v: Any) -> Any:
 
 
 def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
-    """JSON-serialize attrs, truncating oversized values defensively.
+    """JSON-serialize attrs, redacting and truncating string values defensively.
 
     Returns ``None`` for an empty dict (NULL ``attrs`` column). Non-serializable
     values are stringified via ``default=str`` so :func:`emit` never raises --
     a caller passing an odd object is a bug, but telemetry must not propagate
-    it. Stringified values and over-long strings are routed through
-    ``strip_private_data``: ``str(exc)`` routinely embeds secret shapes and
-    absolute paths, and this module is the policy point for what reaches the
-    ``events`` table (and, with OTLP on, the network) -- attrs must stay
-    enums/short tags, enforced here rather than trusted from callers. A hard
-    serialization failure (e.g. a cycle even ``str`` can't handle) or a
+    it. Every string value (plain, stringified, or nested in a container) is
+    routed through ``strip_private_data``: ``str(exc)`` routinely embeds secret
+    shapes and absolute paths, and this module is the policy point for what
+    reaches the ``events`` table (and, with OTLP on, the network) -- attrs must
+    stay enums/short tags, enforced here rather than trusted from callers. A
+    hard serialization failure (e.g. a cycle even ``str`` can't handle) or a
     serialized blob still over the cap after truncation drops the attrs rather
     than the event.
     """
     if not attrs:
         return None
+    from ..memory.privacy import strip_private_data
+
     coerced: dict[str, Any] = {}
     for k, v in attrs.items():
         if isinstance(v, str):
-            v = v[:_MAX_ATTR_CHARS]
+            v = strip_private_data(v)[:_MAX_ATTR_CHARS]
         elif not isinstance(v, (int, float, bool, type(None))):
             # Non-scalar: nested containers are capped structurally; anything
             # else goes through str() (json's default) -- scrub that now, while
@@ -116,8 +121,6 @@ def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
             if isinstance(v, (dict, list, tuple)):
                 v = _coerce_value(v)
             else:
-                from ..memory.privacy import strip_private_data
-
                 v = strip_private_data(str(v))[:_MAX_ATTR_CHARS]
         coerced[str(k)[:64]] = v
     try:
@@ -151,7 +154,7 @@ def emit(name: str, **attrs: Any) -> None:
         attrs_json = _coerce_attrs(attrs)
         session_id = _session_id()
         sink.enqueue(ts, name, session_id, attrs_json)
-        # Optional OTLP tap (T19): no-op (one env read) unless
+        # Optional OTLP tap: no-op (one env read) unless
         # CAIRN_OTEL_ENDPOINT is set. Appends to otel's own side buffer --
         # the SQLite row queued above stays authoritative and is never
         # stolen by the export path.
@@ -196,14 +199,13 @@ def warn_once(key: str, warn_logger: logging.Logger, msg: str) -> None:
 # note_contention lives in graph/schema.py -- it owns the per-site once-guard,
 # the unconditional operational WARNING, and emits the lock_contention event
 # via emit() above (best-effort, CAIRN_TELEMETRY-gated). It is the single
-# canonical helper (the two-helper split that T07 spec'd was collapsed: only
-# schema's is wired at the 13 swallow sites, with the behavior we want -- the
-# warning stays operational even under CAIRN_TELEMETRY=off).
+# canonical helper wired at the swallow sites: the warning stays operational
+# even under CAIRN_TELEMETRY=off.
 # ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
-# semantic_unavailable -- durable signal for a semantic-off degrade (F4)
+# semantic_unavailable -- durable signal for a semantic-off degrade
 #
 # explore() and search_knowledge() both degrade to lexical-only results when
 # the semantic backend can't contribute (not installed / no embeddings built /

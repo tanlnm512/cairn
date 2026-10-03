@@ -28,6 +28,12 @@ _CLI_BUFFER: collections.deque = collections.deque(maxlen=2000)
 _CLI_LOCK = threading.Lock()
 _CLI_FLUSHER_STARTED = False
 
+# Serializes whole flush cycles (snapshot -> write -> pop): the daemon tick
+# and the atexit drain can overlap, and two concurrent runs would insert the
+# same batch twice and then popleft rows that were never written. _CLI_LOCK
+# guards individual buffer mutations only. Mirrors sink._FLUSH_LOCK.
+_FLUSH_LOCK = threading.Lock()
+
 # Cap on the redacted argv summary stored per row: the summary identifies the
 # invocation shape, it is not a payload replay -- same value/rationale as
 # metric_buffering.MAX_ARGS_SUMMARY_CHARS, re-declared locally so neither
@@ -101,7 +107,7 @@ def build_row(
     except Exception:
         raw_summary = None
 
-    # Redact at the chokepoint, BEFORE the row is buffered (audit F4 rule):
+    # Redact at the chokepoint, BEFORE the row is buffered:
     # argv echoes user paths/flags/tokens, exceptions echo request payloads.
     # Lazy import mirrors metric_buffering (avoids any boot-order cycle with
     # the memory package; negligible cost -- the module is cached after the
@@ -154,7 +160,7 @@ def record_cli_invocation(
 def _start_cli_flusher() -> None:
     """Register ``_flush_cli_metrics`` with the shared sink and start it.
 
-    Reuses the single shared flush thread + atexit drain (spec §6.1) instead
+    Reuses the single shared flush thread + atexit drain instead
     of spawning a CLI-specific thread. ``_CLI_FLUSHER_STARTED`` is this
     module's idempotency flag (double-checked under ``_CLI_LOCK``) and the
     piece ``_reset_for_tests`` clears so suites can re-drive registration;
@@ -179,7 +185,9 @@ def _flush_cli_metrics():
     missing table) leaves rows queued for the next attempt; the deque maxlen
     caps growth meanwhile. Rows are popped only after a successful commit,
     and only the rows actually written -- newer rows appended during the
-    flush stay buffered.
+    flush stay buffered. The whole cycle runs under ``_FLUSH_LOCK`` so
+    concurrent flushers cannot snapshot the same batch twice or pop rows
+    another flush has not written yet.
 
     Untyped (no annotations) deliberately, mirroring
     ``metric_buffering._flush_metrics`` and ``sink._flush_events``: the
@@ -187,41 +195,42 @@ def _flush_cli_metrics():
     free of the sqlite3 dependency), so its attribute access is left for
     runtime and mypy does not check this body.
     """
-    with _CLI_LOCK:
-        if not _CLI_BUFFER:
-            return
-        batch = list(_CLI_BUFFER)
     if _conn_factory is None:
         return
-    conn = None
-    try:
-        conn = _conn_factory()
-        conn.executemany(_INSERT_SQL, batch)
-        conn.commit()
-    except Exception:
-        # Couldn't flush this batch -- leave it buffered for the next
-        # attempt. Telemetry is best-effort, but log at debug so silent
-        # backlog stays observable.
-        logger.debug(
-            "cli metric flush failed; %d rows remain buffered",
-            len(batch),
-            exc_info=True,
-        )
-        return
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    # Commit succeeded -> safe to drop these rows. Only remove the rows we
-    # actually wrote; newer rows appended during the flush stay.
-    with _CLI_LOCK:
-        for _ in range(len(batch)):
-            try:
-                _CLI_BUFFER.popleft()
-            except IndexError:
-                break
+    with _FLUSH_LOCK:
+        with _CLI_LOCK:
+            if not _CLI_BUFFER:
+                return
+            batch = list(_CLI_BUFFER)
+        conn = None
+        try:
+            conn = _conn_factory()
+            conn.executemany(_INSERT_SQL, batch)
+            conn.commit()
+        except Exception:
+            # Couldn't flush this batch -- leave it buffered for the next
+            # attempt. Telemetry is best-effort, but log at debug so silent
+            # backlog stays observable.
+            logger.debug(
+                "cli metric flush failed; %d rows remain buffered",
+                len(batch),
+                exc_info=True,
+            )
+            return
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        # Commit succeeded -> safe to drop these rows. Only remove the rows we
+        # actually wrote; newer rows appended during the flush stay.
+        with _CLI_LOCK:
+            for _ in range(len(batch)):
+                try:
+                    _CLI_BUFFER.popleft()
+                except IndexError:
+                    break
 
 
 def configure_conn(conn_factory: Callable[[], "object"]) -> None:

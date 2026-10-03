@@ -931,3 +931,14 @@ def test_fetch_model_listing_dedupes_preserving_order(monkeypatch):
         assert embed_ladder._fetch_model_listing() == ["b", "a", "c"]
     finally:
         server.close()
+
+
+def test_degradation_event_host_strips_credentials(monkeypatch):
+    """The host-only payload never carries user:password@ from the base URL."""
+    _server_env(monkeypatch, "http://user:sup3rs3cret@127.0.0.1:1/v1")
+    embed_ladder.notify_degradation("server_down", "server unreachable")
+
+    events = _degraded_events()
+    assert len(events) == 1
+    assert events[0]["host"] == "127.0.0.1:1"
+    assert "sup3rs3cret" not in json.dumps(events[0])

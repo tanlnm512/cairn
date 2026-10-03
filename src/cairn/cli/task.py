@@ -79,16 +79,21 @@ def task_claim(task_id, assigned_to, knowledge):
         click.echo(f"Could not claim '{task_id}' (not pending or not found).", err=True)
         sys.exit(1)
     click.echo(f"Claimed {task_id}. Write your result, then:")
-    click.echo(f"  cairn task complete {task_id} --result-file <path>")
+    complete_hint = f"  cairn task complete {task_id} --result-file <path>"
+    if assigned_to:
+        complete_hint += f" --as {assigned_to}"
+    click.echo(complete_hint)
 
 
 @task.command("complete")
 @click.argument("task_id")
 @click.option("--result", default=None, help="Result text (alternative to --result-file)")
 @click.option("--result-file", default=None, help="Read result from this file")
+@click.option("--as", "claimer", default="",
+              help="Claimer identity; must match the task's --as at claim time.")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def task_complete(task_id, result, result_file, db, knowledge):
+def task_complete(task_id, result, result_file, claimer, db, knowledge):
     """Mark a task done. Runs the deterministic critic automatically."""
     from ..llm.tasks import complete_task, MAX_REVISE_CYCLES
     from ..okf.bundle import OKFBundle
@@ -102,9 +107,13 @@ def task_complete(task_id, result, result_file, db, knowledge):
 
     # Open DB connection for critic
     conn = get_db(db)
-    
+
     try:
-        outcome = complete_task(bundle, task_id, result, conn=conn)
+        outcome = complete_task(bundle, task_id, result, conn=conn, claimer=claimer)
+        if outcome.get("refused"):
+            reasons = "; ".join(outcome.get("errors") or ["unknown"])
+            click.echo(f"Task {task_id} was not completed: {reasons}.", err=True)
+            sys.exit(1)
         if outcome.get("dropped"):
             click.echo(f"Task {task_id} dropped after {MAX_REVISE_CYCLES} failed attempts.", err=True)
             if outcome.get("errors"):

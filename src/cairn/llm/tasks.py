@@ -58,15 +58,10 @@ def create_task(
     parent_attempt: int = 0,
 ) -> Task:
     """Queue a new task. Returns the Task (already written to the bundle)."""
-    # Privacy floor (mirrored from complete_task's result gate):
-    # memory-* task facts derive from user session content (memory-extract
-    # carries the raw conversation transcript), so scrub secret-shaped
-    # substrings BEFORE the concept is persisted -- facts land both in the
-    # rendered body and structurally in extensions. This is the single
-    # chokepoint every queueing backend passes through: the CLI's no-backend
-    # capture fallback, FileQueueBackend directly, and SubprocessBackend's
-    # fallback to it all create tasks here, so none can bypass the strip.
-    # Non-string facts (ints/lists used by non-memory kinds) pass through.
+    # memory-* facts derive from session content (memory-extract carries the
+    # raw transcript): scrub secret-shaped substrings before persisting.
+    # Every queueing path creates tasks here, so the strip cannot be
+    # bypassed. Non-string facts pass through.
     if task_kind.startswith("memory-") and facts:
         from ..memory.privacy import strip_private_data
 
@@ -244,6 +239,40 @@ def _enriched_article(
     )
 
 
+def _refused_outcome(task_id: str, errors: List[str]) -> Dict[str, Any]:
+    """The refused-completion outcome: nothing recorded, task untouched."""
+    return {
+        "task_id": task_id,
+        "promoted": False,
+        "revised": False,
+        "dropped": False,
+        "refused": True,
+        "errors": errors,
+        "quality": 0.0,
+    }
+
+
+# Returned when the terminal status write loses a complete/drop race.
+_RACE_LOST = "task no longer in-progress; another writer finished it"
+
+
+def _finish_terminal(bundle: OKFBundle, task: Task, status: str) -> bool:
+    """Persist a terminal status iff the task is still in-progress.
+
+    The re-check + write run under the bundle lock so a concurrent
+    complete/drop cannot interleave (last writer wins otherwise). Returns
+    False when another writer finished the task first.
+    """
+    with bundle.lock():
+        current = _read(bundle, task.id)
+        if current is None or current.status != "in-progress":
+            return False
+        task.status = status
+        task.completed_at = _now()
+        bundle.write_concept(_task_to_concept(task))
+        return True
+
+
 def complete_task(
     bundle: OKFBundle,
     task_id: str,
@@ -253,36 +282,27 @@ def complete_task(
 ) -> Dict[str, Any]:
     """Mark a task done and run the deterministic critic on its result.
 
-    Returns {task_id, promoted, revised, dropped, errors, quality}. On fact-check
-    failure, spawns a revise task (up to MAX_REVISE_CYCLES). When `claimer` is
-    provided it must match the task's `assigned_to`, else completion is refused.
+    Returns {task_id, promoted, revised, dropped, refused, errors, quality}.
+    On fact-check failure, spawns a revise task (up to MAX_REVISE_CYCLES);
+    an exhausted chain persists status ``failed``. When `claimer` is
+    provided it must match the task's `assigned_to`, else completion is
+    refused (``refused: True``, never ``dropped: True``).
     """
     task = _read(bundle, task_id)
     if task is None or task.status != "in-progress":
-        return {
-            "task_id": task_id,
-            "promoted": False,
-            "revised": False,
-            "dropped": True,
-            "errors": ["task not in-progress or not found"],
-            "quality": 0.0,
-        }
+        return _refused_outcome(task_id, ["task not in-progress or not found"])
 
     # Ownership guard. Refuse if a claimer identity was supplied but does not
     # own this task. Empty-string assigned_to means the task was claimed
     # anonymously and anyone may complete it.
     if claimer is not None and task.assigned_to and claimer != task.assigned_to:
-        return {
-            "task_id": task_id,
-            "promoted": False,
-            "revised": False,
-            "dropped": True,
-            "errors": [
+        return _refused_outcome(
+            task_id,
+            [
                 f"ownership mismatch: task owned by '{task.assigned_to}' "
                 f"but complete called by '{claimer}'"
             ],
-            "quality": 0.0,
-        }
+        )
 
     # Privacy floor: memory-* task results are derived from user
     # session content (memory-extract embeds the transcript, memory-critic
@@ -381,12 +401,6 @@ def complete_task(
         os.remove(claim_marker)
     except OSError:
         pass
-
-    def _finish_done():
-        """Persist the task in its terminal done state (one write, one shape)."""
-        task.status = "done"
-        task.completed_at = _now()
-        bundle.write_concept(_task_to_concept(task))
 
     # Run critic if a connection is provided
     if conn is not None:
@@ -582,7 +596,8 @@ def complete_task(
                     apply_doc_link_edges(bundle, conn, doc_link_edges)
                     promoted = True
 
-                _finish_done()
+                if not _finish_terminal(bundle, task, "done"):
+                    return _refused_outcome(task_id, [_RACE_LOST])
                 _emit(
                     TASK_LIFECYCLE,
                     task_kind=task.task_kind,
@@ -619,7 +634,8 @@ def complete_task(
                         parent_attempt=task.attempt,
                     )
 
-                    _finish_done()
+                    if not _finish_terminal(bundle, task, "done"):
+                        return _refused_outcome(task_id, [_RACE_LOST])
                     _emit(
                         TASK_LIFECYCLE,
                         task_kind=task.task_kind,
@@ -635,8 +651,10 @@ def complete_task(
                         "quality": critic_result.quality_score,
                     }
                 else:
-                    # Max cycles reached - drop the task
-                    _finish_done()
+                    # Max cycles reached - the chain is spent: persist the
+                    # failed status the task vocabulary advertises.
+                    if not _finish_terminal(bundle, task, "failed"):
+                        return _refused_outcome(task_id, [_RACE_LOST])
                     _emit(
                         TASK_LIFECYCLE,
                         task_kind=task.task_kind,
@@ -665,7 +683,8 @@ def complete_task(
                 "quality": 0.0,
             }
 
-    _finish_done()
+    if not _finish_terminal(bundle, task, "done"):
+        return _refused_outcome(task_id, [_RACE_LOST])
     # No connection provided - return basic completion
     return {
         "task_id": task_id,
@@ -681,32 +700,34 @@ def drop_task(bundle: OKFBundle, task_id: str) -> Dict[str, Any]:
     """Mark a pending or in-progress task dropped (terminal status).
 
     Returns {task_id, dropped, errors}. Done, unknown, and already-dropped
-    tasks are refused with their status left unchanged. A dropped task is
-    never claimable again (claim_task claims pending only); dropping an
-    in-progress task removes its claim marker so the resource can be
-    re-queued.
+    tasks are refused with their status left unchanged. The status check and
+    write run under the bundle lock so a concurrent completion cannot
+    interleave. A dropped task is never claimable again (claim_task claims
+    pending only); dropping an in-progress task removes its claim marker so
+    the resource can be re-queued.
     """
-    task = _read(bundle, task_id)
-    if task is None:
-        return {
-            "task_id": task_id,
-            "dropped": False,
-            "errors": ["task not found"],
-        }
-    if task.status not in ("pending", "in-progress"):
-        return {
-            "task_id": task_id,
-            "dropped": False,
-            "errors": [f"task is {task.status}; only pending or in-progress "
-                       "tasks can be dropped"],
-        }
-    task.status = "dropped"
-    bundle.write_concept(_task_to_concept(task))
-    claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
-    try:
-        os.remove(claim_marker)
-    except OSError:
-        pass
+    with bundle.lock():
+        task = _read(bundle, task_id)
+        if task is None:
+            return {
+                "task_id": task_id,
+                "dropped": False,
+                "errors": ["task not found"],
+            }
+        if task.status not in ("pending", "in-progress"):
+            return {
+                "task_id": task_id,
+                "dropped": False,
+                "errors": [f"task is {task.status}; only pending or in-progress "
+                           "tasks can be dropped"],
+            }
+        task.status = "dropped"
+        bundle.write_concept(_task_to_concept(task))
+        claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
+        try:
+            os.remove(claim_marker)
+        except OSError:
+            pass
     _emit(
         TASK_LIFECYCLE,
         task_kind=task.task_kind,
@@ -723,6 +744,22 @@ def read_result(bundle: OKFBundle, task_id: str) -> Optional[str]:
         return c.body
     except FileNotFoundError:
         return None
+
+
+def result_critic_status(
+    bundle: OKFBundle, task_id: str, default: Optional[str] = None
+) -> Optional[str]:
+    """The task result's critic verdict, or ``default`` when the result never landed."""
+    try:
+        c = bundle.read_concept(f"{TASK_DIR}/{task_id}.result")
+    except Exception:
+        return default
+    return c.extensions.get("critic_status")
+
+
+def latest_task(tasks: List["Task"]) -> "Task":
+    """Newest task by (created_at, attempt) -- the head of a revise chain."""
+    return max(tasks, key=lambda t: (t.created_at, t.attempt))
 
 
 def get_task(bundle: OKFBundle, task_id: str) -> Optional[Task]:

@@ -22,7 +22,7 @@ chokepoint directly:
   F8  memory/store.delete_memory refuses concepts resolved outside memory/
       via get_memory's raw-path fallback.
   F9  complete_task strips result bodies for memory-* task kinds only.
-  F10 record_reference(s_batch) redact + truncate the raw query context.
+  F10 record_references_batch redacts + truncates the raw query context.
 """
 from __future__ import annotations
 
@@ -615,11 +615,12 @@ class TestRefContextSanitization:
         row = db.execute("SELECT context FROM memory_refs").fetchone()
         assert len(row["context"]) <= 200
 
-    def test_single_reference_redacted(self, db):
-        from cairn.memory.promotion import record_reference
+    def test_api_key_reference_redacted(self, db):
+        from cairn.memory.promotion import record_references_batch
 
-        record_reference(db, "memory/tribal/y", "s1",
-                         context=f"searched for {_API_KEY}")
+        record_references_batch(
+            db, [("memory/tribal/y", f"searched for {_API_KEY}")], "s1"
+        )
         row = db.execute("SELECT context FROM memory_refs").fetchone()
         assert "sk-1234567890" not in row["context"]
 

@@ -81,9 +81,14 @@ class FileQueueBackend:
         deadline = time.monotonic() + max(0.0, min(self.max_wait, timeout))
         while True:
             t = task_mod.get_task(self.bundle, task.id)
-            if t and t.status == "done":
-                result = task_mod.read_result(self.bundle, task.id)
-                return result or ""
+            if t is not None:
+                if t.status == "done":
+                    result = task_mod.read_result(self.bundle, task.id)
+                    return result or ""
+                if t.status in ("failed", "dropped"):
+                    # Terminal without a usable result: the deterministic
+                    # fallback below is the substitute.
+                    return ""
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -93,8 +98,6 @@ class FileQueueBackend:
     def _run_task_call(
         self, kind: str, resource: str, facts: Dict[str, Any], timeout: float
     ) -> str:
-        if timeout == _DEFAULT_TIMEOUT:
-            return self._run_task(kind, resource, facts)
         return self._run_task(kind, resource, facts, timeout=timeout)
 
     def synthesize(

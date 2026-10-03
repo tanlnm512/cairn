@@ -493,3 +493,56 @@ def test_no_unknown_cli_session_rows_in_store(cli_store, monkeypatch):
     fallback = [r["session_id"] for r in cli_rows if r["session_id"].startswith("cli:")]
     assert len(fallback) == 2
     assert len(set(fallback)) == 2
+
+
+# ---------------------------------------------------------------------------
+# flush cycle lock: overlapping cycles never double-write or pop unwritten rows
+# ---------------------------------------------------------------------------
+
+
+def test_flush_cycle_lock_serializes_overlapping_cycles(cli_store):
+    """Two overlapping flush cycles (daemon tick vs atexit drain) must not
+    snapshot the same batch twice: the second cycle queues behind the first,
+    so each row lands once and no buffered row is popped unwritten."""
+    import threading
+
+    cli_metrics._reset_for_tests()
+
+    started = threading.Event()
+    release = threading.Event()
+    written: list = []
+
+    class _BlockingConn:
+        def executemany(self, sql, batch):
+            written.extend(batch)
+            started.set()
+            release.wait(timeout=5)
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    cli_metrics.configure_conn(lambda: _BlockingConn())
+
+    cli_metrics.record_cli_invocation("first", ["one"], 1.0, "ok")
+    flusher = threading.Thread(target=cli_metrics._flush_cli_metrics)
+    flusher.start()
+    assert started.wait(timeout=5), "first flush never reached the write"
+
+    # Row appended while the first cycle is mid-write.
+    cli_metrics.record_cli_invocation("second", ["two"], 1.0, "ok")
+
+    def _release_later():
+        time.sleep(0.2)
+        release.set()
+
+    threading.Thread(target=_release_later).start()
+    # Second cycle: with the cycle lock it waits for the first to finish and
+    # snapshots only the row appended in between.
+    cli_metrics._flush_cli_metrics()
+    flusher.join(timeout=5)
+
+    assert [row[0] for row in written] == ["cli:first", "cli:second"]
+    assert not cli_metrics._CLI_BUFFER
