@@ -74,6 +74,19 @@ def test_add_without_file_or_body_errors_cleanly(cli_env):
     assert _stored_docs() == []
 
 
+def test_add_missing_file_errors_cleanly(cli_env):
+    bad = str(cli_env / "does-not-exist.md")
+    result = CliRunner().invoke(knowledge, [
+        "add", "--title", "Ghost doc", "--file", bad,
+    ])
+    assert result.exit_code == 1
+    # Clean, actionable message naming the bad path -- not a traceback.
+    assert "Error:" in result.stderr
+    assert bad in result.stderr
+    assert "Traceback" not in result.stderr
+    assert _stored_docs() == []
+
+
 # --- knowledge ingest ------------------------------------------------------
 
 

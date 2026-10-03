@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, get_db, main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
+
+
+def _split(csv: str) -> list[str]:
+    """Split a comma-separated CLI value into stripped non-empty entries."""
+    return [x.strip() for x in csv.split(",") if x.strip()]
+
 
 @main.group()
 def knowledge():
@@ -35,7 +40,11 @@ def knowledge_add(file_path, body_text, title, doc_type, tags, affects,
 
     # Read body from file or flag
     if file_path:
-        body = Path(file_path).read_text(encoding="utf-8")
+        try:
+            body = Path(file_path).read_text(encoding="utf-8")
+        except OSError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
     elif body_text:
         body = body_text
     else:
@@ -45,9 +54,6 @@ def knowledge_add(file_path, body_text, title, doc_type, tags, affects,
     store = resolve_store()
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
-
-    def _split(s):
-        return [x.strip() for x in s.split(",") if x.strip()]
 
     cid = add_document(
         bundle, title=title, body=body, doc_type=doc_type,
@@ -72,9 +78,6 @@ def knowledge_import(dir_path, doc_type, tags, affects):
     store = resolve_store()
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
-
-    def _split(s):
-        return [x.strip() for x in s.split(",") if x.strip()]
 
     imported = import_directory(
         bundle, dir_path, doc_type=doc_type,
@@ -638,7 +641,7 @@ def knowledge_export(out_path):
 
 
 # --------------------------------------------------------------------------
-# cairn knowledge workflow (procedural ontology -- see src/knowledge/workflow.py)
+# cairn knowledge workflow (procedural ontology -- see cairn/knowledge/workflow.py)
 # --------------------------------------------------------------------------
 # `cairn knowledge list --type workflow`, `cairn knowledge status`, `cairn knowledge
 # remove`, and `cairn knowledge search` already work for workflows unchanged --
@@ -647,7 +650,7 @@ def knowledge_export(out_path):
 # query, not a generic search) are genuinely workflow-specific.
 @knowledge.group("workflow")
 def knowledge_workflow():
-    """Ordered procedural workflows (see src/knowledge/workflow.py)."""
+    """Ordered procedural workflows (see cairn/knowledge/workflow.py)."""
 
 
 @knowledge_workflow.command("add")
@@ -698,9 +701,6 @@ def knowledge_workflow_add(title, steps_raw, steps_file, tags, affects, affects_
     else:
         click.echo("Error: --step (repeatable) or --steps-file required.", err=True)
         sys.exit(1)
-
-    def _split(s):
-        return [x.strip() for x in s.split(",") if x.strip()]
 
     store = resolve_store()
     store.ensure()

@@ -13,8 +13,7 @@ def hooks():
 
 @hooks.command("install")
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
-@click.option("--cairn-dir", default=str(DEFAULT_DB_PATH.parent))
-def hooks_install(workspace, cairn_dir):
+def hooks_install(workspace):
     from ..graph import scanner as scanner_mod
     from ..hooks.git_hooks import install_hooks
 
@@ -22,7 +21,7 @@ def hooks_install(workspace, cairn_dir):
         scanner_mod.repository_id(r)
         for r in scanner_mod.discover_repos(workspace)
     ]
-    installed = install_hooks(repos, workspace, cairn_dir)
+    installed = install_hooks(repos, workspace)
     click.echo(f"Installed post-commit hooks in {len(installed)} repos: {', '.join(installed)}")
 
 
