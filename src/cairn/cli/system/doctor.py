@@ -149,10 +149,10 @@ def _check_embeddings(conn) -> dict:
     backend is active OR the user explicitly chose ``hash`` (an informed
     choice, never a degradation). Mirrors ``embeddings.is_hash_fallback()``.
     """
-    from ...graph.embeddings import _backend_name, is_hash_fallback
+    from ...graph.embeddings import backend_name, is_hash_fallback
 
     # Report the effective backend, including config and defaults.
-    configured = _backend_name()
+    configured = backend_name()
     if is_hash_fallback():
         return _result(
             "embeddings",
@@ -297,8 +297,8 @@ def _check_embed_server(conn) -> list[dict]:
         degradation_footnote,
     )
     from ...graph.embeddings import (
-        _SERVER_FAMILY,
-        _backend_name,
+        SERVER_FAMILY,
+        backend_name,
         _embed_server,
         _server_base_url,
         _server_model,
@@ -309,8 +309,8 @@ def _check_embed_server(conn) -> list[dict]:
     from ...graph.semantic import _ms_bucket
 
     # Resolve the backend from env, config file, and defaults.
-    configured = _backend_name()
-    if configured not in _SERVER_FAMILY:
+    configured = backend_name()
+    if configured not in SERVER_FAMILY:
         return [
             _result(
                 "embed_server",

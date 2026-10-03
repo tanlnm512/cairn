@@ -34,7 +34,7 @@ def _validate_cap(name: str, value: int) -> None:
         raise ValueError(f"{name} must be at least 1")
 
 
-def _projection(conn: sqlite3.Connection) -> _Projection:
+def projection(conn: sqlite3.Connection) -> _Projection:
     rows = conn.execute(
         """
         SELECT
@@ -169,10 +169,10 @@ def build_repo_map(
     _validate_cap("hub_cap", hub_cap)
     _validate_cap("hotspot_cap", hotspot_cap)
 
-    projection = _projection(conn)
-    rows = projection.symbols
+    proj = projection(conn)
+    rows = proj.symbols
     by_repo: dict[str, list[_SymbolRow]] = {}
-    for repo_id in projection.repos:
+    for repo_id in proj.repos:
         by_repo[repo_id] = []
     for row in rows:
         by_repo.setdefault(row.repo, []).append(row)
@@ -180,7 +180,7 @@ def build_repo_map(
     scopes = []
     for repo_id in sorted(by_repo):
         clusters, dropped_clusters = _clusters(
-            by_repo[repo_id], projection.paths[repo_id], hub_cap, cluster_cap
+            by_repo[repo_id], proj.paths[repo_id], hub_cap, cluster_cap
         )
         scopes.append(
             {

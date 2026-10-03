@@ -247,7 +247,7 @@ def create_app(
         request blocks (worst case the probe's ~2 s timeout — a localhost
         tool) instead of racing past an unassigned verdict."""
         nonlocal _probed, _probe_ok
-        if embeddings._backend_name() not in embeddings._SERVER_FAMILY:
+        if embeddings.backend_name() not in embeddings.SERVER_FAMILY:
             return None
         with _probe_lock:
             if _probed:

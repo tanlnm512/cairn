@@ -430,7 +430,7 @@ def test_rung1_parity_fail_falls_through_to_rung2_local(fresh_db, monkeypatch):
         assert emb._effective_backend() == "local"
         assert emb.current_model() == emb.DEFAULT_LOCAL_MODEL
         assert emb.is_hash_fallback() is False
-        assert emb._backend_name() == "server"
+        assert emb.backend_name() == "server"
     finally:
         server.close()
 

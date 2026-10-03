@@ -75,13 +75,13 @@ class TestIsHashFallback:
         monkeypatch.delenv("CAIRN_EMBED_BACKEND", raising=False)
         with mock.patch(
             "cairn.graph.embeddings._effective_backend", return_value="hash"
-        ), mock.patch("cairn.graph.embeddings._backend_name", return_value="local"):
+        ), mock.patch("cairn.graph.embeddings.backend_name", return_value="local"):
             assert emb.is_hash_fallback() is True
 
     def test_false_when_explicit_hash(self, monkeypatch):
         # User explicitly opted into hash -> not a *silent* fallback.
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
-        with mock.patch("cairn.graph.embeddings._backend_name", return_value="hash"):
+        with mock.patch("cairn.graph.embeddings.backend_name", return_value="hash"):
             assert emb.is_hash_fallback() is False
 
 

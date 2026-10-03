@@ -65,7 +65,7 @@ _T1 = 2_000_000_000_000_000_000
 class TestPrecedence:
     def test_default_without_env_or_file(self, config_file):
         assert not config_file.exists()
-        assert emb._backend_name() == "local"
+        assert emb.backend_name() == "local"
         assert emb._server_model() == "bge-m3"
 
     def test_file_beats_default(self, config_file):
@@ -73,7 +73,7 @@ class TestPrecedence:
             "CAIRN_EMBED_BACKEND": "omlx",
             "CAIRN_EMBED_SERVER_MODEL": "file-model",
         })
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         assert emb._server_model() == "file-model"
 
     def test_env_beats_file(self, config_file, monkeypatch):
@@ -83,7 +83,7 @@ class TestPrecedence:
         })
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "ollama")
         monkeypatch.setenv("CAIRN_EMBED_SERVER_MODEL", "env-model")
-        assert emb._backend_name() == "ollama"
+        assert emb.backend_name() == "ollama"
         assert emb._server_model() == "env-model"
 
     def test_blank_env_value_falls_through_to_file(self, config_file, monkeypatch):
@@ -126,7 +126,7 @@ class TestCorruptConfig:
         config_file.write_text("{not json", encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger="cairn.paths"):
             assert paths.get_config_value("CAIRN_EMBED_BACKEND") is None
-            assert emb._backend_name() == "local"
+            assert emb.backend_name() == "local"
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
 
@@ -143,7 +143,7 @@ class TestCorruptConfig:
         config_file.write_text('["CAIRN_EMBED_BACKEND"]', encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger="cairn.paths"):
             assert paths.get_config_value("CAIRN_EMBED_BACKEND") is None
-            assert emb._backend_name() == "local"
+            assert emb.backend_name() == "local"
         # Same degradation surface as the corrupt-JSON path: one warning.
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
@@ -183,30 +183,30 @@ class TestMtimeReread:
     def test_changed_mtime_rereads_without_restart(self, config_file):
         _write(config_file, {"CAIRN_EMBED_BACKEND": "omlx"})
         os.utime(config_file, ns=(_T0, _T0))
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         _write(config_file, {"CAIRN_EMBED_BACKEND": "ollama"})
         os.utime(config_file, ns=(_T1, _T1))
-        assert emb._backend_name() == "ollama"
+        assert emb.backend_name() == "ollama"
 
     def test_unchanged_mtime_serves_cached_value(self, config_file):
         _write(config_file, {"CAIRN_EMBED_BACKEND": "omlx"})
         os.utime(config_file, ns=(_T0, _T0))
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         # Same size, restored mtime: the stamp matches, no re-read.
         _write(config_file, {"CAIRN_EMBED_BACKEND": "hash"})
         os.utime(config_file, ns=(_T0, _T0))
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         # Advancing the mtime releases the new value.
         os.utime(config_file, ns=(_T1, _T1))
-        assert emb._backend_name() == "hash"
+        assert emb.backend_name() == "hash"
 
     def test_deleted_file_degrades_to_env_only(self, config_file, monkeypatch):
         _write(config_file, {"CAIRN_EMBED_BACKEND": "omlx"})
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         config_file.unlink()
-        assert emb._backend_name() == "local"
+        assert emb.backend_name() == "local"
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
-        assert emb._backend_name() == "hash"
+        assert emb.backend_name() == "hash"
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ class TestSetConfigValues:
         assert paths.set_config_values({"CAIRN_EMBED_BACKEND": "omlx"}) is True
         assert config_file.exists()
         assert paths.get_config_value("CAIRN_EMBED_BACKEND") == "omlx"
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         assert paths.set_config_values({"CAIRN_EMBED_SERVER_MODEL": "m2"}) is True
         on_disk = json.loads(config_file.read_text(encoding="utf-8"))
         assert on_disk == {
@@ -294,12 +294,12 @@ class TestResetHook:
     def test_reset_backend_cache_clears_config_cache(self, config_file):
         _write(config_file, {"CAIRN_EMBED_BACKEND": "omlx"})
         os.utime(config_file, ns=(_T0, _T0))
-        assert emb._backend_name() == "omlx"
+        assert emb.backend_name() == "omlx"
         # Same size + restored mtime: only a reset exposes the rewrite.
         _write(config_file, {"CAIRN_EMBED_BACKEND": "hash"})
         os.utime(config_file, ns=(_T0, _T0))
         emb.reset_backend_cache()
-        assert emb._backend_name() == "hash"
+        assert emb.backend_name() == "hash"
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ class TestUnchangedArms:
         })
         # The backend knob itself is config-aware; the openai arm's model
         # and key semantics are not.
-        assert emb._backend_name() == "openai"
+        assert emb.backend_name() == "openai"
         assert emb.current_model() == "text-embedding-3-small"
         assert emb.embeddings_available() is False
         with pytest.raises(RuntimeError):
@@ -381,7 +381,7 @@ class TestUnchangedArms:
 class TestEmptyObject:
     def test_empty_object_equals_absent(self, config_file, monkeypatch):
         _write(config_file, {})
-        assert emb._backend_name() == "local"
+        assert emb.backend_name() == "local"
         assert emb._server_model() == "bge-m3"
         assert paths.get_config_value("anything", "d") == "d"
         monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")

@@ -105,7 +105,7 @@ def embeddings_available() -> bool:
     configured model id. The probe verdict is cached per process;
     reset_backend_cache() invalidates it.
     """
-    backend = resolve_embedding_backend(_backend_name())
+    backend = resolve_embedding_backend(backend_name())
     available = backend.available()
     fallback = backend.fallback_name
     if not available and fallback is not None:
@@ -351,13 +351,13 @@ def _config_or_env(name: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
-def _backend_name() -> str:
+def backend_name() -> str:
     return (_config_or_env("CAIRN_EMBED_BACKEND") or "local").strip().lower()
 
 
 # The server family: omlx/ollama are preset aliases of the same 'server' arm
 # (OpenAI-compatible /v1 endpoint); only the default base URL differs.
-_SERVER_FAMILY = frozenset({"server", "omlx", "ollama"})
+SERVER_FAMILY = frozenset({"server", "omlx", "ollama"})
 
 _SERVER_PRESET_BASE_URL = {
     "omlx": "http://127.0.0.1:8000/v1",
@@ -484,7 +484,7 @@ def _effective_backend() -> str:
     cached: Optional[str] = _EFFECTIVE_BACKEND_CACHE["effective"]
     if cached is not None:
         return cached
-    resolved = resolve_effective_backend(_backend_name())
+    resolved = resolve_effective_backend(backend_name())
     with _BACKEND_CACHE_LOCK:
         cached = _EFFECTIVE_BACKEND_CACHE["effective"]
         if cached is None:
@@ -504,7 +504,7 @@ def _server_base_url() -> str:
     configured = _config_or_env("CAIRN_EMBED_BASE_URL") or ""
     if configured:
         return configured
-    preset = _SERVER_PRESET_BASE_URL.get(_backend_name())
+    preset = _SERVER_PRESET_BASE_URL.get(backend_name())
     if preset:
         return preset
     raise RuntimeError(
@@ -600,7 +600,7 @@ def is_hash_fallback() -> bool:
     paths check this to flag degraded results. Returns False when the user
     explicitly set ``CAIRN_EMBED_BACKEND=hash`` or a real backend is active.
     """
-    return _effective_backend() == "hash" and _backend_name() == "local"
+    return _effective_backend() == "hash" and backend_name() == "local"
 
 
 # Process-global guard so the one-time warning fires at most once per process.

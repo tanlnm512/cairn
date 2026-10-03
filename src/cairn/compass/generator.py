@@ -60,7 +60,7 @@ def _normalize_module_path(module_path: str, repo: Optional[str]) -> str:
     return module_path
 
 
-def _resolve_module(
+def resolve_module(
     conn: sqlite3.Connection, module_path: str, repo: Optional[str],
 ) -> tuple:
     """Resolve (repo, repo-relative module path). Raises
@@ -111,7 +111,7 @@ def generate_compass(
         llm_synthesize: optional callable(symbols, key_files, cross_deps) -> str body.
     """
     # 1. Find all symbols in the module path (segment-anchored, repo-scoped).
-    repo_filter, module_path = _resolve_module(conn, module_path, repo)
+    repo_filter, module_path = resolve_module(conn, module_path, repo)
     symbols = _symbols_in_module(conn, module_path, repo_filter)
 
     # 2. Key files: rank by incoming edges (most-referenced = most important).
@@ -332,7 +332,7 @@ def _derive_title(module_path: str) -> str:
 
 def _gather_facts(conn: sqlite3.Connection, module_path: str, repo: Optional[str]) -> Dict[str, Any]:
     """Gather graph-grounded facts for a module. Single source of truth for synthesis."""
-    repo, module_path = _resolve_module(conn, module_path, repo)
+    repo, module_path = resolve_module(conn, module_path, repo)
     symbols = _symbols_in_module(conn, module_path, repo)
     key_files = _rank_key_files(conn, symbols)
     cross_deps = _cross_module_deps(conn, module_path, repo)
@@ -367,7 +367,7 @@ def generate_compass_with_llm(
                 function falls back to the deterministic generator.
     """
     # 1. Resolve module, then gather facts (single source of truth).
-    repo, module_path = _resolve_module(conn, module_path, repo)
+    repo, module_path = resolve_module(conn, module_path, repo)
     facts = _gather_facts(conn, module_path, repo)
 
     # 2. If no client, fall back to deterministic generation.

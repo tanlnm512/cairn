@@ -143,7 +143,7 @@ def _embeddings_status(request: Request, context: DashboardContext) -> Response:
         request, context.db_path, context.knowledge_dir
     )
     probe_ok = context.server_probe_once()  # first: rung adoption may retarget
-    backend = embeddings._backend_name()
+    backend = embeddings.backend_name()
     try:
         stamp = embeddings.current_model()
     except Exception as exc:  # unresolvable backend is status, not a 500
@@ -160,7 +160,7 @@ def _embeddings_status(request: Request, context: DashboardContext) -> Response:
         {
             "backend": backend,
             "stamp": stamp,
-            "is_server": backend in embeddings._SERVER_FAMILY,
+            "is_server": backend in embeddings.SERVER_FAMILY,
             "probe_ok": probe_ok,
             "rung": state if state is not None and state.active else None,
             "corpora": corpora,

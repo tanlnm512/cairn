@@ -20,7 +20,7 @@ from cairn.compass.generator import (
     _cross_module_deps,
     _infer_repo,
     _rank_key_files,
-    _resolve_module,
+    resolve_module,
     _symbols_in_module,
     generate_compass,
     generate_compass_with_llm,
@@ -94,7 +94,7 @@ class TestModuleResolution:
 
     def test_repo_prefixed_module_infers_and_normalizes(self, conn):
         # `repo/module` resolves to (repo, repo-relative module).
-        assert _resolve_module(conn, "polaris-app/app", None) == ("polaris-app", "app")
+        assert resolve_module(conn, "polaris-app/app", None) == ("polaris-app", "app")
 
     def test_substring_path_not_matched(self, conn):
         # `app` must not match `trapper/decoy.py`.

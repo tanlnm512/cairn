@@ -28,7 +28,7 @@ from cairn.graph.ann_index import (
     index_row_count,
 )
 from cairn.graph.embeddings import (
-    _backend_name,
+    backend_name,
     current_model,
     embed_count,
     is_hash_fallback,
@@ -372,7 +372,7 @@ def symbol_suggest(
     return {"matches": matches, "truncated": len(fetched) > limit}
 
 
-def _parse_ts(value) -> Optional[datetime]:
+def parse_ts(value) -> Optional[datetime]:
     """Parse an ISO-8601 timestamp (concept or ``build_runs``) to an aware
     UTC datetime, or None when missing/unparseable."""
     if not value:
@@ -384,7 +384,7 @@ def _parse_ts(value) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _age_str(started_at) -> Optional[str]:
@@ -393,7 +393,7 @@ def _age_str(started_at) -> Optional[str]:
     Formatted exactly as ``cairn doctor``'s freshness check renders it, so
     the panel and doctor read identically on the same database.
     """
-    dt = _parse_ts(started_at)
+    dt = parse_ts(started_at)
     if dt is None:
         return None
     secs = int((datetime.now(timezone.utc) - dt).total_seconds())
@@ -589,7 +589,7 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
         # Precedence via the embeddings resolver (env > config file >
         # "local"), not a bare env read — data.py already imports the
         # embeddings module at load, so this adds no import cost here.
-        "embed_backend": _backend_name(),
+        "embed_backend": backend_name(),
         "hash_fallback": probes.get("hash_fallback"),
         "ann_configured": configured_backend(),
         "ann_backend_enabled": probes.get("ann_backend_enabled"),
@@ -725,7 +725,7 @@ def get_recent_memories(
                 "timestamp": concept.timestamp or "",
             }
         )
-    entries.sort(key=lambda e: _parse_ts(e["timestamp"]) or _EPOCH, reverse=True)
+    entries.sort(key=lambda e: parse_ts(e["timestamp"]) or EPOCH, reverse=True)
     return entries[:limit]
 
 
