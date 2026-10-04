@@ -1,11 +1,8 @@
 /**
- * Code-lens provider (FR-001): caller/callee counts above symbol
- * declarations, read from the same frozen /editor/symbol response the hover
- * consumes — one endpoint, no second contract. Degraded shells (the one
- * aggregate isDegraded verdict) issue no request and render no lens
- * (FR-004); unknown symbols render no lens, never an error surface. No
- * runtime editor-API dependency — the platform API is injected, so the lens
- * logic runs under plain Node.
+ * Code-lens provider: caller/callee counts above symbol declarations,
+ * read from the same frozen /editor/symbol response the hover consumes.
+ * Degraded shells issue no request and render no lens; unknown symbols
+ * render no lens, never an error surface.
  */
 import type {
   CodeLens,
@@ -80,7 +77,7 @@ type VscodeApi = typeof import("vscode");
 export interface CodeLensWiring {
   context: ExtensionContext;
   vscodeApi: VscodeApi;
-  /** Live shell states; the one aggregate degraded verdict gates every request (FR-004). */
+  /** Live shell states; the one aggregate degraded verdict gates every request. */
   states: () => ServerState[];
   lookup?: SymbolLookup;
 }

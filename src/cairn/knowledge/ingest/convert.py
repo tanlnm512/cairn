@@ -9,9 +9,6 @@ CONVERT_SUFFIXES = frozenset({".pdf", ".docx"})
 _EXTRA_MISSING = "cairn[ingest] not installed"
 _EMPTY_EXTRACTION = "empty extraction"
 
-#: Tag carried by every accepted conversion.
-CONVERTED_TAG = "converted"
-
 
 def convert_document(path: Path) -> tuple[str | None, str | None]:
     """Convert one pdf/docx file to markdown.

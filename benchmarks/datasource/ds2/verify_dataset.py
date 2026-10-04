@@ -202,6 +202,7 @@ def verify_dataset(workroot: Path | None = None) -> tuple[dict, int]:
         exp_corpus = Counter()
         unresolved: list[dict] = []
         resolved = 0
+        aspirational = 0
         total = 0
         single_primary = True
         for q in queries:
@@ -216,7 +217,15 @@ def verify_dataset(workroot: Path | None = None) -> tuple[dict, int]:
                 exp_level_kind[(q.level, q.kind)] += 1
                 exp_corpus[corpus] += 1
                 file_part, symbol_part = parse_symbol_id(exp.symbol_id)
-                prefix = CORPORA[corpus]["prefix"]
+                prefix = CORPORA.get(corpus, {}).get("prefix")
+                if prefix is None:
+                    unresolved.append({
+                        "query_id": q.query_id, "level": q.level,
+                        "kind": q.kind, "grade": exp.grade,
+                        "symbol_id": exp.symbol_id,
+                        "issue": f"unknown corpus prefix {corpus!r}",
+                    })
+                    continue
                 if not file_part.startswith(prefix):
                     unresolved.append({"symbol_id": exp.symbol_id,
                                        "issue": f"lacks prefix {prefix!r}"})
@@ -232,6 +241,7 @@ def verify_dataset(workroot: Path | None = None) -> tuple[dict, int]:
                     })
                 if match_rank(exp.symbol_id, pools[corpus],
                               k=len(pools[corpus])) == 0:
+                    aspirational += 1
                     unresolved.append({
                         "query_id": q.query_id, "symbol_id": exp.symbol_id,
                         "issue": "match_rank rank 0 over the full pool",
@@ -270,6 +280,8 @@ def verify_dataset(workroot: Path | None = None) -> tuple[dict, int]:
                 "total": total,
                 "tier1_exact": resolved,
                 "unresolved": len(unresolved),
+                "not_tier1_exact": total - resolved,
+                "aspirational": aspirational,
                 "pass_rate": (resolved / total) if total else 0.0,
                 "per_level_kind": {f"{lv}:{kind}": n for (lv, kind), n
                                    in sorted(exp_level_kind.items())},
@@ -310,8 +322,8 @@ def _print_human(report: dict, code: int) -> None:
     verdict = "OK  " if code == EXIT_OK else "FAIL"
     print(
         f"{verdict}: {ex['tier1_exact']}/{ex['total']} expectations tier-1-exact "
-        f"(pass rate {ex['pass_rate']:.4f}, unresolved {ex['unresolved']}, "
-        f"aspirational {ex['unresolved']}); exactly-one-grade-2-per-query "
+        f"(pass rate {ex['pass_rate']:.4f}, unresolved {ex['not_tier1_exact']}, "
+        f"aspirational {ex['aspirational']}); exactly-one-grade-2-per-query "
         f"{ex['every_query_exactly_one_grade2']}"
     )
     for err in report.get("errors", []):

@@ -243,6 +243,15 @@ def load_ground_truth(ground_truth_dir: Path) -> List[GradedQuery]:
     ]
 
 
+def _legacy_match_score(retrieved: List[str], expect: List[str], k: int) -> Tuple[float, float]:
+    """(recall, rr) of the legacy first-match expectation scan over ``retrieved``."""
+    expect_lower = [e.lower() for e in expect]
+    for idx, name in enumerate(retrieved[:k], start=1):
+        if any(exp in name.lower() for exp in expect_lower):
+            return 1.0, 1.0 / idx
+    return 0.0, 0.0
+
+
 def evaluate_l1_query(
     conn: sqlite3.Connection,
     query: str,
@@ -255,32 +264,9 @@ def evaluate_l1_query(
     Returns (recall_at_k, reciprocal_rank). ``params`` is threaded
     through to ``semantic_search`` verbatim; ``None`` keeps today's defaults.
     """
-    from cairn.graph import queries as qmod
-
-    # Try hybrid/semantic retrieval first; fall back to lexical if embeddings are empty
-    try:
-        results = qmod.semantic_search(conn, query, limit=k, params=params)
-        retrieved_names = [r.get("name", "") for r in results]
-    except Exception:
-        # search_symbols returns sqlite3.Row rows (no .get) whose SELECT
-        # always includes ``name`` -- index directly.
-        results = qmod.search_symbols(conn, query, limit=k)
-        retrieved_names = [r["name"] for r in results]
-
-    if not retrieved_names:
-        # Fallback to search_symbols if semantic search returned no candidates
-        results = qmod.search_symbols(conn, query, limit=k)
-        retrieved_names = [r["name"] for r in results]
-
-    rank = 0
-    for idx, name in enumerate(retrieved_names, start=1):
-        if any(exp.lower() in name.lower() for exp in expect):
-            rank = idx
-            break
-
-    if rank > 0 and rank <= k:
-        return 1.0, 1.0 / rank
-    return 0.0, 0.0
+    results = _retrieve_l1(conn, query, k, params=params)
+    retrieved_names = [_result_field(r, "name") for r in results]
+    return _legacy_match_score(retrieved_names, expect, k)
 
 
 def evaluate_l5_query(conn: sqlite3.Connection, bundle_root: Optional[str], query: str, expect: List[str], k: int = 10) -> Tuple[float, float]:
@@ -294,18 +280,8 @@ def evaluate_l5_query(conn: sqlite3.Connection, bundle_root: Optional[str], quer
         return 0.0, 0.0
 
     bundle = OKFBundle(bundle_root)
-    concepts = bundle.search(query, limit=k)
-    retrieved_ids = [c.concept_id for c in concepts]
-
-    rank = 0
-    for idx, cid in enumerate(retrieved_ids, start=1):
-        if any(exp.lower() in cid.lower() for exp in expect):
-            rank = idx
-            break
-
-    if rank > 0 and rank <= k:
-        return 1.0, 1.0 / rank
-    return 0.0, 0.0
+    retrieved_ids = [c.concept_id for c in bundle.search(query, limit=k)]
+    return _legacy_match_score(retrieved_ids, expect, k)
 
 
 def evaluate_l4_query(
@@ -320,17 +296,8 @@ def evaluate_l4_query(
     Returns (recall_at_k, reciprocal_rank).
     """
     results = _retrieve_l4(conn, bundle_root, query, k)
-    retrieved_ids = [r["name"] for r in results]
-
-    rank = 0
-    for idx, cid in enumerate(retrieved_ids, start=1):
-        if any(exp.lower() in cid.lower() for exp in expect):
-            rank = idx
-            break
-
-    if rank > 0 and rank <= k:
-        return 1.0, 1.0 / rank
-    return 0.0, 0.0
+    retrieved_ids = [_result_field(r, "name") for r in results]
+    return _legacy_match_score(retrieved_ids, expect, k)
 
 
 # --------------------------------------------------------------------------

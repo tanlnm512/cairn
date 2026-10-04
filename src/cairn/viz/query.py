@@ -124,9 +124,17 @@ def get_impact_graph(conn: sqlite3.Connection, name: str, max_depth: int = 3) ->
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     _add_node(nodes, name, "focus", "", "")
+    # Name -> shallowest depth, so each depth>0 entry can target its step
+    # toward the focal symbol instead of itself.
+    depths: dict[str, int] = {name: 0}
+    for r in result["impacted"]:
+        cur = depths.get(r["symbol"])
+        if cur is None or r["depth"] < cur:
+            depths[r["symbol"]] = r["depth"]
+    callees = _callees_within(conn, list(depths))
     for r in result["impacted"]:
         _add_node(nodes, r["symbol"], "caller", r["file"], r["repo"])
-        edges.append({"source": r["symbol"], "target": name if r["depth"] == 0 else _parent(result, r), "kind": "calls"})
+        edges.append({"source": r["symbol"], "target": name if r["depth"] == 0 else _parent(r, depths, callees, name), "kind": "calls"})
     return {"nodes": list(nodes.values()), "edges": edges,
             "metadata": {"scope": "impact", "symbol": name, "depth": max_depth,
                          "node_count": len(nodes), "edge_count": len(edges), "total": result["total"]}}
@@ -183,6 +191,87 @@ def _is_vendored_path(path: str) -> bool:
     return any(part.lower() in _VENDORED_SEGMENTS for part in parts[:-1])
 
 
+def _curated_scope_graph(
+    conn: sqlite3.Connection, include_tests: bool, path_filter: str = ""
+) -> tuple[dict[str, dict], list[dict], dict]:
+    """Degree-ranked, test/vendor-curated symbols + their deduplicated internal edges.
+
+    Shared core of :func:`get_module_graph` and :func:`get_symbol_overview`.
+    ``path_filter`` is an optional SQL LIKE pattern on the file path. Returns
+    ``(nodes, edges, meta)`` where ``meta`` carries node_count, edge_count,
+    edge_kinds, tests_included, truncated, and vendored_excluded.
+    """
+    from ..graph.tests import is_test_symbol
+
+    cur = conn.cursor()
+    nodes: dict[str, dict] = {}
+    where = "WHERE f.path LIKE ?" if path_filter else ""
+    params = (path_filter,) if path_filter else ()
+    rows = cur.execute(
+        f"SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
+        f"(SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) + "
+        f"(SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) AS degree "
+        f"FROM symbols s JOIN files f ON s.file_id = f.id "
+        f"{where} "
+        f"ORDER BY degree DESC, s.name ASC",
+        params,
+    ).fetchall()
+    eligible = 0
+    vendored_excluded = 0
+    for r in rows:
+        if _is_vendored_path(r["path"]):
+            vendored_excluded += 1
+            continue
+        if not include_tests and is_test_symbol(
+            r["path"], r["name"], r["qualified_name"] or ""
+        )["is_test"]:
+            continue
+        eligible += 1
+        if eligible > _SCOPE_CAP:
+            continue
+        _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
+    edges = _internal_edges(cur, nodes)
+    edge_kinds: dict[str, int] = {}
+    for e in edges:
+        edge_kinds[e["kind"]] = edge_kinds.get(e["kind"], 0) + 1
+    meta = {
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "edge_kinds": edge_kinds,
+        "tests_included": include_tests,
+        "truncated": eligible > _SCOPE_CAP,
+        "vendored_excluded": vendored_excluded,
+    }
+    return nodes, edges, meta
+
+
+def _internal_edges(cur: sqlite3.Cursor, nodes: dict[str, dict]) -> list[dict]:
+    """Edges between the kept symbols, deduplicated on (source, target, kind)."""
+    if not nodes:
+        return []
+    names = list(nodes.keys())
+    placeholders = ",".join("?" * len(names))
+    rows = cur.execute(
+        f"SELECT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt, e.kind "
+        f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
+        f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
+        f"WHERE s1.name IN ({placeholders}) "
+        f"AND COALESCE(s2.name, e.target_name) IN ({placeholders}) "
+        f"LIMIT {_SCOPE_EDGE_CAP}",
+        names + names,
+    ).fetchall()
+    edges: list[dict] = []
+    seen_edges: set[tuple] = set()
+    for r in rows:
+        if r["tgt"] in nodes:
+            key = (r["src"], r["tgt"], r["kind"])
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
+            edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
+    return edges
+
+
 def get_module_graph(
     conn: sqlite3.Connection, module: str = "", include_tests: bool = False
 ) -> Dict:
@@ -201,73 +290,13 @@ def get_module_graph(
     ``metadata.tests_included``, ``metadata.truncated`` and
     ``metadata.vendored_excluded`` report all three choices honestly.
     """
-    from ..graph.tests import is_test_symbol
-
-    cur = conn.cursor()
-    nodes: dict[str, dict] = {}
-    edges: list[dict] = []
-    seen_edges = set()
-    vendored_excluded = 0
-    rows = cur.execute(
-        "SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
-        "(SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) + "
-        "(SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) AS degree "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE f.path LIKE ? "
-        "ORDER BY degree DESC, s.name ASC",
-        (f"%{module}%",),
-    ).fetchall()
-    kept = 0
-    eligible = 0
-    for r in rows:
-        if _is_vendored_path(r["path"]):
-            vendored_excluded += 1
-            continue
-        if not include_tests and is_test_symbol(
-            r["path"], r["name"], r["qualified_name"] or ""
-        )["is_test"]:
-            continue
-        eligible += 1
-        if eligible > _SCOPE_CAP:
-            continue
-        _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
-        kept += 1
-    # Internal edges.
-    if nodes:
-        names = list(nodes.keys())
-        placeholders = ",".join("?" * len(names))
-        rows = cur.execute(
-            f"SELECT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt, e.kind "
-            f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
-            f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
-            f"WHERE s1.name IN ({placeholders}) "
-            f"AND COALESCE(s2.name, e.target_name) IN ({placeholders}) "
-            f"LIMIT {_SCOPE_EDGE_CAP}",
-            names + names,
-        ).fetchall()
-        for r in rows:
-            if r["tgt"] in nodes:
-                key = (r["src"], r["tgt"], r["kind"])
-                if key in seen_edges:
-                    continue
-                seen_edges.add(key)
-                edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
-    edge_kinds: dict[str, int] = {}
-    for e in edges:
-        edge_kinds[e["kind"]] = edge_kinds.get(e["kind"], 0) + 1
+    nodes, edges, meta = _curated_scope_graph(
+        conn, include_tests, path_filter=f"%{module}%"
+    )
     return {
         "nodes": list(nodes.values()),
         "edges": edges,
-        "metadata": {
-            "scope": "module",
-            "module": module,
-            "node_count": len(nodes),
-            "edge_count": len(edges),
-            "edge_kinds": edge_kinds,
-            "tests_included": include_tests,
-            "truncated": eligible > _SCOPE_CAP,
-            "vendored_excluded": vendored_excluded,
-        },
+        "metadata": {"scope": "module", "module": module, **meta},
     }
 
 
@@ -280,82 +309,14 @@ def get_symbol_overview(
     that dispatch here on an empty filter (impact rides along).
 
     The same curation rules as :func:`get_module_graph` without a path
-    filter: candidates ranked by degree (fan-in + fan-out of any edges)
-    then name, so the cap lands on the symbols that carry the workspace's
-    structure. Tests are excluded by default (the ``is_test_symbol``
-    heuristics from the impact layer); ``include_tests`` opts back in.
-    Symbols from vendored/minified assets (:func:`_is_vendored_path`) are
-    never candidates. Edges are deduplicated on ``(source, target,
-    kind)`` — the join is by bare symbol name, so same-named symbols
-    across repos multiply one logical edge into many parallel rows.
-    ``metadata.tests_included``, ``metadata.truncated`` and
-    ``metadata.vendored_excluded`` report all three choices honestly.
+    filter; see that function for the ranking, test, vendor, and edge
+    deduplication contracts.
     """
-    from ..graph.tests import is_test_symbol
-
-    cur = conn.cursor()
-    nodes: dict[str, dict] = {}
-    edges: list[dict] = []
-    seen_edges = set()
-    vendored_excluded = 0
-    rows = cur.execute(
-        "SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
-        "(SELECT COUNT(*) FROM edges e WHERE e.target_id = s.id) + "
-        "(SELECT COUNT(*) FROM edges e WHERE e.source_id = s.id) AS degree "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "ORDER BY degree DESC, s.name ASC"
-    ).fetchall()
-    kept = 0
-    eligible = 0
-    for r in rows:
-        if _is_vendored_path(r["path"]):
-            vendored_excluded += 1
-            continue
-        if not include_tests and is_test_symbol(
-            r["path"], r["name"], r["qualified_name"] or ""
-        )["is_test"]:
-            continue
-        eligible += 1
-        if eligible > _SCOPE_CAP:
-            continue
-        _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
-        kept += 1
-    # Edges between the kept symbols.
-    if nodes:
-        names = list(nodes.keys())
-        placeholders = ",".join("?" * len(names))
-        rows = cur.execute(
-            f"SELECT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt, e.kind "
-            f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
-            f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
-            f"WHERE s1.name IN ({placeholders}) "
-            f"AND COALESCE(s2.name, e.target_name) IN ({placeholders}) "
-            f"LIMIT {_SCOPE_EDGE_CAP}",
-            names + names,
-        ).fetchall()
-        for r in rows:
-            if r["tgt"] in nodes:
-                key = (r["src"], r["tgt"], r["kind"])
-                if key in seen_edges:
-                    continue
-                seen_edges.add(key)
-                edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
-    edge_kinds: dict[str, int] = {}
-    for e in edges:
-        edge_kinds[e["kind"]] = edge_kinds.get(e["kind"], 0) + 1
+    nodes, edges, meta = _curated_scope_graph(conn, include_tests)
     return {
         "nodes": list(nodes.values()),
         "edges": edges,
-        "metadata": {
-            "scope": scope,
-            "focus": "",
-            "node_count": len(nodes),
-            "edge_count": len(edges),
-            "edge_kinds": edge_kinds,
-            "tests_included": include_tests,
-            "truncated": eligible > _SCOPE_CAP,
-            "vendored_excluded": vendored_excluded,
-        },
+        "metadata": {"scope": scope, "focus": "", **meta},
     }
 
 
@@ -370,6 +331,39 @@ def _empty(scope: str, name: str) -> Dict:
     return {"nodes": [], "edges": [], "metadata": {"scope": scope, "symbol": name, "node_count": 0, "edge_count": 0}}
 
 
-def _parent(impact_result: dict, entry: dict) -> str:
-    """Best-effort parent for an impact entry (used for edge target)."""
-    return entry.get("symbol", "")
+_IN_CLAUSE_CHUNK = 200
+
+
+def _callees_within(conn: sqlite3.Connection, names: list[str]) -> dict[str, list[str]]:
+    """Distinct callee names (restricted to ``names``) per source name; chunked under the SQL param limit."""
+    callees: dict[str, list[str]] = {}
+    for i in range(0, len(names), _IN_CLAUSE_CHUNK):
+        chunk = names[i : i + _IN_CLAUSE_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT DISTINCT s1.name AS src, COALESCE(s2.name, e.target_name) AS tgt "
+            f"FROM edges e JOIN symbols s1 ON e.source_id = s1.id "
+            f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
+            f"WHERE s1.name IN ({placeholders}) "
+            f"AND COALESCE(s2.name, e.target_name) IN ({placeholders})",
+            chunk + chunk,
+        ).fetchall()
+        for r in rows:
+            callees.setdefault(r["src"], []).append(r["tgt"])
+    return callees
+
+
+def _parent(entry: dict, depths: dict[str, int], callees: dict[str, list[str]], root: str) -> str:
+    """Edge target for a depth>0 impact entry: its shallowest in-impact callee, never itself."""
+    my_depth = depths.get(entry["symbol"], entry["depth"])
+    toward: list[tuple[int, str]] = []
+    lateral: list[tuple[int, str]] = []
+    for callee in callees.get(entry["symbol"], ()):
+        if callee == entry["symbol"]:
+            continue
+        d = depths.get(callee)
+        if d is None:
+            continue
+        (toward if d < my_depth else lateral).append((d, callee))
+    pool = toward or lateral
+    return min(pool)[1] if pool else root

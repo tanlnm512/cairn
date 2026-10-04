@@ -24,23 +24,17 @@ CONFIG_FILE = CAIRN_HOME / "config.json"
 # Shared library directory for the heavy semantic deps (torch,
 # sentence-transformers, numpy). Installed via `cairn embed --install-deps`
 # with `pip install --target` so they survive `uv tool install --force`
-# reinstalls. Scoped per interpreter ABI (lib/cp311, lib/cp314, ...) because
-# these packages ship ABI-specific wheels: a single flat dir corrupted
-# silently once two interpreters installed into it (e.g. a 3.11 dev venv
-# and a 3.14 pipx install), and pip's --target skip-if-satisfied semantics
-# made the mixed dir unrepairable by re-running the install. Legacy
-# pre-scope installs live directly in lib/ and stay usable via
-# _inject_shared_libs.
+# reinstalls. Scoped per interpreter ABI (lib/cp311, lib/cp314, ...)
+# because these packages ship ABI-specific wheels: interpreters of
+# different ABIs must never share one install dir. Legacy flat installs
+# live directly in lib/ and stay usable via _inject_shared_libs.
 SHARED_LIB = CAIRN_HOME / "lib"
 
 
-# --------------------------------------------------------------------------
-# CAIRN_HOME default ruling: the binding above is import-time, while these
-# helpers re-read os.environ at call time (tests and long-lived processes may
-# change the variable after import). Comparison is by expanded absolute path,
-# so a CAIRN_HOME explicitly set to the default path counts as default. The
-# binding's verbatim resolution behavior is unchanged.
-# --------------------------------------------------------------------------
+# CAIRN_HOME constraint: the binding above is import-time, while the
+# helpers below re-read os.environ at call time (tests and long-lived
+# processes may change the variable after import). Default comparison is
+# by expanded absolute path.
 
 def _current_cairn_home() -> Path:
     """Effective CAIRN_HOME for the current environment: the env var's value

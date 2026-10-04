@@ -19,7 +19,7 @@ from .base import (
 SWIFT_MODIFIERS = {
     "public", "private", "fileprivate", "internal", "open", "final", "static",
     "override", "weak", "lazy", "mutating", "async", "throws", "rethrows",
-    "class", "convenience", "required", "optional", "indirect",
+    "convenience", "required", "optional", "indirect",
 }
 
 TYPE_DECL_NODES = {
@@ -90,7 +90,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                 self._scope_kinds.pop()
             return
 
-        if t == "function_declaration":
+        if t in ("function_declaration", "init_declaration"):
             sym = self._parse_function(node, source)
             if sym:
                 pf.symbols.append(sym)
@@ -189,39 +189,32 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         return "class"
 
     def _parse_function(self, node: Node, source: bytes) -> Optional[Symbol]:
-        # function_declaration: 'func' name '(' params ')' ...
+        """Symbol for a function_declaration or init_declaration node."""
         arity = self._param_arity(node, source)
+        name = None
         for child in node.children:
             if child.type in ("identifier", "simple_identifier"):
                 name = self._node_text(child, source).strip()
-                mods = self._collect_modifiers(node, source)
-                kind = "method" if self._scope else "function"
-                return Symbol(
-                    name=name,
-                    kind=kind,
-                    qualified_name=self._qualified_name(name),
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    column_start=node.start_point[1],
-                    column_end=node.end_point[1],
-                    modifiers=mods,
-                    arity=arity,
-                )
+                break
             # init is a special function with no plain identifier
             if child.type == "init":
-                mods = self._collect_modifiers(node, source)
-                return Symbol(
-                    name="init",
-                    kind="method",
-                    qualified_name=self._qualified_name("init"),
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    column_start=node.start_point[1],
-                    column_end=node.end_point[1],
-                    modifiers=mods,
-                    arity=arity,
-                )
-        return None
+                name = "init"
+                break
+        if not name:
+            return None
+        mods = self._collect_modifiers(node, source)
+        kind = "method" if self._scope else "function"
+        return Symbol(
+            name=name,
+            kind=kind,
+            qualified_name=self._qualified_name(name),
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            column_start=node.start_point[1],
+            column_end=node.end_point[1],
+            modifiers=mods,
+            arity=arity,
+        )
 
     def _param_arity(self, node: Node, source: bytes) -> Optional[int]:
         """Parameter count of a function_declaration; None when a variadic
@@ -260,20 +253,25 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                 break
         return name, type_name
 
+    def _pattern_name(self, node: Node, source: bytes) -> Optional[str]:
+        """Identifier named by a declaration's ``pattern`` child."""
+        for child in node.children:
+            if child.type == "pattern":
+                for c in child.children:
+                    if c.type in ("simple_identifier", "identifier"):
+                        return self._node_text(c, source).strip()
+        return None
+
     def _record_property_type(self, node: Node, source: bytes) -> None:
         """Record a ``let``/``var`` binding's name → type for receiver lookup.
 
         The declared type annotation wins; otherwise a ``Type()`` initializer
         call (capitalized callee) infers the type. Anything else abstains.
         """
-        name = None
+        name = self._pattern_name(node, source)
         type_name = None
         for child in node.children:
-            if child.type == "pattern":
-                for c in child.children:
-                    if c.type in ("simple_identifier", "identifier"):
-                        name = self._node_text(c, source).strip()
-            elif child.type == "type_annotation":
+            if child.type == "type_annotation":
                 for c in child.children:
                     if c.type == "user_type":
                         type_name = self._type_identifier_text(c, source)
@@ -300,21 +298,21 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _parse_property(self, node: Node, source: bytes) -> Optional[Symbol]:
-        for child in node.children:
-            if child.type == "identifier":
-                name = self._node_text(child, source).strip()
-                mods = self._collect_modifiers(node, source)
-                return Symbol(
-                    name=name,
-                    kind="property",
-                    qualified_name=self._qualified_name(name),
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    column_start=node.start_point[1],
-                    column_end=node.end_point[1],
-                    modifiers=mods,
-                )
-        return None
+        # The grammar wraps the binding name: pattern -> simple_identifier.
+        name = self._pattern_name(node, source)
+        if not name:
+            return None
+        mods = self._collect_modifiers(node, source)
+        return Symbol(
+            name=name,
+            kind="property",
+            qualified_name=self._qualified_name(name),
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            column_start=node.start_point[1],
+            column_end=node.end_point[1],
+            modifiers=mods,
+        )
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
         # import_declaration: 'import' identifier

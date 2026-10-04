@@ -15,12 +15,6 @@ from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 
 
-def generate_wiki(repo: str, conn: sqlite3.Connection, bundle: OKFBundle) -> List[OKFConcept]:
-    """Generate wiki concepts for a repo (graph-derived architecture summary)."""
-    concepts, _ = generate_wiki_with_critic(repo, conn, bundle)
-    return concepts
-
-
 def generate_wiki_with_critic(
     repo: str, conn: sqlite3.Connection, bundle: OKFBundle
 ) -> Tuple[List[OKFConcept], List[CriticResult]]:

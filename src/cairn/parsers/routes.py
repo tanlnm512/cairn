@@ -10,11 +10,6 @@ from .base import Edge, ParsedFile, Symbol
 
 HTTP_DECORATOR_METHODS = {"Get", "Post", "Put", "Delete", "Patch", "Options", "Head", "All"}
 PAGE_FILE_STEMS = {"page", "index"}
-# Next.js special files under app/ that are NOT routes themselves.
-APP_ROUTER_NON_ROUTE_STEMS = {
-    "layout", "loading", "error", "not-found", "template", "default",
-    "route",  # route.ts (API handler) is handled as its own case below
-}
 
 
 @dataclass
@@ -314,7 +309,7 @@ def _detect_nextjs(pf: ParsedFile) -> Optional[RouteExtraction]:
     stem = p.stem
 
     if anchor == "app":
-        if stem not in PAGE_FILE_STEMS or stem in APP_ROUTER_NON_ROUTE_STEMS:
+        if stem not in PAGE_FILE_STEMS:
             return None
         segments = [_nextjs_segment(part) for part in rel_dir_parts]
     else:  # pages/

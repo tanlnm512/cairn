@@ -101,8 +101,8 @@ def file_exists(conn: sqlite3.Connection, ref: str) -> bool:
     Directories exist only as prefixes of stored file paths. Match arms
     (segment-boundary only, never bare substring):
     1. exact file path
-    2. file-path suffix (`src/graph/queries.py`)
-    3. directory prefix (`src/graph`)
+    2. file-path suffix (`src/cairn/graph/queries.py`)
+    3. directory prefix (`src/cairn/graph`)
     4. repo-qualified (`repo/...`) re-validated within that repo
     """
     ref = ref.strip("/")
@@ -146,8 +146,8 @@ def symbol_exists(conn: sqlite3.Connection, name: str) -> bool:
 
     row = cur.execute(
         "SELECT 1 FROM symbols WHERE name = ? OR qualified_name = ? "
-        "OR qualified_name LIKE ? LIMIT 1",
-        (bare, bare, f"%.{bare}"),
+        "OR qualified_name LIKE ? ESCAPE '\\' LIMIT 1",
+        (bare, bare, "%." + _escape_like(bare)),
     ).fetchone()
     if row is not None:
         return True

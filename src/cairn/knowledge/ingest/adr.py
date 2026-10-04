@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from cairn.knowledge.ingest.classifier import _DECISION_DIR_TOKENS, _tokens
 from cairn.knowledge.relationships import EXTRACTED
-from cairn.okf.utils import slugify
+from cairn.knowledge.store import doc_type_slug
 
 if TYPE_CHECKING:
     from cairn.knowledge.ingest.parser import ParsedDoc
@@ -147,11 +147,10 @@ def _concept_id(entry: "StagedEntry") -> str:
     """The concept_id staging assigns this document:
     ``knowledge/{doc_type}/{slug}``.
 
-    Mirrors the store's doc-type slugification (``slugify(doc_type) or
-    "general"``) so detected pointers name ids ``execute_manifest``
-    actually creates.
+    Uses the store's doc-type slugification so detected pointers name ids
+    ``execute_manifest`` actually creates.
     """
-    doc_type = slugify(entry.classification.doc_type) or "general"
+    doc_type = doc_type_slug(entry.classification.doc_type)
     return f"knowledge/{doc_type}/{entry.identity.slug}"
 
 

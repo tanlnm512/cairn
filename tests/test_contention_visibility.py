@@ -154,7 +154,7 @@ def test_ann_query_contention_warns_once_semantics_unchanged(monkeypatch, caplog
     # Reach the ``conn.execute(...)`` that the except wraps by making the two
     # preflight checks pass without needing sqlite-vec or a built index.
     monkeypatch.setattr(ann, "try_load", lambda conn: True)
-    monkeypatch.setattr(ann, "index_exists", lambda conn, model: True)
+    monkeypatch.setattr(ann, "index_exists", lambda conn, model, source: True)
 
     class _LockedConn:
         """Stand-in connection whose query raises exactly as a locked vec0
@@ -187,7 +187,7 @@ def test_second_swallow_site_is_independent_of_ann(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger="cairn.graph.schema")
 
     monkeypatch.setattr(ann, "try_load", lambda conn: True)
-    monkeypatch.setattr(ann, "index_exists", lambda conn, model: True)
+    monkeypatch.setattr(ann, "index_exists", lambda conn, model, source: True)
 
     class _LockedConn:
         def execute(self, *args, **kwargs):

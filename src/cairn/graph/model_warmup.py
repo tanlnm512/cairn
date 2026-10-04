@@ -26,7 +26,7 @@ def warm_models_in_background() -> threading.Thread | None:
     a repeat call, or ``None`` when warm-up will not run: disabled via the
     ``CAIRN_WARM_MODELS`` kill switch (``0``/``false``/``no``; unset or
     anything else means enabled) or invoked inside a pytest test
-    (``PYTEST_CURRENT_TEST`` set -- see module docstring: a seconds-long
+    (``PYTEST_CURRENT_TEST`` set -- a seconds-long
     background load must not leak across test boundaries). Boot must never
     join the thread -- the whole point is that serving starts while weights
     load. The thread is a daemon so it can never block process exit, and it

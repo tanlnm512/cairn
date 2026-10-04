@@ -109,8 +109,7 @@ def update(repo, file_path, workspace, db, knowledge):
     if result.get("files_reindexed", 0) > 0 or result.get("files_deleted", 0) > 0:
         try:
             from ..memory.scoring import _graph_verification
-            from ..graph.schema import get_db as _get_db
-            conn = _get_db(db, busy_timeout_ms=20000)
+            conn = get_db(db, busy_timeout_ms=20000)
             try:
                 stale_mems = []
                 for cid in bundle.list_concepts(prefix="memory/"):

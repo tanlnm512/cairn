@@ -150,36 +150,6 @@ def _sanitize_ref_context(context: str) -> str:
 _MAX_REF_CONTEXT_CHARS = 200
 
 
-def record_reference(
-    conn: sqlite3.Connection, memory_path: str, session_id: str, context: str = ""
-):
-    """Record that a session referenced a memory (increments cross_session_refs).
-
-    The context is redacted + truncated via ``_sanitize_ref_context`` before
-    it is persisted. Best-effort: ref-counts are analytics, not correctness,
-    so lock errors are swallowed.
-    """
-    import uuid
-
-    try:
-        conn.execute(
-            "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                uuid.uuid4().hex,
-                memory_path,
-                session_id,
-                datetime.now(timezone.utc).isoformat(),
-                _sanitize_ref_context(context),
-            ),
-        )
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        note_contention("promotion.record_reference", error=e)
-        # Lock contention or read-only connection -- ref counting is analytics.
-        pass
-
-
 def record_references_batch(
     conn: sqlite3.Connection, refs: list, session_id: str
 ):
@@ -549,6 +519,7 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
         old_file = Path(bundle.root) / f"{old_id}.md"
         if old_file.exists():
             old_file.unlink()
+            bundle.invalidate_search_index()
         return new_id
 
 
@@ -805,9 +776,9 @@ def evolve_memory(
 # --- helpers -------------------------------------------------------------
 
 def _age_days(ts: str) -> float:
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
+    """Age in days of an ISO-8601 timestamp; 0 when malformed or naive."""
+    dt = store_mod.parse_memory_timestamp(ts)
+    if dt is None:
         return 0
     return (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0
 

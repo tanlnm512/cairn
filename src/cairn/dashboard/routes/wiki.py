@@ -83,7 +83,7 @@ def _wiki(request: Request, context: DashboardContext) -> Response:
 
 
 def _wiki_page(request: Request, context: DashboardContext) -> Response:
-    """Legacy one-segment URL: a permanent redirect to the repo-qualified
+    """Legacy one-segment URL: a temporary redirect to the repo-qualified
     canonical URL (bookmarks and recorded links keep working), or the
     same 404 as before when no readable concept matches."""
     from urllib.parse import quote
@@ -166,24 +166,25 @@ def _wiki_page_repo(request: Request, context: DashboardContext) -> Response:
     )
 
 def register(routes: list[Any], context: DashboardContext) -> None:
+    from functools import partial
+
     from starlette.routing import Route
-
-    def wiki(request: Request) -> Response:
-        return _wiki(request, context)
-
-    def wiki_page(request: Request) -> Response:
-        return _wiki_page(request, context)
-
-    def wiki_page_repo(request: Request) -> Response:
-        return _wiki_page_repo(request, context)
 
     routes.extend(
         [
-            Route("/wiki", wiki, name="wiki"),
+            Route("/wiki", partial(_wiki, context=context), name="wiki"),
             # Repo-qualified canonical URL first; the one-segment legacy route
             # follows as a redirect (a single path param never matches two
             # segments, so the two never shadow each other).
-            Route("/wiki/{repo}/{page_id}", wiki_page_repo, name="wiki_page_repo"),
-            Route("/wiki/{page_id}", wiki_page, name="wiki_page"),
+            Route(
+                "/wiki/{repo}/{page_id}",
+                partial(_wiki_page_repo, context=context),
+                name="wiki_page_repo",
+            ),
+            Route(
+                "/wiki/{page_id}",
+                partial(_wiki_page, context=context),
+                name="wiki_page",
+            ),
         ]
     )

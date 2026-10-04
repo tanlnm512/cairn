@@ -22,14 +22,14 @@ def _backend(name: str, monkeypatch: pytest.MonkeyPatch, raw: str):
         monkeypatch.setattr(
             backend._fallback,
             "_run_task",
-            lambda kind, resource, facts: raw,
+            lambda kind, resource, facts, timeout=120: raw,
         )
     else:
         backend = FileQueueBackend(_NoDiskBundle())
         monkeypatch.setattr(
             backend,
             "_run_task",
-            lambda kind, resource, facts: raw,
+            lambda kind, resource, facts, timeout=120: raw,
         )
     return backend
 

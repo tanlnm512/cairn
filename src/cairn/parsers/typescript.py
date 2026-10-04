@@ -27,12 +27,13 @@ TS_JS_MODIFIERS = {
 TYPE_DECL_NODES = {"class_declaration", "abstract_class_declaration", "interface_declaration"}
 
 # Declaration nodes whose own children include their `decorator`(s). In
-# tree-sitter-typescript, a class/method/function decorator is a CHILD of the
-# decorated node, so these nodes collect their decorators directly via
+# tree-sitter-typescript, a class/method/function/field decorator is a CHILD
+# of the decorated node, so these nodes collect their decorators directly via
 # _own_decorators rather than through the pending queue.
 DECL_NODES_WITH_OWN_DECORATORS = TYPE_DECL_NODES | {
     "method_definition",
     "function_declaration",
+    "public_field_definition",
 }
 
 # Node types treated as top-level-or-nested variable declarations.
@@ -47,7 +48,7 @@ def resolve_relative_import(importer: Path, spec: str) -> Optional[str]:
 
     Tries `spec` directly and `spec/index`, across `_RESOLUTION_EXTS`. Returns
     the resolved path with its extension stripped (so its last segment is a
-    bare file stem -- see the module docstring for why that matters), or
+    bare file stem), or
     `None` if `spec` is a bare/package import (doesn't start with '.') or no
     candidate file exists on disk.
     """
@@ -347,7 +348,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_field(self, node: Node, source: bytes) -> Optional[Symbol]:
-        decorators = self._take_pending_decorators()
+        decorators = self._take_pending_decorators() + self._own_decorators(node, source)
         name = self._find_name(node, source, ("property_identifier",))
         if not name:
             return None
@@ -457,6 +458,20 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
 
     # --- edges ---------------------------------------------------------
 
+    def _heritage_target_name(self, node: Node, source: bytes) -> Optional[str]:
+        """Bare type name of a heritage-clause target child.
+
+        Generic targets (`implements I2<T>`) wrap the name in a
+        ``generic_type`` node; the name field holds the bare identifier.
+        """
+        if node.type in ("identifier", "type_identifier"):
+            return self._node_text(node, source).strip()
+        if node.type == "generic_type":
+            inner = node.child_by_field_name("name")
+            if inner is not None:
+                return self._node_text(inner, source).strip()
+        return None
+
     def _parse_heritage(self, node: Node, source: bytes, owner: str):
         """extends/implements for class-likes (class_heritage) and interfaces
         (extends_type_clause -- interfaces can `extends` multiple others).
@@ -472,36 +487,26 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
                 for hchild in child.children:
                     if hchild.type == "extends_clause":
                         found_wrapper = True
-                        for c in hchild.children:
-                            if c.type in ("identifier", "type_identifier"):
-                                self._pending_edges.append(
-                                    Edge(owner, "extends", self._node_text(c, source).strip(),
-                                         node.start_point[0] + 1)
-                                )
+                        self._emit_heritage_edges(hchild, "extends", owner, source, node)
                     elif hchild.type == "implements_clause":
                         found_wrapper = True
-                        for c in hchild.children:
-                            if c.type in ("identifier", "type_identifier"):
-                                self._pending_edges.append(
-                                    Edge(owner, "implements", self._node_text(c, source).strip(),
-                                         node.start_point[0] + 1)
-                                )
+                        self._emit_heritage_edges(hchild, "implements", owner, source, node)
                 if not found_wrapper:
                     # JS grammar: class_heritage's own children are directly
                     # 'extends' + identifier, with no wrapper node.
-                    for c in child.children:
-                        if c.type in ("identifier", "type_identifier"):
-                            self._pending_edges.append(
-                                Edge(owner, "extends", self._node_text(c, source).strip(),
-                                     node.start_point[0] + 1)
-                            )
+                    self._emit_heritage_edges(child, "extends", owner, source, node)
             elif child.type == "extends_type_clause":
-                for c in child.children:
-                    if c.type in ("identifier", "type_identifier"):
-                        self._pending_edges.append(
-                            Edge(owner, "extends", self._node_text(c, source).strip(),
-                                 node.start_point[0] + 1)
-                        )
+                self._emit_heritage_edges(child, "extends", owner, source, node)
+
+    def _emit_heritage_edges(self, clause: Node, kind: str, owner: str,
+                             source: bytes, decl: Node) -> None:
+        """One heritage edge per named target child of a heritage clause."""
+        for c in clause.children:
+            name = self._heritage_target_name(c, source)
+            if name:
+                self._pending_edges.append(
+                    Edge(owner, kind, name, decl.start_point[0] + 1)
+                )
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
         if not node.children:

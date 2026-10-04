@@ -180,6 +180,30 @@ class TestPageRecordContract:
         for page in plan[1:]:
             assert page["page_id"] == _slug(page["module"])
 
+    def test_slug_collision_gets_a_distinct_page_id(self, fresh_db):
+        """_slug is not injective: modules whose slugs collide still plan
+        to distinct manifest keys instead of sharing one."""
+        _seed_graph(fresh_db)
+        for fid, path in [("f6", "m.a/core.py"), ("f7", "m-a/core.py")]:
+            fresh_db.execute(
+                "INSERT INTO files (id, repo_id, path, language) "
+                "VALUES (?, 'r', ?, 'python')",
+                (fid, path),
+            )
+        for sid, fid, name in [("s_m1", "f6", "m1"), ("s_m2", "f7", "m2")]:
+            fresh_db.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, qualified_name, "
+                "line_start, line_end) VALUES (?, ?, ?, 'function', ?, 1, 10)",
+                (sid, fid, name, name),
+            )
+        fresh_db.commit()
+        plan = build_page_plan(fresh_db, "r", pages_cap=7)
+        page_ids = [page["page_id"] for page in plan]
+        assert len(set(page_ids)) == len(page_ids)
+        dupes = [p for p in plan if p["module"] in ("m.a", "m-a")]
+        assert len(dupes) == 2
+        assert dupes[0]["page_id"] != dupes[1]["page_id"]
+
     def test_module_page_seeds_name_module_files_and_top_symbols(self, fresh_db):
         _seed_graph(fresh_db)
         plan = build_page_plan(fresh_db, "r")

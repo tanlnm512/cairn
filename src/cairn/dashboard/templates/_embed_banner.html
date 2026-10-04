@@ -7,8 +7,12 @@
   Inline styles reuse the badge-warn recipe and the theme's --warn token
   (dark-theme safe) because the banner must live in the templates only.
   The status link rides the store seam (links.url) and inherits
-  the banner's warn color inline.
+  the banner's warn color inline. notice() is the shared status recipe
+  (settings' saved/error states reuse it).
 -#}
 {%- import "_links.html" as links with context -%}
-{%- if embed_banner %}<div class="embed-banner" role="status" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font-size: 0.85rem; font-weight: 600;">{{ embed_banner }} <a href="{{ links.url('/embeddings') }}" style="color: inherit; text-decoration: underline;">open Embeddings status</a></div>
+{% macro notice(text, kind='warn', role='status', element='p', class_name='', href='', link_label='') -%}
+<{{ element }}{% if class_name %} class="{{ class_name }}"{% endif %} role="{{ role }}" style="margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 1px solid color-mix(in srgb, var(--{{ kind }}) 32%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--{{ kind }}) 12%, transparent); color: var(--{{ kind }}); font-size: 0.85rem; font-weight: 600;">{{ text }}{% if href %} <a href="{{ href }}" style="color: inherit; text-decoration: underline;">{{ link_label }}</a>{% endif %}</{{ element }}>
+{%- endmacro %}
+{%- if embed_banner %}{{ notice(embed_banner, element='div', class_name='embed-banner', href=links.url('/embeddings'), link_label='open Embeddings status') }}
 {% endif %}

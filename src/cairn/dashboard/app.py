@@ -20,7 +20,9 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
 # llm.tasks Task.status vocabulary — the /tasks filter's allowed values.
-TASK_STATUSES = ("pending", "in-progress", "done", "failed")
+# "dropped" is written by drop_task; omitting it degrades ?status=dropped
+# to the unfiltered view.
+TASK_STATUSES = ("pending", "in-progress", "done", "failed", "dropped")
 
 # Agent-memory type vocabulary (cairn memory record) — the /memory
 # filter's allowed values.
@@ -107,7 +109,7 @@ def _human_duration(ms) -> str:
 
 
 def _est_tokens(row: dict) -> str:
-    """Per-call request/response token estimates (US4-AC2); ``unknown``
+    """Per-call request/response token estimates; ``unknown``
     when the row predates payload-size recording (NULL sizes)."""
     req = row.get("est_req_tokens")
     resp = row.get("est_resp_tokens")
@@ -173,7 +175,7 @@ def is_hx_request(request: "Request") -> bool:
 # Exports fetch the filtered set in one unpaginated call: a single
 # list_history page large enough to cover it — never a cursor-following
 # duplicate of the view's paging.
-_EXPORT_ROW_LIMIT = 1_000_000
+EXPORT_ROW_LIMIT = 1_000_000
 
 
 def create_app(
@@ -245,7 +247,7 @@ def create_app(
         request blocks (worst case the probe's ~2 s timeout — a localhost
         tool) instead of racing past an unassigned verdict."""
         nonlocal _probed, _probe_ok
-        if embeddings._backend_name() not in embeddings._SERVER_FAMILY:
+        if embeddings.backend_name() not in embeddings.SERVER_FAMILY:
             return None
         with _probe_lock:
             if _probed:

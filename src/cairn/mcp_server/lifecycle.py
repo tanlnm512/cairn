@@ -181,7 +181,7 @@ def _pid_cmdline(pid: int) -> str | None:
 def _is_cairn_serve_cmdline(cmdline: str) -> bool:
     """True when ``cmdline`` is a real `cairn serve` SERVER invocation.
 
-    Anchored token match on the argv shapes that actually occur (audit F1):
+    Anchored token match on the argv shapes that actually occur:
     editors spawn plain ``cairn serve`` (stdio -- docs/quickstart.md) and
     launchd runs ``cairn serve run --port N``. Both have argv[0] ending in
     ``cairn`` and argv[1] exactly ``serve``. The lifecycle subcommands
@@ -253,13 +253,12 @@ def find_strays(db_path: str | Path) -> list[int]:
 
     These are orphaned stdio servers left over from editor sessions -- the
     root cause of WAL lock contention. A pid qualifies as a stray only when
-    ALL of these hold (audit F1/F2):
+    ALL of these hold:
 
     1. Its full command line is a real `cairn serve` server invocation
        (anchored token match via ps). Editors launch plain ``cairn serve``
-       with the db passed via CAIRN_DB env -- never in argv -- so the old
-       argv-pattern scans (`cairn serve.*<db>`, `cairn serve run`) matched
-       nothing real and orphaned stdio servers were invisible.
+       with the db passed via CAIRN_DB env -- never in argv -- so loose
+       argv-pattern scans false-positive or miss.
     2. It is not in the protected set: self, the launchd daemon, and the
        daemon's children.
     3. It actually holds ``db_path`` open, verified via lsof. A foreground
@@ -319,7 +318,7 @@ def _children_of(ppid: int) -> set[int]:
 def terminate_pid(pid: int, timeout: float = 5.0, cmd_check=None) -> None:
     """SIGTERM a pid, wait, SIGKILL if still alive. Best-effort, never raises.
 
-    ``cmd_check`` (audit F4): optional predicate over the pid's command line.
+    ``cmd_check``: optional predicate over the pid's command line.
     When given, the command line is re-verified immediately before SIGTERM
     and again before SIGKILL: if the targeted process died in between (the
     TERM->KILL window is up to ``timeout`` seconds) and the kernel REUSED the

@@ -111,6 +111,9 @@ def main() -> int:
                 text=True,
             )
             if new.returncode != 0:
+                # Baseline exists, target version unreadable -> deleted there.
+                print(f"  {f}: deleted at {target}", file=sys.stderr)
+                mismatches.append(f)
                 continue
             try:
                 new_dump = ast.dump(_blank_docstrings(ast.parse(new.stdout)))
@@ -119,6 +122,10 @@ def main() -> int:
                 mismatches.append(f)
                 continue
         else:
+            if not Path(f).exists():
+                print(f"  {f}: deleted from the working tree", file=sys.stderr)
+                mismatches.append(f)
+                continue
             try:
                 new_dump = _dump(Path(f))
             except SyntaxError as e:

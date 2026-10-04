@@ -10,9 +10,7 @@
       "column_start": 0,
       "column_end": 1,
       "docstring": null,
-      "modifiers": [
-        "class"
-      ],
+      "modifiers": [],
       "metadata": null,
       "arity": null
     },
@@ -25,9 +23,7 @@
       "column_start": 0,
       "column_end": 1,
       "docstring": null,
-      "modifiers": [
-        "class"
-      ],
+      "modifiers": [],
       "metadata": null,
       "arity": null
     },
@@ -73,6 +69,32 @@
       "arity": 1
     },
     {
+      "name": "init",
+      "kind": "method",
+      "qualified_name": "BaseEntity.init",
+      "line_start": 14,
+      "line_end": 16,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": 1
+    },
+    {
+      "name": "init",
+      "kind": "method",
+      "qualified_name": "User.init",
+      "line_start": 23,
+      "line_end": 26,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": 2
+    },
+    {
       "name": "process",
       "kind": "method",
       "qualified_name": "User.process",
@@ -84,17 +106,48 @@
       "modifiers": [],
       "metadata": null,
       "arity": 0
+    },
+    {
+      "name": "id",
+      "kind": "property",
+      "qualified_name": "User.id",
+      "line_start": 20,
+      "line_end": 20,
+      "column_start": 4,
+      "column_end": 18,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    },
+    {
+      "name": "name",
+      "kind": "property",
+      "qualified_name": "BaseEntity.name",
+      "line_start": 13,
+      "line_end": 13,
+      "column_start": 4,
+      "column_end": 20,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    },
+    {
+      "name": "status",
+      "kind": "property",
+      "qualified_name": "User.status",
+      "line_start": 21,
+      "line_end": 21,
+      "column_start": 4,
+      "column_end": 32,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
     }
   ],
   "edges": [
-    {
-      "source_name": "User",
-      "kind": "calls",
-      "target_name": "init",
-      "line": 25,
-      "column": 0,
-      "call_arity": 1
-    },
     {
       "source_name": "User",
       "kind": "extends",
@@ -110,6 +163,14 @@
       "line": 19,
       "column": 0,
       "call_arity": null
+    },
+    {
+      "source_name": "init",
+      "kind": "calls",
+      "target_name": "init",
+      "line": 25,
+      "column": 0,
+      "call_arity": 1
     },
     {
       "source_name": "process",

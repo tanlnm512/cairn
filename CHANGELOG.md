@@ -11,6 +11,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > releases will be appended here incrementally.
 
 
+## [Unreleased]
+### Fixed
+- Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters
+  fixed across the graph, parsers, memory/LLM, MCP server, dashboard, wiki,
+  knowledge, CLI, install/uninstall and scripts surfaces.
+- Hooks no longer silently no-op in source checkouts: `python -m cairn.cli.main`
+  runs the CLI (missing `__main__` guard), the hook fallback sites work, and the
+  impact guard tolerates empty tool output.
+- Graph reads converge when a parser wheel is missing: unavailable-language
+  files are skipped by the drift and build scans (recorded as parser-unavailable
+  skips), dropped on reindex even when never indexed, and counted so strict
+  refresh settles instead of raising on every read.
+- Incremental updates no longer drop cross-repo imports edges; delete-only
+  diffs contribute blast-radius seeds; git octal escapes and quoted renames
+  resolve to real paths; `trace_flow` visits each id once on diamond graphs;
+  taint finds source→sink paths through the entry symbol.
+- Memory lifecycle on the declared Python 3.10 floor: Z-suffixed timestamps
+  parse (purge actually purges), aware/naive timestamp mixes degrade instead of
+  crashing decay and batch-critic, memory_refs delete the id form writers
+  persist, task complete/drop races are locked with the claimer enforced, and
+  refusals no longer report as drops.
+- Parsers: Swift properties and initializers emit symbols (goldens
+  regenerated), Kotlin primary-constructor default call edges and TypeScript
+  generic `implements` edges are restored, decorators land on their own
+  declaration, and external SCIP indexers run inside the target repo.
+- Dashboard: chains span no longer errors on NULL timestamps, each skipped
+  table shows its own reason, the `dropped` task filter works, template and
+  knowledge-graph JS duplication collapsed onto shared helpers.
+- Wiki queue: manifest write failures surface to the CLI, `--dry-run` is
+  honored in the `--llm` branch, enrich tasks carry the diagrams flag, and
+  slug-collision page ids dedupe.
+- Destructive/privacy scope: `uninstall --graph-only -y` resolves the
+  workspace store before deleting and never widens to all of `~/.cairn`;
+  config backups are no longer clobbered; hook payloads are redacted before
+  truncation; non-object stdin JSON cannot crash hooks.
+- Scripts and verifiers: the SCIP protobuf regen self-copy fixed,
+  install-hooks.sh delegates to `cairn hooks install`, benchmark suites restore
+  environment variables, SWE-bench rows are validated before destructive use,
+  and the datasource/ground-truth verifiers exit via their documented
+  contracts.
+- Embeddings/rerank: malformed vectors skip instead of raising, the
+  no-exist cache sentinel no longer counts as cached, OpenAI responses are
+  envelope-validated without silent truncation, and the reranker model cache is
+  locked.
+- Comment and doc hygiene: decision-log prose, incident stories, task/spec
+  IDs and stale docstrings stripped or corrected across the codebase; the
+  flagged duplication consolidated into shared helpers.
+
 ## [0.21.2] - 2026-09-29
 ### Added
 - Dashboard Memory detail pages: `/memory/{tier}/{slug}` renders a memory's

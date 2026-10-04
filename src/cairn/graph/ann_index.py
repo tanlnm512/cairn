@@ -240,38 +240,15 @@ def sync_index_row(
 ) -> bool:
     """Incrementally sync one vec0 row to an embeddings upsert (no commit).
 
-    Spike findings (sqlite-vec 0.1.9, SQLite 3.53.1, PERF-4 P4.1) that shape
-    this helper:
-
-    * ``INSERT INTO <vec_tbl>(rowid, embedding)`` with an already-present
-      rowid raises ``OperationalError: UNIQUE constraint failed on <tbl>
-      primary key`` -- and so do ``INSERT OR REPLACE`` and ``INSERT OR
-      IGNORE`` (vec0 enforces its PK inside the virtual-table module, where
-      SQLite's conflict-resolution clauses can't reach). There is no
-      replace/upsert idiom; DELETE + re-INSERT is the only update path.
-    * ``DELETE FROM <vec_tbl> WHERE rowid = ?`` behaves like an ordinary
-      table delete (rowcount 1), and deleting a rowid that isn't there is a
-      silent no-op -- so the DELETE below needs no existence probe.
-    * vec0 writes fully participate in SQLite transactions: the delete +
-      insert can share the caller's transaction with the embeddings-row
-      upsert (crash-atomic together), and a ROLLBACK undoes them cleanly.
-      This helper therefore does NOT commit; the caller owns the boundary.
-    * Cost at a 20k-row index: ~27 us per delete+insert+commit cycle vs
-      ~3 us/row for the wholesale rebuild -- why single upserts pay this
-      (microseconds, and the alternative is drift until the next ``cairn
-      embed``) while bulk passes stay on ``rebuild_index``.
-
-    The ``blob`` is the embeddings row's float32-LE ``vec`` verbatim --
-    exactly what ``rebuild_index`` copies via ``INSERT ... SELECT``.
-
-    Pure no-op (returns False, writes nothing) when the ANN backend is
-    disabled (``CAIRN_ANN_BACKEND=off``), no vec0 table exists yet for
-    ``model`` (only ``cairn embed``'s wholesale rebuild creates one), or the
-    extension won't load -- an embeddings upsert must never fail because
-    derived index state is absent. Best-effort on vec0 errors too (e.g. a
-    dim change under a pinned model name): logs and returns False, leaving
-    the drift for ``cairn doctor``'s staleness probe to flag and ``cairn
-    embed`` to heal.
+    vec0 has no replace/upsert idiom: inserting an already-present rowid
+    raises UNIQUE-failure even under OR REPLACE/OR IGNORE, so DELETE +
+    re-INSERT is the only update path (deleting a missing rowid is a silent
+    no-op). vec0 writes join the caller's transaction, so this never
+    commits and never raises: vec0 errors log and return False, leaving
+    drift for `cairn doctor` to flag and `cairn embed` to heal. Pure no-op
+    (False, no write) when the ANN backend is disabled, the index for
+    ``model`` doesn't exist, or the extension won't load. ``blob`` is the
+    embeddings row's float32-LE ``vec`` verbatim.
     """
     if not ann_backend_enabled() or not index_exists(conn, model):
         return False
@@ -370,16 +347,7 @@ def ann_query(
     if not try_load(conn):
         return None
     table = _table_name(model, source)
-    # The default-source probe must stay on the exact 2-arg index_exists
-    # call shape: concurrency tests monkeypatch it as `lambda conn, model:
-    # ...` to force the vec0 MATCH path, and cli/system.py +
-    # mcp_server/_server_core.py call it with two args. Only the opt-in mv
-    # leg passes its source through.
-    if source == "embeddings":
-        have_index = index_exists(conn, model)
-    else:
-        have_index = index_exists(conn, model, source)
-    if not have_index:
+    if not index_exists(conn, model, source):
         # No vec0 index for this model (typically: embeddings were built but
         # `cairn embed` hasn't run since, or the DB predates sqlite-vec). This
         # is a recoverable setup state, not a crash -- but it silently costs
@@ -401,8 +369,8 @@ def ann_query(
         # real cross-process lock event. Anything else (FTS/vec0 syntax error,
         # no-such-table racing a rebuild, index corruption) is a *query*
         # failure -- misattributing it to contention would send doctor's
-        # concurrency check chasing a phantom lock. The spec's `query_error`
-        # reason (§6.4) carries it durably instead.
+        # concurrency check chasing a phantom lock. The `query_error`
+        # event reason carries it durably instead.
         if _is_lock_contention(e):
             note_contention("ann_index.ann_query", error=e)
         else:

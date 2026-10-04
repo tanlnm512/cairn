@@ -121,6 +121,14 @@ def _backup_to_bak(path: Path, reason: str, result: InstallResult,
     the would-be backup is only reported.
     """
     backup = path.with_suffix(path.suffix + ".bak")
+    if backup.exists():
+        # The existing .bak may be the only preserved copy of an earlier
+        # state: never overwrite it, slot the new backup beside it instead.
+        n = 1
+        backup = path.with_suffix(f"{path.suffix}.bak.{n}")
+        while backup.exists():
+            n += 1
+            backup = path.with_suffix(f"{path.suffix}.bak.{n}")
     if dry_run:
         result.written.append(f"would back up {reason} {path} -> {backup}")
         return {}
@@ -215,7 +223,8 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
     """
     if config_key == "zcode" and "mcp" in merger:
         mcp = existing.get("mcp")
-        cur = mcp.get("servers", {}).get("cairn") if isinstance(mcp, dict) else None
+        servers = mcp.get("servers") if isinstance(mcp, dict) else None
+        cur = servers.get("cairn") if isinstance(servers, dict) else None
         if not isinstance(cur, dict):
             return False
         new = merger["mcp"]["servers"]["cairn"]
@@ -441,8 +450,8 @@ def _strip_mcp(path: Path, res) -> None:
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
         return
-    servers = data.get("mcpServers", {})
-    if "cairn" in servers:
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict) and "cairn" in servers:
         del servers["cairn"]
         data["mcpServers"] = servers
         _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
@@ -458,20 +467,40 @@ def _strip_mcp_zcode(path: Path, res) -> None:
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
         return
-    servers = data.get("mcp", {}).get("servers", {})
-    if "cairn" in servers:
-        del servers["cairn"]
-        mcp = data.get("mcp", {})
-        if servers:
-            mcp["servers"] = servers
-        else:
-            mcp.pop("servers", None)
-        if mcp:
-            data["mcp"] = mcp
-        else:
-            data.pop("mcp", None)
-        _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
-        res.written.append(f"stripped cairn from {path}")
+    mcp = data.get("mcp")
+    if not isinstance(mcp, dict):
+        return
+    servers = mcp.get("servers")
+    if not (isinstance(servers, dict) and "cairn" in servers):
+        return
+    del servers["cairn"]
+    if servers:
+        mcp["servers"] = servers
+    else:
+        mcp.pop("servers", None)
+    if mcp:
+        data["mcp"] = mcp
+    else:
+        data.pop("mcp", None)
+    _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+    res.written.append(f"stripped cairn from {path}")
+
+
+def _strip_mcp_kilo(path: Path, res) -> None:
+    """Remove the cairn server from an opencode-format ``mcp`` key (opencode/kilo)."""
+    data = _load_json_or_none(path)
+    if not isinstance(data, dict):
+        return
+    mcp = data.get("mcp")
+    if not (isinstance(mcp, dict) and "cairn" in mcp):
+        return
+    del mcp["cairn"]
+    if mcp:
+        data["mcp"] = mcp
+    else:
+        data.pop("mcp", None)
+    _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+    res.written.append(f"stripped cairn from {path}")
 
 
 def _strip_mcp_opencode(path: Path, res) -> None:
@@ -480,40 +509,17 @@ def _strip_mcp_opencode(path: Path, res) -> None:
     Also strips a stray ``.opencode/mcp.json`` if an earlier installer wrote one
     (opencode itself does not read it).
     """
-    data = _load_json_or_none(path)
-    if isinstance(data, dict):
-        mcp = data.get("mcp", {})
-        if "cairn" in mcp:
-            del mcp["cairn"]
-            if mcp:
-                data["mcp"] = mcp
-            else:
-                data.pop("mcp", None)
-            _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
-            res.written.append(f"stripped cairn from {path}")
+    _strip_mcp_kilo(path, res)
     # Cleanup: remove a stray .opencode/mcp.json if it carries our server.
     stray = path.parent / ".opencode" / "mcp.json"
     if stray.exists():
-        # Only treat it as ours if it carries our server.
         stray_data = _load_json_or_none(stray)
-        if isinstance(stray_data, dict) and "cairn" in (stray_data.get("mcpServers") or {}):
+        stray_servers = (
+            stray_data.get("mcpServers") if isinstance(stray_data, dict) else None
+        )
+        if isinstance(stray_servers, dict) and "cairn" in stray_servers:
             stray.unlink()
             res.written.append(f"removed stray {stray}")
-
-
-def _strip_mcp_kilo(path: Path, res) -> None:
-    """Remove the cairn server from a kilo.json (opencode-format mcp key)."""
-    data = _load_json_or_none(path)
-    if isinstance(data, dict):
-        mcp = data.get("mcp", {})
-        if "cairn" in mcp:
-            del mcp["cairn"]
-            if mcp:
-                data["mcp"] = mcp
-            else:
-                data.pop("mcp", None)
-            _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
-            res.written.append(f"stripped cairn from {path}")
 
 
 def _strip_hooks(path: Path, res: InstallResult) -> None:
@@ -526,7 +532,9 @@ def _strip_hooks(path: Path, res: InstallResult) -> None:
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
         return
-    hooks = data.get("hooks", {})
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return
     markers = _hook_markers()
     changed = False
     for event in list(hooks):
@@ -564,7 +572,9 @@ def _strip_cursor_hooks(path: Path, res: InstallResult) -> None:
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
         return
-    hooks = data.get("hooks", {})
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return
     markers = _hook_markers()
     changed = False
     for event in list(hooks):

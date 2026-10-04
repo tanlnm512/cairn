@@ -56,11 +56,7 @@ class PerfReport:
         return json.dumps(self.to_dict(), indent=2)
 
     def to_table(self) -> str:
-        """Render the report as a rich table via cli.display.
-
-        Returns a string summary (also prints the table when a TTY is
-        available). Kept as a method so the CLI layer is a thin caller.
-        """
+        """Print the perf table via cli.display (unconditionally) and return the report JSON."""
         from ..cli.display import print_table
 
         rows = []

@@ -143,6 +143,32 @@ def _json_has_cairn(path: Path) -> bool:
         return False
 
 
+def _hooks_have_cairn(path: Path) -> bool:
+    """True if a settings.json hooks block carries any cairn hook entry.
+
+    cairn writes only ``hooks`` into .claude/settings.json (never MCP keys),
+    so this — not the MCP-key probe — is what detects a hooks install there.
+    """
+    try:
+        import json
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    from .merge import _entry_entrypoints
+
+    return any(
+        isinstance(entry, dict) and _entry_entrypoints(entry)
+        for entries in hooks.values()
+        if isinstance(entries, list)
+        for entry in entries
+    )
+
+
 def check_installed(workspace: str) -> dict[str, bool]:
     """For each client, True if cairn is already wired in.
 
@@ -155,11 +181,12 @@ def check_installed(workspace: str) -> dict[str, bool]:
     result: dict[str, bool] = {}
 
     # claude: .mcp.json has cairn OR .claude/skills/cairn/ exists OR the
-    # user-scope ~/.claude.json registration has cairn
+    # user-scope ~/.claude.json registration has cairn OR ~/.claude/settings.json
+    # carries the hooks cairn writes there
     result["claude"] = (
         _json_has_cairn(ws / ".mcp.json")
         or (ws / ".claude" / "skills" / "cairn" / "SKILL.md").exists()
-        or _json_has_cairn(home / ".claude" / "settings.json")
+        or _hooks_have_cairn(home / ".claude" / "settings.json")
         or _json_has_cairn(home / ".claude.json")
     )
 
@@ -189,8 +216,9 @@ def check_installed(workspace: str) -> dict[str, bool]:
         or _json_has_cairn(home / ".zcode" / "cli" / "config.json")
     )
 
-    # agy: ~/.gemini/config/mcp_config.json has cairn
-    result["agy"] = _json_has_cairn(home / ".gemini" / "config" / "mcp_config.json")
+    # agy: the installer's own config path (honors APPDATA/XDG_CONFIG_HOME)
+    from .clients.agy import agy_config_path
+    result["agy"] = _json_has_cairn(agy_config_path())
 
     # opencode: opencode.json has cairn MCP entry
     result["opencode"] = (

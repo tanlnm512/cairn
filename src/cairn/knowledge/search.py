@@ -10,7 +10,7 @@ from cairn.okf.bundle import OKFBundle
 logger = logging.getLogger(__name__)
 
 # Common English words filtered from query tokens before matching. Shared
-# baseline defined in src/graph/tokenize.py.
+# baseline imported from cairn.graph.tokenize.
 _STOP_WORDS = BASE_STOP_WORDS
 
 # Field weights for multi-token scoring.
@@ -323,7 +323,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
         return out
     except Exception:
         _note_semantic_off("error")
-        return []  # never crash — mirrors promotion.py:138 pattern
+        return []  # never crash — retrieval errors degrade to no results
 
 
 def _note_semantic_off(reason: str) -> None:

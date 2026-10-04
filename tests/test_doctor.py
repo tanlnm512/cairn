@@ -478,6 +478,31 @@ def test_freshness_warn_stale_build(tmp_path):
     assert "last build" in row["detail"]
 
 
+def test_freshness_warns_at_7d23h_not_8d(tmp_path):
+    """A build 7d23h old (past the 7-day threshold, <8d) -> freshness WARN."""
+    from cairn.cli.system.doctor import STALE_BUILD_DAYS
+
+    db = tmp_path / "graph.db"
+    edge = (
+        datetime.now(timezone.utc)
+        - timedelta(days=STALE_BUILD_DAYS, hours=23)
+    ).isoformat()
+
+    def setup(conn):
+        conn.execute(
+            "INSERT INTO build_runs (kind, started_at) VALUES ('build', ?)",
+            (edge,),
+        )
+
+    _make_db(db, setup)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "freshness")
+    assert row["status"] == "WARN"
+    assert f"(>{STALE_BUILD_DAYS}d)" in row["detail"]
+
+
 def test_freshness_pass_recent_build(tmp_path):
     """A build within the freshness window -> freshness PASS."""
     db = tmp_path / "graph.db"

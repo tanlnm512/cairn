@@ -127,7 +127,8 @@ def _as_string_list(value, path: Path, key: str) -> List[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        return [value] if value.strip() else []
+        stripped = value.strip()
+        return [stripped] if stripped else []
     if isinstance(value, list):
         out = []
         for item in value:

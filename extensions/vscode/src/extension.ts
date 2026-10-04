@@ -1,6 +1,6 @@
 /**
  * Extension shell activation: start or attach the local cairn server per
- * workspace root (D-003), reflect the aggregate state in one status-bar
+ * workspace root, reflect the aggregate state in one status-bar
  * item, register the inline hover and code-lens providers, and host the
  * active-file compass/memory panel. Zero manual configuration — activation
  * alone brings the server up.
@@ -18,7 +18,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const states = (): ServerState[] => manager.states();
   const compassPanel = registerCompassPanel(context, manager);
 
-  // Hover: one /editor/symbol round-trip per hover; degraded shells render nothing (FR-004).
+  // Hover: one /editor/symbol round-trip per hover; degraded shells render nothing.
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(
       { scheme: "file" },
@@ -29,7 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  // Code lens: caller/callee counts above declarations; hidden while degraded (FR-004).
+  // Code lens: caller/callee counts above declarations; hidden while degraded.
   registerCodeLenses({ context, vscodeApi: vscode, states });
 
   manager.onStateChange((next) => {

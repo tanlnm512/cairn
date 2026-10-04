@@ -38,25 +38,21 @@ def note_failure_signature(conn: sqlite3.Connection, sig: str,
 
     First occurrence inserts the row and returns 0; later occurrences
     bump ``occurrences``/``last_seen`` and return the prior count. The
-    caller owns the commit.
+    upsert is atomic on the sig PRIMARY KEY, so concurrent recorders
+    serialize instead of racing a SELECT-then-INSERT. The caller owns the
+    commit.
     """
     now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO memory_failure_signatures"
+        " (sig, tool_name, occurrences, first_seen, last_seen)"
+        " VALUES (?, ?, 1, ?, ?)"
+        " ON CONFLICT(sig) DO UPDATE SET"
+        " occurrences = occurrences + 1, last_seen = excluded.last_seen",
+        (sig, tool_name, now, now),
+    )
     row = conn.execute(
         "SELECT occurrences FROM memory_failure_signatures WHERE sig = ?",
         (sig,),
     ).fetchone()
-    if row is None:
-        conn.execute(
-            "INSERT INTO memory_failure_signatures"
-            " (sig, tool_name, occurrences, first_seen, last_seen)"
-            " VALUES (?, ?, 1, ?, ?)",
-            (sig, tool_name, now, now),
-        )
-        return 0
-    conn.execute(
-        "UPDATE memory_failure_signatures"
-        " SET occurrences = occurrences + 1, last_seen = ?"
-        " WHERE sig = ?",
-        (now, sig),
-    )
-    return row[0]
+    return (row[0] - 1) if row else 0

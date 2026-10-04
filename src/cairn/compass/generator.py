@@ -12,6 +12,7 @@ from ..okf.concept import OKFConcept
 # Cap revise cycles to bound the generator->critic->revise loop.
 from ..llm.tasks import MAX_REVISE_CYCLES
 from .critic import preserved_concept_notes
+from .flow_gaps import _coverage_resource, _name_files
 
 # LIKE escape char: literal '%'/'_' in module paths must not act as wildcards.
 LIKE_ESCAPE_CHAR = "\\"
@@ -59,7 +60,7 @@ def _normalize_module_path(module_path: str, repo: Optional[str]) -> str:
     return module_path
 
 
-def _resolve_module(
+def resolve_module(
     conn: sqlite3.Connection, module_path: str, repo: Optional[str],
 ) -> tuple:
     """Resolve (repo, repo-relative module path). Raises
@@ -69,6 +70,27 @@ def _resolve_module(
         raise ModuleResolutionError("module path is empty")
     repo = repo or _infer_repo(conn, module_path)
     return repo, _normalize_module_path(module_path, repo)
+
+
+def _compass_concept(
+    module_path: str,
+    repo: Optional[str],
+    body: str,
+) -> OKFConcept:
+    """The one Compass concept identity (concept_id/title/tags) for a module."""
+    title = _derive_title(module_path)
+    concept_id = f"compass/{module_path.strip('/').replace('/', '-')}"
+    tags = ([repo] if repo else []) + [t for t in module_path.split("/") if t]
+    return OKFConcept(
+        type="Compass",
+        title=title,
+        description=f"Navigation guide for {module_path}",
+        resource=module_path,
+        tags=tags[:6],
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        concept_id=concept_id,
+        body=body,
+    )
 
 
 def generate_compass(
@@ -89,7 +111,7 @@ def generate_compass(
         llm_synthesize: optional callable(symbols, key_files, cross_deps) -> str body.
     """
     # 1. Find all symbols in the module path (segment-anchored, repo-scoped).
-    repo_filter, module_path = _resolve_module(conn, module_path, repo)
+    repo_filter, module_path = resolve_module(conn, module_path, repo)
     symbols = _symbols_in_module(conn, module_path, repo_filter)
 
     # 2. Key files: rank by incoming edges (most-referenced = most important).
@@ -107,22 +129,8 @@ def generate_compass(
     else:
         body = _template_body(symbols, key_files, cross_deps)
 
-    title = _derive_title(module_path)
-    concept_id = f"compass/{module_path.strip('/').replace('/', '-')}"
-    tags = [repo_filter] if repo_filter else []
-    tags += [t for t in module_path.split("/") if t]
-
-    concept = OKFConcept(
-        type="Compass",
-        title=title,
-        description=f"Navigation guide for {module_path}",
-        resource=module_path,
-        tags=tags[:6],
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        concept_id=concept_id,
-        body=body,
-    )
-    concept.body = preserved_concept_notes(bundle, concept_id, body)
+    concept = _compass_concept(module_path, repo_filter, body)
+    concept.body = preserved_concept_notes(bundle, concept.concept_id, body)
     return concept
 
 
@@ -158,7 +166,7 @@ def _infer_repo(conn, module_path: str) -> Optional[str]:
 
 def _symbols_in_module(conn, module_path: str, repo: Optional[str]) -> List[dict]:
     cur = conn.cursor()
-    q = f"""SELECT s.name, s.kind, s.qualified_name, s.line_start, f.path, f.repo_id
+    q = f"""SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, f.path, f.repo_id
            FROM symbols s JOIN files f ON s.file_id = f.id
            WHERE {_module_match_sql('f.path')}"""
     params: list = list(_module_match_params(module_path))
@@ -170,18 +178,24 @@ def _symbols_in_module(conn, module_path: str, repo: Optional[str]) -> List[dict
 
 
 def _rank_key_files(conn, symbols: List[dict], top: int = 5) -> List[dict]:
-    """Rank files by number of incoming edges (symbols defined there that are called)."""
+    """Rank files by incoming edges to these symbols' ids — never a
+    name match across the store."""
     if not symbols:
         return []
     cur = conn.cursor()
+    ids = [str(s["id"]) for s in symbols]
+    placeholders = ",".join("?" * len(ids))
+    incoming = {
+        r["target_id"]: r["c"]
+        for r in cur.execute(
+            f"SELECT target_id, COUNT(*) AS c FROM edges "
+            f"WHERE target_id IN ({placeholders}) GROUP BY target_id",
+            ids,
+        ).fetchall()
+    }
     file_scores: dict[str, dict] = {}
     for s in symbols:
-        # Count edges where this symbol is a target.
-        n = cur.execute(
-            "SELECT COUNT(*) AS c FROM edges WHERE target_id IN "
-            "(SELECT id FROM symbols WHERE name = ?)",
-            (s["name"],),
-        ).fetchone()["c"]
+        n = incoming.get(str(s["id"]), 0)
         if s["path"] not in file_scores:
             file_scores[s["path"]] = {"path": s["path"], "repo": s["repo_id"], "score": 0, "symbols": []}
         file_scores[s["path"]]["score"] += n
@@ -282,19 +296,21 @@ def _template_body(symbols, key_files, cross_deps) -> str:
         lines.append("- (no files with incoming references detected)")
     lines.append("")
     lines.append("# Build-Failure Patterns")
-    # Graph-derived heuristics.
+    # Graph-derived heuristics; the fallback fires when none apply.
+    section: List[str] = []
     top_score = key_files[0].get("score", 0) if key_files else 0
     if top_score > 20:
         top = key_files[0]["path"].split("/")[-1]
-        lines.append(f"- `{top}` is a high-traffic file ({top_score} incoming refs); "
-                     "changes ripple widely — check `cairn impact` before modifying.")
+        section.append(f"- `{top}` is a high-traffic file ({top_score} incoming refs); "
+                       "changes ripple widely — check `cairn impact` before modifying.")
     if cross_deps:
-        lines.append(f"- This module reaches {len(cross_deps)} other modules; verify cross-module "
-                     "impact before refactoring.")
+        section.append(f"- This module reaches {len(cross_deps)} other modules; verify cross-module "
+                       "impact before refactoring.")
     if len(symbols) > 50:
-        lines.append(f"- Large module ({len(symbols)} symbols); consider splitting if adding features.")
-    if not [l for l in lines if l.startswith("- ") and "high-traffic" not in l]:
-        lines.append("- (run the critic pass with an LLM to surface deeper tribal knowledge)")
+        section.append(f"- Large module ({len(symbols)} symbols); consider splitting if adding features.")
+    if not section:
+        section.append("- (run the critic pass with an LLM to surface deeper tribal knowledge)")
+    lines.extend(section)
     lines.append("")
     lines.append("# Cross-Module Dependencies")
     for mod in cross_deps[:4]:
@@ -316,7 +332,7 @@ def _derive_title(module_path: str) -> str:
 
 def _gather_facts(conn: sqlite3.Connection, module_path: str, repo: Optional[str]) -> Dict[str, Any]:
     """Gather graph-grounded facts for a module. Single source of truth for synthesis."""
-    repo, module_path = _resolve_module(conn, module_path, repo)
+    repo, module_path = resolve_module(conn, module_path, repo)
     symbols = _symbols_in_module(conn, module_path, repo)
     key_files = _rank_key_files(conn, symbols)
     cross_deps = _cross_module_deps(conn, module_path, repo)
@@ -351,7 +367,7 @@ def generate_compass_with_llm(
                 function falls back to the deterministic generator.
     """
     # 1. Resolve module, then gather facts (single source of truth).
-    repo, module_path = _resolve_module(conn, module_path, repo)
+    repo, module_path = resolve_module(conn, module_path, repo)
     facts = _gather_facts(conn, module_path, repo)
 
     # 2. If no client, fall back to deterministic generation.
@@ -384,20 +400,8 @@ def generate_compass_with_llm(
             break  # facts are clean; accept
 
     # 4. Build the final concept from the accepted draft.
-    title = _derive_title(module_path)
-    concept_id = f"compass/{module_path.strip('/').replace('/', '-')}"
-    tags = ([repo] if repo else []) + [t for t in module_path.split("/") if t]
-    concept = OKFConcept(
-        type="Compass",
-        title=title,
-        description=f"Navigation guide for {module_path}",
-        resource=module_path,
-        tags=tags[:6],
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        concept_id=concept_id,
-        body=draft,
-    )
-    concept.body = preserved_concept_notes(bundle, concept_id, draft)
+    concept = _compass_concept(module_path, repo, draft)
+    concept.body = preserved_concept_notes(bundle, concept.concept_id, draft)
     return {
         "concept": concept,
         "mode": "llm",
@@ -563,22 +567,30 @@ def generate_flow_compass(
         entry: the entry-point symbol name (human-readable label).
         entry_id: optional symbol database ID for collision-safe resolution.
         resource: optional override for the concept's ``resource`` field.
-            Defaults to ``entry``. For colliding names, pass a disambiguated key.
+            Defaults to the flow-gaps coverage key (bare name when the
+            symbol is unique across files, ``name#suffix`` on collisions).
         title: optional override for the concept's ``title`` field. Defaults
             to ``Flow: {entry}``. For collisions, pass a qualified title.
     """
     facts = _gather_flow_facts(conn, entry, entry_id=entry_id)
     body = _flow_template_body(facts)
 
-    # concept_id must be filesystem-safe and unique. For collisions, the
-    # resource carries the disambiguator; sanitize it into the concept_id.
-    safe_id = (resource or entry).replace("/", "-").replace(".", "-").replace("#", "-")
+    # concept_id must be filesystem-safe and unique. The resource defaults
+    # to the flow-gaps coverage key, so the written concept marks its own
+    # gap covered; sanitize it into the concept_id.
+    if resource:
+        key = resource
+    else:
+        chain = facts.get("chain_raw") or []
+        entry_file = chain[0]["file"] if chain else ""
+        key = _coverage_resource(entry, entry_file, _name_files(conn, entry))
+    safe_id = key.replace("/", "-").replace(".", "-").replace("#", "-")
     concept_id = f"compass/flow-{safe_id}"
     return OKFConcept(
         type="Compass",
         title=title or f"Flow: {entry}",
         description=f"Execution flow traced from `{entry}`",
-        resource=resource or entry,
+        resource=key,
         tags=["flow", entry.split(".")[-1]][:6],
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         concept_id=concept_id,

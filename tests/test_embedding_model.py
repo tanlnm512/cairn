@@ -71,3 +71,19 @@ def test_purge_stale_models_removes_only_other_models():
         assert remaining[0][0] == "BAAI/bge-m3"
 
 
+
+
+def test_model_is_cached_rejects_no_exist_sentinel(monkeypatch):
+    """A repo-cached-but-file-absent verdict (the _CACHED_NO_EXIST sentinel)
+    is not a cache hit."""
+    pytest.importorskip("huggingface_hub")
+    import huggingface_hub
+
+    from cairn.graph import embeddings as emb
+
+    monkeypatch.setattr(
+        huggingface_hub,
+        "try_to_load_from_cache",
+        lambda repo_id, filename: huggingface_hub._CACHED_NO_EXIST,
+    )
+    assert emb.model_is_cached("BAAI/bge-m3") is False

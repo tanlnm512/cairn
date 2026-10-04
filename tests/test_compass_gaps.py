@@ -123,3 +123,47 @@ def test_untagged_compass_covers_any_repo(conn, tmp_path):
     assert detect_gaps(conn, OKFBundle(str(tmp_path / "k"))) == [
         "agent_runtime/app/services_extra/impl.py"
     ]
+
+
+def test_module_symbol_count_is_escaped_and_repo_scoped(conn):
+    """`app%svc` must not soak up `app/xsvc` symbols via a wildcard LIKE,
+    and the same rel path in another repo must not inflate the count:
+    only the module's own repo-scoped symbols qualify it."""
+    from cairn.compass.gaps import _get_all_modules
+
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES "
+        "('pct', 'agent_runtime', '/work/agent_runtime/app%svc/mid/one.py', 'python')"
+    )
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind) "
+            "VALUES (?, ?, ?, 'function')",
+            (f"pct:sym{i}", "pct", f"psym{i}"),
+        )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES "
+        "('xs', 'agent_runtime', '/work/agent_runtime/app/xsvc/mid/one.py', 'python')"
+    )
+    for i in range(4):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind) "
+            "VALUES (?, ?, ?, 'function')",
+            (f"xs:sym{i}", "xs", f"xsym{i}"),
+        )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES "
+        "('oth', 'other_repo', '/work/other_repo/app%svc/mid/one.py', 'python')"
+    )
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind) "
+            "VALUES (?, ?, ?, 'function')",
+            (f"oth:sym{i}", "oth", f"osym{i}"),
+        )
+    conn.commit()
+    modules = _get_all_modules(conn)
+    # 3 own symbols < 5: a cross-name/cross-repo LIKE count must not
+    # qualify the module.
+    assert "agent_runtime/app%svc/mid/one.py" not in modules
+    assert "agent_runtime/app/services/jobs.py" in modules

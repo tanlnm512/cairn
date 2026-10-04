@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 from typing import Dict, List
 
 # Path patterns (matched as substrings, case-sensitive where language-conventional).
@@ -21,7 +22,6 @@ _TEST_PATH_PATTERNS = (
     "_test.go",              # Go
     "_test.dart",            # Dart/Flutter
     "_test.py",              # Python pytest/unittest
-    "test_",                 # Python pytest (file starts with test_)
     ".spec.ts",              # TypeScript/Jest
     ".spec.js",
     ".test.ts",              # TypeScript/Jest alternate
@@ -29,6 +29,17 @@ _TEST_PATH_PATTERNS = (
     "Test.swift",            # XCTest
     "Spec.swift",
 )
+
+# The pytest ``test_*`` filename convention, anchored to the basename --
+# unanchored, "test_" substring-matches production paths like contest_data/.
+_TEST_BASENAME_PREFIX = "test_"
+
+
+def _test_basename(file_path: str) -> bool:
+    """True if the file's basename starts with the pytest ``test_`` prefix."""
+    return PurePosixPath(file_path.replace("\\", "/")).name.startswith(
+        _TEST_BASENAME_PREFIX
+    )
 
 # Name patterns: symbol name or qualified_name ENDS in Test/Spec/Tests/Specs.
 # Anchored at the end of the final segment so ``LatestUpdate`` doesn't match.
@@ -43,7 +54,10 @@ def is_test_symbol(file_path: str, symbol_name: str = "", qualified_name: str = 
     or ``""`` (not a test). Designed to run as a cheap filter over an impact
     result set; the path check is a substring scan over ~20 patterns.
     """
-    path_hit = bool(file_path) and any(p in file_path for p in _TEST_PATH_PATTERNS)
+    path_hit = bool(file_path) and (
+        any(p in file_path for p in _TEST_PATH_PATTERNS)
+        or _test_basename(file_path)
+    )
     # A bare `Test` filename is a weak signal; under a production source root
     # (`src/main/`, `src/release/`) only strong directory signals count, not
     # filename-only patterns like "Test.kt".
@@ -56,7 +70,9 @@ def is_test_symbol(file_path: str, symbol_name: str = "", qualified_name: str = 
             "/__tests__/", "/spec/", "_test.go", "_test.dart", "_test.py",
             ".spec.ts", ".spec.js", ".test.ts", ".test.js",
         )
-        if not any(p in file_path for p in strong):
+        if not (
+            any(p in file_path for p in strong) or _test_basename(file_path)
+        ):
             path_hit = False
     name_hit = False
     if symbol_name or qualified_name:

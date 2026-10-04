@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 from .main import main
+from ._helpers import _detect_install_method
 
 
 # --- Version helpers -------------------------------------------------------
@@ -50,44 +51,13 @@ def _pypi_latest() -> str | None:
         return None
 
 
-def _detect_install_method() -> str:
-    """Detect how cairn-intel was installed: 'uv', 'pipx', 'pip', or 'unknown'."""
-    exe = sys.executable
-    # Check uv tool installations first (uv tool list is fast).
-    try:
-        r = subprocess.run(
-            ["uv", "tool", "list"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if "cairn-intel" in r.stdout:
-            return "uv"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    # Check pipx.
-    try:
-        r = subprocess.run(
-            ["pipx", "list"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if "cairn-intel" in r.stdout:
-            return "pipx"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    # If running inside a venv that looks like a pip install, say pip.
-    if "venv" in exe or "virtualenv" in exe or ".local" in exe:
-        return "pip"
-    return "unknown"
-
-
 def _reinstall(method: str, version: str) -> bool:
     """Re-install cairn-intel using the detected method. True on success.
 
     The installer runs behind the shared quiet progress helper (the same
     seam `embed --install-deps` uses): one live progress line, with the
-    installer's output drained silently and shown only on failure. Raw
-    `subprocess.run` with inherited stdout used to dump 50+ lines of
-    pipx/uv/pip noise (venv creation, every Collecting/Downloading/
-    already-satisfied line) straight into the terminal.
+    installer's output drained silently and shown only on failure -- an
+    inherited stdout would interleave pipx/uv/pip progress noise into it.
     """
     from . import display
     from ..graph.embeddings import _run_subprocess_with_progress
@@ -97,7 +67,7 @@ def _reinstall(method: str, version: str) -> bool:
         cmd = ["uv", "tool", "install", "--force", spec]
     elif method == "pipx":
         cmd = ["pipx", "install", "--force", spec]
-    elif method == "pip":
+    elif method in ("pip", "venv"):
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", spec]
     else:
         display.warning(

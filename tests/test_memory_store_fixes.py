@@ -330,3 +330,58 @@ def test_delete_exact_no_sibling_clobber_h5(tmp_path, fresh_db):
     assert (bundle.root / f"{id3}.md").exists(), "api v2 file should still exist"
 
 
+
+
+def _archived_memory(bundle, title, *, timestamp=None):
+    """Store one archived-tier memory, optionally with a hand-set timestamp."""
+    mem = create_memory(type_="pattern", title=title, body="content", confidence=0.7)
+    if timestamp is not None:
+        mem.timestamp = timestamp
+    return store_memory(mem, bundle, tier="archived")
+
+
+def test_purge_archived_deletes_old_z_timestamped_and_keeps_recent(tmp_path):
+    """purge_archived ages Z-suffixed timestamps (the store's own format) and
+    skips malformed/naive ones instead of degrading them to age 0."""
+    from cairn.memory.store import purge_archived
+
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    old = _archived_memory(
+        bundle, "old memory", timestamp="2024-01-01T00:00:00Z"
+    )
+    recent = _archived_memory(
+        bundle, "recent memory",
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    malformed = _archived_memory(bundle, "malformed memory", timestamp="not-a-date")
+
+    purged = purge_archived(bundle, max_days=90)
+
+    assert purged == 1
+    assert not (bundle.root / f"{old}.md").exists()
+    assert (bundle.root / f"{recent}.md").exists()
+    assert (bundle.root / f"{malformed}.md").exists()
+
+
+def test_delete_memory_removes_refs_written_with_absolute_id(tmp_path, fresh_db):
+    """memory_refs rows persisted under the absolute concept_id form (the form
+    the search-time writers record) are deleted with their memory."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    mem = create_memory(type_="pattern", title="abs ref target", body="content")
+    mem_id = store_memory(mem, bundle)
+    abs_id = str(bundle.root / mem_id)
+
+    cursor = fresh_db.cursor()
+    ts = datetime.now(timezone.utc).isoformat()
+    cursor.execute(
+        "INSERT INTO memory_refs (memory_path, session_id, referenced_at)"
+        " VALUES (?, ?, ?)",
+        (abs_id, "session1", ts),
+    )
+    fresh_db.commit()
+
+    result = delete_memory(bundle, mem_id, conn=fresh_db)
+    assert result is True
+
+    remaining = cursor.execute("SELECT memory_path FROM memory_refs").fetchall()
+    assert abs_id not in [r[0] for r in remaining]

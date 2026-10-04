@@ -162,7 +162,8 @@ class TestCompleteTaskCriticIntegration:
     def test_critic_fail_drops_when_at_or_above_max_cycles(
         self, fresh_db, tmp_path
     ):
-        """Critic fails with attempt >= MAX_REVISE_CYCLES: drops task."""
+        """Critic fails with attempt >= MAX_REVISE_CYCLES: chain exhausted, the
+        task persists the failed status (never a fake done)."""
         conn = _conn_with_fixture(fresh_db)
         bundle = _create_bundle(tmp_path)
 
@@ -200,6 +201,13 @@ class TestCompleteTaskCriticIntegration:
         tasks = list_tasks(bundle, status="pending")
         revise_tasks = [t for t in tasks if "revise" in t.task_kind]
         assert len(revise_tasks) == 0
+
+        # The exhausted chain persists status failed, so the failed filter
+        # finds it and the done vocabulary stays truthful.
+        from cairn.llm.tasks import get_task
+
+        assert get_task(bundle, task.id).status == "failed"
+        assert [t.id for t in list_tasks(bundle, status="failed")] == [task.id]
 
 # --- C2: Atomic Claim and claimed_at Tests ---
 
@@ -385,3 +393,87 @@ class TestClaimTaskAtomicity:
 class TestTaskDataclassWithClaimedAt:
     """Verify Task dataclass has claimed_at field and it round-trips correctly."""
 
+
+
+class TestCompleteTaskRefusalsAreNotDrops:
+    """C31: a refused completion is reported as refused, never as a drop."""
+
+    def test_complete_of_pending_task_refuses_not_drops(self, tmp_path):
+        bundle = _create_bundle(tmp_path)
+        task = create_task(bundle, "compass-synthesize", "test", facts={})
+
+        outcome = complete_task(bundle, task.id, "irrelevant", claimer="agent")
+
+        assert outcome["refused"] is True
+        assert outcome["dropped"] is False
+        assert "not in-progress" in outcome["errors"][0]
+        from cairn.llm.tasks import get_task
+
+        assert get_task(bundle, task.id).status == "pending"
+
+    def test_ownership_mismatch_refuses_not_drops(self, tmp_path):
+        bundle = _create_bundle(tmp_path)
+        task = create_task(bundle, "compass-synthesize", "test", facts={})
+        claim_task(bundle, task.id, "alice")
+
+        outcome = complete_task(bundle, task.id, "irrelevant", claimer="bob")
+
+        assert outcome["refused"] is True
+        assert outcome["dropped"] is False
+        assert "ownership mismatch" in outcome["errors"][0]
+        from cairn.llm.tasks import get_task
+
+        assert get_task(bundle, task.id).status == "in-progress"
+
+    def test_matching_claimer_completes(self, tmp_path):
+        bundle = _create_bundle(tmp_path)
+        task = create_task(bundle, "compass-synthesize", "test", facts={})
+        claim_task(bundle, task.id, "alice")
+
+        outcome = complete_task(bundle, task.id, "irrelevant", claimer="alice")
+
+        assert not outcome.get("refused")
+        from cairn.llm.tasks import get_task
+
+        assert get_task(bundle, task.id).status == "done"
+
+
+class TestCompleteDropRaceSafety:
+    """C32: concurrent complete/drop serialize on the bundle lock — exactly
+    one terminal write wins and the loser reports a refusal, never both."""
+
+    def test_concurrent_complete_and_drop_single_winner(self, tmp_path):
+        bundle = _create_bundle(tmp_path)
+        task = create_task(bundle, "compass-synthesize", "test", facts={})
+        claim_task(bundle, task.id, "agent")
+        barrier = threading.Barrier(2)
+        outcomes = {}
+
+        def do_complete():
+            barrier.wait(timeout=5)
+            outcomes["complete"] = complete_task(
+                bundle, task.id, "# What Does This Module Do?\nprose\n"
+            )
+
+        def do_drop():
+            barrier.wait(timeout=5)
+            from cairn.llm.tasks import drop_task
+
+            outcomes["drop"] = drop_task(bundle, task.id)
+
+        worker = threading.Thread(target=do_complete)
+        worker.start()
+        do_drop()
+        worker.join(timeout=10)
+
+        complete_won = (
+            not outcomes["complete"].get("refused")
+            and outcomes["complete"]["dropped"] is False
+        )
+        drop_won = outcomes["drop"]["dropped"] is True
+        assert complete_won != drop_won
+
+        from cairn.llm.tasks import get_task
+
+        final_status = get_task(bundle, task.id).status
+        assert final_status == ("dropped" if drop_won else "done")

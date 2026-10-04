@@ -12,8 +12,8 @@ Usage:
   # auto-locate the live store (same logic as the CLI):
   python scripts/measure_memory_health.py
 
-  # measure a specific store root (e.g. a backup, or the Trash copy with data):
-  python scripts/measure_memory_health.py /Users/tan.le/.Trash/9521a7075f4ac248
+  # measure a specific store root (e.g. a backup copy):
+  python scripts/measure_memory_health.py <store-root>
 
   # show 20 sample near-duplicate pairs so you can eyeball the redundancy:
   python scripts/measure_memory_health.py --sample-dupes 20 <path>
@@ -251,7 +251,8 @@ def freshness(rows: list[dict]) -> dict:
         if not ts:
             continue
         try:
-            ages.append((now - datetime.fromisoformat(ts)).days)
+            # fromisoformat rejects the Z suffix before 3.11; normalize first.
+            ages.append((now - datetime.fromisoformat(str(ts).replace("Z", "+00:00"))).days)
         except (ValueError, TypeError):
             continue
     if not ages:
@@ -279,7 +280,7 @@ def main() -> int:
         knowledge_root = auto_locate_store()
         if knowledge_root is None:
             print("No live store found under ~/.cairn. Pass a path explicitly, e.g.:")
-            print("  python scripts/measure_memory_health.py /Users/tan.le/.Trash/9521a7075f4ac248")
+            print("  python scripts/measure_memory_health.py <store-root>")
             return 2
 
     print(f"measuring: {knowledge_root}\n")

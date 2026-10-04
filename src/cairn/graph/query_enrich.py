@@ -34,8 +34,8 @@ _CAMEL_LOWER_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
 # other non-alphanumeric character.
 _SEPARATOR_RE = re.compile(r"[^A-Za-z0-9]+")
 
-# Stopword set -- see the module docstring's "Stopwords" section for why it
-# is this small and why nothing else is trimmed. frozenset for O(1) lookups;
+# Stopword set: grammar/question scaffolding only -- content terms must
+# survive into the matching legs. frozenset for O(1) lookups;
 # iteration order can never leak because it is only probed, never iterated.
 _STOPWORDS = frozenset(
     {

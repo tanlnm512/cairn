@@ -107,7 +107,7 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     return stats
 
 
-def get_tree(conn: sqlite3.Connection, repo: str, prefix: str = "") -> List[Tuple[str, int]]:
+def get_tree(conn: sqlite3.Connection, repo: str) -> List[Tuple[str, int]]:
     """Return directory/package structure with symbol counts for a repo."""
     return group_by_top_level(conn, repo)
 

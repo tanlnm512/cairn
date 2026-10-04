@@ -48,6 +48,9 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]
+        # Generated diagram artifacts (archify HTML inlines its viewer, ~750KB
+        # each) — docs-only bytes, no hygiene risk.
+        exclude: ^docs/diagrams/
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # NOTE: scripts/verify_no_code_change.py is deliberately NOT wired here.

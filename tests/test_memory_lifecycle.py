@@ -213,6 +213,34 @@ class TestExponentialFreshness:
                        extensions={"memory_type": "decision", "doc_source": "manual"})
         assert _freshness(c) == 1.0
 
+    def test_naive_timestamp_degrades_to_neutral(self):
+        """A hand-authored naive timestamp scores neutral instead of raising."""
+        c = OKFConcept(type="Tribal-decision", title="x", body="x",
+                       timestamp="2024-01-01T00:00:00",
+                       extensions={"memory_type": "decision"})
+        assert _freshness(c) == 0.5
+
+
+class TestNaiveTimestampDecayDegradation:
+    """decay() degrades a naive hand-authored timestamp to age 0 instead of
+    crashing the pass with an aware-minus-naive TypeError."""
+
+    def test_decay_survives_naive_timestamp(self, db, bundle):
+        from cairn.memory.promotion import decay
+        from cairn.memory.store import create_memory, store_memory
+
+        mem = create_memory(type_="pattern", title="naive raw note",
+                            body="x", confidence=0.5)
+        cid = store_memory(mem, bundle, tier="raw")
+        raw = bundle.read_concept(cid)
+        raw.timestamp = "2024-01-01T00:00:00"
+        bundle.write_concept(raw)
+
+        result = decay(bundle, raw_max_days=7, conn=db)
+
+        assert result["expired_raw"] == 0
+        assert len(bundle.list_concepts(prefix="memory/raw")) == 1
+
 
 class TestReinforcement:
     """_reinforcement rewards memories that have been recalled."""

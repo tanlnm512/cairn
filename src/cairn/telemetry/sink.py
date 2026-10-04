@@ -48,7 +48,7 @@ _FLUSHERS: List[Callable[[], None]] = []
 # injectable so this module stays free of the schema/store dependency.
 _conn_factory: Optional[Callable[[], "object"]] = None
 
-# Retention caps (spec §6.2). Opportunistic pruning inside the flush thread
+# Retention caps. Opportunistic pruning inside the flush thread
 # keeps the shared DB file bounded; rows past the cap are DELETEd by id.
 _MAX_EVENTS_ROWS = 5000
 _MAX_BUILD_RUNS_ROWS = 500
@@ -98,7 +98,7 @@ def _tool_metrics_max_age() -> Optional[float]:
 
 
 def is_telemetry_off() -> bool:
-    """True when CAIRN_TELEMETRY=off -- the master kill switch (spec §5.1).
+    """True when CAIRN_TELEMETRY=off -- the master kill switch.
 
     Read on every emit() so a test/process toggling the env takes effect
     without a module reload (mirrors metric_buffering reading CAIRN_READ_ONLY
@@ -145,7 +145,7 @@ def configure_conn(conn_factory: Callable[[], "object"]) -> None:
     """Inject the writable-connection factory used to flush events.
 
     Called once at server boot. ``metric_buffering.configure_conn`` mirrors
-    into here (spec §6.1) so the single existing boot call wires both
+    into here so the single existing boot call wires both
     ``tool_metrics`` and ``events``. Must come from outside the sink so this
     module stays free of the schema/store dependency -- mirrors
     ``metric_buffering.configure_conn``.
@@ -158,7 +158,7 @@ def register_flusher(fn: Callable[[], None]) -> None:
     """Register a flush callable the daemon thread invokes each tick.
 
     Used by ``metric_buffering`` to share this sink's single thread instead of
-    spawning its own (spec §6.1). Idempotent by identity: registering the same
+    spawning its own. Idempotent by identity: registering the same
     ``fn`` twice is a no-op, so a test that resets a subsystem's ``_STARTED``
     flag and re-emits cannot double-fire the flusher.
     """
@@ -181,7 +181,7 @@ def enqueue(ts: float, name: str, session_id: str, attrs_json: Optional[str]) ->
 
 
 def _prune(conn):
-    """Bounded growth: keep the newest N rows per table (spec §6.2).
+    """Bounded growth: keep the newest N rows per table.
 
     ``events`` / ``build_runs`` use fixed caps; ``tool_metrics`` uses the
     env-resolved bounds from :func:`retention_policy` (row cap always, age
@@ -190,8 +190,8 @@ def _prune(conn):
     invoked_at), not id-ordered: rows carried across a whole-file rebuild
     swap (schema.copy_telemetry_tables) are appended with fresh ids AFTER
     the current build's row, so id order stops being a proxy for recency
-    there. Guarded per table so a missing table (pre-T08 DB) or a read-only
-    connection doesn't raise -- prune is best-effort, and a failure here
+    there. Guarded per table so a missing table (DB predating the telemetry
+    tables) or a read-only connection doesn't raise -- prune is best-effort, and a failure here
     must not abort the insert (the rows are already committed-worthy on
     their own).
 
@@ -208,7 +208,7 @@ def _prune(conn):
             (_MAX_EVENTS_ROWS,),
         )
     except Exception:
-        # Table missing (pre-T08 DB) or read-only -- prune is best-effort.
+        # Table missing (pre-telemetry DB) or read-only -- prune is best-effort.
         pass
     try:
         conn.execute(

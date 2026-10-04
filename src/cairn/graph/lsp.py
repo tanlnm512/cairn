@@ -49,6 +49,19 @@ class PyrightStdioTransport:
         self._reader.start()
         self._workspace = Path(workspace).resolve()
 
+    @staticmethod
+    def _read_exact(stdout: Any, length: int) -> bytes | None:
+        """Read exactly length bytes; None when EOF hits before the frame ends."""
+        chunks: list[bytes] = []
+        remaining = length
+        while remaining > 0:
+            chunk = stdout.read(remaining)
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
     def _read_responses(self) -> None:
         stdout = self._process.stdout
         if stdout is None:
@@ -66,9 +79,14 @@ class PyrightStdioTransport:
                     headers[name.strip().lower()] = value.strip()
             try:
                 length = int(headers["content-length"])
-                body = stdout.read(length)
+                body = self._read_exact(stdout, length)
+            except (KeyError, ValueError):
+                continue
+            if body is None:
+                return
+            try:
                 message = json.loads(body.decode("utf-8"))
-            except (KeyError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
             if "method" in message:
                 if "id" in message:
@@ -237,7 +255,8 @@ def _symbol_index(conn, workspace: str) -> dict[Path, list[dict[str, Any]]]:
 def _ambiguous_edges(conn) -> list[sqlite3.Row]:
     return conn.execute(
         """
-        SELECT e.id, e.line, e.column, f.path AS file_path, r.path AS repo_path
+        SELECT e.id, e.line, e.column, e.target_name,
+               f.path AS file_path, r.path AS repo_path
         FROM edges AS e
         JOIN symbols AS s ON s.id = e.source_id
         JOIN files AS f ON f.id = s.file_id
@@ -249,6 +268,29 @@ def _ambiguous_edges(conn) -> list[sqlite3.Row]:
         ORDER BY e.line, e.column, e.id
         """
     ).fetchall()
+
+
+def _name_positions(line_text: str, name: str | None) -> list[int]:
+    """Character offsets of whole-word occurrences of name on one line."""
+    if not name:
+        return []
+    positions: list[int] = []
+    start = 0
+    while True:
+        index = line_text.find(name, start)
+        if index < 0:
+            return positions
+        end = index + len(name)
+        before = line_text[index - 1] if index > 0 else ""
+        after = line_text[end] if end < len(line_text) else ""
+        word = _is_word_char
+        if not word(before) and not word(after):
+            positions.append(index)
+        start = end
+
+
+def _is_word_char(character: str) -> bool:
+    return character.isalnum() or character == "_"
 
 
 def _unique_symbol(
@@ -279,13 +321,14 @@ def _unique_symbol(
     return innermost[0]["id"] if len(innermost) == 1 else None
 
 
-def _open_document(transport: Any, path: Path, opened: set[Path]) -> bool:
-    if path in opened:
-        return True
+def _open_document(transport: Any, path: Path, opened: dict[Path, str]) -> str | None:
+    text = opened.get(path)
+    if text is not None:
+        return text
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return False
+        return None
     transport.notify(
         "textDocument/didOpen",
         {
@@ -297,8 +340,8 @@ def _open_document(transport: Any, path: Path, opened: set[Path]) -> bool:
             }
         },
     )
-    opened.add(path)
-    return True
+    opened[path] = text
+    return text
 
 
 def upgrade_ambiguous_edges(
@@ -333,37 +376,46 @@ def upgrade_ambiguous_edges(
     try:
         transport.initialize()
         symbols = _symbol_index(conn, workspace)
-        opened: set[Path] = set()
+        opened: dict[Path, str] = {}
         for edge in edges:
             source_path = _stored_path(
                 workspace, edge["repo_path"], edge["file_path"]
             )
-            if edge["line"] is None or edge["line"] < 1 or not _open_document(
-                transport, source_path, opened
-            ):
+            if edge["line"] is None or edge["line"] < 1:
                 continue
-            character = edge["column"] if edge["column"] is not None else 0
-            result = transport.request(
-                "textDocument/definition",
-                {
-                    "textDocument": {"uri": source_path.as_uri()},
-                    "position": {
-                        "line": int(edge["line"]) - 1,
-                        "character": int(character),
+            text = _open_document(transport, source_path, opened)
+            if text is None:
+                continue
+            lines = text.splitlines()
+            line_index = int(edge["line"]) - 1
+            if line_index >= len(lines):
+                continue
+            line_text = lines[line_index]
+            target_id = None
+            for character in _name_positions(line_text, edge["target_name"]):
+                result = transport.request(
+                    "textDocument/definition",
+                    {
+                        "textDocument": {"uri": source_path.as_uri()},
+                        "position": {
+                            "line": line_index,
+                            "character": character,
+                        },
                     },
-                },
-            )
-            locations = result if isinstance(result, list) else [result]
-            locations = [
-                location for location in locations if isinstance(location, dict)
-            ]
-            if len(locations) != 1:
-                continue
-            location_path = _location_path(locations[0])
-            start = _location_start(locations[0])
-            if location_path is None or start is None:
-                continue
-            target_id = _unique_symbol(symbols.get(location_path), start)
+                )
+                locations = result if isinstance(result, list) else [result]
+                locations = [
+                    location for location in locations if isinstance(location, dict)
+                ]
+                if len(locations) != 1:
+                    continue
+                location_path = _location_path(locations[0])
+                start = _location_start(locations[0])
+                if location_path is None or start is None:
+                    continue
+                target_id = _unique_symbol(symbols.get(location_path), start)
+                if target_id is not None:
+                    break
             if target_id is None:
                 continue
             updated = conn.execute(

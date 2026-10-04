@@ -7,6 +7,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Optional
 
+from .schema import _unicode61_tokens
+
 __all__ = ["ExpansionResult", "expand"]
 
 # DF-signal row: (symbol_df, n_symbols) from the term_df table.
@@ -17,28 +19,6 @@ _DfRow = tuple[int, int]
 # 1 <= symbol_df <= n_symbols contract. Must stay positive so feedback
 # frequency still ranks terms in the degraded mode.
 _UNIFORM_IDF = 1.0
-
-
-def _unicode61_tokens(text: str):
-    """Yield the unicode61 tokenization of ``text``.
-
-    Local mirror of ``schema._unicode61_tokens`` (kept here so this
-    module stays import-pure of the DB layer and of files other agents
-    own in this wave): the two MUST tokenize identically, because
-    expansion tokens are looked up against the term_df vocabulary that
-    schema's copy builds. Case-folds and splits on non-alphanumeric
-    runs, matching the ``tokenize='unicode61'`` declaration on
-    ``symbols_fts``.
-    """
-    cur: list[str] = []
-    for ch in text.lower():
-        if ch.isalnum():
-            cur.append(ch)
-        elif cur:
-            yield "".join(cur)
-            cur = []
-    if cur:
-        yield "".join(cur)
 
 
 def _idf(df_row: Optional[_DfRow]) -> float:
@@ -78,8 +58,8 @@ def expand(
 
     Pure and hermetic: no LLM, network, randomness, time, or
     environment reads; the corpus DF signal arrives only via
-    ``df_lookup``. See the module docstring for the full parameter,
-    df_lookup, and consumer contracts and the algorithm's five steps.
+    ``df_lookup``. ``df_lookup(token)`` returns ``(symbol_df, n_symbols)``
+    or None; the algorithm runs in five commented steps below.
     """
     if not 0.0 <= fb_lambda <= 1.0:
         raise ValueError(f"fb_lambda must be within [0, 1], got {fb_lambda!r}")

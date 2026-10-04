@@ -155,12 +155,12 @@ class _TrackingExporter:
 def _get_logger() -> Any:
     """Build the OTLP logger on first use; None when the SDK is unusable.
 
-    STRICTLY lazy (spec §3/§7): every ``opentelemetry`` import lives inside
+    STRICTLY lazy: every ``opentelemetry`` import lives inside
     this function, which is only reachable when the endpoint is set, telemetry
     is on, and there are pending rows. The default install path never executes
     a single line of this function.
 
-    Synchronous by design (see module docstring): the exporter is wrapped in
+    Synchronous by design: the exporter is wrapped in
     :class:`_TrackingExporter` behind ``SimpleLogRecordProcessor``, so
     ``logger.emit`` performs the HTTP export on the calling thread and its
     success/failure is observable when it returns. ``shutdown_on_exit=False``

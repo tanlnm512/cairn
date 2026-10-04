@@ -18,7 +18,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
     from starlette.responses import JSONResponse, Response
     from starlette.routing import Route
 
-    from ..app import _EXPORT_ROW_LIMIT
+    from ..app import EXPORT_ROW_LIMIT
     from ..data import (
         SESSION_GAP_S,
         get_read_only_db,
@@ -77,7 +77,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
                 session_id=session,
                 source=source,
                 since=since,
-                limit=_EXPORT_ROW_LIMIT,
+                limit=EXPORT_ROW_LIMIT,
             )
         finally:
             conn.close()

@@ -1,4 +1,4 @@
-"""Assemble a skill draft from compass, ranked symbols, and memory (FR-001)."""
+"""Assemble a skill draft from compass, ranked symbols, and memory."""
 from __future__ import annotations
 
 import sqlite3
@@ -113,21 +113,13 @@ def _knowledge_path(conn: sqlite3.Connection) -> Path:
 
 
 def _compass_body(bundle: OKFBundle, module: str) -> str:
-    """Body of the module's compass concept; '' when the module has none.
-
-    Matching mirrors the reader behind ``get_compass``: the module matches a
-    compass concept's resource or concept id.
-    """
+    """Body of the module's compass concept; '' when the module has none."""
     if not module:
         return ""
-    for cid in bundle.list_concepts(prefix="compass/"):
-        try:
-            concept = bundle.read_concept(cid)
-        except Exception:
-            continue
-        if module in (concept.resource or "") or module in cid:
-            return concept.body
-    return ""
+    from ..mcp_server.tools_compass import find_compass_concept
+
+    concept = find_compass_concept(bundle, module)
+    return concept.body if concept is not None else ""
 
 
 def _memories(

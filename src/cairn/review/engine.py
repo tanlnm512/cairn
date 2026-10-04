@@ -14,7 +14,6 @@ PACK_FORMATS = (TEXT_FORMAT, MARKDOWN_FORMAT)
 
 _MEMORY_TYPE_DEFAULT = "decision"
 _COMPASS_MISS_PREFIX = "No compass file found for "
-_WIKI_MISS_MARKER = " results matching '"
 
 # Memory types the pre-submit guard warns about.
 PRE_SUBMIT_MEMORY_TYPES = ("mistake", "pattern")
@@ -214,13 +213,17 @@ def _wiki_section(modules: list[str]) -> dict:
     if not modules:
         return section
     try:
-        from ..mcp_server.tools_compass import search_knowledge
+        from ..mcp_server.tools_compass import _render_full_body, search_knowledge_data
 
         for module in modules:
-            pages = search_knowledge(module, type_filter="Wiki", full_body=True)
-            found = _WIKI_MISS_MARKER not in pages
+            results = search_knowledge_data(module, type_filter="Wiki")
+            found = bool(results)
             section["entries"].append(
-                {"module": module, "pages": pages if found else "", "found": found}
+                {
+                    "module": module,
+                    "pages": _render_full_body(results) if found else "",
+                    "found": found,
+                }
             )
     except Exception as exc:
         section["error"] = str(exc)

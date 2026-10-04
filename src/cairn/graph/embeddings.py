@@ -105,7 +105,7 @@ def embeddings_available() -> bool:
     configured model id. The probe verdict is cached per process;
     reset_backend_cache() invalidates it.
     """
-    backend = resolve_embedding_backend(_backend_name())
+    backend = resolve_embedding_backend(backend_name())
     available = backend.available()
     fallback = backend.fallback_name
     if not available and fallback is not None:
@@ -351,13 +351,13 @@ def _config_or_env(name: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
-def _backend_name() -> str:
+def backend_name() -> str:
     return (_config_or_env("CAIRN_EMBED_BACKEND") or "local").strip().lower()
 
 
 # The server family: omlx/ollama are preset aliases of the same 'server' arm
 # (OpenAI-compatible /v1 endpoint); only the default base URL differs.
-_SERVER_FAMILY = frozenset({"server", "omlx", "ollama"})
+SERVER_FAMILY = frozenset({"server", "omlx", "ollama"})
 
 _SERVER_PRESET_BASE_URL = {
     "omlx": "http://127.0.0.1:8000/v1",
@@ -484,7 +484,7 @@ def _effective_backend() -> str:
     cached: Optional[str] = _EFFECTIVE_BACKEND_CACHE["effective"]
     if cached is not None:
         return cached
-    resolved = resolve_effective_backend(_backend_name())
+    resolved = resolve_effective_backend(backend_name())
     with _BACKEND_CACHE_LOCK:
         cached = _EFFECTIVE_BACKEND_CACHE["effective"]
         if cached is None:
@@ -504,7 +504,7 @@ def _server_base_url() -> str:
     configured = _config_or_env("CAIRN_EMBED_BASE_URL") or ""
     if configured:
         return configured
-    preset = _SERVER_PRESET_BASE_URL.get(_backend_name())
+    preset = _SERVER_PRESET_BASE_URL.get(backend_name())
     if preset:
         return preset
     raise RuntimeError(
@@ -600,7 +600,7 @@ def is_hash_fallback() -> bool:
     paths check this to flag degraded results. Returns False when the user
     explicitly set ``CAIRN_EMBED_BACKEND=hash`` or a real backend is active.
     """
-    return _effective_backend() == "hash" and _backend_name() == "local"
+    return _effective_backend() == "hash" and backend_name() == "local"
 
 
 # Process-global guard so the one-time warning fires at most once per process.
@@ -636,13 +636,13 @@ def warn_hash_fallback_once(logger, context: str = "") -> None:
 def model_is_cached(model_name: Optional[str] = None) -> bool:
     """Check whether the model weights are present in the local HuggingFace cache."""
     try:
-        from huggingface_hub import try_to_load_from_cache
+        from huggingface_hub import _CACHED_NO_EXIST, try_to_load_from_cache
     except ImportError:
         return False
 
     m_name = model_name or current_model()
     result = try_to_load_from_cache(m_name, "config.json")
-    return result is not None
+    return result is not None and result is not _CACHED_NO_EXIST
 
 
 def download_model(model_name: Optional[str] = None) -> bool:
@@ -797,16 +797,12 @@ def _lib_pythonpath() -> str:
 
 
 def _verify_install(lib_dir) -> None:
-    """Import the fresh stack in a FRESH subprocess, under a progress bar.
+    """Import the fresh stack in a fresh subprocess under a progress bar.
 
-    The first import of a freshly installed stack is slow (30s+ on macOS:
-    dyld validates ~150 new .so files before any of them load). Importing
-    in-process left the CLI completely silent for that window after the
-    install spinner had exited -- users read it as a hang and killed the
-    command. The subprocess pays the same one-time cost but shows live
-    progress, and warms the dyld/file caches so the next `cairn embed`
-    imports at full speed. Raises CalledProcessError (after the helper has
-    printed the child's captured output) when the import fails.
+    The first import of a freshly installed stack is slow enough that an
+    in-process import would leave the CLI silently blocked; the subprocess
+    shows live progress. Raises CalledProcessError (after printing the
+    child's captured output) when the import fails.
     """
     import sys
 
@@ -952,12 +948,10 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
     # is created unconditionally by SCHEMA_SQL, so no try/except is needed.
     c4 = cur.execute("DELETE FROM embeddings_mv WHERE model != ?", (target_model,)).rowcount
 
-    # Both vec0 table families are model-scoped and purge together: vec_<model>
-    # (embeddings) and vecmv_<model> (embeddings_mv). '_' must be
-    # escaped in the LIKE patterns -- it is a single-char wildcard, so the old
-    # unescaped 'vec_%' also swept up vecmv_<model> tables (and any unrelated
-    # "vecX..." name), and the keep-test below then dropped the ACTIVE vecmv
-    # index because it never equals vec_<model>.
+    # Both vec0 table families are model-scoped and purge together:
+    # vec_<model> (embeddings) and vecmv_<model> (embeddings_mv). '_' is a
+    # single-char LIKE wildcard and must stay escaped in both patterns so
+    # only these two families match.
     tables = cur.execute(
         "SELECT name FROM sqlite_master WHERE type='table' "
         "AND (name LIKE 'vec\\_%' ESCAPE '\\' OR name LIKE 'vecmv\\_%' ESCAPE '\\')"
@@ -984,6 +978,8 @@ def _embed_local(texts: Sequence[str]) -> Tuple[List[bytes], int]:
 
 
 def _embed_openai(texts: Sequence[str]) -> Tuple[List[bytes], int]:
+    if not texts:
+        return [], 0
     import urllib.request
     import json
 
@@ -999,11 +995,38 @@ def _embed_openai(texts: Sequence[str]) -> Tuple[List[bytes], int]:
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 -- fixed https URL
-        body = json.loads(resp.read().decode("utf-8"))
-    data = body["data"]
+        raw = resp.read()
+    body = raw.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        parsed = None
+    # A 200 body is untrusted: validate the envelope shape, count, and
+    # dimensionality before the write path consumes the blobs.
+    data = parsed.get("data") if isinstance(parsed, dict) else None
+    if not isinstance(data, list) or not all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("index"), int)
+        and isinstance(entry.get("embedding"), list)
+        for entry in data
+    ):
+        raise RuntimeError(
+            "OpenAI embeddings returned malformed response: " f"{body[:120]}"
+        )
     data.sort(key=lambda d: d["index"])  # preserve input order
+    if len(data) != len(texts):
+        raise RuntimeError(
+            f"OpenAI embeddings returned {len(data)} vectors "
+            f"for {len(texts)} inputs"
+        )
     dim = len(data[0]["embedding"])
-    blobs = [_floats_to_blob(d["embedding"]) for d in data]
+    for entry in data:
+        if len(entry["embedding"]) != dim:
+            raise RuntimeError(
+                f"mixed-dimension batch: expected {dim}-dim vectors, "
+                f"got {len(entry['embedding'])}"
+            )
+    blobs = [_floats_to_blob(entry["embedding"]) for entry in data]
     return blobs, dim
 
 
@@ -1205,7 +1228,13 @@ def _embed_hash(texts: Sequence[str]) -> Tuple[List[bytes], int]:
 
 def _embed(texts: Sequence[str]) -> Tuple[List[bytes], int]:
     """Dispatch to the effective backend (after fallback). Returns (blobs, dim)."""
-    return resolve_embedding_backend(_effective_backend()).embed(texts)
+    blobs, dim = resolve_embedding_backend(_effective_backend()).embed(texts)
+    if len(blobs) != len(texts):
+        raise RuntimeError(
+            f"embedding backend returned {len(blobs)} vectors "
+            f"for {len(texts)} inputs"
+        )
+    return blobs, dim
 
 
 def _server_adapter_effective() -> str:
@@ -1576,13 +1605,13 @@ def embed_all(
             # even if current_model() didn't change.
             dim = len(blob) // 4
             # Rowid-stable upsert: ON CONFLICT ... DO UPDATE preserves the
-            # existing rowid. STILL LOAD-BEARING for the vec0 sync: the index
+            # existing rowid. LOAD-BEARING for the vec0 sync: the index
             # keys on embeddings.rowid, and INSERT OR REPLACE (which assigns
             # a NEW rowid) would orphan the old vec0 entry and leave the new
             # row pointing at a vec key that doesn't exist. Bulk rows made
             # here stay unsynced on purpose -- the wholesale rebuild at the
-            # end of `cairn embed` realigns the whole table at ~9x lower
-            # per-row cost than delete+insert (see ann_index.sync_index_row).
+            # end of `cairn embed` realigns the whole table more cheaply
+            # than per-row delete+insert (see ann_index.sync_index_row).
             conn.execute(
                 "INSERT INTO embeddings "
                 "(symbol_id, model, dim, vec, chunk, content_hash, embedded_at) "
@@ -1649,11 +1678,11 @@ def embed_symbols(
     visible to ``ann_query`` immediately, without waiting for the next
     wholesale ``cairn embed`` rebuild.
 
-    Bulk passes deliberately do NOT come through here: per-row vec sync runs
-    ~27 us/row (delete+insert+commit) vs ~3 us/row for the rebuild's INSERT
-    ... SELECT, so ``embed_all`` over thousands of rows keeps its wholesale
-    ``rebuild_index`` at the end (spike notes in ``ann_index.sync_index_row``).
-    A handful of symbols pays microseconds and avoids the drift outright.
+    Bulk passes deliberately do NOT come through here: per-row vec sync
+    costs a delete+insert per row, while the rebuild's ``INSERT ... SELECT``
+    copies wholesale -- so ``embed_all`` over thousands of rows keeps its
+    wholesale ``rebuild_index`` at the end. A handful of symbols pays the
+    per-row cost and avoids the drift outright.
 
     Idempotent like ``embed_all``: symbols whose stored ``content_hash``
     still matches are skipped, as are empty-chunk symbols; unknown ids are

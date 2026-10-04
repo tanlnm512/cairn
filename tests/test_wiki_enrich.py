@@ -272,6 +272,29 @@ def test_enrich_queues_task_with_row_identity_facts(cli_env, monkeypatch):
     assert on_disk["commit_sha"] == OLD_SHA
 
 
+def test_enrich_propagates_the_row_diagrams_flag(cli_env, monkeypatch):
+    """A manifest row planned with --diagrams enriches with the flag set
+    (Mermaid instruction survives into content maintenance); a row without
+    it carries no diagrams key in facts."""
+    knowledge = cli_env
+    bundle = _bundle(knowledge)
+    _promote_article(bundle, "overview", body=PRIOR_BODY)
+    _promote_article(bundle, "details", body=PRIOR_BODY)
+    _write_manifest(knowledge, {
+        _key("overview"): {**_row("overview"), "diagrams": True},
+        _key("details"): _row("details"),
+    })
+    _fresh_head(monkeypatch, FRESH_SHA)
+
+    result = _enrich(knowledge, "--all")
+
+    assert result.exit_code == 0, result.output
+    queued = {t.resource: t for t in _pending_enrich_tasks(bundle)}
+    assert set(queued) == {_key("overview"), _key("details")}
+    assert queued[_key("overview")].facts.get("diagrams") is True
+    assert "diagrams" not in queued[_key("details")].facts
+
+
 # --- enrich refuses unpromoted/unknown pages --------------------------
 
 

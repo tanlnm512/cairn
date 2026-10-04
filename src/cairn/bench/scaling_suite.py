@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Sequence
 
+from ._env import restore_env, snapshot_env
 from .corpus import generate_corpus
 from .report import ScalingPoint, ScalingReport
 from .timing import peak_memory
@@ -102,123 +103,129 @@ def run_scaling_suite(
     """
     report = ScalingReport()
 
-    for n in sizes:
-        size_root = root / f"size_{n}"
-        if size_root.exists():
-            shutil.rmtree(size_root)
-        size_root.mkdir(parents=True)
+    # This suite pins CAIRN_DB/CAIRN_EMBED_BACKEND per size; snapshot and
+    # restore them around the whole sweep like the other bench suites.
+    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND"))
+    try:
+        for n in sizes:
+            size_root = root / f"size_{n}"
+            if size_root.exists():
+                shutil.rmtree(size_root)
+            size_root.mkdir(parents=True)
 
-        corpus = generate_corpus(size_root, n, complexity=complexity)
-        db_path = str(size_root / "bench.db")
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        os.environ["CAIRN_DB"] = db_path
-        os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
+            corpus = generate_corpus(size_root, n, complexity=complexity)
+            db_path = str(size_root / "bench.db")
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            os.environ["CAIRN_DB"] = db_path
+            os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
 
-        from cairn.graph import embeddings as emb
-        from cairn.graph.builder import build_graph
-        from cairn.graph.dataflow import build_transitive_closure
-        from cairn.graph.schema import get_db
-        from cairn.graph.traversal import STRUCTURAL_EDGE_KINDS
-
-        emb.reset_backend_cache()
-
-        # Build + embed under a single memory trace so peak_memory reflects
-        # the full per-size cost; each phase is timed inline with perf_counter.
-        import time as _t
-
-        build_stats: dict = {}
-        embed_stats: dict = {}
-        build_s: float = 0.0
-        embed_s: float = 0.0
-
-        def _build_and_embed():
-            nonlocal build_stats, embed_stats, build_s, embed_s
-            _t0 = _t.perf_counter()
-            build_stats = build_graph(workspace=str(corpus), db_path=db_path)
-            build_s = _t.perf_counter() - _t0
+            from cairn.graph import embeddings as emb
+            from cairn.graph.builder import build_graph
+            from cairn.graph.dataflow import build_transitive_closure
+            from cairn.graph.schema import get_db
+            from cairn.graph.traversal import STRUCTURAL_EDGE_KINDS
 
             emb.reset_backend_cache()
-            _t0 = _t.perf_counter()
-            c = get_db(db_path)
+
+            # Build + embed under a single memory trace so peak_memory reflects
+            # the full per-size cost; each phase is timed inline with perf_counter.
+            import time as _t
+
+            build_stats: dict = {}
+            embed_stats: dict = {}
+            build_s: float = 0.0
+            embed_s: float = 0.0
+
+            def _build_and_embed():
+                nonlocal build_stats, embed_stats, build_s, embed_s
+                _t0 = _t.perf_counter()
+                build_stats = build_graph(workspace=str(corpus), db_path=db_path)
+                build_s = _t.perf_counter() - _t0
+
+                emb.reset_backend_cache()
+                _t0 = _t.perf_counter()
+                c = get_db(db_path)
+                try:
+                    # multivector pinned off: embed is a timed op here.
+                    embed_stats = emb.embed_all(c, reap_orphans=False, multivector=False)
+                finally:
+                    c.close()
+                embed_s = _t.perf_counter() - _t0
+
+            mem, _ = peak_memory(_build_and_embed)
+
+            # Closure op: multiply structural-edge volume deterministically, then
+            # time + memory-trace one transitive-closure build over it.
+            conn = get_db(db_path)
             try:
-                # multivector pinned off: embed is a timed op here.
-                embed_stats = emb.embed_all(c, reap_orphans=False, multivector=False)
-            finally:
-                c.close()
-            embed_s = _t.perf_counter() - _t0
-
-        mem, _ = peak_memory(_build_and_embed)
-
-        # Closure op: multiply structural-edge volume deterministically, then
-        # time + memory-trace one transitive-closure build over it.
-        conn = get_db(db_path)
-        try:
-            synthesize_structural_edges(conn)
-            kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
-            structural_edges = conn.execute(
-                f"SELECT COUNT(*) FROM edges WHERE kind IN ({kind_ph})",
-                STRUCTURAL_EDGE_KINDS,
-            ).fetchone()[0]
-
-            def _closure_op() -> float:
-                _t0 = _t.perf_counter()
-                build_transitive_closure(conn)
-                return _t.perf_counter() - _t0
-
-            closure_mem, closure_s = peak_memory(_closure_op)
-
-            # Incremental maintenance op: one bounded affected-set maintenance
-            # over the same volume -- the path the closure build budget does
-            # not exercise.
-            from ..graph.dataflow import maintain_transitive_closure
-
-            affected = [
-                r[0]
-                for r in conn.execute(
-                    f"SELECT DISTINCT source_id FROM edges WHERE kind IN ({kind_ph}) "
-                    f"ORDER BY source_id LIMIT {CLOSURE_MAINTAIN_AFFECTED}",
+                synthesize_structural_edges(conn)
+                kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
+                structural_edges = conn.execute(
+                    f"SELECT COUNT(*) FROM edges WHERE kind IN ({kind_ph})",
                     STRUCTURAL_EDGE_KINDS,
-                ).fetchall()
-            ]
+                ).fetchone()[0]
 
-            def _maintain_op() -> float:
-                _t0 = _t.perf_counter()
-                maintain_transitive_closure(conn, affected)
-                return _t.perf_counter() - _t0
+                def _closure_op() -> float:
+                    _t0 = _t.perf_counter()
+                    build_transitive_closure(conn)
+                    return _t.perf_counter() - _t0
 
-            maintain_s = _maintain_op()
-        finally:
-            conn.close()
+                closure_mem, closure_s = peak_memory(_closure_op)
 
-        symbols = build_stats.get("symbols", 0)
-        db_mb = Path(db_path).stat().st_size / (1024 * 1024) if os.path.exists(db_path) else 0.0
+                # Incremental maintenance op: one bounded affected-set maintenance
+                # over the same volume -- the path the closure build budget does
+                # not exercise.
+                from ..graph.dataflow import maintain_transitive_closure
 
-        point = ScalingPoint(
-            n_files=n,
-            symbols=symbols,
-            build_seconds=build_s,
-            embed_seconds=embed_s,
-            db_size_mb=db_mb,
-            resolve_rate=_resolve_rate(build_stats),
-            peak_memory_mb=mem.peak_mb,
-            closure_seconds=closure_s,
-            closure_peak_memory_mb=closure_mem.peak_mb,
-            closure_edges=structural_edges,
-            closure_maintain_seconds=maintain_s,
-        )
-        report.points.append(point)
+                affected = [
+                    r[0]
+                    for r in conn.execute(
+                        f"SELECT DISTINCT source_id FROM edges WHERE kind IN ({kind_ph}) "
+                        f"ORDER BY source_id LIMIT {CLOSURE_MAINTAIN_AFFECTED}",
+                        STRUCTURAL_EDGE_KINDS,
+                    ).fetchall()
+                ]
+
+                def _maintain_op() -> float:
+                    _t0 = _t.perf_counter()
+                    maintain_transitive_closure(conn, affected)
+                    return _t.perf_counter() - _t0
+
+                maintain_s = _maintain_op()
+            finally:
+                conn.close()
+
+            symbols = build_stats.get("symbols", 0)
+            db_mb = Path(db_path).stat().st_size / (1024 * 1024) if os.path.exists(db_path) else 0.0
+
+            point = ScalingPoint(
+                n_files=n,
+                symbols=symbols,
+                build_seconds=build_s,
+                embed_seconds=embed_s,
+                db_size_mb=db_mb,
+                resolve_rate=_resolve_rate(build_stats),
+                peak_memory_mb=mem.peak_mb,
+                closure_seconds=closure_s,
+                closure_peak_memory_mb=closure_mem.peak_mb,
+                closure_edges=structural_edges,
+                closure_maintain_seconds=maintain_s,
+            )
+            report.points.append(point)
+            if progress:
+                progress("size_done", n=n, symbols=symbols,
+                         build_s=round(build_s, 3), embed_s=round(embed_s, 3),
+                         closure_s=round(closure_s, 3))
+
+            # Clean up this size's DB to keep disk usage bounded across the sweep.
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+
         if progress:
-            progress("size_done", n=n, symbols=symbols,
-                     build_s=round(build_s, 3), embed_s=round(embed_s, 3),
-                     closure_s=round(closure_s, 3))
-
-        # Clean up this size's DB to keep disk usage bounded across the sweep.
-        try:
-            os.remove(db_path)
-        except OSError:
-            pass
-
-    if progress:
-        progress("scaling_done", points=len(report.points))
-    return report
+            progress("scaling_done", points=len(report.points))
+        return report
+    finally:
+        restore_env(saved_env)

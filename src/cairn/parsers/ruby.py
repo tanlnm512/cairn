@@ -110,7 +110,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
             # ``source_name`` must be the bare name (matching the symbol's
             # ``name`` field) so the builder's same-file name lookup resolves
             # the edge's source_id. Using _qualified_name here would break for
-            # nested classes (builder.py:824-832 keys on bare name).
+            # nested classes (builder.py keys on bare name).
             self._pending_edges.append(
                 Edge(name, "extends", superclass, node.start_point[0] + 1)
             )

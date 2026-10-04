@@ -208,9 +208,9 @@ def reset_cache() -> None:
 # a user-facing warn-once line on the shared 'cairn' logger plus one
 # EMBED_SERVER_DEGRADED event (host+model payload only). The
 # logger line is deliberately NOT gated on telemetry: events.warn_once
-# refuses under CAIRN_TELEMETRY=off, which would silence US3 AC3's
-# unconditional surface, so this module keeps a private once-set and leaves
-# the telemetry gates to emit() itself.
+# refuses under CAIRN_TELEMETRY=off, which would silence the unconditional
+# surface, so this module keeps a private once-set and leaves the telemetry
+# gates to emit() itself.
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger("cairn")
@@ -237,11 +237,14 @@ _DEGRADATION_HINT = {
 
 
 def _degradation_host() -> str:
-    """Netloc of the effective server base URL (host-only payload, A2.6)."""
+    """Netloc of the effective server base URL, credentials stripped (host-only payload, A2.6)."""
     try:
-        return urlsplit(embeddings._server_base_url()).netloc or "unresolved"
+        netloc = urlsplit(embeddings._server_base_url()).netloc
     except RuntimeError:
         return "unresolved"
+    # A netloc may carry user:password@; the payload is host-only, so the
+    # userinfo never leaves the process.
+    return netloc.rpartition("@")[2] or "unresolved"
 
 
 def notify_degradation(reason: str, detail: str = "") -> None:
@@ -250,9 +253,9 @@ def notify_degradation(reason: str, detail: str = "") -> None:
     ``reason`` is a ``telemetry.events.EMBED_SERVER_REASONS`` member;
     ``detail`` is the caller's actionable remediation (defaults to a
     per-reason hint). Fires as one unit: the warn-once logger line (never
-    telemetry-gated, US3 AC3) and one ``EMBED_SERVER_DEGRADED`` event whose
+    telemetry-gated) and one ``EMBED_SERVER_DEGRADED`` event whose
     attrs are reason + host + model only -- never request bodies or code
-    text (spec A2.6); telemetry-off/read-only suppress the event, never the
+    text; telemetry-off/read-only suppress the event, never the
     line. Never raises.
     """
     with _LADDER_LOCK:

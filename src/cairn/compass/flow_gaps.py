@@ -14,6 +14,36 @@ def _flow_resource(name: str, file: str, disambiguator: str | None = None) -> st
     return f"{name}#{suffix}"
 
 
+def _name_files(conn: sqlite3.Connection, name: str) -> set:
+    """Files holding a symbol ``name`` — the collision evidence the
+    coverage key is classified from (all definitions, not just
+    above-threshold candidates, so both sides classify identically)."""
+    rows = conn.execute(
+        "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.name = ?",
+        (name,),
+    ).fetchall()
+    return {r["path"] for r in rows}
+
+
+def _coverage_resource(name: str, file: str, files: set) -> str:
+    """The coverage key shared by detection and generation: bare name when
+    unique across files, basename suffix on collisions, parent-dir suffix
+    when basenames also collide."""
+    if len(files) <= 1:
+        return name
+    base = file.split("/")[-1] if file else "?"
+    bcounts: dict[str, int] = {}
+    for f in files:
+        b = f.split("/")[-1] if f else "?"
+        bcounts[b] = bcounts.get(b, 0) + 1
+    if bcounts.get(base, 0) > 1:
+        parts = [p for p in file.split("/") if p]
+        disambiguator = "/".join(parts[-2:]) if len(parts) >= 2 else base
+        return _flow_resource(name, file, disambiguator=disambiguator)
+    return _flow_resource(name, file)
+
+
 def detect_flow_gaps(
     conn: sqlite3.Connection,
     bundle: OKFBundle,
@@ -22,25 +52,10 @@ def detect_flow_gaps(
     """Find functions and methods meeting outgoing edge threshold lacking a flow compass.
 
     Returns a dict with 'uncovered' and 'covered' candidate lists sorted by
-    out_edges descending.
+    out_edges descending. Resources use the same coverage key
+    (:func:`_coverage_resource`) the generator writes.
     """
     candidates = _get_flow_candidates(conn, min_edges)
-
-    # Detect which names collide (appear in multiple files) so we can build
-    # collision-safe resource keys.
-    name_files: dict[str, set[str]] = {}
-    for c in candidates:
-        name_files.setdefault(c["name"], set()).add(c["file"])
-    colliding = {name for name, files in name_files.items() if len(files) > 1}
-
-    # If basenames also collide for a given name, use parent directory disambiguation.
-    name_basename_counts: dict[str, dict[str, int]] = {}
-    for name in colliding:
-        bcounts: dict[str, int] = {}
-        for f in name_files[name]:
-            base = f.split("/")[-1] if f else "?"
-            bcounts[base] = bcounts.get(base, 0) + 1
-        name_basename_counts[name] = bcounts
 
     # Build the set of already-documented flow resources.
     covered_resources: set[str] = set()
@@ -56,19 +71,10 @@ def detect_flow_gaps(
     covered: List[dict] = []
     for c in candidates:
         entry = dict(c)
-        # Collision-safe resource: name#suffix if colliding, else name.
-        if c["name"] in colliding:
-            base = c["file"].split("/")[-1] if c["file"] else "?"
-            if name_basename_counts[c["name"]].get(base, 0) > 1:
-                parts = [p for p in c["file"].split("/") if p]
-                disambiguator = "/".join(parts[-2:]) if len(parts) >= 2 else base
-                resource = _flow_resource(c["name"], c["file"], disambiguator=disambiguator)
-            else:
-                resource = _flow_resource(c["name"], c["file"])
-        else:
-            resource = c["name"]
+        files = _name_files(conn, c["name"])
+        resource = _coverage_resource(c["name"], c["file"], files)
         entry["resource"] = resource
-        entry["colliding"] = c["name"] in colliding
+        entry["colliding"] = len(files) > 1
         entry["covered"] = resource in covered_resources
         if entry["covered"]:
             covered.append(entry)

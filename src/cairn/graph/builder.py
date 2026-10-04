@@ -879,10 +879,10 @@ def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, 
     """
     import traceback
     path, rel_path, language, repo = args
-    parser = get_parser(language)
-    if parser is None:
-        return path, rel_path, language, repo, None, f"No parser for {language}", None
     try:
+        parser = get_parser(language)
+        if parser is None:
+            return path, rel_path, language, repo, None, f"No parser for {language}", None
         pf = parser.parse(path)
         return path, rel_path, language, repo, pf, None, None
     except Exception as e:
@@ -1094,7 +1094,7 @@ def _norm_module_token(token: str) -> str:
     "cairn.graph.queries".
     """
     t = token.strip().strip("'\"").replace("\\", ".")
-    segs = [s for s in t.replace("/", ".").split(".") if s and set(s) != {"."}]
+    segs = [s for s in t.replace("/", ".").split(".") if s]
     return ".".join(segs)
 
 
@@ -1161,28 +1161,27 @@ def materialize_import_edges(
     stay because a unique same-named file is usually the right target).
     Existing imports edges sourced from the affected module symbols are
     deleted first, so the pass is idempotent per rebuild. Scope with ``repo``
-    or an explicit ``file_ids`` list; neither recomputes the whole store.
+    or an explicit ``file_ids`` list: edge SOURCES and import rows are scoped,
+    but the candidate universe stays store-wide so cross-repo targets resolve
+    exactly as a full build would.
 
     Returns the number of edges inserted.
     """
-    scope = ""
-    params: List[str] = []
-    if repo is not None:
-        scope = " AND f.repo_id = ?"
-        params.append(repo)
-    elif file_ids is not None:
-        ph = ",".join("?" for _ in file_ids)
-        scope = f" AND f.id IN ({ph})"
-        params.extend(file_ids)
-
     module_rows = conn.execute(
-        f"""SELECT s.id AS mid, f.id AS fid, f.path
-            FROM symbols s JOIN files f ON s.file_id = f.id
-            WHERE s.kind = 'module'{scope}""",
-        params,
+        """SELECT s.id AS mid, f.id AS fid, f.path, f.repo_id
+           FROM symbols s JOIN files f ON s.file_id = f.id
+           WHERE s.kind = 'module'"""
     ).fetchall()
 
-    source_ids = [r["mid"] for r in module_rows]
+    if repo is not None:
+        source_rows = [r for r in module_rows if r["repo_id"] == repo]
+    elif file_ids is not None:
+        wanted = set(file_ids)
+        source_rows = [r for r in module_rows if r["fid"] in wanted]
+    else:
+        source_rows = module_rows
+
+    source_ids = [r["mid"] for r in source_rows]
     if not source_ids:
         return 0
 

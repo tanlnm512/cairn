@@ -120,7 +120,7 @@ def test_build_run_telemetry_failure_does_not_break_build(tmp_path, monkeypatch)
 def test_build_graph_unsupported_language_continues_indexing(
     tmp_path, monkeypatch
 ):
-    """A no-parser file is recorded as a parse error without blocking peers."""
+    """A no-parser file is recorded as a parser skip without blocking peers."""
     workspace = tmp_path / "unsupported_language"
     repo = workspace / "demo"
     (repo / ".git").mkdir(parents=True)
@@ -145,10 +145,10 @@ def test_build_graph_unsupported_language_continues_indexing(
     parse_done = [
         kwargs for args, kwargs in events if args and args[0] == "parse_done"
     ]
-    assert parse_done[-1] == {"parsed": 2, "errors": 1}
+    assert parse_done[-1] == {"parsed": 1, "errors": 0}
     assert summary["files"] == 1
-    assert summary["parse_errors"] == 1
-    assert summary["skipped"] == 0
+    assert summary["parse_errors"] == 0
+    assert summary["skipped"] == 1
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -161,14 +161,14 @@ def test_build_graph_unsupported_language_continues_indexing(
             "SELECT COUNT(*) FROM symbols WHERE name = 'Simple' AND kind = 'class'"
         ).fetchone()[0] == 1
 
-        errors = conn.execute(
-            "SELECT file_path, error_message, stack_trace FROM parse_errors"
+        skips = conn.execute(
+            "SELECT path, reason FROM skipped_files"
         ).fetchall()
-        assert [tuple(row) for row in errors] == [
-            ("Unsupported.unsupported", "No parser for unsupported", None)
+        assert [tuple(row) for row in skips] == [
+            ("Unsupported.unsupported", "parser_unavailable")
         ]
         assert conn.execute(
-            "SELECT COUNT(*) FROM skipped_files"
+            "SELECT COUNT(*) FROM parse_errors"
         ).fetchone()[0] == 0
     finally:
         conn.close()
@@ -176,8 +176,8 @@ def test_build_graph_unsupported_language_continues_indexing(
     run_rows = _build_runs_rows(db_path)
     assert len(run_rows) == 1
     assert run_rows[0]["files"] == 1
-    assert run_rows[0]["parse_errors"] == 1
-    assert run_rows[0]["skipped"] == 0
+    assert run_rows[0]["parse_errors"] == 0
+    assert run_rows[0]["skipped"] == 1
 
 
 def test_record_build_run_leaves_unspecified_columns_null(tmp_path):

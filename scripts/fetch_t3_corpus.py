@@ -1,43 +1,5 @@
 #!/usr/bin/env python3
-"""Local T3 corpus fetch-by-pin (FR-006/AC7, TC-030..TC-033).
-
-Fetches one ``t3`` entry from ``benchmarks/datasource/manifest.json`` by
-EXPLICIT pinned-commit checkout and optionally runs the bench against it:
-
-    uv run python scripts/fetch_t3_corpus.py --list
-    uv run python scripts/fetch_t3_corpus.py "home-assistant/core"
-    uv run python scripts/fetch_t3_corpus.py "torvalds/linux" --run-bench
-
-The pin-enforcement contract (the whole point of this command):
-
-* The checkout is ALWAYS ``git clone --no-checkout`` followed by
-  ``git checkout --detach <pinned-sha>`` -- the default-branch HEAD is
-  never materialized, so a T3 result can never silently measure a moving
-  branch (codegraph's contamination lesson: pin enforcement lives in the
-  command, not in the caller's discipline).
-* After the checkout, ``git rev-parse HEAD`` is compared to the manifest
-  pin EXACTLY. A pin that is unreachable (moved, force-pushed away, never
-  existed in the clone) fails loudly -- exit 3, naming the entry, the
-  expected pin, and what was found instead -- and the script never
-  proceeds on any other commit.
-
-This is a LOCAL, maintainer-run command (decision D-009): the multi-GB
-clones happen into a cache OUTSIDE this repository (default
-``~/.cairn/bench-t3/<name>``), the script lives under ``scripts/`` -- never
-``src/cairn``, so ``grep -rn "git clone" src/cairn --include="*.py"`` stays
-at 0 matches -- and NOTHING here is wired into CI (TC-033 standing guard:
-no T3 fetch step appears in ``ci.yml``; the suite stays offline).
-
-How a ``--run-bench`` result ties back to the manifest entry: the bench
-runs as ``cairn bench --workspace <checkout> --json --save <dest>/<name>.json``,
-so the T013 artifact stamp already carries the dataset identity. The stamp
-hook ``build_artifact_stamp(t3_entry=...)`` (src/cairn/bench/datasource.py,
-built in T013 for exactly this wiring) records a T3 pin in the
-``dataset.t3_entry`` block -- but the ``cairn bench`` CLI surface takes no
-t3 flag, and widening it is outside this task's scope. The script therefore
-stamps the SAME shape into the artifact ``--save`` produced (repo + commit
-+ scale, verbatim from the manifest entry, only after a verified checkout),
-making the saved JSON self-describing about which pinned corpus measured it.
+"""Fetch one t3 corpus entry from the datasource manifest by exact pinned-commit checkout, optionally benching it.
 
 Usage:
     uv run python scripts/fetch_t3_corpus.py --list
@@ -45,17 +7,25 @@ Usage:
                                                 [--cache dir] [--dest dir]
                                                 [--run-bench]
 
-Exit codes (the contract tests and the docs rely on):
+Exit codes:
     0  fetched (and benched, if requested) with the pin verified exactly
     1  usage -- unknown entry name, missing git, --list + entry together,
-       or a --cache inside this repository (D-009)
+       or a --cache inside this repository
     2  unusable manifest -- unreadable/not-JSON, no t3 section, or the
        requested entry is malformed (bad sha shape, missing pin keys)
-    3  PIN FAILURE -- clone/fetch/checkout failed or the verified HEAD does
+    3  pin failure -- clone/fetch/checkout failed or the verified HEAD does
        not equal the manifest pin; the message names the entry, the
-       expected pin, and what was found (TC-031)
+       expected pin, and what was found
     4  bench failure -- the ``cairn bench`` subprocess itself exited non-zero
-       (its exit code is reported; a fresh stamp is only written on rc 0).
+       (its exit code is reported; a stamp is only written on rc 0)
+
+Constraints: the checkout is ALWAYS ``git clone --no-checkout`` followed by
+``git checkout --detach <pinned-sha>`` (the default-branch HEAD is never
+materialized) and ``git rev-parse HEAD`` must equal the manifest pin
+exactly. Local, maintainer-run only: multi-GB clones land in a cache
+outside this repository, and nothing here is wired into CI. A
+``--run-bench`` result is stamped with the manifest entry (repo + commit +
+scale) so the saved JSON records which pinned corpus measured it.
 """
 from __future__ import annotations
 
@@ -80,8 +50,8 @@ from cairn.bench.datasource import load_manifest  # noqa: E402
 # via --manifest so scratch experiments and tests never touch the committed file.
 DEFAULT_MANIFEST = REPO_ROOT / "benchmarks" / "datasource" / "manifest.json"
 
-# Clone cache OUTSIDE the repo (D-009): the T3 corpora are multi-GB and never
-# vendored (D-010). Entry names may contain "/" (e.g. "home-assistant/core"),
+# Clone cache OUTSIDE the repo: the t3 corpora are multi-GB and never
+# vendored. Entry names may contain "/" (e.g. "home-assistant/core"),
 # so each entry gets a sanitized directory under this root. --dest defaults
 # here too, so a default run leaves NOTHING inside the repository.
 DEFAULT_CACHE_ROOT = Path.home() / ".cairn" / "bench-t3"
@@ -140,7 +110,7 @@ def load_t3_entries(manifest_path: Path | str) -> list[dict]:
     Raises ManifestError for every shape this command cannot work with:
     unreadable/not-JSON (from load_manifest), a missing or non-list t3
     section, or an empty entry list. Per-entry key checks happen at fetch
-    time (only the requested entry needs to be sound -- D-010 keeps t3
+    time (only the requested entry needs to be sound -- the t3 section is
     optional and independently extendable).
     """
     try:
@@ -149,7 +119,7 @@ def load_t3_entries(manifest_path: Path | str) -> list[dict]:
         raise ManifestError(f"manifest unusable: {exc}") from exc
     t3 = manifest.get("t3") if isinstance(manifest, dict) else None
     if not isinstance(t3, dict) or "entries" not in t3:
-        raise ManifestError(f"manifest {manifest_path} has no t3 section (it is optional -- D-010)")
+        raise ManifestError(f"manifest {manifest_path} has no t3 section (it is optional)")
     entries = t3["entries"]
     if not isinstance(entries, list) or not entries:
         raise ManifestError(f"manifest {manifest_path}: t3.entries must be a non-empty list")
@@ -172,8 +142,8 @@ def find_entry(entries: list[dict], name: str) -> dict:
 
 def check_entry_shape(entry: dict) -> None:
     """Vet the requested entry's pin keys before any git work (exit 2 class):
-    the four T019 keys present, the commit a plausible git sha. A pin that
-    cannot be attempted at all is a manifest problem, not a pin failure."""
+    all REQUIRED_ENTRY_KEYS present, the commit a plausible git sha. A pin
+    that cannot be attempted at all is a manifest problem, not a pin failure."""
     for key in REQUIRED_ENTRY_KEYS:
         value = entry.get(key)
         if not isinstance(value, str) or not value:
@@ -232,7 +202,7 @@ def cache_repo(url: str, cache_dir: Path, entry_name: str) -> None:
 def checkout_pin(entry: dict, cache_dir: Path) -> str:
     """Detach-checkout the manifest pin and VERIFY it, returning the verified sha.
 
-    The verification is the load-bearing step (TC-031): ``rev-parse HEAD``
+    The verification is the load-bearing step: ``rev-parse HEAD``
     after the checkout must equal the manifest pin EXACTLY. An unreachable
     pin (the commit is not in the clone -- moved, force-pushed away, typo'd)
     makes ``git checkout`` itself fail; a checkout that somehow landed
@@ -251,7 +221,7 @@ def checkout_pin(entry: dict, cache_dir: Path) -> str:
             f"  found        : {found}\n"
             "  The manifest pin does not exist in the cloned repository (moved? "
             "force-pushed away?). Refusing to run against any other commit; "
-            "re-pin via the manifest writer (T019) or investigate the remote."
+            "re-pin via the manifest writer or investigate the remote."
         )
     head = _repo_head(cache_dir)
     if head != pin:
@@ -305,11 +275,11 @@ def stamp_t3_entry(save_path: Path, entry: dict) -> None:
 
     Writes ``dataset.t3_entry`` with the verbatim manifest pin (name, url,
     commit, scale_hint) -- byte-for-byte the block ``build_artifact_stamp(
-    t3_entry=...)`` would have produced in-process (T013 built the hook;
-    the CLI exposes no t3 flag, so this script applies it post-save). Only
-    called after a verified checkout, so the stamped pin is one git itself
-    confirmed. A missing/corrupt ``dataset`` block is created rather than
-    trusted: the stamp must not silently no-op.
+    t3_entry=...)`` would have produced in-process; the CLI exposes no t3
+    flag, so this script applies it post-save. Only called after a verified
+    checkout, so the stamped pin is one git itself confirmed. A
+    missing/corrupt ``dataset`` block is created rather than trusted: the
+    stamp must not silently no-op.
     """
     try:
         payload = json.loads(save_path.read_text(encoding="utf-8"))
@@ -460,11 +430,11 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
 
     cache_root = args.cache if args.cache is not None else DEFAULT_CACHE_ROOT
-    # D-009 guard: the multi-GB clone must never land inside this repository.
+    # Guard: the multi-GB clone must never land inside this repository.
     if cache_root.resolve().is_relative_to(REPO_ROOT.resolve()):
         print(
             f"FAIL: --cache {cache_root} is inside this repository ({REPO_ROOT}); "
-            "T3 clones live outside it (D-009).",
+            "t3 clones live outside it.",
             file=sys.stderr,
         )
         return EXIT_USAGE

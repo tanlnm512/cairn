@@ -143,7 +143,7 @@ def _embeddings_status(request: Request, context: DashboardContext) -> Response:
         request, context.db_path, context.knowledge_dir
     )
     probe_ok = context.server_probe_once()  # first: rung adoption may retarget
-    backend = embeddings._backend_name()
+    backend = embeddings.backend_name()
     try:
         stamp = embeddings.current_model()
     except Exception as exc:  # unresolvable backend is status, not a 500
@@ -160,7 +160,7 @@ def _embeddings_status(request: Request, context: DashboardContext) -> Response:
         {
             "backend": backend,
             "stamp": stamp,
-            "is_server": backend in embeddings._SERVER_FAMILY,
+            "is_server": backend in embeddings.SERVER_FAMILY,
             "probe_ok": probe_ok,
             "rung": state if state is not None and state.active else None,
             "corpora": corpora,
@@ -340,16 +340,9 @@ def _settings_parity_check(
 
 
 def register(routes: list[Any], context: DashboardContext) -> None:
+    from functools import partial
+
     from starlette.routing import Route
-
-    def embeddings_status(request: Request) -> Response:
-        return _embeddings_status(request, context)
-
-    def database(request: Request) -> Response:
-        return _database(request, context)
-
-    def settings(request: Request) -> Response:
-        return _settings_page(request, context)
 
     async def settings_save(request: Request) -> Response:
         deny = _reject_cross_site(request)
@@ -366,9 +359,21 @@ def register(routes: list[Any], context: DashboardContext) -> None:
 
     routes.extend(
         [
-            Route("/embeddings", embeddings_status, name="embeddings"),
-            Route("/database", database, name="database"),
-            Route("/settings", settings, name="settings"),
+            Route(
+                "/embeddings",
+                partial(_embeddings_status, context=context),
+                name="embeddings",
+            ),
+            Route(
+                "/database",
+                partial(_database, context=context),
+                name="database",
+            ),
+            Route(
+                "/settings",
+                partial(_settings_page, context=context),
+                name="settings",
+            ),
             # The app's only POST routes — the loopback bind plus
             # _reject_cross_site guard them against cross-site form POSTs;
             # the GET views stay untouched.

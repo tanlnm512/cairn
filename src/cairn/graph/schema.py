@@ -143,16 +143,6 @@ CREATE TABLE IF NOT EXISTS memory_failure_signatures (
     last_seen   TIMESTAMP NOT NULL
 );
 
--- cross-repo dependency records (namespace/import based)
-CREATE TABLE IF NOT EXISTS repo_deps (
-    id TEXT PRIMARY KEY,
-    source_repo TEXT NOT NULL,
-    target_repo TEXT NOT NULL,
-    dep_type TEXT NOT NULL,
-    evidence TEXT,
-    symbol_count INTEGER DEFAULT 0
-);
-
 -- Audit/logging table for parse failures
 CREATE TABLE IF NOT EXISTS parse_errors (
     id TEXT PRIMARY KEY,

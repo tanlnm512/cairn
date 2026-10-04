@@ -386,6 +386,42 @@ class TestMaxLengthPin:
         assert rrk.RERANK_MAX_LENGTH == 512
         assert model.max_length == 512
 
+    def test_concurrent_first_load_constructs_model_once(self, monkeypatch):
+        """Two threads racing the cold cache must construct exactly one model."""
+        import sys
+        import threading
+        import types
+
+        from cairn.graph import reranker as rrk
+
+        calls = []
+        entered_constructor = threading.Event()
+        release_constructor = threading.Event()
+
+        class SlowCrossEncoder:
+            def __init__(self, model_name, **kwargs):
+                calls.append(model_name)
+                entered_constructor.set()
+                release_constructor.wait(timeout=5)
+
+        fake_module = types.ModuleType("sentence_transformers")
+        fake_module.CrossEncoder = SlowCrossEncoder
+        monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+        rrk._RERANKER_CACHE.clear()
+        try:
+            first = threading.Thread(target=rrk._get_reranker)
+            second = threading.Thread(target=rrk._get_reranker)
+            first.start()
+            assert entered_constructor.wait(timeout=5)
+            second.start()
+            release_constructor.set()
+            first.join(timeout=10)
+            second.join(timeout=10)
+        finally:
+            rrk._RERANKER_CACHE.clear()
+
+        assert calls == [rrk.current_rerank_model()]
+
 
 class TestQueryPriorityTruncation:
     def test_default_is_flat_per_t017(self, monkeypatch):
@@ -667,3 +703,19 @@ def test_download_reranker_model_failure_surfaces_child_output(monkeypatch, caps
     out = capsys.readouterr().out
     assert "huggingface.co" in out
     assert "Failed to download reranker" in out
+
+
+def test_reranker_model_is_cached_rejects_no_exist_sentinel(monkeypatch):
+    """A repo-cached-but-file-absent verdict (the _CACHED_NO_EXIST sentinel)
+    is not a cache hit."""
+    import sys
+    import types
+
+    fake = types.ModuleType("huggingface_hub")
+    fake._CACHED_NO_EXIST = object()
+    fake.try_to_load_from_cache = lambda repo_id, filename: fake._CACHED_NO_EXIST
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+
+    from cairn.graph import reranker as rrk
+
+    assert rrk.reranker_model_is_cached("BAAI/bge-reranker-base") is False

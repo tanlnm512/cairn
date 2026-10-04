@@ -336,6 +336,47 @@ class TestBuilderImportsEdges:
         finally:
             conn.close()
 
+    def test_scoped_pass_keeps_cross_repo_import_edge(self, tmp_path):
+        # The post-incremental pass runs repo-scoped; the resolution universe
+        # must stay store-wide or the cross-repo edge is deleted unre-derived.
+        from cairn.graph.builder import build_graph, materialize_import_edges
+
+        workspace = tmp_path / "ws_cross"
+        alpha = workspace / "alpha"
+        (alpha / ".git").mkdir(parents=True)
+        (alpha / "app.py").write_text("import beta.util\n")
+        beta = workspace / "beta"
+        (beta / ".git").mkdir(parents=True)
+        (beta / "util.py").write_text("X = 1\n")
+        db_path = str(tmp_path / "cross.kg")
+        build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            def cross_edge_count():
+                return conn.execute(
+                    """SELECT COUNT(*) FROM edges e
+                       JOIN symbols src ON e.source_id = src.id
+                       JOIN symbols tgt ON e.target_id = tgt.id
+                       WHERE e.kind = 'imports' AND e.resolution = 'exact'
+                         AND src.name = 'app' AND tgt.name = 'util'
+                         AND src.file_id IN (
+                             SELECT id FROM files WHERE repo_id = 'alpha')
+                         AND tgt.file_id IN (
+                             SELECT id FROM files WHERE repo_id = 'beta')"""
+                ).fetchone()[0]
+
+            assert cross_edge_count() == 1, (
+                "full build resolves the cross-repo import"
+            )
+            materialize_import_edges(conn, repo="alpha")
+            conn.commit()
+            assert cross_edge_count() == 1, (
+                "repo-scoped pass must not drop the cross-repo import edge"
+            )
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Resolver + traversal semantics
@@ -461,6 +502,43 @@ class TestVizKindPassthrough:
         callee_kinds = {(c["name"], c["edge_kind"]) for c in data["callees"]}
         assert ("helper", "calls") in callee_kinds
         assert ("Base", "extends") in callee_kinds
+
+
+def test_impact_graph_depth_gt_zero_edges_are_not_self_loops():
+    """A depth>0 impact entry renders an edge toward the entry, never to itself."""
+    from cairn.viz.query import get_impact_graph
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, kind) VALUES (?, ?, ?, ?)",
+        [
+            ("s1", "f1", "entry", "function"),
+            ("s2", "f1", "mid", "function"),
+            ("s3", "f1", "top", "function"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r', 'chain.py', 'python')"
+    )
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("e1", "s2", "s1", "entry", "calls"),
+            ("e2", "s3", "s2", "mid", "calls"),
+        ],
+    )
+    conn.commit()
+    try:
+        graph = get_impact_graph(conn, "entry", max_depth=3)
+    finally:
+        conn.close()
+
+    edges = [(e["source"], e["target"]) for e in graph["edges"]]
+    assert ("mid", "entry") in edges
+    assert ("top", "mid") in edges
+    assert all(s != t for s, t in edges), f"self-loop rendered: {edges}"
 
 
 if __name__ == "__main__":

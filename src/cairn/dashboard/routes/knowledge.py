@@ -139,8 +139,6 @@ def _knowledge_doc(request: Request, context: DashboardContext) -> Response:
 
 
 def _knowledge_graph(request: Request, context: DashboardContext) -> Response:
-    from ..data import get_knowledge_graph, get_read_only_db
-
     """The knowledge relationship canvas at /knowledge/graph: every
     stored doc as a node, every indexed relationship as a directed
     edge. The graph JSON rides the #knowledge-graph-data script tag
@@ -150,6 +148,8 @@ def _knowledge_graph(request: Request, context: DashboardContext) -> Response:
     click fetches the doc's inspect fragment into the side panel.
     Full-page only — the filters live in the client, so there is no
     filter param for a fragment branch to serve."""
+    from ..data import get_knowledge_graph, get_read_only_db
+
     selected_db, selected_knowledge, store_key = context.resolve_selection(
         request, context.db_path, context.knowledge_dir
     )
@@ -166,8 +166,6 @@ def _knowledge_graph(request: Request, context: DashboardContext) -> Response:
 
 
 def _knowledge_graph_inspect(request: Request, context: DashboardContext) -> Response:
-    from ..data import get_knowledge_graph_inspect, get_read_only_db
-
     """One doc's inspect-panel fragment (the canvas's node-click
     fetch target): identity plus the same grouped ``related_docs``
     rows the detail panels render. Inherently fragment-only — the
@@ -175,6 +173,8 @@ def _knowledge_graph_inspect(request: Request, context: DashboardContext) -> Res
     documented exception to the full-page/fragment seam) — and an
     unknown doc renders the panel's not-found note at 200, matching
     /graph/inspect's found=False contract."""
+    from ..data import get_knowledge_graph_inspect, get_read_only_db
+
     doc_id = request.query_params.get("doc", "").strip()
     selected_db, selected_knowledge, store_key = context.resolve_selection(
         request, context.db_path, context.knowledge_dir
@@ -195,19 +195,9 @@ def _knowledge_graph_inspect(request: Request, context: DashboardContext) -> Res
     )
 
 def register(routes: list[Any], context: DashboardContext) -> None:
+    from functools import partial
+
     from starlette.routing import Route
-
-    def knowledge_catalog(request: Request) -> Response:
-        return _knowledge_catalog(request, context)
-
-    def knowledge_doc(request: Request) -> Response:
-        return _knowledge_doc(request, context)
-
-    def knowledge_graph(request: Request) -> Response:
-        return _knowledge_graph(request, context)
-
-    def knowledge_graph_inspect(request: Request) -> Response:
-        return _knowledge_graph_inspect(request, context)
 
     routes.extend(
         [
@@ -218,16 +208,24 @@ def register(routes: list[Any], context: DashboardContext) -> None:
             # fragment precede the two-param route on purpose: the fragment
             # path (/knowledge/graph/inspect) WOULD match it as
             # family=graph, slug=inspect if it followed.
-            Route("/knowledge", knowledge_catalog, name="knowledge"),
-            Route("/knowledge/graph", knowledge_graph, name="knowledge_graph"),
+            Route(
+                "/knowledge",
+                partial(_knowledge_catalog, context=context),
+                name="knowledge",
+            ),
+            Route(
+                "/knowledge/graph",
+                partial(_knowledge_graph, context=context),
+                name="knowledge_graph",
+            ),
             Route(
                 "/knowledge/graph/inspect",
-                knowledge_graph_inspect,
+                partial(_knowledge_graph_inspect, context=context),
                 name="knowledge_graph_inspect",
             ),
             Route(
                 "/knowledge/{family}/{slug}",
-                knowledge_doc,
+                partial(_knowledge_doc, context=context),
                 name="knowledge_doc",
             ),
         ]

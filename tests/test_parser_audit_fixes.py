@@ -19,6 +19,20 @@ Fixes covered:
   is ``simple_identifier`` in the vendored fwcd grammar (cairn._tree_sitter_kotlin)
   but ``identifier`` in older tree-sitter-kotlin wheels; matching a single
   spelling left every class-body ``val``/``var`` without a Symbol.
+- F4 Swift properties/initializers: property names are wrapped
+  ``pattern -> simple_identifier`` (never a direct ``identifier``), and
+  initializers arrive as ``init_declaration`` nodes -- neither shape reached a
+  Symbol handler, so no Swift property or init was ever a symbol.
+- F5 Swift ``class`` keyword: ``class`` in SWIFT_MODIFIERS recorded the
+  declaration keyword as a modifier on every class symbol.
+- F6 TypeScript field decorators: a decorator on a ``public_field_definition``
+  was stashed on the pending queue and consumed by the NEXT declaration.
+- F7 TypeScript generic heritage: ``implements I2<T>`` wraps the target in a
+  ``generic_type`` node, which produced no implements edge.
+- F8 Kotlin constructor-default calls: ``class_parameter`` was treated as a
+  leaf, dropping call edges in primary-constructor default values.
+- F9 Kotlin call-on-call: the tail-identifier fallback swept ``call_suffix``,
+  making an argument identifier the call target (``getHandler()(argOne)``).
 """
 from __future__ import annotations
 
@@ -31,6 +45,8 @@ import pytest
 from cairn.parsers.kotlin import KotlinParser
 from cairn.parsers.php import PhpParser
 from cairn.parsers.ruby import RubyParser
+from cairn.parsers.swift import SwiftParser
+from cairn.parsers.typescript import TypeScriptParser
 
 
 def _parse(parser_cls, source: bytes, suffix: str):
@@ -258,6 +274,137 @@ class TestKotlinClassBodyProperties:
         )
         props = {s.name for s in pf.symbols if s.kind == "property"}
         assert {"id", "name"} <= props
+
+
+# ---------------------------------------------------------------------------
+# F4/F5 — Swift: property/init symbols and the class keyword modifier
+# ---------------------------------------------------------------------------
+
+class TestSwiftPropertiesAndInits:
+    def test_class_properties_emit_symbols(self):
+        """``var name: String`` and ``var status: Status = .active`` are
+        ``pattern -> simple_identifier`` in the grammar; both must produce
+        property Symbols."""
+        pf = _parse(
+            SwiftParser,
+            b"class User {\n"
+            b"    var name: String\n"
+            b"    var status: Status = .active\n"
+            b"}\n",
+            ".swift",
+        )
+        props = {s.name: s for s in pf.symbols if s.kind == "property"}
+        assert "name" in props
+        assert "status" in props
+
+    def test_initializer_emits_symbol(self):
+        """``init(id: String)`` parses as ``init_declaration`` and must
+        produce a method Symbol named ``init``."""
+        pf = _parse(
+            SwiftParser,
+            b"class User {\n"
+            b"    var id: String\n"
+            b"    init(id: String) { self.id = id }\n"
+            b"}\n",
+            ".swift",
+        )
+        inits = [s for s in pf.symbols if s.name == "init"]
+        assert len(inits) == 1
+        assert inits[0].kind == "method"
+        assert inits[0].arity == 1
+
+    def test_class_keyword_is_not_a_modifier(self):
+        """``class`` is the declaration keyword, not a modifier: a class
+        symbol's modifiers must not contain it."""
+        pf = _parse(SwiftParser, b"final class Foo {}\n", ".swift")
+        foo = next(s for s in pf.symbols if s.name == "Foo")
+        assert "final" in foo.modifiers
+        assert "class" not in foo.modifiers
+
+
+# ---------------------------------------------------------------------------
+# F6 — TypeScript: field decorator stays on its own declaration
+# ---------------------------------------------------------------------------
+
+class TestTypeScriptFieldDecorators:
+    def test_field_decorator_not_consumed_by_next_declaration(self):
+        """``@FieldDec()`` on a field attaches to the FIELD symbol; the
+        following method must carry no decorator."""
+        pf = _parse(
+            TypeScriptParser,
+            b"class Foo {\n"
+            b"    @FieldDec()\n"
+            b"    private name: string = 'x';\n"
+            b"\n"
+            b"    greet() { return helper(); }\n"
+            b"}\n",
+            ".ts",
+        )
+        name = next(s for s in pf.symbols if s.name == "name")
+        greet = next(s for s in pf.symbols if s.name == "greet")
+        assert any("@FieldDec()" in m for m in name.modifiers)
+        assert not any("FieldDec" in m for m in greet.modifiers)
+
+
+# ---------------------------------------------------------------------------
+# F7 — TypeScript: generic heritage targets
+# ---------------------------------------------------------------------------
+
+class TestTypeScriptGenericHeritage:
+    def test_generic_implements_emits_edge(self):
+        """``implements I1, I2<T>`` emits implements edges for BOTH targets;
+        the generic wrapper must not drop ``I2``."""
+        pf = _parse(
+            TypeScriptParser,
+            b"class A implements I1, I2<T>, I3 {}\n",
+            ".ts",
+        )
+        impl = sorted(e.target_name for e in pf.edges if e.kind == "implements")
+        assert impl == ["I1", "I2", "I3"]
+
+    def test_interface_generic_extends_emits_edge(self):
+        """``interface I extends J<T>, K`` emits extends edges for both."""
+        pf = _parse(
+            TypeScriptParser,
+            b"interface I extends J<T>, K {}\n",
+            ".ts",
+        )
+        ext = sorted(e.target_name for e in pf.edges if e.kind == "extends")
+        assert ext == ["J", "K"]
+
+
+# ---------------------------------------------------------------------------
+# F8/F9 — Kotlin: constructor-default calls and call-on-call targets
+# ---------------------------------------------------------------------------
+
+class TestKotlinCallEdges:
+    def test_primary_constructor_default_call_emits_edge(self):
+        """``val repo: Repo = createRepo()`` in the primary constructor
+        emits the ``createRepo`` call edge (class_parameter is not a leaf)."""
+        pf = _parse(
+            KotlinParser,
+            b"class User(val repo: Repo = createRepo()) {\n"
+            b"    fun go() { work() }\n"
+            b"}\n",
+            ".kt",
+        )
+        targets = [e.target_name for e in pf.edges if e.kind == "calls"]
+        assert "createRepo" in targets
+
+    def test_call_on_call_target_is_the_callee_not_the_argument(self):
+        """``getHandler()(argOne)`` targets ``getHandler`` only; the
+        argument identifier must never become a call target."""
+        pf = _parse(
+            KotlinParser,
+            b"class Foo {\n"
+            b"    fun go() {\n"
+            b"        getHandler()(argOne)\n"
+            b"    }\n"
+            b"}\n",
+            ".kt",
+        )
+        targets = [e.target_name for e in pf.edges if e.kind == "calls"]
+        assert targets == ["getHandler"]
 
 
 if __name__ == "__main__":

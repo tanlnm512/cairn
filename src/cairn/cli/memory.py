@@ -7,7 +7,29 @@ import sys
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, get_db, main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
+
+
+def _memory_line(c, conn, with_tier: bool = False, with_concept_id: bool = False) -> str:
+    """One memory-listing line: '[<tier> ]<score>, refs-verified=<refs>' title [id].
+
+    ``refs-verified`` is the live backtick-ref fraction ('?' when ``conn`` is
+    None or the verification read fails). The flags carry the per-command
+    column differences: search shows tier + concept id, list shows tier,
+    digest shows the score only.
+    """
+    if conn is None:
+        refs = "?"
+    else:
+        from ..memory.scoring import _graph_verification
+
+        try:
+            refs = str(round(_graph_verification(c, conn), 3))
+        except Exception:
+            refs = "?"
+    tier = f"{c.extensions.get('memory_tier', '?')} " if with_tier else ""
+    cid = f"  ({c.concept_id})" if with_concept_id else ""
+    score = c.extensions.get("memory_score", "?")
+    return f"  [{tier}{score}, refs-verified={refs}] {c.title}{cid}"
 
 @main.group()
 def memory():
@@ -138,7 +160,6 @@ def memory_search(query, tier, as_of, agent, db, knowledge):
     single-agent path runs: identical output, no sharing query.
     """
     from ..memory.promotion import search_memory
-    from ..memory.scoring import _graph_verification
     from ..okf.bundle import OKFBundle
 
     if agent is not None:
@@ -167,13 +188,7 @@ def memory_search(query, tier, as_of, agent, db, knowledge):
         click.echo(f"No memories matching '{query}'.")
         return
     for c in results:
-        score = c.extensions.get("memory_score", "?")
-        t = c.extensions.get("memory_tier", "?")
-        try:
-            refs = round(_graph_verification(c, conn), 3)
-        except Exception:
-            refs = "?"
-        click.echo(f"  [{t} {score}, refs-verified={refs}] {c.title}  ({c.concept_id})")
+        click.echo(_memory_line(c, conn, with_tier=True, with_concept_id=True))
         attribution = shared_by_id.get(c.concept_id)
         if attribution:
             click.echo(f"    {attribution}")
@@ -330,7 +345,6 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
 def memory_list(tier, tag, db, knowledge):
     """List memories, optionally filtered. Shows refs-verified when --db resolves."""
     from ..memory import store as store_mod
-    from ..memory.scoring import _graph_verification
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
@@ -345,15 +359,7 @@ def memory_list(tier, tag, db, knowledge):
         conn = get_db(db)
     try:
         for c in mems:
-            score = c.extensions.get("memory_score", "?")
-            refs = "?"
-            if conn is not None:
-                try:
-                    refs = round(_graph_verification(c, conn), 3)
-                except Exception:
-                    pass
-            click.echo(f"  [{c.extensions.get('memory_tier','?')} {score}, "
-                       f"refs-verified={refs}] {c.title}")
+            click.echo(_memory_line(c, conn, with_tier=True))
     finally:
         if conn is not None:
             conn.close()
@@ -385,7 +391,6 @@ def memory_digest(limit, db, knowledge):
     or removed symbol; verify before relying on it.
     """
     from ..memory.promotion import tribal_digest
-    from ..memory.scoring import _graph_verification
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
@@ -399,14 +404,7 @@ def memory_digest(limit, db, knowledge):
         conn = get_db(db)
     try:
         for c in mems:
-            score = c.extensions.get("memory_score", "?")
-            refs = "?"
-            if conn is not None:
-                try:
-                    refs = round(_graph_verification(c, conn), 3)
-                except Exception:
-                    pass
-            click.echo(f"  [{score}, refs-verified={refs}] {c.title}")
+            click.echo(_memory_line(c, conn))
         if conn is not None:
             from ..graph.embeddings import unembedded_memory_hint
             hint = unembedded_memory_hint(conn, bundle)
@@ -575,7 +573,7 @@ def memory_demote(memory_path, target_tier, db, knowledge):
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_purge(max_days, dry_run, knowledge):
     """Purge old archived memories (CLI-only — not exposed as MCP)."""
-    from ..memory.store import list_memories, purge_archived
+    from ..memory.store import list_memories, parse_memory_timestamp, purge_archived
     from ..okf.bundle import OKFBundle
     from datetime import datetime, timezone
 
@@ -584,14 +582,12 @@ def memory_purge(max_days, dry_run, knowledge):
         now = datetime.now(timezone.utc)
         candidates = []
         for c in list_memories(bundle, tier="archived"):
-            ts = c.timestamp
-            if ts:
-                try:
-                    age = (now - datetime.fromisoformat(ts)).days
-                except (ValueError, TypeError):
-                    age = 0
-                if age > max_days:
-                    candidates.append((c.concept_id, age))
+            dt = parse_memory_timestamp(c.timestamp)
+            if dt is None:
+                continue
+            age = (now - dt).days
+            if age > max_days:
+                candidates.append((c.concept_id, age))
         if not candidates:
             click.echo(f"No archived memories older than {max_days} days.")
             return

@@ -107,13 +107,8 @@ class OKFBundle:
         self.root.mkdir(parents=True, exist_ok=True)
         root_abs = self.root.resolve()
         path = (self.root / f"{concept_id}.md").resolve()
-        try:
-            if not path.is_relative_to(root_abs):
-                raise ValueError(f"concept_id escapes bundle root: {concept_id!r}")
-        except AttributeError:
-            # Python < 3.9 fallback if needed
-            if not str(path).startswith(str(root_abs)):
-                raise ValueError(f"concept_id escapes bundle root: {concept_id!r}")
+        if not path.is_relative_to(root_abs):
+            raise ValueError(f"concept_id escapes bundle root: {concept_id!r}")
         return path
 
     def read_concept(self, concept_id: str) -> OKFConcept:

@@ -15,6 +15,20 @@ from .watcher import refresh_for_query
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
+# git quotes paths containing " or control characters even with
+# core.quotePath=false; the quoted form C-escapes octal bytes and the
+# characters below.
+_C_ESCAPE_RE = re.compile(r"\\(?:(?P<octal>[0-7]{3})|(?P<char>.))")
+_C_SIMPLE_ESCAPES = {
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "v": "\v",
+}
+
 
 class BlastBaseError(RuntimeError):
     """A requested base reference cannot be resolved."""
@@ -24,8 +38,9 @@ def _git(repo: Path, args: list[str]) -> str:
     # errors="replace": git sniffs only the first 8KB for binary detection, so
     # a diff can carry non-UTF-8 payload bytes past that mark; the parser
     # regexes hunks and paths only, so replaced characters are inert.
+    # core.quotePath=false keeps non-ASCII paths byte-identical to files.path.
     result = subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.quotePath=false", *args],
         cwd=str(repo),
         capture_output=True,
         text=True,
@@ -37,11 +52,29 @@ def _git(repo: Path, args: list[str]) -> str:
     return result.stdout
 
 
+def _unquote_git_path(value: str) -> str:
+    """Decode git's C-style quoted path; octal escapes decode as UTF-8 bytes."""
+    if len(value) < 2 or not (value.startswith('"') and value.endswith('"')):
+        return value
+    body = value[1:-1]
+    raw = bytearray()
+    pos = 0
+    for match in _C_ESCAPE_RE.finditer(body):
+        raw.extend(body[pos : match.start()].encode("utf-8"))
+        octal, char = match.group("octal"), match.group("char")
+        if octal is not None:
+            raw.append(int(octal, 8))
+        else:
+            raw.extend(_C_SIMPLE_ESCAPES.get(char, char).encode("utf-8"))
+        pos = match.end()
+    raw.extend(body[pos:].encode("utf-8"))
+    return raw.decode("utf-8", errors="replace")
+
+
 def _diff_path(value: str) -> str | None:
     if value == "/dev/null":
         return None
-    if value.startswith('"') and value.endswith('"'):
-        value = value[1:-1]
+    value = _unquote_git_path(value)
     if value.startswith("a/") or value.startswith("b/"):
         value = value[2:]
     return value
@@ -50,6 +83,7 @@ def _diff_path(value: str) -> str | None:
 def _parse_diff(text: str) -> list[dict]:
     files: list[dict] = []
     current: dict | None = None
+    in_hunk = False
 
     def finish() -> None:
         nonlocal current
@@ -61,16 +95,20 @@ def _parse_diff(text: str) -> list[dict]:
         if line.startswith("diff --git "):
             finish()
             current = {"path": None, "old_path": None, "hunks": []}
+            in_hunk = False
         elif current is None:
+            continue
+        elif in_hunk and line[:1] in (" ", "+", "-", "\\"):
+            # Hunk body: content lines like "--- x"/"+++ x" are not headers.
             continue
         elif line.startswith("--- "):
             current["old_path"] = _diff_path(line[4:])
         elif line.startswith("+++ "):
             current["path"] = _diff_path(line[4:])
         elif line.startswith("rename from "):
-            current["old_path"] = _diff_path("b/" + line[12:])
+            current["old_path"] = _diff_path("b/" + _unquote_git_path(line[12:]))
         elif line.startswith("rename to "):
-            current["path"] = _diff_path("b/" + line[10:])
+            current["path"] = _diff_path("b/" + _unquote_git_path(line[10:]))
         elif line.startswith("@@ "):
             match = _HUNK_RE.match(line)
             if match:
@@ -84,6 +122,7 @@ def _parse_diff(text: str) -> list[dict]:
                         "header": line,
                     }
                 )
+                in_hunk = True
     finish()
     return files
 
@@ -180,12 +219,13 @@ def _seed_symbols(conn, changed: list[dict]) -> tuple[list[dict], list[str]]:
             unindexed.append(rel)
             continue
         for hunk in file_change["hunks"]:
-            if hunk["count"] == 0:
-                continue
+            # count == 0 is a pure deletion: seed the boundary line so the
+            # symbol that lost content still reaches its dependents.
             candidates = list(
                 conn.execute(
                     "SELECT id, name, qualified_name, kind, line_start, line_end "
                     "FROM symbols WHERE file_id = ? "
+                    "AND kind != 'module' "
                     "AND line_start IS NOT NULL AND line_end IS NOT NULL "
                     "AND line_start <= ? AND line_end >= ?",
                     (file_row["id"], hunk["end"], hunk["start"]),

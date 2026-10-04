@@ -204,6 +204,35 @@ def test_instrument_leaves_non_string_result_untouched():
     assert len(mb._METRIC_BUFFER) == 2
 
 
+def test_instrument_truncates_oversized_structured_result(monkeypatch):
+    """A non-str result over MAX_RESULT_CHARS degrades to the truncated string form.
+
+    The MCP client's token ceiling applies to every result shape, so a
+    structured-output tool returning an oversized model must not bypass the
+    cap; under-cap structured results still pass through untouched.
+    """
+    monkeypatch.setattr(mb, "MAX_RESULT_CHARS", 50)
+
+    payload = {"k": "y" * 200}
+
+    @mb.instrument
+    def big_structured():
+        return dict(payload)
+
+    result = big_structured()
+    assert isinstance(result, str)
+    assert "[TRUNCATED:" in result
+    row = mb._METRIC_BUFFER[-1]
+    assert row[9] == len(str(payload)), "original structured size recorded"
+    assert row[10] == len(result), "truncated size recorded"
+
+    @mb.instrument
+    def small_structured():
+        return {"key": "value", "n": 42}
+
+    assert small_structured() == {"key": "value", "n": 42}
+
+
 def test_instrument_preserves_function_metadata():
     """``functools.wraps`` keeps ``__name__``/``__wrapped__`` intact.
 
@@ -377,6 +406,48 @@ def test_flush_keeps_rows_appended_during_flush(fresh_db):
     # Only the two pre-flush rows were written.
     rows = fresh_db.execute("SELECT tool_name FROM tool_metrics ORDER BY id").fetchall()
     assert [r["tool_name"] for r in rows] == ["tool_a", "tool_b"]
+
+
+def test_flush_overflow_midcycle_never_drops_unflushed_rows(fresh_db, monkeypatch):
+    """A deque overflow mid-flush must not make the drain drop unwritten rows.
+
+    With a full deque, a row appended while the flush is mid-write evicts the
+    oldest snapshot row; a positional post-commit drain would then pop a row
+    that never reached the DB. Snapshot+clear under one lock leaves the late
+    append queued for the next flush instead.
+    """
+    import collections
+
+    concurrent_row = ("concurrent_tool", "unknown", 9999.0, 5.0, "ok", None, None, None, None)
+
+    class _OverflowingConn(_UnclosableConn):
+        def executemany(self, sql, params):
+            # Simulate a concurrent append landing while the flush is
+            # mid-write; the deque is full, so this evicts the oldest
+            # snapshot row from the buffer.
+            with mb._METRIC_LOCK:
+                mb._METRIC_BUFFER.append(concurrent_row)
+            return self._real.executemany(sql, params)
+
+    monkeypatch.setattr(mb, "_METRIC_BUFFER", collections.deque(maxlen=3))
+    mb.configure_conn(lambda: _OverflowingConn(fresh_db))
+    rows = [
+        ("tool_a", "unknown", 1.0, 10.0, "ok", None, None, None, None),
+        ("tool_b", "unknown", 2.0, 20.0, "ok", None, None, None, None),
+        ("tool_c", "unknown", 3.0, 30.0, "ok", None, None, None, None),
+    ]
+    with mb._METRIC_LOCK:
+        mb._METRIC_BUFFER.extend(rows)
+    assert len(mb._METRIC_BUFFER) == 3
+
+    mb._flush_metrics()
+
+    landed = fresh_db.execute(
+        "SELECT tool_name FROM tool_metrics ORDER BY id"
+    ).fetchall()
+    assert [r["tool_name"] for r in landed] == ["tool_a", "tool_b", "tool_c"]
+    # The concurrent append survived: nothing unwritten was drained.
+    assert list(mb._METRIC_BUFFER) == [concurrent_row]
 
 
 def test_flush_failure_retains_buffer_for_retry(fresh_db):

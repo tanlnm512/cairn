@@ -7,7 +7,6 @@ import subprocess
 import sys
 
 from .main import main
-from ._helpers import _human_bytes, _mods, _shorten  # noqa: F401
 from ..mcp_server import lifecycle as lc
 
 @main.group(invoke_without_command=True)
