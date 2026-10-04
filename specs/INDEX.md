@@ -20,3 +20,13 @@ Fixture note: the taint-tracking fixtures moved to
 tests/test_taint_{fixtures,surfaces}.py); the spec's as-built docs live in
 the archive entry above.
 - [scip-indexing-v2](scip-indexing-v2/spec.md) — done (2026-09-20)
+- [on-demand-paths](on-demand-paths/spec.md) — draft (created 2026-10-04)
+- [symbol-communities](symbol-communities/spec.md) — draft (created 2026-10-04)
+- [freshness-hooks](freshness-hooks/spec.md) — draft (created 2026-10-04)
+- [http-mcp-serving](http-mcp-serving/spec.md) — draft (created 2026-10-04)
+- [memory-stance-overlay](memory-stance-overlay/spec.md) — draft (created 2026-10-04)
+- [pr-tooling](pr-tooling/spec.md) — draft (created 2026-10-04)
+- [rationale-nodes](rationale-nodes/spec.md) — draft (created 2026-10-04)
+- [bench-worked-artifacts](bench-worked-artifacts/spec.md) — draft (created 2026-10-04)
+- [corpus-breadth](corpus-breadth/spec.md) — draft (created 2026-10-04)
+- [concept-space-unification](concept-space-unification/spec.md) — draft (created 2026-10-04)
