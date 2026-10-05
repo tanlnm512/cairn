@@ -365,7 +365,7 @@ jobs:
       - name: Keyless wildcard entrypoint refuses to start
         run: |
           set +e
-          out=$(docker run --rm --name cairn-smoke -e CAIRN_WORKSPACE=/data/ws cairn:http-smoke sh -c "cairn init --no-build >/dev/null 2>&1; cairn serve --transport http --host 0.0.0.0" 2>&1)
+          out=$(docker run --rm --name cairn-smoke -e CAIRN_WORKSPACE=/data/ws --entrypoint /bin/sh cairn:http-smoke -c "cairn init --no-build >/dev/null 2>&1; cairn serve --transport http --host 0.0.0.0" 2>&1)
           rc=$?
           set -e
           echo "$out" | tail -3
@@ -378,7 +378,7 @@ jobs:
           echo "$out" | grep -q "without an API key"
       - name: Keyed entrypoint reaches /healthz
         run: |
-          docker run -d --name cairn-keyed -e CAIRN_WORKSPACE=/data/ws -e CAIRN_MCP_API_KEY=ci-smoke-key -p 18765:9876 cairn:http-smoke sh -c "cairn init --no-build >/dev/null 2>&1; cairn serve --transport http --host 0.0.0.0"
+          docker run -d --name cairn-keyed -e CAIRN_WORKSPACE=/data/ws -e CAIRN_MCP_API_KEY=ci-smoke-key -p 18765:9876 --entrypoint /bin/sh cairn:http-smoke -c "cairn init --no-build >/dev/null 2>&1; exec cairn serve --transport http --host 0.0.0.0"
           ok=0
           for i in $(seq 1 30); do
             if curl -sf http://127.0.0.1:18765/healthz > /tmp/hz.json 2>/dev/null; then ok=1; break; fi

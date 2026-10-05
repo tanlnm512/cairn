@@ -20,6 +20,14 @@ needs_scip = pytest.mark.skipif(not scip_available(), reason="[scip] extra not i
 
 
 @pytest.fixture(autouse=True)
+def _scip_fixture_git_markers():
+    """The committed scip fixture workspaces carry no .git dir in git (uncommittable); the scanner needs the marker."""
+    for ws in (SCIP_FIXTURES / "covered", SCIP_FIXTURES / "covered-off"):
+        (ws / ".git").mkdir(exist_ok=True)
+
+
+
+@pytest.fixture(autouse=True)
 def _hash_embedder(hash_backend):
     """incremental_update re-embeds changed symbols; pin the dep-free embedder."""
 
