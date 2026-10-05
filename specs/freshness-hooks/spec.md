@@ -1,6 +1,6 @@
 # Spec: freshness-hooks
 
-**Status**: active
+**Status**: done
 **Effort**: standard
 **Created**: 2026-10-04
 **Branch**: `feat/freshness-hooks`

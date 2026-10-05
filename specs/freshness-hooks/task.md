@@ -3,7 +3,7 @@
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 **Lifecycle**: v2
 Status reflects code state per [survey.md](survey.md), not intent.
-PLACEHOLDER
+**Delivered**: commit @ 4937446
 
 ## Burndown
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->

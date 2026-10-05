@@ -22,7 +22,7 @@ the archive entry above.
 - [scip-indexing-v2](scip-indexing-v2/spec.md) — done (2026-09-20)
 - [on-demand-paths](on-demand-paths/spec.md) — done (delivered 0fa4f3d, 2026-10-05)
 - [symbol-communities](symbol-communities/spec.md) — done (delivered 7905dd2, 2026-10-05)
-- [freshness-hooks](freshness-hooks/spec.md) — draft (created 2026-10-04)
+- [freshness-hooks](freshness-hooks/spec.md) — done (delivered 4937446, 2026-10-05)
 - [http-mcp-serving](http-mcp-serving/spec.md) — draft (created 2026-10-04)
 - [memory-stance-overlay](memory-stance-overlay/spec.md) — draft (created 2026-10-04)
 - [pr-tooling](pr-tooling/spec.md) — draft (created 2026-10-04)
