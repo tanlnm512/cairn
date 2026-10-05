@@ -30,3 +30,4 @@ the archive entry above.
 - [bench-worked-artifacts](bench-worked-artifacts/spec.md) — done (delivered bf42d8f, 2026-10-05)
 - [corpus-breadth](corpus-breadth/spec.md) — draft (created 2026-10-04)
 - [concept-space-unification](concept-space-unification/spec.md) — draft (created 2026-10-04)
+- [grade-a-ratchet](grade-a-ratchet/spec.md) — draft (created 2026-10-05)
