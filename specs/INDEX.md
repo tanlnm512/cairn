@@ -27,6 +27,6 @@ the archive entry above.
 - [memory-stance-overlay](memory-stance-overlay/spec.md) — done (delivered fb89eae, 2026-10-05)
 - [pr-tooling](pr-tooling/spec.md) — done (delivered 2b3515e, 2026-10-05)
 - [rationale-nodes](rationale-nodes/spec.md) — done (delivered 591bf92, 2026-10-05)
-- [bench-worked-artifacts](bench-worked-artifacts/spec.md) — draft (created 2026-10-04)
+- [bench-worked-artifacts](bench-worked-artifacts/spec.md) — done (delivered bf42d8f, 2026-10-05)
 - [corpus-breadth](corpus-breadth/spec.md) — draft (created 2026-10-04)
 - [concept-space-unification](concept-space-unification/spec.md) — draft (created 2026-10-04)
