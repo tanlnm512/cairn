@@ -13,6 +13,8 @@ from pathlib import Path
 
 from ... import __version__
 from ...memory.privacy import strip_private_data
+from .audit_status import collect_audit_status
+from .comment_style import DEFAULT_BASELINE, check_comment_baseline
 from .doctor import _knob_source, _run_doctor
 from .metrics import _fmt_ts
 from ..main import DEFAULT_DB_PATH, get_db, main
@@ -197,6 +199,55 @@ def _report_config() -> dict:
     }
 
 
+def _source_root() -> Path | None:
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "src").is_dir() and (candidate / "pyproject.toml").is_file():
+            return candidate
+    return None
+
+
+def _audit_quality_gate(root: Path) -> dict:
+    try:
+        status = collect_audit_status(root)
+        return {
+            "total": status["total"],
+            "remaining": status["remaining"],
+            "by_priority": {
+                priority: counts["remaining"]
+                for priority, counts in status["totals"].items()
+            },
+        }
+    except Exception:
+        return {"status": "error"}
+
+
+def _comment_quality_gate(root: Path) -> dict:
+    try:
+        status = check_comment_baseline(root, root.joinpath(*DEFAULT_BASELINE))
+        if not status["ok"]:
+            return {"status": "error"}
+        return {"remaining": status["remaining"]}
+    except Exception:
+        return {"status": "error"}
+
+
+def _quality_gates() -> dict:
+    try:
+        root = _source_root()
+    except Exception:
+        root = None
+    if root is None:
+        return {
+            "audit_status": {"status": "unavailable"},
+            "comment_style": {"status": "unavailable"},
+        }
+    return {
+        "audit_status": _audit_quality_gate(root),
+        "comment_style": _comment_quality_gate(root),
+    }
+
+
 def _build_report(db: str) -> dict:
     """Assemble the redacted bundle. Never raises.
 
@@ -220,6 +271,7 @@ def _build_report(db: str) -> dict:
         "versions": versions,
         "doctor": _scrub_doctor(_run_doctor(db)),
         "recent_errors": recent_errors,
+        "quality_gates": _quality_gates(),
         "config": _scrub_strings(_report_config()),
     }
 
@@ -270,6 +322,22 @@ def _render_report(bundle: dict) -> str:
             lines.append(f"  {_fmt_ts(t['invoked_at'])} {t['tool_name']} {t.get('error_message') or ''}")
     else:
         lines.append("  none")
+    lines.append("")
+
+    quality = bundle["quality_gates"]
+    lines.append("## Quality gates")
+    audit = quality["audit_status"]
+    if "status" in audit:
+        lines.append(f"audit_status: {audit['status']}")
+    else:
+        lines.append(f"audit_status total: {audit['remaining']}/{audit['total']} remaining")
+        for priority, remaining in audit["by_priority"].items():
+            lines.append(f"audit_status {priority}: {remaining} remaining")
+    comment = quality["comment_style"]
+    if "status" in comment:
+        lines.append(f"comment_style: {comment['status']}")
+    else:
+        lines.append(f"comment_style remaining: {comment['remaining']}")
     lines.append("")
 
     lines.append("## Config")

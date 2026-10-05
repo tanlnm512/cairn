@@ -22,6 +22,11 @@ verbatim from the source.
 - [review-checklist.md](review-checklist.md) — the PR review/audit gate for every change.
 - [release-checklist.md](release-checklist.md) — pre-release verification and the release procedure.
 
+## Quality gates
+
+- `make audit-status` — remaining-vs-total audit findings by priority (`ARGS=--json` for CI); findings live in [audits/2026-10-02.md](audits/2026-10-02.md) with fix status in its `.status.json` sidecar.
+- `make comment-style` — shrink-only comment/docstring ratchet over `src/` (`make comment-style-shrink` re-derives the baseline after fixes; growth is refused).
+
 ## Diagrams
 
 Standalone HTML, open in any browser:

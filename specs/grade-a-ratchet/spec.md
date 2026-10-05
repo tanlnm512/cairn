@@ -1,6 +1,6 @@
 # Spec: grade-a-ratchet
 
-**Status**: approved
+**Status**: active
 **Effort**: standard
 **Created**: 2026-10-05
 **Branch**: `feat/grade-a-ratchet`

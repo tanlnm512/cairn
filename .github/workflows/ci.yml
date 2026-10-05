@@ -127,6 +127,48 @@ jobs:
       - name: Run all hooks
         run: uv run --no-sync pre-commit run --all-files
 
+  # --- Quality ratchet: audit-debt + comment-style stop-growth gates ------
+  # Human modes keep the maintainer surface green; the JSON steps pin the
+  # machine-readable contract report and tooling consume.
+  quality-ratchet:
+    name: Quality ratchet (audit debt + comment style)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+      - name: Audit status (human gate)
+        run: make audit-status
+      - name: Comment style (human gate)
+        run: make comment-style
+      - name: Parse quality-gate JSON outputs
+        run: |
+          uv run --no-sync python -m cairn.cli.system.audit_status --json > audit-status.json
+          uv run --no-sync python -m cairn.cli.system.comment_style --json > comment-style.json
+          python3 - <<'EOF'
+          import json
+          from pathlib import Path
+
+          audit = json.loads(Path("audit-status.json").read_text())
+          for priority in ("P0", "P1", "P2", "P3"):
+              counts = audit["totals"][priority]
+              assert set(counts) == {"total", "fixed", "remaining"}
+              assert 0 <= counts["remaining"] <= counts["total"]
+          assert audit["remaining"] == sum(
+              counts["remaining"] for counts in audit["totals"].values()
+          )
+
+          style = json.loads(Path("comment-style.json").read_text())
+          assert style["ok"] is True
+          assert isinstance(style["remaining"], int)
+          assert style["new"] == [] and style["stale"] == []
+          EOF
+
   # --- Dependency review for PRs (supply-chain, complements pip-audit) -----
   # pip-audit scans the fully-resolved environment; this checks the *delta* a
   # PR introduces (new/changed deps) against the GitHub Advisory DB + licenses.

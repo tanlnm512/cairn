@@ -9,14 +9,15 @@ Status reflects code state per [survey.md](survey.md), not intent.
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 1     | 0    |
-| 2     | 2     | 0    |
-| 3     | 3     | 0    |
-| **Σ** | 6     | 0    |
+| 1 | 1 | 1 |
+| 2 | 2 | 2 |
+| 3 | 3 | 3 |
+| **Σ** | 6 | 6 |
 
 ## Phase 1: Audit data home (FR-001)
 <!-- Checkpoint: no tracked artifact by the two old root names remains; both destination paths resolve; the moved HTML's documentation links resolve from its new directory -->
-- [ ] T001 Move the tracked root artifacts with `git mv` — `architecture.html` to `docs/diagrams/architecture.html` and `audit-findings-2026-10-02.md` to `docs/audits/2026-10-02.md` — and retarget the moved HTML's internal `docs/architecture.md`, `docs/indexing.md`, and `docs/mcp-tools.md` references to `../` equivalents without changing historical CHANGELOG mentions (FR-001)
+- [x] T001 (implemented) Move the tracked root artifacts with `git mv` — `architecture.html` to `docs/diagrams/architecture.html` and `audit-findings-2026-10-02.md` to `docs/audits/2026-10-02.md` — and retarget the moved HTML's internal `docs/architecture.md`, `docs/indexing.md`, and `docs/mcp-tools.md` references to `../` equivalents without changing historical CHANGELOG mentions (FR-001)
+  - done 2026-10-06 — TC-001/002/003 PASS (orchestrator re-verified + audit.py proofs --run)
   - Survey basis: FR-001 records both files tracked at root, both destinations absent, and no live inbound link outside historical changelog text.
   - Touches:
     - `architecture.html`
@@ -28,7 +29,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 2: Standalone quality counters (FR-002, FR-003, NFR-003, NFR-004, NFR-005)
 <!-- Checkpoint: audit counts read P0=2, P1=51, P2=88, P3=3; the comment checker passes an unchanged tree and rejects additions and stale counts; JSON parses; repeated runs are identical -->
-- [ ] T002 (after T001 — consumes relocated `docs/audits/2026-10-02.md` and its findings-index tables headed `### P0 — High (2)`, `### P1 — Medium (51)`, `### P2 — Low (88)`, and `### P3 — Systemic clusters (3)`) Add failing tests for index-only parsing, fixed-ID sidecars, P0–P3 aggregation, clean file-naming failures, JSON, and repeated identical output; then implement executable `src/cairn/cli/system/audit_status.py` with pure `collect_audit_status(root: Path) -> dict` and create strict initial `docs/audits/2026-10-02.status.json` with schema version 1 and an empty `fixed` list (FR-002, NFR-003, NFR-005)
+- [x] T002 (implemented) (after T001 — consumes relocated `docs/audits/2026-10-02.md` and its findings-index tables headed `### P0 — High (2)`, `### P1 — Medium (51)`, `### P2 — Low (88)`, and `### P3 — Systemic clusters (3)`) Add failing tests for index-only parsing, fixed-ID sidecars, P0–P3 aggregation, clean file-naming failures, JSON, and repeated identical output; then implement executable `src/cairn/cli/system/audit_status.py` with pure `collect_audit_status(root: Path) -> dict` and create strict initial `docs/audits/2026-10-02.status.json` with schema version 1 and an empty `fixed` list (FR-002, NFR-003, NFR-005)
+  - done 2026-10-06 — 20 unit tests + TC-004/006/007/008 PASS; make audit-status: P0 2 · P1 51 · P2 88 · P3 3, total 144/144
   - Survey basis: FR-002 records no Make target, script, audits directory, sidecar schema, or sidecar.
   - Touches:
     - `src/cairn/cli/system/audit_status.py`
@@ -37,7 +39,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Verify before implementing: `make audit-status`
   - Proof when complete: `uv run pytest tests/test_audit_status.py -q` passes; direct human mode prints all four priorities and total; direct `--json` mode parses with the tech-spec count fields; a second run is byte-identical.
 
-- [ ] T003 [P] Add failing tests for four-line comment blocks, four-line docstrings, block splitting, syntax failure, duplicate growth, stale entries, initialization, shrink-only updates, JSON, and deterministic regeneration; then implement executable `src/cairn/cli/system/comment_style.py` with `scan_comment_violations(root: Path) -> list[dict]` and `check_comment_baseline(root: Path, baseline_path: Path) -> dict`, and initialize `docs/audits/comment-style-baseline.json` from the unchanged `src/` tree (FR-003, NFR-003, NFR-004, NFR-005)
+- [x] T003 (implemented) [P] Add failing tests for four-line comment blocks, four-line docstrings, block splitting, syntax failure, duplicate growth, stale entries, initialization, shrink-only updates, JSON, and deterministic regeneration; then implement executable `src/cairn/cli/system/comment_style.py` with `scan_comment_violations(root: Path) -> list[dict]` and `check_comment_baseline(root: Path, baseline_path: Path) -> dict`, and initialize `docs/audits/comment-style-baseline.json` from the unchanged `src/` tree (FR-003, NFR-003, NFR-004, NFR-005)
+  - done 2026-10-06 — 13 unit tests + TC-009..TC-018 PASS; baseline 1215 violations; deterministic regen sha256-stable
   - Survey basis: FR-003 records no checker script, baseline, pre-commit hook, or CI job.
   - Touches:
     - `src/cairn/cli/system/comment_style.py`
@@ -48,7 +51,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 3: Gates and report consumption (FR-004)
 <!-- Checkpoint: make audit-status and make comment-style exit zero; ARGS=--json modes emit one parseable object; the local hook and dedicated CI job run; cairn report --json carries quality_gates; docs name the shipped surfaces -->
-- [ ] T004 (after T002, T003 — consumes command interfaces `uv run --no-sync python -m cairn.cli.system.audit_status --json` and `uv run --no-sync python -m cairn.cli.system.comment_style --json` plus the initialized baseline) Wire phony `audit-status`, `comment-style`, and baseline-shrink Make targets with `ARGS` forwarding; add the local `check-comment-lengths` pre-commit hook; and add a dedicated `quality-ratchet` CI job that runs both human gates and parses both JSON outputs (FR-003, FR-004, NFR-003, NFR-005)
+- [x] T004 (implemented) (after T002, T003 — consumes command interfaces `uv run --no-sync python -m cairn.cli.system.audit_status --json` and `uv run --no-sync python -m cairn.cli.system.comment_style --json` plus the initialized baseline) Wire phony `audit-status`, `comment-style`, and baseline-shrink Make targets with `ARGS` forwarding; add the local `check-comment-lengths` pre-commit hook; and add a dedicated `quality-ratchet` CI job that runs both human gates and parses both JSON outputs (FR-003, FR-004, NFR-003, NFR-005)
+  - done 2026-10-06 — make/pre-commit/CI wiring PASS; hook green --all-files; ci.yml valid; TC-009/010/016 PASS
   - Survey basis: FR-003 records no hook or checker job; the Makefile inventory contains no quality targets.
   - Touches:
     - `./Makefile`
@@ -57,7 +61,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Verify before implementing: `grep -n 'comment' .pre-commit-config.yaml .github/workflows/ci.yml`
   - Proof when complete: `make audit-status`, `make comment-style`, both `ARGS=--json` variants, and `uv run --no-sync pre-commit run check-comment-lengths --all-files` exit zero; workflow schema remains valid.
 
-- [ ] T005 (after T002, T003 — consumes `collect_audit_status(root: Path) -> dict` and `check_comment_baseline(root: Path, baseline_path: Path) -> dict`) Extend `_build_report` in `src/cairn/cli/system/report.py` with a count-only nested `quality_gates` section, render the equivalent human lines, preserve never-raise behavior outside a source checkout, and pin the JSON/human shapes with fixture quality roots in `tests/test_report.py` (FR-004, NFR-005)
+- [x] T005 (implemented) (after T002, T003 — consumes `collect_audit_status(root: Path) -> dict` and `check_comment_baseline(root: Path, baseline_path: Path) -> dict`) Extend `_build_report` in `src/cairn/cli/system/report.py` with a count-only nested `quality_gates` section, render the equivalent human lines, preserve never-raise behavior outside a source checkout, and pin the JSON/human shapes with fixture quality roots in `tests/test_report.py` (FR-004, NFR-005)
+  - done 2026-10-06 — 15 report tests + TC-015 PASS; quality_gates live in --json and human modes
   - Survey basis: FR-004 records no audit/comment fields in the existing report bundle; `_build_report` and `report` are the only direct implementation path cited.
   - Touches:
     - `src/cairn/cli/system/report.py`
@@ -65,7 +70,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Verify before implementing: `rg -n 'audit|comment_violation' src/cairn/cli/system/report.py`
   - Proof when complete: `uv run pytest tests/test_report.py -q` passes and `cairn report --json` carries audit total/remaining/by-priority plus comment remaining without paths or raw errors.
 
-- [ ] T006 (after T004, T005 — documents the shipped `audit-status`, `comment-style`, `ARGS=--json`, baseline-shrink, hook, CI job, and `quality_gates` surfaces) Document the two maintainer workflows and link the relocated audit from the docs index, with a concise CHANGELOG entry for the new ratchet (FR-004, NFR-005)
+- [x] T006 (implemented) (after T004, T005 — documents the shipped `audit-status`, `comment-style`, `ARGS=--json`, baseline-shrink, hook, CI job, and `quality_gates` surfaces) Document the two maintainer workflows and link the relocated audit from the docs index, with a concise CHANGELOG entry for the new ratchet (FR-004, NFR-005)
+  - done 2026-10-06 — docs + CHANGELOG landed; 21/21 TCs green (19 auto + 2 manual); regression 4013 passed / 5 skipped; mutation 31/40 killed, survivors adjudicated D-011
   - Survey basis: FR-004 records no consumer documentation for these outputs; docs/README.md currently has no audits index entry.
   - Touches:
     - `README.md`

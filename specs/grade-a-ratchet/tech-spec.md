@@ -326,3 +326,30 @@ exact-shape test with a fixture quality root.
   surface rather than introducing a pass-through `system` command group.
 - **Consequences**: The spec's report consumer is served by the current CLI
   surface with no duplicate command path or new routing layer.
+
+## Decisions appended during delivery
+
+### D-008: Sibling-spec authoring surface stays out of C1
+- **Context**: The scope diff flags 12 unmentioned paths — the `specs/grade-a-guardrails/` authoring tree and `specs/INDEX.md`.
+- **Decision**: Exclude the guardrails tree from this spec's implementation commit; it is a separate approved spec committing on its own branch. `specs/INDEX.md` carries only the committed docset registration line.
+- **Consequences**: C1 stays scoped to ratchet files; the guardrails delivery records its own INDEX line. No product code is affected.
+
+### D-009: CLI output prints are the product contract
+- **Context**: The cleanliness sweep flags 15 `print()` calls in `audit_status.py` and `comment_style.py` as debug-print suspects.
+- **Decision**: All are the modules' CLI output contract — human rows and `--json` payloads on stdout, errors on stderr — required by FR-002/FR-003/NFR-005.
+- **Consequences**: No change; the sweep heuristic cannot distinguish CLI output from debug prints and these are adjudicated as product behavior.
+
+### D-010: Landed CLI spellings supersede the sketch
+- **Context**: The landed CLI spells writer flags `--init`/`--update` and check JSON `{ok, remaining, new, stale}`; earlier contract text named `--initialize-baseline`/`--update-baseline` and a wider shape.
+- **Decision**: Keep the landed spellings and reduced shape — Makefile, docs, CI, and tests pin them; the extra fields were speculative. Reviewer WARN-1/WARN-2 dispositioned; NIT-4 (TC-014 digit-check looseness) parked: test.md is frozen post-approval and the unit suite pins the type.
+- **Consequences**: The frozen contract text stands corrected by this decision only; no behavior change.
+
+### D-011: Mutation survivors adjudicated as oracle-scope artifacts
+- **Context**: Mutation run killed 31/40 (cap); 9 survived under the TC-command oracle.
+- **Decision**: Survivors are oracle-scope artifacts or non-contractual formatting: the suspicious parser mutant (`And→Or` at the table-header guard) fails 16/20 unit tests when applied by hand; the rest are output constants no contract pins. The harness runs test.md commands only; pytest remains the stronger oracle and the regression gate.
+- **Consequences**: No test additions required by this pass; the unit suite is credited as the killing oracle.
+
+### D-012: runpy import warning parked
+- **Context**: Reviewer NIT-5 — `python -m cairn.cli.system.audit_status|comment_style` emits a runpy double-import RuntimeWarning on stderr because the package `__init__` eagerly imports `report`, which imports the collectors.
+- **Decision**: Park: stdout (the contractual surface) is unaffected; a late-pass import-graph reshuffle is not worth the regression risk. Fix opportunistically in the comment-sweep follow-up spec.
+- **Consequences**: Cosmetic stderr noise on make/hook/CI invocations only.
