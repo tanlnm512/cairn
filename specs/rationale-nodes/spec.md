@@ -1,67 +1,130 @@
-# Spec: <name>
+# Spec: rationale-nodes
 
-**Status**: draft          <!-- draft while writing → approved at the approve gate
-                                (explicit user sign-off — a human gate, never
-                                auto-satisfied) → active once the first task spawns
-                                → done when all tasks are ticked and `check.py`
-                                re-runs green -->
-**Effort**: standard       <!-- tiny | standard | large (SKILL.md § Effort scaling):
-                                standard = ONE merged design spawn authors
-                                plan/tech-spec/test/task (D-024); large = the full
-                                plan ∥ tech ∥ qa wave + a separate tasks wave; tiny =
-                                all-inline. Gates and audits are identical at every
-                                tier. Bump to large for multi-area, auth,
-                                persistence, migration, or research-heavy work. -->
-**Created**: YYYY-MM-DD
-**Branch**: `<type>/<name>`
+**Status**: draft
+**Effort**: standard
+**Created**: 2026-10-05
+**Branch**: `feat/rationale-nodes`
 
 ## What
-<One paragraph: the capability being built, in user-visible terms. No stack, no file names.>
+Index the "why" that already lives in code: comments marked `NOTE:`, `WHY:`,
+or `HACK:` become rationale records linked to the innermost enclosing
+symbol (or the file when top-level), persisted in an additive `rationale`
+table during the normal build, queryable via `cairn rationale`, and
+surfaced in explore output. No new MCP tool — the tool count stays fixed.
 
 ## Why
-<The problem or opportunity. What breaks, or what's missed, without this.>
+Design intent concentrates in inline comments, and the graph never sees
+them: an agent navigating to a symbol gets its signature and body but not
+the constraint comment three lines up explaining why the code is shaped
+that way. Docstrings are already indexed; marker comments — the ones
+engineers actually write constraints in — are not. This indexes what
+already exists; it does not encourage writing new rationale in code.
 
 ## Business value
-<Who benefits and how success is measured — measurable outcomes, not features.>
+Agents gain constraint awareness at navigation time without grepping; the
+knowledge graph covers the why-layer of a codebase for the cost of one
+table and some CST-walk work. Success: a build of the cairn repo itself
+produces rationale records for existing marker comments, attributed to
+their enclosing symbols, visible in `cairn rationale` and explore output.
 
 ## User stories
-<!-- Ordered by priority; each independently demoable. -->
-### US1 — <title> (P1)
-As a <persona>, I want <capability>, so that <benefit>.
+### US1 — Extraction at build (P1)
+As a user, I want marker comments captured during the normal build, so that
+no extra step is needed.
 
 **Acceptance criteria** (each traces to an FR below):
-- AC1: Given <initial state>, When <action>, Then <observable outcome>.
-- AC2: Given <initial state>, When <action>, Then <observable outcome>.
+- AC1: Given a file containing `# NOTE:`/`# WHY:`/`# HACK:` comments (or the
+  language's comment syntax), When `cairn build` runs, Then the `rationale`
+  table holds one record per marker comment with kind and text.
+- AC2: Given a marker comment inside a function's span, When the build
+  runs, Then the record is attributed to that symbol; given one at
+  top level, Then it is attributed to the file (symbol NULL).
 
-### US2 — <title> (P2)
-...
+### US2 — Query (P2)
+As an agent, I want to list the rationale for a symbol or file, so that
+constraints are visible before editing.
+
+**Acceptance criteria**:
+- AC1: Given rationale records for a symbol, When `cairn rationale
+  --symbol SYMBOL` runs, Then the records print ordered by line with kind
+  tags.
+
+### US3 — Explore surfacing (P2)
+As an agent using explore, I want rationale attached to the symbols I
+query, so that the constraint is in context without a second call.
+
+**Acceptance criteria**:
+- AC1: Given symbols with rationale records, When explore runs, Then a
+  "Rationale" section lists them; given none, Then no section appears.
+
+### US4 — Incremental honesty (P2)
+As a user running `cairn update`, I want rationale kept fresh, so that
+removed comments don't linger.
+
+**Acceptance criteria**:
+- AC1: Given a reindexed file, When the incremental update completes, Then
+  that file's rationale rows are exactly what its current comments imply.
 
 ## Requirements
-<!-- EARS-shaped SHALL statements. Standing requirements use the
-     ubiquitous pattern ("The system shall X"); the rest use WHEN / IF …
-     THEN / WHERE patterns. One verb, one system, testable. If the
-     request doesn't pin something down, mark it NEEDS CLARIFICATION —
-     never guess. -->
-- **FR-001**: The system shall <standing capability>.
-- **FR-002**: WHEN <trigger>, the system shall <response>.
-- **FR-003**: IF <unwanted condition>, then the system shall <safe behavior>.
-- **FR-004**: WHERE <optional feature is included>, the system shall <behavior>.
-- **FR-005**: The system shall [NEEDS CLARIFICATION: <the open question — e.g. auth method not specified>]
+- **FR-001**: The build shall extract comments whose text begins with
+  `NOTE:`, `WHY:`, or `HACK:` (after the comment opener and optional
+  whitespace) in every language whose parser the registry supports with a
+  mapped comment node type, and shall persist them in an additive
+  `rationale` table (id, file_id, symbol_id nullable, line, kind, text).
+- **FR-002**: Attribution shall attach a record to the innermost enclosing
+  callable or type whose span contains the comment line; otherwise
+  symbol_id is NULL (file-level).
+- **FR-003**: The system shall provide `cairn rationale` with
+  `--symbol`/`--file` filters, printing records ordered by line with kind
+  tags.
+- **FR-004**: Explore output shall include a "Rationale" section when any
+  queried symbol has rationale records, and omit it otherwise; the MCP tool
+  count shall not change.
+- **FR-005**: Docstrings shall not produce rationale records (they are
+  already captured on the symbol).
+- **FR-006**: WHERE a language has no mapped comment node type, the build
+  shall produce no rationale records for it and SHALL NOT fail.
+- **FR-007**: Incremental reindex and `cairn update` shall delete and
+  re-derive the affected files' rationale rows together with their
+  symbols/edges.
+- **FR-008**: `TODO:`/`FIXME:` markers are explicitly out of scope and
+  shall not be captured.
 
 ## Quality attributes
-<!-- Triage every family. An applicable NFR is EARS-shaped and traces to a
-     task and TC like an FR. An inapplicable NFR must say why. -->
-- **NFR-001**: Security — applicable: The system shall <security quality constraint>.
-- **NFR-002**: Privacy — applicable: The system shall <privacy/data-handling constraint>.
-- **NFR-003**: Performance — not applicable: <why this feature introduces no performance-sensitive path>.
-- **NFR-004**: Reliability — not applicable: <why no new failure/recovery contract is needed>.
-- **NFR-005**: Observability — not applicable: <why no new signal is required>.
-- **NFR-006**: Accessibility — not applicable: <why no user-facing surface is touched>.
+- **NFR-001**: Security — not applicable: local index data only, no new
+  surface.
+- **NFR-002**: Privacy — not applicable: rationale text is repo content
+  already indexed elsewhere; nothing leaves the store.
+- **NFR-003**: Performance — applicable: WHEN the build runs with
+  rationale extraction, the per-file overhead shall be negligible (comment
+  scan rides the existing CST walk; no second pass over the tree).
+- **NFR-004**: Reliability — not applicable: additive table, rebuildable
+  from source, no new failure contract.
+- **NFR-005**: Observability — not applicable: build summary may report
+  rationale counts; no new signal required.
+- **NFR-006**: Accessibility — not applicable: no UI surface is touched.
 
 ## Scope
-**In**: ...
-**Out (deferred)**: ...        <!-- explicit non-goals; deferred ≠ forgotten -->
+**In**: comment-node-type map per supported language; extraction in the
+shared parser walk; additive `rationale` table; `cairn rationale` CLI;
+explore "Rationale" section; incremental delete/re-derive; docs.
+**Out (deferred)**: `TODO:`/`FIXME:` capture; ADR/design-doc citation
+linking (concept-space-unification spec's territory); compass/wiki
+integration beyond optional counts; rationale for languages outside the
+parser registry; any MCP tool surface change.
 
 ## Assumptions & risks
-- Assumption: <default chosen because input was silent>
-- Risk: <what could invalidate this spec> — mitigation: <...>
+- Assumption: every registry language has a stable comment node type
+  nameable per grammar (e.g. `comment`, `line_comment`); verified per
+  language with a tiny parse in tech-spec, with the map table as the
+  single source.
+- Risk: marker comments above a definition (e.g. directly preceding a
+  function) fall outside its span and would be file-attributed —
+  mitigation: attribution rule is span-containment only, pinned with
+  fixture tests; a follow-up can add look-ahead if it proves useful.
+- Risk: multi-line marker comments could duplicate records per line —
+  mitigation: one record per comment node; continuation lines fold into
+  the text.
+- Risk: per-language parser variance (the generic tier vs dedicated
+  parsers) — mitigation: extraction lives in the shared walk with the map
+  consulted per language, not per parser copy.
