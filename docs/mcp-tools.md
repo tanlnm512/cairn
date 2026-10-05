@@ -2,7 +2,7 @@
 
 ← [Docs index](README.md)
 
-Read this when you need the tool surface: what the 25 tools are, how they're
+Read this when you need the tool surface: what the 26 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
 "Tool Quirks" table in [AGENTS.md](../AGENTS.md) — it is kept there so every
 agent session loads it.
@@ -12,7 +12,7 @@ agent session loads it.
 - Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
 - Transports: **stdio** (default, one process per client) or **SSE daemon**
   on `:9876` (`cairn serve start|stop|status|restart`, `run` for foreground).
-- Boot sequence (`server.py:run`): verify exactly 25 tools registered →
+- Boot sequence (`server.py:run`): verify exactly 26 tools registered →
   parent-death watchdog (stdio) → boot catch-up reindex (`ensure_fresh_force`)
   → memory decay → live file watcher (`[watch]` extra).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
@@ -20,7 +20,7 @@ agent session loads it.
 - `CAIRN_READ_ONLY=1` makes the server refuse write tools.
 - Resource `cairn://status` exposes live server status.
 
-## The 25 tools by layer
+## The 26 tools by layer
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-components-dark.png">
@@ -30,7 +30,7 @@ agent session loads it.
 Open [diagrams/c4-components.html](diagrams/c4-components.html) for the
 full-size version.
 
-**L1 — Graph** (`tools_graph.py`, 11):
+**L1 — Graph** (`tools_graph.py`, 12):
 
 | Tool | Purpose |
 |---|---|
@@ -44,6 +44,7 @@ full-size version.
 | `file_api` | body-free symbol records for one indexed file; `signature` is null when unavailable |
 | `cross_repo_deps` | cross-repo consumers of a repo's API |
 | `visualize_graph` | Mermaid/DOT/JSON rendering of a subgraph |
+| `path` | shortest structural path between two symbols over the live graph (same hop chain the `cairn path` CLI prints) |
 
 **L1 — Federation** (`tools_federation.py`, 1):
 

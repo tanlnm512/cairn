@@ -49,6 +49,7 @@ are read at process start, not per call.
 | `cairn ask "<question>"` | natural-language query across layers (`--all-repos` fans out across registered stores) |
 | `cairn federated-search "QUERY"` | cross-store semantic search with per-repo attribution (`--limit`, `--json`, `--shared-embed`) |
 | `cairn pack --task "<text>" --budget <N>` | one-shot token-budgeted context block (`--json`; drops lowest-centrality content first and reports counts) |
+| `cairn path --from <pattern> --to <pattern>` | shortest structural path between symbols (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk; `--limit` caps printed paths; patterns are case-insensitive substrings of a symbol or qualified name) |
 | `cairn taint --from <pattern> --to <pattern>` | inter-procedural taint path trace (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk) |
 | `cairn review` | review loop: `--base <ref>` context pack, `--pre-submit [--gate]` memory guard, `--capture-event <file>` comment capture |
 | `cairn context <file>` | compass + memory context for a file |

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, Mapping, Optional
+from typing import Iterable, Iterator, Mapping, Optional, TypeVar
 
 from .dataflow import CLOSURE_MAX_DEPTH
 from .traversal import STRUCTURAL_EDGE_KINDS
+
+# Shared default for the number of paths the CLI and MCP path surfaces print.
+DEFAULT_PATH_LIMIT = 50
 
 DEFAULT_SOURCES: dict[str, set[str]] = {
     "http": {"urlopen"},
@@ -92,6 +95,23 @@ class TaintPath:
     hops: list[TaintHop]
 
 
+@dataclass(frozen=True)
+class PathHop:
+    """One hop of a symbol path: file, definition line, symbol name, and the resolution of the reaching edge."""
+
+    file: str
+    line: Optional[int]
+    symbol: str
+    resolution: str
+
+
+@dataclass(frozen=True)
+class SymbolPath:
+    """A seed-to-seed symbol path, hops ordered from origin to destination."""
+
+    hops: list[PathHop]
+
+
 # Seeding only follows call edges: a source/sink match is a call event, so
 # class-hierarchy edges never seed or terminate a path.
 _CALL_EDGE_KINDS: tuple[str, ...] = ("calls", "call")
@@ -158,6 +178,61 @@ def intersect_seeds(
     ]
 
 
+def find_symbol_paths(
+    conn: sqlite3.Connection,
+    from_ids: set[str],
+    to_ids: set[str],
+    fuzzy: bool = False,
+    max_depth: int = CLOSURE_MAX_DEPTH,
+) -> list[SymbolPath]:
+    """Shortest structural path per (from, to) symbol-id pair over ``edges``.
+
+    Seeds are resolved symbol ids; an empty or unknown seed set yields no
+    paths. Only exact-resolution edges are followed unless ``fuzzy`` also
+    follows ambiguous/unresolved edges by their preserved target name.
+    ``max_depth`` is the edge budget between endpoints and the walk is
+    deterministic for an unchanged graph.
+    """
+    if not from_ids or not to_ids:
+        return []
+    entries = _seed_rows(conn, from_ids)
+    terminator_ids = {row["id"] for row in _seed_rows(conn, to_ids)}
+    if not entries or not terminator_ids:
+        return []
+    paths = [
+        SymbolPath(hops=hops)
+        for entry in entries
+        for hops in _paths_from_seed(conn, entry, terminator_ids, fuzzy, max_depth)
+    ]
+    paths.sort(
+        key=lambda path: (
+            path.hops[0].file,
+            path.hops[0].symbol,
+            path.hops[-1].file,
+            path.hops[-1].symbol,
+        )
+    )
+    return paths
+
+
+def resolve_pattern_symbols(
+    conn: sqlite3.Connection, pattern: str
+) -> list[sqlite3.Row]:
+    """Symbols whose name or qualified name contains ``pattern``, case-insensitively,
+    in deterministic (file, name, id) order."""
+    return conn.execute(
+        """
+        SELECT s.id, s.name, s.qualified_name, f.path AS file
+        FROM symbols s
+        JOIN files f ON f.id = s.file_id
+        WHERE instr(lower(s.name), lower(?)) > 0
+           OR instr(lower(coalesce(s.qualified_name, '')), lower(?)) > 0
+        ORDER BY f.path, s.name, s.id
+        """,
+        (pattern, pattern),
+    ).fetchall()
+
+
 def _pattern_names(pattern: str, table: Mapping[str, Iterable[str]]) -> set[str]:
     """Resolve a query pattern: category token, exact call name, or nothing."""
     if pattern in table:
@@ -204,6 +279,25 @@ def _symbols_calling(conn: sqlite3.Connection, names: set[str]) -> list[sqlite3.
         """,
         (*names, *_CALL_EDGE_KINDS),
     ).fetchall()
+
+
+def _seed_rows(conn: sqlite3.Connection, ids: set[str]) -> list[sqlite3.Row]:
+    """Seed symbols by id, in deterministic (file, name, id) order."""
+    rows: list[sqlite3.Row] = []
+    for chunk in _chunked(sorted(ids)):
+        ph = ",".join("?" * len(chunk))
+        rows.extend(
+            conn.execute(
+                f"""
+                SELECT s.id, s.name, s.line_start, f.path AS file
+                FROM symbols s
+                JOIN files f ON f.id = s.file_id
+                WHERE s.id IN ({ph})
+                """,
+                tuple(chunk),
+            ).fetchall()
+        )
+    return sorted(rows, key=lambda row: (row["file"], row["name"] or "", row["id"]))
 
 
 def _paths_from_entry(
@@ -258,11 +352,69 @@ def _paths_from_entry(
     return paths
 
 
+def _paths_from_seed(
+    conn: sqlite3.Connection,
+    entry: sqlite3.Row,
+    terminator_ids: set[str],
+    fuzzy: bool,
+    max_depth: int,
+) -> list[list[PathHop]]:
+    """Shortest hop chain per terminator reachable from one seed symbol.
+
+    Unlike the taint walk, a terminator is expanded through after its path
+    is recorded, so pairs whose shortest route crosses another destination
+    still resolve at their true depth.
+    """
+    paths: list[list[PathHop]] = []
+    # hop id -> (previous hop id or None, rendered hop)
+    parent: dict[str, tuple[Optional[str], PathHop]] = {
+        entry["id"]: (
+            None,
+            PathHop(entry["file"], entry["line_start"], entry["name"], "exact"),
+        )
+    }
+    if entry["id"] in terminator_ids:
+        paths.append(_hop_chain(entry["id"], parent))
+    visited = {entry["id"]}
+    frontier = [entry["id"]]
+    depth = 0
+
+    def visit(row: sqlite3.Row, next_frontier: list[str]) -> None:
+        hop_id = row["hop_id"]
+        if hop_id in visited:
+            return
+        visited.add(hop_id)
+        parent[hop_id] = (
+            row["source_id"],
+            PathHop(
+                row["hop_file"], row["hop_line"], row["hop_name"], row["resolution"]
+            ),
+        )
+        if hop_id in terminator_ids:
+            paths.append(_hop_chain(hop_id, parent))
+        next_frontier.append(hop_id)
+
+    while frontier and depth < max_depth:
+        next_frontier: list[str] = []
+        for chunk in _chunked(frontier):
+            for row in _exact_neighbors(conn, chunk):
+                visit(row, next_frontier)
+            if fuzzy:
+                for row in _fuzzy_neighbors(conn, chunk):
+                    visit(row, next_frontier)
+        frontier = next_frontier
+        depth += 1
+    return paths
+
+
+_HopT = TypeVar("_HopT")
+
+
 def _hop_chain(
-    hop_id: str, parent: dict[str, tuple[Optional[str], TaintHop]]
-) -> list[TaintHop]:
+    hop_id: str, parent: dict[str, tuple[Optional[str], _HopT]]
+) -> list[_HopT]:
     """Walk parent links back to the entry and return entry-first hops."""
-    hops: list[TaintHop] = []
+    hops: list[_HopT] = []
     cursor: Optional[str] = hop_id
     while cursor is not None:
         previous, hop = parent[cursor]
@@ -281,14 +433,17 @@ def _exact_neighbors(
     return conn.execute(
         f"""
         SELECT DISTINCT e.source_id, e.resolution,
-               s.id AS hop_id, s.name AS hop_name, f.path AS hop_file
+               s.id AS hop_id, s.name AS hop_name, f.path AS hop_file,
+               s.line_start AS hop_line
         FROM edges e
         JOIN symbols s ON s.id = e.target_id
         JOIN files f ON f.id = s.file_id
+        JOIN symbols src ON src.id = e.source_id
+        JOIN files src_file ON src_file.id = src.file_id
         WHERE e.source_id IN ({id_ph})
           AND e.resolution = 'exact'
           AND e.kind IN ({kind_ph})
-        ORDER BY s.name, f.path, s.id
+        ORDER BY s.name, f.path, s.id, src.name, src_file.path, src.id
         """,
         (*source_ids, *STRUCTURAL_EDGE_KINDS),
     ).fetchall()
@@ -308,7 +463,8 @@ def _fuzzy_neighbors(
     return conn.execute(
         f"""
         SELECT DISTINCT e.source_id, e.resolution,
-               s.id AS hop_id, s.name AS hop_name, f.path AS hop_file
+               s.id AS hop_id, s.name AS hop_name, f.path AS hop_file,
+               s.line_start AS hop_line
         FROM edges e
         JOIN symbols s ON s.name = e.target_name
         JOIN files f ON f.id = s.file_id
@@ -318,7 +474,7 @@ def _fuzzy_neighbors(
           AND e.resolution IN ('ambiguous', 'unresolved')
           AND e.kind IN ({kind_ph})
           AND src_file.repo_id = f.repo_id
-        ORDER BY s.name, f.path, s.id
+        ORDER BY s.name, f.path, s.id, src.name, src_file.path, src.id
         """,
         (*source_ids, *STRUCTURAL_EDGE_KINDS),
     ).fetchall()

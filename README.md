@@ -19,7 +19,7 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
 graph** (15 languages), fuses it with **code-grounded tribal memory**, compass,
-and wiki, and serves all of it through one MCP server (25 tools) + a `cairn`
+and wiki, and serves all of it through one MCP server (26 tools) + a `cairn`
 CLI. The product is a **verification contract**: every `exact` edge is actually
 resolved, every symbol in a synthesized doc is graph-verified by a
 deterministic critic, and the LLM never sits in the query path.
@@ -347,11 +347,11 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## MCP Tools
 
-25 tools across four layers — same store as the CLI:
+26 tools across four layers — same store as the CLI:
 
 | Layer | Tools |
 |-------|-------|
-| **graph** (12) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `federated_search` (cross-store), `visualize_graph` |
+| **graph** (13) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `path` (shortest structural path between two symbols), `federated_search` (cross-store), `visualize_graph` |
 | **compass + knowledge base** (5) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
 | **memory** (2) | tribal memory: `recall_memory`, `record_memory` (lifecycle verbs are CLI-only: `cairn memory digest|evolve|promote|demote|forget|decay`) |
 | **knowledge** (6) | OKF business docs / workflows: add / search / status / delete / `trace_workflow` / `wiki_generate` |

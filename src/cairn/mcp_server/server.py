@@ -46,7 +46,7 @@ from . import tools_memory   # noqa: F401
 from . import tools_wiki     # noqa: F401
 
 # Expected tool count - assertion fires if tools are missing due to import issues
-_EXPECTED_TOOL_COUNT = 25
+_EXPECTED_TOOL_COUNT = 26
 
 
 def _drain_buffered_telemetry() -> None:

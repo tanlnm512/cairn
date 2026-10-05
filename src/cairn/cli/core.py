@@ -279,7 +279,9 @@ def config(list_all, mcp_config, db_only, as_json):
 @click.option("--staging", is_flag=True, help="Build to temp DB and atomic-swap for zero downtime.")
 @click.option("--lsp", is_flag=True,
               help="Upgrade ambiguous Python calls with pyright when available.")
-def build(repo, workspace, db, verbose, staging, lsp):
+@click.option("--with-closure", is_flag=True,
+              help="Materialize the transitive closure (skipped by default).")
+def build(repo, workspace, db, verbose, staging, lsp, with_closure):
     """Build (or rebuild) the code graph."""
     from . import display
 
@@ -336,9 +338,10 @@ def build(repo, workspace, db, verbose, staging, lsp):
             # settle it before the derived-index phases.
             r.finish("done")
 
-            # Derived indexes: dataflow + transitive closure. Dataflow calls
-            # impact_analysis per public symbol and can be slow on large workspaces,
-            # so it gets its own animated sub-step. Transitive closure is pure SQL.
+            # Derived indexes: dataflow always; transitive closure only under
+            # --with-closure. Dataflow calls impact_analysis per public symbol
+            # and can be slow on large workspaces, so it gets its own animated
+            # sub-step. Transitive closure is pure SQL.
             df_count = tc_count = None
             df_error = None
             conn = None
@@ -364,12 +367,14 @@ def build(repo, workspace, db, verbose, staging, lsp):
                         conn, progress=lambda done: r.tick(f"{done:,}/{pub_total:,}")
                     )
                     r.finish(f"{df_count:,} symbols")
-                    r.start("Transitive closure")
-                    tc_count = build_transitive_closure(conn)
-                    r.finish(f"{tc_count:,} edges")
+                    if with_closure:
+                        r.start("Transitive closure")
+                        tc_count = build_transitive_closure(conn)
+                        r.finish(f"{tc_count:,} edges")
                 else:
                     df_count = 0
-                    tc_count = build_transitive_closure(conn)
+                    if with_closure:
+                        tc_count = build_transitive_closure(conn)
 
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             except Exception as e:
@@ -462,7 +467,9 @@ def build(repo, workspace, db, verbose, staging, lsp):
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE, help="Workspace root.")
 @click.option("--db", default=None,
               help="SQLite DB path (default: central store for this workspace).")
-def import_scip(scip_file, workspace, db):
+@click.option("--with-closure", is_flag=True,
+              help="Rebuild the transitive closure after import (skipped by default).")
+def import_scip(scip_file, workspace, db, with_closure):
     """Import a SCIP index into an already-built graph as an edges-only overlay."""
     from ..paths import resolve_store
 
@@ -488,11 +495,13 @@ def import_scip(scip_file, workspace, db):
                 f"the graph — check that --workspace/--db point at the workspace "
                 f"this index covers"
             )
-        # The import replaces calls/references edges; transitive_edges must be
-        # rebuilt or multi-hop queries (impact_analysis, callers) stay stale.
-        from ..graph.dataflow import build_transitive_closure
+        # The import replaces calls/references edges; a materialized closure
+        # must be rebuilt after the replacement or multi-hop queries
+        # (impact_analysis, callers) read stale rows.
+        if with_closure:
+            from ..graph.dataflow import build_transitive_closure
 
-        build_transitive_closure(conn)
+            build_transitive_closure(conn)
     except ImportError as e:
         raise click.ClickException(str(e)) from e
     finally:

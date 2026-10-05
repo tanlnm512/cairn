@@ -1,4 +1,4 @@
-"""L1 graph MCP tools: find_definition, get_callers, get_callees, impact_analysis, explore, semantic_search, search_symbols, repo_map, file_api, cross_repo_deps, plus visualize_graph (a graph renderer, filed under L4 but structurally belongs with the graph-query tools)."""
+"""L1 graph MCP tools: find_definition, get_callers, get_callees, impact_analysis, path, explore, semantic_search, search_symbols, repo_map, file_api, cross_repo_deps, plus visualize_graph (a graph renderer, filed under L4 but structurally belongs with the graph-query tools)."""
 from __future__ import annotations
 
 import logging
@@ -8,6 +8,7 @@ import sqlite3
 
 from mcp.types import ToolAnnotations
 
+from ..graph.taint import CLOSURE_MAX_DEPTH, DEFAULT_PATH_LIMIT
 from ._server_core import (
     _append_embed_degradation_footnote,
     _bundle,
@@ -425,6 +426,70 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
         consumer_list = ", ".join(f"{d['repo']} (x{d['count']})" for d in dependents[:5])
         out.append(f"Cross-repo: {len(dependents)} repo(s) depend — {consumer_list}")
     return _prepend_banner("\n".join(out), data.get("stale_banner", ""))
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
+@instrument
+def path(
+    from_pattern: str, to_pattern: str, fuzzy: bool = False, max_depth: int = CLOSURE_MAX_DEPTH, limit: int = DEFAULT_PATH_LIMIT
+) -> str:
+    """Trace the shortest structural path between two symbols over the live graph.
+
+    Endpoints accept name or qualified-name patterns, matched as
+    case-insensitive substrings ("Auth" matches AuthController.login). One
+    shortest path per resolved (from, to) pair, printed as the same numbered
+    hop-chain blocks the `cairn path` CLI prints. Traverses exact-resolution
+    structural edges (calls/extends/implements); fuzzy=True also follows
+    ambiguous/unresolved hops by their preserved target name. max_depth is
+    the edge budget between endpoints (default CLOSURE_MAX_DEPTH); limit caps
+    printed paths (default DEFAULT_PATH_LIMIT).
+
+    Example:
+        path("chain_a", "chain_d")
+        ->  path 1 (chain_a -> chain_d, 4 hops):
+              chain.py:4 chain_a [exact]
+              chain.py:8 chain_b [exact]
+              chain.py:12 chain_c [exact]
+              chain.py:16 chain_d [exact]
+    """
+    from cairn.graph.taint import find_symbol_paths, resolve_pattern_symbols
+
+    max_depth = _clamp(max_depth, 1, 10)  # bound LLM-supplied value at the boundary
+    limit = _clamp(limit, 1, 1000)        # bound LLM-supplied value at the boundary
+    conn = _conn()
+    try:
+        freshness = _fresh_graph(conn)
+        from_ids = {row["id"] for row in resolve_pattern_symbols(conn, from_pattern)}
+        to_ids = {row["id"] for row in resolve_pattern_symbols(conn, to_pattern)}
+        paths = find_symbol_paths(conn, from_ids, to_ids, fuzzy=fuzzy, max_depth=max_depth)
+    finally:
+        conn.close()
+
+    if not from_ids or not to_ids:
+        missing = [
+            f"no symbols match {side} pattern '{pattern}'"
+            for side, pattern, ids in (
+                ("from", from_pattern, from_ids),
+                ("to", to_pattern, to_ids),
+            )
+            if not ids
+        ]
+        return _with_freshness("\n".join(missing), freshness)
+    if not paths:
+        return _with_freshness(
+            f"no path within {max_depth} hops from '{from_pattern}' to '{to_pattern}'",
+            freshness,
+        )
+    out = []
+    for number, symbol_path in enumerate(paths[:limit], start=1):
+        out.append(
+            f"path {number} ({from_pattern} -> {to_pattern}, "
+            f"{len(symbol_path.hops)} hops):"
+        )
+        for hop in symbol_path.hops:
+            line = hop.line if hop.line is not None else "?"
+            out.append(f"  {hop.file}:{line} {hop.symbol} [{hop.resolution}]")
+    return _with_freshness("\n".join(out), freshness)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))

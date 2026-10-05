@@ -26,6 +26,7 @@ from . import knowledge    # noqa: F401
 from . import map          # noqa: F401
 from . import memory       # noqa: F401
 from . import pack         # noqa: F401
+from . import paths        # noqa: F401
 from . import query        # noqa: F401
 from . import review       # noqa: F401
 from . import serve        # noqa: F401

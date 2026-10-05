@@ -617,9 +617,9 @@ def test_update_uses_incremental_maintenance_not_full_rebuild(tmp_path, monkeypa
 
 
 def test_update_falls_back_to_full_rebuild_when_derived_never_built(tmp_path, monkeypatch):
-    """An empty derived table (ancient/never-built DB) cannot be maintained --
-    there is no pre-state to compute an affected set from -- so the update
-    must fall back to the full build."""
+    """An empty dataflow table has no pre-state to compute an affected set
+    from, so the update must fall back to the full rebuild -- and a store
+    with a closure keeps its closure leg in that fallback."""
     from cairn.graph import dataflow as dataflow_mod
 
     repo, _tick = _make_corpus(tmp_path)
@@ -628,7 +628,6 @@ def test_update_falls_back_to_full_rebuild_when_derived_never_built(tmp_path, mo
 
     conn = get_db(db)
     try:
-        conn.execute("DELETE FROM transitive_edges")
         conn.execute("DELETE FROM dataflow")
         conn.commit()
     finally:

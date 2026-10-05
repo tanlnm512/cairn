@@ -12,14 +12,14 @@ each build finishes in seconds on a laptop):
 - `chain/` — four tiny modules where `chain_a` calls `chain_b`, `chain_b`
   calls `chain_c`, `chain_c` calls `chain_d`: a unique three-hop shortest
   path with no shortcuts.
-- `depth/` — `dep_entry` reaches `dep_target` in two hops (through one
-  intermediate) and also in three hops (through two others): a decoy longer
-  route that a first-found walk could report instead of the shortest.
+- `depth/` — `dep_entry` reaches `dep_target` in two hops through either of
+  two intermediates: a diamond whose equal-length routes make a first-found
+  walk's reported depth order-dependent.
 - `fork/` — `hub_top` calls `mid_left` and `mid_right`, and both call
   `hub_sink`: two equally short routes for one pair (a tie).
-- `islands/` — two disjoint components (`isle_a_one` → `isle_a_two` and
-  `isle_b_one` → `isle_b_two`) with no edge between them.
-- `fanout/` — 60 independent entry symbols `fan_01`–`fan_60`, each calling
+- `islands/` — two disjoint components (`isl_a1` → `isl_a2` and
+  `isl_b1` → `isl_b2`) with no edge between them.
+- `fanout/` — 60 independent entry symbols `fan_0`–`fan_59`, each calling
   `fan_sink` (60 one-hop pairs); names chosen so the probe tokens match the
   intended symbol sets under the same endpoint matching rules the query
   shares with the taint command.
@@ -43,7 +43,7 @@ and finish well under the 120 s audit cap.
 - **Then** the shortest exact-resolution path prints as an ordered hop chain
   (head, both intermediates, tail, in walk order) with a file:line reference
   for each of the three hops
-- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc001.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/chain --db /tmp/odp-tc001.db && [ "$(sqlite3 /tmp/odp-tc001.db 'select count(*) from transitive_edges')" = "0" ] && uv run --no-sync cairn path --db /tmp/odp-tc001.db --from chain_a --to chain_d > /tmp/odp-tc001.out && [ "$(grep -oE '\.py:[0-9]+' /tmp/odp-tc001.out | wc -l | tr -d ' ')" -ge 3 ] && python3 -c 'import sys; t=open("/tmp/odp-tc001.out").read(); p=[t.find(s) for s in ("chain_a","chain_b","chain_c","chain_d")]; sys.exit(0 if -1 not in p and p==sorted(p) else 1)'`
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc001.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/chain --db /tmp/odp-tc001.db && [ "$(sqlite3 /tmp/odp-tc001.db 'select count(*) from transitive_edges')" = "0" ] && uv run --no-sync cairn path --db /tmp/odp-tc001.db --from chain_a --to chain_d > /tmp/odp-tc001.out && [ "$(grep -oE '\.py:[0-9]+' /tmp/odp-tc001.out | wc -l | tr -d ' ')" -ge 3 ] && python3 -c 'import re,sys; ls=[l for l in open("/tmp/odp-tc001.out") if re.search(r"\.py:[0-9]+",l)]; p=[next((i for i,l in enumerate(ls) if s in l),-1) for s in ("chain_a","chain_b","chain_c","chain_d")]; sys.exit(0 if -1 not in p and p==sorted(p) else 1)'`
 
 ## TC-002 — Query inside the depth bound but beyond the route length reports no path
 - **Story**: US1 · **Traces to**: FR-001, AC2
@@ -61,7 +61,7 @@ and finish well under the 120 s audit cap.
   the other, under the default depth bound
 - **Then** it reports no path within the bound and exits 0 (a disconnected
   graph is an answer, not an error)
-- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc003.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/islands --db /tmp/odp-tc003.db && uv run --no-sync cairn path --db /tmp/odp-tc003.db --from isle_a_one --to isle_b_two > /tmp/odp-tc003.out 2>&1 && grep -qi "no path within" /tmp/odp-tc003.out`
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc003.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/islands --db /tmp/odp-tc003.db && uv run --no-sync cairn path --db /tmp/odp-tc003.db --from isl_a1 --to isl_b2 > /tmp/odp-tc003.out 2>&1 && grep -qi "no path within" /tmp/odp-tc003.out`
 
 ## TC-004 — A tie resolves to exactly one shortest path
 - **Story**: US1 · **Traces to**: FR-001
@@ -70,7 +70,7 @@ and finish well under the 120 s audit cap.
 - **When** the path query runs from the entry to the sink by exact name
 - **Then** exactly one path is printed — one intermediate appears, never
   both, and the sink appears once
-- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc004.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/odp-tc004.db && uv run --no-sync cairn path --db /tmp/odp-tc004.db --from hub_top --to hub_sink > /tmp/odp-tc004.out && python3 -c 'import sys; t=open("/tmp/odp-tc004.out").read(); sys.exit(0 if t.count("hub_sink")==1 and t.find("hub_top")>=0 and (t.find("mid_left")>=0)!=(t.find("mid_right")>=0) else 1)'`
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc004.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/odp-tc004.db && uv run --no-sync cairn path --db /tmp/odp-tc004.db --from hub_top --to hub_sink > /tmp/odp-tc004.out && python3 -c 'import re,sys; ls=[l for l in open("/tmp/odp-tc004.out") if re.search(r"\.py:[0-9]+",l)]; sys.exit(0 if sum("hub_sink" in l for l in ls)==1 and any("hub_top" in l for l in ls) and (any("mid_left" in l for l in ls))!=(any("mid_right" in l for l in ls)) else 1)'`
 
 ## TC-005 — Endpoint patterns yield one path per resolved pair
 - **Story**: US1 · **Traces to**: FR-001
@@ -97,7 +97,7 @@ and finish well under the 120 s audit cap.
 - **When** the query runs twice — once default, once with fuzzy enabled
 - **Then** the default run reports no path within the bound, and the fuzzy
   run finds the route across the ambiguous hop under the same hop budget
-- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc007.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fuzzy --db /tmp/odp-tc007.db && uv run --no-sync cairn path --db /tmp/odp-tc007.db --from fz_start --to fz_end > /tmp/odp-tc007-def.out 2>&1 && grep -qi "no path within" /tmp/odp-tc007-def.out && uv run --no-sync cairn path --db /tmp/odp-tc007.db --from fz_start --to fz_end --fuzzy > /tmp/odp-tc007-fz.out && python3 -c 'import sys; t=open("/tmp/odp-tc007-fz.out").read(); p=[t.find(s) for s in ("fz_start","fz_shared","fz_end")]; sys.exit(0 if -1 not in p and p==sorted(p) else 1)'`
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc007.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fuzzy --db /tmp/odp-tc007.db && uv run --no-sync cairn path --db /tmp/odp-tc007.db --from fz_start --to fz_end > /tmp/odp-tc007-def.out 2>&1 && grep -qi "no path within" /tmp/odp-tc007-def.out && uv run --no-sync cairn path --db /tmp/odp-tc007.db --from fz_start --to fz_end --fuzzy > /tmp/odp-tc007-fz.out && python3 -c 'import re,sys; ls=[l for l in open("/tmp/odp-tc007-fz.out") if re.search(r"\.py:[0-9]+",l)]; p=[next((i for i,l in enumerate(ls) if s in l),-1) for s in ("fz_start","fz_shared","fz_end")]; sys.exit(0 if -1 not in p and p==sorted(p) else 1)'`
 
 ## TC-008 — Same-symbol endpoints return the trivial zero-hop path (boundary)
 - **Story**: US1 · **Traces to**: FR-001
@@ -124,7 +124,7 @@ and finish well under the 120 s audit cap.
 - **Then** each invocation returns the same hop chain the CLI prints for
   those inputs (the HTTP-transport arm arrives with the HTTP-transport
   spec, which owns that surface)
-- **Pass condition**: `uv run --no-sync pytest tests/test_mcp_paths.py -q`
+- **Pass condition**: `uv run --no-sync pytest tests/test_mcp_path_tool.py -q`
 
 ## TC-011 — The tool registry and its count pin include the new tool
 - **Story**: US2 · **Traces to**: FR-002
@@ -132,7 +132,7 @@ and finish well under the 120 s audit cap.
 - **When** the registry is listed and the self-check runs
 - **Then** the `path` tool is registered and the count self-check passes
   with the updated pin — the pin reflects the new tool total, not the old one
-- **Pass condition**: `uv run --no-sync pytest tests/test_mcp_paths.py -q`
+- **Pass condition**: `uv run --no-sync pytest tests/test_mcp_path_tool.py -q`
 
 ## TC-012 — A default build materializes no closure
 - **Story**: US3 · **Traces to**: FR-004, AC1
@@ -179,14 +179,13 @@ and finish well under the 120 s audit cap.
 ## TC-017 — Impact depths stay shortest-path on closure-free stores
 - **Story**: US4 · **Traces to**: FR-005, AC1
 - **Given** two builds of the depth workspace — one with the closure, one
-  without — where the target sits two hops from the entry alongside a decoy
-  three-hop route
-- **When** impact analysis runs at the default depth bound against each
-  build
-- **Then** both report the target at depth two: the closure-free walk tracks
-  the minimum distance per reached symbol, so its depth numbers match the
-  closure-era output for the same graph
-- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc017-on.db /tmp/odp-tc017-off.db && uv run --no-sync cairn build --with-closure --workspace tests/fixtures/on-demand-paths/depth --db /tmp/odp-tc017-on.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/depth --db /tmp/odp-tc017-off.db && uv run --no-sync cairn impact --db /tmp/odp-tc017-on.db --depth 3 dep_entry | grep dep_target | grep -qw 2 && uv run --no-sync cairn impact --db /tmp/odp-tc017-off.db --depth 3 dep_entry | grep dep_target | grep -qw 2`
+  without — where the entry reaches the target through either intermediate
+- **When** impact analysis runs at a depth-three bound against the target
+  (the diamond node that has callers) on each build
+- **Then** the two outputs are byte-identical: the closure-free walk tracks
+  the minimum distance per reached symbol, so its depths equal the
+  closure-era shortest depths for the same graph
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/odp-tc017-on.db /tmp/odp-tc017-off.db /tmp/odp-tc017-on.out /tmp/odp-tc017-off.out && uv run --no-sync cairn build --with-closure --workspace tests/fixtures/on-demand-paths/depth --db /tmp/odp-tc017-on.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/depth --db /tmp/odp-tc017-off.db && uv run --no-sync cairn impact --db /tmp/odp-tc017-on.db --depth 3 dep_target > /tmp/odp-tc017-on.out && uv run --no-sync cairn impact --db /tmp/odp-tc017-off.db --depth 3 dep_target > /tmp/odp-tc017-off.out && diff /tmp/odp-tc017-on.out /tmp/odp-tc017-off.out`
 
 ## TC-018 — Identical queries return identical output across runs
 - **Story**: US1 · **Traces to**: FR-007
@@ -255,7 +254,7 @@ and finish well under the 120 s audit cap.
 AC coverage: US1 AC1 → TC-001 · US1 AC2 → TC-002, TC-003 · US2 AC1 →
 TC-010 · US3 AC1 → TC-012, TC-015 · US3 AC2 → TC-014 · US4 AC1 → TC-017.
 
-Notes: TC-010/TC-011 share one owner module (`tests/test_mcp_paths.py`),
+Notes: TC-010/TC-011 share one owner module (`tests/test_mcp_path_tool.py`),
 which this suite contracts to prove both the transport parity and the
 registry-pin contracts. The US2 AC1 HTTP arm is deferred with the HTTP
 transport to its own spec, per this spec's Scope. No property library ships

@@ -7,7 +7,7 @@ All AI coding agents working in this workspace should use these tools.
 
 - Name: `cairn` (auto-connected at session start)
 - Transport: stdio
-- 25 tools across 4 layers: graph + federation (12), knowledge base + compass (5), memory (2), knowledge docs + wiki (6)
+- 26 tools across 4 layers: graph + federation (13), knowledge base + compass (5), memory (2), knowledge docs + wiki (6)
   (`explore` is the recommended first call -- it aggregates the graph layer;
   `ask_compass` is the cross-layer router)
 

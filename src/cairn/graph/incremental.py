@@ -462,10 +462,10 @@ def incremental_update(
             # not undo the reindex.
             derived_errors: list[str] = []
             if result["reindexed"] or result["deleted"]:
-                if pre["closure_built"] and pre["dataflow_built"]:
+                if pre["dataflow_built"]:
                     derived_errors = _maintain_derived_indexes(conn, workspace, all_paths, pre)
                 else:
-                    derived_errors = _rebuild_derived_indexes(conn)
+                    derived_errors = _rebuild_derived_indexes(conn, pre["closure_built"])
     finally:
         conn.close()
 
@@ -492,8 +492,11 @@ def incremental_update(
     }
 
 
-def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
-    """Full rebuild of dataflow + transitive closure; returns error strings.
+def _rebuild_derived_indexes(
+    conn: sqlite3.Connection, closure_built: bool
+) -> list[str]:
+    """Full rebuild of dataflow plus, only for a store that has one, the
+    transitive closure; returns error strings.
 
     Fallback for a never-built derived table (no trusted pre-state to compute
     an affected set from). Each phase is independent; a failure in one doesn't
@@ -501,17 +504,18 @@ def _rebuild_derived_indexes(conn: sqlite3.Connection) -> list[str]:
     """
     errors: list[str] = []
     try:
-        from .dataflow import build_dataflow_index, build_transitive_closure
+        from .dataflow import build_dataflow_index
         build_dataflow_index(conn)
     except Exception as e:
         logger.debug("dataflow rebuild failed", exc_info=True)
         errors.append(f"dataflow: {e}")
-    try:
-        from .dataflow import build_transitive_closure
-        build_transitive_closure(conn)
-    except Exception as e:
-        logger.debug("transitive closure rebuild failed", exc_info=True)
-        errors.append(f"transitive_closure: {e}")
+    if closure_built:
+        try:
+            from .dataflow import build_transitive_closure
+            build_transitive_closure(conn)
+        except Exception as e:
+            logger.debug("transitive closure rebuild failed", exc_info=True)
+            errors.append(f"transitive_closure: {e}")
     return errors
 
 
@@ -709,8 +713,9 @@ def _maintain_derived_indexes(
 
     Closure sources = old/new ids, repair and name-repair sources, and their
     closure ancestors; dataflow names = old/new names plus names reachable
-    from the changed edges' resolved targets. Each phase is best-effort and
-    independent; returns error strings.
+    from the changed edges' resolved targets. The closure leg runs only when
+    the store has a closure (an absent closure stays absent). Each phase is
+    best-effort and independent; returns error strings.
     """
     from .dataflow import (
         _chunked,
@@ -765,11 +770,13 @@ def _maintain_derived_indexes(
     affected_sources = changed_sources | new_ids | pre["ancestor_ids"] | post_ancestors
 
     errors: list[str] = []
-    try:
-        maintain_transitive_closure(conn, affected_sources)
-    except Exception as e:
-        logger.debug("transitive closure maintenance failed", exc_info=True)
-        errors.append(f"transitive_closure: {e}")
+    if pre["closure_built"]:
+        # An absent closure stays absent: maintenance never materializes one.
+        try:
+            maintain_transitive_closure(conn, affected_sources)
+        except Exception as e:
+            logger.debug("transitive closure maintenance failed", exc_info=True)
+            errors.append(f"transitive_closure: {e}")
 
     try:
         # Changed-edge target seeds for the dataflow-affected computation:
