@@ -1,0 +1,54 @@
+{
+  "artifacts": [
+    "README.md",
+    "manifest.json",
+    "perf.json"
+  ],
+  "command": [
+    "cairn",
+    "bench",
+    "--suite",
+    "perf",
+    "--sizes",
+    "100,500,1000,5000",
+    "--n-files",
+    "300",
+    "--complexity",
+    "medium",
+    "--embed-backend",
+    "hash",
+    "--worked",
+    "benchmarks",
+    "--threshold",
+    "0.15",
+    "--repeats",
+    "3",
+    "--runs",
+    "3"
+  ],
+  "inputs": {
+    "dataset_version": "DS-v1",
+    "embed_backend": "hash",
+    "repeats": 3,
+    "runs": 3,
+    "seed": 49374,
+    "suite": "perf"
+  },
+  "schema": "cairn.worked.manifest.v1",
+  "stamp": {
+    "cairn_version": "0.21.2",
+    "dataset": {
+      "identity_size": 300,
+      "name": "benchmark-datasource",
+      "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+      "version": "DS-v1"
+    },
+    "machine_profile": {
+      "arch": "arm64",
+      "cpu": "arm",
+      "cpu_count": 10,
+      "os": "macOS-27.0.1-arm64-arm-64bit",
+      "runner_class": "reference-local"
+    }
+  }
+}

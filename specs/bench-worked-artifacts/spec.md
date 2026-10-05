@@ -1,6 +1,6 @@
 # Spec: bench-worked-artifacts
 
-**Status**: approved
+**Status**: active
 **Effort**: standard
 **Created**: 2026-10-05
 **Branch**: `feat/bench-worked-artifacts`

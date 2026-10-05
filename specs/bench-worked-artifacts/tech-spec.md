@@ -203,3 +203,8 @@ privileged operation.
 - **Context**: NFR-004 requires failing cleanly *after* the bench run with results on stdout regardless; the compare block can `sys.exit(2)` on regressions (`src/cairn/cli/bench.py:713` area, session), which would orphan a not-yet-written bundle.
 - **Decision**: block order in `bench()` is: suite run → payload (emitted to stdout/table by `_stamp_and_emit`/swe-bench render) → `--save` → worked → compare; a worked-write failure prints `display.error` and exits 1 immediately (results are already out).
 - **Consequences**: a regressed run still lands its evidence bundle before the exit-2 signal; a user passing both `--worked` and `--compare` with an unwritable target gets exit 1 with a clear error instead of a masked compare — accepted, re-run compares after fixing the target.
+
+### D-009: D-004 amendment — $TMPDIR scrub anchor
+- **Context**: D-004's letter ("anything else passes verbatim") cannot satisfy NFR-002's own test — bench workspaces live under the system tempdir, whose absolute path must be absent from manifests.
+- **Decision**: the scrub anchors are repo-relative, then $HOME-templated, then $TMPDIR-templated; everything else verbatim.
+- **Consequences**: manifests carry no absolute home or temp paths; NFR-002's test is the owner.
