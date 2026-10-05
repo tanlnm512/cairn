@@ -95,7 +95,7 @@ def _reflect_one(
         if concept.extensions.get(STANCE_KEY) != verdict:
             concept.extensions[STANCE_KEY] = verdict
             changed = True
-        if verdict == "contested":
+        if verdict == "contested" and peer_id is not None:
             peer_rel = _norm_cid(bundle, peer_id)
             if concept.extensions.get(STANCE_PEER_KEY) != peer_rel:
                 concept.extensions[STANCE_PEER_KEY] = peer_rel

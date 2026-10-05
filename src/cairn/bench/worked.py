@@ -81,7 +81,7 @@ def recorded_command() -> list[str]:
     ctx = click.get_current_context(silent=True)
     if ctx is None:
         return []
-    tokens = ["cairn", ctx.info_name]
+    tokens = ["cairn", ctx.info_name or ""]
     for param in ctx.command.params:
         value = ctx.params.get(param.name)
         if getattr(param, "is_flag", False):

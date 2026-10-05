@@ -365,22 +365,27 @@ jobs:
       - name: Keyless wildcard entrypoint refuses to start
         run: |
           set +e
-          docker run --rm --name cairn-smoke cairn:http-smoke
+          out=$(docker run --rm --name cairn-smoke -e CAIRN_WORKSPACE=/data/ws cairn:http-smoke sh -c "cairn init --no-build >/dev/null 2>&1; cairn serve --transport http --host 0.0.0.0" 2>&1)
           rc=$?
           set -e
-          # D-004: non-loopback bind without a key exits 1 before binding.
+          echo "$out" | tail -3
+          # D-004: with the store present, non-loopback bind without a key
+          # exits 1 on the API-key refusal before binding.
           if [ "$rc" -eq 0 ]; then
             echo "::error::keyless container exited 0 (expected refusal exit 1)"
             exit 1
           fi
+          echo "$out" | grep -q "without an API key"
       - name: Keyed entrypoint reaches /healthz
         run: |
-          docker run -d --name cairn-keyed -e CAIRN_MCP_API_KEY=ci-smoke-key -p 18765:9876 cairn:http-smoke
+          docker run -d --name cairn-keyed -e CAIRN_WORKSPACE=/data/ws -e CAIRN_MCP_API_KEY=ci-smoke-key -p 18765:9876 cairn:http-smoke sh -c "cairn init --no-build >/dev/null 2>&1; cairn serve --transport http --host 0.0.0.0"
+          ok=0
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:18765/healthz > /dev/null 2>&1; then break; fi
+            if curl -sf http://127.0.0.1:18765/healthz > /tmp/hz.json 2>/dev/null; then ok=1; break; fi
             sleep 1
           done
-          curl -sf http://127.0.0.1:18765/healthz | grep -q '"status"'
+          if [ "$ok" -ne 1 ]; then echo "::error::healthz never came up"; docker logs cairn-keyed | tail -5; docker rm -f cairn-keyed; exit 1; fi
+          grep -q '"status"' /tmp/hz.json
           docker rm -f cairn-keyed
 
   bench:

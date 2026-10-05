@@ -220,7 +220,7 @@ def community_overlaps(conn, per_pr_seeds: dict[int, list[str]]) -> dict:
         for number, seeds in per_pr_seeds.items()
     }
     numbers = sorted(by_pr)
-    pairs = []
+    pairs: list[dict[str, object]] = []
     for i, a in enumerate(numbers):
         for b in numbers[i + 1 :]:
             shared = by_pr[a] & by_pr[b]
@@ -233,5 +233,11 @@ def community_overlaps(conn, per_pr_seeds: dict[int, list[str]]) -> dict:
                         "communities": sorted(labels[c] for c in shared),
                     }
                 )
-    pairs.sort(key=lambda pair: (-pair["shared"], pair["a"], pair["b"]))
+    pairs.sort(
+        key=lambda pair: (
+            -int(pair["shared"]),  # type: ignore[call-overload]
+            str(pair["a"]),
+            str(pair["b"]),
+        )
+    )
     return {"pairs": pairs, "hint": None}

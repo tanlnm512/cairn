@@ -108,7 +108,14 @@ class TreeSitterParserBase:
 
     Provides _node_text, _qualified_name, _child_of_type/_find_name (AST-shape
     helpers), and scope stack management (_scope, _callable_scope).
+
+    Subclasses provide `language` and `_visit`; the shared _walk relies on both.
     """
+
+    language: str = ""
+
+    def _visit(self, node, source: bytes, pf: "ParsedFile") -> None:
+        raise NotImplementedError
 
     def __init__(self):
         # Stack of enclosing type names; empty = top-level
