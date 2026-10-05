@@ -9,14 +9,15 @@ Status reflects code state per [survey.md](survey.md), not intent.
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1 | 1 | 0 |
-| 2 | 3 | 0 |
-| 3 | 3 | 0 |
-| **Σ** | 7 | 0 |
+| 1 | 1 | 1 |
+| 2 | 3 | 3 |
+| 3 | 3 | 3 |
+| **Σ** | 7 | 7 |
 
 ## Phase 1: Range-scoped update (FR-001)
 <!-- Checkpoint: `cairn update --help` shows --diff-ref; a two-commit scratch repo reindexes exactly the second commit's files with `--diff-ref 'HEAD@{1}..HEAD'`; flag-less update unchanged (survey S2). -->
-- [ ] T001 Add `--diff-ref A..B` range scoping to `cairn update` — CLI option with endpoint pre-validation plus optional `diff_ref` keyword through `incremental_update` into `_changed_source_files`' range mode, failing-test-first (FR-001)
+- [x] T001 (implemented) Add `--diff-ref A..B` range scoping to `cairn update` — CLI option with endpoint pre-validation plus optional `diff_ref` keyword through `incremental_update` into `_changed_source_files`' range mode, failing-test-first (FR-001)
+  - done 2026-10-05 — done 2026-10-05 — range-mode tests + live e2e (HEAD~1..HEAD reindexes committed files, clean worktree); 79 passed incremental+audit suites
   - Touches:
     - `src/cairn/cli/update.py`
     - `src/cairn/graph/incremental.py`
@@ -25,17 +26,20 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 2: Hooks keep the store fresh (FR-002, FR-003, FR-004)
 <!-- Checkpoint: commit reindexes the committed files; branch switch reindexes old..new; file checkout no-ops; install/uninstall cover both hooks with guard pins green (survey S1, S3, S4). -->
-- [ ] T002 Rewrite the post-commit template to a background `--diff-ref` range invocation with the first-commit empty-tree fallback (after T001) (FR-002, NFR-001, NFR-004)
+- [x] T002 (implemented) Rewrite the post-commit template to a background `--diff-ref` range invocation with the first-commit empty-tree fallback (after T001) (FR-002, NFR-001, NFR-004)
+  - done 2026-10-05 — done 2026-10-05 — ranged template + empty-tree fallback; live first-commit arm fired computed empty-tree hash; fidelity pins kept contiguous
   - Touches:
     - `src/cairn/hooks/git_hooks.py`
     - `tests/test_install_uninstall_fidelity.py`
   - Consumes from T001: the `--diff-ref A..B` option on `cairn update` (single range string → `git diff --name-only`). Template resolves `git rev-parse -q --verify 'HEAD@{1}'`, else `$(git hash-object -t tree /dev/null)..HEAD` (D-001); keeps pinned substrings `cairn update --repo "{repo}"` and `cairn validate-paths --mark`, output discarded, `&` backgrounded; default-home render stays byte-identical to the constant.
-- [ ] T003 Add the post-checkout hook template — branch switch backgrounds `--diff-ref $1..$2`, file checkout no-ops (after T002) (FR-003, NFR-003)
+- [x] T003 (implemented) Add the post-checkout hook template — branch switch backgrounds `--diff-ref $1..$2`, file checkout no-ops (after T002) (FR-003, NFR-003)
+  - done 2026-10-05 — done 2026-10-05 — post-checkout guard [ $3 = 1 ]; live: branch switch fires old..new, file checkout spawns zero cairn processes
   - Touches:
     - `src/cairn/hooks/git_hooks.py`
     - `tests/test_install_uninstall_fidelity.py`
   - Consumes from T002: the module's template/render/install structure (`POST_CHECKOUT_TEMPLATE` alongside the rewritten `POST_COMMIT_TEMPLATE`, same `_render_*` export-line convention). Guard is `[ "$3" = "1" ]` — `$3` is git's branch-checkout flag (the spec's "exit code 1"); `$1..$2` are git-provided SHAs, no reflog resolution.
-- [ ] T004 Generalize `install_hooks`/`uninstall_hooks` to manage both hook names per repo, preserving refuse-to-clobber and cairn-marker rules (after T003) (FR-004)
+- [x] T004 (implemented) Generalize `install_hooks`/`uninstall_hooks` to manage both hook names per repo, preserving refuse-to-clobber and cairn-marker rules (after T003) (FR-004)
+  - done 2026-10-05 — done 2026-10-05 — both hooks per repo, clobber/marker rules per file; foreign-hook + uninstall live runs green; 145 passed fidelity+graft
   - Touches:
     - `src/cairn/hooks/git_hooks.py`
     - `tests/test_install_uninstall_fidelity.py`
@@ -44,18 +48,21 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 3: One-command opt-in setup (FR-005, FR-006)
 <!-- Checkpoint: `cairn init --with-hooks` installs both hooks idempotently in a git workspace; non-git workspace gets guidance and zero partial hooks; docs updated. -->
-- [ ] T005 Add `--with-hooks` to `cairn init`, wiring `install_hooks` after store creation, opt-in and non-interactive (after T004) (FR-005)
+- [x] T005 (implemented) Add `--with-hooks` to `cairn init`, wiring `install_hooks` after store creation, opt-in and non-interactive (after T004) (FR-005)
+  - done 2026-10-05 — done 2026-10-05 — init --with-hooks idempotent (md5-identical reinstall); 80 passed fidelity+smoke
   - Touches:
     - `src/cairn/cli/core.py`
     - `tests/test_install_uninstall_fidelity.py`
   - Consumes from T004: generalized `install_hooks(repos, workspace)` managing both hooks, returning installed repo names. Flag installs with the same rules as `cairn hooks install`; never prompts.
-- [ ] T006 Add non-git clean-failure guidance and both-hooks surface text (after T005) (FR-006)
+- [x] T006 (implemented) Add non-git clean-failure guidance and both-hooks surface text (after T005) (FR-006)
+  - done 2026-10-05 — done 2026-10-05 — non-git: hooks install exit 1 + guidance, init warns exit 0; zero partial hooks pinned
   - Touches:
     - `src/cairn/cli/hooks_viz.py`
     - `src/cairn/cli/core.py`
     - `tests/test_install_uninstall_fidelity.py`
   - Consumes from T005: the init-side hook-install call site in `src/cairn/cli/core.py`. Zero discovered repos: `cairn hooks install` prints guidance and exits 1; `init --with-hooks` warns and init still succeeds — no partial hooks either way (D-005); success text covers post-commit + post-checkout (survey S5 gap).
-- [ ] T007 [P] Update docs for the new flag, both hooks, and `init --with-hooks` (FR-002, FR-003, FR-005)
+- [x] T007 (implemented) [P] Update docs for the new flag, both hooks, and `init --with-hooks` (FR-002, FR-003, FR-005)
+  - done 2026-10-05 — done 2026-10-05 — cli-reference + CHANGELOG; doc-links 0 broken
   - Touches:
     - `docs/configuration.md`
     - `docs/cli-reference.md`

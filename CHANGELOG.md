@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Freshness hooks: `cairn update --diff-ref A..B` scopes changed-file
+  detection to a git ref range (range diff only — the untracked pass and
+  stat fallback are skipped, and both endpoints are pre-validated so a bad
+  ref is a clean error); `cairn hooks install/uninstall` manage a
+  post-commit hook (backgrounds a ranged update after every commit — the
+  previous commit resolves from the reflog, with an empty-tree range
+  fallback on a repo's first commit — plus `cairn validate-paths --mark`,
+  output discarded so the commit never waits) and a post-checkout hook
+  (branch switches only; file checkouts no-op); `cairn init --with-hooks`
+  installs both hooks opt-in and non-interactively. Hooks are never
+  overwritten when foreign and removed only when cairn-marked; in a
+  non-git workspace `hooks install` prints guidance and exits 1 while
+  `init --with-hooks` warns and init still succeeds — no partial hooks
+  either way.
 - `cairn communities` command: deterministic Louvain community detection over
   structural edges, persisted to the `communities`/`symbol_communities`
   derived tables with global and per-community hub symbols (`--top-k`,

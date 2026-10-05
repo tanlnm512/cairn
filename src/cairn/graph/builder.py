@@ -891,6 +891,16 @@ def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, 
         return path, rel_path, language, repo, None, err_msg, st
 
 
+def ensure_repo_row(cur, repo: str) -> None:
+    """Insert a placeholder repos row when absent so repo_id FKs hold."""
+    cur.execute(
+        """INSERT INTO repos (id, name, path, language, git_remote, indexed_at)
+           VALUES (?, ?, ?, '', NULL, ?)
+           ON CONFLICT(id) DO NOTHING""",
+        (repo, repo, ".", _now()),
+    )
+
+
 def insert_parsed_file(
     cur,
     repo: str,
@@ -908,6 +918,7 @@ def insert_parsed_file(
     ``abs_path`` is the absolute path used only to stat for size/mtime.
     Returns (symbol_count, edge_count, import_count).
     """
+    ensure_repo_row(cur, repo)
     file_id = _new_id()
     # Populate size and mtime for catch-up reconciliation.
     try:
@@ -1248,16 +1259,7 @@ def materialize_import_edges(
 
 
 def insert_parse_error(cur, repo: str, path: str, error_message: str, stack_trace: str | None = None):
-    # Ensure a repos row exists so the parse_errors.repo_id FK holds even when
-    # the error fires before the repo was registered (e.g. incremental reindex
-    # of a file whose repo_id is empty or inferred differently than build
-    # stored). Idempotent — ON CONFLICT is a no-op if the row already exists.
-    cur.execute(
-        """INSERT INTO repos (id, name, path, language, git_remote, indexed_at)
-           VALUES (?, ?, ?, '', NULL, ?)
-           ON CONFLICT(id) DO NOTHING""",
-        (repo, repo, ".", _now()),
-    )
+    ensure_repo_row(cur, repo)
     cur.execute(
         """INSERT INTO parse_errors (id, file_path, repo_id, error_message, stack_trace, timestamp)
            VALUES (?, ?, ?, ?, ?, ?)""",

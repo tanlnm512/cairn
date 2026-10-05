@@ -97,7 +97,7 @@ def _remove_hooks(ws: str, dry_run: bool) -> None:
         click.echo(f"  (skipped: {e})")
         return
     if dry_run:
-        click.echo(f"  would scan {len(repos)} repo(s) for post-commit hooks")
+        click.echo(f"  would scan {len(repos)} repo(s) for git hooks (post-commit + post-checkout)")
         return
     removed = uninstall_hooks(repos, ws)
     if removed:

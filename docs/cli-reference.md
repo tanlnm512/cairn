@@ -11,9 +11,9 @@ are read at process start, not per call.
 
 | Command | Purpose |
 |---|---|
-| `cairn init` | interactive first-time setup (runs a build) |
+| `cairn init [--with-hooks]` | interactive first-time setup (runs a build); `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
 | `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) |
-| `cairn update [--file <path>]` | incremental reindex (git-diff driven) |
+| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | snapshot the store |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
@@ -29,6 +29,20 @@ are read at process start, not per call.
 - Missing or failing pyright is a noticed no-op; failed passes roll back their
   changes.
 - Existing `exact` edges are never selected or downgraded.
+
+### `cairn update --diff-ref`
+
+- `--diff-ref A..B` scopes changed-file detection to the git ref range: the
+  changed set is exactly `git diff --name-only A..B` — the untracked-file
+  pass and the size/mtime fallback that flag-less mode uses are skipped, so
+  nothing outside the range is reindexed.
+- Both range endpoints are pre-validated with `git rev-parse -q --verify`;
+  an unresolvable ref exits with a clean error instead of a silent
+  zero-file update.
+- Flag-less `cairn update` is unchanged: worktree diff versus `HEAD` plus
+  untracked source files.
+- The cairn git hooks (see [below](#cairn-hooks)) call this form with the
+  committed or checked-out range.
 
 ## Query
 
@@ -169,8 +183,30 @@ Group: `cairn memory …`
 | `cairn bench` | performance suites |
 | `cairn eval` | retrieval evaluation |
 | `cairn viz [--export FILE]` | render graph diagrams; `--export` writes one self-contained HTML file |
-| `cairn hooks install|uninstall` | git hooks |
+| `cairn hooks install|uninstall` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) |
 | `cairn version` / `upgrade` | version and self-upgrade |
 | `cairn sync` | sync pending watcher edits |
+
+### `cairn hooks`
+
+- `cairn hooks install` writes a post-commit and a post-checkout hook into
+  every discovered git repo's `.git/hooks/`, idempotently: an existing
+  cairn hook is rewritten in place, and a foreign hook (no cairn marker in
+  its content) is never overwritten. `uninstall` removes only cairn-marked
+  hooks.
+- post-commit: after every commit, backgrounds
+  `cairn update --diff-ref <prev>..HEAD` plus `cairn validate-paths --mark`.
+  The previous commit resolves from the reflog (`HEAD@{1}`); a repo's first
+  commit falls back to an empty-tree range. Output is discarded — the commit
+  never waits on the update, and a failed update never fails the commit.
+- post-checkout: on branch switches only, backgrounds
+  `cairn update --diff-ref <old>..<new>`; file checkouts run nothing.
+- With a non-default `CAIRN_HOME`, installed hooks embed an
+  `export CAIRN_HOME` line (see [configuration.md](configuration.md)).
+- `cairn init --with-hooks` installs both hooks with the same rules as
+  `cairn hooks install` (opt-in, never interactive).
+- In a workspace with no git repository, `hooks install` prints guidance
+  and exits 1; `init --with-hooks` prints the guidance as a warning and init
+  still succeeds. Neither path writes partial hooks.
 
 Global: `-v/--verbose` for debug logging.

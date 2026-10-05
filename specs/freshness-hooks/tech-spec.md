@@ -316,3 +316,13 @@ hook files; already-installed new-template hooks keep working (they call
 - **Consequences**: The guidance text lives in one place per surface;
   init remains usable in non-git workspaces while the opt-in hook step
   still fails cleanly per FR-006.
+
+### D-006: Never-built store FK fix (upstream bug the hook exposed)
+- **Context**: T002-T004's live runs found that on a never-built store (repos table empty), the first ranged update drops the first file: `insert_files` (src/cairn/graph/builder.py:920) violates `files.repo_id -> repos.id` before any repos row exists; only the parse-error path (`insert_parse_error`, builder.py:1250) creates the row, contradicting incremental.py:72-74's comment. Flag-less mode masked it (0 files right after a commit); the ranged hook is the first writer into a never-built store.
+- **Decision**: the reindex path ensures the repos row exists before `insert_files` (same ensure semantics the parse-error path already has); regression test: fresh store + ranged update indexes ALL files including the first. Scope ruling: src/cairn/graph/builder.py joins T001's file family for this fix.
+- **Consequences**: `cairn init --no-build` + hook-first workflows keep every file; the stale comment at incremental.py:72-74 is corrected to match behavior.
+
+### D-007: Surface-text stragglers ruled into scope
+- **Context**: T006's both-hooks surface sweep flagged two wording stragglers outside its Touches (src/cairn/cli/agents.py:23 `--git-hooks` help; src/cairn/cli/uninstall.py:100 dry-run text), plus docs/configuration.md's single-template mention.
+- **Decision**: the three wording updates plus T007's `CHANGELOG.md` entry join the delivery set by ruling (both-hooks naming everywhere; docs/cli-reference.md and CHANGELOG.md were T007's surfaces).
+- **Consequences**: scope audit clean; no behavior change.

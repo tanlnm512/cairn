@@ -17,7 +17,9 @@ import random
 import re
 import shutil
 import sqlite3
+import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -892,3 +894,185 @@ def test_maintain_dataflow_index_deletes_row_when_symbol_becomes_private(fresh_d
     assert fresh_db.execute(
         "SELECT COUNT(*) FROM dataflow WHERE symbol = 'sym_two'"
     ).fetchone()[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Range-scoped updates (FR-001): --diff-ref A..B through incremental_update
+# ---------------------------------------------------------------------------
+
+
+def _git(args, cwd: Path) -> None:
+    """Run a git command in ``cwd`` with a pinned hermetic committer identity."""
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    subprocess.run(
+        ["git", *args], cwd=str(cwd), check=True, env=env,
+        capture_output=True, text=True,
+    )
+
+
+def _committed_repo(root) -> Path:
+    """A real git repo under ``root`` whose first commit holds a.py + b.py."""
+    repo = root / "gitrepo"
+    repo.mkdir()
+    _git(["init", "-q"], repo)
+    (repo / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    (repo / "b.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
+    _git(["add", "."], repo)
+    _git(["commit", "-qm", "first"], repo)
+    return repo
+
+
+def _indexed_paths(db_path: str) -> set[str]:
+    conn = get_db(db_path)
+    try:
+        return {r["path"] for r in conn.execute("SELECT path FROM files")}
+    finally:
+        conn.close()
+
+
+def test_range_update_reindexes_exactly_the_commit_range(tmp_path):
+    """diff_ref scopes detection to the git range: exactly the committed
+    files reindex even though the worktree holds other noise (uncommitted
+    edit + untracked file stay out)."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "range.kg")
+    build_graph(workspace=str(repo), db_path=db)
+
+    (repo / "a.py").write_text("def alpha():\n    return 11\n", encoding="utf-8")
+    (repo / "c.py").write_text("def gamma():\n    return 3\n", encoding="utf-8")
+    _git(["add", "."], repo)
+    _git(["commit", "-qm", "second"], repo)
+    # Worktree noise the range must ignore.
+    (repo / "b.py").write_text("def beta():\n    return 22\n", encoding="utf-8")
+    (repo / "d.py").write_text("def delta():\n    return 4\n", encoding="utf-8")
+
+    res = incremental_update(workspace=str(repo), db_path=db, diff_ref="HEAD~1..HEAD")
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 2, res
+    paths = _indexed_paths(db)
+    assert "b.py" in paths and "d.py" not in paths
+    conn = get_db(db)
+    try:
+        assert conn.execute("SELECT 1 FROM symbols WHERE name = 'gamma'").fetchone()
+    finally:
+        conn.close()
+
+
+def test_fresh_store_range_update_indexes_all_files(tmp_path):
+    """A never-built store's first ranged update indexes every committed file
+    including the first: nothing drops into parse_errors on a missing repos
+    row."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "fresh.kg")
+    empty_tree = subprocess.run(
+        ["git", "hash-object", "-t", "tree", "/dev/null"],
+        cwd=str(repo), capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    res = incremental_update(workspace=str(repo), db_path=db, diff_ref=f"{empty_tree}..HEAD")
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 2, res
+    assert _indexed_paths(db) == {"a.py", "b.py"}
+    conn = get_db(db)
+    try:
+        assert conn.execute("SELECT 1 FROM parse_errors").fetchone() is None
+        assert conn.execute("SELECT COUNT(*) AS c FROM symbols").fetchone()["c"] > 0
+    finally:
+        conn.close()
+
+
+def test_flag_absent_update_keeps_worktree_and_untracked_detection(tmp_path):
+    """No diff_ref: today's signal -- worktree diff vs HEAD plus untracked
+    files -- is unchanged."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "wt.kg")
+    build_graph(workspace=str(repo), db_path=db)
+
+    (repo / "a.py").write_text("def alpha():\n    return 22\n", encoding="utf-8")
+    (repo / "e.py").write_text("def epsilon():\n    return 5\n", encoding="utf-8")
+
+    res = incremental_update(workspace=str(repo), db_path=db)
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 2, res
+    assert "e.py" in _indexed_paths(db)
+
+
+def test_range_mode_git_failure_returns_empty_not_stat_fallback(tmp_path):
+    """A failed range diff returns [] rather than falling through to the stat
+    fallback: off-range worktree noise must not widen the span."""
+    from cairn.graph.incremental import _changed_source_files
+
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "badrange.kg")
+    build_graph(workspace=str(repo), db_path=db)
+    (repo / "a.py").write_text("def alpha():\n    return 33\n", encoding="utf-8")
+
+    conn = get_db(db)
+    try:
+        changed = _changed_source_files(repo, conn=conn, diff_ref="no-such-ref..HEAD")
+    finally:
+        conn.close()
+
+    assert changed == []
+
+
+def test_cli_update_rejects_unresolvable_diff_ref_endpoint(tmp_path):
+    """An unresolvable --diff-ref endpoint is a clean CLI error before any
+    scan -- no traceback, no silent zero-file update."""
+    from click.testing import CliRunner
+
+    repo = _committed_repo(tmp_path)
+
+    from cairn.cli.main import main
+
+    result = CliRunner().invoke(
+        main,
+        ["update", "--workspace", str(repo), "--db", str(tmp_path / "bad.kg"),
+         "--diff-ref", "no-such-ref..HEAD"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "no-such-ref" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_update_forwards_diff_ref_to_incremental_update(tmp_path, monkeypatch):
+    """A valid --diff-ref reaches incremental_update as the diff_ref keyword."""
+    from click.testing import CliRunner
+
+    import cairn.graph.incremental as incremental_mod
+
+    repo = _committed_repo(tmp_path)
+    (repo / "a.py").write_text("def alpha():\n    return 2\n", encoding="utf-8")
+    _git(["add", "."], repo)
+    _git(["commit", "-qm", "second"], repo)
+
+    captured: dict = {}
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        return {"repos_scanned": 1, "files_reindexed": 0, "files_deleted": 0,
+                "errors": [], "deferred_embeds": 0}
+
+    monkeypatch.setattr(incremental_mod, "incremental_update", _spy)
+
+    from cairn.cli.main import main
+
+    result = CliRunner().invoke(
+        main,
+        ["update", "--workspace", str(repo), "--db", str(tmp_path / "cli.kg"),
+         "--diff-ref", "HEAD~1..HEAD"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured.get("diff_ref") == "HEAD~1..HEAD", captured

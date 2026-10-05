@@ -70,8 +70,8 @@ def reindex_paths(
         row = _find_tracked_file_row(cur, workspace, abs_path)
         # Use the STORED repo_id for downstream inserts so FK constraints on
         # files.repo_id -> repos.id hold (the inferred 'repo' may not exist in
-        # repos at all). If no existing row, keep the inferred repo but ensure
-        # a repos row exists (the insert_parsed_file path creates one).
+        # repos at all). With no existing file row the inferred repo is kept;
+        # insert_parsed_file ensures its repos row exists before the insert.
         stored_repo = row["repo_id"] if row else repo
         stored_path = row["path"] if row else rel_to_repo  # normalize for delete
         file_id = row["id"] if row else None
@@ -389,11 +389,14 @@ def incremental_update(
     repo: Optional[str] = None,
     workspace: str = scanner_mod.DEFAULT_WORKSPACE,
     db_path: Optional[str] = None,
+    diff_ref: Optional[str] = None,
 ) -> dict:
     """Re-index only changed files since the last build.
 
     Uses `git diff` to find changed source files, deletes their old symbols/edges,
-    and re-parses + inserts them. After reindexing it re-applies the configured
+    and re-parses + inserts them. With ``diff_ref`` set, detection is scoped to
+    that git range (``A..B``) and the worktree/untracked/stat signals are
+    skipped. After reindexing it re-applies the configured
     SCIP overlay (existing index files only, never a generation) so covered files
     keep index-sourced edges. It then refreshes the derived indexes (dataflow +
     transitive closure) so cached impact lookups and multi-hop traversals reflect
@@ -424,7 +427,7 @@ def incremental_update(
         all_paths: list[str] = []
         for r in repos:
             repo_path = scanner_mod.resolve_repo_path(workspace, r)
-            changed = _changed_source_files(repo_path, conn=conn)
+            changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
             if not changed:
                 continue
             for f in changed:
@@ -817,19 +820,48 @@ def _maintain_derived_indexes(
     return errors
 
 
-def _changed_source_files(repo_path: Path, conn=None) -> List[str]:
+def _filter_source_paths(lines) -> List[str]:
+    """Keep non-blank lines whose suffix is a mapped source extension, deduped
+    in first-seen order."""
+    changed = []
+    for line in lines:
+        line = line.strip()
+        if (
+            line
+            and Path(line).suffix in scanner_mod.EXTENSION_MAP
+            and line not in changed
+        ):
+            changed.append(line)
+    return changed
+
+
+def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = None) -> List[str]:
     """Return repo-relative paths of changed source files since last index.
 
-    Primary signal: ``git diff --name-only HEAD`` plus untracked source files
-    (``git ls-files --others``). Falls back to size/mtime
-    comparison against the ``files`` table when git is unavailable or the repo
-    has no HEAD yet. Without the fallback, such repos silently report "0 changed
-    files" on every ``cairn update``.
+    Flag-less: ``git diff --name-only HEAD`` plus untracked source files
+    (``git ls-files --others``), falling back to size/mtime comparison against
+    the ``files`` table when git is unavailable or the repo has no HEAD yet.
+    Without the fallback, such repos silently report "0 changed files" on every
+    ``cairn update``.
 
-    ``conn`` (optional) is needed only for the fallback path. If omitted and
-    git is unavailable, returns [] -- callers that want the fallback must pass
-    the open connection.
+    With ``diff_ref``: only ``git diff --name-only <diff_ref>`` -- the
+    untracked pass and the stat fallback are skipped, so the result is exactly
+    the ref span. A git failure logs and returns [].
+
+    ``conn`` (optional) is needed only for the flag-less fallback path. If
+    omitted and git is unavailable, returns [] -- callers that want the
+    fallback must pass the open connection.
     """
+    if diff_ref is not None:
+        out = _run_git(["diff", "--name-only", diff_ref], str(repo_path))
+        if out is None:
+            logger.warning(
+                "git diff failed for range %r in %s; reindexing nothing for it",
+                diff_ref, repo_path,
+            )
+            return []
+        return _filter_source_paths(out.splitlines())
+
     out = _run_git(["diff", "--name-only", "HEAD"], str(repo_path))
     if out is not None:
         # git ran (may still be empty if truly nothing changed). git diff never
@@ -841,16 +873,7 @@ def _changed_source_files(repo_path: Path, conn=None) -> List[str]:
         )
         if untracked:
             lines.extend(untracked.splitlines())
-        changed = []
-        for line in lines:
-            line = line.strip()
-            if (
-                line
-                and Path(line).suffix in scanner_mod.EXTENSION_MAP
-                and line not in changed
-            ):
-                changed.append(line)
-        return changed
+        return _filter_source_paths(lines)
 
     # git diff failed (no git, no HEAD, not a repo). Fall back to size/mtime
     # comparison against the files table — the same signal `cairn sync` uses.

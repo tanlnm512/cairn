@@ -10,11 +10,13 @@ from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, main, scanner_mod
 @main.command()
 @click.option("--repo", default=None, help="Specific repo to update.")
 @click.option("--file", "file_path", default=None, help="Specific file changed (for PostToolUse hooks)")
+@click.option("--diff-ref", "diff_ref", default=None,
+              help="Git ref range A..B to scope changed-file detection to (e.g. HEAD@{1}..HEAD).")
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_KNOWLEDGE_PATH),
               help="Knowledge bundle path (for the post-update memory staleness scan).")
-def update(repo, file_path, workspace, db, knowledge):
+def update(repo, file_path, workspace, db, knowledge, diff_ref):
     """Incremental graph update from git diff (or a single changed file)."""
     from . import display
     from ..graph.schema import get_db
@@ -47,8 +49,25 @@ def update(repo, file_path, workspace, db, knowledge):
         display.success(f"Reindexed {rel_path} in repo {repo}")
         return
 
+    if diff_ref:
+        from ..utils.git import _run_git
+
+        repos = (
+            [repo]
+            if repo
+            else [scanner_mod.repository_id(r) for r in scanner_mod.discover_repos(workspace)]
+        )
+        for r in repos:
+            repo_path = scanner_mod.resolve_repo_path(workspace, r)
+            for endpoint in (p for p in diff_ref.split("..") if p):
+                if _run_git(["rev-parse", "-q", "--verify", endpoint], str(repo_path)) is None:
+                    display.error(
+                        f"--diff-ref endpoint '{endpoint}' does not resolve in {repo_path}"
+                    )
+                    sys.exit(1)
+
     from ..graph.incremental import incremental_update
-    result = incremental_update(repo=repo, workspace=workspace, db_path=db)
+    result = incremental_update(repo=repo, workspace=workspace, db_path=db, diff_ref=diff_ref)
     errors = result.get("errors") or []
     deleted = result.get("files_deleted", 0)
 

@@ -54,7 +54,9 @@ def _build_progress_handler(r):
 @click.option("--no-build", is_flag=True, help="Register without building the graph.")
 @click.option("--import-docs", is_flag=True,
               help="Auto-discover and ingest docs/**/*.md as knowledge.")
-def init(ws_arg, legacy_dir, no_build, import_docs):
+@click.option("--with-hooks", is_flag=True,
+              help="Install cairn git hooks (post-commit, post-checkout) in discovered repos.")
+def init(ws_arg, legacy_dir, no_build, import_docs, with_hooks):
     """Register this workspace with cairn's central store.
 
     Creates ~/.cairn/<key>/.kg and .knowledge/ for this workspace and
@@ -150,6 +152,32 @@ def init(ws_arg, legacy_dir, no_build, import_docs):
                 r.step(f"Imported {len(imported)} doc(s) from docs/")
             else:
                 r.warn("No docs/ directory found; skipping --import-docs")
+
+        if with_hooks:
+            from ..hooks.git_hooks import (
+                NO_GIT_REPOS_GUIDANCE,
+                discover_hook_repos,
+                install_hooks,
+            )
+
+            repos = discover_hook_repos(str(ws))
+            if not repos:
+                r.warn(NO_GIT_REPOS_GUIDANCE)
+            else:
+                try:
+                    installed = install_hooks(repos, str(ws))
+                except ValueError as e:
+                    # init's store is already registered; a hook-name guard hit
+                    # must not fail the whole command.
+                    r.warn(f"git hooks not installed: {e}")
+                else:
+                    if installed:
+                        r.step(
+                            "Git hooks",
+                            "post-commit + post-checkout in " + ", ".join(installed),
+                        )
+                    else:
+                        r.warn("No hooks installed; existing non-cairn hooks were left untouched")
 
     # Trailing hint prints after the rail closes so `└ Done` stays the last
     # rail line.
