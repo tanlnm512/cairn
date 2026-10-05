@@ -1,6 +1,6 @@
 # Spec: on-demand-paths
 
-**Status**: active
+**Status**: done
 **Effort**: standard
 **Created**: 2026-10-04
 **Branch**: `feat/on-demand-paths`
