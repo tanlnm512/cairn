@@ -1,6 +1,6 @@
 # Spec: http-mcp-serving
 
-**Status**: draft
+**Status**: approved
 **Effort**: large
 **Created**: 2026-10-04
 **Branch**: `feat/http-mcp-serving`

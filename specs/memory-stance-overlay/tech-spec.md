@@ -48,7 +48,7 @@ drops against). Orthogonal to lifecycle state by construction: reflect never
 writes `memory_tier`, `memory_score`, `memory_is_latest`, `title`, or `body`
 (survey S9).
 
-**Stance authority is BOTH** (D-001, resolving FR-002's NEEDS CLARIFICATION):
+**Stance authority is BOTH** (D-001, the FR-002 ruling):
 `--stance` on `cairn memory record` (survey S3) and a `stance` parameter on
 the MCP `record_memory` tool (survey S2) record a *prior* through
 `capture_memory`; `cairn memory reflect` recomputes an *evidence verdict*
@@ -215,8 +215,7 @@ frontmatter restores the exact pre-feature file state.
 ## Decisions
 <!-- ADR-lite. Append-only: decisions made during implementation land here too. -->
 ### D-001: Stance authority is BOTH — record-time prior, reflect verdict wins
-- **Context**: FR-002 carried a NEEDS CLARIFICATION: reflect-only stance, or
-  also settable at record time.
+- **Context**: FR-002's stance-authority contract (dual source, evidence wins).
 - **Decision**: Both. `--stance` on `cairn memory record` and a `stance`
   parameter on the MCP `record_memory` tool write a prior through
   `capture_memory`; `cairn memory reflect` recomputes from evidence and its

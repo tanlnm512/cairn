@@ -1,6 +1,6 @@
 # Spec: pr-tooling
 
-**Status**: draft
+**Status**: approved
 **Effort**: standard
 **Created**: 2026-10-05
 **Branch**: `feat/pr-tooling`
