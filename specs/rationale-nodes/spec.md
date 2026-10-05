@@ -1,6 +1,6 @@
 # Spec: rationale-nodes
 
-**Status**: active
+**Status**: done
 **Effort**: standard
 **Created**: 2026-10-05
 **Branch**: `feat/rationale-nodes`
