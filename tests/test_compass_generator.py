@@ -208,9 +208,72 @@ class TestCrossModuleDeps:
 
         bundle = OKFBundle(str(tmp_path / "k"))
         concept = generate_compass("app", conn, bundle, repo="polaris-app")
+        # No community rows -> the section is absent (rows-gated, D-006).
+        assert "# Subsystems" not in concept.body
         result = critic_concept(concept, conn)
         assert result.errors == [], f"critic rejected graph-sourced body: {result.errors}"
         assert result.passed is True
+
+    def test_deterministic_template_with_community_rows_passes_critic(self, conn, tmp_path):
+        # With community rows the section joins the body between the first
+        # two sections; the 6-section body saturates quality at 1.0 against
+        # the 5-section default denominator and still passes.
+        from cairn.compass.critic import critic_concept
+
+        _row(conn, "communities", id=1, label="hub:adk.api_handler", size=1)
+        _row(conn, "communities", id=2, label="agent.py", size=2)
+        _row(conn, "symbol_communities", community_id=1, symbol_id="s4", structural_degree=1)
+        _row(conn, "symbol_communities", community_id=2, symbol_id="s1", structural_degree=2)
+        _row(conn, "symbol_communities", community_id=2, symbol_id="s2", structural_degree=1)
+        conn.commit()
+
+        bundle = OKFBundle(str(tmp_path / "k"))
+        concept = generate_compass("app", conn, bundle, repo="polaris-app")
+        before_section, rest = concept.body.split("# Subsystems", 1)
+        assert "# What Does This Module Do?" in before_section
+        section, _ = rest.split("# Common Modification Patterns", 1)
+        # Communities ordered by (-size, label); hubs by structural degree.
+        assert "- agent.py (2 symbols) - hub `adk.agent_run`" in section
+        assert "- hub:adk.api_handler (1 symbols) - hub `adk.api_handler`" in section
+        assert section.index("agent.py") < section.index("hub:adk.api_handler")
+        result = critic_concept(concept, conn)
+        assert result.errors == []
+        assert result.passed is True
+        assert result.quality_score == 1.0
+
+
+class TestSubsystemsFact:
+    """The compass-side community fact: (-size, label) top-5, top hub each."""
+
+    def _seed_communities(self, conn: sqlite3.Connection) -> None:
+        # Six communities so the (-size, label) cut drops zz.py; community 1
+        # has a degree gap for the hub tie-break check, community 2 has a
+        # single member, community 3 exists with no members (no hub).
+        _row(conn, "communities", id=1, label="m.py", size=3)
+        _row(conn, "communities", id=2, label="b.py", size=2)
+        _row(conn, "communities", id=3, label="c.py", size=2)
+        _row(conn, "communities", id=4, label="a.py", size=1)
+        _row(conn, "communities", id=5, label="d.py", size=1)
+        _row(conn, "communities", id=6, label="zz.py", size=1)
+        _row(conn, "symbol_communities", community_id=1, symbol_id="s1", structural_degree=3)
+        _row(conn, "symbol_communities", community_id=1, symbol_id="s2", structural_degree=1)
+        _row(conn, "symbol_communities", community_id=2, symbol_id="s4", structural_degree=2)
+        conn.commit()
+
+    def test_top_communities_ordered_limited_with_hubs(self, conn):
+        from cairn.compass.generator import _subsystems_fact
+
+        self._seed_communities(conn)
+        fact = _subsystems_fact(conn)
+        assert [f["label"] for f in fact] == ["m.py", "b.py", "c.py", "a.py", "d.py"]
+        assert fact[0] == {"label": "m.py", "size": 3, "hub": "adk.agent_run"}
+        assert fact[1] == {"label": "b.py", "size": 2, "hub": "adk.api_handler"}
+        assert fact[2] == {"label": "c.py", "size": 2, "hub": None}
+
+    def test_no_community_rows_yields_empty_fact(self, conn):
+        from cairn.compass.generator import _subsystems_fact
+
+        assert _subsystems_fact(conn) == []
 
 
 class TestCompassGenerateCLI:

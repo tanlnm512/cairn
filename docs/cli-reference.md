@@ -43,6 +43,7 @@ are read at process start, not per call.
 | `cairn impact <symbol>` | what breaks if changed (within-repo) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
+| `cairn communities` | Louvain subsystem clusters over the symbol graph (requires the `[graph-analytics]` extra) |
 | `cairn grep <pattern>` | span-grouped search over indexed files |
 | `cairn deps <repo>` | cross-repo dependency map |
 | `cairn tree <path>` | file/module symbol tree |
@@ -73,6 +74,18 @@ are read at process start, not per call.
 - `--json` emits the canonical machine shape. Text is the default.
 - `--max-clusters`, `--max-hubs`, and `--max-hotspots` cap their arrays and
   every cap reports how many entries were dropped, including zero.
+
+### `cairn communities`
+
+- Computes deterministic Louvain communities over structural edge kinds only
+  and persists the partition plus per-community hubs to derived tables;
+  prints the community count, global hubs, and per-community hubs.
+- Requires the `[graph-analytics]` extra (`pip install
+  'cairn[graph-analytics]'`); without it the command exits 1 with that hint
+  and the store is untouched.
+- `--db` selects the store; `--top-k` caps the hub lists (default 10,
+  minimum 1).
+- A store with no structural edges prints "no communities found".
 
 ### `cairn grep <pattern>`
 

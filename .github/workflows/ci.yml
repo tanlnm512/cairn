@@ -165,8 +165,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.1.0
 
-      - name: Install (with dev + ingest extras)
-        run: uv sync --extra dev --extra ingest --python ${{ matrix.python-version }}
+      - name: Install (with dev + ingest + graph-analytics extras)
+        run: uv sync --extra dev --extra ingest --extra graph-analytics --python ${{ matrix.python-version }}
 
       - name: Validate skill eval specs
         run: uv run --no-sync python scripts/run_skill_evals.py

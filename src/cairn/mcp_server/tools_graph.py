@@ -8,7 +8,6 @@ import sqlite3
 
 from mcp.types import ToolAnnotations
 
-from ..graph.taint import CLOSURE_MAX_DEPTH, DEFAULT_PATH_LIMIT
 from ._server_core import (
     _append_embed_degradation_footnote,
     _bundle,
@@ -431,7 +430,7 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def path(
-    from_pattern: str, to_pattern: str, fuzzy: bool = False, max_depth: int = CLOSURE_MAX_DEPTH, limit: int = DEFAULT_PATH_LIMIT
+    from_pattern: str, to_pattern: str, fuzzy: bool = False, max_depth: int = 4, limit: int = 50
 ) -> str:
     """Trace the shortest structural path between two symbols over the live graph.
 

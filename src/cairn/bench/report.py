@@ -93,6 +93,8 @@ class ScalingPoint:
     closure_maintain_seconds: float = 0.0
     path_query_seconds: float = 0.0
     path_query_paths: int = 0
+    communities_seconds: float = 0.0
+    communities_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -109,6 +111,8 @@ class ScalingPoint:
             "closure_maintain_s": round(self.closure_maintain_seconds, 3),
             "path_query_s": round(self.path_query_seconds, 3),
             "path_query_paths": self.path_query_paths,
+            "communities_s": round(self.communities_seconds, 3),
+            "communities_count": self.communities_count,
         }
 
 

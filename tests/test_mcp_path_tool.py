@@ -117,3 +117,14 @@ def test_limit_caps_printed_paths(tmp_path, monkeypatch):
     assert lines[3] == "path 2 (fan_4 -> fan_sink, 2 hops):"
     assert sum(1 for line in lines if line.startswith("path ")) == 2
     assert all(line.endswith("[exact]") for line in lines[1::3])
+def test_path_defaults_match_shared_constants():
+    """D-014 drift guard: literal signature defaults equal the shared constants."""
+    from cairn.graph.taint import CLOSURE_MAX_DEPTH, DEFAULT_PATH_LIMIT
+
+    from cairn.mcp_server.tools_graph import path
+
+    import inspect
+
+    sig = inspect.signature(path)
+    assert sig.parameters["max_depth"].default == CLOSURE_MAX_DEPTH == 4
+    assert sig.parameters["limit"].default == DEFAULT_PATH_LIMIT == 50

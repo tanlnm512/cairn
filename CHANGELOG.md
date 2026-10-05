@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- `cairn communities` command: deterministic Louvain community detection over
+  structural edges, persisted to the `communities`/`symbol_communities`
+  derived tables with global and per-community hub symbols (`--top-k`,
+  default 10); a store with no structural edges reports "no communities
+  found". Requires the new `[graph-analytics]` extra (`pip install
+  'cairn[graph-analytics]'`) — without it the command exits with the install
+  hint and leaves the store untouched.
+- Dashboard `/communities` view: renders the partition with community sizes,
+  hub symbols, and member drill-down (nav under Explore, after Graph).
+
 ### Fixed
 - Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters
   fixed across the graph, parsers, memory/LLM, MCP server, dashboard, wiki,

@@ -24,12 +24,13 @@ from pathlib import Path
 
 import pytest
 
-# The sixteen main views (same inventory the asset tests crawl).
+# The seventeen main views (same inventory the asset tests crawl).
 _MAIN_VIEWS = (
     "/",
     "/workspaces",
     "/projects",
     "/graph",
+    "/communities",
     "/history",
     "/tokens",
     "/chains",

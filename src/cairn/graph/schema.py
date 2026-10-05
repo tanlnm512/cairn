@@ -431,6 +431,20 @@ CREATE INDEX IF NOT EXISTS idx_transitive_target ON transitive_edges(target_name
 CREATE INDEX IF NOT EXISTS idx_transitive_target_id ON transitive_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_transitive_distance ON transitive_edges(distance);
 
+-- Louvain subsystem partition over the symbol graph; derived rows, full-refresh by `cairn communities`.
+CREATE TABLE IF NOT EXISTS communities (
+    id INTEGER PRIMARY KEY,
+    label TEXT NOT NULL,
+    size INTEGER NOT NULL
+);
+
+-- Community membership with per-member structural degree, stored so reads never re-join edges.
+CREATE TABLE IF NOT EXISTS symbol_communities (
+    community_id INTEGER NOT NULL,
+    symbol_id TEXT NOT NULL,
+    structural_degree INTEGER NOT NULL
+);
+
 -- Migration tracking: records which schema migrations have been applied.
 -- Used to ensure migrations are only run once and to detect partial/failed
 -- migrations. key is the migration name (e.g., "edges.resolution"), value

@@ -820,6 +820,8 @@ def _output_spec(task_kind: str, facts: Optional[Dict[str, Any]] = None) -> str:
             "Write a 25-35 line compass file with exactly these 5 sections:\n"
             "# What Does This Module Do? / # Common Modification Patterns / "
             "# Build-Failure Patterns / # Cross-Module Dependencies / # Tribal Knowledge\n"
+            "When facts.subsystems is non-empty, also emit `# Subsystems` right after "
+            "the first section: one line per community (label, size, hub symbol).\n"
             "Only reference files/symbols listed in the facts. Use backticks for code."
         ),
         "compass-revise": (

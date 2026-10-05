@@ -22,8 +22,9 @@ from cairn.graph.schema import _apply_schema, get_db
 # read paths: graph scope changes (repo / symbol+depth / unknown fallback),
 # the graph JSON endpoints (candidates: exact / absent-from-store / absent
 # whitespace name; neighbors: repeatable names + depth, whitespace-only,
-# absent, unknown name + bogus depth), history tool+session filters
-# (separate and combined), tasks status filter, and the static assets.
+# absent, unknown name + bogus depth), the communities view with its
+# member drill-down param, history tool+session filters (separate and
+# combined), tasks status filter, and the static assets.
 ROUTES = [
     "/",
     "/projects",
@@ -40,6 +41,8 @@ ROUTES = [
     "/graph/neighbors?name=%20%20",
     "/graph/neighbors",
     "/graph/neighbors?name=no_such_symbol&depth=bogus",
+    "/communities",
+    "/communities?community=1",
     "/health",
     "/memory",
     "/tasks",
@@ -190,11 +193,11 @@ def _guard_world(tmp_path, name="guard.db"):
     )
 
 
-def _fetch(client, path):
+def _fetch(client, path, headers=None):
     """One guarded fetch: a sqlite error must fail naming the route, not
     surface as an opaque 500."""
     try:
-        resp = client.get(path)
+        resp = client.get(path, headers=headers)
     except sqlite3.OperationalError as exc:
         pytest.fail(f"{path}: {exc}")
     assert resp.status_code == 200, path
@@ -230,6 +233,30 @@ def test_full_route_pass_leaves_db_byte_identical(tmp_path):
 
     assert _digest(db_path) == before_digest
     assert _metric_rows(db_path) == before_rows
+    sidecars = sorted(
+        p.name
+        for p in Path(db_path).parent.iterdir()
+        if p.name.endswith(("-wal", "-shm"))
+    )
+    assert sidecars == []
+
+
+def test_communities_drilldown_fragment_renders_the_region_alone(tmp_path):
+    """The HX-Request branch of /communities renders the member region
+    fragment — no shell chrome, the rows-gated empty state without a
+    selected community — and leaves the DB byte-identical like every
+    other route."""
+    client, db_path = _guard_world(tmp_path, name="communities-fragment.db")
+    before_digest = _digest(db_path)
+
+    resp = _fetch(
+        client, "/communities?community=1", headers={"HX-Request": "true"}
+    )
+    assert 'id="community-members"' in resp.text
+    assert "No community #1 in this store" in resp.text
+    assert "<aside" not in resp.text
+
+    assert _digest(db_path) == before_digest
     sidecars = sorted(
         p.name
         for p in Path(db_path).parent.iterdir()

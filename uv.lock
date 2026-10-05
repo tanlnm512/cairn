@@ -423,6 +423,10 @@ dev = [
     { name = "ruff" },
     { name = "watchdog" },
 ]
+graph-analytics = [
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 ingest = [
     { name = "mammoth" },
     { name = "markdownify" },
@@ -462,6 +466,7 @@ requires-dist = [
     { name = "markdownify", marker = "extra == 'ingest'", specifier = ">=0.13" },
     { name = "mcp", specifier = ">=0.9.0,<2.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.3.0" },
+    { name = "networkx", marker = "extra == 'graph-analytics'", specifier = ">=3.4" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "numpy", marker = "extra == 'semantic'", specifier = ">=1.24" },
     { name = "onnxruntime", marker = "python_full_version < '3.11' and extra == 'ingest'", specifier = "<1.24" },
@@ -504,7 +509,7 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "watchdog", marker = "extra == 'watch'", specifier = ">=3.0" },
 ]
-provides-extras = ["watch", "test", "dev", "semantic", "ann", "scip", "otlp", "ingest", "bench"]
+provides-extras = ["watch", "test", "dev", "semantic", "ann", "scip", "otlp", "ingest", "bench", "graph-analytics"]
 
 [[package]]
 name = "certifi"

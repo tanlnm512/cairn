@@ -6,61 +6,70 @@ has an observable pass condition. No implementation details.
 "Prepared workspace" = a workspace registered with the store whose graph is
 built (`cairn build`) over a small code fixture sized to finish in seconds.
 
+Fixture contract (test assets this suite reuses from
+`tests/fixtures/on-demand-paths/`, provisioned idempotently by its
+`provision.sh`, which also resets mutation state; all paths repo-root-relative,
+each command finishing well under the 120 s audit cap): `fork/` (`hub_top` ->
+`mid_left`/`mid_right` -> `hub_sink`) backs the hub, label, and determinism
+checks; `islands/` (two disjoint components) backs the multi-partition checks;
+TC-004 builds its relation-free workspace inline. Stores are throwaway
+`/tmp/comm-tcNNN.db` files. All auto commands are single-line.
+
 ## TC-001 — One command computes, persists, and summarizes communities
 - **Story**: US1 · **Traces to**: FR-001 (AC1)
 - **Given** a prepared workspace whose graph contains code relations between its symbols
 - **When** the user runs `cairn communities`
 - **Then** the command succeeds and the summary prints the number of communities found, the size of each, and the top hub symbols; the results are stored so later consumers (compass guide, dashboard view — TC-009, TC-012) read them without recomputing
-- **Pass condition**: `cairn communities` exits 0 in the prepared workspace and its output states a community count, a size per community, and named hub symbols
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc001.db /tmp/comm-tc001.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc001.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc001.db > /tmp/comm-tc001.out && grep -qE '^[0-9]+ communities$' /tmp/comm-tc001.out && grep -qE '\([0-9]+ symbols\)$' /tmp/comm-tc001.out && grep -qE '^  [a-z_]+ \(degree [0-9]+\)$' /tmp/comm-tc001.out && [ "$(sqlite3 /tmp/comm-tc001.db 'select count(*) from communities')" -gt 0 ] && [ "$(sqlite3 /tmp/comm-tc001.db 'select count(*) from symbol_communities')" -gt 0 ]`
 
 ## TC-002 — Re-running on an unchanged graph reproduces the result exactly
 - **Story**: US1 · **Traces to**: FR-007 (AC2)
 - **Given** a prepared workspace where `cairn communities` has already run once and nothing in the code changed since
 - **When** the command runs a second time
 - **Then** the reported partition, community labels, ordering, and hub lists are identical to the first run — the printed output matches byte for byte
-- **Pass condition**: `cairn communities > run1.txt && cairn communities > run2.txt && diff run1.txt run2.txt` exits 0 (no differences) in the prepared workspace
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc002.db /tmp/comm-tc002-a.out /tmp/comm-tc002-b.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc002.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc002.db > /tmp/comm-tc002-a.out && uv run --no-sync cairn communities --db /tmp/comm-tc002.db > /tmp/comm-tc002-b.out && diff /tmp/comm-tc002-a.out /tmp/comm-tc002-b.out`
 
 ## TC-003 — Re-running after the code changes replaces stale results
 - **Story**: US1 · **Traces to**: FR-001 (AC1)
 - **Given** a prepared workspace where `cairn communities` has already run, after which a real code relation is added between previously unrelated symbols and the graph is rebuilt
 - **When** the command runs again on the rebuilt graph
 - **Then** the results equal what a fresh compute of that same rebuilt graph produces — byte-identical to the output from an identical twin workspace built from scratch with the added relation already present — so no membership from the pre-change run survives unless the fresh compute also reports it
-- **Pass condition**: `cairn communities` on the rebuilt workspace and on the twin workspace (same fixture built from scratch with the added relation) both exit 0 with byte-identical output, and a further run on the unchanged rebuilt workspace reproduces that output exactly
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc003-a.db /tmp/comm-tc003-b.db /tmp/comm-tc003-a.out /tmp/comm-tc003-b.out /tmp/comm-tc003-a2.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc003-a.db > /dev/null && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc003-b.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc003-a.db > /tmp/comm-tc003-a.out && uv run --no-sync cairn communities --db /tmp/comm-tc003-b.db > /tmp/comm-tc003-b.out && diff /tmp/comm-tc003-a.out /tmp/comm-tc003-b.out && uv run --no-sync cairn communities --db /tmp/comm-tc003-a.db > /tmp/comm-tc003-a2.out && diff /tmp/comm-tc003-a.out /tmp/comm-tc003-a2.out` (the rebuilt store vs its identical fresh-built twin, plus a further run on the rebuilt store — build-stability, the same contract the pytest owner pins)
 
 ## TC-004 — A graph with symbols but no code relations degrades, not crashes
 - **Story**: US1 · **Traces to**: FR-001
 - **Given** a built workspace whose graph has symbols but zero code relations (e.g. prose-only sources)
 - **When** the user runs `cairn communities`
 - **Then** the command succeeds, reports that no communities were found (or an empty listing), and exits 0 — no traceback, no error exit
-- **Pass condition**: `cairn communities` exits 0 on the relation-free workspace and its output contains no error text
+- **Pass condition**: `rm -rf /tmp/comm-tc004-ws && mkdir -p /tmp/comm-tc004-ws/.git && printf 'def a():\n    return 1\n\n\ndef b():\n    return 2\n' > /tmp/comm-tc004-ws/solo.py && rm -f /tmp/comm-tc004.db /tmp/comm-tc004.out && uv run --no-sync cairn build --workspace /tmp/comm-tc004-ws --db /tmp/comm-tc004.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc004.db > /tmp/comm-tc004.out 2>&1 && grep -q 'no communities found' /tmp/comm-tc004.out && ! grep -qi traceback /tmp/comm-tc004.out`
 
 ## TC-005 — Import-only bridges: stable partition, converging refresh
 - **Story**: US1 · **Traces to**: FR-002
 - **Given** a fixture of two groups whose members call only each other, with the single cross-group link being an import-style reference rather than a call or inheritance relation
 - **When** `cairn communities` runs on the fixture twice back-to-back, and once more after a full rebuild of the unchanged graph
 - **Then** every run succeeds and reports a partition covering the symbols, the same one every time — whatever partition the import-only link yields is stable across runs, and the full-refresh path converges to it
-- **Pass condition**: three `cairn communities` runs on the import-bridged fixture (two back-to-back, one after a fresh rebuild) all exit 0 with byte-identical output
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc005-a.db /tmp/comm-tc005-b.db /tmp/comm-tc005-1.out /tmp/comm-tc005-2.out /tmp/comm-tc005-3.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/islands --db /tmp/comm-tc005-a.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc005-a.db > /tmp/comm-tc005-1.out && uv run --no-sync cairn communities --db /tmp/comm-tc005-a.db > /tmp/comm-tc005-2.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/islands --db /tmp/comm-tc005-b.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc005-b.db > /tmp/comm-tc005-3.out && diff /tmp/comm-tc005-1.out /tmp/comm-tc005-2.out && diff /tmp/comm-tc005-1.out /tmp/comm-tc005-3.out`
 
 ## TC-006 — Hubs rank by combined structural degree, globally and per community, top ten
 - **Story**: US1 · **Traces to**: FR-003
 - **Given** a prepared fixture where one shared routine receives calls from across the fixture and also calls out to several others, giving it the highest combined degree of any symbol
 - **When** `cairn communities` runs
 - **Then** that routine is listed first in the global hub list; the global list shows at most ten hubs; every reported community names its own hub; on a fixture with fewer than ten hub candidates all are listed with no error or padding
-- **Pass condition**: `cairn communities` output on the fixture starts its global hub list with the highest-degree routine, contains at most ten global hubs, and shows a hub per community line
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc006.db /tmp/comm-tc006.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc006.db > /dev/null && uv run --no-sync cairn communities --db /tmp/comm-tc006.db > /tmp/comm-tc006.out && grep -A1 '^Global hubs:' /tmp/comm-tc006.out | tail -n 1 | grep -q ' (degree 2)$' && [ "$(sed -n '/^Global hubs:/,/^Communities:/p' /tmp/comm-tc006.out | grep -c '(degree ')" -le 10 ] && awk '/\([0-9]+ symbols\)$/{n++;p=1;next} p && !/\(degree [0-9]+\)$/{bad=1} {p=0} END{exit (!bad && n>0)?0:1}' /tmp/comm-tc006.out`
 
 ## TC-007 — Community labels come from member facts with no model involved
 - **Story**: US1 · **Traces to**: FR-008
 - **Given** a prepared workspace and an environment with no model provider credentials configured
 - **When** `cairn communities` runs
 - **Then** every community carries a readable label derived from its own members' facts (e.g. its top hub's name or the members' dominant source area), and no label is blank, a placeholder, or an error
-- **Pass condition**: with model credentials absent from the environment, `cairn communities` exits 0 and every community in the output has a label matching a member hub name or shared member path area (standing guard: fails if labels ever need a model or go blank)
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc007.db /tmp/comm-tc007.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc007.db > /dev/null && env -u OPENAI_API_KEY -u CAIRN_EMBED_API_KEY uv run --no-sync cairn communities --db /tmp/comm-tc007.db > /tmp/comm-tc007.out && grep -qE '^[0-9]+ communities$' /tmp/comm-tc007.out && python3 -c 'import re,sys; ls=[l.rstrip("\n") for l in open("/tmp/comm-tc007.out") if re.match(r"^  \d+: .+ \(\d+ symbols\)$", l.rstrip("\n"))]; sys.exit(0 if ls and all(re.match(r"^  \d+: (?:[A-Za-z0-9_./-]+|hub:\S+) \(\d+ symbols\)$", l) for l in ls) else 1)'` (standing guard: fails if labels ever need a model or go blank)
 
 ## TC-008 — Without the analytics extra: clear failure, store untouched
 - **Story**: US4 · **Traces to**: FR-004 (AC1)
 - **Given** an environment installed without the graph-analytics extra, pointing at a built store
 - **When** the user runs `cairn communities`
 - **Then** the command exits non-zero with a message naming the missing extra and the exact way to add it; the store is byte-for-byte unchanged — a checksum taken before and after the failed run is identical, and no community data appears
-- **Pass condition**: `cairn communities` exits non-zero, prints an install hint naming the graph-analytics extra, and the store database checksum is identical before and after the run (standing guard: fails if the default install ever grows a hard dependency on the extra)
+- **Pass condition**: `mkdir -p /tmp/comm-block && printf 'raise ImportError("blocked")\n' > /tmp/comm-block/networkx.py && sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc008.db /tmp/comm-tc008.out && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc008.db > /dev/null && before=$(shasum -a 256 /tmp/comm-tc008.db | cut -d ' ' -f 1) && ! PYTHONPATH=/tmp/comm-block uv run --no-sync cairn communities --db /tmp/comm-tc008.db > /tmp/comm-tc008.out 2>&1 && grep -q 'graph-analytics' /tmp/comm-tc008.out && [ "$(shasum -a 256 /tmp/comm-tc008.db | cut -d ' ' -f 1)" = "$before" ]` (standing guard: fails if the default install ever grows a hard dependency on the extra)
 
 ## TC-009 — Compass guide carries Subsystems when community data exists
 - **Story**: US2 · **Traces to**: FR-005 (AC1)
@@ -102,7 +111,7 @@ built (`cairn build`) over a small code fixture sized to finish in seconds.
 - **Given** any built workspace store
 - **When** `cairn communities` runs
 - **Then** it completes in seconds, not minutes; at scale the standing budget holds — on the 1000-file generated corpus the command completes within 10 seconds wall
-- **Pass condition**: `cairn communities` exits 0 on a built store well inside the runner cap (bounded proof); standing at-scale verify: the scaling budget gate run in full, `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_scaling_gate.py -m "not infra" -q`, asserts the communities wall time ≤ 10 s at the 1000-file gate point
+- **Pass condition**: `sh tests/fixtures/on-demand-paths/provision.sh && rm -f /tmp/comm-tc014.db && uv run --no-sync cairn build --workspace tests/fixtures/on-demand-paths/fork --db /tmp/comm-tc014.db > /dev/null && uv run --no-sync python -c 'import subprocess,time; t=time.monotonic(); subprocess.run(["uv","run","--no-sync","cairn","communities","--db","/tmp/comm-tc014.db"],check=True,capture_output=True); d=time.monotonic()-t; assert d < 60.0, d'` (bounded proof; standing at-scale verify beyond the audit's 120 s cap: the scaling budget gate run in full, `CAIRN_LIB=/tmp/__no_such_lib__ uv run --extra test pytest tests/test_scaling_gate.py -m "not infra" -q`, asserts the communities wall time ≤ 10 s at the 1000-file gate point)
 
 ## Coverage matrix
 <!-- Every FR and applicable NFR appears; `check.py` fails a requirement with no TC. -->

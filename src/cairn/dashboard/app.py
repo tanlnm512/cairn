@@ -331,6 +331,7 @@ def create_app(
 
     from .routes import (
         DashboardContext,
+        communities,
         core,
         editor,
         graph,
@@ -356,6 +357,7 @@ def create_app(
 
     core.register(routes, context, section="primary")
     graph.register(routes, context)
+    communities.register(routes, context)
     history.register(routes, context)
     core.register(routes, context, section="health")
     memory.register(routes, context)

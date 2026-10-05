@@ -3117,7 +3117,7 @@ def test_command_palette_seeds_views_and_workspaces(tmp_path, monkeypatch):
         ).group(1)
     )
     by_label = {v["label"]: v["href"] for v in seed["views"]}
-    assert len(by_label) == 15  # 14 nav views + the palette-only graph view
+    assert len(by_label) == 16  # 15 nav views + the palette-only graph view
     assert by_label["Graph"] == f"/graph?store={_SW_KEY_A}"
     # The knowledge family: the catalog in the sidebar, the graph view
     # palette-only (one sidebar entry per surface family).
@@ -3156,7 +3156,7 @@ def test_command_palette_dialog_markup_with_htmx_input(tmp_path, monkeypatch):
 
 def test_palette_results_empty_query_serves_the_seed_rows(tmp_path, monkeypatch):
     """An empty query returns the unfiltered list the palette opens with:
-    the 14 nav views + the palette-only knowledge graph view first
+    the 15 nav views + the palette-only knowledge graph view first
     (store-carrying hrefs, exactly the seed composition), then the
     populated workspaces keyed for the switch; no symbols without a real
     query (store A has a seeded symbol)."""
@@ -3170,9 +3170,9 @@ def test_palette_results_empty_query_serves_the_seed_rows(tmp_path, monkeypatch)
     assert f'data-store-key="{_SW_KEY_A}"' in resp.text
     assert f'data-store-key="{_SW_KEY_B}"' in resp.text
     # 15 view rows + 2 populated workspaces, consecutively numbered.
-    for i in range(17):
+    for i in range(18):
         assert f'id="palette-row-{i}"' in resp.text
-    assert 'id="palette-row-17"' not in resp.text
+    assert 'id="palette-row-18"' not in resp.text
     assert "no matches" not in resp.text
     assert "store_a_fn" not in resp.text
 

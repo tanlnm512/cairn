@@ -15,6 +15,7 @@ from . import agents       # noqa: F401
 from . import ask_context  # noqa: F401
 from . import bench        # noqa: F401
 from . import compass      # noqa: F401
+from . import communities  # noqa: F401
 from . import core         # noqa: F401
 from . import dashboard    # noqa: F401
 from . import dataflow     # noqa: F401

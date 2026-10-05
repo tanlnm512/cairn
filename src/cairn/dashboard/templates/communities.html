@@ -1,0 +1,73 @@
+{#-
+  The /communities view: the persisted Louvain partition (written by
+  `cairn communities`) with per-community member drill-down. One
+  template, two render modes picked by the ``fragment`` context flag:
+  the full page under base.html, or the #community-members region alone
+  on the route's HX-Request branch — the Members links hx-get the same
+  route and swap the region in place, and without htmx they navigate to
+  the full page, which renders the region inline. Community rows are
+  read rows-gated: a store without community rows renders the empty
+  panel, never an error.
+-#}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% macro members_region() -%}
+<div id="community-members">
+  {% if selected %}
+  <h2>{{ selected.label }}</h2>
+  <p class="muted">{{ selected.size }} symbols, ranked by combined structural degree.</p>
+  {% call tables.table(['Member', 'Path', 'Structural degree']) %}
+    {% for m in selected.members %}
+    <tr>
+      <td class="cell-id"><code title="{{ m.qualified_name }}">{{ m.qualified_name }}</code></td>
+      <td>{{ m.path }}</td>
+      <td class="num">{{ m.structural_degree }}</td>
+    </tr>
+    {% endfor %}
+  {% endcall %}
+  {% elif community_id is not none %}
+  {{ tables.empty_state('No community #' ~ community_id ~ ' in this store') }}
+  {% else %}
+  <p class="muted">Select a community to list its member symbols.</p>
+  {% endif %}
+</div>
+{%- endmacro %}
+{% if fragment %}
+{{ members_region() }}
+{% else %}
+{% extends "base.html" %}
+{% block title %}Communities — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Communities</h1>
+  <p class="muted">
+    Louvain subsystems over the structural symbol graph — run
+    <code>cairn communities</code> to (re)build this view.
+  </p>
+  {% if communities %}
+  {% call tables.table(['Community', 'Size', 'Top hubs', 'Members']) %}
+    {% for c in communities %}
+    <tr>
+      <td><code title="community #{{ c.id }}">{{ c.label }}</code></td>
+      <td class="num">{{ c.size }}</td>
+      <td>
+        {%- for h in c.hubs -%}
+        <code title="degree {{ h.structural_degree }}">{{ h.qualified_name }}</code>{% if not loop.last %}, {% endif %}
+        {%- endfor -%}
+      </td>
+      <td>
+        <a href="{{ links.url('/communities', {'community': c.id}) }}"
+           aria-label="Show members of {{ c.label }}"
+           hx-get="{{ links.url('/communities', {'community': c.id}) }}"
+           hx-target="#community-members" hx-swap="outerHTML">Members</a>
+      </td>
+    </tr>
+    {% endfor %}
+  {% endcall %}
+  {% else %}
+  {{ tables.empty_state('No communities persisted yet', "cairn communities") }}
+  {% endif %}
+  {{ members_region() }}
+</section>
+{% endblock %}
+{% endif %}

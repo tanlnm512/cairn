@@ -1,6 +1,6 @@
 # Spec: symbol-communities
 
-**Status**: approved
+**Status**: active
 **Effort**: large
 **Created**: 2026-10-04
 **Branch**: `feat/symbol-communities`

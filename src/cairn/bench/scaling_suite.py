@@ -34,6 +34,11 @@ PATH_QUERY_BUDGET_WALL_SECONDS = 2.0
 PATH_QUERY_SEEDS = 25
 PATH_QUERY_MAX_DEPTH = 4
 
+# Communities budget at the gate point: wall seconds one full
+# compute_communities run (edge pull, Louvain partition, hub/label
+# derivation, table persist) must stay within on the built corpus.
+COMMUNITIES_BUDGET_WALL_SECONDS = 10.0
+
 
 def synthesize_structural_edges(
     conn: sqlite3.Connection, *, factor: int = CLOSURE_EDGE_FACTOR
@@ -214,6 +219,22 @@ def run_scaling_suite(
                     path_count = _path_op()
                     path_s = _t.perf_counter() - _t0
 
+                # Communities op: one full partition run on the built corpus,
+                # before the closure-gate edge multiplication below; timed
+                # after a discarded warmup call. Recorded as zero when the
+                # optional graph-analytics extra is absent.
+                from ..graph.communities import compute_communities
+
+                communities_count = 0
+                communities_s: float = 0.0
+                try:
+                    compute_communities(conn)
+                    _t0 = _t.perf_counter()
+                    communities_count = compute_communities(conn)
+                    communities_s = _t.perf_counter() - _t0
+                except ImportError:
+                    pass
+
                 # Closure op: multiply structural-edge volume deterministically, then
                 # time + memory-trace one transitive-closure build over it.
                 synthesize_structural_edges(conn)
@@ -269,6 +290,8 @@ def run_scaling_suite(
                 closure_maintain_seconds=maintain_s,
                 path_query_seconds=path_s,
                 path_query_paths=path_count,
+                communities_seconds=communities_s,
+                communities_count=communities_count,
             )
             report.points.append(point)
             if progress:

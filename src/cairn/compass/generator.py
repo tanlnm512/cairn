@@ -127,7 +127,7 @@ def generate_compass(
     if llm_synthesize:
         body = llm_synthesize(symbols, key_files, cross_deps, quick_commands)
     else:
-        body = _template_body(symbols, key_files, cross_deps)
+        body = _template_body(symbols, key_files, cross_deps, _subsystems_fact(conn))
 
     concept = _compass_concept(module_path, repo_filter, body)
     concept.body = preserved_concept_notes(bundle, concept.concept_id, body)
@@ -251,6 +251,45 @@ def _cross_module_deps(conn, module_path: str, repo: Optional[str]) -> List[str]
     return sorted(mods)[:8]
 
 
+# Top communities surfaced in the deterministic Subsystems section.
+_SUBSYSTEMS_TOP = 5
+
+
+def _subsystems_fact(conn: sqlite3.Connection) -> List[dict]:
+    """Top communities by (-size, label), each with its top hub (highest
+    structural degree, ties by (path, qualified_name)); empty when the store
+    has no community rows (missing tables degrade the same way)."""
+    try:
+        cur = conn.cursor()
+        rows = cur.execute(
+            "SELECT id, label, size FROM communities "
+            "ORDER BY size DESC, label ASC LIMIT ?",
+            (_SUBSYSTEMS_TOP,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    fact: List[dict] = []
+    for row in rows:
+        hub = cur.execute(
+            """
+            SELECT s.qualified_name
+            FROM symbol_communities sc
+            JOIN symbols s ON s.id = sc.symbol_id
+            JOIN files f ON f.id = s.file_id
+            WHERE sc.community_id = ?
+            ORDER BY sc.structural_degree DESC, f.path ASC, s.qualified_name ASC
+            LIMIT 1
+            """,
+            (row["id"],),
+        ).fetchone()
+        fact.append({
+            "label": row["label"],
+            "size": row["size"],
+            "hub": hub["qualified_name"] if hub else None,
+        })
+    return fact
+
+
 def _is_gradle_repo(conn: sqlite3.Connection, repo: str) -> bool:
     """True when the repo's indexed files include a Gradle build file."""
     cur = conn.cursor()
@@ -274,7 +313,7 @@ def _quick_commands(conn: sqlite3.Connection, repo: Optional[str]) -> List[str]:
     return cmds
 
 
-def _template_body(symbols, key_files, cross_deps) -> str:
+def _template_body(symbols, key_files, cross_deps, subsystems) -> str:
     lines = ["# What Does This Module Do?"]
     if symbols:
         kinds: dict[str, int] = {}
@@ -285,6 +324,12 @@ def _template_body(symbols, key_files, cross_deps) -> str:
     else:
         lines.append("- (no symbols detected in this module)")
     lines.append("")
+    if subsystems:
+        lines.append("# Subsystems")
+        for sub in subsystems:
+            hub = f" - hub `{sub['hub']}`" if sub["hub"] else ""
+            lines.append(f"- {sub['label']} ({sub['size']} symbols){hub}")
+        lines.append("")
     lines.append("# Common Modification Patterns")
     if key_files:
         for kf in key_files:
@@ -344,6 +389,7 @@ def _gather_facts(conn: sqlite3.Connection, module_path: str, repo: Optional[str
         "key_files": [{"file": kf["path"].split("/")[-1], "refs": kf.get("score", 0)} for kf in key_files],
         "cross_deps": cross_deps,
         "quick_commands": quick_commands,
+        "subsystems": _subsystems_fact(conn),
         "symbol_names": [s["name"] for s in symbols[:40]],
     }
 

@@ -448,3 +448,33 @@ probe, the scaling gate, and the derived-table exemplars.
   renders the omitted Subsystems section / empty panel; D-005's singleton
   persistence now applies only to Louvain-emitted singletons in non-empty
   graphs (edge-connected symbols the partition isolates).
+
+### D-011: D-004 column-type correction
+- **Context**: D-004's prose (and task.md's T002 bullet, since fixed) wrote `symbol_communities.symbol_id INTEGER`; schema ground truth is `symbols.id TEXT PRIMARY KEY` (uuid string).
+- **Decision**: the shipped type is TEXT — `symbol_communities(community_id INTEGER NOT NULL, symbol_id TEXT NOT NULL, structural_degree INTEGER NOT NULL)`; T002's implementation is the contract.
+- **Consequences**: none beyond the corrected letter; D-004's other terms (additive-only, no MIGRATIONS entry, full-refresh shape) unchanged.
+
+### D-012: D-008 amendment — palette count pins
+- **Context**: T009 found two palette-seed pins in tests/test_dashboard_app.py the survey/tech-spec sweep never enumerated; both flip with the 15th nav view.
+- **Decision**: tests/test_dashboard_app.py joins the T009 lockstep scope; the pins move 15→16 (palette seeds) and range(17)/row-17 → range(18)/row-18 (empty-query seed rows), docstrings recounted.
+- **Consequences**: the next view-count bump sweeps six files plus this one.
+
+### D-013: CI test arms gain graph-analytics
+- **Context**: T010's gates guard with importorskip, but tests/test_communities.py exercises compute_communities directly; CI test legs sync only dev+ingest, so the extra's absence would error the file there.
+- **Decision: CI's test-leg sync adds the graph-analytics extra (networkx is pure-Python, no matrix cost); the importorskip guards stay as the belt for extra-less local runs.
+- **Consequences**: the communities suite runs on every CI leg; no wheel/platform impact.
+
+### D-014: Delivery scope additions
+- **Context**: T010's ScalingPoint fields live in `src/cairn/bench/report.py` (spec-1 D-009 precedent), and D-013's CI change touches `.github/workflows/ci.yml`; TC-002's original fragment wrote run1.txt/run2.txt into the repo root.
+- **Decision**: both paths join their tasks' Touches by ruling; TC-002's condition now redirects to /tmp.
+- **Consequences**: scope audit clean; no repo-root pollution from proof runs.
+
+### D-015: Cross-spec delivery files
+- **Context**: spec-1's D-014 amendment (literal `path` defaults + drift pin) landed during spec-2's delivery window on the shared branch.
+- **Decision**: `src/cairn/mcp_server/tools_graph.py` + `tests/test_mcp_path_tool.py` changes belong to on-demand-paths D-014 (recorded in `specs/on-demand-paths/tech-spec.md`); this spec's scope audit admits them by reference.
+- **Consequences**: per-spec scope stays honest on a shared-branch campaign.
+
+### D-016: Cross-spec D-append scope waiver
+- **Context**: the shared-branch campaign mode delivers multiple specs on one branch; the scope audit's specs/ rule admits only this spec's own tree, so an append to a DELIVERED spec's tech-spec (on-demand-paths D-014) during this spec's window is structurally unadmittable.
+- **Decision**: DoD gate 6's single unmentioned path — the on-demand-paths tech-spec D-014 append — is ruled campaign bookkeeping, not scope creep; surfaced in the delivery summary.
+- **Consequences**: per-spec scope stays strict for code; cross-spec D-### appends remain visible and ruled, never silent.
