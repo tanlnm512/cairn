@@ -335,6 +335,7 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 | `cairn pack --task "<text>" --budget <N>` | One-shot token-budgeted context block: ranked sources, blast lines, compass excerpt, memories |
 | `cairn taint --from <src> --to <sink>` | Trace inter-procedural taint paths over precise call edges (`--fuzzy` opt-in, depth-capped) |
 | `cairn review` | Diff-scoped review pack (`--base`), pre-submit memory guard (`--pre-submit [--gate]`), comment capture (`--capture-event`) |
+| `cairn prs` | Open-PR triage fusing gh with the local graph: CI/review list, per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json`; read-only on both sides |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |

@@ -68,6 +68,7 @@ are read at process start, not per call.
 | `cairn path --from <pattern> --to <pattern>` | shortest structural path between symbols (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk; `--limit` caps printed paths; patterns are case-insensitive substrings of a symbol or qualified name) |
 | `cairn taint --from <pattern> --to <pattern>` | inter-procedural taint path trace (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk) |
 | `cairn review` | review loop: `--base <ref>` context pack, `--pre-submit [--gate]` memory guard, `--capture-event <file>` comment capture |
+| `cairn prs` | open-PR triage over gh: six-column list (CI + review state), per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json` payload — read-only on both sides (see [below](#cairn-prs)) |
 | `cairn context <file>` | compass + memory context for a file |
 
 ### `cairn blast`
@@ -131,6 +132,47 @@ are read at process start, not per call.
 - MCP `explore` output includes a `=== Rationale (N) ===` section (after
   Tribal memory) when any matched symbol has rationale records, and omits
   it otherwise; the MCP tool count is unchanged.
+
+### `cairn prs`
+
+- One read-only triage command fusing GitHub PR state with the local graph.
+  The default view lists open PRs from `gh` over the workspace's remote as a
+  six-column table — `PR`, `Title`, `Branch`, `Author`, `CI`, `Review`. CI
+  is classified conservatively from `statusCheckRollup`
+  (`pass`/`fail`/`pending`/`none`); `Author` and `Review` print `-` when gh
+  reports none.
+- Strictly read-only on both sides: the store opens read-only with no
+  freshness refresh, and gh runs only as a subprocess with pinned read-only
+  argv (`pr list` / `pr view` / `pr diff`); no tokens are read, logged, or
+  passed beyond gh's own configuration.
+- gh missing, unauthenticated, timed out (30 s), or erroring produces one
+  actionable error carrying gh's message (a missing binary gets install +
+  `gh auth login` guidance) — the report is assembled before anything
+  renders, so a failure never prints a partial table.
+- `--impact PR|BRANCH` targets one open PR by number (optional `#`) or
+  branch name (a branch must not start with `-`), fetches the diff and base
+  ref via gh, and prints: the `Store: local index (built <age>|never)` line
+  (impact reflects the local index as-is, never a fresh build of the PR
+  branch), `Changed symbols:` with file spans, `Dependents:` with depth and
+  resolution, `Unindexed changed files:` for any changed file with no
+  indexed symbols, and `Deleted files:` (`repo:path`). Traversal reuses the
+  impact depth caps — no unbounded walk.
+- `--conflicts` ranks open-PR pairs by shared-community overlap of their
+  touched symbols (`#12 + #34: 3 shared (label-a, label-b)` lines, largest
+  overlap first, PR-number tie-break); it resolves every open PR's seeds,
+  so it costs one `gh pr diff` per PR. Community tables are consumed, never
+  built: absent or empty `communities`/`symbol_communities` print
+  `Merge-order risk: unavailable — community tables absent — run cairn
+  communities` instead of failing; with tables populated but no shared
+  labels the section reads `no shared-community PR pairs`.
+- `--json` emits the whole report as one document:
+  `{"store": {"index": "local", "built": "<age>"|null}, "prs": [{number,
+  title, head_ref, author, ci_state, review_decision}…], "impact": …|null,
+  "conflicts": {"pairs": [{a, b, shared, communities}], "hint": …}|null}` —
+  `impact` and `conflicts` are `null` unless `--impact`/`--conflicts` was
+  passed; `built` is the store-age string (`"3d old"`, `"just now"`) or
+  `null` when the store has no build runs.
+- `--db` selects the store.
 
 ## Embeddings & rerank
 

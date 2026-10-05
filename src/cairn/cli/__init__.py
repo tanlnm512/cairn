@@ -28,6 +28,7 @@ from . import map          # noqa: F401
 from . import memory       # noqa: F401
 from . import pack         # noqa: F401
 from . import paths        # noqa: F401
+from . import prs          # noqa: F401
 from . import query        # noqa: F401
 from . import rationale    # noqa: F401
 from . import review       # noqa: F401

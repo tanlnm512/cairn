@@ -1,0 +1,26 @@
+diff --git a/src/cairn/graph/blast.py b/src/cairn/graph/blast.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/cairn/graph/blast.py
++++ b/src/cairn/graph/blast.py
+@@ -33,8 +33,11 @@ def _radius(
+     radius: dict[tuple[str, str, str], dict] = {}
+     cycles: dict[str, dict] = {}
+     truncated = False
+-    for seed in seeds:
+-        result = impact_analysis(
++    ordered = sorted(seeds, key=lambda seed: seed["name"])
++    for seed in ordered:
++        result = impact_analysis(
++            conn,
+             seed["name"],
+             max_depth=10,
+             fuzzy=fuzzy,
+diff --git a/src/cairn/graph/prs_fetch.py b/src/cairn/graph/prs_fetch.py
+new file mode 100644
+index 0000000..abc1234
+--- /dev/null
++++ b/src/cairn/graph/prs_fetch.py
+@@ -0,0 +1,3 @@
++def fetch_pr_view(repo, ref):
++    """Fetch (number, head_ref, base_ref) for one PR or branch."""
++    raise NotImplementedError

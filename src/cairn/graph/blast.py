@@ -158,6 +158,24 @@ def _resolve_base(repo: Path, base: str) -> str:
     return merge_base
 
 
+def _changed_entry(repo_id: str, parsed: dict) -> dict | None:
+    path = parsed["path"]
+    if path is None:
+        path = parsed["old_path"]
+    if path is None:
+        return None
+    return {
+        "repo": repo_id,
+        "path": path,
+        "old_path": parsed["old_path"],
+        "deleted": parsed["path"] is None,
+        "renamed": parsed["old_path"] is not None
+        and parsed["path"] is not None
+        and parsed["old_path"] != parsed["path"],
+        "hunks": parsed["hunks"],
+    }
+
+
 def _changed_files(conn, workspace: Path, base: str | None) -> tuple[dict, list[dict]]:
     repos = list(
         conn.execute(
@@ -184,23 +202,9 @@ def _changed_files(conn, workspace: Path, base: str | None) -> tuple[dict, list[
             else ["diff", "--unified=0", f"{left}..HEAD"]
         )
         for parsed in _parse_diff(_git(repo_path, args)):
-            path = parsed["path"]
-            if path is None:
-                path = parsed["old_path"]
-            if path is None:
-                continue
-            changed.append(
-                {
-                    "repo": repo["id"],
-                    "path": path,
-                    "old_path": parsed["old_path"],
-                    "deleted": parsed["path"] is None,
-                    "renamed": parsed["old_path"] is not None
-                    and parsed["path"] is not None
-                    and parsed["old_path"] != parsed["path"],
-                    "hunks": parsed["hunks"],
-                }
-            )
+            entry = _changed_entry(repo["id"], parsed)
+            if entry is not None:
+                changed.append(entry)
     return basis, changed
 
 
@@ -551,6 +555,87 @@ def compute_blast(
     ]
     return {
         "basis": basis,
+        "changed_files": changed,
+        "seeds": seeds,
+        "areas": _areas(seeds, radius),
+        "radius": radius,
+        "cycles": cycles,
+        "unindexed_files": unindexed,
+        "deleted_files": sorted(set(deleted)),
+        "truncated": truncated,
+        "taint_paths": taint_paths,
+    }
+
+
+def _pr_repo_id(conn, workspace_path: Path) -> str:
+    repos = list(
+        conn.execute("SELECT id, path FROM repos ORDER BY path, id").fetchall()
+    )
+    matches = [
+        row["id"]
+        for row in repos
+        if _repo_path(workspace_path, row["path"]).resolve() == workspace_path
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise BlastBaseError(
+            f"Workspace '{workspace_path}' matches multiple registered "
+            "repositories; run from a single-repo workspace root."
+        )
+    if len(repos) == 1:
+        return repos[0]["id"]
+    raise BlastBaseError(
+        f"Workspace '{workspace_path}' matches no repository registered in "
+        "the store; run cairn update in the workspace first."
+    )
+
+
+def _pr_changed_files(conn, workspace_path: Path, diff_text: str) -> list[dict]:
+    repo_id = _pr_repo_id(conn, workspace_path)
+    changed: list[dict] = []
+    for parsed in _parse_diff(diff_text):
+        entry = _changed_entry(repo_id, parsed)
+        if entry is not None:
+            changed.append(entry)
+    return changed
+
+
+def pr_seed_symbols(
+    conn: sqlite3.Connection, workspace: str, diff_text: str
+) -> tuple[list[dict], list[str]]:
+    """Resolve a PR diff's changed files to seed symbols and unindexed paths."""
+    changed = _pr_changed_files(conn, Path(workspace).resolve(), diff_text)
+    return _seed_symbols(conn, changed)
+
+
+def compute_pr_impact(
+    conn: sqlite3.Connection,
+    workspace: str,
+    *,
+    diff_text: str,
+    base_ref: str,
+    fuzzy: bool = False,
+    limit: int = 500,
+) -> dict:
+    """Return the reverse radius of a PR diff against the store as-is (no refresh)."""
+    workspace_path = Path(workspace).resolve()
+    changed = _pr_changed_files(conn, workspace_path, diff_text)
+    seeds, unindexed = _seed_symbols(conn, changed)
+    radius, cycles, truncated = _radius(conn, seeds, fuzzy=fuzzy, limit=limit)
+    _annotate_radius(conn, seeds, radius)
+    config = load_config(workspace_path)
+    taint_paths = intersect_seeds(
+        conn,
+        build_registry(config.taint_sources, config.taint_sinks),
+        {seed["name"] for seed in seeds},
+        fuzzy=fuzzy,
+    )
+    deleted = [
+        f"{item['repo']}:{item['path']}" for item in changed if item["deleted"]
+    ]
+    return {
+        "basis": {"kind": "pr", "base": base_ref},
         "changed_files": changed,
         "seeds": seeds,
         "areas": _areas(seeds, radius),

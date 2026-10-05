@@ -344,3 +344,8 @@ no config keys — so rollback is code-only.
 - **Consequences**: per-invocation cost stays within the blast profile;
   batch-impact-everything remains a deliberate future flag, not an
   accident.
+
+### D-009: Module-shape and scope rulings
+- **Context**: T004's fetchers landed as src/cairn/graph/prs_fetch.py (concurrent-wave coordination ruling — prs.py was mid-creation) with its own test file and fixture snapshots; T008's surface mandate covers README.md.
+- **Decision**: prs_fetch.py + tests/test_prs_fetch.py + tests/fixtures/gh/pr_view_fetch.json + pr_diff.patch join T004's Touches by ruling; README.md and docs/cli-reference.md join T008's.
+- **Consequences**: scope audit clean; the fetchers stay a separate module (D-001's wrapper remains the sole subprocess boundary they import).

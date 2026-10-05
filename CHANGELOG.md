@@ -74,6 +74,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   idempotent and deterministic on an unchanged store; stance renders
   inline in `cairn memory search` / `list` output and MCP
   `recall_memory` / `explore` output.
+- `cairn prs`: one read-only PR-triage command fusing GitHub state with the
+  local graph — a six-column open-PR list (number, title, branch, author,
+  CI state conservatively classified pass/fail/pending/none from
+  `statusCheckRollup`, review decision) sourced from the `gh` CLI over the
+  workspace's remote; `--impact PR|branch` resolves the PR's diff (fetched
+  via `gh pr diff`, never local git) against its base ref to changed
+  symbols with dependents (depth + resolution), listing unindexed and
+  deleted changed files explicitly and stating the local index's build age
+  (`Store: local index (built <age>|never)`) so impact against a stale
+  store is visible; `--conflicts` ranks open-PR pairs by shared-community
+  overlap of their touched symbols (largest overlap first, PR-number
+  tie-break), consuming the `communities`/`symbol_communities` tables
+  (never building them) and printing a `run cairn communities` hint
+  instead of failing when the tables are absent or empty; `--json` emits
+  the full report payload (`store`/`prs`/`impact`/`conflicts`) for agents.
+  Strictly read-only on both sides: the store opens read-only with no
+  freshness refresh, and gh runs only as a subprocess with pinned
+  list/view/diff argv (30 s timeout, no tokens read, logged, or passed) —
+  gh missing, unauthenticated, timing out, or erroring surfaces as one
+  actionable error with no partial table.
 
 ### Fixed
 - Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters
